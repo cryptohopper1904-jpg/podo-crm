@@ -1,0 +1,192 @@
+import "server-only";
+import { and, asc, desc, eq, ilike, isNull, max, or, sql } from "drizzle-orm";
+import { z } from "zod";
+import { withOrg } from "@/db";
+import {
+  appointments,
+  billingContacts,
+  consents,
+  invoices,
+  media,
+  patients,
+  treatmentRecords,
+} from "@/db/schema";
+import type { AuthContext } from "@/lib/auth/session";
+import { audit } from "@/lib/audit";
+import { patientStatus } from "@/lib/patient-status";
+import { sequential } from "@/lib/seq";
+
+const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+const optText = z.preprocess(emptyToNull, z.string().trim().max(500).nullable().optional());
+
+export const patientInput = z.object({
+  salutation: optText,
+  title: optText,
+  lastName: z.string().trim().min(1, "Nachname fehlt").max(120),
+  firstName: optText,
+  birthDate: z.preprocess(emptyToNull, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Geburtsdatum als TT.MM.JJJJ").nullable().optional()),
+  street: optText,
+  zip: optText,
+  city: optText,
+  phoneMobile: optText,
+  phoneLandline: optText,
+  email: z.preprocess(emptyToNull, z.string().trim().email("E-Mail ungültig").nullable().optional()),
+  preferredChannel: z.enum(["email", "whatsapp", "sms", "phone", "letter", "none"]).default("none"),
+  insuranceType: z.enum(["gkv", "pkv", "self", "beihilfe"]).default("self"),
+  insurerName: optText,
+  insuranceNumber: optText,
+  gpName: optText,
+  notes: optText,
+  visitIntervalWeeks: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(52).nullable().optional()),
+  homeVisit: z.preprocess((v) => v === "on" || v === true, z.boolean()).default(false),
+  risk_diabetes: z.preprocess((v) => v === "on", z.boolean()).optional(),
+  risk_diabetesType: optText,
+  risk_anticoagulation: z.preprocess((v) => v === "on", z.boolean()).optional(),
+  risk_pavk: z.preprocess((v) => v === "on", z.boolean()).optional(),
+  risk_neuropathy: z.preprocess((v) => v === "on", z.boolean()).optional(),
+  risk_mrsa: z.preprocess((v) => v === "on", z.boolean()).optional(),
+  risk_allergies: optText,
+});
+export type PatientInput = z.infer<typeof patientInput>;
+
+export function toPatientValues(d: PatientInput) {
+  const { risk_diabetes, risk_diabetesType, risk_anticoagulation, risk_pavk, risk_neuropathy, risk_mrsa, risk_allergies, ...rest } = d;
+  return {
+    ...rest,
+    riskFlags: {
+      diabetes: !!risk_diabetes,
+      diabetesType: risk_diabetesType ?? undefined,
+      anticoagulation: !!risk_anticoagulation,
+      pavk: !!risk_pavk,
+      neuropathy: !!risk_neuropathy,
+      mrsa: !!risk_mrsa,
+      allergies: risk_allergies ?? undefined,
+    },
+  };
+}
+
+export async function listPatients(auth: AuthContext, opts: { q?: string; status?: string; limit?: number } = {}) {
+  const org = auth.organization.id;
+  return withOrg(org, async (tx) => {
+    const q = opts.q?.trim();
+    const where = [eq(patients.organizationId, org), isNull(patients.archivedAt)];
+    if (q) {
+      const like = `%${q}%`;
+      where.push(
+        or(
+          ilike(patients.lastName, like),
+          ilike(patients.firstName, like),
+          ilike(patients.email, like),
+          ilike(patients.phoneMobile, like),
+          ilike(patients.city, like),
+          sql`${patients.number}::text = ${q}`,
+        )!,
+      );
+    }
+    const lastVisit = tx
+      .select({ patientId: appointments.patientId, last: max(appointments.startsAt).as("last") })
+      .from(appointments)
+      .where(and(eq(appointments.organizationId, org), eq(appointments.status, "done")))
+      .groupBy(appointments.patientId)
+      .as("lv");
+    const open = tx
+      .select({
+        patientId: invoices.patientId,
+        openCents: sql<number>`coalesce(sum(${invoices.totalCents} - ${invoices.paidCents}), 0)`.as("open_cents"),
+      })
+      .from(invoices)
+      .where(and(eq(invoices.organizationId, org), sql`${invoices.status} in ('issued','partially_paid')`))
+      .groupBy(invoices.patientId)
+      .as("op");
+    const rows = await tx
+      .select({ p: patients, last: lastVisit.last, openCents: open.openCents })
+      .from(patients)
+      .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
+      .leftJoin(open, eq(open.patientId, patients.id))
+      .where(and(...where))
+      .orderBy(asc(patients.lastName), asc(patients.firstName))
+      .limit(opts.limit ?? 300);
+    await audit({ organizationId: org, userId: auth.user.id, action: "patients.list", meta: { q: q ? "[suche]" : null, n: rows.length } });
+    return rows
+      .map((r) => ({
+        ...r.p,
+        lastVisit: r.last ? new Date(r.last) : null,
+        openCents: Number(r.openCents ?? 0),
+        status: patientStatus(r.last ? new Date(r.last) : null, r.p.visitIntervalWeeks),
+      }))
+      .filter((r) => !opts.status || r.status === opts.status);
+  });
+}
+
+export async function getPatient(auth: AuthContext, id: string) {
+  const org = auth.organization.id;
+  const result = await withOrg(org, async (tx) => {
+    const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, id)));
+    if (!p) return null;
+    const medical = auth.can("medical.read");
+    const [appts, recs, photos, invs, cons, billing] = await sequential(
+      () => tx.select().from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.patientId, id))).orderBy(desc(appointments.startsAt)).limit(50),
+      () => medical
+        ? tx.select().from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.patientId, id))).orderBy(desc(treatmentRecords.treatedAt)).limit(100)
+        : Promise.resolve([]),
+      () => medical
+        ? tx.select().from(media).where(and(eq(media.organizationId, org), eq(media.patientId, id), isNull(media.deletedAt))).orderBy(desc(media.takenAt)).limit(200)
+        : Promise.resolve([]),
+      () => auth.can("invoices.read")
+        ? tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.patientId, id))).orderBy(desc(invoices.createdAt)).limit(50)
+        : Promise.resolve([]),
+      () => tx.select().from(consents).where(and(eq(consents.organizationId, org), eq(consents.patientId, id))).orderBy(desc(consents.recordedAt)),
+      () => p.billingContactId
+        ? tx.select().from(billingContacts).where(eq(billingContacts.id, p.billingContactId))
+        : Promise.resolve([]),
+    );
+    const lastDone = appts.find((a) => a.status === "done");
+    return {
+      patient: p,
+      appointments: appts,
+      records: recs,
+      media: photos,
+      invoices: invs,
+      consents: cons,
+      billingContact: billing[0] ?? null,
+      status: patientStatus(lastDone ? lastDone.startsAt : null, p.visitIntervalWeeks),
+      openCents: invs.filter((i) => i.status === "issued" || i.status === "partially_paid").reduce((s, i) => s + i.totalCents - i.paidCents, 0),
+      revenueCents: invs.filter((i) => i.status !== "cancelled" && i.status !== "draft").reduce((s, i) => s + i.paidCents, 0),
+    };
+  });
+  if (result) await audit({ organizationId: org, userId: auth.user.id, action: "patient.read", entity: "patient", entityId: id });
+  return result;
+}
+
+/** Aktuell gültige Einwilligungen (letzter Eintrag je Typ). */
+export function currentConsents(rows: { type: string; granted: boolean; recordedAt: Date }[]) {
+  const map = new Map<string, { granted: boolean; recordedAt: Date }>();
+  for (const r of [...rows].sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime())) {
+    if (!map.has(r.type)) map.set(r.type, { granted: r.granted, recordedAt: r.recordedAt });
+  }
+  return map;
+}
+
+export async function nextPatientNumber(org: string) {
+  return withOrg(org, async (tx) => {
+    const [r] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
+    return (r?.n ?? 0) + 1;
+  });
+}
+
+/** Mögliche Dubletten: gleicher Name+Geburtsdatum oder gleiche E-Mail/Mobilnummer. */
+export async function findDuplicates(org: string, d: { lastName: string; firstName?: string | null; birthDate?: string | null; email?: string | null; phoneMobile?: string | null }, excludeId?: string) {
+  return withOrg(org, async (tx) => {
+    const conds = [];
+    if (d.birthDate) conds.push(and(ilike(patients.lastName, d.lastName), eq(patients.birthDate, d.birthDate)));
+    if (d.email) conds.push(ilike(patients.email, d.email));
+    if (d.phoneMobile) conds.push(eq(patients.phoneMobile, d.phoneMobile));
+    if (!conds.length) return [];
+    const rows = await tx
+      .select({ id: patients.id, number: patients.number, lastName: patients.lastName, firstName: patients.firstName })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), or(...conds)))
+      .limit(5);
+    return rows.filter((r) => r.id !== excludeId);
+  });
+}

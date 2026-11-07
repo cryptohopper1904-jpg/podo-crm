@@ -1,0 +1,131 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/space-grotesk";
+
+/* Dunkelmodus über data-theme (Umschalter), Standard folgt dem System */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+ * PodoCRM Design-Tokens – flach, frisch, hell.
+ * Primär: Mint/Petrol (Frische, Medizin), Akzent: Koralle (Aktionen), Info: Himmelblau, Warnung: Sonnengelb.
+ * Kontraste geprüft: Text auf Fläche ≥ 4.5:1.
+ */
+:root {
+  --bg: #f4f9f8;
+  --surface: #ffffff;
+  --surface-2: #eef5f4;
+  --border: #e1ecea;
+  --border-strong: #a9c2bf;
+  --text: #0f2a2e;
+  --muted: #55706f;
+  --primary: #0b7f73;
+  --primary-hover: #086158;
+  --on-primary: #ffffff;
+  --primary-soft: #ddf5ef;
+  --primary-soft-text: #0a4f48;
+  --accent: #f2715a;
+  --accent-hover: #e05a42;
+  --on-accent: #2a0a03;
+  --accent-soft: #ffe7e1;
+  --accent-soft-text: #7a2614;
+  --info-soft: #e2eefb;
+  --info-soft-text: #1a3f66;
+  --warn-soft: #fff4cf;
+  --warn-soft-text: #5e4a00;
+  --danger: #c2412a;
+  --ring: #0b7f73;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #0d1b1e;
+  --surface: #13262a;
+  --surface-2: #1a3135;
+  --border: #23393d;
+  --border-strong: #3c5a5e;
+  --text: #e8f3f1;
+  --muted: #a3bdba;
+  --primary: #34d1bc;
+  --primary-hover: #5ee0cd;
+  --on-primary: #06302b;
+  --primary-soft: #123c38;
+  --primary-soft-text: #cff5ee;
+  --accent: #ff8a73;
+  --accent-hover: #ffa290;
+  --on-accent: #3a0f05;
+  --accent-soft: #43281f;
+  --accent-soft-text: #ffd9cf;
+  --info-soft: #1b2f45;
+  --info-soft-text: #d3e6fa;
+  --warn-soft: #3a3417;
+  --warn-soft-text: #f7ebb5;
+  --danger: #ff8a73;
+  --ring: #5ee0cd;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-on-primary: var(--on-primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-soft-text: var(--primary-soft-text);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-text: var(--accent-soft-text);
+  --color-info-soft: var(--info-soft);
+  --color-info-soft-text: var(--info-soft-text);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-soft-text: var(--warn-soft-text);
+  --color-danger: var(--danger);
+  --color-ring: var(--ring);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk Variable", "Inter Variable", ui-sans-serif, sans-serif;
+  --radius-card: 16px;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Große Touch-Ziele für iPad/iPhone (Bedienung mit Handschuhen) */
+@media (pointer: coarse) {
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
