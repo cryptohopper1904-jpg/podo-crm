@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { Table } from "@/components/ui";
-import { db } from "@/db";
+import { withOrg } from "@/db";
 import { auditLog, users } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { dateTimeDe } from "@/lib/format";
@@ -9,13 +9,14 @@ export const metadata = { title: "Zugriffsprotokoll" };
 
 export default async function AuditPage() {
   const auth = await requireAuth("audit.read");
-  const rows = await db
+  const org = auth.organization.id;
+  const rows = await withOrg(org, (tx) => tx
     .select({ l: auditLog, name: users.name })
     .from(auditLog)
     .leftJoin(users, eq(users.id, auditLog.userId))
     .where(eq(auditLog.organizationId, auth.organization.id))
     .orderBy(desc(auditLog.at))
-    .limit(300);
+    .limit(300));
   return (
     <>
       <p className="mb-4 text-sm text-muted">Jeder Zugriff auf Kundenakten, Fotos und Doku wird protokolliert (unveränderbar). Die letzten 300 Einträge:</p>

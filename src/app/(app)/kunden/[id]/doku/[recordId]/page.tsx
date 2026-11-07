@@ -106,7 +106,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
             <Textarea id="addendum" name="text" required minLength={3} placeholder="Ergänzung oder Korrektur (der ursprüngliche Eintrag bleibt sichtbar)" />
             <div className="flex flex-wrap gap-2">
               <Button type="submit" variant="secondary">Nachtrag speichern</Button>
-              {needsCountersign && auth.role !== "trainee" ? (
+              {needsCountersign && (auth.role === "owner" || auth.role === "therapist") && r.authorId !== auth.user.id ? (
                 <Button type="submit" name="kind" value="countersign">Gegenzeichnen</Button>
               ) : null}
             </div>

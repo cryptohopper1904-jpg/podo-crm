@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointments, braceEpisodes, media, patients, recordAddenda, treatmentRecords, type FootPoint } from "@/db/schema";
@@ -57,8 +57,18 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
   const recordId = await withOrg(org, async (tx) => {
     const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, d.patientId)));
     if (!p) throw new Error("Kunde nicht gefunden");
+    // Hash-Kette je Patient serialisieren (parallele Einträge dürfen nicht verzweigen)
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"rec:" + d.patientId}))`);
+    if (d.appointmentId) {
+      const [a] = await tx.select({ id: appointments.id }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, d.appointmentId), eq(appointments.patientId, d.patientId)));
+      if (!a) return { error: "Der Termin gehört nicht zu diesem Kunden." } as const;
+    }
+    if (d.braceEpisodeId) {
+      const [b] = await tx.select({ id: braceEpisodes.id }).from(braceEpisodes).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, d.braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
+      if (!b) return { error: "Die Spangen-Episode gehört nicht zu diesem Kunden." } as const;
+    }
     const photos = mediaIds.length
-      ? await tx.select({ id: media.id, purpose: media.purpose }).from(media).where(and(eq(media.organizationId, org), eq(media.patientId, d.patientId), inArray(media.id, mediaIds)))
+      ? await tx.select({ id: media.id, purpose: media.purpose }).from(media).where(and(eq(media.organizationId, org), eq(media.patientId, d.patientId), inArray(media.id, mediaIds), isNull(media.recordId), eq(media.uploadedBy, auth.user.id)))
       : [];
     const brace = checkBracePhotos(d.braceAction as BraceAction, photos.map((x) => x.purpose), d.missingPhotoReason);
     if (!brace.ok) return { error: "Für diesen Spangen-Schritt fehlt das Pflichtfoto. Bitte aufnehmen oder begründen." } as const;
@@ -76,9 +86,9 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
         .returning({ id: braceEpisodes.id });
       braceEpisodeId = ep.id;
     } else if (braceEpisodeId && d.braceAction === "remove") {
-      await tx.update(braceEpisodes).set({ status: "completed", endedAt: new Date().toISOString().slice(0, 10) }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId)));
+      await tx.update(braceEpisodes).set({ status: "completed", endedAt: new Date().toISOString().slice(0, 10) }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
     } else if (braceEpisodeId && d.braceChange) {
-      await tx.update(braceEpisodes).set({ braceType: d.braceChange }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId)));
+      await tx.update(braceEpisodes).set({ braceType: d.braceChange }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
     }
 
     const [prev] = await tx
@@ -136,7 +146,7 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
       await tx.update(media).set({ recordId: rec.id, braceEpisodeId }).where(and(eq(media.organizationId, org), inArray(media.id, photos.map((x) => x.id))));
     }
     if (d.appointmentId) {
-      await tx.update(appointments).set({ status: "done", updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, d.appointmentId)));
+      await tx.update(appointments).set({ status: "done", updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, d.appointmentId), eq(appointments.patientId, d.patientId)));
     }
     return { id: rec.id } as const;
   });
@@ -154,12 +164,24 @@ export async function addAddendumAction(form: FormData) {
   const body = z.string().trim().min(3).max(5000).parse(form.get("text"));
   const kind = form.get("kind") === "countersign" ? "countersign" : "addendum";
   await withOrg(org, async (tx) => {
-    const [prev] = await tx.select({ hash: recordAddenda.hash }).from(recordAddenda).where(and(eq(recordAddenda.organizationId, org), eq(recordAddenda.recordId, recordId))).orderBy(desc(recordAddenda.createdAt)).limit(1);
-    const [rec] = await tx.select({ hash: treatmentRecords.hash }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, recordId)));
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"add:" + recordId}))`);
+    const [rec] = await tx
+      .select({ hash: treatmentRecords.hash, authorId: treatmentRecords.authorId, countersignRequired: treatmentRecords.countersignRequired })
+      .from(treatmentRecords)
+      .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, recordId), eq(treatmentRecords.patientId, patientId)));
     if (!rec) throw new Error("Eintrag nicht gefunden");
+    if (kind === "countersign") {
+      // Gegenzeichnung nur durch Inhaber:in/Podolog:in, nicht durch die Autorin/den Autor selbst
+      if (!(auth.role === "owner" || auth.role === "therapist")) throw new Error("Keine Berechtigung zur Gegenzeichnung.");
+      if (rec.authorId === auth.user.id) throw new Error("Eigene Einträge können nicht gegengezeichnet werden.");
+      if (!rec.countersignRequired) throw new Error("Dieser Eintrag braucht keine Gegenzeichnung.");
+    }
+    const [prev] = await tx.select({ hash: recordAddenda.hash }).from(recordAddenda).where(and(eq(recordAddenda.organizationId, org), eq(recordAddenda.recordId, recordId))).orderBy(desc(recordAddenda.createdAt)).limit(1);
     const prevHash = prev?.hash ?? rec.hash;
-    const content = { recordId, authorId: auth.user.id, kind, text: body, at: new Date().toISOString() };
-    await tx.insert(recordAddenda).values({ organizationId: org, recordId, authorId: auth.user.id, kind, text: body, prevHash, hash: chainHash(prevHash, content) });
+    const createdAt = new Date();
+    // gehasht wird exakt der gespeicherte Zeitstempel → später reproduzierbar
+    const content = { recordId, authorId: auth.user.id, kind, text: body, at: createdAt.toISOString() };
+    await tx.insert(recordAddenda).values({ organizationId: org, recordId, authorId: auth.user.id, kind, text: body, createdAt, prevHash, hash: chainHash(prevHash, content) });
   });
   await audit({ organizationId: org, userId: auth.user.id, action: `record.${kind}`, entity: "treatment_record", entityId: recordId });
   revalidatePath(`/kunden/${patientId}/doku/${recordId}`);

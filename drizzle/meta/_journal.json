@@ -22,6 +22,20 @@
       "when": 1794084510057,
       "tag": "0002_import_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794084905790,
+      "tag": "0003_auth_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794084906636,
+      "tag": "0004_security_hardening",
+      "breakpoints": true
     }
   ]
 }

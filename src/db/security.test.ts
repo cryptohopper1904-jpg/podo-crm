@@ -65,6 +65,14 @@ d("Datenbank-Sicherheit", () => {
     await expect(asOrg(orgA, (c) => c.query("delete from treatment_records where id = $1", [rec]))).rejects.toThrow(/unveränderbar/);
   });
 
+  it("Audit-Log ist mandantengetrennt lesbar", async () => {
+    await pool.query("insert into audit_log (organization_id, action) values ($1, 'test.a')", [orgA]);
+    const byB = await asOrg(orgB, async (c) => (await c.query("select 1 from audit_log where organization_id = $1", [orgA])).rowCount);
+    const byA = await asOrg(orgA, async (c) => (await c.query("select 1 from audit_log where organization_id = $1", [orgA])).rowCount);
+    expect(byB).toBe(0);
+    expect(byA).toBeGreaterThan(0);
+  });
+
   it("ausgestellte Rechnungen sind unveränderbar", async () => {
     const inv = await asOrg(orgA, async (c) => {
       const id = (await c.query("insert into invoices (organization_id, patient_id, status) values ($1,$2,'draft') returning id", [orgA, patientA])).rows[0].id;
@@ -74,6 +82,7 @@ d("Datenbank-Sicherheit", () => {
     });
     await expect(asOrg(orgA, (c) => c.query("update invoices set total_cents = 1 where id = $1", [inv]))).rejects.toThrow(/unveränderbar/);
     await expect(asOrg(orgA, (c) => c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents) values ($1,$2,'X',1,1)", [orgA, inv]))).rejects.toThrow(/unveränderbar/);
+    await expect(asOrg(orgA, (c) => c.query("update invoices set status = 'draft' where id = $1", [inv]))).rejects.toThrow(/unveränderbar/);
     // Statuswechsel (bezahlt/storniert) bleibt erlaubt
     await asOrg(orgA, (c) => c.query("update invoices set status = 'paid', paid_cents = 6500 where id = $1", [inv]));
   });

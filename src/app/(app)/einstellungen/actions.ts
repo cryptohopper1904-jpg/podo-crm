@@ -8,7 +8,7 @@ import { memberships, organizations, services, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { requireAuth } from "@/lib/auth/session";
-import { generateTotpSecret, verifyTotp } from "@/lib/auth/totp";
+import { generateTotpSecret, matchTotpStep } from "@/lib/auth/totp";
 import { parseMoney } from "@/lib/format";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 
@@ -132,6 +132,7 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
 
 export async function startTotpAction(): Promise<SettingsState> {
   const auth = await requireAuth();
+  if (auth.user.totpEnabled) return { error: "2FA ist bereits aktiv." };
   const secret = generateTotpSecret();
   await db.update(users).set({ totpSecretEnc: encryptSecret(secret), totpEnabled: false }).where(eq(users.id, auth.user.id));
   return { secret };
@@ -141,8 +142,9 @@ export async function confirmTotpAction(_: SettingsState, form: FormData): Promi
   const auth = await requireAuth();
   const [u] = await db.select().from(users).where(eq(users.id, auth.user.id));
   if (!u.totpSecretEnc) return { error: "Bitte zuerst einrichten." };
-  if (!verifyTotp(decryptSecret(u.totpSecretEnc), String(form.get("code") ?? ""))) return { error: "Code stimmt nicht.", secret: decryptSecret(u.totpSecretEnc) };
-  await db.update(users).set({ totpEnabled: true }).where(eq(users.id, auth.user.id));
+  const step = matchTotpStep(decryptSecret(u.totpSecretEnc), String(form.get("code") ?? ""));
+  if (step === null) return { error: "Code stimmt nicht." };
+  await db.update(users).set({ totpEnabled: true, totpLastStep: step }).where(eq(users.id, auth.user.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "2fa.enabled" });
   revalidatePath("/einstellungen/sicherheit");
   return { ok: "Zwei-Faktor-Anmeldung ist aktiv." };

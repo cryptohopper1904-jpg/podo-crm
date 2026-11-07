@@ -1,4 +1,3 @@
-import { sequential } from "@/lib/seq";
 import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -104,7 +103,7 @@ async function applyPayments(
       const [v] = await tx
         .select()
         .from(vouchers)
-        .where(and(eq(vouchers.organizationId, org), ilike(vouchers.code, p.voucherCode)))
+        .where(and(eq(vouchers.organizationId, org), eq(sql`upper(${vouchers.code})`, String(p.voucherCode).trim().toUpperCase())))
         .for("update");
       if (!v) throw new InvoiceError(`Gutschein ${p.voucherCode} nicht gefunden.`);
       if (p.amountCents > 0 && v.validUntil < today) throw new InvoiceError(`Gutschein ${v.code} ist abgelaufen (${dateDe(v.validUntil)}).`);
@@ -450,26 +449,25 @@ export async function getInvoice(auth: AuthContext, id: string) {
   const data = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, id)));
     if (!inv) return null;
-    const [lines, pays, o, patient, billing, related] = await sequential(
-      () => tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position)),
-      () => tx
+    const lines = await (tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position)));
+    const pays = await (tx
         .select({ payment: payments, voucherCode: vouchers.code })
         .from(payments)
         .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
         .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
-        .orderBy(asc(payments.paidAt)),
-      () => loadOrg(tx, org),
-      () => inv.patientId
+        .orderBy(asc(payments.paidAt)));
+    const o = await (loadOrg(tx, org));
+    const patient = await (inv.patientId
         ? tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((r) => r[0] ?? null)
-        : Promise.resolve(null),
-      () => inv.billingContactId
+        : Promise.resolve(null));
+    const billing = await (inv.billingContactId
         ? tx
             .select()
             .from(billingContacts)
             .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId)))
             .then((r) => r[0] ?? null)
-        : Promise.resolve(null),
-      () => // Storno-Beziehung in beide Richtungen
+        : Promise.resolve(null));
+    const related = await (// Storno-Beziehung in beide Richtungen
       tx
         .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, cancelsInvoiceId: invoices.cancelsInvoiceId })
         .from(invoices)
@@ -478,8 +476,7 @@ export async function getInvoice(auth: AuthContext, id: string) {
             eq(invoices.organizationId, org),
             or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
           ),
-        ),
-    );
+        ));
     return {
       invoice: inv,
       lines,
@@ -507,21 +504,19 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       billingContactId: patients.billingContactId,
       careHomeId: patients.careHomeId,
     };
-    const [recent, svc, contacts, o] = await sequential(
-      () => tx
+    const recent = await (tx
         .select(cols)
         .from(patients)
         .where(and(eq(patients.organizationId, org), isNull(patients.archivedAt)))
         .orderBy(desc(patients.updatedAt))
-        .limit(200),
-      () => tx
+        .limit(200));
+    const svc = await (tx
         .select()
         .from(services)
         .where(and(eq(services.organizationId, org), eq(services.active, true)))
-        .orderBy(asc(services.category), asc(services.name)),
-      () => tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)),
-      () => loadOrg(tx, org),
-    );
+        .orderBy(asc(services.category), asc(services.name)));
+    const contacts = await (tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)));
+    const o = await (loadOrg(tx, org));
     let list = recent;
     if (preselectPatientId && z.uuid().safeParse(preselectPatientId).success && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));

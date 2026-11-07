@@ -164,6 +164,8 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   totpSecretEnc: text("totp_secret_enc"),
   totpEnabled: boolean("totp_enabled").notNull().default(false),
+  /** zuletzt akzeptierter TOTP-Zeitschritt – verhindert Wiederverwendung (Replay) */
+  totpLastStep: integer("totp_last_step"),
   /** Betreiber der SaaS – hat KEINEN Datenzugriff ohne Freigabe (Break-Glass) */
   isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
   failedLogins: integer("failed_logins").notNull().default(0),
@@ -199,6 +201,7 @@ export const sessions = pgTable(
     organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
     /** false bis 2FA bestätigt ist */
     verified: boolean("verified").notNull().default(true),
+    totpFailures: integer("totp_failures").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     userAgent: text("user_agent"),
     ip: text("ip"),
@@ -267,7 +270,7 @@ export const patients = pgTable(
     /** Zusatzangaben aus Importen (Doctolib: maiden_name, occupation, referrer, gp_city, crucial_info, no_reminders) */
     extra: jsonb("extra").$type<Record<string, unknown>>().notNull().default({}),
     /** z. B. { doctolib: "123", legacyExcel: 17 } */
-    externalIds: jsonb("external_ids").$type<Record<string, string | number>>().notNull().default({}),
+    externalIds: jsonb("external_ids").$type<Record<string, string | number | undefined>>().notNull().default({}),
     source: text("source"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: createdAt(),

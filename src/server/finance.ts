@@ -54,7 +54,12 @@ export async function financeOverview(auth: AuthContext, year: number) {
                extract(month from (a.starts_at at time zone 'Europe/Berlin'))::int
         from appointments a
         where a.organization_id = ${org} and a.status = 'done' and a.starts_at >= ${from} and a.starts_at < ${to}
-          and not exists (select 1 from treatment_records t2 where t2.organization_id = ${org} and t2.appointment_id = a.id)
+          and not exists (
+            select 1 from treatment_records t2
+            where t2.organization_id = ${org}
+              and (t2.appointment_id = a.id
+                   or (t2.patient_id = a.patient_id
+                       and (t2.treated_at at time zone 'Europe/Berlin')::date = (a.starts_at at time zone 'Europe/Berlin')::date)))
       ) x group by 1, 2`);
 
     const [recv] = (

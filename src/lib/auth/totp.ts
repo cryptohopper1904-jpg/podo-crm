@@ -59,6 +59,18 @@ export function verifyTotp(secret: string, code: string, time = Date.now()): boo
   return false;
 }
 
+/** Gibt den passenden Zeitschritt zurück (±1 Fenster) oder null. Für Replay-Schutz. */
+export function matchTotpStep(secret: string, code: string, time = Date.now()): number | null {
+  const c = code.replace(/\s/g, "");
+  if (!/^\d{6}$/.test(c)) return null;
+  const now = Math.floor(time / 1000 / 30);
+  for (const drift of [-1, 0, 1]) {
+    const expected = totpCode(secret, (now + drift) * 30_000);
+    if (timingSafeEqual(Buffer.from(expected), Buffer.from(c))) return now + drift;
+  }
+  return null;
+}
+
 export function otpauthUrl(secret: string, account: string, issuer = "PodoCRM"): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&period=30&digits=6`;
 }

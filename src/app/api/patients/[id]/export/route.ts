@@ -27,7 +27,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/patients/[i
       termine: await tx.select().from(appointments).where(w(appointments)),
       behandlungen: await mapSequential(
         recs, async (r) => ({ ...r, nachtraege: await tx.select().from(recordAddenda).where(and(eq(recordAddenda.organizationId, org), eq(recordAddenda.recordId, r.id))) })),
-      medien: (await tx.select().from(media).where(w(media))).map(({ storageKey: _k, ...m }) => m),
+      medien: (await tx.select().from(media).where(w(media))).map((m) => ({ ...m, storageKey: undefined })),
       rechnungen: await mapSequential(
         inv, async (i) => ({
           ...i,

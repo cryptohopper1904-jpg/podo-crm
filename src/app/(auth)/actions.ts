@@ -8,7 +8,7 @@ import { locations, memberships, organizations, sessions, users } from "@/db/sch
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { createSession, destroySession, getSession, markSessionVerified } from "@/lib/auth/session";
-import { verifyTotp } from "@/lib/auth/totp";
+import { matchTotpStep } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
 
@@ -30,12 +30,12 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
     return { error: "Zu viele Fehlversuche. Bitte in einigen Minuten erneut versuchen." };
   }
   if (!(await verifyPassword(user.passwordHash, password))) {
-    const failed = user.failedLogins + 1;
+    // atomar hochzählen (keine Race Condition bei parallelen Versuchen)
     await db
       .update(users)
       .set({
-        failedLogins: failed >= LOCK_AFTER ? 0 : failed,
-        lockedUntil: failed >= LOCK_AFTER ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null,
+        failedLogins: sql`case when ${users.failedLogins} + 1 >= ${LOCK_AFTER} then 0 else ${users.failedLogins} + 1 end`,
+        lockedUntil: sql`case when ${users.failedLogins} + 1 >= ${LOCK_AFTER} then now() + make_interval(mins => ${LOCK_MINUTES}) else ${users.lockedUntil} end`,
       })
       .where(eq(users.id, user.id));
     await audit({ userId: user.id, action: "login.failed" });
@@ -53,15 +53,32 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   redirect(user.totpEnabled ? "/login/2fa" : "/heute");
 }
 
+const MAX_TOTP_FAILURES = 5;
+
 export async function verifyTotpAction(_: FormState, form: FormData): Promise<FormState> {
   const row = await getSession();
   if (!row) redirect("/login");
+  if (row.session.verified) redirect("/heute");
   const code = String(form.get("code") ?? "");
   const secret = row.user.totpSecretEnc ? decryptSecret(row.user.totpSecretEnc) : null;
-  if (!secret || !verifyTotp(secret, code)) {
+  const step = secret ? matchTotpStep(secret, code) : null;
+  // Replay-Schutz: derselbe (oder ältere) Zeitschritt wird nicht zweimal akzeptiert
+  if (step === null || (row.user.totpLastStep !== null && step <= row.user.totpLastStep)) {
+    const [s] = await db
+      .update(sessions)
+      .set({ totpFailures: sql`${sessions.totpFailures} + 1` })
+      .where(eq(sessions.id, row.session.id))
+      .returning({ n: sessions.totpFailures });
     await audit({ userId: row.user.id, action: "login.2fa_failed" });
+    if ((s?.n ?? MAX_TOTP_FAILURES) >= MAX_TOTP_FAILURES) {
+      // Sitzung verwerfen und Konto kurz sperren
+      await db.update(users).set({ lockedUntil: sql`now() + make_interval(mins => ${LOCK_MINUTES})` }).where(eq(users.id, row.user.id));
+      await destroySession();
+      redirect("/login");
+    }
     return { error: "Der Code stimmt nicht. Bitte den aktuellen Code aus der Authenticator-App eingeben." };
   }
+  await db.update(users).set({ totpLastStep: step }).where(eq(users.id, row.user.id));
   await markSessionVerified();
   redirect("/heute");
 }
@@ -88,10 +105,6 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   const pwProblem = passwordProblem(d.password);
   if (pwProblem) return { error: pwProblem };
 
-  const [{ n }] = await db.select({ n: count() }).from(users);
-  if (n > 0 && process.env.ALLOW_SIGNUP !== "true") {
-    return { error: "Neue Registrierungen sind auf diesem Server deaktiviert." };
-  }
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, d.email)).limit(1);
   if (existing) return { error: "Für diese E-Mail gibt es bereits ein Konto." };
 
@@ -104,7 +117,11 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   const slug = `${slugBase}-${Math.random().toString(36).slice(2, 6)}`;
   const passwordHash = await hashPassword(d.password);
 
-  const { userId, orgId } = await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
+    // Erstinstallation serialisieren: nur genau eine erste Praxis/ein Plattform-Admin
+    await tx.execute(sql`select pg_advisory_xact_lock(4711001)`);
+    const [{ n }] = await tx.select({ n: count() }).from(users);
+    if (n > 0 && process.env.ALLOW_SIGNUP !== "true") return null;
     const [org] = await tx.insert(organizations).values({ name: d.practiceName, slug, state: d.state }).returning();
     const [user] = await tx
       .insert(users)
@@ -116,6 +133,8 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     await seedOrganizationDefaults(tx, org.id);
     return { userId: user.id, orgId: org.id };
   });
+  if (!result) return { error: "Neue Registrierungen sind auf diesem Server deaktiviert." };
+  const { userId, orgId } = result;
   await createSession(userId, orgId, true);
   await audit({ organizationId: orgId, userId, action: "organization.created" });
   redirect("/heute");
@@ -124,7 +143,7 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
 /** Wechselt die aktive Praxis (für Nutzer mit mehreren Mitgliedschaften). */
 export async function switchOrganizationAction(form: FormData) {
   const row = await getSession();
-  if (!row) redirect("/login");
+  if (!row || !row.session.verified) redirect("/login");
   const orgId = String(form.get("organizationId") ?? "");
   const [m] = await db
     .select()
