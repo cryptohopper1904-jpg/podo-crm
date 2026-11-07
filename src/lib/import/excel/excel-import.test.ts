@@ -6,7 +6,7 @@ import { parsePayment, parseWorkbook } from "./parse";
 import { persistImport } from "./persist";
 
 /** Synthetische Arbeitsmappe im Format „Podologie Rechnungsmanager V0.9.2“ – nur erfundene Daten. */
-async function buildWorkbook(): Promise<Uint8Array> {
+export async function buildWorkbook(): Promise<Uint8Array> {
   const wb = new ExcelJS.Workbook();
 
   const p = wb.addWorksheet("Patienten");

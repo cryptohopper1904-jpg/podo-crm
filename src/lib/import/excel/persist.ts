@@ -237,11 +237,13 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
     });
 
     for (const part of chunks(toInsert, 200)) {
-      // 1) als Entwurf anlegen
-      const created = await tx
+      // 1) als Entwurf OHNE Nummer anlegen (eine vergebene Nummer gilt als ausgestellt → Positionen wären gesperrt)
+      const created: { id: string; number: string | null }[] = [];
+      for (const inv of part) {
+        const [row] = await tx
         .insert(s.invoices)
         .values(
-          part.map((inv) => {
+          [inv].map((inv) => {
             const patientId = inv.patientLegacyId !== null ? summary.patientIdByLegacyId[inv.patientLegacyId] ?? null : null;
             if (inv.patientLegacyId !== null && !patientId) {
               warnings.push({ sheet: "Rechnungen", row: inv.row, message: `Patient ${inv.patientLegacyId} nicht gefunden – Rechnung ohne Patientenbezug.` });
@@ -249,7 +251,7 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
             return {
               organizationId,
               patientId,
-              number: inv.number,
+              number: null,
               kind: inv.kind,
               status: "draft" as const,
               issuedAt: inv.issuedAt,
@@ -269,7 +271,9 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
             };
           }),
         )
-        .returning({ id: s.invoices.id, number: s.invoices.number });
+        .returning({ id: s.invoices.id });
+        created.push({ id: row.id, number: inv.number });
+      }
       const idByNumber = new Map(created.map((c) => [c.number, c.id]));
       summary.invoices += created.length;
 
@@ -299,7 +303,7 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
       for (const inv of part) {
         const invoiceId = idByNumber.get(inv.number)!;
         const paidCents = Math.min(inv.totalCents, inv.payments.reduce((a, p) => a + p.amountCents, 0));
-        await tx.update(s.invoices).set({ status: inv.status, paidCents }).where(and(eq(s.invoices.id, invoiceId), eq(s.invoices.organizationId, organizationId)));
+        await tx.update(s.invoices).set({ number: inv.number, status: inv.status, paidCents }).where(and(eq(s.invoices.id, invoiceId), eq(s.invoices.organizationId, organizationId)));
         const paidAt = inv.issuedAt ? new Date(`${inv.issuedAt}T12:00:00Z`) : new Date();
         for (const p of inv.payments) {
           const voucherId = p.method === "voucher" && p.voucherLegacyId != null ? voucherIdByLegacy.get(p.voucherLegacyId) ?? null : null;

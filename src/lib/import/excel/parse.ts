@@ -151,10 +151,13 @@ class Ctx {
   }
 }
 
+const DERIVED_COLUMNS = new Set(["id", "open", "revenue", "treatments", "lastTreatment", "status", "route", "monthlyShare", "nextDue", "daysUntil", "sum", "sumSr", "remaining", "statusReceipt", "statusSr", "lastName", "firstName"]);
+
 /** Liest eine Zeile als Objekt der gemappten Spalten; meldet Formeln ohne Ergebnis und Fehlerwerte. */
 function readRow<M extends ColumnMap<string>>(ctx: Ctx, sheet: SheetName, row: ExcelJS.Row, cols: Cols<M>): { values: { [K in keyof M]: Primitive }; empty: boolean } {
   const values = {} as { [K in keyof M]: Primitive };
   let empty = true;
+  const pending: string[] = [];
   for (const key of Object.keys(cols) as (keyof M)[]) {
     const c = cols[key];
     if (c === undefined) {
@@ -162,8 +165,9 @@ function readRow<M extends ColumnMap<string>>(ctx: Ctx, sheet: SheetName, row: E
       continue;
     }
     const rc = readCell(row.getCell(c), row.number);
-    if (rc.formulaWithoutResult) ctx.warn(sheet, row.number, `Spalte „${String(key)}“: Formel ohne gespeichertes Ergebnis (=${rc.formulaWithoutResult}).`);
-    if (rc.error) ctx.warn(sheet, row.number, `Spalte „${String(key)}“: Fehlerwert ${rc.error}.`);
+    // Berechnete Excel-Spalten (Umsatz, offen, Status …) werden im CRM neu berechnet → keine Warnung
+    if (rc.formulaWithoutResult && !DERIVED_COLUMNS.has(String(key))) pending.push(`Spalte „${String(key)}“: Formel ohne gespeichertes Ergebnis – bitte Datei einmal in Excel öffnen und speichern.`);
+    if (rc.error && !DERIVED_COLUMNS.has(String(key))) pending.push(`Spalte „${String(key)}“: Fehlerwert ${rc.error}.`);
     values[key] = typeof rc.value === "string" && rc.value.trim() === "" ? null : rc.value;
   }
   // „leer“ = keine Zelle mit Inhalt außer evtl. einer ID-Formel (=ROW()-1 steht oft in leeren Zeilen)
@@ -171,6 +175,8 @@ function readRow<M extends ColumnMap<string>>(ctx: Ctx, sheet: SheetName, row: E
     if (key === "id") continue;
     if (values[key] !== null) empty = false;
   }
+  // Warnungen nur für Zeilen mit echtem Inhalt (leere Vorlagenzeilen enthalten nur Formeln)
+  if (!empty) for (const msg of pending) ctx.warn(sheet, row.number, msg);
   return { values, empty };
 }
 
@@ -763,7 +769,12 @@ export async function parseWorkbook(buffer: ArrayBuffer | Uint8Array, opts: Pars
   try {
     const data = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     // exceljs erwartet einen Node-Buffer
-    await wb.xlsx.load(Buffer.from(data.buffer, data.byteOffset, data.byteLength) as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0]);
+    // Tabellen-/Filter-/Validierungsknoten überspringen: exceljs stürzt sonst bei Excel-Tabellen mit
+    // Autofilter ab ("filterButton") – für den Import brauchen wir nur Zellwerte.
+    const cleaned = await stripExcelTables(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+    await wb.xlsx.load(cleaned as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0], {
+      ignoreNodes: ["tableParts", "autoFilter", "dataValidations", "extLst", "conditionalFormatting"],
+    } as unknown as Parameters<ExcelJS.Workbook["xlsx"]["load"]>[1]);
   } catch (e) {
     ctx.warn("Arbeitsmappe", null, `Datei konnte nicht gelesen werden: ${(e as Error).message}`);
     return { patients: [], services: [], vouchers: [], invoices: [], fixedCosts: [], report };
@@ -792,4 +803,32 @@ export async function parseWorkbook(buffer: ArrayBuffer | Uint8Array, opts: Pars
   report.duplicates = findDuplicates(patients);
   report.skippedEmptyRows = SHEET_NAMES.reduce((a, n) => a + report.counts[n].skippedEmpty, 0);
   return { patients, services, vouchers, invoices, fixedCosts, report };
+}
+
+
+/**
+ * Entfernt Excel-„Tabellen“ (ListObjects) aus der Datei, bevor exceljs sie liest.
+ * exceljs 4.4 stürzt bei Tabellen mit Autofilter ab („filterButton“, z. B. Rechnungsmanager V0.9.2).
+ * Für den Import werden nur die Zellwerte gebraucht; die Originaldatei bleibt unverändert.
+ */
+async function stripExcelTables(buf: Buffer): Promise<Buffer> {
+  const { default: JSZip } = await import("jszip");
+  const zip = await JSZip.loadAsync(buf);
+  const tables = Object.keys(zip.files).filter((f) => /^xl\/tables\/.+\.xml$/i.test(f));
+  if (!tables.length) return buf;
+  for (const f of tables) zip.remove(f);
+  for (const f of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/_rels\/.+\.rels$/i.test(n))) {
+    const xml = await zip.file(f)!.async("string");
+    zip.file(f, xml.replace(/<Relationship\b[^>]*Target="[^"]*tables\/[^"]*"[^>]*\/>/gi, ""));
+  }
+  for (const f of Object.keys(zip.files).filter((n) => /^xl\/worksheets\/[^/]+\.xml$/i.test(n))) {
+    const xml = await zip.file(f)!.async("string");
+    zip.file(f, xml.replace(/<tableParts\b[^>]*>[\s\S]*?<\/tableParts>/gi, "").replace(/<tableParts\b[^>]*\/>/gi, ""));
+  }
+  const ct = zip.file("[Content_Types].xml");
+  if (ct) {
+    const xml = await ct.async("string");
+    zip.file("[Content_Types].xml", xml.replace(/<Override\b[^>]*PartName="\/xl\/tables\/[^"]*"[^>]*\/>/gi, ""));
+  }
+  return zip.generateAsync({ type: "nodebuffer" });
 }
