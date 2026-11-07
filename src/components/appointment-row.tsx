@@ -35,11 +35,9 @@ export function AppointmentRow({ row, canDoc, canEdit }: { row: ApptRow; canDoc:
         <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? ` · ${row.therapist}` : ""}</p>
         {patient ? <div className="mt-1"><RiskBadges flags={patient.riskFlags} compact /></div> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
       <Badge tone="neutral">{SOURCE[a.source] ?? a.source}</Badge>
       <Badge tone={st.tone}>{st.label}</Badge>
-      </div>
-      <div className="flex gap-1.5">
         {canDoc && patient && a.status !== "done" && !cancelled ? (
           <Link href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl bg-primary px-3 text-sm font-semibold text-on-primary hover:bg-primary-hover">Doku</Link>
         ) : null}
@@ -48,7 +46,7 @@ export function AppointmentRow({ row, canDoc, canEdit }: { row: ApptRow; canDoc:
             <form action={setAppointmentStatusAction}>
               <input type="hidden" name="id" value={a.id} />
               <input type="hidden" name="status" value="no_show" />
-              <button className="h-10 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2" title="Nicht erschienen">n. e.</button>
+              <button className="h-10 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2" title="Nicht erschienen (Ausfallhonorar möglich)">Nicht da</button>
             </form>
             <form action={setAppointmentStatusAction}>
               <input type="hidden" name="id" value={a.id} />
