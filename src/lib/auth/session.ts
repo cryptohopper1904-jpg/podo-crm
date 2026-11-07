@@ -25,7 +25,8 @@ export async function requestMeta() {
 export async function createSession(userId: string, organizationId: string | null, verified: boolean) {
   const token = randomBytes(32).toString("base64url");
   const meta = await requestMeta();
-  const expiresAt = new Date(Date.now() + SESSION_HOURS * 3600_000);
+  // Unbestätigte Sitzungen (2FA ausstehend) laufen nach 10 Minuten ab
+  const expiresAt = new Date(Date.now() + (verified ? SESSION_HOURS * 3600_000 : 10 * 60_000));
   await db.insert(sessions).values({
     id: sha256(token),
     userId,
@@ -52,10 +53,13 @@ export async function destroySession() {
   jar.delete(SESSION_COOKIE);
 }
 
+/** Nach erfolgreicher 2FA: alte Sitzung verwerfen und ein NEUES Token ausgeben (Session-Fixation). */
 export async function markSessionVerified() {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  if (token) await db.update(sessions).set({ verified: true }).where(eq(sessions.id, sha256(token)));
+  if (!token) return;
+  const [old] = await db.delete(sessions).where(eq(sessions.id, sha256(token))).returning();
+  if (old) await createSession(old.userId, old.organizationId, true);
 }
 
 export type AuthContext = {

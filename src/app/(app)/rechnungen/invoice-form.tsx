@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
 import { AlertTriangle, Plus, Trash2 } from "lucide-react";
@@ -122,7 +123,7 @@ export function InvoiceForm({
   );
 
   return (
-    <form action={action} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <input type="hidden" name="lines" value={linesJson} />
       <input type="hidden" name="payments" value={paymentsToJson(payments)} />
       <input type="hidden" name="kind" value={kind} />

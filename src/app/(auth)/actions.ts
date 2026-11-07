@@ -21,13 +21,14 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const password = String(form.get("password") ?? "");
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
-  const generic = "E-Mail oder Passwort ist falsch.";
+  const generic = "Anmeldung nicht möglich: E-Mail oder Passwort falsch, oder Konto nach mehreren Fehlversuchen kurz gesperrt.";
   if (!user) {
     await hashPassword(password); // gleiche Laufzeit, kein Hinweis auf existierende Konten
     return { error: generic };
   }
   if (user.lockedUntil && user.lockedUntil > new Date()) {
-    return { error: "Zu viele Fehlversuche. Bitte in einigen Minuten erneut versuchen." };
+    await hashPassword(password); // gleiche Laufzeit
+    return { error: generic }; // kein Hinweis, dass das Konto existiert
   }
   if (!(await verifyPassword(user.passwordHash, password))) {
     // atomar hochzählen (keine Race Condition bei parallelen Versuchen)
@@ -95,6 +96,7 @@ const setupSchema = z.object({
   password: z.string(),
   state: z.string().length(2).default("BB"),
   privacy: z.literal("on", { message: "Bitte die AVV/Datenschutzhinweise bestätigen." }),
+  setupToken: z.string().optional(),
 });
 
 /** Registrierung einer neuen Praxis. Die erste Praxis ist immer erlaubt, weitere nur mit ALLOW_SIGNUP=true. */
@@ -122,6 +124,8 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     await tx.execute(sql`select pg_advisory_xact_lock(4711001)`);
     const [{ n }] = await tx.select({ n: count() }).from(users);
     if (n > 0 && process.env.ALLOW_SIGNUP !== "true") return null;
+    // Ersteinrichtung nur mit Einmal-Token aus der Server-Konfiguration (sonst könnte jeder zuerst kommen)
+    if (n === 0 && process.env.SETUP_TOKEN && d.setupToken !== process.env.SETUP_TOKEN) return "token" as const;
     const [org] = await tx.insert(organizations).values({ name: d.practiceName, slug, state: d.state }).returning();
     const [user] = await tx
       .insert(users)
@@ -134,6 +138,7 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     return { userId: user.id, orgId: org.id };
   });
   if (!result) return { error: "Neue Registrierungen sind auf diesem Server deaktiviert." };
+  if (result === "token") return { error: "Einrichtungs-Code ist falsch (siehe SETUP_TOKEN in der Server-Konfiguration)." };
   const { userId, orgId } = result;
   await createSession(userId, orgId, true);
   await audit({ organizationId: orgId, userId, action: "organization.created" });

@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { Button, Field, FormError, Input } from "@/components/ui";
 import { loginAction } from "../actions";
@@ -7,7 +8,7 @@ import { loginAction } from "../actions";
 export function LoginForm() {
   const [state, action, pending] = useActionState(loginAction, undefined);
   return (
-    <form action={action} className="mt-6 flex flex-col gap-4">
+    <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
       <FormError message={state?.error} />
       <Field label="E-Mail">
         <Input name="email" type="email" autoComplete="username" required autoFocus />

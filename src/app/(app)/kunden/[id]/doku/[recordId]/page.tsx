@@ -7,6 +7,7 @@ import { Badge, Button, Card, FormSuccess, Textarea } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateTimeDe, fullName } from "@/lib/format";
+import { BRACE_ACTION_LABEL, MEDIA_PURPOSE_LABEL } from "@/lib/labels";
 import { addAddendumAction } from "../actions";
 
 export const metadata = { title: "Behandlungseintrag" };
@@ -31,7 +32,9 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   if (!data) notFound();
   await audit({ organizationId: org, userId: auth.user.id, action: "record.read", entity: "treatment_record", entityId: recordId });
   const r = data.r;
+  const st = r.structured as { braceAction?: string; braceChange?: string | null };
   const rows: [string, string | null][] = [
+    ["Nagelspange", st.braceAction && st.braceAction !== "none" ? `${BRACE_ACTION_LABEL[st.braceAction] ?? st.braceAction}${st.braceChange ? ` – Wechsel: ${st.braceChange}` : ""}` : null],
     ["Durchgeführte Behandlung", r.servicesText],
     ["Befund", r.findings],
     ["Reaktion / Besonderheiten", r.reaction],
@@ -79,8 +82,8 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
             {data.photos.map((m) => (
               <figure key={m.id} className="overflow-hidden rounded-xl bg-surface-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={`/api/media/${m.id}`} alt={m.purpose} className="aspect-square w-full object-cover" />
-                <figcaption className="px-2 py-1 text-xs">{m.purpose} · {m.footSide === "left" ? "li" : "re"} D{m.toe} · {m.view}</figcaption>
+                <img src={`/api/media/${m.id}`} alt={MEDIA_PURPOSE_LABEL[m.purpose] ?? "Foto"} className="aspect-square w-full object-cover" />
+                <figcaption className="px-2 py-1 text-xs">{MEDIA_PURPOSE_LABEL[m.purpose] ?? m.purpose} · {m.footSide === "left" ? "li" : "re"} D{m.toe} · {m.view}</figcaption>
               </figure>
             ))}
           </div>

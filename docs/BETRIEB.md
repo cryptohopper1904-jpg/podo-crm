@@ -11,7 +11,7 @@
 git clone <repo> podo-crm && cd podo-crm
 cp deploy/.env.example deploy/.env
 ```
-In `deploy/.env` setzen:
+In `deploy/.env` setzen (u. a. `SETUP_TOKEN`: Einmal-Code für die Ersteinrichtung, sonst könnte jede Person, die die Domain zuerst aufruft, die Praxis anlegen):
 - `DOMAIN`, `PUBLIC_URL`
 - `DB_OWNER_PASSWORD`, `DB_APP_PASSWORD`, `BACKUP_PASSPHRASE`: lange Zufallswerte (`openssl rand -base64 32`)
 - `APP_ENCRYPTION_KEY`: `openssl rand -base64 32`. **Sicher und getrennt aufbewahren**: Ohne diesen Schlüssel sind Fotos und Zugangsdaten nicht mehr lesbar.

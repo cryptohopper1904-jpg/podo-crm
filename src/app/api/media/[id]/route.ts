@@ -23,7 +23,9 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/media/[id]"
       "Content-Length": String(data.length),
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
-      "Content-Disposition": "inline",
+      // Nur Bilder inline; alles andere als Download. Sandbox verhindert Skriptausführung (z. B. in PDFs/SVG).
+      "Content-Disposition": m.mime.startsWith("image/") ? "inline" : "attachment",
+      "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'",
     },
   });
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState, useRef, useState } from "react";
 import { Camera, Check, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
@@ -81,7 +82,7 @@ export function DokuForm({
   }
 
   return (
-    <form action={action} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <input type="hidden" name="patientId" value={patientId} />
       {appointmentId ? <input type="hidden" name="appointmentId" value={appointmentId} /> : null}
       <input type="hidden" name="footPoints" value={JSON.stringify(points)} />

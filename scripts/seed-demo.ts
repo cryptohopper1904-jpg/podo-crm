@@ -93,12 +93,16 @@ async function main() {
         homeVisit: i === 3,
       });
     }
-    for (let w = 1; w <= 10; w++) {
+    const lastHash = new Map<string, string>();
+    for (let w = 10; w >= 1; w--) {
       const p = pts[w % pts.length];
       const start = new Date(base.getTime() - w * 7 * 86400_000);
       const [appt] = await tx.insert(s.appointments).values({ organizationId: org.id, patientId: p.id, therapistId: user.id, startsAt: start, endsAt: new Date(start.getTime() + 40 * 60_000), status: "done", source: "phone", title: pk.name }).returning();
       const content = { findings: "Hyperkeratose plantar, Nägel verdickt", servicesText: pk.name, at: start.toISOString() };
-      await tx.insert(s.treatmentRecords).values({ organizationId: org.id, patientId: p.id, authorId: user.id, treatedAt: start, appointmentId: appt.id, findings: content.findings, servicesText: content.servicesText, prevHash: null, hash: chainHash(null, { ...content, w }) });
+      const prevHash = lastHash.get(p.id) ?? null;
+      const hash = chainHash(prevHash, { ...content, w });
+      lastHash.set(p.id, hash);
+      await tx.insert(s.treatmentRecords).values({ organizationId: org.id, patientId: p.id, authorId: user.id, treatedAt: start, appointmentId: appt.id, findings: content.findings, servicesText: content.servicesText, prevHash, hash });
       // bezahlte Quittung
       const [inv] = await tx.insert(s.invoices).values({ organizationId: org.id, patientId: p.id, kind: "receipt", status: "draft", createdBy: user.id }).returning();
       await tx.insert(s.invoiceLines).values({ organizationId: org.id, invoiceId: inv.id, serviceId: pk.id, description: pk.name, unitPriceCents: pk.priceCents, vatRate: 0, totalCents: pk.priceCents });

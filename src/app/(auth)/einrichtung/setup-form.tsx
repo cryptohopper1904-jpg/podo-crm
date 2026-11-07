@@ -1,15 +1,21 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { Button, Checkbox, Field, FormError, Input, Select } from "@/components/ui";
 import { STATES } from "@/lib/holidays";
 import { setupAction } from "../actions";
 
-export function SetupForm() {
+export function SetupForm({ needsToken = false }: { needsToken?: boolean }) {
   const [state, action, pending] = useActionState(setupAction, undefined);
   return (
-    <form action={action} className="mt-6 flex flex-col gap-4">
+    <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
       <FormError message={state?.error} />
+      {needsToken ? (
+        <Field label="Einrichtungs-Code" hint="Steht als SETUP_TOKEN in der Server-Konfiguration.">
+          <Input name="setupToken" required autoComplete="off" />
+        </Field>
+      ) : null}
       <Field label="Name der Praxis">
         <Input name="practiceName" required placeholder="Podologie am Markt" />
       </Field>

@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState, useMemo, useState } from "react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { createAppointmentAction } from "../actions";
@@ -15,7 +16,7 @@ export function AppointmentForm({ patients, services, team, defaults }: { patien
   const duration = useMemo(() => services.filter((s) => picked.includes(s.id)).reduce((a, s) => a + s.durationMin, 0) || 30, [picked, services]);
   const shown = filter ? patients.filter((p) => `${p.lastName} ${p.firstName ?? ""} ${p.number}`.toLowerCase().includes(filter.toLowerCase())).slice(0, 50) : patients.slice(0, 300);
   return (
-    <form action={action} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <FormError message={state?.error} />
       {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem eintragen (Doppelbelegung)" /> : null}
       <Card>

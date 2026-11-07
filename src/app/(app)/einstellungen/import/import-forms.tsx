@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { Badge, Button, FormError, FormSuccess, Table } from "@/components/ui";
 import { money } from "@/lib/format";
@@ -18,7 +19,7 @@ export function ExcelImportForm({ action }: { action: (s: ExcelImportState, f: F
   const [state, run, pending] = useActionState(action, undefined);
   const p = state?.preview;
   return (
-    <form action={run} className="flex flex-col gap-4">
+    <form onSubmit={keepValues(run)} className="flex flex-col gap-4">
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
       <input
@@ -96,7 +97,7 @@ export function DoctolibImportForm({ action }: { action: (s: DoctolibImportState
   const [state, run, pending] = useActionState(action, undefined);
   const p = state?.preview;
   return (
-    <form action={run} className="flex flex-col gap-4">
+    <form onSubmit={keepValues(run)} className="flex flex-col gap-4">
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
       <input type="file" name="file" required accept=".csv,text/csv" className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface file:px-4 file:font-semibold" />

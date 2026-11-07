@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState } from "react";
 import type { patients } from "@/db/schema";
@@ -18,7 +19,7 @@ export function PatientForm({ patient }: { patient?: P }) {
   const [state, action, pending] = useActionState(savePatientAction, undefined);
   const r = patient?.riskFlags ?? {};
   return (
-    <form action={action} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       {patient ? <input type="hidden" name="id" value={patient.id} /> : null}
       <FormError message={state?.error} />
       {state?.duplicates?.length ? (

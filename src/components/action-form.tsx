@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState, type ReactNode } from "react";
 import { Button, FormError, FormSuccess } from "./ui";
 
@@ -19,7 +20,7 @@ export function ActionForm({
 }) {
   const [state, run, pending] = useActionState(action, undefined);
   return (
-    <form action={run} className={className}>
+    <form onSubmit={keepValues(run)} className={className}>
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
       {children}

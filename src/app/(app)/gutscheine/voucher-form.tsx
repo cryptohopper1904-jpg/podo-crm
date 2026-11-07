@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { Button, Card, Field, FormError, Input, Select, Textarea } from "@/components/ui";
@@ -11,7 +12,7 @@ export function VoucherForm({ today }: { today: string }) {
   const [issuedAt, setIssuedAt] = useState(today);
   const [validUntil, setValidUntil] = useState(defaultVoucherValidUntil(today));
   return (
-    <form action={action} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <FormError message={state?.error} />
       <Card>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -1,5 +1,5 @@
 import "server-only";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { loadKey } from "./crypto";
@@ -65,24 +65,31 @@ export const ALLOWED_MIME = new Set([
   "application/pdf",
 ]);
 
+/** Eigener Schlüssel je Praxis (HKDF aus dem Hauptschlüssel) – trennt Mandanten auch kryptografisch. */
+function orgKey(organizationId: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", loadKey(), Buffer.from(organizationId), Buffer.from("podo-media-v2"), 32));
+}
+
 export async function storeEncrypted(organizationId: string, data: Buffer) {
   const now = new Date();
   const key = `${organizationId}/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.bin`;
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", loadKey(), iv);
+  const cipher = createCipheriv("aes-256-gcm", orgKey(organizationId), iv);
   cipher.setAAD(Buffer.from(key));
   const enc = Buffer.concat([cipher.update(data), cipher.final()]);
-  const payload = Buffer.concat([Buffer.from("PODO1"), iv, cipher.getAuthTag(), enc]);
+  const payload = Buffer.concat([Buffer.from("PODO2"), iv, cipher.getAuthTag(), enc]);
   await getDriver().put(key, payload);
   return { storageKey: key, sha256: createHash("sha256").update(data).digest("hex"), sizeBytes: data.length };
 }
 
 export async function readDecrypted(storageKey: string): Promise<Buffer> {
   const payload = await getDriver().get(storageKey);
-  if (payload.subarray(0, 5).toString() !== "PODO1") throw new Error("Unbekanntes Dateiformat");
+  const magic = payload.subarray(0, 5).toString();
+  if (magic !== "PODO1" && magic !== "PODO2") throw new Error("Unbekanntes Dateiformat");
   const iv = payload.subarray(5, 17);
   const tag = payload.subarray(17, 33);
-  const decipher = createDecipheriv("aes-256-gcm", loadKey(), iv);
+  const key = magic === "PODO2" ? orgKey(storageKey.split("/")[0]) : loadKey();
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAAD(Buffer.from(storageKey));
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(payload.subarray(33)), decipher.final()]);

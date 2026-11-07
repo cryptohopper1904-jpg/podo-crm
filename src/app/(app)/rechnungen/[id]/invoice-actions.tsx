@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
 import { Ban, CreditCard, Send } from "lucide-react";
 import { Button, Card, Field, FormError, FormSuccess, Input } from "@/components/ui";
@@ -32,7 +33,7 @@ export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; open
   }
   return (
     <Card className="no-print w-full">
-      <form action={action} className="flex flex-col gap-4">
+      <form onSubmit={keepValues(action)} className="flex flex-col gap-4">
         <h2 className="font-display text-lg font-semibold">{refund ? "Erstattung erfassen" : "Zahlung erfassen"}</h2>
         <input type="hidden" name="invoiceId" value={invoiceId} />
         <input type="hidden" name="payments" value={paymentsToJson(rows, refund ? -1 : 1)} />
@@ -88,7 +89,7 @@ export function CancelPanel({ invoiceId, number }: { invoiceId: string; number: 
 export function LexofficeButton({ invoiceId }: { invoiceId: string }) {
   const [state, action, pending] = useActionState(pushToLexofficeAction, undefined);
   return (
-    <form action={action} className="flex flex-col gap-2">
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-2">
       <input type="hidden" name="invoiceId" value={invoiceId} />
       <Button type="submit" variant="secondary" disabled={pending}>
         <Send size={18} aria-hidden /> {pending ? "Sende …" : "An lexoffice senden"}

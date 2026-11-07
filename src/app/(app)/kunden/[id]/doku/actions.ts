@@ -117,6 +117,10 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
       recommendation: d.recommendation,
       footPoints,
       structured,
+      appointmentId: d.appointmentId ?? null,
+      missingPhotoReason: brace.missing ? d.missingPhotoReason : null,
+      aiAssisted: d.aiAssisted === "1",
+      countersignRequired: auth.role === "trainee",
     };
     const hash = chainHash(prev?.hash ?? null, content);
     const [rec] = await tx

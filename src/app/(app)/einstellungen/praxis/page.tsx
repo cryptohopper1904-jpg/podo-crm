@@ -14,6 +14,12 @@ export default async function PracticeSettings() {
   const [o] = await db.select().from(organizations).where(eq(organizations.id, auth.organization.id));
   const s = o.settings as { materialCostCents?: number; opening?: { from: string; to: string } };
   return (
+    <div className="flex flex-col gap-6">
+    <Card>
+      <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
+      <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
+      <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
+    </Card>
     <Card>
       <ActionForm action={savePracticeAction}>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -37,5 +43,6 @@ export default async function PracticeSettings() {
         <Checkbox name="smallBusiness" defaultChecked={o.smallBusiness} label="Kleinunternehmer nach § 19 UStG (keine Umsatzsteuer auf Rechnungen)" />
       </ActionForm>
     </Card>
+    </div>
   );
 }

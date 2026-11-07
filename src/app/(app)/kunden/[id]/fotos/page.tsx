@@ -7,13 +7,11 @@ import { Badge, Card, Empty } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, fullName } from "@/lib/format";
+import { MEDIA_PURPOSE_LABEL } from "@/lib/labels";
 
 export const metadata = { title: "Fotoverlauf" };
 
-const PURPOSE: Record<string, string> = {
-  brace_before: "Spange vorher", brace_progress: "Spange Verlauf", brace_complication: "Spange Verschlechterung", brace_after: "Spange Abschluss",
-  finding: "Befund", wound: "Wunde", document: "Dokument", prescription: "Verordnung", marketing: "Marketing", voice_report: "Sprachbericht",
-};
+const PURPOSE = MEDIA_PURPOSE_LABEL;
 
 /** Verlauf je Körperstelle (Seite + Zehe), älteste links – für Vorher/Nachher-Vergleich. Keine KI-Bewertung (MDR). */
 export default async function PhotosPage(props: PageProps<"/kunden/[id]/fotos">) {

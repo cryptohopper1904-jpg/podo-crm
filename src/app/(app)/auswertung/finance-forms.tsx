@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import Link from "next/link";
 import { Button, Checkbox, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
@@ -12,7 +13,7 @@ type Cost = { id: string; category: string; amountCents: number; interval: strin
 export function FixedCostForm({ cost, today, cancelHref }: { cost?: Cost; today: string; cancelHref: string }) {
   const [state, action, pending] = useActionState(saveFixedCostAction, undefined);
   return (
-    <form action={action} className="flex flex-col gap-4" key={cost?.id ?? "new"}>
+    <form onSubmit={keepValues(action)} className="flex flex-col gap-4" key={cost?.id ?? "new"}>
       {cost ? <input type="hidden" name="id" value={cost.id} /> : null}
       <FormError message={state?.error} />
       <FormSuccess message={state?.success} />
@@ -51,7 +52,7 @@ export function FixedCostForm({ cost, today, cancelHref }: { cost?: Cost; today:
 export function MaterialCostForm({ cents }: { cents: number }) {
   const [state, action, pending] = useActionState(saveMaterialCostAction, undefined);
   return (
-    <form action={action} className="flex flex-wrap items-end gap-3">
+    <form onSubmit={keepValues(action)} className="flex flex-wrap items-end gap-3">
       <Field label="Materialkosten je Behandlung (€)">
         <Input name="materialCost" inputMode="decimal" defaultValue={euro(cents)} className="w-36" />
       </Field>

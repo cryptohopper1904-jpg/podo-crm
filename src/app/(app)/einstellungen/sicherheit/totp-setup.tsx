@@ -1,5 +1,6 @@
 "use client";
 
+import { keepValues } from "@/lib/forms";
 import { useActionState, useState, useTransition } from "react";
 import { Button, Field, FormError, FormSuccess, Input } from "@/components/ui";
 import { otpauthUrl } from "@/lib/auth/totp-url";
@@ -18,7 +19,7 @@ export function TotpSetup({ email }: { email: string }) {
     );
   }
   return (
-    <form action={confirm} className="flex flex-col gap-4">
+    <form onSubmit={keepValues(confirm)} className="flex flex-col gap-4">
       <FormError message={state?.error} />
       <ol className="list-decimal pl-5 text-sm">
         <li>In der Authenticator-App „Konto hinzufügen“ wählen.</li>
