@@ -1,7 +1,7 @@
 # Stand & Übergabe (07.11.2026, nachts)
 
 ## Was läuft (getestet)
-- **88 automatische Tests grün**, darunter echte Datenbanktests für Mandantentrennung (RLS), unveränderbare Doku, GoBD-Rechnungsschutz, Audit-Log-Trennung und Excel-Import.
+- **95 automatische Tests grün**, darunter echte Datenbanktests für Mandantentrennung (RLS), unveränderbare Doku, GoBD-Rechnungsschutz, Audit-Log-Trennung und Excel-Import.
 - **Browser-Durchlauf (Playwright)**: Login → Heute → Kunden → Akte (hell/dunkel) → Doku auf iPhone-Größe → Sprachbericht (Testmodus) → Spange setzen ohne Foto (wird blockiert) → mit Foto (gespeichert, unveränderbar) → Rechnungen/Gutscheine/Auswertung → Posteingang/Bewertungen/News → Schnittstellen → Import.
 - **Produktions-Build** (`pnpm build`) läuft durch.
 - **Deine Excel-Vorlage V0.9.2** wird gelesen: 5 Kunden, 18 Leistungen, 1 Gutschein, 8 Rechnungen, 15 Fixkosten, 49 sinnvolle Hinweise (z. B. fehlende Dauer bei Leistungen). Gelesen wurde nur lokal; es ging nichts nach außen.
@@ -24,10 +24,10 @@
 1. **Plan-Review** (GPT, Gemini, Mistral, Grok) → Plan v0.2, Korrekturen in Kap. 14/15
 2. **Code-Review Sicherheit, Runde 1** (GPT, Gemini, Grok) → behoben: 2FA-Bruteforce/Replay, Rechnung zurück auf Entwurf, Azubi-Selbstgegenzeichnung, Audit-Log-Trennung, Upload-Typprüfung, verwaiste Dateien, Gutschein-Wildcard, IP-Spoofing, Registrierungs-Race
 3. **Runde 2 (Grok)** → behoben: TRUNCATE-Schutz, Positions-Trigger „fail closed“, Hash-Kette ohne Verzweigung, kurze 2FA-Sitzungen + neues Token, Einmal-Code für Ersteinrichtung, eigener Foto-Schlüssel je Praxis, Login ohne Konto-Hinweis
-4. **Runde 3** (Webhooks, KI-Route, Kalender, Import, Buchung) → siehe `docs/reviews/code/round3-*`
+4. **Runde 3** (GPT, Gemini, Grok: Webhooks, KI-Route, Kalender, Import, Buchung) → behoben: Webhooks nur mit Signatur/Token (fail closed), Wiederholung fehlgeschlagener Webhooks, Online-Buchung hängt sich nie an bestehende Akten (Praxis ordnet zu), Doppelbuchungssperre, Schutz gegen Anfragen ins interne Netz (SSRF), Namen werden vor KI-Versand serverseitig entfernt, Testmodus-Texte klar markiert und nicht übernommen, Antworten nicht doppelt versendbar, WhatsApp nur mit Einwilligung, serverseitig signierter Import-Vorschau-Token, Kalender-Feed ohne Praxisname/Hausbesuch
 
 ## Was du morgen tun musst
-1. **GitHub-Repo verbinden.** Ich konnte keins anlegen; das blockiert die Sitzung. Bitte ein **leeres privates Repo** anlegen (z. B. `podo-crm`) und in der Sitzung freigeben. Dann pushe ich alles (5 Commits) und öffne einen Pull Request.
+1. **GitHub-Repo verbinden.** Ich konnte keins anlegen; das blockiert die Sitzung. Bitte ein **leeres privates Repo** anlegen (z. B. `podo-crm`) und in der Sitzung freigeben. Dann pushe ich alles (alle Commits) und öffne einen Pull Request.
 2. **Server-Zugang** (Anbieter, IP, SSH-Zugang oder Coolify/Portainer), dazu eine **Domain**. Danach Installation nach `docs/BETRIEB.md`.
 3. **Fachlich prüfen**: Fotopflichten (`src/lib/rules/brace.ts`) gegen die aktuelle Leistungsbeschreibung § 125, USt-Einstufung deiner Leistungen mit der Steuerberatung, Ausfallhonorar-Text.
 4. **Für echte Schnittstellen**: lexoffice-API-Key, SumUp-Zugang + Reader-ID, Doctolib-Partneranfrage, Google-Business-API-Antrag, SMS-Anbieter, WhatsApp-BSP, EU-KI-Anbieter mit AVV.

@@ -74,6 +74,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   };
 
   // ───── Patienten ─────
+  // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Doctolib-Import)
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
   const existingNumbers = new Set(
     (await tx.select({ number: s.patients.number }).from(s.patients).where(eq(s.patients.organizationId, organizationId))).map((r) => r.number),
   );

@@ -13,6 +13,7 @@
  */
 import { decryptJson } from "@/lib/crypto";
 import { IntegrationNotConfiguredError } from "./errors";
+import { assertSafeHostSyntax, assertSafeUrlSyntax, guardedFetch } from "./net-guard";
 import { DoctolibAdapter, DoctolibMock } from "./doctolib/doctolib";
 import { GoogleBusinessAdapter, GoogleBusinessMock } from "./google/google-business";
 import { LexofficeAdapter } from "./lexoffice/lexoffice";
@@ -32,9 +33,22 @@ export interface RegistryOptions {
   fetch?: FetchLike;
 }
 
+let warnedProdMock = false;
+
 export function isMockMode(connection?: Pick<IntegrationConnection, "status"> | null, opts: RegistryOptions = {}): boolean {
   const mode = opts.mode ?? process.env.INTEGRATIONS_MODE;
+  if (mode === "mock" && process.env.NODE_ENV === "production" && !warnedProdMock) {
+    // In der Testphase einer Praxis erlaubt – aber sichtbar protokollieren
+    warnedProdMock = true;
+    console.warn("[integrations] INTEGRATIONS_MODE=mock in Produktion: Es werden keine echten Zahlungen/Nachrichten verarbeitet.");
+  }
   return mode === "mock" || connection?.status === "mock";
+}
+
+/** Frei konfigurierbare Ziele (baseUrl, Hosts) formal prüfen – DNS-Prüfung erfolgt in guardedFetch vor jedem Request. */
+function checkTargets(cfg: Record<string, unknown>) {
+  if (typeof cfg.baseUrl === "string" && cfg.baseUrl) assertSafeUrlSyntax(cfg.baseUrl);
+  for (const k of ["smtpHost", "imapHost"]) if (typeof cfg[k] === "string" && cfg[k]) assertSafeHostSyntax(cfg[k] as string);
 }
 
 function resolveSecret(connection: IntegrationConnection | null | undefined): Record<string, string> {
@@ -119,5 +133,8 @@ export function getAdapter<P extends SupportedProvider>(
     // LLM/Transkription dürfen über env konfiguriert sein, Doctolib arbeitet lokal
     throw new IntegrationNotConfiguredError(provider, "Verbindung ist getrennt");
   }
-  return REAL[provider](connection?.config ?? {}, resolveSecret(connection), opts.fetch);
+  const cfg = connection?.config ?? {};
+  checkTargets(cfg);
+  // Jeder echte Request läuft über den SSRF-Schutz (https, keine privaten Ziele, keine Weiterleitungen)
+  return REAL[provider](cfg, resolveSecret(connection), guardedFetch(opts.fetch));
 }

@@ -93,7 +93,7 @@ export function DokuForm({
       {activeBrace ? <input type="hidden" name="braceEpisodeId" value={activeBrace.id} /> : null}
       <FormError message={state?.error} />
 
-      {voiceEnabled ? <VoiceReport onResult={(r) => { setFields((f) => ({ ...f, ...r })); setAi(true); }} /> : null}
+      {voiceEnabled ? <VoiceReport patientId={patientId} onResult={(r) => { setFields((f) => ({ ...f, ...r })); setAi(true); }} /> : null}
 
       <Card>
         <h2 className="mb-3 font-display text-lg font-semibold">Leistungen</h2>
@@ -282,8 +282,9 @@ export function DokuForm({
 }
 
 /** Sprachbericht: aufnehmen → transkribieren → KI ordnet in Felder. Audio wird danach nicht gespeichert. */
-function VoiceReport({ onResult }: { onResult: (r: Partial<Record<"findings" | "servicesText" | "material" | "reaction" | "recommendation", string>>) => void }) {
+function VoiceReport({ patientId, onResult }: { patientId: string; onResult: (r: Partial<Record<"findings" | "servicesText" | "material" | "reaction" | "recommendation", string>>) => void }) {
   const [status, setStatus] = useState<"idle" | "rec" | "busy" | "done" | "error">("idle");
+  const [mock, setMock] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -306,11 +307,14 @@ function VoiceReport({ onResult }: { onResult: (r: Partial<Record<"findings" | "
           const blob = new Blob(chunks.current, { type: mime });
           const fd = new FormData();
           fd.set("audio", blob, `bericht.${mime === "audio/webm" ? "webm" : "m4a"}`);
+          fd.set("patientId", patientId);
           const res = await fetch("/api/ai/voice-report", { method: "POST", body: fd });
           const json = await res.json();
           if (!res.ok) throw new Error(json.error ?? "Verarbeitung fehlgeschlagen");
           setTranscript(json.transcript);
-          onResult(json.fields ?? {});
+          setMock(json.mock === true);
+          // Testmodus: nur Beispieltext anzeigen, KEINE Felder befüllen (keine erfundenen Befunde in der Akte)
+          if (json.mock !== true) onResult(json.fields ?? {});
           setStatus("done");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Fehler");
@@ -346,6 +350,11 @@ function VoiceReport({ onResult }: { onResult: (r: Partial<Record<"findings" | "
         </Button>
       )}
       <FormError message={error} />
+      {mock ? (
+        <p role="status" className="mt-3 flex items-center gap-2 rounded-xl bg-warn-soft p-3 text-sm font-medium text-warn-soft-text">
+          <Badge tone="warn">Testmodus</Badge> Kein echter KI-Dienst angebunden – das Transkript ist ein Beispieltext und wurde nicht in die Felder übernommen.
+        </p>
+      ) : null}
       {transcript ? (
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer font-semibold text-primary">Transkript anzeigen</summary>

@@ -173,6 +173,7 @@ function fakeTx() {
     then: (res: (v: T) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve().then(value).then(res, rej),
   });
   const tx = {
+    execute: async () => ({ rows: [] }),
     select: () => ({
       from: (table: Table) => ({
         where: () => {

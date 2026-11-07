@@ -3,7 +3,7 @@
 import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
-import { appointmentServices, appointments, consents, messages, organizations, patients, services } from "@/db/schema";
+import { appointmentServices, appointments, messages, organizations, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
@@ -14,6 +14,9 @@ export type BookingState = { error?: string; ok?: string } | undefined;
 const hits = new Map<string, number[]>();
 function limited(ip: string) {
   const now = Date.now();
+  // alte Einträge entfernen, Größe begrenzen (kein Speicher-Leck)
+  if (hits.size > 5000) for (const [k, v] of hits) if (!v.some((t) => now - t < 3600_000)) hits.delete(k);
+  if (hits.size > 10000) hits.clear();
   const list = (hits.get(ip) ?? []).filter((t) => now - t < 3600_000);
   list.push(now);
   hits.set(ip, list);
@@ -47,40 +50,39 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   if (start.getTime() < Date.now() + 2 * 3600_000) return { error: "Bitte einen späteren Termin wählen." };
 
   const result = await withOrg(org.id, async (tx) => {
-    const [svc] = await tx.select().from(services).where(and(eq(services.organizationId, org.id), eq(services.id, d.serviceId), eq(services.active, true)));
+    // Buchungen je Praxis serialisieren → keine Doppelbelegung bei gleichzeitigen Anfragen
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"book:" + org.id}))`);
+    const [svc] = await tx
+      .select({ id: services.id, name: services.name, durationMin: services.durationMin })
+      .from(services)
+      .where(and(eq(services.organizationId, org.id), eq(services.id, d.serviceId), eq(services.active, true)));
     if (!svc) return { error: "Leistung nicht verfügbar." };
     const end = new Date(start.getTime() + svc.durationMin * 60_000);
     const clash = await tx.select({ id: appointments.id, status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org.id), lt(appointments.startsAt, end), gte(appointments.endsAt, start)));
     if (clash.some((c) => c.status !== "cancelled")) return { error: "Dieser Termin wurde gerade vergeben. Bitte einen anderen wählen." };
-    // Bestehenden Kunden über Telefon/E-Mail + Name finden, sonst neu anlegen (als „Online“ markiert)
-    const phone = d.phone.replace(/\s/g, "");
-    const existing = await tx.select().from(patients).where(and(eq(patients.organizationId, org.id), eq(patients.lastName, d.lastName)));
-    let patient = existing.find((p) => (p.phoneMobile ?? "").replace(/\s/g, "") === phone || (d.email && p.email === d.email));
-    if (!patient) {
-      // Nummernvergabe serialisieren (parallele Online-Buchungen)
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org.id}))`);
-      const [{ max }] = (await tx.execute<{ max: number }>(sql`select coalesce(max(number),0)::int as max from patients where organization_id = ${org.id}`)).rows;
-      [patient] = await tx
-        .insert(patients)
-        .values({ organizationId: org.id, number: max + 1, firstName: d.firstName, lastName: d.lastName, phoneMobile: d.phone, email: d.email || null, source: "online-buchung" })
-        .returning();
-    }
+    // Sicherheit: Eine öffentliche Anfrage wird NIE automatisch an eine bestehende Akte gehängt
+    // (sonst könnte jemand mit Name + Telefonnummer fremde Akten verändern). Die Praxis ordnet im Posteingang zu.
+    const initials = `${d.firstName} ${d.lastName.slice(0, 1)}.`;
     const [a] = await tx
       .insert(appointments)
-      .values({ organizationId: org.id, patientId: patient.id, startsAt: start, endsAt: end, status: "planned", source: "online", title: svc.name, notes: d.note || null })
-      .returning();
+      .values({ organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Kunde im Posteingang zuordnen und Termin bestätigen." })
+      .returning({ id: appointments.id });
     await tx.insert(appointmentServices).values({ organizationId: org.id, appointmentId: a.id, serviceId: svc.id });
-    await tx.insert(consents).values([
-      { organizationId: org.id, patientId: patient.id, type: "privacy_notice", granted: true, via: "online-buchung" },
-      { organizationId: org.id, patientId: patient.id, type: "no_show_terms", granted: true, via: "online-buchung" },
-    ]);
     await tx.insert(messages).values({
       organizationId: org.id,
-      patientId: patient.id,
-      channel: "email",
+      patientId: null,
+      channel: d.email ? "email" : "sms",
       direction: "inbound",
-      subject: "Neue Online-Buchung",
-      body: `Online-Buchung: ${svc.name} am ${d.date} um ${d.time}. Bitte bestätigen.${d.note ? `\nNotiz: ${d.note}` : ""}`,
+      fromAddress: d.email || d.phone,
+      subject: "Neue Online-Buchung (unbestätigt)",
+      body: [
+        `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
+        `Name: ${d.firstName} ${d.lastName}`,
+        `Telefon: ${d.phone}${d.email ? ` · E-Mail: ${d.email}` : ""}`,
+        `Datenschutzhinweise und Ausfallregelung bei der Buchung bestätigt (${new Date().toISOString()}).`,
+        d.note ? `Notiz: ${d.note}` : null,
+        "Bitte Kunde zuordnen (bestehend oder neu) und Termin bestätigen.",
+      ].filter(Boolean).join("\n"),
       status: "new",
     });
     return { ok: true as const, appointmentId: a.id };

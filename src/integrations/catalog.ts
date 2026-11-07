@@ -136,6 +136,11 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   },
 ];
 
+/** Anbieter ohne (umgesetzte) Signatur: Webhook nur mit zufälligem Token `?token=` */
+export const TOKEN_WEBHOOK_PROVIDERS: SupportedProvider[] = ["lexoffice", "sms", "voice_agent"];
+/** Anbieter mit HMAC-Signatur: Geheimnis ist Pflicht */
+export const HMAC_WEBHOOK_SECRET: Partial<Record<SupportedProvider, string>> = { sumup: "webhookSecret", whatsapp: "appSecret" };
+
 export const STATUS_LABEL: Record<string, string> = {
   mock: "Testmodus",
   connected: "verbunden",

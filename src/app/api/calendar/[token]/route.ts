@@ -7,7 +7,8 @@ import { buildIcs, initials, type IcsEvent } from "@/lib/ical";
 
 /**
  * Persönlicher iCal-Feed (Termine der letzten 30 und nächsten 120 Tage).
- * Datenschutz: KEINE Patientennamen – nur Initialen und Leistungskürzel; keine Notizen.
+ * Datenschutz: KEINE Patientennamen – nur Initialen, Zeit und Leistungskürzel; kein Praxisname,
+ * keine Hausbesuchs-Kennzeichnung, keine Notizen. Nicht cachen (no-store).
  */
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/calendar/[token]">) {
   const { token } = await ctx.params;
@@ -20,7 +21,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/calendar/[t
   if (!userId) return new NextResponse("Not found", { status: 404 });
 
   const orgs = await db
-    .select({ id: organizations.id, name: organizations.name })
+    .select({ id: organizations.id })
     .from(memberships)
     .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
     .where(and(eq(memberships.userId, userId), eq(memberships.active, true)));
@@ -51,14 +52,13 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/calendar/[t
           uid: `${r.a.id}@podocrm`,
           start: r.a.startsAt,
           end: r.a.endsAt,
-          summary: `${who}${codes.length ? ` · ${codes.join(", ")}` : ""}${r.a.homeVisit ? " · Hausbesuch" : ""}`,
-          description: orgs.length > 1 ? org.name : undefined,
+          summary: `${who}${codes.length ? ` · ${codes.join(", ")}` : ""}`,
           status: r.a.status === "cancelled" ? "CANCELLED" : r.a.status === "planned" ? "TENTATIVE" : "CONFIRMED",
         });
       }
     });
   }
   return new NextResponse(buildIcs("PodoCRM Termine", events), {
-    headers: { "Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "private, max-age=300" },
+    headers: { "Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "no-store" },
   });
 }

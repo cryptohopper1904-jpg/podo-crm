@@ -1,11 +1,13 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { integrationConnections } from "@/db/schema";
-import { PROVIDER_CATALOG } from "@/integrations/catalog";
+import { PROVIDER_CATALOG, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
+import { assertPublicHost, assertPublicUrl, UnsafeTargetError } from "@/integrations/net-guard";
 import { testConnection } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
@@ -52,11 +54,38 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
       secretChanged = true;
     }
   }
-  const config: Record<string, unknown> = { ...(existing?.config ?? {}) };
+  const oldConfig = (existing?.config ?? {}) as Record<string, unknown>;
+  const config: Record<string, unknown> = { ...oldConfig };
   for (const f of info.configFields) {
     const v = String(form.get(`config_${f.name}`) ?? "").trim().slice(0, 300);
     if (v) config[f.name] = v;
     else delete config[f.name];
+  }
+
+  // SSRF-Schutz: frei wählbare Ziele müssen öffentliche https-Adressen bzw. Hosts sein
+  try {
+    if (typeof config.baseUrl === "string") config.baseUrl = (await assertPublicUrl(config.baseUrl)).toString().replace(/\/$/, "");
+    for (const k of ["smtpHost", "imapHost"]) if (typeof config[k] === "string") await assertPublicHost(config[k] as string);
+  } catch (e) {
+    return { error: e instanceof UnsafeTargetError ? e.message : "Ziel-Adresse nicht erlaubt." };
+  }
+  // Ziel geändert → bisher hinterlegte Zugangsdaten verwerfen (sonst könnte man sie an einen fremden Server umleiten)
+  const targetChanged = ["baseUrl", "smtpHost", "imapHost"].some((k) => (oldConfig[k] ?? null) !== (config[k] ?? null));
+  if (targetChanged && existing?.secretEnc) {
+    const fresh: Record<string, string> = {};
+    for (const f of info.secretFields) {
+      const v = String(form.get(`secret_${f.name}`) ?? "").trim();
+      if (v) fresh[f.name] = v;
+    }
+    if (secret.webhookToken) fresh.webhookToken = secret.webhookToken;
+    secret = fresh;
+    secretChanged = true;
+  }
+
+  // Webhook-Token für Anbieter ohne eigene Signatur (lexoffice, SMS, Telefonagent)
+  if (TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) && (!secret.webhookToken || form.get("rotateWebhookToken") === "on")) {
+    secret.webhookToken = randomBytes(32).toString("base64url");
+    secretChanged = true;
   }
   if (info.provider === "llm" || info.provider === "transcription") {
     config.dataProcessingApproved = form.get("dataProcessingApproved") === "on";
@@ -84,7 +113,7 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
     meta: { status: status.data, secretChanged, configKeys: Object.keys(config) },
   });
   revalidatePath("/einstellungen/schnittstellen");
-  return { ok: `${info.label} gespeichert.` };
+  return { ok: targetChanged && existing?.secretEnc ? `${info.label} gespeichert. Ziel geändert – bitte Zugangsdaten neu eingeben.` : `${info.label} gespeichert.` };
 }
 
 export async function testIntegrationAction(_: IntegrationState, form: FormData): Promise<IntegrationState> {
@@ -95,7 +124,7 @@ export async function testIntegrationAction(_: IntegrationState, form: FormData)
   const p = provider.data as (typeof PROVIDER_CATALOG)[number]["provider"];
   const conn = await loadConnection(org, p);
   const res = await testConnection(p, conn ?? { status: "disconnected", organizationId: org });
-  await logSync(org, p, { direction: "test", ok: res.ok, message: res.message });
+  await logSync(org, p, { direction: "test", ok: res.ok, message: res.detail });
   if (conn) {
     await withOrg(org, (tx) =>
       tx
@@ -103,7 +132,7 @@ export async function testIntegrationAction(_: IntegrationState, form: FormData)
         .set(
           res.ok
             ? { lastError: null, lastSyncAt: new Date(), ...(conn.status === "error" ? { status: "connected" as const } : {}) }
-            : { lastError: res.message, ...(conn.status === "connected" ? { status: "error" as const } : {}) },
+            : { lastError: res.detail, ...(conn.status === "connected" ? { status: "error" as const } : {}) },
         )
         .where(and(eq(integrationConnections.organizationId, org), eq(integrationConnections.provider, p))),
     );

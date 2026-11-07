@@ -29,7 +29,7 @@ export function ExcelImportForm({ action }: { action: (s: ExcelImportState, f: F
         accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface file:px-4 file:font-semibold"
       />
-      {state?.hash ? <input type="hidden" name="hash" value={state.hash} /> : null}
+      {state?.previewToken ? <input type="hidden" name="previewToken" value={state.previewToken} /> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" name="intent" value="preview" variant="secondary" disabled={pending}>{pending ? "…" : "Prüfen (Vorschau)"}</Button>
         {p ? <Button type="submit" name="intent" value="run" disabled={pending}>Import ausführen</Button> : null}
@@ -101,7 +101,7 @@ export function DoctolibImportForm({ action }: { action: (s: DoctolibImportState
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
       <input type="file" name="file" required accept=".csv,text/csv" className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface file:px-4 file:font-semibold" />
-      {state?.hash ? <input type="hidden" name="hash" value={state.hash} /> : null}
+      {state?.previewToken ? <input type="hidden" name="previewToken" value={state.previewToken} /> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" name="intent" value="preview" variant="secondary" disabled={pending}>{pending ? "…" : "Prüfen (Vorschau)"}</Button>
         {p && p.total > p.existing ? <Button type="submit" name="intent" value="run" disabled={pending}>Import ausführen</Button> : null}

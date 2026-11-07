@@ -4,7 +4,7 @@ import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections } from "@/db/schema";
-import { PROVIDER_CATALOG, STATUS_LABEL } from "@/integrations/catalog";
+import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
 import { requireAuth } from "@/lib/auth/session";
 import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
@@ -47,14 +47,16 @@ export default async function IntegrationsSettings() {
       {PROVIDER_CATALOG.map((info) => {
         const row = rows.find((r) => r.provider === info.provider);
         const status = row?.status ?? "disconnected";
-        let storedKeys: string[] = [];
+        let secretValues: Record<string, string> = {};
         if (row?.secretEnc) {
           try {
-            storedKeys = Object.keys(JSON.parse(decryptSecret(row.secretEnc, org)));
+            secretValues = JSON.parse(decryptSecret(row.secretEnc, org));
           } catch {
-            storedKeys = [];
+            secretValues = {};
           }
         }
+        // Nur Namen der hinterlegten Felder anzeigen – Werte nie (Ausnahme: Webhook-Token in der Webhook-Adresse)
+        const storedKeys = Object.keys(secretValues);
         const cfg = (row?.config ?? {}) as Record<string, unknown>;
         return (
           <Card key={info.provider}>
@@ -63,10 +65,24 @@ export default async function IntegrationsSettings() {
             <p className="mb-4 text-sm text-muted"><strong>Datenschutz:</strong> {info.privacy}{info.docs ? <> · <a className="underline" href={info.docs} target="_blank" rel="noreferrer">Doku</a></> : null}</p>
             {row?.lastError ? <p className="mb-3 text-sm text-danger">Letzter Fehler: {row.lastError}</p> : null}
             {row?.lastSyncAt ? <p className="mb-3 text-xs text-muted">Zuletzt erfolgreich: {dateTimeDe(row.lastSyncAt)}</p> : null}
-            {info.provider === "sumup" || info.provider === "whatsapp" || info.provider === "sms" || info.provider === "lexoffice" ? (
-              <p className="mb-3 text-xs text-muted">
-                Webhook-Adresse: <code className="break-all">{`${origin}/api/webhooks/${info.provider}?org=${org}`}</code>
-              </p>
+            {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) || HMAC_WEBHOOK_SECRET[info.provider] ? (
+              <div className="mb-3 text-xs text-muted">
+                Webhook-Adresse:{" "}
+                {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) ? (
+                  secretValues.webhookToken ? (
+                    <code className="break-all">{`${origin}/api/webhooks/${info.provider}?org=${org}&token=${secretValues.webhookToken}`}</code>
+                  ) : (
+                    <span>wird beim ersten Speichern erzeugt</span>
+                  )
+                ) : (
+                  <code className="break-all">{`${origin}/api/webhooks/${info.provider}?org=${org}`}</code>
+                )}
+                <span className="block">
+                  {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider)
+                    ? "Enthält ein geheimes Token – wie ein Passwort behandeln. Ohne gültiges Token werden Aufrufe abgelehnt."
+                    : `Aufrufe werden nur mit gültiger Signatur angenommen – „${info.secretFields.find((f) => f.name === HMAC_WEBHOOK_SECRET[info.provider])?.label}“ ist Pflicht.`}
+                </span>
+              </div>
             ) : null}
             <ActionForm action={saveIntegrationAction}>
               <input type="hidden" name="provider" value={info.provider} />
@@ -95,6 +111,9 @@ export default async function IntegrationsSettings() {
                   defaultChecked={cfg.dataProcessingApproved === true}
                   label="Ich bestätige: Anbieter verarbeitet in der EU, AVV liegt vor, Zero Data Retention und kein Training auf unseren Daten."
                 />
+              ) : null}
+              {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) && secretValues.webhookToken ? (
+                <Checkbox name="rotateWebhookToken" label="Webhook-Token neu erzeugen (alte Adresse wird ungültig)" />
               ) : null}
               {storedKeys.length ? (
                 <div className="flex flex-wrap gap-4">

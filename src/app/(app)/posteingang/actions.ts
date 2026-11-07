@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
-import { messages, patients } from "@/db/schema";
+import { consents, messages, patients } from "@/db/schema";
+import { redact, restore } from "@/integrations/llm/redact";
+import { describeError } from "@/integrations/test-connection";
 import type { MessagingProvider } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
@@ -61,12 +63,15 @@ export async function suggestReplyAction(_: InboxState, form: FormData): Promise
   try {
     const { facts, practiceName } = await replyFacts(org, m.patientId);
     const llm = await adapterFor(org, "llm");
-    const suggestion = await llm.suggestReply(m.body, {
+    // Datenminimierung: Namen, Telefonnummern, E-Mails, Datumsangaben vor dem Versand entfernen
+    const { text: redacted, map } = redact(m.body, { names: knownNames });
+    const raw = await llm.suggestReply(redacted, {
       practiceName,
       tone: "friendly",
       knownNames,
       facts: [...facts, m.channel === "whatsapp" || m.channel === "sms" ? "Kanal ist WhatsApp/SMS: nur Organisatorisches, keine medizinischen Inhalte, kurz halten." : "Kanal ist E-Mail."],
     });
+    const suggestion = restore(raw, map);
     await withOrg(org, (tx) =>
       tx
         .update(messages)
@@ -75,10 +80,28 @@ export async function suggestReplyAction(_: InboxState, form: FormData): Promise
     );
     await audit({ organizationId: org, userId: auth.user.id, action: "ai.reply_suggestion", entity: "message", entityId: m.id, meta: { mock: llm.isMock } });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "KI-Vorschlag fehlgeschlagen." };
+    await logSync(org, "llm", { direction: "out", ok: false, message: `Antwortvorschlag: ${describeError(e)}`, entity: "message", entityId: m.id });
+    return { error: "KI-Vorschlag fehlgeschlagen (Details im Synchronisationsprotokoll)." };
   }
   revalidatePath("/posteingang");
   return { ok: "Vorschlag erstellt – bitte prüfen und anpassen." };
+}
+
+const EMAIL_RE = /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[a-z]{2,}$/i;
+const PHONE_RE = /^\+?[0-9 ()/.-]{6,24}$/;
+/** Entfernt Steuerzeichen (CR/LF etc.) – Schutz vor Header-Injection. */
+const clean = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+
+async function hasGrantedConsent(org: string, patientId: string, type: "whatsapp" | "sms_reminders" | "email_reminders") {
+  const [c] = await withOrg(org, (tx) =>
+    tx
+      .select({ granted: consents.granted })
+      .from(consents)
+      .where(and(eq(consents.organizationId, org), eq(consents.patientId, patientId), eq(consents.type, type)))
+      .orderBy(desc(consents.recordedAt))
+      .limit(1),
+  );
+  return c?.granted === true;
 }
 
 export async function sendReplyAction(_: InboxState, form: FormData): Promise<InboxState> {
@@ -90,37 +113,66 @@ export async function sendReplyAction(_: InboxState, form: FormData): Promise<In
   if (!body.success) return { error: body.error.issues[0]?.message };
   const m = await loadMessage(org, id.data);
   if (!m) return { error: "Nachricht nicht gefunden." };
-  if (!m.fromAddress) return { error: "Absenderadresse fehlt." };
+  if (m.status !== "new" && m.status !== "suggested") return { error: "Diese Nachricht wurde bereits beantwortet." };
   const provider = CHANNEL_PROVIDER[m.channel];
   if (!provider) return { error: "Für diesen Kanal ist kein Versand möglich – bitte telefonisch/per Brief antworten und „Erledigt“ wählen." };
+
+  // Empfänger und Betreff prüfen (keine Steuerzeichen, gültiges Format)
+  const to = clean(m.fromAddress ?? "");
+  if (!to) return { error: "Absenderadresse fehlt." };
+  if (m.channel === "email" ? !EMAIL_RE.test(to) : !PHONE_RE.test(to) || to.replace(/\D/g, "").length < 7 || to.replace(/\D/g, "").length > 15) {
+    return { error: "Empfängeradresse ist ungültig." };
+  }
+  const subject = m.subject ? clean(`Re: ${m.subject.replace(/^re:\s*/i, "")}`).slice(0, 200) : undefined;
+
+  // WhatsApp/SMS: nur an zugeordnete Personen; WhatsApp zusätzlich nur mit Einwilligung
+  if (m.channel === "whatsapp" || m.channel === "sms") {
+    if (!m.patientId) return { error: "Bitte die Nachricht zuerst einer Person zuordnen – Freitext per WhatsApp/SMS nur an bekannte Kontakte." };
+    if (m.channel === "whatsapp" && !(await hasGrantedConsent(org, m.patientId, "whatsapp"))) {
+      return { error: "Keine WhatsApp-Einwilligung der Person hinterlegt – bitte per Telefon oder E-Mail antworten." };
+    }
+  }
+
+  // Idempotenz: Nachricht atomar „reservieren“ – nur ein Versand pro Nachricht
+  const claimed = await withOrg(org, (tx) =>
+    tx
+      .update(messages)
+      .set({ status: "answered" })
+      .where(and(eq(messages.organizationId, org), eq(messages.id, m.id), eq(messages.status, m.status)))
+      .returning({ id: messages.id }),
+  );
+  if (claimed.length === 0) return { error: "Diese Nachricht wurde bereits gesendet." };
 
   let externalId: string;
   let mock = false;
   try {
     const port = await adapterFor(org, provider);
     mock = port.isMock;
-    const res = await port.send({ to: m.fromAddress, body: body.data, subject: m.subject ? `Re: ${m.subject.replace(/^re:\s*/i, "")}` : undefined });
+    const res = await port.send({ to, body: body.data, subject });
     externalId = res.externalId;
   } catch (e) {
-    await logSync(org, provider, { direction: "out", ok: false, message: e instanceof Error ? e.message : String(e), entity: "message", entityId: m.id });
-    return { error: e instanceof Error ? e.message : "Versand fehlgeschlagen." };
+    // Versand fehlgeschlagen → Reservierung zurücknehmen
+    await withOrg(org, (tx) =>
+      tx.update(messages).set({ status: m.status }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id), eq(messages.status, "answered"))),
+    );
+    await logSync(org, provider, { direction: "out", ok: false, message: describeError(e), entity: "message", entityId: m.id });
+    return { error: "Versand fehlgeschlagen (Details im Synchronisationsprotokoll)." };
   }
-  await withOrg(org, async (tx) => {
-    await tx.insert(messages).values({
+  await withOrg(org, (tx) =>
+    tx.insert(messages).values({
       organizationId: org,
       patientId: m.patientId,
       channel: m.channel,
       direction: "outbound",
       fromAddress: m.toAddress,
-      toAddress: m.fromAddress,
-      subject: m.subject ? `Re: ${m.subject.replace(/^re:\s*/i, "")}` : null,
+      toAddress: to,
+      subject: subject ?? null,
       body: body.data,
       status: "answered",
       externalId,
-      threadKey: m.threadKey ?? m.fromAddress,
-    });
-    await tx.update(messages).set({ status: "answered" }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id)));
-  });
+      threadKey: m.threadKey ?? to,
+    }),
+  );
   await logSync(org, provider, { direction: "out", ok: true, message: mock ? "Testmodus – nicht wirklich versendet" : "versendet", entity: "message", entityId: m.id });
   await audit({ organizationId: org, userId: auth.user.id, action: "message.reply", entity: "message", entityId: m.id, meta: { channel: m.channel, mock } });
   revalidatePath("/posteingang");

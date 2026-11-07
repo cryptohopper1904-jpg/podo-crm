@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { reviews } from "@/db/schema";
+import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { neutralReviewReply, reviewReplyProblems } from "@/lib/review-guard";
@@ -36,8 +37,8 @@ export async function syncReviewsAction(): Promise<ReviewState> {
     revalidatePath("/bewertungen");
     return { ok: `${list.length} Bewertungen abgerufen, ${created} neu.` };
   } catch (e) {
-    await logSync(org, "google_business", { direction: "in", ok: false, message: e instanceof Error ? e.message : String(e) });
-    return { error: e instanceof Error ? e.message : "Abruf fehlgeschlagen." };
+    await logSync(org, "google_business", { direction: "in", ok: false, message: describeError(e) });
+    return { error: "Abruf fehlgeschlagen (Details im Synchronisationsprotokoll)." };
   }
 }
 
@@ -63,7 +64,8 @@ export async function suggestReviewReplyAction(_: ReviewState, form: FormData): 
       ],
     });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "KI-Vorschlag fehlgeschlagen." };
+    await logSync(org, "llm", { direction: "out", ok: false, message: `Bewertungsantwort: ${describeError(e)}` });
+    return { error: "KI-Vorschlag fehlgeschlagen (Details im Synchronisationsprotokoll)." };
   }
   const problems = reviewReplyProblems(suggestion);
   if (problems.length) {
@@ -99,6 +101,7 @@ export async function publishReviewReplyAction(_: ReviewState, form: FormData): 
     revalidatePath("/bewertungen");
     return { ok: port.isMock ? "Testmodus: Antwort gespeichert, nicht bei Google veröffentlicht." : "Antwort veröffentlicht." };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Veröffentlichen fehlgeschlagen." };
+    await logSync(org, "google_business", { direction: "out", ok: false, message: describeError(e), entity: "review", entityId: r.id });
+    return { error: "Veröffentlichen fehlgeschlagen (Details im Synchronisationsprotokoll)." };
   }
 }

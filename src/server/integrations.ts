@@ -45,3 +45,14 @@ export async function recentSyncLog(organizationId: string, limit = 20) {
     tx.select().from(syncLog).where(eq(syncLog.organizationId, organizationId)).orderBy(desc(syncLog.at)).limit(limit),
   );
 }
+
+/**
+ * Freigabe für Gesundheitsdaten (EU-Verarbeitung + AVV + Zero Data Retention), je Mandant in der
+ * Verbindungs-Config oder global per env (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true).
+ */
+export async function processingApproved(organizationId: string, provider: "llm" | "transcription"): Promise<boolean> {
+  const env = provider === "llm" ? process.env.LLM_DATA_PROCESSING_APPROVED : process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED;
+  if (env === "true") return true;
+  const conn = await loadConnection(organizationId, provider);
+  return conn?.config?.dataProcessingApproved === true;
+}

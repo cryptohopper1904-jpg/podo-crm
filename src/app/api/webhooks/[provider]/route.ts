@@ -1,4 +1,5 @@
 import { after, NextResponse, type NextRequest } from "next/server";
+import { describeError } from "@/integrations/test-connection";
 import { verifyHmacSignature } from "@/integrations/sumup/sumup";
 import type { NormalizedWebhookEvent } from "@/integrations/types";
 import {
@@ -8,17 +9,29 @@ import {
   handleVoiceAgentWebhook,
   handleWhatsAppWebhook,
 } from "@/integrations/webhooks";
+import { safeEqual } from "@/lib/safe-equal";
 import { decryptSecret } from "@/lib/secrets";
 import { loadConnection, logSync } from "@/server/integrations";
-import { bodyHash, finishWebhookEvent, isUuid, processSumupEvent, storeInboundMessages, storeWebhookEvent } from "@/server/webhooks";
+import { bodyHash, claimWebhookEvent, finishWebhookEvent, isUuid, processSumupEvent, storeInboundMessages } from "@/server/webhooks";
 
 /**
- * Webhook-Eingang: /api/webhooks/{provider}?org={organizationId}
- * 1. Signatur prüfen (falls Geheimnis hinterlegt), 2. idempotent in webhook_events speichern,
- * 3. sofort 200 antworten, 4. Verarbeitung nach der Antwort (after()).
+ * Webhook-Eingang: /api/webhooks/{provider}?org={organizationId}[&token=…]
+ *
+ * FAIL CLOSED:
+ *  1. Größe prüfen (Content-Length und gestreamt, max. 512 KB)
+ *  2. Verbindung muss existieren und „verbunden“ sein („Testmodus“ nur außerhalb von Produktion)
+ *  3. Authentisierung ist Pflicht: SumUp/WhatsApp per HMAC-Signatur, lexoffice/SMS/Telefonagent per
+ *     zufälligem Token je Praxis (`?token=`, zeitkonstanter Vergleich)
+ *  4. erst danach idempotent speichern; fehlgeschlagene Ereignisse werden bei erneuter Zustellung neu verarbeitet
+ *  5. sofort 200, Verarbeitung nach der Antwort (after())
+ * Fehlerantworten sind bewusst generisch (kein Orakel für Praxis-IDs).
  */
 const PROVIDERS = ["sumup", "lexoffice", "whatsapp", "sms", "voice_agent"] as const;
 type WebhookProvider = (typeof PROVIDERS)[number];
+const MAX_BODY = 512 * 1024;
+
+const denied = () => NextResponse.json({ error: "Nicht autorisiert" }, { status: 401 });
+const tooLarge = () => NextResponse.json({ error: "Zu groß" }, { status: 413 });
 
 function secretOf(conn: Awaited<ReturnType<typeof loadConnection>>, org: string): Record<string, string> {
   if (!conn?.secretEnc) return {};
@@ -29,44 +42,80 @@ function secretOf(conn: Awaited<ReturnType<typeof loadConnection>>, org: string)
   }
 }
 
+function connectionActive(conn: Awaited<ReturnType<typeof loadConnection>>): boolean {
+  if (!conn) return false;
+  if (conn.status === "connected") return true;
+  return conn.status === "mock" && process.env.NODE_ENV !== "production";
+}
+
+/** Liest den Body gestreamt und bricht oberhalb von `max` Bytes ab. */
+async function readBodyCapped(req: NextRequest, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** WhatsApp-Verifizierung (hub.challenge) */
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/webhooks/[provider]">) {
   const { provider } = await ctx.params;
   const org = req.nextUrl.searchParams.get("org");
-  if (provider !== "whatsapp" || !isUuid(org)) return new NextResponse("Not found", { status: 404 });
+  if (provider !== "whatsapp" || !isUuid(org)) return denied();
   const conn = await loadConnection(org, "whatsapp");
+  if (!connectionActive(conn)) return denied();
   const token = (conn?.config as Record<string, unknown> | undefined)?.verifyToken;
   const sp = req.nextUrl.searchParams;
-  if (sp.get("hub.mode") === "subscribe" && typeof token === "string" && token && sp.get("hub.verify_token") === token) {
-    return new NextResponse(sp.get("hub.challenge") ?? "", { status: 200 });
+  if (sp.get("hub.mode") === "subscribe" && typeof token === "string" && safeEqual(sp.get("hub.verify_token"), token)) {
+    return new NextResponse(sp.get("hub.challenge") ?? "", { status: 200, headers: { "Content-Type": "text/plain" } });
   }
-  return new NextResponse("Forbidden", { status: 403 });
+  return denied();
 }
 
 export async function POST(req: NextRequest, ctx: RouteContext<"/api/webhooks/[provider]">) {
   const { provider: raw } = await ctx.params;
   const org = req.nextUrl.searchParams.get("org");
-  if (!PROVIDERS.includes(raw as WebhookProvider) || !isUuid(org)) return NextResponse.json({ error: "Unbekannt" }, { status: 404 });
+  if (!PROVIDERS.includes(raw as WebhookProvider) || !isUuid(org)) return denied();
   const provider = raw as WebhookProvider;
-  const rawBody = await req.text();
-  if (rawBody.length > 512_000) return NextResponse.json({ error: "Zu groß" }, { status: 413 });
+
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declared) && declared > MAX_BODY) return tooLarge();
+
+  const conn = await loadConnection(org, provider);
+  if (!connectionActive(conn)) return denied();
+  const secret = secretOf(conn, org);
+
+  const rawBody = await readBodyCapped(req, MAX_BODY);
+  if (rawBody === null) return tooLarge();
+  const headers = Object.fromEntries(req.headers.entries());
+
+  // Authentisierung – ohne hinterlegtes Geheimnis wird immer abgelehnt
+  let authorized = false;
+  if (provider === "sumup") {
+    const header = String((conn?.config as Record<string, unknown> | undefined)?.signatureHeader ?? "x-payload-signature").toLowerCase();
+    authorized = !!secret.webhookSecret && verifyHmacSignature(rawBody, headers[header], secret.webhookSecret);
+  } else if (provider === "whatsapp") {
+    authorized = !!secret.appSecret && verifyHmacSignature(rawBody, headers["x-hub-signature-256"], secret.appSecret);
+  } else {
+    authorized = safeEqual(req.nextUrl.searchParams.get("token"), secret.webhookToken);
+  }
+  if (!authorized) return denied();
+
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
   } catch {
-    return NextResponse.json({ error: "Kein JSON" }, { status: 400 });
-  }
-  const headers = Object.fromEntries(req.headers.entries());
-  const conn = await loadConnection(org, provider);
-  const secret = secretOf(conn, org);
-
-  // Signaturprüfung, sofern ein Geheimnis hinterlegt ist (Payloads sind ohnehin nicht autoritativ)
-  if (provider === "sumup" && secret.webhookSecret) {
-    const sig = headers[String((conn?.config as Record<string, unknown> | undefined)?.signatureHeader ?? "x-payload-signature").toLowerCase()];
-    if (!verifyHmacSignature(rawBody, sig, secret.webhookSecret)) return NextResponse.json({ error: "Signatur ungültig" }, { status: 401 });
-  }
-  if (provider === "whatsapp" && secret.appSecret) {
-    if (!verifyHmacSignature(rawBody, headers["x-hub-signature-256"], secret.appSecret)) return NextResponse.json({ error: "Signatur ungültig" }, { status: 401 });
+    return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
   }
 
   let normalized: NormalizedWebhookEvent | null = null;
@@ -79,30 +128,30 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/webhooks/[p
     externalId = normalized.externalId;
   }
 
-  let eventId: string | null;
+  let claim: Awaited<ReturnType<typeof claimWebhookEvent>>;
   try {
-    eventId = await storeWebhookEvent(provider, org, externalId, payload);
+    claim = await claimWebhookEvent(provider, org, externalId, payload);
   } catch {
-    return NextResponse.json({ error: "Unbekannte Praxis" }, { status: 404 });
+    return NextResponse.json({ error: "Vorübergehender Fehler" }, { status: 503 });
   }
-  if (!eventId) return NextResponse.json({ ok: true, duplicate: true });
+  if (!claim) return NextResponse.json({ ok: true });
+  const eventId = claim.id;
 
   after(async () => {
     try {
-      let note = "";
-      if (provider === "sumup" && normalized) note = await processSumupEvent(org, normalized);
+      if (provider === "sumup" && normalized) await processSumupEvent(org, normalized);
       else if (provider === "whatsapp") await storeInboundMessages(org, handleWhatsAppWebhook(payload));
       else if (provider === "sms") await storeInboundMessages(org, handleSmsWebhook(payload));
-      else if (provider === "voice_agent") note = handleVoiceAgentWebhook(payload).type;
+      else if (provider === "voice_agent") handleVoiceAgentWebhook(payload);
       else if (provider === "lexoffice") {
         // TODO: Zahlungsstatus per getPaymentStatus nachladen und Rechnung abgleichen
-        await logSync(org, "lexoffice", { direction: "in", ok: true, message: `Ereignis ${normalized?.type}` });
+        await logSync(org, "lexoffice", { direction: "in", ok: true, message: `Ereignis ${normalized?.type ?? "unbekannt"}` });
       }
-      await finishWebhookEvent(eventId, undefined);
-      if (note) console.info(`[webhook ${provider}] ${note}`);
+      await finishWebhookEvent(eventId);
     } catch (e) {
-      await finishWebhookEvent(eventId, e instanceof Error ? e.message : String(e));
-      await logSync(org, provider, { direction: "in", ok: false, message: e instanceof Error ? e.message : String(e) }).catch(() => undefined);
+      const detail = describeError(e);
+      await finishWebhookEvent(eventId, detail).catch(() => undefined);
+      await logSync(org, provider, { direction: "in", ok: false, message: `Webhook-Verarbeitung fehlgeschlagen: ${detail}` }).catch(() => undefined);
     }
   });
   return NextResponse.json({ ok: true });

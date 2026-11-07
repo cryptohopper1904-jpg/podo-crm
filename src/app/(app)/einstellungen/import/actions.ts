@@ -8,6 +8,7 @@ import { patients } from "@/db/schema";
 import { parseDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
 import type { PatientDraft } from "@/integrations/types";
 import { audit } from "@/lib/audit";
+import { signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
 import { requireAuth } from "@/lib/auth/session";
 import { parseWorkbook } from "@/lib/import/excel/parse";
 import { persistImport } from "@/lib/import/excel/persist";
@@ -21,7 +22,8 @@ export type ExcelImportState =
   | {
       error?: string;
       ok?: string;
-      hash?: string;
+      /** server-signiert (HMAC), an Datei/Praxis/Benutzer/Art gebunden, 15 Min. gültig */
+      previewToken?: string;
       fileName?: string;
       preview?: {
         counts: ImportReport["counts"];
@@ -57,7 +59,7 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
   if (intent !== "run") {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.excel.preview", meta: { sha256: up.hash } });
     return {
-      hash: up.hash,
+      previewToken: signPreviewToken({ hash: up.hash, organizationId: org, userId: auth.user.id, type: "excel" }),
       fileName: up.name,
       preview: {
         counts: result.report.counts,
@@ -70,7 +72,9 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
     };
   }
 
-  if (form.get("hash") !== up.hash) return { error: "Bitte zuerst genau diese Datei prüfen (Vorschau), dann importieren." };
+  if (!verifyPreviewToken(String(form.get("previewToken") ?? ""), { hash: up.hash, organizationId: org, userId: auth.user.id, type: "excel" })) {
+    return { error: "Bitte zuerst genau diese Datei prüfen (Vorschau, max. 15 Minuten gültig), dann importieren." };
+  }
   if (result.patients.length + result.services.length + result.invoices.length === 0) return { error: "Keine importierbaren Daten gefunden." };
   try {
     const s = await withOrg(org, (tx) => persistImport(tx, org, result, auth.user.id));
@@ -97,7 +101,9 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
       },
     };
   } catch (e) {
-    return { error: `Import abgebrochen, es wurde nichts gespeichert: ${e instanceof Error ? e.message : String(e)}` };
+    await audit({ organizationId: org, userId: auth.user.id, action: "import.excel.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
+    console.error("[import.excel]", e instanceof Error ? e.message : e);
+    return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte Datei prüfen oder den Support kontaktieren." };
   }
 }
 
@@ -106,7 +112,7 @@ export type DoctolibImportState =
   | {
       error?: string;
       ok?: string;
-      hash?: string;
+      previewToken?: string;
       preview?: { total: number; existing: number; issues: { row: number; message: string }[]; sample: string[] };
     }
   | undefined;
@@ -165,8 +171,9 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
   const fresh = drafts.filter((d) => !d.externalId || !existing.has(d.externalId));
 
   if (form.get("intent") !== "run") {
+    await audit({ organizationId: org, userId: auth.user.id, action: "import.doctolib.preview", meta: { sha256: up.hash, total: drafts.length } });
     return {
-      hash: up.hash,
+      previewToken: signPreviewToken({ hash: up.hash, organizationId: org, userId: auth.user.id, type: "doctolib" }),
       preview: {
         total: drafts.length,
         existing: drafts.length - fresh.length,
@@ -175,16 +182,40 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
       },
     };
   }
-  if (form.get("hash") !== up.hash) return { error: "Bitte zuerst genau diese Datei prüfen, dann importieren." };
+  if (!verifyPreviewToken(String(form.get("previewToken") ?? ""), { hash: up.hash, organizationId: org, userId: auth.user.id, type: "doctolib" })) {
+    return { error: "Bitte zuerst genau diese Datei prüfen (Vorschau, max. 15 Minuten gültig), dann importieren." };
+  }
   if (fresh.length === 0) return { ok: "Keine neuen Patient:innen in der Datei." };
-  await withOrg(org, async (tx) => {
-    const [r] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
-    let next = (r?.n ?? 0) + 1;
-    for (let i = 0; i < fresh.length; i += 500) {
-      await tx.insert(patients).values(fresh.slice(i, i + 500).map((d) => ({ ...toValues(d), organizationId: org, number: next++ })));
-    }
-  });
-  await audit({ organizationId: org, userId: auth.user.id, action: "import.doctolib.run", meta: { sha256: up.hash, created: fresh.length } });
+  let created = 0;
+  try {
+    created = await withOrg(org, async (tx) => {
+      // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie bei Neuanlage/Online-Buchung)
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
+      // Unter dem Lock erneut prüfen, welche Doctolib-IDs schon existieren
+      const rows = await tx
+        .select({ id: sql<string | null>`${patients.externalIds}->>'doctolib'` })
+        .from(patients)
+        .where(and(eq(patients.organizationId, org), sql`${patients.externalIds} ? 'doctolib'`));
+      const known = new Set(rows.map((r) => r.id).filter((x): x is string => !!x));
+      const seen = new Set<string>();
+      const todo = drafts.filter((d) => {
+        if (!d.externalId) return true;
+        if (known.has(d.externalId) || seen.has(d.externalId)) return false;
+        seen.add(d.externalId);
+        return true;
+      });
+      const [r] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
+      let next = (r?.n ?? 0) + 1;
+      for (let i = 0; i < todo.length; i += 500) {
+        await tx.insert(patients).values(todo.slice(i, i + 500).map((d) => ({ ...toValues(d), organizationId: org, number: next++ })));
+      }
+      return todo.length;
+    });
+  } catch (e) {
+    console.error("[import.doctolib]", e instanceof Error ? e.message : e);
+    return { error: "Import abgebrochen, es wurde nichts gespeichert." };
+  }
+  await audit({ organizationId: org, userId: auth.user.id, action: "import.doctolib.run", meta: { sha256: up.hash, created } });
   revalidatePath("/kunden");
-  return { ok: `${fresh.length} Patient:innen importiert${drafts.length - fresh.length ? `, ${drafts.length - fresh.length} bereits vorhanden übersprungen` : ""}.` };
+  return { ok: `${created} Patient:innen importiert${drafts.length - created ? `, ${drafts.length - created} bereits vorhanden übersprungen` : ""}.` };
 }

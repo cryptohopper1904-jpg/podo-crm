@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { invoices, messages, payments, webhookEvents } from "@/db/schema";
 import type { InboundMessage, NormalizedWebhookEvent, ProviderId } from "@/integrations/types";
@@ -11,18 +11,42 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (v: string | null | undefined): v is string => !!v && UUID.test(v);
 export const bodyHash = (raw: string) => createHash("sha256").update(raw).digest("hex");
 
-/** Speichert ein Ereignis idempotent. Gibt null zurück, wenn es schon verarbeitet/empfangen wurde. */
-export async function storeWebhookEvent(provider: ProviderId, organizationId: string, externalId: string, payload: unknown): Promise<string | null> {
+/**
+ * Reserviert ein Ereignis zur Verarbeitung (erst NACH erfolgreicher Signatur-/Token-Prüfung aufrufen).
+ * - neu → wird angelegt
+ * - schon vorhanden, aber fehlgeschlagen (error gesetzt, processed_at leer) → atomar erneut reserviert
+ * - sonst (erfolgreich verarbeitet oder gerade in Arbeit) → null = Duplikat
+ */
+export async function claimWebhookEvent(provider: ProviderId, organizationId: string, externalId: string, payload: unknown): Promise<{ id: string; retry: boolean } | null> {
+  const ext = externalId.slice(0, 300);
   const rows = await db
     .insert(webhookEvents)
-    .values({ provider, organizationId, externalId: externalId.slice(0, 300), payload: payload as object })
+    .values({ provider, organizationId, externalId: ext, payload: payload as object })
     .onConflictDoNothing({ target: [webhookEvents.provider, webhookEvents.externalId] })
     .returning({ id: webhookEvents.id });
-  return rows[0]?.id ?? null;
+  if (rows[0]) return { id: rows[0].id, retry: false };
+  const again = await db
+    .update(webhookEvents)
+    .set({ error: null, receivedAt: new Date() })
+    .where(
+      and(
+        eq(webhookEvents.provider, provider),
+        eq(webhookEvents.externalId, ext),
+        eq(webhookEvents.organizationId, organizationId),
+        isNotNull(webhookEvents.error),
+        isNull(webhookEvents.processedAt),
+      ),
+    )
+    .returning({ id: webhookEvents.id });
+  return again[0] ? { id: again[0].id, retry: true } : null;
 }
 
+/** Erfolg → processed_at setzen. Fehler → nur error setzen (processed_at bleibt leer, damit eine erneute Zustellung neu verarbeitet). */
 export async function finishWebhookEvent(id: string, error?: string) {
-  await db.update(webhookEvents).set({ processedAt: new Date(), error: error?.slice(0, 500) ?? null }).where(eq(webhookEvents.id, id));
+  await db
+    .update(webhookEvents)
+    .set(error ? { error: error.slice(0, 500), processedAt: null } : { processedAt: new Date(), error: null })
+    .where(eq(webhookEvents.id, id));
 }
 
 /**
