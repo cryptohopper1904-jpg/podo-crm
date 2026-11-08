@@ -88,3 +88,13 @@ Noch offen nach Phase 2: echter SMTP-Versand, fiskaly-Vertrag und DSFinV-K-Expor
 
 ## Lokal ausprobieren
 Siehe README. Demo-Login: `demo@podocrm.local` / `demo-passwort-123`.
+
+## Phase 5 B (Stand 08.11.2026)
+| Bereich | Umgesetzt |
+|---|---|
+| **Buchen im Kundenportal** | `/portal/buchen`: nur online buchbare Leistungen (`settings.onlineBooking.serviceCodes`), freie Zeiten der nächsten 6 Wochen (Arbeitszeiten/Öffnungszeiten, Abwesenheiten, Feiertage, belegte Termine), Vorlaufzeit `onlineBooking.leadHours` (Standard 2 h) und optional `onlineBooking.maxPerDay`. Termin hängt direkt an der Akte der Person (Identität über den Portal-Link), Status „geplant“, Nachricht im Posteingang, gleiche Buchungssperre wie `/buchen`. Höchstens 3 offene Portal-Buchungen je Person, Drosselung je IP und Person, Audit |
+| **Verschieben** | eigene Termine bis 24 h vorher (alter Termin wird abgesagt, neuer mit gleichen Leistungen angelegt – atomar) |
+| **Warteliste-Nachrücker** | Warteliste je Person (Akte → „Warteliste“: Leistung, Wochentage, Tageszeit). Bei Absage (Praxis-Kalender, Kundenportal; KI-Telefon-Absagen nach Bestätigung durch die Praxis) bekommen bis zu 5 passende Personen (älteste zuerst) einen Einmal-Link `/portal/angebot/<token>` – nur mit Erinnerungs-Einwilligung, ohne medizinische Angaben; ohne Einwilligung → Anruf-Vorschlag im Posteingang. Wer zuerst annimmt, bekommt den Termin, alle anderen sehen „leider schon vergeben“ |
+| **E2E-Tests** | Playwright (`e2e/`, `pnpm e2e`): Login, Kunde anlegen, Doku mit 2D-Fußpunkt, Rechnung ausstellen, öffentliche Buchung, Portal (Link → buchen → verschieben), Posteingang, Abmelden, Routen-Schutz, keine Konsolenfehler. CI-Job `e2e` |
+
+Schema-Wünsche dazu (u. a. Quelle `portal`): `docs/SCHEMA_REQUESTS.md`.

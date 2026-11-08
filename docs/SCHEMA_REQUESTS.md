@@ -49,3 +49,11 @@ Hinweis: Der Excel-Import übernimmt SR-Teilzeilen weiterhin als Positionen der 
 | integration_provider (Enum) | Wert `kim` | KIM-Verbindung liegt bis dahin unter `gkv_billing` (`src/integrations/kim/provider.ts`). Nach der Migration Konstante umstellen und `UPDATE integration_connections SET provider='kim' WHERE provider='gkv_billing'` (sync_log analog) |
 | messages | Unique-Index (organization_id, channel, external_id) WHERE external_id IS NOT NULL | KIM-Dedupe über Message-ID derzeit per Vorab-Select unter Advisory-Lock je Praxis |
 | messages | `meta` jsonb (z. B. KIM-Dienstkennung, Anhangsliste) | Anhangsnamen stehen derzeit als Hinweiszeile im Text |
+
+## Offen (Kundenportal-Buchung & Warteliste – Phase 5 B)
+| Tabelle | Wunsch | Grund |
+|---|---|---|
+| appointment_source (Enum) | Wert `portal` | Portal-Buchungen laufen derzeit als `source = 'online'` mit `external_id = 'portal:<uuid>'` (`PORTAL_EXTERNAL_PREFIX`), Nachrücker als `external_id = 'waitlist:<link-id>'`. Nach der Migration `UPDATE appointments SET source='portal' WHERE external_id LIKE 'portal:%'` und Konstante in `src/lib/portal-booking.ts` umstellen |
+| waitlist | `service_ids uuid[]`, `weekdays int2[]`, `dayparts text[]`, `note text` | Wünsche stehen derzeit als JSON (`{"v":1,…}`) im Freitext `wishes` (`serializeWishes`/`parseWishes`, alte Einträge per Heuristik) |
+| patient_links | `appointment_id uuid` (FK, on delete cascade) | Angebot → freier Termin wird derzeit über `reminder_log` (`kind='waitlist_offer'`, `dedupe_key='wloffer:<link-id>'`, `appointment_id`) zugeordnet |
+| reminder_log | Index `(organization_id, kind, appointment_id)` | Angebote je freiem Termin (Widerruf der übrigen Links bei Annahme) ohne Seq-Scan |
