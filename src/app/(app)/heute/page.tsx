@@ -9,12 +9,14 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, money, timeDe, weekdayLong } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { listAppointments } from "@/server/appointments";
+import { voiceQuotaFor } from "@/server/voice";
+import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
 
 export const metadata = { title: "Heute" };
 
 const PROVIDER_LABEL: Record<string, string> = {
   lexoffice: "lexoffice", sumup: "SumUp", doctolib: "Doctolib", google_business: "Google", email_imap: "E-Mail", whatsapp: "WhatsApp",
-  sms: "SMS", voice_agent: "KI-Telefon", transcription: "Transkription", llm: "KI-Assistent", calendar_ics: "Kalender-Abo",
+  sms: "SMS", voice_agent: "KI-Telefon", transcription: "Transkription", llm: "KI-Assistent", calendar_ics: "Kalender-Abo", gkv_billing: "GKV-Abrechnung", kim: "KIM",
 };
 
 function greeting() {
@@ -51,6 +53,9 @@ export default async function TodayPage() {
   const active = appts.filter((r) => r.a.status !== "cancelled");
   const homeVisits = active.filter((r) => r.a.homeVisit).length;
   const holiday = holidayOn(today, auth.organization.state as StateCode);
+  // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
+  const voiceQuota =
+    auth.role === "owner" && stats.integ.some((i) => i.provider === "voice_agent" && i.status === "connected") ? await voiceQuotaFor(auth) : null;
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -63,6 +68,7 @@ export default async function TodayPage() {
       </header>
 
       <OnboardingCard auth={auth} />
+      {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
 
       <section aria-label="Kennzahlen" className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Termine heute" value={active.length} sub={homeVisits ? `davon ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : "keine Hausbesuche"} tone="primary" />

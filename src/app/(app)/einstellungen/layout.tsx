@@ -12,6 +12,8 @@ const TABS = [
   ["protokoll", "Zugriffsprotokoll"],
   ["abo", "Abo & Tarif"],
   ["support", "Support-Zugriff"],
+  ["ti", "TI & KIM"],
+  ["ocr", "Verordnungs-OCR"],
   ["daten", "Daten & Kündigung"],
 ] as const;
 

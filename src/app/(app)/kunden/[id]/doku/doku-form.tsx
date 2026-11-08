@@ -4,7 +4,8 @@ import { keepValues } from "@/lib/forms";
 import { useActionState, useRef, useState } from "react";
 import { Camera, Check, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
-import { FootMap } from "@/components/foot-map";
+import { FootFindings } from "@/components/foot3d";
+import { serializeFootPoints } from "@/lib/foot3d";
 import { Badge, Button, Card, Checkbox, Field, FormError, Input, Select, Textarea, cx } from "@/components/ui";
 import { saveTreatmentAction, type DokuFormState } from "./actions";
 
@@ -105,7 +106,7 @@ export function DokuForm({
     <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <input type="hidden" name="patientId" value={patientId} />
       {appointmentId ? <input type="hidden" name="appointmentId" value={appointmentId} /> : null}
-      <input type="hidden" name="footPoints" value={JSON.stringify(points)} />
+      <input type="hidden" name="footPoints" value={serializeFootPoints(points)} />
       <input type="hidden" name="mediaIds" value={JSON.stringify(uploads.map((u) => u.id))} />
       <input type="hidden" name="serviceIds" value={JSON.stringify(picked)} />
       <input type="hidden" name="aiAssisted" value={ai ? "1" : "0"} />
@@ -279,7 +280,7 @@ export function DokuForm({
 
       <Card>
         <h2 className="mb-3 font-display text-lg font-semibold">Befund am Fuß</h2>
-        <FootMap value={points} onChange={setPoints} />
+        <FootFindings value={points} onChange={setPoints} />
       </Card>
 
       <Card>

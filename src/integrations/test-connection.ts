@@ -6,9 +6,11 @@
 import { IntegrationHttpError, IntegrationNotConfiguredError } from "./errors";
 import { LexofficeAdapter } from "./lexoffice/lexoffice";
 import { UnsafeTargetError } from "./net-guard";
-import { getAdapter, type RegistryOptions } from "./registry";
+import { KIM_CONNECTION_PROVIDER } from "./kim/provider";
+import { Pop3Error } from "./kim/pop3";
+import { getAdapter, getKimAdapter, type RegistryOptions } from "./registry";
 import { SumupAdapter } from "./sumup/sumup";
-import type { IntegrationConnection, SupportedProvider } from "./types";
+import type { IntegrationConnection, ProviderId, SupportedProvider } from "./types";
 
 export interface TestResult {
   ok: boolean;
@@ -20,6 +22,8 @@ export interface TestResult {
 export function describeError(e: unknown): string {
   if (e instanceof IntegrationHttpError) return `${e.provider}: HTTP ${e.status}`;
   if (e instanceof IntegrationNotConfiguredError || e instanceof UnsafeTargetError) return e.message.slice(0, 200);
+  // POP3/SMTP: eigene, geheimnisfreie Meldung (Serverantwort wird nicht übernommen)
+  if (e instanceof Pop3Error || (e instanceof Error && e.name === "SmtpError")) return `${e.name}: ${e.message}`.slice(0, 200);
   if (e instanceof Error) {
     const code = (e as { cause?: { code?: string } }).cause?.code ?? (e as { code?: string }).code;
     return `${e.name}${code ? ` (${code})` : ""}`;
@@ -28,12 +32,19 @@ export function describeError(e: unknown): string {
 }
 
 export async function testConnection(
-  provider: SupportedProvider,
+  provider: ProviderId,
   connection: IntegrationConnection | null,
   opts: RegistryOptions = {},
 ): Promise<TestResult> {
   try {
-    const adapter = getAdapter(provider, connection, opts);
+    if (provider === KIM_CONNECTION_PROVIDER) {
+      // KIM: Anmeldung am POP3-Postfach des Clientmoduls, Nachrichten werden nur gezählt
+      const kim = getKimAdapter(connection, opts);
+      if (kim.isMock) return { ok: true, message: "KIM im Testmodus – es werden Beispielnachrichten verwendet, keine Verbindung zur TI.", detail: "Testmodus" };
+      const { messages } = await kim.ping();
+      return { ok: true, message: `KIM-Postfach erreichbar (${messages} Nachricht(en) auf dem Server).`, detail: "POP3-Anmeldung erfolgreich" };
+    }
+    const adapter = getAdapter(provider as SupportedProvider, connection, opts);
     if (adapter.isMock) return { ok: true, message: "Testmodus aktiv – es werden keine echten Daten übertragen.", detail: "Testmodus" };
     if (adapter instanceof LexofficeAdapter || adapter instanceof SumupAdapter) {
       await adapter.ping();

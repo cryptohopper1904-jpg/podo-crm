@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { describeError } from "@/integrations/test-connection";
-import { IMPLEMENTED_VOICE_VENDORS, voiceAgentFor } from "@/integrations/voice/voice-agent";
+import { configuredVoiceVendor, IMPLEMENTED_VOICE_VENDORS, voiceAgentFor } from "@/integrations/voice/voice-agent";
 import type { VoiceVendorId } from "@/integrations/types";
+import { clientIpFrom } from "@/lib/auth/client-ip";
 import { clientKey, createRateLimiter } from "@/lib/rate-limit";
 import { readBodyCapped } from "@/lib/read-body";
 import { decryptSecret } from "@/lib/secrets";
@@ -17,7 +18,9 @@ import { isUuid } from "@/server/webhooks";
  *  2. Verbindung „KI-Telefonagent“ muss existieren und verbunden sein („Testmodus“ nur außerhalb Produktion),
  *     konfigurierter Anbieter muss zum Pfad passen
  *  3. Echtheit: Vapi `x-vapi-secret` = Geheimnis der Praxis (verschlüsselt gespeichert, zeitkonstanter Vergleich);
+ *     Retell `x-retell-signature` = HMAC-SHA256 über den Roh-Body mit dem API-Schlüssel der Praxis;
  *     ohne hinterlegtes Geheimnis wird immer abgelehnt
+ *  Minutenkontingent/Tarif: siehe processVoiceEvent → Werkzeuge antworten bei Überschreitung mit Rückrufbitte.
  *  4. Drosselung je IP (Fehlversuche) und je Praxis
  * Fehlerantworten sind generisch (kein Orakel für Praxis-IDs).
  */
@@ -38,7 +41,7 @@ function secretOf(secretEnc: string | null | undefined, org: string): Record<str
 
 export async function POST(req: NextRequest, ctx: RouteContext<"/api/voice/[provider]">) {
   const { provider } = await ctx.params;
-  const ip = clientKey({ ip: req.headers.get("x-forwarded-for")?.split(",").pop()?.trim() ?? req.headers.get("x-real-ip"), userAgent: req.headers.get("user-agent") });
+  const ip = clientKey({ ip: clientIpFrom(req.headers.get("x-forwarded-for"), req.headers.get("x-real-ip")), userAgent: req.headers.get("user-agent") });
   if (failLimiter.exceeded(ip)) return NextResponse.json({ error: "Zu viele Anfragen" }, { status: 429 });
   const fail = () => {
     failLimiter.limited(ip);
@@ -55,8 +58,7 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/voice/[prov
   const conn = await loadConnection(org, "voice_agent");
   const active = !!conn && (conn.status === "connected" || (conn.status === "mock" && process.env.NODE_ENV !== "production"));
   if (!conn || !active) return fail();
-  const configured = typeof conn.config?.vendor === "string" && conn.config.vendor ? conn.config.vendor : "vapi";
-  if (configured !== vendor) return fail();
+  if (configuredVoiceVendor(conn.config) !== vendor) return fail();
 
   let port;
   try {
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/voice/[prov
   const rawBody = await readBodyCapped(req, MAX_BODY);
   if (rawBody === null) return NextResponse.json({ error: "Zu groß" }, { status: 413 });
   const headers = Object.fromEntries(req.headers.entries());
-  if (!port.verify(headers, secretOf(conn.secretEnc, org))) return fail();
+  if (!port.verify(headers, secretOf(conn.secretEnc, org), rawBody)) return fail();
 
   if (orgLimiter.limited(org)) return NextResponse.json({ error: "Zu viele Anfragen" }, { status: 429 });
 

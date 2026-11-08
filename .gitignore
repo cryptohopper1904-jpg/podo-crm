@@ -47,3 +47,4 @@ next-env.d.ts
 /data/
 !.env.example
 !deploy/.env.example
+deploy/docker-compose.subdomain.yml

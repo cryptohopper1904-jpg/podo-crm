@@ -65,12 +65,12 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
   // SSRF-Schutz: frei wählbare Ziele müssen öffentliche https-Adressen bzw. Hosts sein
   try {
     if (typeof config.baseUrl === "string") config.baseUrl = (await assertPublicUrl(config.baseUrl)).toString().replace(/\/$/, "");
-    for (const k of ["smtpHost", "imapHost"]) if (typeof config[k] === "string") await assertPublicHost(config[k] as string);
+    for (const k of ["smtpHost", "imapHost", "pop3Host"]) if (typeof config[k] === "string") await assertPublicHost(config[k] as string);
   } catch (e) {
     return { error: e instanceof UnsafeTargetError ? e.message : "Ziel-Adresse nicht erlaubt." };
   }
   // Ziel geändert → bisher hinterlegte Zugangsdaten verwerfen (sonst könnte man sie an einen fremden Server umleiten)
-  const targetChanged = ["baseUrl", "smtpHost", "imapHost"].some((k) => (oldConfig[k] ?? null) !== (config[k] ?? null));
+  const targetChanged = ["baseUrl", "smtpHost", "imapHost", "pop3Host", "smtpPort", "pop3Port"].some((k) => (oldConfig[k] ?? null) !== (config[k] ?? null));
   if (targetChanged && existing?.secretEnc) {
     const fresh: Record<string, string> = {};
     for (const f of info.secretFields) {

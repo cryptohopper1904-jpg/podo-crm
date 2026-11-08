@@ -11,6 +11,7 @@ import { dateTimeDe } from "@/lib/format";
 import { decryptSecret } from "@/lib/secrets";
 import { recentSyncLog } from "@/server/integrations";
 import { saveIntegrationAction, testIntegrationAction } from "./actions";
+import { MailCard } from "./mail-card";
 
 export const metadata = { title: "Schnittstellen" };
 
@@ -43,6 +44,8 @@ export default async function IntegrationsSettings() {
         Für jede echte Schnittstelle, über die Kundendaten fließen, ist ein Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO) nötig.
         Zugangsdaten werden verschlüsselt gespeichert und nie wieder angezeigt.
       </p>
+
+      <MailCard auth={auth} />
 
       {PROVIDER_CATALOG.map((info) => {
         const row = rows.find((r) => r.provider === info.provider);

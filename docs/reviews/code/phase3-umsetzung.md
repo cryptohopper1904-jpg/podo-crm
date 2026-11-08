@@ -18,8 +18,8 @@
 | Voice: Replay erzeugt doppelte Nachrichten | mittel | **behoben** – Duplikatprüfung je Anruf |
 | hashtext-Kollisionen bei Advisory Locks | mittel | **behoben** – hashtextextended (64 Bit), Online- und Telefonbuchung teilen den Lock |
 | Dateien bleiben bei Fehler nach Purge-Commit | hoch | **behoben** – Lösch-Skript entfernt verwaiste Ablage-Ordner bei jedem Lauf |
-| Support-Freigabe nicht personengebunden | mittel | bewusst offen: gilt für alle Betreiber-Admins mit 2FA (kleines Team); auf der Roadmap |
-| Export im Arbeitsspeicher | mittel | bewusst offen (Praxisgrößen klein, 1 Export/10 min); Streaming auf der Roadmap |
-| Session-Token-Rotation beim Support-Wechsel | mittel | offen – Freigabe wird bei jeder Anfrage geprüft; Rotation auf der Roadmap |
-| Gesperrte Konten behalten Sitzungen | mittel | offen – Sperre betrifft Fehlversuche, nicht Entzug; Entzug löscht Mitgliedschaft |
-| Audit-Spam support.view, X-Forwarded-For, __Host-Cookie | niedrig | offen (Betrieb hinter Caddy, dokumentiert) |
+| Support-Freigabe nicht personengebunden | mittel | **behoben (Phase 4)** – Inhaber:in wählt eine Person (Plattform-Admin mit 2FA, nur Name/E-Mail sichtbar); neue Freigaben ohne Person werden abgelehnt; alte „alle Betreiber“-Freigaben laufen bis Ablauf weiter und sind markiert |
+| Export im Arbeitsspeicher | mittel | **behoben (Phase 4)** – Streaming-ZIP (archiver, ZIP64): Tabellen seitenweise (2.000 Zeilen), Medien einzeln als Stream (vorab GCM-geprüft); Layout/README unverändert |
+| Session-Token-Rotation beim Support-Wechsel | mittel | **behoben (Phase 4)** – neues Token bei Praxiswechsel, Support betreten/verlassen (gleicher 2FA-Status und Ablauf, altes Token gelöscht) |
+| Gesperrte Konten behalten Sitzungen | mittel | **behoben (Phase 4)** – 2FA-Sperre, Deaktivierung, Passwortwechsel, Löschung beenden Sitzungen; Passwort-Fehlversuche bewusst nicht (DoS) |
+| Audit-Spam support.view, X-Forwarded-For, __Host-Cookie | niedrig | **behoben (Phase 4)** – support.view ohne Prefetch, je Freigabe+Pfad max. 1×/60 s (Schreibzugriffe immer); IP über `TRUSTED_PROXY_HOPS` (docs/BETRIEB.md); `__Host-podo_session` in Produktion |

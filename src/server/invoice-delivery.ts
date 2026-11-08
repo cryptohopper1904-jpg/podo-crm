@@ -3,6 +3,7 @@ import { and, asc, eq, gte, inArray, lt, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
+import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
 import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
@@ -11,7 +12,8 @@ import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf } from "@/lib/invoice-pdf";
 import { showsDueDate } from "@/lib/invoice-view";
-import { adapterFor, logSync } from "./integrations";
+import { logSync } from "./integrations";
+import { mailMessagingPort } from "./mail";
 import { InvoiceError, loadInvoiceBundle, type InvoiceBundle } from "./invoices";
 
 /**
@@ -72,12 +74,14 @@ export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
   let externalId: string;
   let mock = false;
   try {
-    const port = await adapterFor(org, "email_imap");
+    // MailPort (SMTP der Praxis / Plattform-SMTP / Testmodus) – Drosselung und Fehler-Audit in ./mail
+    const port = await mailMessagingPort(org, { purpose: "invoice", userId: auth.user.id, entity: "invoice", entityId: invoiceId });
     mock = port.isMock;
     externalId = (await port.send({ to, subject, body, attachments: [{ filename: pdf.filename, contentType: "application/pdf", data: pdf.bytes }] })).externalId;
   } catch (e) {
     await logSync(org, "email_imap", { direction: "out", ok: false, message: `Rechnung ${bundle.invoice.number}: ${describeError(e)}`, entity: "invoice", entityId: invoiceId });
-    throw new InvoiceError("E-Mail-Versand fehlgeschlagen (Details im Synchronisationsprotokoll).");
+    // sichere Meldung (ohne Zugangsdaten) direkt anzeigen
+    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${e instanceof MailSendError || e instanceof MailNotConfiguredError ? e.message : "Details im Synchronisationsprotokoll."}`);
   }
   await withOrg(org, async (tx) => {
     // sent_at/sent_to sind nicht durch den GoBD-Trigger gesperrt

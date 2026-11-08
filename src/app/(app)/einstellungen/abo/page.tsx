@@ -2,7 +2,7 @@ import { Badge, Button, Card, CardTitle, Table } from "@/components/ui";
 import { getBillingPort } from "@/integrations/stripe";
 import { denyAccess, requireAuth } from "@/lib/auth/session";
 import { dateDe, money } from "@/lib/format";
-import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, seatLimit } from "@/lib/plans";
+import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { loadOrgBilling, usedSeats } from "@/server/billing";
 import { openPortalAction } from "./actions";
 import { CheckoutForm } from "./checkout-form";
@@ -90,7 +90,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
               <td><p className="font-semibold">{PLANS[p].label}</p><p className="text-sm text-muted">{PLANS[p].description}</p></td>
               <td className="tabular-nums">{money(PLANS[p].priceCents)}{PLANS[p].maxSeats !== 1 ? <span className="block text-xs text-muted">+ {money(EXTRA_SEAT_CENTS)} je weiterem Platz</span> : null}</td>
               <td>{PLANS[p].includedSeats} inkl.{PLANS[p].maxSeats ? `, max. ${PLANS[p].maxSeats}` : ", unbegrenzt"}</td>
-              {FEATURES.map((f) => <td key={f}>{PLANS[p].features.includes(f) ? "✓" : "–"}</td>)}
+              {FEATURES.map((f) => <td key={f}>{PLANS[p].features.includes(f) ? (f === "voice_agent" ? `✓ (${PLANS[p].voiceMinutesIncluded} Min./Monat)` : "✓") : f === "voice_agent" && VOICE_ADDON_PLANS.includes(p) ? `Zusatzmodul (${VOICE_ADDON_MINUTES} Min./Monat)` : "–"}</td>)}
             </tr>
           ))}
         </tbody>

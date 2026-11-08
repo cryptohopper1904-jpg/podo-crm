@@ -42,3 +42,10 @@ Hinweis: Der Excel-Import übernimmt SR-Teilzeilen weiterhin als Positionen der 
 | reminder_log | Index `(organization_id, at desc)`; Index `(organization_id, patient_id, kind, at)` | Protokollansicht und „letzte Rückholung je Person“ |
 | patients | Spalte `reminders_opt_out` boolean | Abmeldung von Erinnerungen („Keine Erinnerungen mehr?“); derzeit nur `extra.no_reminders` (Doctolib-Import) |
 | invoices | Spalte `period_month` (Sammelrechnung) bzw. Verknüpfung `invoice_lines.treatment_record_id` | „noch nicht abgerechnet“ für Pflegeheim-Sammelrechnungen exakt statt per Text-Heuristik (Name + Datum in der Positionsbeschreibung) |
+
+## Offen (TI/KIM, eVerordnung – Phase 4)
+| Tabelle | Wunsch | Grund |
+|---|---|---|
+| integration_provider (Enum) | Wert `kim` | KIM-Verbindung liegt bis dahin unter `gkv_billing` (`src/integrations/kim/provider.ts`). Nach der Migration Konstante umstellen und `UPDATE integration_connections SET provider='kim' WHERE provider='gkv_billing'` (sync_log analog) |
+| messages | Unique-Index (organization_id, channel, external_id) WHERE external_id IS NOT NULL | KIM-Dedupe über Message-ID derzeit per Vorab-Select unter Advisory-Lock je Praxis |
+| messages | `meta` jsonb (z. B. KIM-Dienstkennung, Anhangsliste) | Anhangsnamen stehen derzeit als Hinweiszeile im Text |

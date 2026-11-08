@@ -1,8 +1,8 @@
 import { Badge, Card, Table } from "@/components/ui";
 import { dateDe } from "@/lib/format";
-import { PLAN_IDS, PLANS, isPlanId } from "@/lib/plans";
+import { PLAN_IDS, PLANS, isPlanId, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
-import { enterSupportAction, extendTrialAction, setPlanAction } from "./actions";
+import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction } from "./actions";
 
 export const metadata = { title: "Plattform" };
 
@@ -56,6 +56,14 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
                       <input id={`days-${p.id}`} name="days" type="number" min={1} max={90} defaultValue={14} className="h-9 w-16 rounded-lg border border-border bg-surface px-2 text-sm" />
                       <button className="text-sm font-semibold text-primary">Test verlängern</button>
                     </form>
+                    {isPlanId(p.plan) && VOICE_ADDON_PLANS.includes(p.plan) ? (
+                      <form action={setVoiceAddonAction} className="flex items-center gap-2">
+                        <input type="hidden" name="organizationId" value={p.id} />
+                        <input type="hidden" name="on" value={p.voiceAddon ? "0" : "1"} />
+                        <span className="text-xs">KI-Telefon-Zusatzmodul: {p.voiceAddon ? "aktiv" : "aus"}</span>
+                        <button className="text-sm font-semibold text-primary">{p.voiceAddon ? "abschalten" : "aktivieren"}</button>
+                      </form>
+                    ) : null}
                     {p.activeGrantForMe ? (
                       <form action={enterSupportAction}>
                         <input type="hidden" name="organizationId" value={p.id} />

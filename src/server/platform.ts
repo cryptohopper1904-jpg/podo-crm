@@ -1,10 +1,10 @@
 import "server-only";
 import { notFound } from "next/navigation";
-import { and, count, desc, eq, gt, gte, isNull } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { appointments, auditLog, memberships, organizations, patients, supportGrants } from "@/db/schema";
 import { getSession, requestMeta } from "@/lib/auth/session";
-import { isPlanId, PLANS, type PlanId } from "@/lib/plans";
+import { isPlanId, PLANS, voiceAddonActive, type PlanId } from "@/lib/plans";
 
 /**
  * Plattform-Konsole (SaaS-Betreiber). Zugang NUR für users.is_platform_admin MIT aktiver 2FA – sonst 404.
@@ -29,6 +29,8 @@ export type PracticeOverview = {
   patients: number;
   appointments30d: number;
   activeGrantForMe: boolean;
+  /** KI-Telefon als Zusatzmodul gebucht (organizations.settings.voiceAddon) */
+  voiceAddon: boolean;
 };
 
 /**
@@ -68,6 +70,7 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       patients: c.patients,
       appointments30d: c.appointments30d,
       activeGrantForMe: c.grant,
+      voiceAddon: voiceAddonActive(o.settings),
     });
   }
   return out;
@@ -100,4 +103,15 @@ export async function extendTrial(adminUserId: string, organizationId: string, d
   const trialEndsAt = new Date(base + days * 86_400_000);
   await db.update(organizations).set({ trialEndsAt, plan: "trial", subscriptionStatus: "trialing" }).where(eq(organizations.id, organizationId));
   await platformAudit(organizationId, adminUserId, "platform.trial_extended", { days, from: o.trialEndsAt?.toISOString() ?? null, to: trialEndsAt.toISOString() });
+}
+
+/** Zusatzmodul KI-Telefon an-/abschalten (bis zur Stripe-Anbindung manuell durch den Betreiber). */
+export async function setVoiceAddon(adminUserId: string, organizationId: string, on: boolean) {
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, organizationId));
+  if (!o) throw new Error("Praxis nicht gefunden");
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('voiceAddon', ${on}::boolean)` })
+    .where(eq(organizations.id, organizationId));
+  await platformAudit(organizationId, adminUserId, "platform.voice_addon", { from: voiceAddonActive(o.settings), to: on });
 }

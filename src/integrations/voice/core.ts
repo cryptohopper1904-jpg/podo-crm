@@ -136,6 +136,35 @@ export interface VoiceToolDeps {
   practiceInfo(): Promise<{ name: string; address: string | null; phone: string | null; openingText: string }>;
   /** Ausgang des Anrufs vormerken (voice_calls) */
   noteOutcome(outcome: VoiceOutcome, appointmentId?: string | null): Promise<void>;
+  /**
+   * Minutenkontingent/Freischaltung: true = keine Terminabfragen/-buchungen mehr, stattdessen
+   * Rückrufbitte in den Posteingang (fehlt die Funktion: unbegrenzt).
+   */
+  quotaExceeded?(): Promise<boolean>;
+}
+
+/** Werkzeuge, die bei erschöpftem Kontingent durch eine Rückrufbitte ersetzt werden. */
+export const QUOTA_LIMITED_TOOLS: readonly VoiceTool[] = ["freie_termine", "termin_buchen"];
+export const QUOTA_INBOX_SUBJECT = "Rückrufbitte (KI-Telefon, Minutenkontingent erschöpft)";
+
+/** Kontingent erschöpft: höflich vertrösten und Rückrufbitte an die Praxis (einmal je Anruf). */
+async function quotaFallback(rawArgs: Record<string, unknown>, deps: VoiceToolDeps): Promise<string> {
+  const rawTel = typeof rawArgs.telefon === "string" ? rawArgs.telefon : null;
+  const tel = rawTel && phone.safeParse(rawTel).success ? rawTel.trim() : deps.caller;
+  if (!tel) {
+    return "Telefonisch können gerade keine Termine vergeben werden. Bitte freundlich um Name und Rückrufnummer bitten und dann rueckruf aufrufen – oder den Anrufer bitten, später während der Öffnungszeiten erneut anzurufen.";
+  }
+  await deps.inbox({
+    subject: QUOTA_INBOX_SUBJECT,
+    from: tel,
+    body: [
+      "Terminanfrage per KI-Telefon – nicht bearbeitet, weil das monatliche Minutenkontingent des KI-Telefons erschöpft ist.",
+      `Rückrufnummer: ${tel}`,
+      "Bitte zurückrufen. Kontingent und Zusatzminuten: Telefon → Nutzung.",
+    ].join("\n"),
+  });
+  await deps.noteOutcome("callback");
+  return "Telefonisch können gerade keine Termine vergeben werden. Bitte dem Anrufer freundlich sagen: Die Praxis ruft so bald wie möglich unter der übermittelten Nummer zurück – alternativ gern später während der Öffnungszeiten erneut anrufen. Die Rückrufbitte ist bereits weitergegeben.";
 }
 
 export const MAX_SLOTS = 3;
@@ -255,7 +284,8 @@ export async function runVoiceTools(calls: VoiceToolCall[], deps: VoiceToolDeps,
       continue;
     }
     try {
-      out.push({ toolCallId: c.toolCallId, result: await run(c.tool, c.args, deps) });
+      const limited = QUOTA_LIMITED_TOOLS.includes(c.tool) && (await deps.quotaExceeded?.()) === true;
+      out.push({ toolCallId: c.toolCallId, result: limited ? await quotaFallback(c.args, deps) : await run(c.tool, c.args, deps) });
     } catch (e) {
       onError?.(e, c.tool);
       out.push({ toolCallId: c.toolCallId, result: "Technischer Fehler. Bitte eine Rückrufbitte aufnehmen oder auf die Öffnungszeiten verweisen." });

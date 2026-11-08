@@ -24,7 +24,9 @@ import { EmailAdapter, MessagingMock, SmsAdapter, WhatsAppAdapter } from "./mess
 import { SumupMock } from "./sumup/mock";
 import { SumupAdapter } from "./sumup/sumup";
 import { TranscriptionMock, WhisperCompatibleTranscription } from "./transcription/transcription";
-import type { FetchLike, IntegrationConnection, PortByProvider, SupportedProvider } from "./types";
+import { KimAdapter, KimMock } from "./kim/kim";
+import { KIM_CONNECTION_PROVIDER } from "./kim/provider";
+import type { FetchLike, IntegrationConnection, KimPort, PortByProvider, SupportedProvider } from "./types";
 import { voiceAgentFor, VoiceAgentMock } from "./voice/voice-agent";
 
 export interface RegistryOptions {
@@ -48,7 +50,7 @@ export function isMockMode(connection?: Pick<IntegrationConnection, "status"> | 
 /** Frei konfigurierbare Ziele (baseUrl, Hosts) formal prüfen – DNS-Prüfung erfolgt in guardedFetch vor jedem Request. */
 function checkTargets(cfg: Record<string, unknown>) {
   if (typeof cfg.baseUrl === "string" && cfg.baseUrl) assertSafeUrlSyntax(cfg.baseUrl);
-  for (const k of ["smtpHost", "imapHost"]) if (typeof cfg[k] === "string" && cfg[k]) assertSafeHostSyntax(cfg[k] as string);
+  for (const k of ["smtpHost", "imapHost", "pop3Host"]) if (typeof cfg[k] === "string" && cfg[k]) assertSafeHostSyntax(cfg[k] as string);
 }
 
 function resolveSecret(connection: IntegrationConnection | null | undefined): Record<string, string> {
@@ -136,4 +138,31 @@ export function getAdapter<P extends SupportedProvider>(
   checkTargets(cfg);
   // Jeder echte Request läuft über den SSRF-Schutz (https, keine privaten Ziele, keine Weiterleitungen)
   return REAL[provider](cfg, resolveSecret(connection), guardedFetch(opts.fetch));
+}
+
+const port = (v: unknown): number | undefined => {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d{1,5}$/.test(v) ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 && n <= 65535 ? n : undefined;
+};
+
+/**
+ * KIM-Adapter (eigener Port, nicht über `getAdapter`, weil KIM keinen eigenen `integration_provider`
+ * hat – siehe src/integrations/kim/provider.ts). Mock wie bei allen anderen Anbietern.
+ */
+export function getKimAdapter(connection?: IntegrationConnection | null, opts: Pick<RegistryOptions, "mode"> = {}): KimPort {
+  if (isMockMode(connection, opts)) return new KimMock();
+  if (!connection || connection.status === "disconnected") throw new IntegrationNotConfiguredError(connection?.provider ?? KIM_CONNECTION_PROVIDER, "KIM-Verbindung ist aus");
+  const cfg = connection.config ?? {};
+  checkTargets(cfg);
+  const sec = resolveSecret(connection);
+  return new KimAdapter({
+    pop3Host: str(cfg.pop3Host),
+    pop3Port: port(cfg.pop3Port),
+    smtpHost: str(cfg.smtpHost),
+    smtpPort: port(cfg.smtpPort),
+    user: str(cfg.user),
+    password: sec.password,
+    address: str(cfg.address),
+    deleteAfterFetch: cfg.deleteAfterFetch === true || cfg.deleteAfterFetch === "ja",
+  });
 }

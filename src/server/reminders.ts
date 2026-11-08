@@ -19,6 +19,7 @@ import {
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingPort, MessagingProvider } from "@/integrations/types";
 import { adapterFor, logSync } from "./integrations";
+import { mailMessagingPort } from "./mail";
 
 export * from "@/lib/reminders";
 
@@ -171,7 +172,8 @@ type SendDeps = { getPort?: (org: string, provider: MessagingProvider) => Promis
 
 /** Versendet geplante Erinnerungen einer Praxis: erst Log-Zeile (Dedupe), dann Versand, dann Status. */
 export async function sendPlannedReminders(org: string, list: PlannedReminder[], deps: SendDeps = {}) {
-  const getPort = deps.getPort ?? ((o, p) => adapterFor(o, p));
+  // E-Mail über den MailPort (Drosselung, Fehler-Audit), SMS/WhatsApp über die Registry
+  const getPort = deps.getPort ?? ((o, p) => (p === "email_imap" ? mailMessagingPort(o, { purpose: "reminder" }) : adapterFor(o, p)));
   const out = { sent: 0, failed: 0, duplicates: 0, mock: false };
   const ports = new Map<MessagingProvider, MessagingPort | Error>();
   for (const r of list) {

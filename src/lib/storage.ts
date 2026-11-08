@@ -1,7 +1,9 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { loadKey } from "./crypto";
 
 /**
@@ -16,6 +18,8 @@ import { loadKey } from "./crypto";
 export interface StorageDriver {
   put(key: string, data: Buffer): Promise<void>;
   get(key: string): Promise<Buffer>;
+  /** optional: Datei als Stream lesen (große Exporte ohne die ganze Datei im Speicher) */
+  getStream?(key: string): Readable;
   /** nur für das Aufräumen fehlgeschlagener Uploads (nie für dokumentierte Medien) */
   remove(key: string): Promise<void>;
 }
@@ -33,6 +37,9 @@ class LocalDriver implements StorageDriver {
   }
   async get(key: string) {
     return readFile(this.file(key));
+  }
+  getStream(key: string) {
+    return createReadStream(this.file(key), { highWaterMark: 64 * 1024 });
   }
   async remove(key: string) {
     await rm(this.file(key), { force: true });
@@ -82,17 +89,69 @@ export async function storeEncrypted(organizationId: string, data: Buffer) {
   return { storageKey: key, sha256: createHash("sha256").update(data).digest("hex"), sizeBytes: data.length };
 }
 
-export async function readDecrypted(storageKey: string): Promise<Buffer> {
-  const payload = await getDriver().get(storageKey);
-  const magic = payload.subarray(0, 5).toString();
+/** Kopf: 5 Byte Format + 12 Byte IV + 16 Byte GCM-Tag */
+const HEADER_BYTES = 33;
+
+function decipherFor(storageKey: string, header: Buffer) {
+  const magic = header.subarray(0, 5).toString();
   if (magic !== "PODO1" && magic !== "PODO2") throw new Error("Unbekanntes Dateiformat");
-  const iv = payload.subarray(5, 17);
-  const tag = payload.subarray(17, 33);
+  const iv = header.subarray(5, 17);
+  const tag = header.subarray(17, HEADER_BYTES);
   const key = magic === "PODO2" ? orgKey(storageKey.split("/")[0]) : loadKey();
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAAD(Buffer.from(storageKey));
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(payload.subarray(33)), decipher.final()]);
+  return decipher;
+}
+
+export async function readDecrypted(storageKey: string): Promise<Buffer> {
+  const payload = await getDriver().get(storageKey);
+  const decipher = decipherFor(storageKey, payload.subarray(0, HEADER_BYTES));
+  return Buffer.concat([decipher.update(payload.subarray(HEADER_BYTES)), decipher.final()]);
+}
+
+async function* decryptChunks(storageKey: string, source: AsyncIterable<Buffer | string>): AsyncGenerator<Buffer> {
+  let head = Buffer.alloc(0);
+  let decipher: ReturnType<typeof decipherFor> | null = null;
+  for await (const raw of source) {
+    let chunk = typeof raw === "string" ? Buffer.from(raw) : raw;
+    if (!decipher) {
+      head = Buffer.concat([head, chunk]);
+      if (head.length < HEADER_BYTES) continue;
+      decipher = decipherFor(storageKey, head.subarray(0, HEADER_BYTES));
+      chunk = head.subarray(HEADER_BYTES);
+    }
+    if (chunk.length) {
+      const out = decipher.update(chunk);
+      if (out.length) yield out;
+    }
+  }
+  if (!decipher) throw new Error("Datei unvollständig");
+  // prüft den GCM-Tag – erst hier steht fest, dass der Inhalt unverändert ist
+  const last = decipher.final();
+  if (last.length) yield last;
+}
+
+/**
+ * Entschlüsselt als Stream (Speicher je Datei: wenige 64-KB-Blöcke).
+ * ACHTUNG: Die Echtheit (GCM-Tag) steht erst am Ende fest – ein Fehler kommt dann als Stream-Fehler.
+ * Wer vorher Gewissheit braucht (Export), prüft mit verifyStored() vorab.
+ */
+export function readDecryptedStream(storageKey: string): Readable {
+  const d = getDriver();
+  const source: AsyncIterable<Buffer> = d.getStream
+    ? d.getStream(storageKey)
+    : (async function* () {
+        yield await d.get(storageKey);
+      })();
+  return Readable.from(decryptChunks(storageKey, source), { objectMode: false });
+}
+
+/** Prüft Lesbarkeit und Echtheit einer Datei, ohne sie im Speicher zu halten (Ergebnis wird verworfen). */
+export async function verifyStored(storageKey: string): Promise<{ sizeBytes: number }> {
+  let sizeBytes = 0;
+  for await (const chunk of readDecryptedStream(storageKey)) sizeBytes += (chunk as Buffer).length;
+  return { sizeBytes };
 }
 
 export async function discardStored(storageKey: string) {

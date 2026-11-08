@@ -1,0 +1,47 @@
+{
+  "resourceType": "Bundle",
+  "id": "bundle-ui-0002",
+  "type": "collection",
+  "timestamp": "2026-11-03T15:00:00Z",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:7d1f0000-0000-4000-8000-000000000002",
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "7d1f0000-0000-4000-8000-000000000002",
+        "status": "active",
+        "intent": "order",
+        "priority": "urgent",
+        "subject": { "reference": "urn:uuid:7d1f0000-0000-4000-8000-0000000000aa" },
+        "medicationCodeableConcept": { "text": "Nagelkorrekturspange, mehrteilig" },
+        "dispenseRequest": { "quantity": { "value": 4 } },
+        "reasonCode": [{ "coding": [{ "code": "L60.0", "display": "Unguis incarnatus" }] }],
+        "extension": [
+          { "url": "https://example.org/fhir/Diagnosegruppe", "valueString": "ui2" },
+          { "url": "https://example.org/fhir/Leitsymptomatik", "valueString": "eingewachsener Zehennagel Stadium 2" },
+          { "url": "https://example.org/fhir/Frequenzempfehlung", "valueString": "1x alle 1-4 Wochen" },
+          { "url": "https://example.org/fhir/Hausbesuch", "valueBoolean": true }
+        ]
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:7d1f0000-0000-4000-8000-0000000000aa",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "7d1f0000-0000-4000-8000-0000000000aa",
+        "identifier": [{ "system": "http://fhir.de/sid/gkv/kvid-10", "value": "x12345" }],
+        "name": [{ "text": "Max Mustermann", "family": "Mustermann", "given": ["Max"] }],
+        "birthDate": "1948-06-15",
+        "gender": "male"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Practitioner",
+        "identifier": [{ "system": "https://fhir.kbv.de/NamingSystem/KBV_NS_Base_ANR", "value": "12345" }],
+        "name": [{ "text": "Dr. Erfunden Demo" }]
+      }
+    },
+    { "resource": { "resourceType": "Observation", "status": "final", "valueString": "unbekannte Ressource – wird ignoriert" } }
+  ]
+}

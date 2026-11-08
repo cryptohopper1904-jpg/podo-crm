@@ -98,7 +98,7 @@ describe("Vapi-Adapter", () => {
 
   it("nicht umgesetzte Anbieter werden abgelehnt", () => {
     expect(voiceAgentFor("vapi")).toBeInstanceOf(VapiVoiceAgent);
-    expect(() => voiceAgentFor("retell")).toThrow(/noch nicht umgesetzt/);
+    expect(() => voiceAgentFor("fonio")).toThrow(/noch nicht umgesetzt/);
     expect(() => voiceAgentFor("evil")).toThrow();
   });
 });

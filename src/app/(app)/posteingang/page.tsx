@@ -7,21 +7,24 @@ import { messages, patients } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { dateTimeDe } from "@/lib/format";
 import { isMockMode } from "@/integrations/registry";
-import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction } from "./actions";
+import { mapSequential } from "@/lib/seq";
+import type { PatientSuggestion } from "@/lib/kim-hints";
+import { kimPatientSuggestions, loadKimConnection } from "@/server/kim";
+import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction, syncKimAction } from "./actions";
 
 export const metadata = { title: "Posteingang" };
 
-const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "WhatsApp", sms: "SMS", phone: "Telefon", letter: "Brief", none: "–" };
+const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "WhatsApp", sms: "SMS", phone: "Telefon", letter: "Brief", none: "–", kim: "KIM" };
 
 type Row = { m: typeof messages.$inferSelect; patient: { id: string; number: number; firstName: string | null; lastName: string } | null };
 
-function MessageCard({ row, canWrite }: { row: Row; canWrite: boolean }) {
+function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: boolean; suggestions?: PatientSuggestion[] }) {
   const { m, patient } = row;
   const open = m.status === "new" || m.status === "suggested";
   return (
     <Card>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-        <Badge tone={m.channel === "whatsapp" ? "primary" : m.channel === "email" ? "info" : "neutral"}>{CHANNEL_LABEL[m.channel]}</Badge>
+        <Badge tone={m.channel === "whatsapp" ? "primary" : m.channel === "email" ? "info" : m.channel === "kim" ? "accent" : "neutral"}>{CHANNEL_LABEL[m.channel] ?? m.channel}</Badge>
         <span className="font-semibold">{m.fromAddress ?? "unbekannt"}</span>
         <span className="text-muted">{dateTimeDe(m.receivedAt)}</span>
         {m.status === "suggested" ? <Badge tone="info">Vorschlag bereit</Badge> : null}
@@ -38,10 +41,24 @@ function MessageCard({ row, canWrite }: { row: Row; canWrite: boolean }) {
 
       {open && canWrite ? (
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
+          {!patient && suggestions.length ? (
+            <div className="flex flex-col gap-2 rounded-xl bg-surface-2 p-3">
+              <p className="text-sm font-semibold">Vorschläge zur Zuordnung (bitte prüfen – es wird nichts automatisch zugeordnet)</p>
+              {suggestions.map((sg) => (
+                <ActionForm key={sg.patient.id} action={matchPatientAction} submit={`Nr. ${sg.patient.number} zuordnen`} className="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="id" value={m.id} />
+                  <input type="hidden" name="patientNumber" value={sg.patient.number} />
+                  <span className="text-sm">
+                    Nr. {sg.patient.number} · {[sg.patient.firstName, sg.patient.lastName].filter(Boolean).join(" ")} <span className="text-muted">({sg.reasons.join(", ")})</span>
+                  </span>
+                </ActionForm>
+              ))}
+            </div>
+          ) : null}
           {!patient ? (
             <ActionForm action={matchPatientAction} submit="Zuordnen" className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="id" value={m.id} />
-              <Field label="Kundennummer (leer = automatisch über Absender)"><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
+              <Field label={m.channel === "kim" ? "Kundennummer" : "Kundennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
             </ActionForm>
           ) : null}
           <ActionForm action={suggestReplyAction} submit={m.aiSuggestion ? "Neuen KI-Vorschlag erzeugen" : "KI-Vorschlag erzeugen"} className="flex flex-col gap-2">
@@ -51,7 +68,13 @@ function MessageCard({ row, canWrite }: { row: Row; canWrite: boolean }) {
             <input type="hidden" name="id" value={m.id} />
             <Field
               label="Antwort"
-              hint={m.channel === "whatsapp" || m.channel === "sms" ? "Nur Organisatorisches (Termine) – keine medizinischen Inhalte über WhatsApp/SMS." : "Vor dem Senden prüfen. KI-Vorschläge sind nur Entwürfe."}
+              hint={
+                m.channel === "whatsapp" || m.channel === "sms"
+                  ? "Nur Organisatorisches (Termine) – keine medizinischen Inhalte über WhatsApp/SMS."
+                  : m.channel === "kim"
+                    ? "Antwort per KIM an die absendende Praxis (nur Text). Vor dem Senden prüfen."
+                    : "Vor dem Senden prüfen. KI-Vorschläge sind nur Entwürfe."
+              }
             >
               <Textarea name="body" rows={6} defaultValue={m.aiSuggestion ?? ""} key={m.aiSuggestion ?? "leer"} />
             </Field>
@@ -80,15 +103,30 @@ export default async function InboxPage() {
   const open = rows.filter((r) => r.m.status !== "answered");
   const answered = rows.filter((r) => r.m.status === "answered").slice(0, 30);
   const canWrite = auth.can("messages.write");
+  const kimConn = await loadKimConnection(org);
+  // Zuordnungsvorschläge nur für offene, nicht zugeordnete KIM-Nachrichten (nie automatisch)
+  const kimOpen = open.filter((r) => r.m.channel === "kim" && !r.patient).slice(0, 30);
+  const suggestionMap = new Map(
+    canWrite ? await mapSequential(kimOpen, async (r) => [r.m.id, await kimPatientSuggestions(org, { subject: r.m.subject, body: r.m.body })] as const) : [],
+  );
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader title="Posteingang" subtitle={`${open.length} offen`} />
+      {kimConn && canWrite ? (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface p-4">
+          <ActionForm action={syncKimAction} submit="KIM abrufen" className="flex flex-wrap items-center gap-3">
+            <span className="text-sm">
+              <Badge tone="accent">KIM</Badge> {kimConn.status === "mock" ? "Testmodus: Es werden Beispielnachrichten abgerufen (keine TI-Verbindung)." : "Neue Nachrichten aus dem KIM-Postfach holen."}
+            </span>
+          </ActionForm>
+        </div>
+      ) : null}
       {isMockMode() ? (
         <p className="mb-4 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">Testmodus: Antworten werden gespeichert und protokolliert, aber nicht wirklich versendet.</p>
       ) : null}
       <section className="flex flex-col gap-4">
         <h2 className="font-display text-xl font-semibold">Neu</h2>
-        {open.length ? open.map((r) => <MessageCard key={r.m.id} row={r} canWrite={canWrite} />) : <Empty title="Keine offenen Nachrichten" />}
+        {open.length ? open.map((r) => <MessageCard key={r.m.id} row={r} canWrite={canWrite} suggestions={suggestionMap.get(r.m.id)} />) : <Empty title="Keine offenen Nachrichten" />}
       </section>
       <section className="mt-8 flex flex-col gap-4">
         <h2 className="font-display text-xl font-semibold">Beantwortet</h2>

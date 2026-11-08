@@ -1,30 +1,14 @@
 "use client";
 
+import { Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
+import { FOOT_POINTS } from "@/lib/foot-points";
 
 /**
- * 2D-Fußschema (Aufsicht plantar/dorsal kombiniert) mit antippbaren Punkten.
- * Kürzel angelehnt an die Podologie-Ausbildung: D1–D5 = Zehen, N = Nagel, MT = Metatarsalköpfchen.
- * (3D-Modell ist für Phase 4 geplant.)
+ * 2D-Fußschema (Aufsicht plantar/dorsal kombiniert) mit antippbaren Punkten – schneller Standard.
+ * Vokabular: src/lib/foot-points.ts (gemeinsam mit dem 3D-Modell in src/components/foot3d).
  */
-export const FOOT_POINTS: { id: string; label: string; x: number; y: number }[] = [
-  { id: "N1", label: "Nagel D1", x: 38, y: 22 },
-  { id: "N2", label: "Nagel D2", x: 60, y: 20 },
-  { id: "N3", label: "Nagel D3", x: 76, y: 26 },
-  { id: "N4", label: "Nagel D4", x: 89, y: 35 },
-  { id: "N5", label: "Nagel D5", x: 99, y: 47 },
-  { id: "Z1", label: "Zehe D1 (Kuppe/Gelenk)", x: 40, y: 45 },
-  { id: "Z25", label: "Zehen D2–D5 (Zwischenräume)", x: 78, y: 52 },
-  { id: "MT1", label: "Großzehenballen (MT1)", x: 40, y: 82 },
-  { id: "MT25", label: "Vorfußballen (MT2–4)", x: 68, y: 86 },
-  { id: "MT5", label: "Kleinzehenballen (MT5)", x: 94, y: 90 },
-  { id: "MF", label: "Mittelfuß", x: 66, y: 130 },
-  { id: "LR", label: "Fußaußenrand", x: 92, y: 140 },
-  { id: "FE", label: "Ferse", x: 62, y: 184 },
-  { id: "FR", label: "Fersenrand (Rhagaden)", x: 62, y: 206 },
-];
-
-function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: Set<string>; onToggle: (side: "left" | "right", id: string) => void }) {
+function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: Set<string>; onToggle?: (side: "left" | "right", id: string) => void }) {
   const mirror = side === "left";
   return (
     <figure className="flex flex-col items-center gap-2">
@@ -56,7 +40,7 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
       </svg>
       <figcaption className="text-sm font-semibold">{side === "left" ? "Links" : "Rechts"}</figcaption>
       {/* Zugängliche Bedienung: echte Buttons statt SVG-Klickflächen */}
-      <div className="flex max-w-xs flex-wrap justify-center gap-1.5">
+      {onToggle ? <div className="flex max-w-xs flex-wrap justify-center gap-1.5">
         {FOOT_POINTS.map((p) => {
           const on = selected.has(`${side}:${p.id}`);
           return (
@@ -72,14 +56,15 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
             </button>
           );
         })}
-      </div>
+      </div> : null}
     </figure>
   );
 }
 
-export function FootMap({ value, onChange }: { value: FootPoint[]; onChange: (v: FootPoint[]) => void }) {
+export function FootMap({ value, onChange, readOnly = false }: { value: FootPoint[]; onChange?: (v: FootPoint[]) => void; readOnly?: boolean }) {
   const selected = new Set(value.map((v) => `${v.side}:${v.point}`));
   const toggle = (side: "left" | "right", id: string) => {
+    if (!onChange) return;
     const key = `${side}:${id}`;
     if (selected.has(key)) onChange(value.filter((v) => `${v.side}:${v.point}` !== key));
     else onChange([...value, { side, point: id, label: FOOT_POINTS.find((p) => p.id === id)?.label }]);
@@ -87,27 +72,74 @@ export function FootMap({ value, onChange }: { value: FootPoint[]; onChange: (v:
   return (
     <div>
       <div className="flex flex-wrap justify-center gap-8">
-        <Foot side="right" selected={selected} onToggle={toggle} />
-        <Foot side="left" selected={selected} onToggle={toggle} />
+        <Foot side="right" selected={selected} onToggle={readOnly ? undefined : toggle} />
+        <Foot side="left" selected={selected} onToggle={readOnly ? undefined : toggle} />
       </div>
-      {value.length ? (
-        <ul className="mt-4 flex flex-col gap-2">
-          {value.map((v, i) => (
-            <li key={`${v.side}:${v.point}`} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="w-48 font-semibold">{v.side === "left" ? "Links" : "Rechts"} · {v.label}</span>
-              <input
-                aria-label={`Befund ${v.label}`}
-                className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3"
-                placeholder="Befund an dieser Stelle, z. B. Clavus, Unguis incarnatus"
-                value={v.note ?? ""}
-                onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))}
-              />
-            </li>
-          ))}
-        </ul>
+      {readOnly ? null : value.length ? (
+        <FootPointList value={value} onChange={onChange} />
       ) : (
         <p className="mt-3 text-center text-sm text-muted">Stellen antippen, um Befunde am Fuß zu markieren.</p>
       )}
     </div>
+  );
+}
+
+/**
+ * Liste der Markierungen mit Befundfeld und Entfernen-Knopf – auch die tastaturbedienbare
+ * Alternative zum 3D-Modell. `highlight`/`onSelect`: Markierung im 3D-Modell hervorheben.
+ */
+export function FootPointList({
+  value,
+  onChange,
+  highlight,
+  onSelect,
+}: {
+  value: FootPoint[];
+  onChange?: (v: FootPoint[]) => void;
+  highlight?: number | null;
+  onSelect?: (i: number) => void;
+}) {
+  return (
+    <ol className="mt-4 flex flex-col gap-2">
+      {value.map((v, i) => {
+        const name = `${v.side === "left" ? "Links" : "Rechts"} · ${v.label ?? v.point}`;
+        return (
+          <li key={i} className={`flex flex-wrap items-center gap-2 rounded-xl text-sm ${highlight === i ? "bg-accent-soft p-1.5" : ""}`}>
+            <button
+              type="button"
+              onClick={() => onSelect?.(i)}
+              disabled={!onSelect}
+              className="flex w-52 items-center gap-2 text-left font-semibold disabled:cursor-default"
+              aria-label={onSelect ? `${name} im Modell zeigen` : undefined}
+            >
+              <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs text-on-primary">{i + 1}</span>
+              <span>{name}{v.pos3d ? <span className="ml-1 text-xs font-normal text-muted">(3D)</span> : null}</span>
+            </button>
+            {onChange ? (
+              <>
+                <input
+                  aria-label={`Befund ${name}`}
+                  className="h-10 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3"
+                  placeholder="Befund an dieser Stelle, z. B. Clavus, Unguis incarnatus"
+                  maxLength={500}
+                  value={v.note ?? ""}
+                  onChange={(e) => onChange(value.map((x, j) => (j === i ? { ...x, note: e.target.value } : x)))}
+                />
+                <button
+                  type="button"
+                  aria-label={`Markierung ${i + 1} (${name}) entfernen`}
+                  className="inline-flex size-10 items-center justify-center rounded-lg border border-border bg-surface hover:bg-surface-2"
+                  onClick={() => onChange(value.filter((_, j) => j !== i))}
+                >
+                  <Trash2 size={16} aria-hidden />
+                </button>
+              </>
+            ) : v.note ? (
+              <span className="text-muted">{v.note}</span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ol>
   );
 }

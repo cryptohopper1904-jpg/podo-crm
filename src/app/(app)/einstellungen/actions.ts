@@ -8,7 +8,7 @@ import { db, withOrg } from "@/db";
 import { memberships, organizations, services, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
-import { requireAuth } from "@/lib/auth/session";
+import { requireAuth, revokeUserSessions } from "@/lib/auth/session";
 import { generateTotpSecret, matchTotpStep } from "@/lib/auth/totp";
 import { parseMoney } from "@/lib/format";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
@@ -105,7 +105,9 @@ export async function updateMemberAction(form: FormData) {
     return false;
   });
   if (blocked) redirect("/einstellungen/team?plaetze=voll");
-  await audit({ organizationId: org, userId: auth.user.id, action: "member.update", entity: "membership", entityId: id, meta: { role, active } });
+  // Deaktiviert: laufende Sitzungen der Person in DIESER Praxis sofort beenden (andere Praxen bleiben unberührt)
+  const revokedSessions = m.active && !nextActive ? await revokeUserSessions(m.userId, { organizationId: org }) : 0;
+  await audit({ organizationId: org, userId: auth.user.id, action: "member.update", entity: "membership", entityId: id, meta: { role, active, revokedSessions } });
   revalidatePath("/einstellungen/team");
 }
 
@@ -181,6 +183,8 @@ export async function changePasswordAction(_: SettingsState, form: FormData): Pr
   const p = passwordProblem(next);
   if (p) return { error: p };
   await db.update(users).set({ passwordHash: await hashPassword(next) }).where(eq(users.id, auth.user.id));
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "password.changed" });
+  // Alle anderen Sitzungen beenden (z. B. auf einem verlorenen Gerät); die aktuelle bleibt bestehen
+  const revokedSessions = await revokeUserSessions(auth.user.id, { exceptSessionId: auth.sessionId });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "password.changed", meta: { revokedSessions } });
   return { ok: "Passwort geändert." };
 }

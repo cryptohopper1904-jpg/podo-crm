@@ -1,96 +1,239 @@
 import "server-only";
 import { Readable } from "node:stream";
-import JSZip from "jszip";
-import { eq, inArray } from "drizzle-orm";
+import archiver from "archiver";
+import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { withOrg } from "@/db";
-import { media, memberships, organizations, users } from "@/db/schema";
-import { mediaPath, stripRow, tenantTables, toJson } from "@/lib/practice-export";
-import { readDecrypted } from "@/lib/storage";
+import { media, memberships, organizations, patients, users } from "@/db/schema";
+import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
+import { readDecryptedStream, verifyStored } from "@/lib/storage";
 
 type Row = Record<string, unknown>;
 
-export type PracticeExport = {
-  stream: ReadableStream<Uint8Array>;
+export type ExportSummary = {
   counts: Record<string, number>;
   mediaFiles: number;
   mediaErrors: number;
 };
 
-/**
- * Vollständiger Export einer Praxis als ZIP:
- * - tables/<tabelle>.json für jede Mandanten-Tabelle (über withOrg → RLS), ohne Geheimnisse
- * - tables/organizations.json, tables/users.json (nur Mitglieder, ohne Passwort-Hash/2FA)
- * - media/<Kundennummer>/<Datei> entschlüsselt
- * - README.txt mit Erläuterungen und Aufbewahrungshinweis
- */
-export async function buildPracticeExport(opts: { organizationId: string; exportedBy: { name: string; email: string } }): Promise<PracticeExport> {
-  const org = opts.organizationId;
-  const tables = tenantTables();
+export type PracticeExport = {
+  stream: ReadableStream<Uint8Array>;
+  /** erfüllt, sobald das ZIP vollständig geschrieben ist (Zahlen erst dann bekannt); abgelehnt bei Abbruch/Fehler */
+  done: Promise<ExportSummary>;
+};
 
-  const data = await withOrg(org, async (tx) => {
-    const out: Record<string, Row[]> = {};
-    for (const t of tables) {
-      const orgCol = (t.table as unknown as Record<string, PgColumn>).organizationId;
-      const rows = (await tx
-        .select()
-        .from(t.table as PgTable)
-        .where(eq(orgCol, org))) as Row[];
-      out[t.name] = rows.map((r) => stripRow(r, t.strippedKeys) as Row);
+export type ExportOptions = {
+  organizationId: string;
+  exportedBy: { name: string; email: string };
+  /** Zeilen je Datenbankabfrage (Standard 2.000) */
+  pageSize?: number;
+  /** Medien-Metadaten je Abfrage (Standard 200) */
+  mediaPageSize?: number;
+};
+
+/** JSON wie JSON.stringify(rows, …, 2), aber zeilenweise erzeugt (Datumswerte ISO, BigInt als String). */
+const replacer = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
+const jsonElement = (row: unknown) => "  " + JSON.stringify(row, replacer, 2).split("\n").join("\n  ");
+
+/**
+ * Vollständiger Export einer Praxis als ZIP – STREAMEND, Speicherbedarf unabhängig von der Praxisgröße:
+ * - tables/<tabelle>.json für jede Mandanten-Tabelle (über withOrg → RLS), ohne Geheimnisse,
+ *   seitenweise gelesen (Keyset über id, je Seite eine kurze Transaktion) und als JSON-Array geschrieben
+ * - tables/organizations.json, tables/users.json (nur Mitglieder, ohne Passwort-Hash/2FA)
+ * - media/<Kundennummer>/<Datei> entschlüsselt – eine Datei nach der anderen, als Stream; jede Datei wird
+ *   vorab auf Echtheit (GCM) geprüft, damit eine defekte Datei nicht den ganzen Export abbricht
+ * - README.txt mit Erläuterungen und Aufbewahrungshinweis (am Ende, mit den Zahlen)
+ * Aufbau und Dateinamen sind identisch mit dem bisherigen (JSZip-)Export. ZIP64 bei > 4 GB automatisch.
+ * Im Speicher bleiben nur: eine Tabellenseite, ein Datei-Block und die IDs fehlerhafter Medien.
+ */
+export async function buildPracticeExport(opts: ExportOptions): Promise<PracticeExport> {
+  const org = opts.organizationId;
+  const pageSize = opts.pageSize ?? 2_000;
+  const mediaPageSize = opts.mediaPageSize ?? 200;
+  const archive = archiver("zip", { zlib: { level: 6 } });
+  const out = new Readable().wrap(archive);
+
+  let closed = false;
+  let finished = false;
+  let failure: Error | null = null;
+  const waiters = new Set<{ resolve: () => void; reject: (e: Error) => void }>();
+  const fail = (e: Error) => {
+    failure ??= e;
+    for (const w of waiters) w.reject(failure);
+    waiters.clear();
+  };
+  archive.on("entry", () => {
+    for (const w of waiters) w.resolve();
+    waiters.clear();
+  });
+  archive.on("error", (e) => fail(e));
+  archive.on("warning", (e) => fail(e));
+  // Download abgebrochen (Client weg) → Erzeugung beenden
+  out.on("close", () => {
+    closed = true;
+    if (!finished) {
+      fail(new Error("Export abgebrochen"));
+      archive.abort();
     }
-    const [orgRow] = await tx.select().from(organizations).where(eq(organizations.id, org));
-    const memberIds = (await tx.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.organizationId, org))).map((m) => m.userId);
-    out.users = memberIds.length
-      ? await tx
-          .select({ id: users.id, email: users.email, name: users.name, totpEnabled: users.totpEnabled, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt })
-          .from(users)
-          .where(inArray(users.id, memberIds))
-      : [];
-    // Speicherpfade der Medien werden nur intern gebraucht (nicht exportiert)
-    const mediaKeys = new Map<string, string>();
-    for (const m of await tx.select({ id: media.id, storageKey: media.storageKey }).from(media).where(eq(media.organizationId, org))) mediaKeys.set(m.id, m.storageKey);
-    return { tables: out, org: orgRow, mediaKeys };
   });
 
-  const zip = new JSZip();
-  const patientNumbers = new Map<string, number>();
-  for (const p of data.tables.patients ?? []) patientNumbers.set(p.id as string, p.number as number);
+  /** Ein Eintrag nach dem anderen: erst wenn er fertig im ZIP steht, kommt der nächste (Gegendruck). */
+  const add = (source: Readable | string, data: archiver.ZipEntryData) =>
+    new Promise<void>((resolve, reject) => {
+      if (failure || closed) return reject(failure ?? new Error("Export abgebrochen"));
+      waiters.add({ resolve, reject });
+      archive.append(source, data);
+    });
 
-  // Medien entschlüsseln (nacheinander, um den Speicher zu schonen)
+  const counts: Record<string, number> = {};
+  const mediaErrors = new Set<string>();
   let mediaFiles = 0;
-  const mediaErrors: string[] = [];
-  const mediaRows = data.tables.media ?? [];
-  for (const m of mediaRows) {
-    const key = data.mediaKeys.get(m.id as string);
-    const file = mediaPath(
-      { id: m.id as string, mime: m.mime as string, purpose: String(m.purpose), takenAt: m.takenAt as Date },
-      patientNumbers.get(m.patientId as string),
-    );
-    if (!key) continue;
-    try {
-      const buf = await readDecrypted(key);
-      // Bilder/Audio sind bereits komprimiert
-      zip.file(file, buf, { compression: m.mime === "application/pdf" ? "DEFLATE" : "STORE", date: new Date(m.takenAt as Date) });
-      m.exportFile = file;
-      mediaFiles++;
-    } catch {
-      m.exportFile = null;
-      m.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
-      mediaErrors.push(m.id as string);
+
+  /** Seitenweise alle Zeilen einer Tabelle (Keyset über id), je Seite eine kurze RLS-Transaktion. */
+  async function* pages<T extends Row>(read: (after: unknown, limit: number) => Promise<T[]>, limit: number): AsyncGenerator<T[]> {
+    let after: unknown = undefined;
+    for (;;) {
+      const rows = await read(after, limit);
+      if (rows.length) yield rows;
+      if (rows.length < limit) return;
+      after = rows[rows.length - 1].id;
     }
   }
 
-  const counts: Record<string, number> = {};
-  for (const [name, rows] of Object.entries(data.tables)) {
-    counts[name] = rows.length;
-    zip.file(`tables/${name}.json`, toJson(rows));
-  }
-  zip.file("tables/organizations.json", toJson(data.org ? [data.org] : []));
-  zip.file("README.txt", readme({ orgName: data.org?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors }));
+  const tableReader = (table: PgTable) => {
+    const cols = table as unknown as Record<string, PgColumn>;
+    return (after: unknown, limit: number) =>
+      withOrg(org, async (tx) => {
+        const conds: SQL[] = [eq(cols.organizationId, org)];
+        if (after !== undefined) conds.push(gt(cols.id, after));
+        return (await tx.select().from(table).where(and(...conds)).orderBy(asc(cols.id)).limit(limit)) as Row[];
+      });
+  };
 
-  const node = zip.generateNodeStream({ type: "nodebuffer", streamFiles: true, compression: "DEFLATE", compressionOptions: { level: 6 } });
-  const stream = Readable.toWeb(new Readable().wrap(node)) as ReadableStream<Uint8Array>;
-  return { stream, counts, mediaFiles, mediaErrors: mediaErrors.length };
+  /** JSON-Array einer Tabelle als Stream; `map` darf Zeilen (seitenweise) ergänzen. */
+  function jsonTable(name: string, source: AsyncGenerator<Row[]>, map?: (rows: Row[]) => Promise<Row[]> | Row[]) {
+    counts[name] = 0;
+    return Readable.from(
+      (async function* () {
+        let first = true;
+        for await (const page of source) {
+          const rows = map ? await map(page) : page;
+          const parts: string[] = [];
+          for (const r of rows) {
+            parts.push(jsonElement(r));
+            counts[name]++;
+          }
+          if (!parts.length) continue;
+          yield (first ? "[\n" : ",\n") + parts.join(",\n");
+          first = false;
+        }
+        yield first ? "[]" : "\n]";
+      })(),
+      { objectMode: false },
+    );
+  }
+
+  /** Kundennummern für eine Seite von Medien (nur die benötigten). */
+  const numbersFor = async (patientIds: string[]) => {
+    const ids = [...new Set(patientIds.filter(Boolean))];
+    if (!ids.length) return new Map<string, number>();
+    const rows = await withOrg(org, (tx) =>
+      tx.select({ id: patients.id, number: patients.number }).from(patients).where(and(eq(patients.organizationId, org), inArray(patients.id, ids))),
+    );
+    return new Map(rows.map((r) => [r.id, r.number]));
+  };
+
+  const exportFileOf = (m: Row, numbers: Map<string, number>) =>
+    mediaPath(
+      { id: m.id as string, mime: m.mime as string, purpose: String(m.purpose), takenAt: m.takenAt as Date },
+      numbers.get(m.patientId as string),
+    );
+
+  async function produce() {
+    const tables = tenantTables();
+    const [orgRow] = await withOrg(org, (tx) => tx.select().from(organizations).where(eq(organizations.id, org)));
+
+    // 1) Medien entschlüsseln – eine Datei nach der anderen
+    const mediaCols = { id: media.id, storageKey: media.storageKey, mime: media.mime, purpose: media.purpose, takenAt: media.takenAt, patientId: media.patientId };
+    const mediaPages = pages(
+      (after, limit) =>
+        withOrg(org, (tx) =>
+          tx
+            .select(mediaCols)
+            .from(media)
+            .where(and(eq(media.organizationId, org), after === undefined ? undefined : gt(media.id, after as string)))
+            .orderBy(asc(media.id))
+            .limit(limit),
+        ),
+      mediaPageSize,
+    );
+    for await (const page of mediaPages) {
+      const numbers = await numbersFor(page.map((m) => m.patientId as string));
+      for (const m of page) {
+        if (!m.storageKey) continue;
+        const file = exportFileOf(m, numbers);
+        try {
+          await verifyStored(m.storageKey);
+        } catch {
+          mediaErrors.add(m.id);
+          continue;
+        }
+        // Bilder/Audio sind bereits komprimiert
+        await add(readDecryptedStream(m.storageKey), { name: file, store: m.mime !== "application/pdf", date: new Date(m.takenAt) });
+        mediaFiles++;
+      }
+    }
+
+    // 2) Tabellen (seitenweise)
+    for (const t of tables) {
+      const isMedia = t.name === "media";
+      const source = jsonTable(t.name, pages(tableReader(t.table), pageSize), async (rows) => {
+        const numbers = isMedia ? await numbersFor(rows.map((r) => r.patientId as string)) : null;
+        return rows.map((r) => {
+          const hadFile = isMedia && !!r.storageKey;
+          const clean = stripRow(r, t.strippedKeys) as Row;
+          if (hadFile && numbers) {
+            if (mediaErrors.has(r.id as string)) {
+              clean.exportFile = null;
+              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
+            } else {
+              clean.exportFile = exportFileOf(r, numbers);
+            }
+          }
+          return clean;
+        });
+      });
+      await add(source, { name: `tables/${t.name}.json` });
+    }
+    const memberIds = (
+      await withOrg(org, (tx) => tx.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.organizationId, org)))
+    ).map((m) => m.userId);
+    const userRows = memberIds.length
+      ? await withOrg(org, (tx) =>
+          tx
+            .select({ id: users.id, email: users.email, name: users.name, totpEnabled: users.totpEnabled, lastLoginAt: users.lastLoginAt, createdAt: users.createdAt })
+            .from(users)
+            .where(inArray(users.id, memberIds)),
+        )
+      : [];
+    counts.users = userRows.length;
+    await add(JSON.stringify(userRows, replacer, 2), { name: "tables/users.json" });
+    await add(JSON.stringify(orgRow ? [sanitizeOrganizationRow(orgRow)] : [], replacer, 2), { name: "tables/organizations.json" });
+    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors] }), { name: "README.txt" });
+    await archive.finalize();
+    finished = true;
+    return { counts, mediaFiles, mediaErrors: mediaErrors.size };
+  }
+
+  const done = produce().catch((e: unknown) => {
+    const err = e instanceof Error ? e : new Error(String(e));
+    if (!closed) out.destroy(err);
+    throw err;
+  });
+  // unbehandelte Ablehnung vermeiden, falls niemand auf done wartet
+  done.catch(() => undefined);
+  const stream = Readable.toWeb(out) as ReadableStream<Uint8Array>;
+  return { stream, done };
 }
 
 function readme(p: { orgName: string; exportedBy: { name: string; email: string }; counts: Record<string, number>; mediaFiles: number; mediaErrors: string[] }) {

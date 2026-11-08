@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { isPlanId } from "@/lib/plans";
-import { extendTrial, requirePlatformAdmin, setPracticePlan } from "@/server/platform";
+import { extendTrial, requirePlatformAdmin, setPracticePlan, setVoiceAddon } from "@/server/platform";
 import { enterSupport, exitSupport } from "@/server/support";
 
 export async function setPlanAction(form: FormData) {
@@ -24,6 +24,14 @@ export async function extendTrialAction(form: FormData) {
   revalidatePath("/plattform");
 }
 
+export async function setVoiceAddonAction(form: FormData) {
+  const row = await requirePlatformAdmin();
+  const d = z.object({ organizationId: z.string().uuid(), on: z.enum(["0", "1"]) }).safeParse(Object.fromEntries(form));
+  if (!d.success) redirect("/plattform?fehler=eingabe");
+  await setVoiceAddon(row.user.id, d.data.organizationId, d.data.on === "1");
+  revalidatePath("/plattform");
+}
+
 /** Support-Zugriff starten – nur mit gültiger Freigabe der Praxis (sonst kein Zutritt). */
 export async function enterSupportAction(form: FormData) {
   const row = await requirePlatformAdmin();
@@ -38,6 +46,6 @@ export async function enterSupportAction(form: FormData) {
 export async function exitSupportAction() {
   const row = await getSession();
   if (!row || !row.session.verified) redirect("/login");
-  await exitSupport(row.user.id, row.session.id, row.session.organizationId);
+  if (!(await exitSupport(row.user.id, row.session.id, row.session.organizationId))) redirect("/login");
   redirect(row.user.isPlatformAdmin && row.user.totpEnabled ? "/plattform" : "/heute");
 }
