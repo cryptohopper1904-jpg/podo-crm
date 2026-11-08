@@ -6,6 +6,7 @@ const TABS = [
   ["team", "Team & Rollen"],
   ["leistungen", "Leistungen"],
   ["schnittstellen", "Schnittstellen"],
+  ["erinnerungen", "Erinnerungen"],
   ["import", "Import"],
   ["sicherheit", "Sicherheit"],
   ["protokoll", "Zugriffsprotokoll"],

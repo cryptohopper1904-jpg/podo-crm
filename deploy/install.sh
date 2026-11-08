@@ -37,6 +37,7 @@ DB_APP_PASSWORD=$(rnd)
 BACKUP_PASSPHRASE=$(rnd)
 APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
 SETUP_TOKEN=$(rnd | cut -c1-16)
+CRON_SECRET=$(rnd)
 ALLOW_SIGNUP=false
 INTEGRATIONS_MODE=mock
 SEED_DEMO=$([[ "$TARGET" =~ ^[0-9.]+$ ]] && echo true || echo false)
@@ -44,6 +45,10 @@ LLM_DATA_PROCESSING_APPROVED=false
 TRANSCRIPTION_DATA_PROCESSING_APPROVED=false
 CONF
   chmod 600 "$ENV"
+fi
+# Ältere Installationen: CRON_SECRET für den Erinnerungsdienst nachtragen
+if ! grep -q '^CRON_SECRET=' "$ENV"; then
+  echo "CRON_SECRET=$(openssl rand -base64 32 | tr -d '\n/+=' | cut -c1-40)" >> "$ENV"
 fi
 
 docker compose -f deploy/docker-compose.yml --env-file "$ENV" up -d --build
