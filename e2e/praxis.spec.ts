@@ -49,9 +49,16 @@ test("Kunde anlegen", async () => {
   await page.goto("/kunden/neu");
   await page.getByLabel("Vorname", { exact: true }).fill(firstName);
   await page.getByLabel("Nachname *", { exact: true }).fill(lastName);
-  await page.getByLabel("Mobil", { exact: true }).fill("0151 12345678");
+  await page.getByLabel("Mobil", { exact: true }).fill(`0151 ${String(Date.now()).slice(-8)}`);
   await page.getByLabel("E-Mail", { exact: true }).fill(`erna.${run}@example.org`);
   await page.getByRole("button", { name: "Speichern" }).click();
+  // Dubletten-Hinweis (z. B. bei wiederholtem Lauf gegen dieselbe Datenbank) bewusst übergehen
+  const dup = page.getByLabel("Trotzdem neu anlegen");
+  await expect(page.getByRole("heading", { name: new RegExp(lastName) }).or(dup)).toBeVisible();
+  if (await dup.isVisible()) {
+    await dup.check();
+    await page.getByRole("button", { name: "Speichern" }).click();
+  }
   await expect(page).toHaveURL(/\/kunden\/[0-9a-f-]{36}$/);
   await expect(page.getByRole("heading", { name: new RegExp(lastName) })).toBeVisible();
   patientUrl = new URL(page.url()).pathname;
