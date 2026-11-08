@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Banknote,
   Phone,
   BarChart3,
   Building2,
@@ -40,6 +41,7 @@ export type NavKey =
   | "pflegeheime"
   | "hygiene"
   | "team"
+  | "kasse"
   | "telefon"
   | "plattform";
 
@@ -52,6 +54,7 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "verordnungen", href: "/verordnungen", label: "Verordnungen", icon: ClipboardList },
   { key: "pflegeheime", href: "/pflegeheime", label: "Pflegeheime", icon: Building2 },
   { key: "rechnungen", href: "/rechnungen", label: "Rechnungen", icon: FileText },
+  { key: "kasse", href: "/kasse", label: "Kasse", icon: Banknote },
   { key: "gutscheine", href: "/gutscheine", label: "Gutscheine", icon: Gift },
   { key: "telefon", href: "/telefon", label: "Telefon", icon: Phone },
   { key: "bewertungen", href: "/bewertungen", label: "Bewertungen", icon: Star },

@@ -70,13 +70,11 @@ export async function bookPortalAppointmentAction(_: PortalBookState, form: Form
     const r = await reschedulePortalAppointment(link, { appointmentId, startsAt });
     if (!r.ok) return { error: r.error, phone: r.phone };
     after(() => offerFreedSlotSafe(link.organizationId, r.cancelledId));
-    revalidatePath("/kalender");
-    revalidatePath("/portal");
+    // bewusst kein revalidatePath: die aktuelle Seite (?verschieben=<alter Termin>) würde sonst neu gerendert
+    // und die Erfolgsmeldung durch „Termin nicht gefunden“ ersetzen; /portal und /kalender sind ohnehin dynamisch.
     return { ok: r.message };
   }
   const r = await bookPortalAppointment(link, { serviceId: String(form.get("serviceId") ?? ""), startsAt });
   if (!r.ok) return { error: r.error };
-  revalidatePath("/kalender");
-  revalidatePath("/portal");
   return { ok: r.message };
 }
