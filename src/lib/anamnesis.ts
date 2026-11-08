@@ -215,3 +215,30 @@ export function anamnesisSummary(d: AnamnesisData): [string, string][] {
   ];
   return rows.filter((r): r is [string, string] => !!r[1]);
 }
+
+/**
+ * Vorbelegung der Erstanamnese aus den Risikomerkmalen der Kundenakte.
+ * Verhindert, dass beim ersten Speichern (mit „Risikomerkmale übernehmen“) bekannte Risiken
+ * wie Diabetes oder Blutverdünner versehentlich aus der Akte gelöscht werden.
+ */
+export function initialFromRiskFlags(flags: {
+  diabetes?: boolean;
+  diabetesType?: string;
+  anticoagulation?: boolean;
+  pavk?: boolean;
+  neuropathy?: boolean;
+  mrsa?: boolean;
+  allergies?: string;
+}): Partial<AnamnesisData> {
+  const t = flags.diabetesType ?? "";
+  const diabetesType: AnamnesisData["diabetesType"] = /1/.test(t) ? "1" : /2/.test(t) ? "2" : t ? "other" : undefined;
+  return {
+    diabetes: !!flags.diabetes,
+    diabetesType: flags.diabetes ? diabetesType ?? "unknown" : undefined,
+    anticoagulation: !!flags.anticoagulation,
+    pavk: !!flags.pavk,
+    neuropathy: !!flags.neuropathy,
+    mrsa: !!flags.mrsa,
+    allergies: flags.allergies || undefined,
+  };
+}

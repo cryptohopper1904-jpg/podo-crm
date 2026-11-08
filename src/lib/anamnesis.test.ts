@@ -69,3 +69,15 @@ describe("Risiko-Flags", () => {
     });
   });
 });
+
+import { initialFromRiskFlags } from "./anamnesis";
+describe("Vorbelegung aus Kundenakte", () => {
+  it("übernimmt bekannte Risiken, damit sie nicht gelöscht werden", () => {
+    const i = initialFromRiskFlags({ diabetes: true, diabetesType: "Typ 2", anticoagulation: true, allergies: "Latex" });
+    expect(i.diabetes).toBe(true);
+    expect(i.diabetesType).toBe("2");
+    expect(i.anticoagulation).toBe(true);
+    expect(i.allergies).toBe("Latex");
+    expect(i.pavk).toBe(false);
+  });
+});

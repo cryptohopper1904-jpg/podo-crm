@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
-import { anamnesisSummary } from "@/lib/anamnesis";
+import { anamnesisSummary, initialFromRiskFlags } from "@/lib/anamnesis";
 import { dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { listAnamneses } from "@/server/anamnesis";
 import { revokeLinkAction } from "./actions";
@@ -42,7 +42,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
             <h2 className="font-display text-xl font-semibold">{latest ? "Neue Version (vorausgefüllt mit der letzten Angabe)" : "Erstanamnese"}</h2>
             {data.versions.length ? <Link href={`/kunden/${id}/anamnese`} className="text-sm font-semibold text-primary">Abbrechen</Link> : null}
           </div>
-          <AnamnesisForm patientId={id} initial={latest?.data ?? null} />
+          <AnamnesisForm patientId={id} initial={latest?.data ?? initialFromRiskFlags(data.patient.riskFlags)} />
         </section>
       ) : null}
 
