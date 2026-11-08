@@ -32,6 +32,21 @@
 3. **Fachlich prüfen**: Fotopflichten (`src/lib/rules/brace.ts`) gegen die aktuelle Leistungsbeschreibung § 125, USt-Einstufung deiner Leistungen mit der Steuerberatung, Ausfallhonorar-Text.
 4. **Für echte Schnittstellen**: lexoffice-API-Key, SumUp-Zugang + Reader-ID, Doctolib-Partneranfrage, Google-Business-API-Antrag, SMS-Anbieter, WhatsApp-BSP, EU-KI-Anbieter mit AVV.
 
+
+## Phase 2 (Stand 08.11.2026)
+| Bereich | Umgesetzt |
+|---|---|
+| **Verordnungen (GKV)** | Erfassung inkl. Positionen, Foto der Papierverordnung, Ampeln für Behandlungsbeginn/Frist, Frequenz und verbrauchte Einheiten, Zuzahlung, Statusfluss bis „abrechnungsreif“, Verknüpfung mit der Behandlungsdoku, **Abrechnungslauf mit CSV-Export für ein Abrechnungszentrum** (die § 302-Übermittlung selbst macht der Partner). Regeln versioniert in `src/lib/rules/prescription.ts` – **vor Echtbetrieb fachlich prüfen** |
+| **Anamnese** | Strukturierter Bogen (indikationsabhängig), IWGDF-Risikoklasse, Versionen (unveränderbar), **Online-Anamnese per Einmal-Link** (7 Tage, nur Vorname sichtbar, Einwilligungen werden mit erfasst) |
+| **Pflegeheime** | Heime verwalten, Bewohner zuordnen, Besuchstag mit Schnell-Doku, Sammelrechnung je Monat |
+| **Erinnerungen** | Automatisch 24 h vorher, Rückholung bei Überfälligkeit, Spangen-Kontrolle – nur mit Einwilligung, ohne medizinische Inhalte, ohne Doppelversand; Cron-Container im Docker-Setup |
+| **Rechnungen** | PDF-Erzeugung, Versand per E-Mail, SumUp-Terminal und Zahlungslink direkt aus der Rechnung (Webhook bucht automatisch), TSE-Schnittstelle vorbereitet (fiskaly) |
+| **Kundenportal** | Link für Patient:innen: kommende Termine, offene Rechnungen als PDF, Gutscheine, Absage bis 24 h vorher |
+| **Hygiene & Geräte** | Sterilgut-Chargen (Freigabe endgültig), QR-Etiketten, **Rückverfolgung „wer wurde mit Charge X behandelt“**, Gerätebuch (unveränderbar) mit Wartungs-/Validierungs-/Prüffristen, Tages-Checkliste, Material mit Bestellliste |
+| **Team** | Arbeitszeiten, Urlaub/Krankheit/Fortbildung, Warnung bei Terminen in Abwesenheiten |
+
+Noch offen nach Phase 2: echter SMTP-Versand, fiskaly-Vertrag und DSFinV-K-Export, Vertrag mit einem Abrechnungszentrum, Verordnungs-OCR, Kundenportal-Buchung, Sterilgut-Prüfung direkt im Doku-Formular.
+
 ## Offen / nächste Schritte
 - PDF-Rechnungen (aktuell Druck über den Browser), Rechnungsversand per E-Mail
 - SumUp-Terminalzahlung direkt aus der Rechnung starten (Adapter ist fertig, UI-Knopf fehlt)

@@ -1,3 +1,4 @@
+import { checkBatchUsable } from "@/server/hygiene";
 import "server-only";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
@@ -77,6 +78,18 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
   await lockPatientChain(tx, input.patientId);
   const refError = await checkTreatmentRefs(tx, ctx, input);
   if (refError) throw new RecordInputError(refError);
+  // Gesperrte oder abgelaufene Sterilgut-Chargen dürfen nicht dokumentiert werden.
+  // Unbekannte Chargen bleiben erlaubt (Praxen ohne Hygiene-Modul / Fremdetiketten).
+  if (input.sterileBatchCode) {
+    const batch = await checkBatchUsable(tx, org, input.sterileBatchCode);
+    if (!batch.ok && (batch.reason === "rejected" || batch.reason === "expired")) {
+      throw new RecordInputError(
+        batch.reason === "rejected"
+          ? "Diese Sterilgut-Charge ist gesperrt und darf nicht verwendet werden."
+          : "Diese Sterilgut-Charge ist abgelaufen.",
+      );
+    }
+  }
 
   const [prev] = await tx
     .select({ hash: treatmentRecords.hash })
