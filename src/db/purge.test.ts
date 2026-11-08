@@ -195,7 +195,14 @@ d("Löschlauf gekündigter Praxen", () => {
   it("Unveränderbarkeit und RLS sind danach wieder aktiv", async () => {
     await expect(asOrg(b.org, (c) => c.query("delete from treatment_records where id = $1", [b.record]))).rejects.toThrow(/unveränderbar/);
     await expect(asOrg(b.org, (c) => c.query("update invoices set notes = 'x' where id = $1", [b.invoice]))).rejects.toThrow();
-    await expect(pool.query("delete from audit_log where organization_id = $1", [b.org])).resolves.toMatchObject({ rowCount: 0 });
+    // Nicht-Superuser-Eigentümer: FORCE RLS blendet die Zeilen aus (0 Zeilen). Superuser (z. B. CI-Container)
+    // umgeht RLS – dann muss der Append-only-Trigger greifen. In keinem Fall darf etwas gelöscht werden.
+    const del = await pool.query("delete from audit_log where organization_id = $1", [b.org]).then(
+      (r) => ({ rowCount: r.rowCount, error: null as string | null }),
+      (e: Error) => ({ rowCount: 0, error: e.message }),
+    );
+    expect(del.rowCount).toBe(0);
+    if (del.error) expect(del.error).toMatch(/unveränderbar|nicht gelöscht|append/i);
     const flags = await pool.query("select relforcerowsecurity from pg_class where relname = 'audit_log'");
     expect(flags.rows[0].relforcerowsecurity).toBe(true);
     const disabled = await pool.query(
