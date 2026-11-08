@@ -66,6 +66,19 @@ Noch offen nach Phase 2: echter SMTP-Versand, fiskaly-Vertrag und DSFinV-K-Expor
 - Für den Telefonagenten: Vapi-Konto + AVV mit Vapi, Telefonnummer, Vorlage einfügen.
 - Externer Pentest vor dem ersten fremden Mandanten.
 
+## Phase 4 (Stand 08.11.2026)
+| Bereich | Umgesetzt |
+|---|---|
+| **TI / KIM** | KIM-Anbindung über das KIM-Clientmodul (POP3/SMTP mit TLS), Abruf in den Posteingang (manuell + Cron), Antwort per KIM, Zuordnung zu Kund:innen nur als Vorschlag. Einstellungsseite „TI & KIM“ mit Checkliste (SMC-B, eHBA, Konnektor/TI-Gateway, KIM-Anbieter). Echter Betrieb braucht diese Komponenten – siehe `docs/TI.md` |
+| **eVerordnung** | Import eines FHIR-Bundles (Heilmittel) mit Vorschau → Verordnungsentwurf; doppelte Importe werden abgewiesen. Die Heilmittel-eVerordnung ist laut gematik geplant – Stand vor Echtbetrieb prüfen |
+| **3D-Fuß** | Interaktives 3D-Fußmodell (iPad-tauglich) für Befundmarkierungen, umschaltbar 2D/3D, lädt nur bei Bedarf |
+| **Verordnung per Foto** | KI liest das Muster-13-Foto aus, jedes Feld wird angezeigt und bestätigt, nichts wird ohne „Übernehmen“ gespeichert. Standardmäßig aus; echter Anbieter nur mit AVV-Bestätigung |
+| **KI-Telefon für alle** | Zweiter Anbieter (Retell), Einrichtungs-Assistent, Minutenkontingent je Tarif bzw. Zusatzpaket, Monatsbericht; über dem Kontingent → Rückrufwunsch statt Buchung |
+| **E-Mail** | Echter SMTP-Versand (Praxis-SMTP oder Plattform-Server), nur mit TLS, Testmail-Knopf, Ratenbegrenzung |
+| **Sicherheit** | Support-Freigabe personengebunden, neue Sitzung bei Praxiswechsel, Sperren beenden Sitzungen, Export streamend, `__Host-`-Cookie, externe Reviews mit allen Befunden behoben (`docs/reviews/code/phase4-umsetzung.md`) |
+
+**Online-Test:** `deploy/install-subdomain.sh` installiert PodoCRM neben einem vorhandenen Caddy (z. B. `podo.algoverdict.com`).
+
 ## Offen / nächste Schritte
 - Echter SMTP-Versand, fiskaly-Vertrag + DSFinV-K-Export, Vertrag mit Abrechnungszentrum, Verordnungs-OCR
 - Support-Freigabe an eine bestimmte Person binden (aktuell: alle Betreiber-Admins mit 2FA)

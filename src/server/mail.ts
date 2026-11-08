@@ -15,7 +15,7 @@ import {
   type MailSettings,
   type TransportFactory,
 } from "@/integrations/mail/mail";
-import { assertPublicHost, UnsafeTargetError } from "@/integrations/net-guard";
+import { resolvePublicAddress, UnsafeTargetError } from "@/integrations/net-guard";
 import type { MessagingPort, OutboundMessage } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
@@ -74,15 +74,21 @@ export async function mailSettingsFor(org: string): Promise<MailSettings> {
   });
 }
 
-/** MailPort der Praxis. SMTP-Host der Praxis wird vor jeder Verbindung gegen interne Netze geprüft (SSRF). */
+/**
+ * MailPort der Praxis. Der SMTP-Host der Praxis wird vor jeder Verbindung EINMAL aufgelöst und gegen
+ * interne Netze geprüft (SSRF); nodemailer verbindet danach genau mit dieser geprüften IP (kein
+ * DNS-Rebinding), das TLS-Zertifikat wird weiterhin gegen den Hostnamen geprüft.
+ */
 export async function mailPortFor(org: string): Promise<MailPort> {
   const settings = await mailSettingsFor(org);
   if (settings.kind === "smtp" && settings.source === "org") {
+    let connectAddress: string;
     try {
-      await assertPublicHost(settings.target.host);
+      connectAddress = await resolvePublicAddress(settings.target.host);
     } catch (e) {
       throw new MailSendError(e instanceof UnsafeTargetError ? e.message : "SMTP-Server nicht erlaubt.", "EUNSAFE");
     }
+    return mailAdapterFor(settings, factoryOverride, { connectAddress });
   }
   return mailAdapterFor(settings, factoryOverride);
 }

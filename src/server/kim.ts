@@ -8,6 +8,7 @@ import { describeError } from "@/integrations/test-connection";
 import type { IntegrationConnection, KimInboundMessage, KimPort } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { attachmentNote, extractKimHints, rankSuggestions, type PatientSuggestion } from "@/lib/kim-hints";
+import { mapPool, withTimeout } from "@/lib/pool";
 import { loadConnection, logSync } from "./integrations";
 
 export interface KimSyncResult {
@@ -113,28 +114,43 @@ export async function syncKimInbox(organizationId: string, opts: { adapter?: Kim
   return { fetched: list.length, imported, duplicates, mock: adapter.isMock };
 }
 
+/** Gleichzeitige Praxen je Cron-Lauf und hartes Zeitlimit je Praxis (ein hängendes Clientmodul blockiert keine anderen). */
+export const KIM_SYNC_CONCURRENCY = 5;
+export const KIM_SYNC_TIMEOUT_MS = 60_000;
+
 /**
  * Cron: alle Praxen mit aktiver KIM-Verbindung (Status „verbunden“, „Fehler“ oder „Testmodus“).
  * organizations hat keine RLS; Verbindungen werden je Praxis mit withOrg gelesen.
+ * Höchstens `concurrency` Praxen parallel (jede in eigenen, kurzen Transaktionen), je Praxis `timeoutMs`.
  */
-export async function runKimSyncAll(): Promise<{ organizations: number; imported: number; errors: number }> {
+export async function runKimSyncAll(
+  opts: { concurrency?: number; timeoutMs?: number; sync?: (organizationId: string) => Promise<KimSyncResult | { error: string }> } = {},
+): Promise<{ organizations: number; imported: number; errors: number }> {
+  const sync = opts.sync ?? ((id: string) => syncKimInbox(id));
+  const timeoutMs = opts.timeoutMs ?? KIM_SYNC_TIMEOUT_MS;
   const orgs = await db.select({ id: organizations.id }).from(organizations).where(isNull(organizations.deletionRequestedAt));
   let n = 0;
   let imported = 0;
   let errors = 0;
-  for (const o of orgs) {
-    const conn = await loadConnection(o.id, KIM_CONNECTION_PROVIDER);
-    if (!conn || conn.status === "disconnected") continue;
-    n++;
+  await mapPool(orgs, opts.concurrency ?? KIM_SYNC_CONCURRENCY, async (o) => {
     try {
-      const r = await syncKimInbox(o.id);
-      if ("error" in r) errors++;
-      else imported += r.imported;
+      await withTimeout(
+        (async () => {
+          const conn = await loadConnection(o.id, KIM_CONNECTION_PROVIDER);
+          if (!conn || conn.status === "disconnected") return;
+          n++;
+          const r = await sync(o.id);
+          if ("error" in r) errors++;
+          else imported += r.imported;
+        })(),
+        timeoutMs,
+        "KIM-Abruf: Zeitlimit je Praxis überschritten",
+      );
     } catch (e) {
       errors++;
-      console.error("[cron/kim]", describeError(e));
+      console.error("[cron/kim]", o.id, describeError(e));
     }
-  }
+  });
   return { organizations: n, imported, errors };
 }
 

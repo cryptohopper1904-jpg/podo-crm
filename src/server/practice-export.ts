@@ -5,7 +5,7 @@ import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { withOrg } from "@/db";
 import { media, memberships, organizations, patients, users } from "@/db/schema";
-import { mediaPath, stripRow, tenantTables } from "@/lib/practice-export";
+import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 
 type Row = Record<string, unknown>;
@@ -218,7 +218,7 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       : [];
     counts.users = userRows.length;
     await add(JSON.stringify(userRows, replacer, 2), { name: "tables/users.json" });
-    await add(JSON.stringify(orgRow ? [orgRow] : [], replacer, 2), { name: "tables/organizations.json" });
+    await add(JSON.stringify(orgRow ? [sanitizeOrganizationRow(orgRow)] : [], replacer, 2), { name: "tables/organizations.json" });
     await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors] }), { name: "README.txt" });
     await archive.finalize();
     finished = true;

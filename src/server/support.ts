@@ -106,7 +106,12 @@ export async function revokeSupportGrant(auth: AuthContext, grantId: string) {
 
 const grantee = alias(users, "grantee");
 
+/** Übersicht der Freigaben (inkl. E-Mail-Adressen der Plattform-Admins und Begründungen): nur Inhaber:in
+ *  bzw. wer Praxiseinstellungen verwalten darf – nie der Support selbst. */
 export async function listSupportGrants(auth: AuthContext) {
+  if (auth.support || !(auth.role === "owner" || auth.can("settings.manage"))) {
+    throw new Error("Nur die Praxisinhaberin bzw. der Praxisinhaber kann Support-Zugriff verwalten.");
+  }
   const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx

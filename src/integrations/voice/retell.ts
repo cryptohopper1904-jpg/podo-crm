@@ -10,8 +10,9 @@
  *
  * Echtheit: Header `x-retell-signature` = HMAC-SHA256 über den unveränderten Body mit dem
  * API-Schlüssel der Praxis (Retell-Konto). Aktuelles Format „v=<ms-Zeitstempel>,d=<hex>“ mit
- * HMAC über body + Zeitstempel (Retell-SDK `verify`, max. 5 Minuten Abweichung → kein Replay);
- * älteres Format: reiner Hex-Digest über den Body. Vergleich zeitkonstant, ohne Schlüssel immer false.
+ * HMAC über body + Zeitstempel (Retell-SDK `verify`, max. 5 Minuten Abweichung → kein Replay).
+ * Das ältere Format ohne Zeitstempel (reiner Hex-Digest) wird NICHT akzeptiert (unbegrenzt wiederholbar).
+ * Vergleich zeitkonstant, ohne Schlüssel immer false.
  */
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { VoiceAgentPort, VoiceCallEvent, VoiceToolCall, VoiceToolResult } from "../types";
@@ -45,10 +46,6 @@ export function verifyRetellSignature(rawBody: string | undefined, apiKey: strin
     if (!Number.isFinite(ts) || Math.abs(now - ts) > RETELL_SIGNATURE_TOLERANCE_MS) return false;
     const digest = createHmac("sha256", apiKey).update(rawBody + m[1]).digest("hex");
     return hexEqual(digest, m[2]);
-  }
-  if (/^[0-9a-fA-F]{64}$/.test(sig)) {
-    const digest = createHmac("sha256", apiKey).update(rawBody).digest("hex");
-    return hexEqual(digest, sig);
   }
   return false;
 }

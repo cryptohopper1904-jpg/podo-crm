@@ -14,6 +14,7 @@
  *
  * Fehlermeldungen enthalten NIE Zugangsdaten oder Server-Antworten, nur Fehlercodes.
  */
+import { isIP } from "node:net";
 import nodemailer from "nodemailer";
 import type Mail from "nodemailer/lib/mailer";
 import type SMTPTransport from "nodemailer/lib/smtp-transport";
@@ -145,11 +146,64 @@ export function toMailError(e: unknown): MailSendError {
 // ───────────── Adapter ─────────────
 
 type Transporter = { sendMail(m: Mail.Options): Promise<{ messageId?: string }>; verify(): Promise<unknown> };
-export type TransportFactory = (opts: SMTPTransport.Options | string) => Transporter;
+export type TransportFactory = (opts: SMTPTransport.Options) => Transporter;
 
-const defaultFactory: TransportFactory = (opts) => nodemailer.createTransport(opts as SMTPTransport.Options);
+const defaultFactory: TransportFactory = (opts) => nodemailer.createTransport(opts);
 
 const TIMEOUTS = { connectionTimeout: 15_000, greetingTimeout: 10_000, socketTimeout: 30_000 };
+
+const LOCAL_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const stripBrackets = (h: string) => h.replace(/^\[|\]$/g, "");
+
+export type TransportContext = {
+  /** bereits geprüfte (öffentliche) IP, mit der verbunden wird – kein erneutes DNS (Rebinding-Schutz) */
+  connectAddress?: string;
+  /** Umgebung (Standard: process.env.NODE_ENV) – Klartext nur in Entwicklung zu localhost */
+  nodeEnv?: string;
+};
+
+/** Plattform-SMTP_URL (smtp:// bzw. smtps://) in nodemailer-Optionen zerlegen. */
+export function parseSmtpUrl(raw: string): { host: string; port: number; secure: boolean; user?: string; pass?: string } {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new MailSendError("SMTP_URL ist ungültig (Plattform-Einstellung).", "ECONFIG");
+  }
+  if (u.protocol !== "smtp:" && u.protocol !== "smtps:") throw new MailSendError("SMTP_URL muss mit smtp:// oder smtps:// beginnen.", "ECONFIG");
+  const host = stripBrackets(u.hostname);
+  if (!host) throw new MailSendError("SMTP_URL ohne Server (Plattform-Einstellung).", "ECONFIG");
+  const secure = u.protocol === "smtps:";
+  const port = u.port ? Number(u.port) : secure ? 465 : 587;
+  return { host, port, secure: secure || port === 465, user: u.username ? decodeURIComponent(u.username) : undefined, pass: u.password ? decodeURIComponent(u.password) : undefined };
+}
+
+/**
+ * nodemailer-Optionen (rein, testbar):
+ *  - immer TLS: implizit (465/smtps) oder STARTTLS-Pflicht (requireTLS), mindestens TLS 1.2,
+ *    Zertifikat wird gegen den konfigurierten Hostnamen geprüft (tls.servername)
+ *  - Praxis-SMTP: Verbindung zur vorab geprüften IP (`connectAddress`)
+ *  - Ausnahme nur außerhalb der Produktion für localhost (Mailcatcher in der Entwicklung)
+ */
+export function smtpTransportOptions(settings: Extract<MailSettings, { kind: "smtp" }>, ctx: TransportContext = {}): SMTPTransport.Options {
+  const t =
+    settings.source === "org"
+      ? { host: stripBrackets(settings.target.host), port: settings.target.port, secure: settings.target.secure, user: settings.target.user, pass: settings.target.password }
+      : parseSmtpUrl(settings.url);
+  const nodeEnv = ctx.nodeEnv ?? process.env.NODE_ENV;
+  const devPlain = nodeEnv !== "production" && settings.source === "platform" && LOCAL_DEV_HOSTS.has(t.host.toLowerCase());
+  const servername = isIP(t.host) ? undefined : t.host;
+  return {
+    host: ctx.connectAddress ?? t.host,
+    port: t.port,
+    secure: t.secure,
+    // STARTTLS erzwingen – Gesundheitsbezug, nie im Klartext
+    requireTLS: !t.secure && !devPlain,
+    ...(t.user ? { auth: { user: t.user, pass: t.pass ?? "" } } : {}),
+    tls: { minVersion: "TLSv1.2", rejectUnauthorized: true, ...(servername ? { servername } : {}) },
+    ...TIMEOUTS,
+  };
+}
 
 export class SmtpMailAdapter implements MailPort {
   readonly kind = "smtp" as const;
@@ -159,24 +213,12 @@ export class SmtpMailAdapter implements MailPort {
   private readonly from: string;
   private readonly replyTo: string | null;
 
-  constructor(settings: Extract<MailSettings, { kind: "smtp" }>, factory: TransportFactory = defaultFactory) {
+  constructor(settings: Extract<MailSettings, { kind: "smtp" }>, factory: TransportFactory = defaultFactory, ctx: TransportContext = {}) {
     this.source = settings.source;
     this.from = settings.from;
     this.replyTo = settings.replyTo;
     try {
-      this.transporter =
-        settings.source === "org"
-          ? factory({
-              host: settings.target.host,
-              port: settings.target.port,
-              secure: settings.target.secure,
-              // 587/25: STARTTLS erzwingen – Gesundheitsbezug, nie im Klartext
-              requireTLS: !settings.target.secure,
-              auth: { user: settings.target.user, pass: settings.target.password },
-              tls: { minVersion: "TLSv1.2" },
-              ...TIMEOUTS,
-            })
-          : factory(settings.url);
+      this.transporter = factory(smtpTransportOptions(settings, ctx));
     } catch (e) {
       throw toMailError(e);
     }
@@ -228,8 +270,8 @@ export class MockMailAdapter implements MailPort {
 }
 
 /** Adapter zur Auswahl. `unconfigured` → MailNotConfiguredError. */
-export function mailAdapterFor(settings: MailSettings, factory?: TransportFactory): MailPort {
+export function mailAdapterFor(settings: MailSettings, factory?: TransportFactory, ctx?: TransportContext): MailPort {
   if (settings.kind === "mock") return new MockMailAdapter();
   if (settings.kind === "unconfigured") throw new MailNotConfiguredError(`E-Mail-Versand nicht eingerichtet: ${settings.reason}`);
-  return new SmtpMailAdapter(settings, factory);
+  return new SmtpMailAdapter(settings, factory, ctx);
 }

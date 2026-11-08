@@ -73,4 +73,34 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       if (prev !== undefined) process.env.INTEGRATIONS_MODE = prev;
     }
   });
+  it("Cron: begrenzte Parallelität, hartes Zeitlimit je Praxis – ein hängendes Modul blockiert keine anderen", async () => {
+    const orgs = [await f.org(), await f.org(), await f.org(), await f.org()];
+    for (const o of orgs) await f.asOrg(o, (c) => c.query("insert into integration_connections (organization_id, provider, status) values ($1, 'kim', 'mock')", [o]));
+    const [hang, ...ok] = orgs;
+    let active = 0;
+    let peak = 0;
+    const done = new Set<string>();
+    const t0 = Date.now();
+    const r = await kim.runKimSyncAll({
+      concurrency: 2,
+      timeoutMs: 300,
+      sync: async (id) => {
+        if (id === hang) return new Promise(() => {}); // hängt für immer
+        active++;
+        peak = Math.max(peak, active);
+        try {
+          await new Promise((res) => setTimeout(res, 5));
+          if (orgs.includes(id)) done.add(id);
+          return { fetched: 1, imported: orgs.includes(id) ? 1 : 0, duplicates: 0, mock: true };
+        } finally {
+          active--;
+        }
+      },
+    });
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(peak).toBeLessThanOrEqual(2);
+    expect([...done].sort()).toEqual([...ok].sort());
+    expect(r.errors).toBeGreaterThanOrEqual(1);
+    expect(r.imported).toBeGreaterThanOrEqual(3);
+  });
 });

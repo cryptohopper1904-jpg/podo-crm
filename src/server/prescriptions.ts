@@ -154,11 +154,16 @@ export async function listRunningPrescriptions(auth: AuthContext, statuses: Pres
 /** Herkunft beim Anlegen aus einem Import (eVerordnung) – nur beim Neuanlegen, Bearbeitungen behalten die Herkunft. */
 export type PrescriptionOrigin = { source: "everordnung"; externalRef: string; importData: Record<string, unknown> };
 
+/**
+ * `opts.tx`: in einer bestehenden Transaktion des Aufrufers speichern (z. B. eVerordnung-Import zusammen mit
+ * der Patientenanlage). Dann schreibt diese Funktion KEIN Audit – der Aufrufer ruft nach dem Commit
+ * `afterCommit()` auf. Ohne `tx`: eigene Transaktion, Audit nach dem Commit (wie bisher).
+ */
 export async function savePrescription(
   auth: AuthContext,
   d: PrescriptionInput,
-  opts: { origin?: PrescriptionOrigin } = {},
-): Promise<{ id: string; warnings: string[] } | { error: string }> {
+  opts: { origin?: PrescriptionOrigin; tx?: Tx } = {},
+): Promise<{ id: string; warnings: string[]; afterCommit?: () => Promise<void> } | { error: string }> {
   assertCan(auth, "medical.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
@@ -170,7 +175,7 @@ export async function savePrescription(
   if (d.source === "ocr" && !ocr) return { error: "Die ausgelesenen Daten sind ungültig – bitte erneut auslesen oder manuell erfassen." };
   if (ocr && !d.scanMediaId) return { error: "Zur Auslesung gehört das Foto der Verordnung." };
 
-  const result = await withOrg<{ error: string } | { id: string; warnings: string[]; created: boolean }>(org, async (tx) => {
+  const run = async (tx: Tx): Promise<{ error: string } | { id: string; warnings: string[]; created: boolean }> => {
     const [p] = await tx.select({ id: patients.id, birthDate: patients.birthDate }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, d.patientId)));
     if (!p) return { error: "Kunde nicht gefunden." };
     if (d.scanMediaId) {
@@ -220,9 +225,13 @@ export async function savePrescription(
       .values({ ...values, ...(opts.origin ?? {}), organizationId: org, patientId: d.patientId, status: "open", createdBy: auth.user.id })
       .returning({ id: prescriptions.id });
     return { id: row.id, warnings, created: true };
-  });
+  };
+  const result = opts.tx ? await run(opts.tx) : await withOrg(org, run);
   if ("error" in result) return { error: result.error };
-  await audit({ organizationId: org, userId: auth.user.id, action: result.created ? "prescription.create" : "prescription.update", entity: "prescription", entityId: result.id, meta: { patientId: d.patientId, rulesVersion: RULES_VERSION, source: ocr ? "ocr" : undefined, edited: ocr?.edited } });
+  const writeAudit = () =>
+    audit({ organizationId: org, userId: auth.user.id, action: result.created ? "prescription.create" : "prescription.update", entity: "prescription", entityId: result.id, meta: { patientId: d.patientId, rulesVersion: RULES_VERSION, source: ocr ? "ocr" : undefined, edited: ocr?.edited } });
+  if (opts.tx) return { id: result.id, warnings: result.warnings, afterCommit: writeAudit };
+  await writeAudit();
   return { id: result.id, warnings: result.warnings };
 }
 

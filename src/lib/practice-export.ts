@@ -37,6 +37,26 @@ export function stripRow<T extends Record<string, unknown>>(row: T, keys: readon
   return copy as Partial<T>;
 }
 
+/** Schlüsselnamen in JSON-Einstellungen, die Geheimnisse/Chiffrate enthalten (z. B. settings.ocr.apiKeyEnc). */
+export const SECRET_KEY_RE = /enc$|secret|password|token|api_?key/i;
+
+/** Entfernt rekursiv alle Schlüssel, deren Name nach Geheimnis aussieht (Objekte und Arrays, ohne Mutation). */
+export function stripSecretsDeep(value: unknown, depth = 0): unknown {
+  if (depth > 20) return null;
+  if (Array.isArray(value)) return value.map((v) => stripSecretsDeep(v, depth + 1));
+  if (value && typeof value === "object" && !(value instanceof Date)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) if (!SECRET_KEY_RE.test(k)) out[k] = stripSecretsDeep(v, depth + 1);
+    return out;
+  }
+  return value;
+}
+
+/** Praxis-Stammdaten für den Export: Einstellungen ohne Geheimnisse (OCR-Schlüssel u. Ä.). */
+export function sanitizeOrganizationRow<T extends { settings?: unknown }>(row: T): T {
+  return { ...row, settings: stripSecretsDeep(row.settings ?? {}) };
+}
+
 const EXT: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",

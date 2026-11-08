@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { confirmsPracticeName, deletionDueAt, isWithinGrace, purgeCutoff } from "./org-deletion";
-import { mediaPath, stripRow, tenantTables } from "./practice-export";
+import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "./practice-export";
 
 describe("Praxis-Export", () => {
   it("erfasst alle Mandanten-Tabellen und lässt Technik-Tabellen weg", () => {
@@ -22,6 +22,23 @@ describe("Praxis-Export", () => {
     expect(tables.patient_links).toContain("tokenHash");
     expect(tables.media).toContain("storageKey");
     expect(stripRow({ a: 1, secretEnc: "x" }, ["secretEnc"])).toEqual({ a: 1 });
+  });
+
+  it("entfernt Geheimnisse rekursiv aus den Praxis-Einstellungen (z. B. OCR-Schlüssel)", () => {
+    const row = {
+      id: "o1",
+      name: "Praxis",
+      settings: {
+        ocr: { provider: "openai", apiKeyEnc: "v1:abc", model: "x" },
+        mail: { smtpPassword: "p", nested: [{ accessToken: "t", clientSecret: "s", keep: 1 }] },
+        api_key: "k",
+        reminderDays: 2,
+      },
+    };
+    const clean = sanitizeOrganizationRow(row);
+    expect(clean).toEqual({ id: "o1", name: "Praxis", settings: { ocr: { provider: "openai", model: "x" }, mail: { nested: [{ keep: 1 }] }, reminderDays: 2 } });
+    expect(JSON.stringify(clean)).not.toMatch(/v1:abc|"p"|"t"|"s"|"k"/);
+    expect(row.settings.ocr.apiKeyEnc).toBe("v1:abc"); // Original unverändert
   });
 
   it("baut sichere Dateipfade für Medien", () => {

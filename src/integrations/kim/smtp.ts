@@ -161,13 +161,20 @@ export interface BuildMailInput {
   date?: Date;
 }
 
+/** Kopfzeilenwert ohne CR/LF/Steuerzeichen (gegen Header-Injection), danach RFC 2047. */
+export const sanitizeHeader = (v: string) => encodeHeader(String(v ?? "").replace(/[\r\n\u0000-\u001f\u007f\u2028\u2029]+/g, " "));
+
 export function buildMail(input: BuildMailInput): { raw: string; messageId: string } {
-  const domain = input.domain ?? (input.from.split("@")[1] || "podocrm.local");
+  // Adressen landen ungefiltert in From:/To: – deshalb hier (nicht erst beim Envelope) streng prüfen
+  if (typeof input.from !== "string" || /[\r\n]/.test(input.from) || !isMailAddress(input.from)) throw new SmtpError("Ungültige Absenderadresse in Kopfzeile");
+  if (typeof input.to !== "string" || /[\r\n]/.test(input.to) || !isMailAddress(input.to)) throw new SmtpError("Ungültige Empfängeradresse in Kopfzeile");
+  const fromDomain = input.from.split("@")[1];
+  const domain = input.domain && /^[a-z0-9.-]{1,253}$/i.test(input.domain) ? input.domain : fromDomain || "podocrm.local";
   const messageId = `${randomBytes(12).toString("hex")}@${domain}`;
   const headers = [
     `From: ${input.from}`,
     `To: ${input.to}`,
-    `Subject: ${encodeHeader(input.subject)}`,
+    `Subject: ${sanitizeHeader(input.subject)}`,
     `Date: ${(input.date ?? new Date()).toUTCString().replace("GMT", "+0000")}`,
     `Message-ID: <${messageId}>`,
     "MIME-Version: 1.0",

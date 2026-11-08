@@ -9,7 +9,12 @@
 import type { Duplex } from "node:stream";
 
 export class Pop3Error extends Error {
-  constructor(message: string, readonly response?: string) {
+  /**
+   * `serverReply`: reguläre „-ERR“-Antwort des Servers – die Verbindung ist danach weiter benutzbar.
+   * Alle anderen Fehler (Zeitlimit, Abbruch, Größen-/Zeilenlimit) lassen den Stream in unbekanntem
+   * Zustand zurück → die Verbindung wird sofort geschlossen.
+   */
+  constructor(message: string, readonly response?: string, readonly serverReply = false) {
     super(message);
     this.name = "Pop3Error";
   }
@@ -63,11 +68,17 @@ class LineReader {
 
   private wait(timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Pop3Error("Zeitüberschreitung beim POP3-Server")), timeoutMs);
-      this.waiters.push(() => {
+      const waiter = () => {
         clearTimeout(t);
         resolve();
-      });
+      };
+      const t = setTimeout(() => {
+        // abgelaufenen Waiter entfernen und Verbindung hart schließen
+        this.waiters = this.waiters.filter((w) => w !== waiter);
+        this.stream.destroy();
+        reject(new Pop3Error("Zeitüberschreitung beim POP3-Server"));
+      }, timeoutMs);
+      this.waiters.push(waiter);
     });
   }
 
@@ -127,24 +138,50 @@ export class Pop3Client {
     const line = await this.reader!.line(this.timeoutMs);
     if (line.startsWith("+OK")) return line.slice(3).trim();
     // Fehlertext des Servers nicht weiterreichen (kann Benutzernamen enthalten) – nur kurz
-    throw new Pop3Error("POP3-Server meldet einen Fehler", line.slice(0, 120));
+    throw new Pop3Error("POP3-Server meldet einen Fehler", line.slice(0, 120), true);
+  }
+
+  /** Führt eine Operation aus; bei jedem Transportfehler (nicht bei „-ERR“) wird die Verbindung geschlossen. */
+  private async guarded<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!(e instanceof Pop3Error && e.serverReply)) this.close();
+      throw e;
+    }
   }
 
   private async command(cmd: string): Promise<string> {
-    if (/[\r\n]/.test(cmd)) throw new Pop3Error("Ungültiges Zeichen im POP3-Befehl");
-    this.stream!.write(`${cmd}\r\n`);
-    return this.status();
+    if (/[\r\n]/.test(cmd)) throw new Pop3Error("Ungültiges Zeichen im POP3-Befehl", undefined, true);
+    if (!this.stream || !this.reader) throw new Pop3Error("Keine POP3-Verbindung");
+    const stream = this.stream;
+    return this.guarded(async () => {
+      stream.write(`${cmd}\r\n`);
+      return this.status();
+    });
+  }
+
+  private multiline(maxBytes: number): Promise<Buffer> {
+    if (!this.reader) return Promise.reject(new Pop3Error("Keine POP3-Verbindung"));
+    const reader = this.reader;
+    return this.guarded(() => reader.multiline(this.timeoutMs, maxBytes));
   }
 
   async connect(): Promise<void> {
-    this.stream = await this.opts.connect();
-    this.reader = new LineReader(this.stream);
-    await this.status(); // Begrüßung
-    await this.command(`USER ${this.opts.user}`);
     try {
-      await this.command(`PASS ${this.opts.password}`);
+      this.stream = await this.opts.connect();
+      this.reader = new LineReader(this.stream);
+      await this.status(); // Begrüßung
+      await this.command(`USER ${this.opts.user}`);
+      try {
+        await this.command(`PASS ${this.opts.password}`);
+      } catch (e) {
+        throw new Pop3Error("POP3-Anmeldung fehlgeschlagen", e instanceof Pop3Error ? e.response : undefined);
+      }
     } catch (e) {
-      throw new Pop3Error("POP3-Anmeldung fehlgeschlagen", e instanceof Pop3Error ? e.response : undefined);
+      // jede Störung beim Verbindungsaufbau/Anmelden → Socket schließen
+      this.close();
+      throw e;
     }
   }
 
@@ -162,7 +199,7 @@ export class Pop3Client {
     } catch {
       return null;
     }
-    const raw = (await this.reader!.multiline(this.timeoutMs, 1024 * 1024)).toString("latin1");
+    const raw = (await this.multiline(1024 * 1024)).toString("latin1");
     const map = new Map<number, string>();
     for (const line of raw.split(/\r\n/)) {
       const m = line.match(/^(\d+)\s+(\S+)$/);
@@ -174,7 +211,7 @@ export class Pop3Client {
   async retr(n: number): Promise<Buffer> {
     if (!Number.isInteger(n) || n < 1) throw new Pop3Error("Ungültige Nachrichtennummer");
     await this.command(`RETR ${n}`);
-    return this.reader!.multiline(this.timeoutMs, this.maxMessageBytes);
+    return this.multiline(this.maxMessageBytes);
   }
 
   async dele(n: number): Promise<void> {
@@ -195,5 +232,11 @@ export class Pop3Client {
   close() {
     this.stream?.destroy();
     this.stream = null;
+    this.reader = null;
+  }
+
+  /** nur für Tests: ist noch ein Stream offen? */
+  get isOpen(): boolean {
+    return this.stream !== null;
   }
 }

@@ -8,7 +8,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import type { Duplex } from "node:stream";
-import { assertSafeHostSyntax, isPrivateIp, UnsafeTargetError, type Resolver } from "../net-guard";
+import { isPrivateIp, resolvePublicAddress, UnsafeTargetError, type Resolver } from "../net-guard";
 
 const defaultResolver: Resolver = (host) => lookup(host, { all: true, verbatim: true });
 
@@ -25,18 +25,12 @@ export function assertKimPort(port: number): void {
   if (port !== 995 && port !== 465 && port < 1024) throw new UnsafeTargetError("Port nicht erlaubt (995, 465 oder ≥ 1024).");
 }
 
+/** Geprüfte öffentliche IP für den Host (IP-Literale werden ebenfalls gegen private Bereiche geprüft). */
 export async function resolvePublic(host: string, resolve: Resolver = defaultResolver): Promise<string> {
-  assertSafeHostSyntax(host);
-  const h = host.replace(/^\[|\]$/g, "");
-  if (isIP(h)) return h;
-  let addrs: { address: string }[];
-  try {
-    addrs = await resolve(h);
-  } catch {
-    throw new UnsafeTargetError("Host konnte nicht aufgelöst werden.");
-  }
-  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new UnsafeTargetError("Host zeigt auf eine private oder lokale Adresse.");
-  return addrs[0].address;
+  const ip = await resolvePublicAddress(host, resolve);
+  // doppelte Absicherung: auch das Ergebnis selbst nochmals prüfen
+  if (isPrivateIp(ip)) throw new UnsafeTargetError("Private oder lokale Adresse nicht erlaubt.");
+  return ip;
 }
 
 export function tlsConnector(target: TlsTarget): () => Promise<Duplex> {
@@ -47,7 +41,7 @@ export function tlsConnector(target: TlsTarget): () => Promise<Duplex> {
       const socket = tlsConnect({
         host: ip,
         port: target.port,
-        servername: isIP(target.host) ? undefined : target.host,
+        servername: isIP(target.host.replace(/^\[|\]$/g, "")) ? undefined : target.host,
         rejectUnauthorized: true,
         minVersion: "TLSv1.2",
         timeout: target.timeoutMs ?? 20_000,

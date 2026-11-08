@@ -15,9 +15,10 @@ describe("Retell: x-retell-signature (HMAC-SHA256, fail closed)", () => {
     expect(verifyRetellSignature(body, KEY, signRetellBody(body, KEY, NOW), NOW)).toBe(true);
   });
 
-  it("älteres Format (reiner Hex-Digest über den Body) wird akzeptiert", () => {
+  it("älteres Format ohne Zeitstempel (reiner Hex-Digest) wird abgelehnt – kein unbegrenzter Replay", () => {
     const legacy = createHmac("sha256", KEY).update(body).digest("hex");
-    expect(verifyRetellSignature(body, KEY, legacy, NOW)).toBe(true);
+    expect(verifyRetellSignature(body, KEY, legacy, NOW)).toBe(false);
+    expect(verifyRetellSignature(body, KEY, `d=${legacy}`, NOW)).toBe(false);
   });
 
   it("veränderter Body, falscher Schlüssel, manipulierter Digest oder Zeitstempel → abgelehnt", () => {

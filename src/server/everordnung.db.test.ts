@@ -90,4 +90,29 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
     expect(vo).toEqual({ diagnosis_group: "UI2", urgent: true, home_visit: true, units: 4 });
     await expect(evo.previewEverordnung(authFor(org, user, () => false), bundle("hmv-ui-minimal.json"))).rejects.toThrow(/Berechtigung/);
   });
+  it("Neuanlage ist atomar: parallele Importe mit „neu anlegen“ hinterlassen genau eine Person und eine Verordnung", async () => {
+    const org = await f.org();
+    const user = await f.user();
+    const auth = authFor(org, user);
+    const results = await Promise.all([1, 2, 3].map(() => evo.importEverordnung(auth, bundle("hmv-ui-minimal.json"), { createPatient: true })));
+    expect(results.filter((r) => "id" in r)).toHaveLength(1);
+    const counts = (await f.asOrg(org, (c) => c.query("select (select count(*)::int from patients where organization_id = $1) as p, (select count(*)::int from prescriptions where organization_id = $1) as v", [org]))).rows[0];
+    expect(counts).toEqual({ p: 1, v: 1 });
+    // Fehler nach der Personenanlage (z. B. Dublette) → keine zusätzliche Person
+    expect(await evo.importEverordnung(auth, bundle("hmv-ui-minimal.json"), { createPatient: true })).toEqual({ error: "Diese eVerordnung wurde bereits importiert." });
+    expect((await f.asOrg(org, (c) => c.query("select count(*)::int as n from patients where organization_id = $1", [org]))).rows[0].n).toBe(1);
+  });
+
+  it("Kandidatensuche: Nachname wird exakt (ohne LIKE-Platzhalter) verglichen", async () => {
+    const org = await f.org();
+    const user = await f.user();
+    const p = await f.patient(org, { lastName: "Anders" });
+    await f.asOrg(org, (c) => c.query("update patients set birth_date = '1948-06-15' where id = $1", [p]));
+    const evil = bundle("hmv-ui-minimal.json").replace('"family": "Mustermann"', '"family": "%"').replace('"text": "Max Mustermann"', '"text": "Max %"');
+    const pre = await evo.previewEverordnung(authFor(org, user), evil);
+    if ("error" in pre) throw new Error(pre.error);
+    expect(pre.candidates).toEqual([]);
+    const ok = await evo.previewEverordnung(authFor(org, user), bundle("hmv-ui-minimal.json").replace(/Mustermann/g, "ANDERS"));
+    expect("candidates" in ok && ok.candidates.map((c) => c.id)).toEqual([p]);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertPublicHost, assertPublicUrl, assertSafeUrlSyntax, guardedFetch, isPrivateIp, UnsafeTargetError } from "./net-guard";
+import { assertPublicHost, assertPublicUrl, assertSafeUrlSyntax, guardedFetch, isPrivateIp, resolvePublicAddress, UnsafeTargetError } from "./net-guard";
 
 const resolveTo = (...ips: string[]) => async () => ips.map((address) => ({ address }));
 
@@ -9,6 +9,11 @@ describe("net-guard (SSRF)", () => {
       expect(isPrivateIp(ip), ip).toBe(true);
     }
     for (const ip of ["8.8.8.8", "172.32.0.1", "1.1.1.1", "2a00:1450:4001::1"]) expect(isPrivateIp(ip), ip).toBe(false);
+    // ausgeschriebene/ungekürzte IPv6-Formen, Zonen-IDs, gemappte und eingebettete IPv4
+    for (const ip of ["0:0:0:0:0:0:0:1", "0000:0000:0000:0000:0000:0000:0000:0001", "[::1]", "fe80::1%eth0", "febf::1", "fc00::1", "FD12:3456::1", "::ffff:10.0.0.1", "0:0:0:0:0:ffff:a9fe:a9fe", "::ffff:169.254.169.254", "::127.0.0.1", "2002:7f00:1::", "64:ff9b::a00:1", "ff02::1"]) {
+      expect(isPrivateIp(ip), ip).toBe(true);
+    }
+    for (const ip of ["::ffff:8.8.8.8", "2001:4860:4860::8888"]) expect(isPrivateIp(ip), ip).toBe(false);
   });
 
   it("prüft URL-Syntax", () => {
@@ -32,5 +37,19 @@ describe("net-guard (SSRF)", () => {
     expect(calls[0].redirect).toBe("error");
     const g = guardedFetch(async () => new Response("ok"), resolveTo("127.0.0.1"));
     await expect(g("https://rebind.example.com/a")).rejects.toThrow(UnsafeTargetError);
+  });
+});
+
+describe("resolvePublicAddress (eine Auflösung, geprüfte IP)", () => {
+  it("IP-Literale werden geprüft, Hostnamen genau einmal aufgelöst", async () => {
+    for (const h of ["127.0.0.1", "::1", "[::1]", "169.254.169.254", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "0:0:0:0:0:0:0:1"]) {
+      await expect(resolvePublicAddress(h, async () => [{ address: "93.184.216.34" }]), h).rejects.toBeInstanceOf(UnsafeTargetError);
+    }
+    expect(await resolvePublicAddress("93.184.216.34")).toBe("93.184.216.34");
+    let calls = 0;
+    const resolver = async () => (calls++, [{ address: "93.184.216.34" }, { address: "2a00:1450:4001::1" }]);
+    expect(await resolvePublicAddress("smtp.example.org", resolver)).toBe("93.184.216.34");
+    expect(calls).toBe(1);
+    await expect(resolvePublicAddress("smtp.example.org", async () => [{ address: "93.184.216.34" }, { address: "10.0.0.1" }])).rejects.toThrow(/private/);
   });
 });

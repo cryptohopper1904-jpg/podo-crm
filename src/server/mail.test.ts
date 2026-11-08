@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   conn: null as null | { status: string; config: Record<string, unknown>; secretEnc: string | null },
   audits: [] as { action: string; meta?: Record<string, unknown> }[],
   sync: [] as { ok: boolean; message?: string }[],
+  resolved: [] as string[],
 }));
 
 vi.mock("@/db", () => ({
@@ -25,8 +26,10 @@ vi.mock("@/lib/audit", () => ({
 vi.mock("@/lib/secrets", () => ({ decryptSecret: (s: string) => s }));
 vi.mock("@/integrations/net-guard", () => ({
   UnsafeTargetError: class extends Error {},
-  assertPublicHost: async (h: string) => {
+  resolvePublicAddress: async (h: string) => {
+    state.resolved.push(h);
     if (h === "127.0.0.1") throw new Error("intern");
+    return "93.184.216.34";
   },
 }));
 
@@ -68,6 +71,19 @@ describe("server/mail", () => {
     process.env.INTEGRATIONS_MODE = "mock";
     state.conn = connected();
     expect(await mailPortFor("org-1")).toBeInstanceOf(MockMailAdapter);
+  });
+
+  it("Praxis-SMTP: Host wird einmal aufgelöst, nodemailer verbindet mit der geprüften IP (DNS-Rebinding)", async () => {
+    const opts: unknown[] = [];
+    _setTransportFactory((o) => {
+      opts.push(o);
+      return { sendMail: async () => ({ messageId: "<1@x>" }), verify: async () => true };
+    });
+    state.resolved = [];
+    state.conn = connected();
+    await mailPortFor("org-1");
+    expect(state.resolved).toEqual(["smtp.example.org"]);
+    expect(opts[0]).toMatchObject({ host: "93.184.216.34", requireTLS: true, tls: { servername: "smtp.example.org", minVersion: "TLSv1.2" } });
   });
 
   it("interner SMTP-Host der Praxis wird abgelehnt (SSRF)", async () => {

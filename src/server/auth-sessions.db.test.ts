@@ -336,5 +336,17 @@ const redirectOf = async (p: Promise<unknown>) => {
       expect(legacy.g.granteeUserId).toBeNull();
       expect(legacy.granteeName).toBeNull();
     });
+
+    it("Übersicht der Freigaben nur für Inhaber:in bzw. settings.manage, nie für den Support", async () => {
+      const org = await activeOrg();
+      const owner = await f.user();
+      await member(org, owner);
+      const staff = { role: "staff", support: null, organization: { id: org }, user: { id: owner }, can: () => false } as unknown as import("@/lib/auth/session").AuthContext;
+      await expect(support.listSupportGrants(staff)).rejects.toThrow(/Praxisinhaber/);
+      const supportAuth = { role: "owner", support: { grantId: "x", scope: "write" }, organization: { id: org }, user: { id: owner }, can: () => true } as unknown as import("@/lib/auth/session").AuthContext;
+      await expect(support.listSupportGrants(supportAuth)).rejects.toThrow(/Praxisinhaber/);
+      const manager = { role: "admin", support: null, organization: { id: org }, user: { id: owner }, can: (p: string) => p === "settings.manage" } as unknown as import("@/lib/auth/session").AuthContext;
+      await expect(support.listSupportGrants(manager)).resolves.toEqual([]);
+    });
   });
 });

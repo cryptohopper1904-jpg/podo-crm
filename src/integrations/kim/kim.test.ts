@@ -195,6 +195,38 @@ describe("POP3-Client (In-Memory-Server)", () => {
     const inj = new Pop3Client({ connect: fakePop3([]).connect, user: "praxis\r\nDELE 1", password: "geheim" });
     await expect(inj.connect()).rejects.toThrow(/Ungültiges Zeichen/);
   });
+
+  it("Socket wird bei jedem Fehler/Zeitlimit in connect und Befehlen geschlossen", async () => {
+    const streams: Duplex[] = [];
+    const track = (connect: () => Promise<Duplex>) => async () => {
+      const d = await connect();
+      streams.push(d);
+      return d;
+    };
+    // Zeitlimit bei der Begrüßung
+    const silent = new Pop3Client({ connect: track(async () => new Duplex({ read() {}, write(_c, _e, cb) { cb(); } })), user: "x", password: "y", timeoutMs: 20 });
+    await expect(silent.connect()).rejects.toThrow(/Zeitüberschreitung/);
+    expect(streams.at(-1)!.destroyed).toBe(true);
+    expect(silent.isOpen).toBe(false);
+    // falsches Passwort
+    const wrong = new Pop3Client({ connect: track(fakePop3([], { password: "anders" }).connect), user: "praxis", password: "geheim" });
+    await expect(wrong.connect()).rejects.toThrow(/Anmeldung/);
+    expect(streams.at(-1)!.destroyed).toBe(true);
+    // Größenlimit beim Abruf → Stream in unbekanntem Zustand → geschlossen
+    const big = new Pop3Client({ connect: track(fakePop3([ARZTBRIEF]).connect), user: "praxis", password: "geheim", maxMessageBytes: 100 });
+    await big.connect();
+    await expect(big.retr(1)).rejects.toThrow(/zu groß/);
+    expect(streams.at(-1)!.destroyed).toBe(true);
+    await expect(big.stat()).rejects.toThrow(/Keine POP3-Verbindung/);
+    // reguläre „-ERR“-Antwort (UIDL nicht unterstützt) lässt die Verbindung offen
+    const noUidl = new Pop3Client({ connect: track(fakePop3([mail2], { noUidl: true }).connect), user: "praxis", password: "geheim" });
+    await noUidl.connect();
+    expect(await noUidl.uidl()).toBeNull();
+    expect(noUidl.isOpen).toBe(true);
+    expect(await noUidl.stat()).toMatchObject({ count: 1 });
+    await noUidl.quit();
+    expect(streams.at(-1)!.destroyed).toBe(true);
+  });
 });
 
 describe("KIM-Adapter", () => {
@@ -311,10 +343,28 @@ describe("SMTP-Client (In-Memory-Server)", () => {
   });
 });
 
+describe("buildMail: Header-Injection", () => {
+  it("lehnt Adressen mit CR/LF oder ungültige Adressen ab und bereinigt den Betreff", () => {
+    const base = { from: "praxis@kim.example", to: "arzt@kim.example", subject: "Befund", text: "x" };
+    expect(() => buildMail({ ...base, from: "praxis@kim.example\r\nBcc: evil@x.de" })).toThrow(/Absenderadresse/);
+    expect(() => buildMail({ ...base, to: "arzt@kim.example\nBcc: evil@x.de" })).toThrow(/Empfängeradresse/);
+    expect(() => buildMail({ ...base, to: "kein-adresse" })).toThrow(/Empfängeradresse/);
+    const { raw } = buildMail({ ...base, subject: "Befund\r\nBcc: evil@x.de\r\n\r\nKörper" });
+    const head = raw.split("\r\n\r\n")[0];
+    expect(head).not.toMatch(/^Bcc:/m);
+    expect(head.split("\r\n").filter((l) => l.startsWith("Subject:"))).toHaveLength(1);
+  });
+});
+
 describe("Netz: SSRF-Schutz für KIM-Hosts", () => {
   it("nur öffentliche Ziele und erlaubte Ports", async () => {
     await expect(resolvePublic("kim.example.com", async () => [{ address: "10.0.0.5" }])).rejects.toThrow(/private/);
     await expect(resolvePublic("localhost")).rejects.toThrow();
+    // IP-Literale werden ebenfalls geprüft (kein Umgehen der DNS-Prüfung)
+    for (const ip of ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1", "[::1]", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "0:0:0:0:0:0:0:1"]) {
+      await expect(resolvePublic(ip), ip).rejects.toThrow();
+    }
+    expect(await resolvePublic("93.184.216.34")).toBe("93.184.216.34");
     expect(await resolvePublic("kim.example.com", async () => [{ address: "93.184.216.34" }])).toBe("93.184.216.34");
     expect(() => assertKimPort(25)).toThrow();
     expect(() => assertKimPort(995)).not.toThrow();

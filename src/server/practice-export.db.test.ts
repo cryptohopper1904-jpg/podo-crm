@@ -101,6 +101,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     tampered[tampered.length - 1] ^= 0xff;
     files.set(brokenKey, tampered);
 
+    await f.pool.query(`update organizations set settings = '{"ocr":{"provider":"openai","apiKeyEnc":"v1:GEHEIM-CHIFFRAT"},"reminderDays":2}'::jsonb where id = $1`, [org]);
+
     stats.peak = 0;
     stats.opened = 0;
     stats.wholeReads = 0;
@@ -120,6 +122,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(names).toContain("README.txt");
     expect(names).toContain("tables/organizations.json");
     expect(names).toContain("tables/users.json");
+    const orgText = await zip.file("tables/organizations.json")!.async("string");
+    expect(orgText).not.toContain("GEHEIM-CHIFFRAT");
+    expect(orgText).not.toContain("apiKeyEnc");
+    expect(JSON.parse(orgText)[0].settings).toEqual({ ocr: { provider: "openai" }, reminderDays: 2 });
     for (const t of lib.tenantTables()) expect(names).toContain(`tables/${t.name}.json`);
     expect(names.filter((n) => n.startsWith("media/"))).toHaveLength(MEDIA - 1);
 

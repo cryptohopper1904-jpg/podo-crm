@@ -1,6 +1,6 @@
 /** MailPort: Auswahl des Adapters, SMTP-Adapter mit gemocktem nodemailer-Transport, sichere Fehlermeldungen. */
 import { describe, expect, it, vi } from "vitest";
-import { mailAdapterFor, MailNotConfiguredError, MailSendError, MockMailAdapter, resolveMailSettings, SmtpMailAdapter, toMailError, type TransportFactory } from "./mail";
+import { mailAdapterFor, MailNotConfiguredError, MailSendError, MockMailAdapter, parseSmtpUrl, resolveMailSettings, SmtpMailAdapter, smtpTransportOptions, toMailError, type TransportFactory } from "./mail";
 
 const practice = { name: "Testpraxis Fuß", email: "info@praxis.example" };
 const PASSWORD = "geheim-Passwort-123";
@@ -75,12 +75,25 @@ describe("SmtpMailAdapter (nodemailer gemockt)", () => {
     expect([...att.content]).toEqual([1, 2, 3]);
   });
 
-  it("Plattform-SMTP: Transport aus SMTP_URL", () => {
+  it("Praxis-SMTP: Verbindung zur geprüften IP, Zertifikat/SNI gegen den Hostnamen", () => {
     const t = fakeTransport();
-    const s = resolveMailSettings({ connection: null, env: { SMTP_URL: "smtp://mail.example", SMTP_FROM: "noreply@example.org" }, practice });
+    mailAdapterFor(orgSettings, t.factory, { connectAddress: "93.184.216.34" });
+    expect(t.opts[0]).toMatchObject({ host: "93.184.216.34", port: 587, requireTLS: true, tls: { minVersion: "TLSv1.2", servername: "smtp.example.org", rejectUnauthorized: true } });
+  });
+
+  it("Plattform-SMTP: SMTP_URL zerlegt, TLS-Pflicht (STARTTLS bzw. implizit) und TLS ≥ 1.2", () => {
+    const t = fakeTransport();
+    const s = resolveMailSettings({ connection: null, env: { SMTP_URL: "smtp://user%40x:p%3Ass@mail.example.org:2525", SMTP_FROM: "noreply@example.org" }, practice });
     if (s.kind !== "smtp") throw new Error();
     mailAdapterFor(s, t.factory);
-    expect(t.opts[0]).toBe("smtp://mail.example");
+    expect(t.opts[0]).toMatchObject({ host: "mail.example.org", port: 2525, secure: false, requireTLS: true, auth: { user: "user@x", pass: "p:ss" }, tls: { minVersion: "TLSv1.2", servername: "mail.example.org" } });
+    expect(parseSmtpUrl("smtps://mail.example.org")).toMatchObject({ port: 465, secure: true });
+    expect(() => parseSmtpUrl("http://mail.example.org")).toThrow(MailSendError);
+    const platform = (url: string) => ({ kind: "smtp" as const, source: "platform" as const, url, from: "a@b.de", replyTo: null });
+    // Klartext nur in Entwicklung zu localhost (Mailcatcher) – nie in Produktion
+    expect(smtpTransportOptions(platform("smtp://localhost:1025"), { nodeEnv: "development" }).requireTLS).toBe(false);
+    expect(smtpTransportOptions(platform("smtp://localhost:1025"), { nodeEnv: "production" }).requireTLS).toBe(true);
+    expect(smtpTransportOptions(platform("smtp://mail.example.org"), { nodeEnv: "development" }).requireTLS).toBe(true);
   });
 
   it("Fehler werden zu sicheren Meldungen – nie mit Passwort oder Server-Antwort", async () => {
