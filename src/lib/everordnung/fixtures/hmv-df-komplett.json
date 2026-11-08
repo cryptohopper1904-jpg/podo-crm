@@ -1,0 +1,100 @@
+{
+  "resourceType": "Bundle",
+  "id": "a1b2c3d4-0000-4000-8000-000000000001",
+  "meta": { "profile": ["https://fhir.kbv.de/StructureDefinition/KBV_PR_HMV_Bundle|0.9-beispiel"] },
+  "identifier": { "system": "https://gematik.de/fhir/NamingSystem/PrescriptionID", "value": "170.000.000.000.001.01" },
+  "type": "document",
+  "timestamp": "2026-10-28T09:30:00+01:00",
+  "entry": [
+    {
+      "fullUrl": "https://pvs.beispiel.example/Composition/c1",
+      "resource": { "resourceType": "Composition", "id": "c1", "status": "final", "date": "2026-10-28T09:30:00+01:00", "title": "Heilmittelverordnung (Testdaten)" }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/ServiceRequest/sr1",
+      "resource": {
+        "resourceType": "ServiceRequest",
+        "id": "sr1",
+        "status": "active",
+        "intent": "order",
+        "authoredOn": "2026-10-28",
+        "subject": { "reference": "Patient/p1" },
+        "requester": { "reference": "Practitioner/pr1" },
+        "category": [{ "coding": [{ "system": "https://fhir.kbv.de/CodeSystem/KBV_CS_HMV_Heilmittelbereich", "code": "PODO", "display": "Podologische Therapie" }] }],
+        "code": { "coding": [{ "system": "https://fhir.kbv.de/CodeSystem/KBV_CS_HMV_Heilmittel", "code": "78100", "display": "Podologische Komplexbehandlung" }] },
+        "quantityQuantity": { "value": 6, "unit": "Behandlungseinheiten" },
+        "occurrenceTiming": { "repeat": { "frequency": 1, "period": 4, "periodMax": 6, "periodUnit": "wk" } },
+        "reasonReference": [{ "reference": "Condition/cond1" }],
+        "extension": [
+          { "url": "https://fhir.kbv.de/StructureDefinition/KBV_EX_HMV_Diagnosegruppe", "valueCoding": { "code": "DF", "display": "Diabetisches Fußsyndrom" } },
+          { "url": "https://fhir.kbv.de/StructureDefinition/KBV_EX_HMV_Leitsymptomatik", "valueCoding": { "code": "a", "display": "Schädigung der Haut und der Zehennägel bei nachweisbarer Neuropathie" } },
+          { "url": "https://fhir.kbv.de/StructureDefinition/KBV_EX_HMV_Hausbesuch", "valueBoolean": false },
+          { "url": "https://fhir.kbv.de/StructureDefinition/KBV_EX_HMV_Therapiebericht", "valueBoolean": true },
+          { "url": "https://fhir.kbv.de/StructureDefinition/KBV_EX_HMV_Dringlich", "valueBoolean": false },
+          { "url": "https://example.org/unbekannte-erweiterung", "valueString": "wird ignoriert" }
+        ],
+        "note": [{ "text": "Erfundene Testverordnung" }],
+        "unbekanntesFeld": { "tief": [1, 2, 3] }
+      }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Condition/cond1",
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond1",
+        "code": {
+          "coding": [
+            { "system": "http://fhir.de/CodeSystem/bfarm/icd-10-gm", "version": "2026", "code": "E11.74", "display": "Diabetes mellitus, Typ 2, mit multiplen Komplikationen, mit diabetischem Fußsyndrom" }
+          ]
+        }
+      }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Condition/cond2",
+      "resource": { "resourceType": "Condition", "id": "cond2", "code": { "coding": [{ "system": "http://fhir.de/CodeSystem/bfarm/icd-10-gm", "code": "G63.2", "display": "Diabetische Polyneuropathie" }] } }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Patient/p1",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "p1",
+        "identifier": [{ "type": { "coding": [{ "system": "http://fhir.de/CodeSystem/identifier-type-de-basis", "code": "GKV" }] }, "system": "http://fhir.de/sid/gkv/kvid-10", "value": "A123456780" }],
+        "name": [{ "use": "official", "family": "Musterfrau", "given": ["Erika"] }],
+        "birthDate": "1950-02-01",
+        "gender": "female",
+        "address": [{ "type": "both", "line": ["Beispielweg 12"], "postalCode": "12345", "city": "Musterstadt", "country": "D" }]
+      }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Practitioner/pr1",
+      "resource": {
+        "resourceType": "Practitioner",
+        "id": "pr1",
+        "identifier": [{ "system": "https://fhir.kbv.de/NamingSystem/KBV_NS_Base_ANR", "value": "999999901" }],
+        "name": [{ "use": "official", "family": "Beispiel", "given": ["Hans"], "prefix": ["Dr. med."] }]
+      }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Organization/o1",
+      "resource": {
+        "resourceType": "Organization",
+        "id": "o1",
+        "identifier": [{ "system": "https://fhir.kbv.de/NamingSystem/KBV_NS_Base_BSNR", "value": "999999900" }],
+        "name": "Praxis Dr. Beispiel (Testdaten)",
+        "telecom": [{ "system": "phone", "value": "0000 000000" }]
+      }
+    },
+    {
+      "fullUrl": "https://pvs.beispiel.example/Coverage/cov1",
+      "resource": {
+        "resourceType": "Coverage",
+        "id": "cov1",
+        "status": "active",
+        "type": { "coding": [{ "system": "http://fhir.de/CodeSystem/versicherungsart-de-basis", "code": "GKV" }] },
+        "beneficiary": { "reference": "Patient/p1" },
+        "payor": [{ "identifier": { "system": "http://fhir.de/sid/arge-ik/iknr", "value": "100000000" }, "display": "Test-Krankenkasse (erfunden)" }],
+        "extension": [{ "url": "http://fhir.de/StructureDefinition/gkv/zuzahlungsstatus", "extension": [{ "url": "status", "valueBoolean": false }] }]
+      }
+    }
+  ]
+}

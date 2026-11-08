@@ -11,6 +11,11 @@ describe("Praxis-Export", () => {
     expect(names).not.toContain("users");
   });
 
+  it("jede Mandanten-Tabelle hat eine Spalte id (seitenweiser Export per Keyset)", () => {
+    const missing = tenantTables().filter((t) => !("id" in (t.table as unknown as Record<string, unknown>))).map((t) => t.name);
+    expect(missing).toEqual([]);
+  });
+
   it("entfernt Geheimnisse und interne Pfade", () => {
     const tables = Object.fromEntries(tenantTables().map((t) => [t.name, t.strippedKeys]));
     expect(tables.integration_connections).toContain("secretEnc");

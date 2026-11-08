@@ -11,8 +11,10 @@ import type { FetchLike, InboundMessage, MessagingPort, MessagingProvider, Outbo
 
 // ───────────── E-Mail (Gerüst) ─────────────
 /**
- * TODO: SMTP-Versand und IMAP-Abruf (z. B. mit nodemailer/imapflow – neue Abhängigkeit, daher noch offen),
- * alternativ Gmail API bzw. Microsoft Graph. Doku: https://nodemailer.com/ , https://imapflow.com/
+ * Versand: läuft NICHT über diese Klasse, sondern über den MailPort (src/integrations/mail/mail.ts,
+ * src/server/mail.ts – adapterFor("email_imap") liefert ihn). Diese Klasse prüft nur die Konfiguration
+ * („Verbindung testen“) und normalisiert eingehende Mails.
+ * TODO: IMAP-Abruf (z. B. imapflow), alternativ Gmail API bzw. Microsoft Graph.
  */
 export class EmailAdapter implements MessagingPort {
   readonly provider = "email_imap" as const;
@@ -23,7 +25,7 @@ export class EmailAdapter implements MessagingPort {
     }
   }
   async send(): Promise<{ externalId: string }> {
-    throw new IntegrationNotConfiguredError("email_imap", "SMTP-Versand noch nicht implementiert (TODO)");
+    throw new IntegrationNotConfiguredError("email_imap", "Versand bitte über den MailPort (src/server/mail.ts)");
   }
   /** Erwartet eine bereits zerlegte Mail { messageId, from, to, subject, text, date }. */
   parseInbound(payload: unknown): InboundMessage[] {

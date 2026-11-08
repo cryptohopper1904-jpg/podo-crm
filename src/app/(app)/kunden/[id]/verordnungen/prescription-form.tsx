@@ -1,11 +1,12 @@
 "use client";
 
 import { keepValues } from "@/lib/forms";
-import { useActionState, useRef, useState } from "react";
-import { Camera, Loader2, Plus, Trash2 } from "lucide-react";
-import { Button, Card, Checkbox, Field, FormError, Input, Select } from "@/components/ui";
+import { useActionState, useRef, useState, type ReactNode } from "react";
+import { Camera, Loader2, Plus, ScanText, Trash2, X } from "lucide-react";
+import { Badge, Button, Card, Checkbox, Field, FormError, Input, Select, cx } from "@/components/ui";
+import { LOW_CONFIDENCE, OCR_FIELD_LABELS, type OcrFieldKey, type OcrFields, type OcrSuggestion } from "@/integrations/ocr/schema";
 import { DIAGNOSIS_GROUPS, FREQUENCY_OPTIONS, START_DEADLINE_DAYS, START_DEADLINE_URGENT_DAYS, startDeadline, type DiagnosisGroup } from "@/lib/rules/prescription";
-import { savePrescriptionAction, type PrescriptionFormState } from "./actions";
+import { readPrescriptionPhotoAction, savePrescriptionAction, type PrescriptionFormState } from "./actions";
 
 type Position = { position?: string; label: string; units: number };
 export type PrescriptionInitial = {
@@ -29,17 +30,39 @@ export type PrescriptionInitial = {
 
 const deDate = (iso: string) => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "–");
 
+/** Daten der Akte zum Abgleich mit den ausgelesenen Versichertendaten */
+export type PatientCompare = { name: string; birthDate: string | null; insuranceNumber: string | null; insurerName: string | null };
+export type OcrAvailability = { available: boolean; mock: boolean; reason: string | null };
+
+type OcrState = { suggestion: OcrSuggestion; mock: boolean; at: string };
+/** Felder ohne eigene Spalte an der Verordnung – werden nur in importData (bestätigt) abgelegt */
+const ASIDE_KEYS = ["patientName", "patientBirthDate", "insurerIk", "insuranceNumber", "leitsymptomatik"] as const;
+type AsideKey = (typeof ASIDE_KEYS)[number];
+
+const norm = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase().replace(/\s+/g, " ") : JSON.stringify(v ?? null));
+
 export function PrescriptionForm({
   patientId,
-  initial,
+  initial: initialProp,
   catalog,
+  ocrInfo = { available: false, mock: false, reason: null },
+  patient,
 }: {
   patientId: string;
   initial: PrescriptionInitial;
   /** Leistungen mit GKV-Positionsnummer aus dem Leistungskatalog */
   catalog: { position: string; label: string }[];
+  ocrInfo?: OcrAvailability;
+  patient?: PatientCompare;
 }) {
   const [state, action, pending] = useActionState<PrescriptionFormState, FormData>(savePrescriptionAction, undefined);
+  // initial als State: eine Auslesung setzt die (unkontrollierten) Felder neu (key = version)
+  const [initial, setInitial] = useState(initialProp);
+  const [version, setVersion] = useState(0);
+  const [ocr, setOcr] = useState<OcrState | null>(null);
+  const [aside, setAside] = useState<Partial<Record<AsideKey, string>>>({});
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [ocrError, setOcrError] = useState<string | null>(null);
   const [group, setGroup] = useState<DiagnosisGroup>(initial.diagnosisGroup);
   const [issuedAt, setIssuedAt] = useState(initial.issuedAt);
   const [urgent, setUrgent] = useState(initial.urgent);
@@ -52,6 +75,101 @@ export function PrescriptionForm({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const rule = DIAGNOSIS_GROUPS[group];
+  const f: OcrFields = ocr?.suggestion.fields ?? {};
+
+  async function runOcr() {
+    if (!scanId) return;
+    setOcrBusy(true);
+    setOcrError(null);
+    try {
+      const res = await readPrescriptionPhotoAction({ patientId, mediaId: scanId });
+      if (!res.ok) return setOcrError(res.error);
+      applySuggestion(res);
+    } catch {
+      setOcrError("Auslesen fehlgeschlagen. Bitte erneut versuchen oder manuell erfassen.");
+    } finally {
+      setOcrBusy(false);
+    }
+  }
+
+  /** Vorschlag in die Felder übernehmen (nur im Formular – gespeichert wird erst mit „Übernehmen“) */
+  function applySuggestion(res: OcrState) {
+    const v = res.suggestion.fields;
+    setOcr({ suggestion: res.suggestion, mock: res.mock, at: res.at });
+    if (v.diagnosisGroup) setGroup(v.diagnosisGroup.value);
+    if (v.issuedAt) setIssuedAt(v.issuedAt.value);
+    if (v.urgent) setUrgent(v.urgent.value);
+    if (v.units) setUnits(v.units.value);
+    if (v.frequencyPerWeek) setFrequency(v.frequencyPerWeek.value);
+    if (v.positions) setPositions(v.positions.value.map((p) => ({ ...p })));
+    setInitial((i) => ({
+      ...i,
+      doctorName: v.doctorName?.value ?? i.doctorName,
+      doctorLanr: v.doctorLanr?.value ?? i.doctorLanr,
+      doctorBsnr: v.doctorBsnr?.value ?? i.doctorBsnr,
+      icd10: v.icd10?.value ?? i.icd10,
+      remedy: v.remedy?.value ?? i.remedy,
+      homeVisit: v.homeVisit?.value ?? i.homeVisit,
+    }));
+    setAside(Object.fromEntries(ASIDE_KEYS.filter((k) => v[k]).map((k) => [k, String(v[k]!.value)])));
+    setVersion((n) => n + 1);
+  }
+
+  function discardSuggestion() {
+    setOcr(null);
+    setAside({});
+    setOcrError(null);
+  }
+
+  /** importData = Vorschlag + Sicherheit (kein Bild); Felder ohne Spalte in der bestätigten Fassung */
+  function withImportData(fd: FormData) {
+    if (!ocr) return fd;
+    const fields: Record<string, unknown> = { ...ocr.suggestion.fields };
+    const edited: OcrFieldKey[] = [];
+    for (const k of ASIDE_KEYS) {
+      const val = (aside[k] ?? "").trim();
+      const orig = f[k]?.value;
+      if (norm(val) !== norm(orig ?? "")) {
+        edited.push(k);
+        if (val) fields[k] = { value: val, confidence: 1 };
+        else delete fields[k];
+      }
+    }
+    const compare: [OcrFieldKey, unknown][] = [
+      ["issuedAt", fd.get("issuedAt")],
+      ["diagnosisGroup", fd.get("diagnosisGroup")],
+      ["icd10", String(fd.get("icd10") ?? "").toUpperCase()],
+      ["units", Number(fd.get("units"))],
+      ["frequencyPerWeek", fd.get("frequencyPerWeek")],
+      ["remedy", fd.get("remedy")],
+      ["doctorName", fd.get("doctorName")],
+      ["doctorLanr", fd.get("doctorLanr")],
+      ["doctorBsnr", fd.get("doctorBsnr")],
+      ["urgent", fd.get("urgent") === "on"],
+      ["homeVisit", fd.get("homeVisit") === "on"],
+    ];
+    for (const [k, val] of compare) if (f[k] && norm(f[k]!.value) !== norm(val)) edited.push(k);
+    if (f.positions && norm(f.positions.value) !== norm(positions.filter((p) => p.label || p.position))) edited.push("positions");
+    fd.set("source", "ocr");
+    fd.set("importData", JSON.stringify({ kind: "ocr", mock: ocr.mock, at: ocr.at, fields, edited }));
+    return fd;
+  }
+
+  /** kleine Sicherheitsanzeige je Feld */
+  const conf = (k: OcrFieldKey) => {
+    const c = f[k]?.confidence;
+    if (c === undefined) return null;
+    const low = c < LOW_CONFIDENCE;
+    return (
+      <Badge tone={low ? "warn" : "info"} className="ml-1 align-middle">
+        {low ? "unsicher" : "ausgelesen"} {Math.round(c * 100)} %
+      </Badge>
+    );
+  };
+  const hint = (k: OcrFieldKey, base?: ReactNode) => {
+    const c = conf(k);
+    return c || base ? <>{base}{c}</> : undefined;
+  };
 
   async function upload(file: File | undefined) {
     if (!file) return;
@@ -79,7 +197,7 @@ export function PrescriptionForm({
   const setPos = (i: number, patch: Partial<Position>) => setPositions((ps) => ps.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
   return (
-    <form onSubmit={keepValues(action)} className="flex flex-col gap-5">
+    <form onSubmit={keepValues((fd) => action(withImportData(fd)))} className="flex flex-col gap-5">
       <input type="hidden" name="patientId" value={patientId} />
       {initial.id ? <input type="hidden" name="id" value={initial.id} /> : null}
       <input type="hidden" name="positions" value={JSON.stringify(positions)} />

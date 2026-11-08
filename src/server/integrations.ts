@@ -17,8 +17,13 @@ export async function loadConnection(organizationId: string, provider: ProviderI
   return { provider: row.provider, status: row.status, config: row.config, secretEnc: row.secretEnc, organizationId };
 }
 
-/** Adapter für den Mandanten (Mock bei INTEGRATIONS_MODE=mock oder Status „mock“). */
+/**
+ * Adapter für den Mandanten (Mock bei INTEGRATIONS_MODE=mock oder Status „mock“).
+ * E-Mail („email_imap“) läuft über den MailPort (SMTP der Praxis bzw. Plattform-SMTP, Drosselung, Audit),
+ * siehe ./mail – dynamisch importiert, weil ./mail seinerseits loadConnection/logSync nutzt.
+ */
 export async function adapterFor<P extends SupportedProvider>(organizationId: string, provider: P): Promise<PortByProvider[P]> {
+  if (provider === "email_imap") return (await (await import("./mail")).mailMessagingPort(organizationId)) as PortByProvider[P];
   return getAdapter(provider, await loadConnection(organizationId, provider));
 }
 

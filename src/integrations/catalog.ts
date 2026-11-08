@@ -73,11 +73,13 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   {
     provider: "email_imap",
     label: "E-Mail (SMTP/IMAP)",
-    description: "Posteingang und Versand über das Praxispostfach.",
+    description: "Versand (Rechnungen, Erinnerungen, Antworten) über das Praxispostfach per SMTP. Ohne eigene Zugangsdaten nutzt PodoCRM – falls eingerichtet – den Plattform-Server.",
     privacy: "Postfach bei einem Anbieter mit AVV und Serverstandort EU. Gesundheitsdaten nur verschlüsselt (TLS) übertragen.",
     secretFields: [{ name: "password", label: "Passwort / App-Passwort" }],
     configFields: [
       { name: "smtpHost", label: "SMTP-Server" },
+      { name: "smtpPort", label: "SMTP-Port (587 STARTTLS / 465 TLS)", placeholder: "587" },
+      { name: "fromAddress", label: "Absenderadresse (sonst Benutzername)", placeholder: "praxis@example.de" },
       { name: "imapHost", label: "IMAP-Server" },
       { name: "user", label: "Benutzername" },
     ],

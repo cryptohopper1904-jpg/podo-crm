@@ -27,7 +27,7 @@ Beim Aufruf der Website verarbeitet unser Server technisch notwendige Daten: IP-
 
 ## 3. Cookies und lokale Speicherung
 
-- **Sitzungs-Cookie** (`podo_session`): nur nach der Anmeldung, technisch notwendig, HttpOnly, läuft nach höchstens 12 Stunden ab. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG, Art. 6 Abs. 1 lit. b DSGVO.
+- **Sitzungs-Cookie** (`__Host-podo_session`, in der Entwicklung `podo_session`): nur nach der Anmeldung, technisch notwendig, HttpOnly, läuft nach höchstens 12 Stunden ab. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG, Art. 6 Abs. 1 lit. b DSGVO.
 - **Hell/Dunkel-Einstellung** (`podo-theme` im lokalen Speicher des Browsers): speichert nur Ihre Anzeigewahl auf Ihrem Gerät, wird nicht an uns übertragen. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG.
 
 ## 4. Registrierung und Nutzung durch Praxen
