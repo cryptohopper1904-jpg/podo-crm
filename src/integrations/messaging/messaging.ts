@@ -63,6 +63,7 @@ export class WhatsAppAdapter implements MessagingPort {
   }
 
   async send(msg: OutboundMessage): Promise<{ externalId: string }> {
+    if (msg.attachments?.length) throw new Error("WhatsApp: Anhänge werden nicht unterstützt (bitte per E-Mail senden).");
     const to = msg.to.replace(/[^\d]/g, "");
     const body = msg.template
       ? {
@@ -138,6 +139,7 @@ export class SmsAdapter implements MessagingPort {
   }
 
   async send(msg: OutboundMessage): Promise<{ externalId: string }> {
+    if (msg.attachments?.length) throw new Error("SMS: Anhänge werden nicht unterstützt (bitte per E-Mail senden).");
     const res = await requestJson<{ success?: string; messages?: { id?: string | number }[] }>({
       provider: "sms",
       fetch: this.fetchFn,
@@ -180,9 +182,18 @@ export class MessagingMock implements MessagingPort {
   readonly sent: OutboundMessage[] = [];
   constructor(readonly provider: MessagingProvider) {}
 
+  /**
+   * Testmodus: nichts wird versendet. Protokolliert nur Kanal, Länge und Anhänge – keine Adressen/Inhalte.
+   * Anhänge sind nur bei E-Mail erlaubt (wie bei den echten Adaptern).
+   */
   async send(msg: OutboundMessage) {
+    if (msg.attachments?.length && this.provider !== "email_imap") throw new Error(`${this.provider}: Anhänge werden nicht unterstützt.`);
     this.sent.push(msg);
-    return { externalId: mockId(`msg-${this.provider}`, `${this.sent.length}|${msg.to}|${msg.body}`) };
+    if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+      console.info(`[mock:${this.provider}] Nachricht nicht versendet (Testmodus) · ${msg.body.length} Zeichen · ${msg.attachments?.length ?? 0} Anhang/Anhänge`);
+    }
+    const att = (msg.attachments ?? []).map((a) => `${a.filename}:${a.data.byteLength}`).join(",");
+    return { externalId: mockId(`msg-${this.provider}`, `${this.sent.length}|${msg.to}|${msg.body}|${att}`) };
   }
 
   parseInbound(payload: unknown): InboundMessage[] {

@@ -178,6 +178,11 @@ export class SumupAdapter implements PaymentPort {
     };
   }
 
+  /** DELETE /v0.1/checkouts/{id} – deaktiviert einen noch nicht bezahlten Checkout (Zahlungslink). */
+  async deactivateCheckout(checkoutId: string): Promise<void> {
+    await this.req("DELETE", `/v0.1/checkouts/${encodeURIComponent(checkoutId)}`);
+  }
+
   verifyWebhook(rawBody: string, headers: Record<string, string | undefined>): boolean {
     if (!this.opts.webhookSecret) return false;
     const h = lowerHeaders(headers);

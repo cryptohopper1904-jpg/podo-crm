@@ -36,6 +36,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   const rows: [string, string | null][] = [
     ["Nagelspange", st.braceAction && st.braceAction !== "none" ? `${BRACE_ACTION_LABEL[st.braceAction] ?? st.braceAction}${st.braceChange ? ` – Wechsel: ${st.braceChange}` : ""}` : null],
     ["Durchgeführte Behandlung", r.servicesText],
+    ["Verordnung", r.prescriptionId ? "Einheit auf GKV-Verordnung gebucht" : null],
     ["Befund", r.findings],
     ["Reaktion / Besonderheiten", r.reaction],
     ["Material", r.material],

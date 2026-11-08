@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import {
@@ -12,11 +12,14 @@ import {
   payments,
   services,
   syncLog,
+  treatmentRecords,
   vouchers,
 } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
+import { allocateByVat, fiscalRef, getFiscalPort } from "@/integrations/tse";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { nextNumber } from "@/lib/numbering";
 import {
@@ -42,6 +45,8 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 
 export const lineInput = z.object({
   serviceId: optUuid,
+  /** Sammelrechnung: abgerechnete Behandlung (Doku-Eintrag) – verhindert Doppelabrechnung */
+  treatmentRecordId: optUuid,
   description: z.string().trim().max(300).default(""),
   quantity: z.coerce.number().positive("Menge muss größer 0 sein").max(9999),
   factor: z.coerce.number().positive("Faktor muss größer 0 sein").max(99),
@@ -80,6 +85,29 @@ async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
 }
 
 /**
+ * Barzahlung über die TSE signieren (KassenSichV). Solange kein zertifizierter TSE-Vertrag besteht,
+ * läuft der Mock (Referenz „tse:test:…“) – für echten Bargeldeinsatz ist eine echte TSE Pflicht.
+ * Die Signaturreferenz landet in payments.external_ref.
+ */
+async function signCashPayment(inv: { id: string; number?: string | null }, amountCents: number, vatGroups: { rate: number; grossCents: number }[]) {
+  const fiscal = getFiscalPort();
+  try {
+    const reference = inv.number ?? inv.id;
+    const { transactionId } = await fiscal.startTransaction({ reference });
+    const sig = await fiscal.finishTransaction({
+      transactionId,
+      reference,
+      amounts: allocateByVat(amountCents, vatGroups),
+      paymentType: "cash",
+      paymentCents: amountCents,
+    });
+    return fiscalRef(sig);
+  } catch (e) {
+    throw new InvoiceError(`Barzahlung konnte nicht über die TSE signiert werden: ${e instanceof Error ? e.message : "unbekannter Fehler"}`);
+  }
+}
+
+/**
  * Bucht Zahlungen auf eine (bereits ausgestellte) Rechnung und aktualisiert paidCents/Status.
  * Gutschein-Zahlungen werden gegen das Restguthaben geprüft (Zeile wird gesperrt).
  */
@@ -87,9 +115,10 @@ async function applyPayments(
   tx: Tx,
   org: string,
   userId: string,
-  inv: { id: string; totalCents: number; paidCents: number },
+  inv: { id: string; totalCents: number; paidCents: number; number?: string | null },
   list: PaymentInput[],
   today: string,
+  vatGroups: { rate: number; grossCents: number }[] = [],
 ) {
   if (!list.length) return { paidCents: inv.paidCents, status: statusFromPayments(inv.totalCents, inv.paidCents) };
   const err = validatePayments(inv.totalCents - inv.paidCents, list.map((p) => p.amountCents));
@@ -117,13 +146,15 @@ async function applyPayments(
       voucherUse.set(v.id, (voucherUse.get(v.id) ?? 0) + p.amountCents);
       voucherId = v.id;
     }
+    let externalRef = p.externalRef ?? null;
+    if (p.method === "cash") externalRef = await signCashPayment(inv, p.amountCents, vatGroups);
     await tx.insert(payments).values({
       organizationId: org,
       invoiceId: inv.id,
       method: p.method,
       amountCents: p.amountCents,
       voucherId,
-      externalRef: p.externalRef ?? null,
+      externalRef,
       createdBy: userId,
     });
   }
@@ -137,10 +168,40 @@ async function applyPayments(
 }
 
 /**
+ * Doppelabrechnung verhindern: Jede Behandlung (treatment_record) darf nur in einer nicht stornierten
+ * Rechnung stehen. Pro Praxis serialisiert (Advisory-Lock), damit zwei gleichzeitige Sammelrechnungen
+ * dieselbe Behandlung nicht beide abrechnen. Die Behandlung muss zur Person bzw. zum Pflegeheim gehören.
+ */
+async function assertRecordsNotInvoiced(tx: Tx, org: string, recordIds: string[], patientId: string | null, billingContactId: string | null) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
+  const recs = await tx
+    .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, careHomeId: patients.careHomeId })
+    .from(treatmentRecords)
+    .innerJoin(patients, eq(patients.id, treatmentRecords.patientId))
+    .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recordIds)));
+  if (recs.length !== recordIds.length) throw new InvoiceError("Behandlung zur Position nicht gefunden.");
+  for (const r of recs) {
+    const ok = (patientId && r.patientId === patientId) || (billingContactId && r.careHomeId === billingContactId);
+    if (!ok) throw new InvoiceError(`Die Behandlung vom ${dateDe(r.treatedAt)} gehört nicht zu diesem Rechnungsempfänger.`);
+  }
+  const billed = await tx
+    .select({ recordId: invoiceLines.treatmentRecordId, number: invoices.number })
+    .from(invoiceLines)
+    .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+    .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recordIds), notInArray(invoices.status, ["cancelled", "draft"])))
+    .limit(1);
+  if (billed[0]) {
+    const r = recs.find((x) => x.id === billed[0].recordId);
+    throw new InvoiceError(`Die Behandlung vom ${r ? dateDe(r.treatedAt) : "?"} ist bereits in Rechnung ${billed[0].number} abgerechnet.`);
+  }
+}
+
+/**
  * Legt eine Rechnung an und stellt sie sofort aus (GoBD: Entwurf → Positionen → Nummer + Summen
  * in derselben Transaktion; danach sind Nummer/Beträge per DB-Trigger unveränderbar).
  */
 export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (input.issuedAt > today) throw new InvoiceError("Das Rechnungsdatum darf nicht in der Zukunft liegen.");
@@ -185,6 +246,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       const vatRate = effectiveVatRate(l.vatRate, { smallBusiness });
       return {
         serviceId: s?.id ?? null,
+        treatmentRecordId: l.treatmentRecordId ?? null,
         description,
         quantity: l.quantity,
         factor: l.factor,
@@ -195,6 +257,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         requiresTherapeuticPurpose: input.kind === "no_show_fee" ? false : s ? s.requiresTherapeuticPurpose : true,
       };
     });
+
+    const recordIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
+    if (recordIds.length) await assertRecordsNotInvoiced(tx, org, recordIds, input.patientId ?? null, input.billingContactId ?? null);
 
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
     if (needsConfirm && !input.therapeuticConfirmed) {
@@ -236,6 +301,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         organizationId: org,
         invoiceId: draft.id,
         serviceId: l.serviceId,
+        treatmentRecordId: l.treatmentRecordId,
         description: l.description,
         quantity: String(l.quantity),
         factor: String(l.factor),
@@ -263,7 +329,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
     // 4) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, totalCents: totals.totalCents, paidCents: 0 }, input.payments, today);
+    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: 0 }, input.payments, today, totals.groups);
     return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
   });
 
@@ -279,6 +345,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 }
 
 export async function addPayments(auth: AuthContext, invoiceId: string, list: PaymentInput[]) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   if (!list.length) throw new InvoiceError("Keine Zahlung angegeben.");
   const result = await withOrg(org, async (tx) => {
@@ -289,7 +356,11 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
       .for("update");
     if (!inv) throw new InvoiceError("Rechnung nicht gefunden.");
     if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Für diese Rechnung kann keine Zahlung erfasst werden.");
-    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso());
+    const vatLines = await tx
+      .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+      .from(invoiceLines)
+      .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, inv.id)));
+    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), computeTotals(vatLines).groups);
   });
   await audit({
     organizationId: org,
@@ -302,11 +373,33 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
   return result;
 }
 
+/** Zahlungslink bei SumUp deaktivieren (best effort; Fehler nur protokollieren). */
+async function deactivateProviderCheckout(org: string, checkoutRef: string) {
+  const [kind, ...rest] = checkoutRef.split(":");
+  const id = rest.join(":");
+  if (kind !== "checkout" || !id) {
+    // TODO: laufende Terminal-Zahlung abbrechen (SumUp Cloud API: POST /v0.1/merchants/{code}/readers/{id}/terminate)
+    return;
+  }
+  try {
+    const { adapterFor } = await import("./integrations");
+    const port = await adapterFor(org, "sumup");
+    if (port.deactivateCheckout) await port.deactivateCheckout(id);
+    await withOrg(org, (tx) => tx.insert(syncLog).values({ organizationId: org, provider: "sumup", direction: "out", ok: true, message: "Zahlungslink nach Storno deaktiviert" }));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unbekannt";
+    await withOrg(org, (tx) =>
+      tx.insert(syncLog).values({ organizationId: org, provider: "sumup", direction: "out", ok: false, message: `Zahlungslink konnte nach Storno nicht deaktiviert werden: ${msg}`.slice(0, 500) }),
+    ).catch(() => undefined);
+  }
+}
+
 /**
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
 export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
   const result = await withOrg(org, async (tx) => {
@@ -371,9 +464,14 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
         paidCents,
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
-    await tx.update(invoices).set({ status: "cancelled" }).where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
-    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents };
+    // Storno: offene Zahlungslinks/Terminal-Zuordnung entfernen (eine spätere SumUp-Zahlung wird dann nicht gebucht, sondern gemeldet)
+    await tx
+      .update(invoices)
+      .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
+      .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
+    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents, checkoutRef: orig.checkoutRef };
   });
+  if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
     organizationId: org,
     userId: auth.user.id,
@@ -388,6 +486,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
 export type InvoiceFilter = "open" | "paid" | "all";
 
 export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFilter; q?: string; limit?: number } = {}) {
+  assertCan(auth, "invoices.read");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const where: SQL[] = [eq(invoices.organizationId, org), sql`${invoices.status} <> 'draft'`];
@@ -444,56 +543,63 @@ export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFi
   });
 }
 
+/** Lädt eine Rechnung mit allem, was Druckansicht und PDF brauchen (innerhalb von withOrg). */
+export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
+  const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, id)));
+  if (!inv) return null;
+  const lines = await tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position));
+  const pays = await tx
+    .select({ payment: payments, voucherCode: vouchers.code })
+    .from(payments)
+    .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
+    .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
+    .orderBy(asc(payments.paidAt));
+  const o = await loadOrg(tx, org);
+  const patient = inv.patientId
+    ? await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((r) => r[0] ?? null)
+    : null;
+  const billing = inv.billingContactId
+    ? await tx
+        .select()
+        .from(billingContacts)
+        .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId)))
+        .then((r) => r[0] ?? null)
+    : null;
+  // Storno-Beziehung in beide Richtungen
+  const related = await tx
+    .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, cancelsInvoiceId: invoices.cancelsInvoiceId })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.organizationId, org),
+        or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
+      ),
+    );
+  return {
+    invoice: inv,
+    lines,
+    payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
+    organization: o,
+    patient,
+    billingContact: billing,
+    cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
+    cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
+  };
+}
+export type InvoiceBundle = NonNullable<Awaited<ReturnType<typeof loadInvoiceBundle>>>;
+
 export async function getInvoice(auth: AuthContext, id: string) {
+  assertCan(auth, "invoices.read");
   const org = auth.organization.id;
-  const data = await withOrg(org, async (tx) => {
-    const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, id)));
-    if (!inv) return null;
-    const lines = await (tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position)));
-    const pays = await (tx
-        .select({ payment: payments, voucherCode: vouchers.code })
-        .from(payments)
-        .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
-        .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
-        .orderBy(asc(payments.paidAt)));
-    const o = await (loadOrg(tx, org));
-    const patient = await (inv.patientId
-        ? tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((r) => r[0] ?? null)
-        : Promise.resolve(null));
-    const billing = await (inv.billingContactId
-        ? tx
-            .select()
-            .from(billingContacts)
-            .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId)))
-            .then((r) => r[0] ?? null)
-        : Promise.resolve(null));
-    const related = await (// Storno-Beziehung in beide Richtungen
-      tx
-        .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, cancelsInvoiceId: invoices.cancelsInvoiceId })
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.organizationId, org),
-            or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
-          ),
-        ));
-    return {
-      invoice: inv,
-      lines,
-      payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
-      organization: o,
-      patient,
-      billingContact: billing,
-      cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
-      cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
-    };
-  });
+  if (!z.uuid().safeParse(id).success) return null;
+  const data = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, id));
   if (data) await audit({ organizationId: org, userId: auth.user.id, action: "invoice.read", entity: "invoice", entityId: id });
   return data;
 }
 
 /** Stammdaten für das Rechnungsformular. */
 export async function invoiceFormData(auth: AuthContext, preselectPatientId?: string | null) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const cols = {
@@ -546,6 +652,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
  * Der externe Aufruf läuft außerhalb der DB-Transaktion.
  */
 export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: string): Promise<{ ok: boolean; message: string }> {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const prep = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));

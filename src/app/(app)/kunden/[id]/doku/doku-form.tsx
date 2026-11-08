@@ -30,12 +30,17 @@ export function DokuForm({
   services,
   activeBrace,
   voiceEnabled,
+  prescriptions = [],
+  defaultPrescriptionId,
 }: {
   patientId: string;
   appointmentId?: string;
   services: Service[];
   activeBrace: { id: string; side: string; toe: number; braceType: string | null; stage: string | null } | null;
   voiceEnabled: boolean;
+  /** buchbare Verordnungen (open/active mit Resteinheiten) */
+  prescriptions?: { id: string; label: string; remaining: number; warning: string | null }[];
+  defaultPrescriptionId?: string | null;
 }) {
   const [state, action, pending] = useActionState<DokuFormState, FormData>(saveTreatmentAction, undefined);
   const [points, setPoints] = useState<FootPoint[]>([]);
@@ -47,7 +52,22 @@ export function DokuForm({
   const [fields, setFields] = useState({ findings: "", servicesText: "", material: "", reaction: "", recommendation: "" });
   const [picked, setPicked] = useState<string[]>([]);
   const [batch, setBatch] = useState("");
+  const [batchHint, setBatchHint] = useState<{ ok: boolean; message: string } | null>(null);
+  async function checkBatch(code: string) {
+    setBatchHint(null);
+    if (code.trim().length < 3) return;
+    try {
+      const res = await fetch(`/api/hygiene/batch/${encodeURIComponent(code.trim())}`);
+      const json = await res.json();
+      if (res.ok) setBatchHint({ ok: !!json.ok, message: json.message ?? (json.ok ? "Charge freigegeben." : "Charge nicht verwendbar.") });
+      else setBatchHint({ ok: false, message: json.error ?? "Charge konnte nicht geprüft werden." });
+    } catch {
+      // offline: kein Hinweis
+    }
+  }
   const [ai, setAi] = useState(false);
+  const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
+  const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Pflichtfotos Nagelspange (versionierte Regel, siehe src/lib/rules/brace.ts) ──
@@ -92,6 +112,23 @@ export function DokuForm({
       <input type="hidden" name="braceAction" value={braceAction} />
       {activeBrace ? <input type="hidden" name="braceEpisodeId" value={activeBrace.id} /> : null}
       <FormError message={state?.error} />
+
+      {prescriptions.length ? (
+        <Card>
+          <h2 className="mb-3 font-display text-lg font-semibold">Verordnung</h2>
+          <Field label="Behandlung auf Verordnung buchen" hint="Mit dem Speichern wird eine Einheit der Verordnung gezählt.">
+            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => setPrescriptionId(e.target.value)}>
+              <option value="">– ohne Verordnung (Selbstzahler) –</option>
+              {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </Select>
+          </Field>
+          {selectedVo ? (
+            <p className={cx("mt-3 rounded-xl p-3 text-sm font-medium", selectedVo.warning ? "bg-warn-soft text-warn-soft-text" : "bg-primary-soft text-primary-soft-text")}>
+              Nach dieser Behandlung noch {selectedVo.remaining - 1} Einheit(en) offen.{selectedVo.warning ? ` ${selectedVo.warning}` : ""}
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
 
       {voiceEnabled ? <VoiceReport patientId={patientId} onResult={(r) => { setFields((f) => ({ ...f, ...r })); setAi(true); }} /> : null}
 
@@ -258,9 +295,12 @@ export function DokuForm({
           </Field>
           <Field label="Sterilgut-Charge">
             <div className="flex gap-2">
-              <Input name="sterileBatchCode" value={batch} onChange={(e) => setBatch(e.target.value)} placeholder="Etikett scannen oder eintippen" />
-              <BatchScanner onCode={setBatch} />
+              <Input name="sterileBatchCode" value={batch} onChange={(e) => setBatch(e.target.value)} onBlur={(e) => checkBatch(e.target.value)} placeholder="Etikett scannen oder eintippen" />
+              <BatchScanner onCode={(c) => { setBatch(c); void checkBatch(c); }} />
             </div>
+          {batchHint ? (
+              <p className={cx("mt-1 rounded-lg px-2 py-1 text-xs font-semibold", batchHint.ok ? "bg-primary-soft text-primary-soft-text" : "bg-accent-soft text-accent-soft-text")}>{batchHint.message}</p>
+            ) : null}
           </Field>
           <Field label="Empfehlung / nächster Termin" className="md:col-span-2">
             <Textarea name="recommendation" value={fields.recommendation} onChange={(e) => setFields({ ...fields, recommendation: e.target.value })} rows={2} />

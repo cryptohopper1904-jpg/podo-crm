@@ -4,6 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  Building2,
+  ClipboardList,
+  ShieldCheck,
+  UsersRound,
   CalendarDays,
   FileText,
   Gift,
@@ -29,7 +33,11 @@ export type NavKey =
   | "bewertungen"
   | "news"
   | "auswertung"
-  | "einstellungen";
+  | "einstellungen"
+  | "verordnungen"
+  | "pflegeheime"
+  | "hygiene"
+  | "team";
 
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
   { key: "heute", href: "/heute", label: "Heute", icon: Home, mobile: true },
@@ -37,10 +45,14 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "kunden", href: "/kunden", label: "Kunden", icon: Users, mobile: true },
   { key: "doku", href: "/doku", label: "Behandlung", icon: Stethoscope, mobile: true },
   { key: "posteingang", href: "/posteingang", label: "Posteingang", icon: Inbox, mobile: true },
+  { key: "verordnungen", href: "/verordnungen", label: "Verordnungen", icon: ClipboardList },
+  { key: "pflegeheime", href: "/pflegeheime", label: "Pflegeheime", icon: Building2 },
   { key: "rechnungen", href: "/rechnungen", label: "Rechnungen", icon: FileText },
   { key: "gutscheine", href: "/gutscheine", label: "Gutscheine", icon: Gift },
   { key: "bewertungen", href: "/bewertungen", label: "Bewertungen", icon: Star },
   { key: "news", href: "/news", label: "News", icon: Newspaper },
+  { key: "hygiene", href: "/hygiene", label: "Hygiene & Geräte", icon: ShieldCheck },
+  { key: "team", href: "/team", label: "Team-Planung", icon: UsersRound },
   { key: "auswertung", href: "/auswertung", label: "Auswertung", icon: BarChart3 },
   { key: "einstellungen", href: "/einstellungen", label: "Einstellungen", icon: Settings },
 ];

@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarPlus, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
+import { PortalLinkButton } from "@/components/portal-link-button";
 import { requireAuth } from "@/lib/auth/session";
 import { ageYears, dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { STATUS_LABEL } from "@/lib/patient-status";
@@ -54,6 +55,10 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
         <div className="flex flex-wrap gap-2">
           {auth.can("medical.write") ? (
             <LinkButton href={`/kunden/${p.id}/doku/neu`}><Stethoscope size={18} aria-hidden /> Behandlung dokumentieren</LinkButton>
+          ) : null}
+          <LinkButton href={`/kunden/${p.id}/anamnese`} variant="secondary"><ClipboardCheck size={18} aria-hidden /> Anamnese</LinkButton>
+          {auth.can("medical.read") ? (
+            <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
           ) : null}
           {auth.can("appointments.write") ? (
             <LinkButton href={`/kalender/neu?patient=${p.id}`} variant="secondary"><CalendarPlus size={18} aria-hidden /> Termin</LinkButton>
@@ -182,6 +187,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <div className="flex flex-col gap-2">
               <LinkButton variant="secondary" href={`/api/patients/${p.id}/export`}><Download size={18} aria-hidden /> Auskunft (Art. 15) als JSON</LinkButton>
               <LinkButton variant="secondary" href={`/kunden/${p.id}/akte-drucken`}>Akte drucken / PDF</LinkButton>
+              {auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
             </div>
           </Card>
         </div>

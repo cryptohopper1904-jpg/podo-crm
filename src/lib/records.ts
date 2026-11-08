@@ -28,3 +28,32 @@ export function verifyChain(entries: { prevHash: string | null; hash: string; co
   }
   return -1;
 }
+
+export type TreatmentContentInput = {
+  patientId: string;
+  authorId: string;
+  treatedAt: string;
+  findings: string | null;
+  servicesText: string | null;
+  material: string | null;
+  sterileBatchCode: string | null;
+  reaction: string | null;
+  recommendation: string | null;
+  footPoints: unknown[];
+  structured: Record<string, unknown>;
+  appointmentId: string | null;
+  missingPhotoReason: string | null;
+  aiAssisted: boolean;
+  countersignRequired: boolean;
+  prescriptionId?: string | null;
+};
+
+/**
+ * Inhalt eines Behandlungseintrags, der in die Hash-Kette eingeht.
+ * `prescriptionId` wird nur aufgenommen, wenn gesetzt – so bleiben die Hashes älterer Einträge
+ * (vor der Verordnungs-Verknüpfung) unverändert reproduzierbar.
+ */
+export function treatmentContent(input: TreatmentContentInput): Record<string, unknown> {
+  const { prescriptionId, ...rest } = input;
+  return prescriptionId ? { ...rest, prescriptionId } : rest;
+}

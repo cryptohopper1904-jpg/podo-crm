@@ -139,7 +139,12 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/webhooks/[p
 
   after(async () => {
     try {
-      if (provider === "sumup" && normalized) await processSumupEvent(org, normalized);
+      let note: string | undefined;
+      if (provider === "sumup" && normalized) {
+        const r = await processSumupEvent(org, normalized);
+        // nicht zugeordnete Zahlung: verarbeitet (keine Wiederholung), aber mit Hinweis – Praxis prüft im Posteingang
+        if (r.startsWith("nicht zugeordnet")) note = r;
+      }
       else if (provider === "whatsapp") await storeInboundMessages(org, handleWhatsAppWebhook(payload));
       else if (provider === "sms") await storeInboundMessages(org, handleSmsWebhook(payload));
       else if (provider === "voice_agent") handleVoiceAgentWebhook(payload);
@@ -147,7 +152,7 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/webhooks/[p
         // TODO: Zahlungsstatus per getPaymentStatus nachladen und Rechnung abgleichen
         await logSync(org, "lexoffice", { direction: "in", ok: true, message: `Ereignis ${normalized?.type ?? "unbekannt"}` });
       }
-      await finishWebhookEvent(eventId);
+      await finishWebhookEvent(eventId, undefined, note);
     } catch (e) {
       const detail = describeError(e);
       await finishWebhookEvent(eventId, detail).catch(() => undefined);

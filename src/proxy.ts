@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * Optimistische Prüfung: ohne Session-Cookie direkt zum Login.
  * Die echte Prüfung (Session gültig, Rolle, Mandant) passiert serverseitig in requireAuth().
  */
-const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/buchen", "/kein-zugriff"];
+const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

@@ -9,7 +9,14 @@ import { verifyHmacSignature } from "./sumup";
 export class SumupMock implements PaymentPort {
   readonly provider = "sumup" as const;
   readonly isMock = true;
-  readonly transactions = new Map<string, PaymentTransaction>();
+  /**
+   * Prozessweiter Speicher: Die Registry erzeugt pro Aufruf einen neuen Mock – damit
+   * „Testzahlung simulieren“ über denselben Pfad wie ein echter Webhook (getTransaction) laufen kann.
+   */
+  private static readonly store = new Map<string, PaymentTransaction>();
+  get transactions() {
+    return SumupMock.store;
+  }
 
   constructor(private readonly webhookSecret = "mock-secret") {}
 
@@ -43,6 +50,11 @@ export class SumupMock implements PaymentPort {
     const tx = this.transactions.get(id);
     if (!tx) return { id, status: "unknown" as const, amountCents: 0, currency: "EUR" };
     return tx;
+  }
+
+  async deactivateCheckout(checkoutId: string) {
+    const tx = this.transactions.get(checkoutId);
+    if (tx && tx.status === "pending") this.transactions.set(checkoutId, { ...tx, status: "cancelled" });
   }
 
   verifyWebhook(rawBody: string, headers: Record<string, string | undefined>) {

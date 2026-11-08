@@ -18,7 +18,14 @@ const nextConfig: NextConfig = {
   // Tailwind CSS v4 über den Turbopack-Loader
   turbopack: { rules: { "*.css": { loaders: ["@tailwindcss/turbopack"] } } },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Einmal-Token im Pfad: nie als Referrer weitergeben, nicht cachen (spätere Regel überschreibt)
+      { source: "/anamnese/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
+      // Kundenportal: keine Referrer (persönlicher Link darf nicht an Dritte gelangen), nicht cachen
+      { source: "/portal", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/portal/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
+    ];
   },
 };
 

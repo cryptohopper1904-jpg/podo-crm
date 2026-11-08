@@ -13,6 +13,8 @@ import {
   paymentInput,
   pushInvoiceToAccounting,
 } from "@/server/invoices";
+import { createPaymentLink, sendPaymentLink, simulateTestPayment, startTerminalPayment } from "@/server/card-payments";
+import { sendInvoiceEmail } from "@/server/invoice-delivery";
 
 export type InvoiceFormState = { error?: string } | undefined;
 export type SimpleState = { error?: string; success?: string } | undefined;
@@ -91,6 +93,84 @@ export async function pushToLexofficeAction(_: SimpleState, form: FormData): Pro
   try {
     const r = await pushInvoiceToAccounting(auth, invoiceId);
     return r.ok ? { success: r.message } : { error: r.message };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export type LinkState = { error?: string; success?: string; url?: string } | undefined;
+
+const invoiceIdOf = (form: FormData) => z.uuid().safeParse(form.get("invoiceId"));
+
+function refresh(id: string) {
+  revalidatePath(`/rechnungen/${id}`);
+  revalidatePath("/rechnungen");
+}
+
+export async function sendInvoiceEmailAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  if (!id.success) return { error: "Rechnung nicht gefunden." };
+  try {
+    const r = await sendInvoiceEmail(auth, id.data);
+    refresh(id.data);
+    return { success: r.mock ? `Testmodus: E-Mail an ${r.to} vorbereitet, aber nicht wirklich versendet.` : `Rechnung an ${r.to} gesendet.` };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function startTerminalAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  if (!id.success) return { error: "Rechnung nicht gefunden." };
+  try {
+    const r = await startTerminalPayment(auth, id.data);
+    refresh(id.data);
+    return {
+      success: r.mock
+        ? "Testmodus: Terminal-Zahlung vorgemerkt. Mit „Testzahlung simulieren“ als bezahlt buchen."
+        : "Betrag wurde an das Terminal gesendet. Die Zahlung wird nach Bestätigung durch SumUp automatisch gebucht.",
+    };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function createPaymentLinkAction(_: LinkState, form: FormData): Promise<LinkState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  if (!id.success) return { error: "Rechnung nicht gefunden." };
+  try {
+    const r = await createPaymentLink(auth, id.data);
+    refresh(id.data);
+    return { url: r.url, success: r.mock ? "Testmodus: Link ist nicht echt bezahlbar." : "Zahlungslink erzeugt." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function sendPaymentLinkAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  const channel = z.enum(["email", "sms", "whatsapp"]).safeParse(form.get("channel"));
+  if (!id.success || !channel.success) return { error: "Eingaben prüfen." };
+  try {
+    const r = await sendPaymentLink(auth, id.data, channel.data);
+    return { success: r.mock ? "Testmodus: Nachricht gespeichert, aber nicht wirklich versendet." : "Zahlungslink versendet." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function simulatePaymentAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  if (!id.success) return { error: "Rechnung nicht gefunden." };
+  try {
+    const r = await simulateTestPayment(auth, id.data);
+    refresh(id.data);
+    return r === "gebucht" ? { success: "Testzahlung gebucht." } : { error: `Testzahlung nicht gebucht: ${r}` };
   } catch (e) {
     return { error: errorMessage(e) };
   }

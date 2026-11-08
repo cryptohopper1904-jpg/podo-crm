@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { braceEpisodes, integrationConnections, patients, services } from "@/db/schema";
+import { appointments, braceEpisodes, integrationConnections, patients, services } from "@/db/schema";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { fullName } from "@/lib/format";
+import { bookablePrescriptions } from "@/server/prescriptions";
 import { DokuForm } from "../doku-form";
 
 export const metadata = { title: "Behandlung dokumentieren" };
@@ -22,7 +23,11 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
     const svc = await tx.select({ id: services.id, code: services.code, name: services.name }).from(services).where(and(eq(services.organizationId, org), eq(services.active, true))).orderBy(asc(services.code));
     const [brace] = await tx.select().from(braceEpisodes).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.patientId, id), eq(braceEpisodes.status, "active"))).limit(1);
     const [voice] = await tx.select().from(integrationConnections).where(and(eq(integrationConnections.organizationId, org), eq(integrationConnections.provider, "transcription")));
-    return { p, svc, brace, voiceEnabled: !!voice && voice.status !== "disconnected" };
+    const vos = await bookablePrescriptions(tx, org, id);
+    const [appt] = appointmentId && /^[0-9a-f-]{36}$/.test(appointmentId)
+      ? await tx.select({ prescriptionId: appointments.prescriptionId }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId), eq(appointments.patientId, id)))
+      : [];
+    return { p, svc, brace, voiceEnabled: !!voice && voice.status !== "disconnected", vos, defaultVo: appt?.prescriptionId ?? null };
   });
   if (!data) notFound();
   return (
@@ -38,6 +43,8 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
         services={data.svc}
         activeBrace={data.brace ? { id: data.brace.id, side: data.brace.side, toe: data.brace.toe, braceType: data.brace.braceType, stage: data.brace.stage } : null}
         voiceEnabled={data.voiceEnabled}
+        prescriptions={data.vos}
+        defaultPrescriptionId={data.defaultVo}
       />
     </div>
   );
