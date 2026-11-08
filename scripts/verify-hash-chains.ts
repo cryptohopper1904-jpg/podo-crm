@@ -1,6 +1,7 @@
 /**
- * Prüft die Hash-Ketten der Behandlungsdokumentation (treatment_records je Patient:in, record_addenda je Eintrag)
- * durch Neuberechnung mit demselben Code wie die App (src/lib/records.ts).
+ * Prüft die Hash-Ketten der Behandlungsdokumentation (treatment_records je Patient:in, record_addenda je Eintrag) und
+ * der Kassenabschlüsse (cash_closings je Praxis: lückenlose Z-Nummern ab 1, Verkettung, Inhalts-Hash, fortlaufende
+ * Belegnummern) durch Neuberechnung mit demselben Code wie die App (src/lib/records.ts, src/lib/kasse/chain.ts).
  * Gedacht für den Wiederherstellungs-Test (deploy/restore-test.sh) gegen eine Wegwerf-Datenbank;
  * braucht eine Rolle, die RLS umgeht (Superuser/Eigentümer). Liest nur.
  *
@@ -10,8 +11,12 @@
  * Demo-Praxen (slug „demo-…“, scripts/seed-demo.ts) nutzen ein vereinfachtes Inhaltsformat;
  * dort werden nur Verkettung und nicht der Inhalt gewertet.
  */
-import { Pool } from "pg";
+import { Pool, types } from "pg";
+import { verifyClosingRows, type ClosingChainRow } from "../src/lib/kasse/chain";
 import { chainHash, treatmentContent } from "../src/lib/records";
+
+// „date“ als Text (wie Drizzle), sonst ändert sich der Inhalts-Hash des Buchungstags
+types.setTypeParser(1082, (v: string) => v);
 
 type RecordRow = {
   id: string;
@@ -36,6 +41,62 @@ type RecordRow = {
   hash: string;
   demo: boolean;
 };
+type ClosingRow = {
+  id: string;
+  organization_id: string;
+  number: number;
+  business_date: string;
+  closed_at: Date;
+  created_at: Date;
+  opening_cents: number;
+  cash_payments_cents: number;
+  movements_cents: number;
+  expected_cash_cents: number;
+  counted_cash_cents: number;
+  difference_cents: number;
+  denominations: Record<string, number>;
+  totals: unknown;
+  payment_count: number;
+  movement_count: number;
+  first_bon_nr: number;
+  last_bon_nr: number;
+  items_digest: string;
+  tse: unknown;
+  bons: unknown[] | null;
+  difference_reason: string | null;
+  note: string | null;
+  created_by: string | null;
+  prev_hash: string | null;
+  hash: string;
+};
+const closingOf = (r: ClosingRow): ClosingChainRow => ({
+  id: r.id,
+  organizationId: r.organization_id,
+  number: r.number,
+  businessDate: r.business_date,
+  closedAt: r.closed_at,
+  createdAt: r.created_at,
+  openingCents: r.opening_cents,
+  cashPaymentsCents: r.cash_payments_cents,
+  movementsCents: r.movements_cents,
+  expectedCashCents: r.expected_cash_cents,
+  countedCashCents: r.counted_cash_cents,
+  differenceCents: r.difference_cents,
+  denominations: r.denominations,
+  totals: r.totals,
+  paymentCount: r.payment_count,
+  movementCount: r.movement_count,
+  firstBonNr: r.first_bon_nr,
+  lastBonNr: r.last_bon_nr,
+  itemsDigest: r.items_digest,
+  tse: r.tse,
+  bons: r.bons,
+  differenceReason: r.difference_reason,
+  note: r.note,
+  createdBy: r.created_by,
+  prevHash: r.prev_hash,
+  hash: r.hash,
+});
 type AddendumRow = { id: string; record_id: string; author_id: string; kind: string; text: string; created_at: Date; prev_hash: string | null; hash: string; demo: boolean };
 
 /** Reihenfolge über die Verkettung (nicht über Zeitstempel). Liefert IDs mit Verkettungsfehlern. */
@@ -80,6 +141,12 @@ async function main() {
       `select a.id, a.record_id, a.author_id, a.kind, a.text, a.created_at, a.prev_hash, a.hash, o.slug like 'demo-%' as demo
          from record_addenda a join organizations o on o.id = a.organization_id
         where $1::uuid is null or a.organization_id = $1::uuid`,
+      [org],
+    )
+  ).rows;
+  const closings = (
+    await pool.query<ClosingRow>(
+      `select * from cash_closings where $1::uuid is null or organization_id = $1::uuid order by organization_id, number`,
       [org],
     )
   ).rows;
@@ -156,7 +223,19 @@ async function main() {
   linkErrors += addLinkIds.length;
   contentErrors += addContentIds.length;
 
+  // Kassenabschlüsse je Praxis: Z 1, 2, 3 … ohne Lücke, Kette + Inhalt + Belegnummern (gleiche Prüfung wie die App)
+  const byOrg = new Map<string, ClosingChainRow[]>();
+  for (const c of closings) byOrg.set(c.organization_id, [...(byOrg.get(c.organization_id) ?? []), closingOf(c)]);
+  const closingIds: string[] = [];
+  for (const [orgId, rows] of byOrg) {
+    const bad = verifyClosingRows(rows);
+    if (bad !== -1) closingIds.push(`${orgId} ab Z ${rows[bad].number} (Position ${bad + 1}; ${rows[bad].number !== bad + 1 ? "Z-Nummer nicht lückenlos" : "Kette/Inhalt/Belegnummern"})`);
+  }
+  linkErrors += closingIds.length;
+
   console.log(`Behandlungseinträge: ${records.length} (${byPatient.size} Ketten), Nachträge: ${addenda.length}`);
+  console.log(`Kassenabschlüsse: ${closings.length} (${byOrg.size} Praxen)`);
+  report("Kassenabschlüsse fehlerhaft (Praxis)", closingIds);
   if (demoSkipped) console.log(`Demo-Praxis: ${demoSkipped} Einträge nur auf Verkettung geprüft`);
   report("Verkettung fehlerhaft (Eintrag)", linkIds);
   report("Inhalt passt nicht zum Hash (Eintrag)", contentIds);

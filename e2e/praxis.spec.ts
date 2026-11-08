@@ -1,7 +1,7 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
  * Login → Kunde anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → öffentliche Buchung →
- * Kundenportal per Link (buchen + verschieben) → Posteingang → Abmelden.
+ * Kundenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
@@ -151,6 +151,22 @@ test("Kundenportal: Link erzeugen, Termin buchen und verschieben", async ({ brow
   await page.goto("/posteingang");
   await expect(page.getByText("Neue Buchung über das Kundenportal").first()).toBeVisible();
   await expect(page.getByText("Terminverschiebung über das Kundenportal").first()).toBeVisible();
+});
+
+test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () => {
+  await page.goto("/kasse");
+  await expect(page.getByRole("heading", { name: "Kasse", exact: true })).toBeVisible();
+  const reason = page.getByLabel("Grund / Beleg *");
+  await page.getByLabel("Betrag (€)").fill("1,00");
+  await reason.fill("=HYPERLINK(1)");
+  await page.getByRole("button", { name: "Im Kassenbuch erfassen" }).click();
+  await expect(page.getByText(/darf nicht mit =, \+, - oder @ beginnen/)).toBeVisible();
+  await page.getByLabel("Betrag (€)").fill("1,00");
+  await reason.fill(`E2E Porto ${run}`);
+  await page.getByRole("button", { name: "Im Kassenbuch erfassen" }).click();
+  await expect(page.getByText("Im Kassenbuch erfasst.")).toBeVisible();
+  await page.getByRole("link", { name: /DSFinV-K-Export/ }).click();
+  await expect(page).toHaveURL(/\/kasse\/export/);
 });
 
 test("Abmelden", async () => {

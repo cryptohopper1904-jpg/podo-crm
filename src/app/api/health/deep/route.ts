@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Ausführlicher Betriebs-Check für Monitoring (z. B. Uptime Kuma, alle 5 min):
- *   GET /api/health/deep  mit  Authorization: Bearer ${HEALTH_TOKEN}  (ohne HEALTH_TOKEN: CRON_SECRET)
+ *   GET /api/health/deep  mit  Authorization: Bearer ${HEALTH_TOKEN}  (eigenes Token, kein Rückgriff auf CRON_SECRET)
  * - kein Token konfiguriert → 503 (fail closed), falsches Token → 401 (zeitkonstanter Vergleich)
  * - Prüfungen: Datenbank, Migrationsstand, Dateiablage beschreibbar, Alter des letzten Backups,
  *   letzte Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR, geschrieben von backup-/cron-Container)
@@ -94,7 +94,8 @@ async function checkTimestamps(): Promise<Record<string, CheckResult>> {
 }
 
 export async function GET(req: NextRequest) {
-  const secret = process.env.HEALTH_TOKEN || process.env.CRON_SECRET;
+  // nur ein eigenes Token – kein Rückgriff auf CRON_SECRET (getrennte Geheimnisse für Monitoring und Cron)
+  const secret = process.env.HEALTH_TOKEN;
   if (!secret || secret.length < 16) return NextResponse.json({ error: "Health-Token nicht eingerichtet" }, { status: 503 });
   const header = req.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";

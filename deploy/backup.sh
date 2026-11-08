@@ -37,7 +37,7 @@ EOF
 case "$MODE" in
   daily)
     save "/backups/db-$TS.dump.gpg" pg_dump -h db -U podo_owner -d podo -Fc
-    save "/backups/files-$TS.tar.gz.gpg" tar -C /data -cz storage
+    save "/backups/files-$TS.tar.gz.gpg" tar -C /data -cz --exclude="storage/.pre-restore-*" --exclude="storage/.restore-*" storage
     find /backups -type f -name '*.gpg' -mtime +"${BACKUP_RETENTION_DAYS:-14}" -delete
     find /backups -type f \( -name '*.tmp' -o -name '*.ok' \) -mtime +1 -delete
     # lesbar für die App (läuft als eigener Benutzer), trotz umask 077 oben

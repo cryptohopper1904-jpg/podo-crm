@@ -37,8 +37,6 @@ Hinweis: Der Excel-Import übernimmt SR-Teilzeilen weiterhin als Positionen der 
 | invoices | Index `(organization_id, checkout_ref)` | SumUp-Terminal-Webhook ordnet die Zahlung über `checkout_ref` zu (`reader:<id>` / `checkout:<id>`), derzeit Seq-Scan |
 | payments | Unique-Index `(organization_id, external_ref)` WHERE external_ref IS NOT NULL | Idempotenz der SumUp-Buchung zusätzlich in der DB absichern (derzeit Zeilensperre auf der Rechnung + Vorab-Select) |
 | integration_provider (Enum) | Wert `tse` (bzw. `fiskaly`) | TSE-Zugang (API-Key/Secret, TSS-/Client-ID) pro Praxis verschlüsselt in `integration_connections` statt Umgebungsvariablen |
-| fiscal_transactions (neu) | id, organization_id, payment_id, tss_serial, tx_number, signature_counter, signature, started_at, finished_at, is_test, raw jsonb (append-only, RLS) | KassenSichV/DSFinV-K: vollständige Signaturdaten je Bar-Buchung; derzeit nur Kurzreferenz in `payments.external_ref` (`tse:[test:]<serial>:<nr>:<counter>`) |
-| cash_point_closings (neu) | Tagesabschluss (Z-Bon) je Kasse | Voraussetzung für den DSFinV-K-Export |
 | reminder_log | Index `(organization_id, at desc)`; Index `(organization_id, patient_id, kind, at)` | Protokollansicht und „letzte Rückholung je Person“ |
 | patients | Spalte `reminders_opt_out` boolean | Abmeldung von Erinnerungen („Keine Erinnerungen mehr?“); derzeit nur `extra.no_reminders` (Doctolib-Import) |
 | invoices | Spalte `period_month` (Sammelrechnung) bzw. Verknüpfung `invoice_lines.treatment_record_id` | „noch nicht abgerechnet“ für Pflegeheim-Sammelrechnungen exakt statt per Text-Heuristik (Name + Datum in der Positionsbeschreibung) |
@@ -50,10 +48,12 @@ Hinweis: Der Excel-Import übernimmt SR-Teilzeilen weiterhin als Positionen der 
 | messages | Unique-Index (organization_id, channel, external_id) WHERE external_id IS NOT NULL | KIM-Dedupe über Message-ID derzeit per Vorab-Select unter Advisory-Lock je Praxis |
 | messages | `meta` jsonb (z. B. KIM-Dienstkennung, Anhangsliste) | Anhangsnamen stehen derzeit als Hinweiszeile im Text |
 
-## Offen (Kundenportal-Buchung & Warteliste – Phase 5 B)
-| Tabelle | Wunsch | Grund |
-|---|---|---|
-| appointment_source (Enum) | Wert `portal` | Portal-Buchungen laufen derzeit als `source = 'online'` mit `external_id = 'portal:<uuid>'` (`PORTAL_EXTERNAL_PREFIX`), Nachrücker als `external_id = 'waitlist:<link-id>'`. Nach der Migration `UPDATE appointments SET source='portal' WHERE external_id LIKE 'portal:%'` und Konstante in `src/lib/portal-booking.ts` umstellen |
-| waitlist | `service_ids uuid[]`, `weekdays int2[]`, `dayparts text[]`, `note text` | Wünsche stehen derzeit als JSON (`{"v":1,…}`) im Freitext `wishes` (`serializeWishes`/`parseWishes`, alte Einträge per Heuristik) |
-| patient_links | `appointment_id uuid` (FK, on delete cascade) | Angebot → freier Termin wird derzeit über `reminder_log` (`kind='waitlist_offer'`, `dedupe_key='wloffer:<link-id>'`, `appointment_id`) zugeordnet |
-| reminder_log | Index `(organization_id, kind, appointment_id)` | Angebote je freiem Termin (Widerruf der übrigen Links bei Annahme) ohne Seq-Scan |
+## Erledigt (Kundenportal-Buchung & Warteliste – Phase 5, Migrationen 0016/0017)
+| Tabelle | Umsetzung |
+|---|---|
+| appointment_source (Enum) | ✔ Wert `portal` (Typ ersetzt statt `ADD VALUE`, damit die Datenübernahme in derselben Migrations-Transaktion läuft). Portal-Buchungen und Nachrücker haben Quelle `portal`; `external_id` bleibt (`portal:<uuid>` für eigene Buchungen → Limit offener Portal-Buchungen, `waitlist:<link-id>` für Nachrücker). Bestand mit `source='online'` und `external_id LIKE 'portal:%'` bzw. `'waitlist:%'` umgestellt |
+| waitlist | ✔ `service_ids uuid[]`, `weekdays smallint[]`, `dayparts text[]`, `note text`; JSON-Wünsche (`{"v":1,…}`) in die Spalten übernommen, Freitext-Altbestand bleibt in `wishes` (Heuristik) |
+| patient_links | ✔ `appointment_id uuid` (FK, on delete cascade) + Index `(organization_id, appointment_id)`; Bestand aus `reminder_log` übernommen. Widerruf der übrigen Angebote bei Annahme direkt über den Link |
+| reminder_log | ✔ entfällt – Zuordnung Angebot → Termin über `patient_links.appointment_id` |
+| fiscal_transactions (neu) | ✔ vollständige TSE-Signatur je Kassenvorgang (Bar, Karte, Gutschein), append-only, RLS (Wunsch aus Phase 2) |
+| cash_point_closings (neu) | ✔ als `cash_closings` (Phase 5 A) + `cash_closing_registrations` (Meldung an den TSE-Dienst nach dem Commit) |

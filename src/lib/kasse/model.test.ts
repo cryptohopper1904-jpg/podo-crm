@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chainHash } from "@/lib/records";
-import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, type KassePayment } from "./model";
+import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment } from "./model";
 
 const p = (id: string, method: KassePayment["method"], amountCents: number, minute: number): KassePayment => ({
   id,
@@ -102,5 +102,27 @@ describe("Kasse: Hash-Kette", () => {
     expect(chainHash(null, closingHashContent(roundTrip))).toBe(h1);
     expect(chainHash(null, closingHashContent({ ...base, countedCashCents: 101 }))).not.toBe(h1);
     expect(chainHash(h1, closingHashContent({ ...base, number: 2 }))).not.toBe(chainHash(null, closingHashContent({ ...base, number: 2 })));
+  });
+
+  it("Kette: Snapshot der Bons geht in den Hash ein (Altbestand ohne Snapshot unverändert), Lücken werden erkannt", () => {
+    const legacy = chainHash(null, closingHashContent(base));
+    expect(chainHash(null, closingHashContent({ ...base, bons: undefined }))).toBe(legacy);
+    const bons = buildBons({ zNumber: 1, firstBonNr: 1, closedAt: base.closedAt, openingCents: 0, openingIsNew: true, differenceCents: 0, payments: [{ ...p("a", "cash", 100, 1), tse: { serial: "S", number: 1, signatureCounter: 2, isTest: false, signature: "sig", startedAt: new Date(0), finishedAt: new Date(1000) } }], movements: [] });
+    const snap = serializeBons(bons);
+    expect(reviveBons(snap)).toEqual(bons);
+    const withSnap = { ...base, bons: snap };
+    const h = chainHash(null, closingHashContent(withSnap));
+    expect(h).not.toBe(legacy);
+    const row1 = { ...withSnap, prevHash: null, hash: h };
+    expect(verifyClosingRows([row1])).toBe(-1);
+    // geänderter Snapshot (z. B. Gutscheincode/USt) bricht die Kette
+    const tampered = JSON.parse(JSON.stringify(snap));
+    tampered[0].lines[0].text = "anders";
+    expect(verifyClosingRows([{ ...row1, bons: tampered }])).toBe(0);
+    // Z-Nummer mit Lücke bzw. Belegnummern nicht fortlaufend
+    const z3 = { ...base, id: "c3", number: 3, firstBonNr: 2, lastBonNr: 2 };
+    expect(verifyClosingRows([row1, { ...z3, prevHash: h, hash: chainHash(h, closingHashContent(z3)) }])).toBe(1);
+    const z2 = { ...base, id: "c2", number: 2, firstBonNr: 5, lastBonNr: 5 };
+    expect(verifyClosingRows([row1, { ...z2, prevHash: h, hash: chainHash(h, closingHashContent(z2)) }])).toBe(1);
   });
 });

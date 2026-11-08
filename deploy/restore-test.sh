@@ -7,8 +7,9 @@
 #   bash deploy/restore-test.sh --file /pfad/db-….dump.gpg   # z. B. aus dem Offsite-Speicher
 #
 # Prüfungen: Entschlüsselung + pg_restore fehlerfrei · Tabellen vorhanden · Zeilenzahlen · Stand der
-#   Migrationen · Hash-Kette der Behandlungsdoku (Verkettung per SQL, Inhalts-Hashes per Skript
-#   scripts/verify-hash-chains.ts) · Datei-Backup lesbar (Anzahl Dateien, ohne Entpacken auf Platte).
+#   Migrationen · Hash-Ketten der Behandlungsdoku und der Kassenabschlüsse (Verkettung und lückenlose Z-Nummern
+#   per SQL, Inhalts-Hashes per Skript scripts/verify-hash-chains.ts) · Datei-Backup lesbar (Anzahl Dateien,
+#   ohne Entpacken auf Platte).
 # Ausgabe enthält nur Zähler und IDs, keine Patientendaten.
 #
 # Optionen: --file DATEI  --skip-files (Datei-Backup nicht prüfen)  --skip-recompute (kein Inhalts-Hash)
@@ -100,7 +101,8 @@ main() {
   info "Zeilen je Tabelle:"
   "${Q[@]}" "select t, coalesce((xpath('/row/n/text()', query_to_xml(format('select count(*) as n from %I', t), false, true, '')))[1]::text, '–')
              from unnest(array['organizations','users','patients','appointments','treatment_records','record_addenda','media',
-                               'anamneses','prescriptions','invoices','payments','vouchers','audit_log']) t
+                               'anamneses','prescriptions','invoices','payments','vouchers','cash_closings','cash_movements',
+                               'fiscal_transactions','audit_log']) t
              where to_regclass(t) is not null" | awk -F'|' '{ printf "    %-20s %s\n", $1, $2 }'
   local orgs; orgs=$("${Q[@]}" "select count(*) from organizations")
   if [ "$orgs" -ge 1 ]; then ok "$orgs Praxis/Praxen"; else bad "keine Praxis in der Sicherung"; fi
@@ -130,7 +132,32 @@ main() {
     bad "Hash-Kette: $starts Patient:innen ohne/mit mehreren Anfängen, $missing fehlende Vorgänger, $forks Verzweigungen"
   fi
 
-  # Hash-Kette, Teil 2: Inhalts-Hashes neu berechnen (gleicher Code wie die App, src/lib/records.ts)
+  # Kassenabschlüsse (Z-Bons), Teil 1 (SQL): je Praxis Z 1…n ohne Lücke/Doppel, Kette ohne Bruch/Verzweigung,
+  # fortlaufende Belegnummern
+  if [ "$("${Q[@]}" "select to_regclass('cash_closings') is not null")" = t ]; then
+    local zc
+    zc=$("${Q[@]}" "
+      with c as (select organization_id o, number n, hash, prev_hash, first_bon_nr f, last_bon_nr l,
+                        lag(hash) over w as lh, lag(last_bon_nr) over w as ll, row_number() over w as rn
+                   from cash_closings window w as (partition by organization_id order by number))
+      select
+        (select count(*) from c where n <> rn),
+        (select count(*) from c where prev_hash is distinct from lh),
+        (select count(*) from c where f <> coalesce(ll, 0) + 1 or l < f - 1),
+        (select count(*) from cash_closings),
+        (select count(distinct organization_id) from cash_closings)")
+    local zgaps zlinks zbons ztotal zorgs
+    IFS='|' read -r zgaps zlinks zbons ztotal zorgs <<<"$zc"
+    if [ "$zgaps" = 0 ] && [ "$zlinks" = 0 ] && [ "$zbons" = 0 ]; then
+      ok "Kassenabschlüsse: $ztotal Z-Bons ($zorgs Praxen), Z-Nummern lückenlos, Kette und Belegnummern fortlaufend"
+    else
+      bad "Kassenabschlüsse: $zgaps Z-Nummern-Lücken, $zlinks Kettenbrüche, $zbons Belegnummern-Lücken"
+    fi
+  else
+    info "Kassenabschlüsse: Tabelle nicht vorhanden (Sicherung vor Phase 5)"
+  fi
+
+  # Hash-Ketten, Teil 2: Inhalts-Hashes neu berechnen (Behandlungsdoku und Kassenabschlüsse) (gleicher Code wie die App, src/lib/records.ts)
   if [ "$SKIP_RECOMPUTE" = 1 ]; then
     info "Inhalts-Hashes: übersprungen (--skip-recompute)"
   else
@@ -138,7 +165,7 @@ main() {
     if docker build -q -f "$APP_DIR/deploy/Dockerfile.migrate" -t podo-crm-tools:restore-test "$APP_DIR" >/dev/null; then
       if docker run --rm --network "$NET" -e DATABASE_URL="postgres://podo_owner:$PW@$CT:5432/podo_restore" \
           podo-crm-tools:restore-test pnpm exec tsx scripts/verify-hash-chains.ts | sed 's/^/    /'; then
-        ok "Inhalts-Hashes reproduzierbar"
+        ok "Inhalts-Hashes reproduzierbar (Behandlungsdoku, Kassenabschlüsse)"
       else
         bad "Inhalts-Hashes: Abweichungen (siehe oben)"
       fi

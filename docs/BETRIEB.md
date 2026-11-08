@@ -67,8 +67,8 @@ Standard ist Testbetrieb mit Demo-Praxis (`SEED_DEMO=true`, Login `demo@podocrm.
 | `DB_OWNER_PASSWORD`, `DB_APP_PASSWORD` | Datenbank-Passwörter (Zufall, nicht ändern) |
 | `APP_ENCRYPTION_KEY`, `BACKUP_PASSPHRASE` | siehe Abschnitt 0 |
 | `SETUP_TOKEN` | Einmal-Code für `/einrichtung` |
-| `CRON_SECRET` | schützt `/api/cron/*` (und `/api/health/deep`, falls kein `HEALTH_TOKEN`) |
-| `HEALTH_TOKEN` | optional: eigenes Token für `/api/health/deep` |
+| `CRON_SECRET` | schützt `/api/cron/*` |
+| `HEALTH_TOKEN` | Token für `/api/health/deep` (eigenes Geheimnis, nicht `CRON_SECRET`) |
 | `BACKUP_RETENTION_DAYS` | Aufbewahrung lokaler Backups (Standard 14) |
 | `SENTRY_DSN`, `ERROR_WEBHOOK_URL` | optionales Fehler-Reporting (Abschnitt 4.3) |
 | `TRUSTED_PROXY_HOPS` | Anzahl Proxys vor der App (Abschnitt 6) |
@@ -100,7 +100,7 @@ bash /opt/podo-crm/deploy/restore.sh --db db-preupdate-<zeit>.dump.gpg
 ```
 Achtung: Alles, was seit dieser Sicherung eingegeben wurde, geht dabei verloren. Deshalb Updates außerhalb der Sprechzeiten durchführen.
 
-Das Skript lässt sich gefahrlos mehrfach ausführen; ein zweites Update gleichzeitig verhindert eine Sperre (`/tmp/podo-crm-update.lock`).
+Das Skript lässt sich gefahrlos mehrfach ausführen; ein zweites Update gleichzeitig verhindert eine Sperre (`deploy/.update.lock` im Installationsverzeichnis, nicht im allgemein beschreibbaren `/tmp`).
 
 ---
 
@@ -130,6 +130,7 @@ Das Skript spielt das **neueste** Datenbank-Backup in einen **Wegwerf-Postgres-C
 - Anzahl Tabellen, Zeilenzahlen wichtiger Tabellen, mindestens eine Praxis,
 - Migrationsstand im Vergleich zum Code,
 - **Hash-Kette der Behandlungsdoku**: per SQL (je Patient:in genau ein Anfang, keine Lücke, keine Verzweigung) und durch Neuberechnung aller Hashes mit dem App-Code (`scripts/verify-hash-chains.ts`, auch der Nachträge). Demo-Praxen werden nur auf Verkettung geprüft.
+- **Kassenabschlüsse (Z-Bons)**: je Praxis Z-Nummern 1…n ohne Lücke, Kette ohne Bruch, Belegnummern fortlaufend (SQL) und Neuberechnung der Inhalts-Hashes (inkl. Bon-Snapshot) mit dem App-Code (`src/lib/kasse/chain.ts`).
 - das neueste Datei-Backup (entschlüsselbar, Anzahl Dateien – ohne Entpacken auf die Platte),
 
 und löscht Container, Netzwerk und Daten danach wieder. Die Ausgabe enthält nur Zähler und IDs. Ergebnis (Datum, „erfolgreich“) im Betriebsprotokoll / in der Verfahrensdokumentation festhalten.
@@ -151,9 +152,9 @@ bash /opt/podo-crm/deploy/restore.sh --db latest                                
 bash /opt/podo-crm/deploy/restore.sh --db db-20261108-0300.dump.gpg --files files-20261108-0300.tar.gz.gpg
 bash /opt/podo-crm/deploy/restore.sh --db /root/restore/db-….dump.gpg           # Datei vom Host (Offsite)
 ```
-Ablauf: Rückfrage (`WIEDERHERSTELLEN` eintippen; `--yes` ohne Rückfrage, `--dry-run` nur anzeigen) → aktuellen Stand zusätzlich sichern (`db-preupdate-…`) → Backup in eine Hilfsdatenbank einspielen → **nur wenn das fehlerfrei war**: App und Cron stoppen, Datenbank `podo` ersetzen → Dateien (optional) ins Volume `storage` entpacken → alles starten und auf `/api/health` warten. Ist das Backup älter als der Code, spielt `migrate` die fehlenden Migrationen automatisch nach.
+Ablauf: Rückfrage (`WIEDERHERSTELLEN` eintippen; `--yes` ohne Rückfrage, `--dry-run` nur anzeigen) → aktuellen Stand zusätzlich sichern (`db-preupdate-…`) → Backup in eine Hilfsdatenbank einspielen → **nur wenn das fehlerfrei war**: App und Cron stoppen, Datenbank `podo` ersetzen → Dateien (optional): Archiv prüfen (keine absoluten Pfade, kein `..`, keine Links), in ein leeres Verzeichnis entpacken, dann umschalten – der bisherige Bestand wandert vollständig nach `storage/.pre-restore-<zeit>` (Quarantäne, nicht in neuen Backups) → alles starten und auf `/api/health` warten. Ist das Backup älter als der Code, spielt `migrate` die fehlenden Migrationen automatisch nach.
 
-Datenbank und Dateien möglichst vom **selben Zeitpunkt** einspielen. Fotos, die nach dem Backup hochgeladen wurden, bleiben als Datei liegen, sind aber in der Datenbank nicht mehr verknüpft.
+Datenbank und Dateien möglichst vom **selben Zeitpunkt** einspielen. Nach dem Datei-Restore liegen neuere Fotos (ohne Datenbank-Bezug) nur noch in der Quarantäne; nach erfolgreicher Prüfung löschen (Befehl gibt das Skript aus). Wird nur die Datenbank zurückgespielt, bleiben neuere Dateien im Volume, sind aber nicht mehr verknüpft – dann `--files` vom selben Zeitpunkt mit einspielen.
 
 ---
 
@@ -166,7 +167,7 @@ Datenbank und Dateien möglichst vom **selben Zeitpunkt** einspielen. Fotos, die
 ```bash
 curl -s -H "Authorization: Bearer $HEALTH_TOKEN" https://DOMAIN/api/health/deep
 ```
-Token: `HEALTH_TOKEN` aus `deploy/.env`, ohne diesen Wert `CRON_SECRET`. Fehlt beides → `503`, falsches Token → `401`.
+Token: `HEALTH_TOKEN` aus `deploy/.env` (wird von `install.sh` erzeugt). Fehlt es → `503`, falsches Token → `401`.
 
 | Prüfung | ok | warn | fail |
 |---|---|---|---|

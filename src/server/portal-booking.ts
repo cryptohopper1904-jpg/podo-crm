@@ -104,7 +104,7 @@ async function busyBetween(tx: Tx, org: string, from: Date, to: Date) {
     .where(and(eq(appointments.organizationId, org), lt(appointments.startsAt, to), gte(appointments.endsAt, from)));
   const busy = rows.filter((r) => r.status !== "cancelled");
   const onlinePerDay = new Map<string, number>();
-  for (const r of busy) if (r.source === "online") onlinePerDay.set(berlinDateIso(r.startsAt), (onlinePerDay.get(berlinDateIso(r.startsAt)) ?? 0) + 1);
+  for (const r of busy) if (r.source === "online" || r.source === "portal") onlinePerDay.set(berlinDateIso(r.startsAt), (onlinePerDay.get(berlinDateIso(r.startsAt)) ?? 0) + 1);
   return { busy, onlinePerDay };
 }
 
@@ -274,6 +274,7 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
         and(
           eq(appointments.organizationId, org),
           eq(appointments.patientId, link.patientId),
+          eq(appointments.source, "portal"),
           like(appointments.externalId, `${PORTAL_EXTERNAL_PREFIX}%`),
           gte(appointments.startsAt, now),
           inArray(appointments.status, ["planned", "confirmed"]),
@@ -290,7 +291,7 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
         startsAt: start,
         endsAt: end,
         status: "planned",
-        source: "online",
+        source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: svc.name,
         notes: "Gebucht über das Kundenportal (Identität über den persönlichen Portal-Link).",
@@ -372,7 +373,7 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
         startsAt: start,
         endsAt: end,
         status: "planned",
-        source: "online",
+        source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: a.title,
         notes: [`Über das Kundenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`, a.notes].filter(Boolean).join("\n"),

@@ -419,7 +419,13 @@ async function registerClosing(org: string, row: ClosingRow): Promise<Registrati
     tx.select().from(cashClosingRegistrations).where(and(eq(cashClosingRegistrations.organizationId, org), eq(cashClosingRegistrations.cashClosingId, row.id))),
   );
   if (existing) return existing;
-  const port = getFiscalPort();
+  let port: ReturnType<typeof getFiscalPort>;
+  try {
+    port = getFiscalPort();
+  } catch (e) {
+    log.error("kasse.registration.not_configured", { error: e });
+    return null;
+  }
   if (!port.registerCashPointClosing) {
     log.error("kasse.registration.unsupported", { kind: port.vendor });
     return null;

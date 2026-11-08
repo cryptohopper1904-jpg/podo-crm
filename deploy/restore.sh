@@ -11,8 +11,10 @@
 # Ablauf Datenbank: aktuelle Datenbank zusätzlich sichern → in eine neue Datenbank „podo_restore_new“
 #   einspielen → erst wenn das fehlerfrei geklappt hat, App/Cron stoppen und „podo“ ersetzen → starten.
 #   Schlägt das Einspielen fehl, bleibt die bisherige Datenbank unverändert.
-# Ablauf Dateien: Archiv in das storage-Volume entpacken (vorhandene Dateien gleichen Namens werden
-#   überschrieben, neuere bleiben erhalten – Dateinamen sind zufällig und werden nie wiederverwendet).
+# Ablauf Dateien: Archiv prüfen (keine absoluten Pfade, kein „..“) und in ein LEERES Verzeichnis im storage-Volume
+#   entpacken; erst danach wird umgeschaltet: der bisherige Bestand wandert vollständig nach
+#   /data/storage/.pre-restore-<zeit>/ (Quarantäne, verschlüsselt wie zuvor), der wiederhergestellte Stand ersetzt ihn.
+#   So bleiben keine Dateien ohne Datenbank-Bezug sichtbar liegen. Quarantäne nach Prüfung löschen (Hinweis am Ende).
 #
 # Optionen: --db DATEI|latest  --files DATEI|latest  --yes (ohne Rückfrage)  --dry-run
 set -euo pipefail
@@ -84,9 +86,25 @@ main() {
   if [ -n "$FILES" ]; then
     say "Dateien (Fotos/Dokumente) zurückspielen"
     "${COMPOSE[@]}" stop app cron >/dev/null 2>&1 || true
-    decrypt_backup "$FILES" | "${COMPOSE[@]}" run --rm -T --no-deps --entrypoint sh app -c 'tar -C /data/storage -xz --strip-components=1' \
-      || die "Dateien konnten nicht entpackt werden."
-    info "Dateien zurückgespielt."
+    local TS; TS=$(date +%Y%m%d-%H%M%S)
+    # shellcheck disable=SC2016  # wird im Container ausgewertet
+    decrypt_backup "$FILES" | "${COMPOSE[@]}" run --rm -T --no-deps --entrypoint sh app -c '
+      set -eu
+      S=/data/storage; TS="$1"; NEW="$S/.restore-new-$TS"; OLD="$S/.pre-restore-$TS"; ARC="$S/.restore-$TS.tgz"
+      trap "rm -f \"$ARC\"" EXIT
+      cat > "$ARC"
+      # Archiv prüfen: keine absoluten Pfade, keine „..“-Bestandteile, keine Links
+      if tar -tzf "$ARC" | grep -Eq "^/|(^|/)\.\.(/|$)"; then echo "Archiv enthält unsichere Pfade – abgebrochen." >&2; exit 1; fi
+      if tar -tvzf "$ARC" | grep -Eq "^[lh]"; then echo "Archiv enthält Links – abgebrochen." >&2; exit 1; fi
+      mkdir -m 700 "$NEW" "$OLD"
+      tar -C "$NEW" -xz --strip-components=1 --no-same-owner --no-same-permissions -f "$ARC"
+      # Umschalten: bisherigen Bestand (ohne frühere Quarantänen) in die Quarantäne, neuen Stand an seinen Platz
+      find "$S" -mindepth 1 -maxdepth 1 ! -name ".restore-*" ! -name ".pre-restore-*" -exec mv -t "$OLD" {} +
+      find "$NEW" -mindepth 1 -maxdepth 1 -exec mv -t "$S" {} +
+      rmdir "$NEW"
+    ' sh "$TS" || die "Dateien konnten nicht zurückgespielt werden (Bestand unverändert, sofern das Umschalten nicht begonnen hat)."
+    info "Dateien zurückgespielt. Bisheriger Bestand in Quarantäne: /data/storage/.pre-restore-$TS"
+    info "Nach erfolgreicher Prüfung löschen: ${COMPOSE[*]} run --rm --no-deps --entrypoint rm app -rf /data/storage/.pre-restore-$TS"
   fi
 
   say "Starten"

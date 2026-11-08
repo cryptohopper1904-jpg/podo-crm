@@ -32,7 +32,18 @@ describe("Fehler-Reporting", () => {
   });
 
   it("ersetzt ID-artige Segmente im Fallback-Pfad", () => {
-    expect(scrubRoute(undefined, "/kunden/3f2a1b4c-1111-2222-3333-444455556666/doku?tab=1")).toBe("/kunden/[id]/doku");
+    // ohne Routenmuster kein echter Pfad (Regression Review Phase 5: /kunden/42, Namenssegmente)
+    expect(scrubRoute(undefined, "/kunden/3f2a1b4c-1111-2222-3333-444455556666/doku?tab=1")).toBe("/kunden/[…]");
+    expect(scrubRoute(undefined, "/kunden/42")).toBe("/kunden/[…]");
+    expect(scrubRoute(undefined, "/Erika-Muster/x")).toBe("[unbekannt]");
+  });
+
+  it("externer Bericht ohne Fehlermeldung – höchstens SQLSTATE (Regression Review Phase 5)", () => {
+    const dbErr = Object.assign(new Error('duplicate key value violates unique constraint, Key (last_name)=(Muster) Diabetes'), { code: "23505" });
+    const r = buildErrorReport(dbErr, { method: "POST" }, { routePath: "/api/x", routeType: "route" });
+    expect(r.errorMessage).toBe("SQLSTATE 23505");
+    expect(JSON.stringify(r)).not.toMatch(/Muster|Diabetes/);
+    expect(buildErrorReport(new Error("Frau Muster hat Diabetes"), {}, { routePath: "/x" }).errorMessage).toBe("");
   });
 
   it("parst Sentry-DSN und baut ein Envelope ohne Nutzerdaten", () => {

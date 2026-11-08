@@ -25,8 +25,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const auth = { organization: { id: org, name: "T", slug: "t", smallBusiness: false }, user: { id: user, name: "Anna Test" }, can: () => true } as never;
     const patient = await f.patient(org);
     const invoice = await f.invoice(org, patient, 100_000);
-    const payment = (method: string, cents: number, paidAt: string) =>
-      f.asOrg(org, async (c) => (await c.query("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, created_by) values ($1,$2,$3,$4,$5,$6) returning id", [org, invoice, method, cents, paidAt, user])).rows[0].id as string);
+    /** createdBy null = Provider/Webhook (darf verspätet in einen abgeschlossenen Zeitraum fallen) */
+    const payment = (method: string, cents: number, paidAt: string, createdBy: string | null = user) =>
+      f.asOrg(org, async (c) => (await c.query("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, created_by) values ($1,$2,$3,$4,$5,$6) returning id", [org, invoice, method, cents, paidAt, createdBy])).rows[0].id as string);
     const closings = () => f.asOrg(org, async (c) => (await c.query("select * from cash_closings where organization_id = $1 order by number", [org])).rows);
     return { org, user, auth, invoice, payment, closings };
   };
@@ -106,8 +107,13 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // neue Zahlung mit Abschluss-Zuordnung ist verboten
     await expect(q("insert into payments (organization_id, invoice_id, method, amount_cents, cash_closing_id) select organization_id, invoice_id, 'cash', 1, $2 from payments where id = $1", [p1, z.id])).rejects.toThrow(/keinem Kassenabschluss/);
 
-    // Nachzügler (z. B. verspäteter Webhook) am abgeschlossenen Tag: anlegen ok, aber sofort gesperrt
-    const late = await payment("card", 3000, "2026-08-10 17:59+02");
+    // Regression (Review Phase 5): Benutzer:in darf keine Zahlung rückwirkend in den abgeschlossenen Zeitraum datieren …
+    await expect(payment("cash", 100, "2026-08-10 17:00+02")).rejects.toThrow(/rückwirkend/);
+    await expect(payment("cash", 100, "2026-08-09 12:00+02")).rejects.toThrow(/rückwirkend/);
+    // … und keine offene Zahlung per UPDATE vor den Abschluss verschieben (nicht nur exakt auf den Abschlusstag)
+    await expect(q("update payments set paid_at = '2026-08-01 12:00+02' where id = $1", [pOpen])).rejects.toThrow(/unveränderbar/);
+    // Nachzügler (verspäteter Webhook, ohne Benutzer) am abgeschlossenen Tag: anlegen ok, aber sofort gesperrt
+    const late = await payment("card", 3000, "2026-08-10 17:59+02", null);
     await expect(q("update payments set amount_cents = 1 where id = $1", [late])).rejects.toThrow(/unveränderbar/);
     await expect(q("delete from payments where id = $1", [late])).rejects.toThrow(/gelöscht/);
 
@@ -122,6 +128,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(q("update cash_movements set reason = 'x' where id = $1", [mv.id])).rejects.toThrow(/unveränderbar/);
     await expect(q("delete from cash_movements where id = $1", [mv.id])).rejects.toThrow(/nicht gelöscht/);
     await expect(q("insert into cash_movements (organization_id, kind, amount_cents, reason) values ($1, 'payout', 100, 'falsches Vorzeichen')", [org])).rejects.toThrow();
+    // Regression: Kassenbuch nicht rückdatiert / nicht in der Zukunft
+    await expect(q("insert into cash_movements (organization_id, kind, amount_cents, reason, occurred_at) values ($1, 'payout', -100, 'alt', '2026-08-10 12:00+02')", [org])).rejects.toThrow(/rückwirkend/);
+    await expect(q("insert into cash_movements (organization_id, kind, amount_cents, reason, occurred_at) values ($1, 'payout', -100, 'neu', now() + interval '1 day')", [org])).rejects.toThrow(/Zukunft/);
+    // Regression: Formel-Injection im Freitext wird abgelehnt
+    await expect(kasse.addCashMovement(auth, { kind: "payout", amountCents: 100, reason: "=HYPERLINK(1)" })).rejects.toThrow();
 
     // Kassenbuch-Eintrag entstand „jetzt“ → Abschluss für heute
     const { berlinDateIso } = await import("@/lib/format");
@@ -134,8 +145,15 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(z2.totals.byMethod).toEqual({ card: 5000 });
     await expect(q("update payments set external_ref = 'y' where id = $1", [pOpen])).rejects.toThrow(/unveränderbar/);
 
+    // Audit-Eintrag in derselben Transaktion wie der Abschluss
+    const au = (await f.asOrg(org, (c) => c.query("select count(*)::int n from audit_log where entity_id = $1 and action = 'kasse.close'", [z2.id]))).rows[0].n;
+    expect(au).toBe(1);
+    // Snapshot der Bons ist Teil des Abschlusses (Hash-Kette)
+    expect(Array.isArray(z2.bons) && z2.bons.length).toBe(3);
+    expect(z2.registration).toBe("none");
     // Ansicht: Kette + Zuordnung geprüft
     const view = await kasse.getClosing(auth, z2.id);
+    expect(view!.organization).not.toHaveProperty("settings");
     expect(view!.chainOk).toBe(true);
     expect(view!.digestOk).toBe(true);
     const pdf = await kasse.zBonPdfForOrg(org, z2.id);
@@ -159,5 +177,80 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await kasse.getClosing(b.auth, z.id)).toBeNull();
     const n = await f.asOrg(b.org, async (c) => (await c.query("select count(*)::int as n from cash_closings where id = $1", [z.id])).rows[0].n);
     expect(n).toBe(0);
+  });
+
+  it("Regression: Export nutzt den Snapshot – spätere Änderung am Gutschein ändert den DSFinV-K-Bon nicht", async () => {
+    const { auth, org, invoice, user } = await setup();
+    const v = (await f.asOrg(org, (c) => c.query("insert into vouchers (organization_id, code, issued_at, valid_until, amount_cents, purpose) values ($1, $2, '2026-01-01', '2030-01-01', 5000, 'multi') returning id", [org, `G-${Math.random().toString(36).slice(2, 8)}`]))).rows[0];
+    const code = (await f.asOrg(org, (c) => c.query("select code from vouchers where id=$1", [v.id]))).rows[0].code as string;
+    await f.asOrg(org, (c) => c.query("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, voucher_id, created_by) values ($1,$2,'voucher',2000,'2026-06-01 10:00+02',$3,$4)", [org, invoice, v.id, user]));
+    const z = await kasse.closeDay(auth, { businessDate: "2026-06-01", denominations: den(0) });
+    await f.asOrg(org, (c) => c.query("update vouchers set code = 'GEAENDERT', purpose = 'single' where id = $1", [v.id]));
+    const exp = await kasse.buildDsfinvkExport(auth, "2026-06-01", "2026-06-01");
+    const zip = await JSZip.loadAsync(exp.bytes);
+    const lines = await zip.file("lines.csv")!.async("string");
+    expect(lines).toContain(code);
+    expect(lines).not.toContain("GEAENDERT");
+    expect((await kasse.getClosing(auth, z.id))!.bons.flatMap((b) => b.lines.map((l) => l.voucherCode))).toContain(code);
+  });
+
+  it("Regression: TSE-Meldung erst nach dem Commit – Ausfall lässt den Abschluss bestehen („ausstehend“)", async () => {
+    const { auth, closings } = await setup();
+    process.env.TSE_PROVIDER = "fiskaly"; // ohne Zugangsdaten → Meldung schlägt fehl
+    const prevMode = process.env.INTEGRATIONS_MODE;
+    delete process.env.INTEGRATIONS_MODE;
+    try {
+      const z = await kasse.closeDay(auth, { businessDate: "2026-05-04", denominations: den(0), openingCents: 0 });
+      expect(z.tse.mode).toBe("fiskaly");
+      expect(z.registration).toBe("pending");
+      expect((await closings()).map((r) => r.number)).toEqual([1]);
+      await expect(kasse.retryClosingRegistration(auth, z.id)).rejects.toThrow(/fehlgeschlagen/);
+      const view = await kasse.getClosing(auth, z.id);
+      expect(view!.registration).toBeNull();
+      expect(view!.chainOk).toBe(true);
+    } finally {
+      delete process.env.TSE_PROVIDER;
+      if (prevMode !== undefined) process.env.INTEGRATIONS_MODE = prevMode;
+    }
+  });
+
+  it("Regression: eigene Rechte für Kasse – DSFinV-K-Export nicht mit bloßem Rechnungs-Leserecht", async () => {
+    const { auth } = await setup();
+    const limited = { ...(auth as object), can: (p: string) => p === "invoices.read" || p === "invoices.write" } as never;
+    await expect(kasse.buildDsfinvkExport(limited, "2026-01-01", "2026-01-02")).rejects.toThrow(/Berechtigung/);
+    await expect(kasse.closeDay(limited, { businessDate: "2026-01-01", denominations: den(0) })).rejects.toThrow(/Berechtigung/);
+    await expect(kasse.getClosing(limited, "00000000-0000-0000-0000-000000000000")).rejects.toThrow(/Berechtigung/);
+  });
+
+  it("KassenSichV: Karten- und Gutscheinzahlungen werden ebenfalls TSE-signiert (vollständige Signatur gespeichert)", async () => {
+    const { auth, org, invoice } = await setup();
+    const inv = await import("./invoices");
+    const v = (await f.asOrg(org, (c) => c.query("insert into vouchers (organization_id, code, issued_at, valid_until, amount_cents, purpose) values ($1, $2, '2026-01-01', '2099-01-01', 5000, 'multi') returning code", [org, `S-${Math.random().toString(36).slice(2, 8)}`]))).rows[0];
+    await inv.addPayments(auth, invoice, [
+      { method: "card", amountCents: 1000 },
+      { method: "voucher", amountCents: 500, voucherCode: v.code },
+      { method: "cash", amountCents: 700 },
+      { method: "transfer", amountCents: 300 },
+    ]);
+    await expect(inv.addPayments(auth, invoice, [{ method: "card", amountCents: 100, externalRef: "tse:FAKE:1:1" }])).rejects.toThrow(/tse:/);
+    const rows = (
+      await f.asOrg(org, (c) =>
+        c.query("select p.method, f.signature, f.is_test, f.started_at from payments p left join fiscal_transactions f on f.payment_id = p.id where p.organization_id=$1 order by p.method", [org]),
+      )
+    ).rows;
+    const by = Object.fromEntries(rows.map((r) => [r.method, r]));
+    for (const m of ["card", "voucher", "cash"]) {
+      expect(by[m].signature).toBeTruthy();
+      expect(by[m].is_test).toBe(true);
+    }
+    expect(by.transfer.signature).toBeNull();
+    // unveränderbar
+    await expect(f.asOrg(org, (c) => c.query("update fiscal_transactions set signature = 'x' where organization_id = $1", [org]))).rejects.toThrow(/unveränderbar/);
+    // Export: TSE-Transaktionen mit Signatur, Start und Ende (Test-Signaturen werden nicht als echte TSE gemeldet)
+    const { berlinDateIso } = await import("@/lib/format");
+    const z = await kasse.closeDay(auth, { businessDate: berlinDateIso(), denominations: den(700), openingCents: 0 });
+    const bons = (await kasse.getClosing(auth, z.id))!.bons.filter((b) => b.kind === "payment");
+    expect(bons).toHaveLength(3);
+    expect(bons.every((b) => b.tse?.signature && b.tse.startedAt instanceof Date)).toBe(true);
   });
 });

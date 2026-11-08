@@ -57,10 +57,19 @@ main() {
   [ -d "$APP_DIR/.git" ] || die "$APP_DIR ist kein git-Checkout."
   require_docker
 
-  # Nur ein Update gleichzeitig
+  # Nur ein Update gleichzeitig. Sperrdatei im (root-eigenen) Installationsverzeichnis statt im allgemein
+  # beschreibbaren /tmp (kein Symlink-/Vorab-Anlegen durch andere lokale Nutzer); vorhandener Symlink → Abbruch.
   if command -v flock >/dev/null; then
-    exec 9>"${TMPDIR:-/tmp}/podo-crm-update.lock"
-    flock -n 9 || die "Es läuft bereits ein Update (Sperre ${TMPDIR:-/tmp}/podo-crm-update.lock)."
+    local LOCK="$APP_DIR/deploy/.update.lock"
+    [ -L "$LOCK" ] && die "Sperrdatei $LOCK ist ein Symlink – Abbruch."
+    exec 9>>"$LOCK"
+    flock -n 9 || die "Es läuft bereits ein Update (Sperre $LOCK)."
+  fi
+  # Seit Phase 5: eigenes HEALTH_TOKEN für /api/health/deep (kein Rückgriff mehr auf CRON_SECRET)
+  if [ "$DRY_RUN" != 1 ] && ! grep -q '^HEALTH_TOKEN=.\{16,\}' "$ENV_FILE"; then
+    sed -i '/^HEALTH_TOKEN=/d' "$ENV_FILE"
+    echo "HEALTH_TOKEN=$(openssl rand -base64 32 | tr -d '\n/+=' | cut -c1-40)" >> "$ENV_FILE"
+    warn "HEALTH_TOKEN neu erzeugt (deploy/.env) – im Monitoring (Uptime Kuma o. Ä.) eintragen."
   fi
 
   # ── 1. Stand prüfen und Ziel ermitteln ─────────────────────────────────────

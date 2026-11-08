@@ -25,8 +25,8 @@ export async function signRegisterPayment(input: {
   amountCents: number;
   vatGroups: { rate: number; grossCents: number }[];
 }): Promise<SignedPayment> {
-  const port = getFiscalPort();
   try {
+    const port = getFiscalPort();
     const { transactionId } = await port.startTransaction({ reference: input.reference });
     const signature = await port.finishTransaction({
       transactionId,

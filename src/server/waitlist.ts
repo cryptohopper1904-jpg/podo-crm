@@ -16,9 +16,9 @@ import {
   OFFER_KIND,
   OFFER_PURPOSE,
   offerExpiry,
+  normalizeWishes,
   offerText,
-  parseWishes,
-  serializeWishes,
+  wishesOfRow,
   type WaitlistWishes,
 } from "@/lib/waitlist";
 import { describeError } from "@/integrations/test-connection";
@@ -29,6 +29,23 @@ import { mailMessagingPort } from "./mail";
 const PROVIDER: Record<ReminderChannel, MessagingProvider> = { email: "email_imap", sms: "sms", whatsapp: "whatsapp" };
 const REMINDER_CONSENTS = ["email_reminders", "sms_reminders", "whatsapp"] as const;
 const offerKey = (linkId: string) => `wloffer:${linkId}`;
+const wlCols = { wishes: waitlist.wishes, serviceIds: waitlist.serviceIds, weekdays: waitlist.weekdays, dayparts: waitlist.dayparts, note: waitlist.note };
+
+/**
+ * Basis-URL für Angebots-Links: absolut und HTTPS (Token im Link = Annahme im Namen der Person). http nur für
+ * localhost (Entwicklung/E2E). null → kein Versand.
+ */
+export function offerBaseUrl(raw: string | undefined | null): string | null {
+  try {
+    const u = new URL(String(raw ?? "").trim());
+    const local = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) return null;
+    if (u.username || u.password || u.search || u.hash) return null;
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
 const shortName = (first: string | null, last: string) => `${first ?? ""} ${last.slice(0, 1)}.`.trim();
 
 export type OfferDeps = {
@@ -38,7 +55,8 @@ export type OfferDeps = {
   baseUrl?: string;
 };
 
-export type OfferSummary = { offered: number; manual: number; skipped?: string; urls?: string[] };
+/** Ergebnis ohne Links/Tokens (die stehen nur in der versendeten Nachricht). */
+export type OfferSummary = { offered: number; manual: number; skipped?: string };
 
 /**
  * Ein Termin wurde abgesagt (Praxis, Kundenportal; beim KI-Telefon sagt die Praxis nach Prüfung ab):
@@ -51,6 +69,8 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
   if (!z.uuid().safeParse(appointmentId).success) return { offered: 0, manual: 0, skipped: "invalid" };
   const [o] = await db.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, org));
   if (!o) return { offered: 0, manual: 0, skipped: "org" };
+  const base = offerBaseUrl(deps.baseUrl ?? process.env.PUBLIC_URL);
+  if (!base) return { offered: 0, manual: 0, skipped: "no_https_url" };
 
   type Planned = { linkId: string; token: string; patientId: string; firstName: string | null; label: string; channel: ReminderChannel; to: string; expiresAt: Date };
   const prepared = await withOrg(org, async (tx) => {
@@ -73,7 +93,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
     ).map((s) => s.id);
     const svcList = await tx.select({ id: services.id, name: services.name, code: services.code }).from(services).where(eq(services.organizationId, org));
     const entries = await tx
-      .select({ id: waitlist.id, patientId: waitlist.patientId, wishes: waitlist.wishes, createdAt: waitlist.createdAt })
+      .select({ id: waitlist.id, patientId: waitlist.patientId, createdAt: waitlist.createdAt, ...wlCols })
       .from(waitlist)
       .innerJoin(patients, eq(patients.id, waitlist.patientId))
       .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), isNull(patients.archivedAt)));
@@ -88,7 +108,8 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       .from(patientLinks)
       .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.purpose, OFFER_PURPOSE), isNull(patientLinks.revokedAt), isNull(patientLinks.usedAt), gt(patientLinks.expiresAt, now)));
     const exclude = [a.patientId, ...already.map((x) => x.patientId), ...activeOffers.map((x) => x.patientId)].filter((x): x is string => !!x);
-    const picked = matchWaitlist(entries, { startsAt: a.startsAt, endsAt: a.endsAt, serviceIds }, { services: svcList, excludePatientIds: exclude });
+    const candidates = entries.map((e) => ({ id: e.id, patientId: e.patientId, createdAt: e.createdAt, wishes: wishesOfRow(e, svcList) }));
+    const picked = matchWaitlist(candidates, { startsAt: a.startsAt, endsAt: a.endsAt, serviceIds }, { excludePatientIds: exclude });
     if (!picked.length) return { skipped: "no_match" as const };
     const ids = picked.map((p) => p.patientId);
     const ps = await tx
@@ -101,7 +122,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       .where(and(eq(consents.organizationId, org), inArray(consents.patientId, ids), inArray(consents.type, [...REMINDER_CONSENTS])))
       .orderBy(desc(consents.recordedAt));
     const planned: Planned[] = [];
-    const manual: { label: string; phone: string | null; wishes: string }[] = [];
+    const manual: { patientId: string; name: string; wishes: string }[] = [];
     for (const c of picked) {
       const p = ps.find((x) => x.id === c.patientId);
       if (!p) continue;
@@ -112,7 +133,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       );
       const label = shortName(p.firstName, p.lastName);
       if (!ch) {
-        manual.push({ label: `${p.firstName ?? ""} ${p.lastName}`.trim(), phone: p.phoneMobile ?? p.phoneLandline, wishes: describeWishes(parseWishes(c.wishes, svcList), svcList) });
+        manual.push({ patientId: p.id, name: `${p.firstName ?? ""} ${p.lastName}`.trim(), wishes: describeWishes(c.wishes, svcList) });
         // auch ohne Versand protokollieren → beim nächsten Aufruf nicht erneut vorschlagen
         await tx
           .insert(reminderLog)
@@ -122,10 +143,10 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       }
       const token = newPortalToken();
       const linkId = randomUUID();
-      // Einmal-Link (höchstens ein aktives Angebot je Person – partieller Unique-Index); Zuordnung Link → Termin im Versandprotokoll
+      // Einmal-Link (höchstens ein aktives Angebot je Person – partieller Unique-Index), direkt mit dem freien Termin verknüpft
       const ins = await tx
         .insert(patientLinks)
-        .values({ id: linkId, organizationId: org, patientId: p.id, purpose: OFFER_PURPOSE, tokenHash: hashPortalToken(token), expiresAt })
+        .values({ id: linkId, organizationId: org, patientId: p.id, purpose: OFFER_PURPOSE, tokenHash: hashPortalToken(token), expiresAt, appointmentId: a.id })
         .onConflictDoNothing()
         .returning({ id: patientLinks.id });
       if (!ins.length) continue;
@@ -137,12 +158,10 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
   if ("skipped" in prepared) return { offered: 0, manual: 0, skipped: prepared.skipped };
 
   const { slot, planned, manual } = prepared;
-  const base = (deps.baseUrl ?? process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   const getPort = deps.getPort ?? ((orgId: string, p: MessagingProvider) => (p === "email_imap" ? mailMessagingPort(orgId, { purpose: "reminder" }) : adapterFor(orgId, p)));
   const ports = new Map<MessagingProvider, MessagingPort | Error>();
   const sent: string[] = [];
   const failed: string[] = [];
-  const urls: string[] = [];
   for (const r of planned) {
     const url = `${base}/portal/angebot/${r.token}`;
     const text = offerText(o, r.firstName, slot.startsAt, url, r.expiresAt);
@@ -171,7 +190,6 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
         }),
       );
       sent.push(`${r.label} (${r.channel === "email" ? "E-Mail" : r.channel === "sms" ? "SMS" : "WhatsApp"})`);
-      urls.push(url);
     } catch (e) {
       status = "failed";
       detail = describeError(e).slice(0, 300);
@@ -195,20 +213,36 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
           `Der abgesagte Termin am ${when} wurde der Warteliste angeboten. Wer zuerst annimmt, bekommt ihn automatisch (Status „geplant“).`,
           sent.length ? `Angebot verschickt an: ${sent.join(", ")}.` : null,
           failed.length ? `Versand fehlgeschlagen: ${failed.join(", ")}.` : null,
-          manual.length
-            ? `Ohne Einwilligung für Nachrichten – bitte ggf. anrufen:\n${manual.map((m) => `• ${m.label}${m.phone ? `, Tel. ${m.phone}` : ""} (Wunsch: ${m.wishes})`).join("\n")}`
-            : null,
+          manual.length ? `${manual.length} passende Person(en) ohne Einwilligung für Nachrichten – Anruf-Vorschläge stehen als eigene Nachrichten bei der jeweiligen Akte.` : null,
         ]
           .filter(Boolean)
           .join("\n"),
-        status: manual.length ? "suggested" : "new",
-        aiSuggestion: manual.length ? "Vorschlag: Personen von der Warteliste anrufen und den freien Termin anbieten." : null,
+        status: "new",
         threadKey: `waitlist:${slot.id}`,
       }),
     );
   }
+  // Anruf-Vorschläge je Person an der Akte (keine Telefonnummer/Wünsche als Kopie in einer allgemeinen Nachricht)
+  if (manual.length) {
+    const when = `${dateDe(slot.startsAt)} um ${timeDe(slot.startsAt)} Uhr`;
+    await withOrg(org, (tx) =>
+      tx.insert(messages).values(
+        manual.map((m) => ({
+          organizationId: org,
+          patientId: m.patientId,
+          channel: "none" as const,
+          direction: "inbound" as const,
+          subject: `Warteliste: bitte anrufen – freier Termin ${when}`,
+          body: `Der freie Termin am ${when} passt zum Wartelisten-Wunsch (${m.wishes}) von ${m.name}. Für Nachrichten liegt keine Einwilligung vor – bitte ggf. anrufen (Telefon in der Akte).`,
+          status: "suggested" as const,
+          aiSuggestion: "Vorschlag: Person anrufen und den freien Termin anbieten.",
+          threadKey: `waitlist:${slot.id}:${m.patientId}`,
+        })),
+      ),
+    );
+  }
   await audit({ organizationId: org, action: "waitlist.offer", entity: "appointment", entityId: slot.id, meta: { offered: sent.length, failed: failed.length, manual: manual.length } });
-  return { offered: sent.length, manual: manual.length, urls };
+  return { offered: sent.length, manual: manual.length };
 }
 
 /** Für Aufrufer nach einer Absage: Fehler im Angebot dürfen die Absage nie scheitern lassen. */
@@ -230,24 +264,21 @@ export type OfferView =
 
 async function findOffer(token: string) {
   if (!isPortalToken(token)) return null;
+  // patient_links hat bewusst keine RLS (Lookup nur über den Token-Hash, wie sessions; drizzle/0007) – danach wird
+  // ausschließlich im Mandantenkontext der gefundenen Praxis gelesen.
   const [l] = await db
-    .select({ id: patientLinks.id, organizationId: patientLinks.organizationId, patientId: patientLinks.patientId, purpose: patientLinks.purpose, expiresAt: patientLinks.expiresAt, usedAt: patientLinks.usedAt, revokedAt: patientLinks.revokedAt })
+    .select({ id: patientLinks.id, organizationId: patientLinks.organizationId, patientId: patientLinks.patientId, purpose: patientLinks.purpose, expiresAt: patientLinks.expiresAt, usedAt: patientLinks.usedAt, revokedAt: patientLinks.revokedAt, appointmentId: patientLinks.appointmentId })
     .from(patientLinks)
     .where(eq(patientLinks.tokenHash, hashPortalToken(token)))
     .limit(1);
-  if (!l || l.purpose !== OFFER_PURPOSE) return null;
+  if (!l || l.purpose !== OFFER_PURPOSE || !l.appointmentId) return null;
   const [o] = await db.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, l.organizationId));
   if (!o) return null;
   const slot = await withOrg(l.organizationId, async (tx) => {
-    const [log] = await tx
-      .select({ appointmentId: reminderLog.appointmentId })
-      .from(reminderLog)
-      .where(and(eq(reminderLog.organizationId, l.organizationId), eq(reminderLog.dedupeKey, offerKey(l.id))));
-    if (!log?.appointmentId) return null;
     const [a] = await tx
       .select({ id: appointments.id, startsAt: appointments.startsAt, endsAt: appointments.endsAt, therapistId: appointments.therapistId, locationId: appointments.locationId, title: appointments.title })
       .from(appointments)
-      .where(and(eq(appointments.organizationId, l.organizationId), eq(appointments.id, log.appointmentId)));
+      .where(and(eq(appointments.organizationId, l.organizationId), eq(appointments.id, l.appointmentId!)));
     return a ?? null;
   });
   if (!slot) return null;
@@ -286,21 +317,34 @@ const TAKEN_MSG = "Leider schon vergeben – jemand anderes war schneller. Sie b
 export async function acceptOffer(token: string, now = new Date()): Promise<AcceptResult> {
   const f = await findOffer(token);
   if (!f) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
-  const { practice, slot } = f;
+  const { practice } = f;
   const org = f.link.organizationId;
+  let slot = f.slot;
   const res = await withOrg(org, async (tx): Promise<AcceptResult> => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org}, 0))`);
     const [l] = await tx.select().from(patientLinks).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, f.link.id))).for("update");
     if (!l) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
     if (l.usedAt) return { ok: false, state: "accepted", error: "Sie haben diesen Termin bereits angenommen." };
     if (l.revokedAt) return { ok: false, state: "taken", error: TAKEN_MSG };
+    // Ursprungstermin UNTER der Sperre neu laden: nur ein weiterhin abgesagter Termin mit unveränderten Zeiten wird vergeben
+    const [cur] = await tx
+      .select({ id: appointments.id, status: appointments.status, startsAt: appointments.startsAt, endsAt: appointments.endsAt, therapistId: appointments.therapistId, locationId: appointments.locationId, title: appointments.title })
+      .from(appointments)
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, slot.id)))
+      .for("update");
+    if (!cur || cur.status !== "cancelled" || cur.startsAt.getTime() !== slot.startsAt.getTime() || cur.endsAt.getTime() !== slot.endsAt.getTime()) {
+      await tx.update(patientLinks).set({ revokedAt: now }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, l.id)));
+      return { ok: false, state: "taken", error: TAKEN_MSG };
+    }
+    slot = { id: cur.id, startsAt: cur.startsAt, endsAt: cur.endsAt, therapistId: cur.therapistId, locationId: cur.locationId, title: cur.title };
     if (l.expiresAt <= now || slot.startsAt <= now) return { ok: false, state: "expired", error: "Das Angebot ist abgelaufen." };
     const rows = await tx
       .select({ id: appointments.id, status: appointments.status })
       .from(appointments)
       .where(and(eq(appointments.organizationId, org), lt(appointments.startsAt, slot.endsAt), gt(appointments.endsAt, slot.startsAt)));
-    if (rows.some((r) => r.id !== slot.id && r.status !== "cancelled")) {
-      await tx.update(patientLinks).set({ revokedAt: now }).where(eq(patientLinks.id, l.id));
+    // kein Ausschluss des Ursprungstermins mehr nötig: er ist (geprüft) abgesagt
+    if (rows.some((r) => r.status !== "cancelled")) {
+      await tx.update(patientLinks).set({ revokedAt: now }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, l.id)));
       return { ok: false, state: "taken", error: TAKEN_MSG };
     }
     const [p] = await tx.select({ firstName: patients.firstName, lastName: patients.lastName, archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, l.patientId)));
@@ -319,25 +363,27 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         status: "planned",
-        source: "online",
+        source: "portal",
         externalId: `waitlist:${l.id}`,
         title: slot.title,
         notes: "Von der Warteliste nachgerückt (Angebot per persönlichem Link angenommen).",
       })
       .returning({ id: appointments.id });
     if (svc.length) await tx.insert(appointmentServices).values(svc.map((s) => ({ organizationId: org, appointmentId: a.id, serviceId: s.serviceId, quantity: s.quantity })));
-    await tx.update(patientLinks).set({ usedAt: now }).where(eq(patientLinks.id, l.id));
+    await tx.update(patientLinks).set({ usedAt: now }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, l.id)));
     // alle anderen Angebote für diesen Termin widerrufen
-    const others = await tx
-      .select({ key: reminderLog.dedupeKey })
-      .from(reminderLog)
-      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, slot.id)));
-    const otherIds = others.map((o) => o.key.replace(/^wloffer:/, "")).filter((id) => z.uuid().safeParse(id).success && id !== l.id);
-    if (otherIds.length)
-      await tx
-        .update(patientLinks)
-        .set({ revokedAt: now })
-        .where(and(eq(patientLinks.organizationId, org), inArray(patientLinks.id, otherIds), isNull(patientLinks.usedAt), isNull(patientLinks.revokedAt)));
+    await tx
+      .update(patientLinks)
+      .set({ revokedAt: now })
+      .where(
+        and(
+          eq(patientLinks.organizationId, org),
+          eq(patientLinks.purpose, OFFER_PURPOSE),
+          eq(patientLinks.appointmentId, slot.id),
+          isNull(patientLinks.usedAt),
+          isNull(patientLinks.revokedAt),
+        ),
+      );
     await tx.update(waitlist).set({ resolvedAt: now }).where(and(eq(waitlist.organizationId, org), eq(waitlist.patientId, l.patientId), isNull(waitlist.resolvedAt)));
     await tx.insert(messages).values({
       organizationId: org,
@@ -351,7 +397,7 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
     });
     return { ok: true, appointmentId: a.id, message: `Der Termin am ${dateDe(slot.startsAt)} um ${timeDe(slot.startsAt)} Uhr gehört Ihnen. Wir freuen uns auf Sie! ${practice.name}` };
   });
-  await audit({ organizationId: org, action: res.ok ? "waitlist.offer_accept" : "waitlist.offer_reject", entity: "appointment", entityId: res.ok ? res.appointmentId : slot.id, meta: res.ok ? { from: slot.id } : { state: res.state } });
+  await audit({ organizationId: org, action: res.ok ? "waitlist.offer_accept" : "waitlist.offer_reject", entity: "appointment", entityId: res.ok ? res.appointmentId : f.slot.id, meta: res.ok ? { from: f.slot.id } : { state: res.state } });
   return res;
 }
 
@@ -363,14 +409,14 @@ export async function listWaitlist(auth: AuthContext, patientId?: string) {
   return withOrg(org, async (tx) => {
     const svc = await tx.select({ id: services.id, name: services.name, code: services.code }).from(services).where(eq(services.organizationId, org));
     const rows = await tx
-      .select({ id: waitlist.id, patientId: waitlist.patientId, wishes: waitlist.wishes, createdAt: waitlist.createdAt, firstName: patients.firstName, lastName: patients.lastName })
+      .select({ id: waitlist.id, patientId: waitlist.patientId, createdAt: waitlist.createdAt, firstName: patients.firstName, lastName: patients.lastName, ...wlCols })
       .from(waitlist)
       .innerJoin(patients, eq(patients.id, waitlist.patientId))
       .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), patientId ? eq(waitlist.patientId, patientId) : undefined))
       .orderBy(asc(waitlist.createdAt));
     return rows.map((r) => {
-      const w = parseWishes(r.wishes, svc);
-      return { ...r, label: describeWishes(w, svc), note: r.wishes?.trim().startsWith("{") ? w.note : r.wishes };
+      const w = wishesOfRow(r, svc);
+      return { id: r.id, patientId: r.patientId, createdAt: r.createdAt, firstName: r.firstName, lastName: r.lastName, label: describeWishes(w, svc), note: r.wishes?.trim() && !r.wishes.trim().startsWith("{") ? r.wishes : w.note };
     });
   });
 }
@@ -382,7 +428,11 @@ export async function addWaitlistEntry(auth: AuthContext, patientId: string, wis
   const id = await withOrg(org, async (tx) => {
     const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt)));
     if (!p) throw new Error("Person nicht gefunden.");
-    const [row] = await tx.insert(waitlist).values({ organizationId: org, patientId, wishes: serializeWishes(wishes) }).returning({ id: waitlist.id });
+    const w = normalizeWishes(wishes);
+    const [row] = await tx
+      .insert(waitlist)
+      .values({ organizationId: org, patientId, wishes: null, serviceIds: w.serviceIds, weekdays: w.weekdays, dayparts: w.dayparts, note: w.note })
+      .returning({ id: waitlist.id });
     return row.id;
   });
   await audit({ organizationId: org, userId: auth.user.id, action: "waitlist.add", entity: "patient", entityId: patientId });

@@ -91,7 +91,10 @@ const redirectOf = async (p: Promise<unknown>) => {
   const countSessions = async (user: string) => (await f.pool.query("select count(*)::int n from sessions where user_id = $1", [user])).rows[0].n as number;
   const platformAdmin = async (o: { totp?: boolean } = {}) => {
     const u = await f.user();
-    await f.pool.query("update users set is_platform_admin = true, totp_enabled = $2 where id = $1", [u, o.totp ?? true]);
+    // Name sortiert vorne: die Admin-Liste ist auf 100 Einträge begrenzt, die Test-DB sammelt über Läufe Admins an
+    await f.pool.query("update users set is_platform_admin = true, totp_enabled = $2, name = '  Test-Admin ' || left(id::text, 8) where id = $1", [u, o.totp ?? true]);
+    // ältere Test-Admins aus früheren Läufen zurücksetzen, damit die Liste nicht volläuft
+    await f.pool.query("update users set is_platform_admin = false where is_platform_admin and name like '  Test-Admin %' and created_at < now() - interval '1 hour'");
     return u;
   };
   const grant = (org: string, by: string, grantee: string | null) =>

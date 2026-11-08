@@ -20,7 +20,7 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   // Betriebs-Check für Monitoring: kein Sitzungs-Login, sondern Bearer HEALTH_TOKEN (Fallback CRON_SECRET),
   // zeitkonstant per safeEqual geprüft; ohne konfiguriertes Token 503, falsches Token 401.
   // Antwort enthält nur Zustände/Zeiten/Zähler, keine Personendaten.
-  "src/app/api/health/deep/route.ts": ["Health-Deep: Bearer HEALTH_TOKEN/CRON_SECRET", /safeEqual\([^)]*secret/],
+  "src/app/api/health/deep/route.ts": ["Health-Deep: Bearer HEALTH_TOKEN", /safeEqual\([^)]*secret/],
   "src/app/api/calendar/[token]/route.ts": ["iCal-Feed: signiertes Token", /verifyCalendarToken\(/],
   "src/app/portal/[token]/route.ts": ["Portal-Einstieg: Token + Rate-Limit", /resolvePortalLink\(/],
   "src/app/portal/rechnung/[id]/route.ts": ["Portal-Rechnung: Portal-Sitzung (Cookie)", /currentPortalLink\(/],

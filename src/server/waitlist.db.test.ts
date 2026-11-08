@@ -9,7 +9,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { hashPortalToken, newPortalToken } from "@/lib/portal";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
-import { serializeWishes } from "@/lib/waitlist";
 import type { MessagingPort } from "@/integrations/types";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
@@ -61,8 +60,16 @@ function futureWeekday(minDays: number) {
       return id;
     });
   }
-  async function waitFor(org: string, patientId: string, wishes: string | null, ageDays: number) {
-    await f.asOrg(org, (c) => c.query("insert into waitlist (organization_id, patient_id, wishes, created_at) values ($1,$2,$3, now() - ($4 || ' days')::interval)", [org, patientId, wishes, String(ageDays)]));
+  type Wish = { serviceIds?: string[]; weekdays?: number[]; dayparts?: string[] } | string | null;
+  /** Wartelisten-Eintrag: Objekt → strukturierte Spalten, Text → Altbestand (Freitext in „wishes“) */
+  async function waitFor(org: string, patientId: string, wish: Wish, ageDays: number) {
+    const w = typeof wish === "object" && wish ? wish : {};
+    await f.asOrg(org, (c) =>
+      c.query(
+        "insert into waitlist (organization_id, patient_id, wishes, service_ids, weekdays, dayparts, created_at) values ($1,$2,$3,$4,$5,$6, now() - ($7 || ' days')::interval)",
+        [org, patientId, typeof wish === "string" ? wish : null, w.serviceIds ?? [], w.weekdays ?? [], w.dayparts ?? [], String(ageDays)],
+      ),
+    );
   }
   async function portalLink(org: string, patientId: string) {
     const token = newPortalToken();
@@ -70,7 +77,8 @@ function futureWeekday(minDays: number) {
     const l = r.rows[0];
     return { id: l.id as string, organizationId: org, patientId, purpose: "portal", expiresAt: new Date(l.expires_at), revokedAt: null };
   }
-  const tokenOf = (url: string) => url.split("/portal/angebot/")[1];
+  /** Token aus der (Mock-)Nachricht an eine Adresse – das Ergebnis von offerFreedSlot enthält keine Links */
+  const tokenFor = (to: string) => sent.filter((m) => m.to === to).pop()!.body.match(/\/portal\/angebot\/([A-Za-z0-9_-]+)/)![1];
 
   it("Absage → Angebot an passende Personen mit Einwilligung; erste Annahme gewinnt, andere „schon vergeben“", async () => {
     const org = await f.org();
@@ -85,11 +93,11 @@ function futureWeekday(minDays: number) {
     const wrongTime = await f.patient(org, { firstName: "Dora", email: "dora@example.org" });
     const wrongService = await f.patient(org, { firstName: "Emil", email: "emil@example.org" });
     for (const p of [a, b, wrongTime, wrongService]) await f.consent(org, p, "email_reminders");
-    await waitFor(org, b, serializeWishes({ dayparts: ["morning"] }), 5);
-    await waitFor(org, a, serializeWishes({ serviceIds: [pk] }), 10);
+    await waitFor(org, b, { dayparts: ["morning"] }, 5);
+    await waitFor(org, a, { serviceIds: [pk] }, 10);
     await waitFor(org, noConsent, null, 7);
-    await waitFor(org, wrongTime, serializeWishes({ dayparts: ["evening"] }), 20);
-    await waitFor(org, wrongService, serializeWishes({ serviceIds: [fp] }), 20);
+    await waitFor(org, wrongTime, { dayparts: ["evening"] }, 20);
+    await waitFor(org, wrongService, { serviceIds: [fp] }, 20);
     await waitFor(org, owner, null, 30); // die absagende Person selbst bekommt kein Angebot
 
     const id = await appt(org, owner, start, 40, "planned", pk);
@@ -100,27 +108,38 @@ function futureWeekday(minDays: number) {
     const r = await wl.offerFreedSlot(org, id, deps);
     expect(r.offered).toBe(2);
     expect(r.manual).toBe(1);
+    expect(r).not.toHaveProperty("urls"); // keine Tokens im Rückgabewert
     expect(sent.map((s) => s.to).sort()).toEqual(["anna@example.org", "bernd@example.org"]);
     expect(sent[0].body).toContain("https://praxis.test/portal/angebot/");
     // erneuter Aufruf: niemand doppelt
     expect((await wl.offerFreedSlot(org, id, deps)).offered).toBe(0);
     // Posteingang: Angebotsübersicht + Anruf-Vorschlag; im Verlauf kein Klartext-Link
-    const inbox = (await f.asOrg(org, (c) => c.query("select subject, body, status, direction from messages where organization_id=$1 order by received_at", [org]))).rows;
+    const inbox = (await f.asOrg(org, (c) => c.query("select subject, body, status, direction, patient_id from messages where organization_id=$1 order by received_at", [org]))).rows;
     const summary = inbox.find((m) => m.subject.startsWith("Warteliste: freier Termin"));
-    expect(summary?.body).toContain("Carla Ohne");
-    expect(summary?.status).toBe("suggested");
+    expect(summary?.body).not.toContain("Carla");
+    expect(summary?.body).toContain("1 passende Person(en) ohne Einwilligung");
+    // Anruf-Vorschlag an der Akte – ohne Telefonnummer als Kopie
+    const call = inbox.find((m) => m.subject.startsWith("Warteliste: bitte anrufen"));
+    expect(call?.patient_id).toBe(noConsent);
+    expect(call?.status).toBe("suggested");
+    expect(call?.body).toContain("Carla Ohne");
+    expect(call?.body).not.toContain("2222222");
+    // Link ↔ freier Termin direkt am Link
+    const links = (await f.pool.query("select appointment_id from patient_links where organization_id=$1 and purpose='waitlist_offer'", [org])).rows;
+    expect(links.map((x) => x.appointment_id)).toEqual([id, id]);
     expect(inbox.filter((m) => m.direction === "outbound").every((m) => !m.body.includes("/portal/angebot/"))).toBe(true);
 
     // Anzeige öffnet nichts; dann parallele Annahme → genau einer gewinnt
-    const [ta, tb] = r.urls!.map(tokenOf);
+    const [ta, tb] = ["anna@example.org", "bernd@example.org"].map(tokenFor);
     expect((await wl.loadOffer(ta)).state).toBe("valid");
     const results = await Promise.all([wl.acceptOffer(ta), wl.acceptOffer(tb)]);
     expect(results.filter((x) => x.ok)).toHaveLength(1);
     const loser = results.find((x) => !x.ok)!;
     expect(!loser.ok && loser.state).toBe("taken");
     expect(!loser.ok && loser.error).toMatch(/schon vergeben/);
-    const booked = (await f.asOrg(org, (c) => c.query("select patient_id, status, starts_at from appointments where organization_id=$1 and status <> 'cancelled'", [org]))).rows;
+    const booked = (await f.asOrg(org, (c) => c.query("select patient_id, status, starts_at, source from appointments where organization_id=$1 and status <> 'cancelled'", [org]))).rows;
     expect(booked).toHaveLength(1);
+    expect(booked[0].source).toBe("portal");
     expect([a, b]).toContain(booked[0].patient_id);
     expect(new Date(booked[0].starts_at).getTime()).toBe(start.getTime());
     // Verlierer-Link zeigt „schon vergeben“, Gewinner „angenommen“, Wartelisten-Eintrag erledigt
@@ -144,7 +163,7 @@ function futureWeekday(minDays: number) {
     const r = await wl.offerFreedSlot(org, id, deps);
     expect(r.offered).toBe(1);
     await appt(org, null, start, 30, "planned");
-    const t = tokenOf(r.urls![0]);
+    const t = tokenFor("p@example.org");
     expect((await wl.loadOffer(t)).state).toBe("taken");
     const acc = await wl.acceptOffer(t);
     expect(!acc.ok && acc.state).toBe("taken");
@@ -169,6 +188,7 @@ function futureWeekday(minDays: number) {
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("planned");
     expect(rows[0].external_id).toMatch(/^portal:/);
+    expect(rows[0].source).toBe("portal");
     // nicht freigegebene Zeit / außerhalb der Öffnungszeit
     expect((await pb.bookPortalAppointment(l1, { serviceId: pk, startsAt: berlinToUtc(day, "21:00").toISOString() })).ok).toBe(false);
     const inbox = (await f.asOrg(org, (c) => c.query("select subject from messages where organization_id=$1", [org]))).rows;
@@ -211,5 +231,39 @@ function futureWeekday(minDays: number) {
     // fremder Termin → abgelehnt
     const foreign = await appt(org, await f.patient(org), berlinToUtc(futureWeekday(8), "09:00"), 40, "planned", pk);
     expect((await pb.reschedulePortalAppointment(l, { appointmentId: foreign, startsAt: target })).ok).toBe(false);
+  });
+
+  it("Regression: Ursprungstermin wird reaktiviert/verschoben → Annahme vergibt ihn nicht doppelt", async () => {
+    const org = await f.org();
+    const start = berlinToUtc(futureWeekday(4), "11:00");
+    const p = await f.patient(org, { email: "re@example.org", preferredChannel: "email" });
+    await f.consent(org, p, "email_reminders");
+    await waitFor(org, p, null, 1);
+    const owner = await f.patient(org);
+    const id = await appt(org, owner, start, 30, "cancelled");
+    expect((await wl.offerFreedSlot(org, id, deps)).offered).toBe(1);
+    const t = tokenFor("re@example.org");
+    // Praxis reaktiviert den abgesagten Termin, bevor jemand annimmt
+    await f.asOrg(org, (c) => c.query("update appointments set status='planned' where id=$1", [id]));
+    const acc = await wl.acceptOffer(t);
+    expect(!acc.ok && acc.state).toBe("taken");
+    const active = (await f.asOrg(org, (c) => c.query("select count(*)::int n from appointments where organization_id=$1 and status <> 'cancelled'", [org]))).rows[0].n;
+    expect(active).toBe(1);
+  });
+
+  it("Regression: ohne HTTPS-Basis-URL keine Angebots-Links", async () => {
+    expect(wl.offerBaseUrl("http://praxis.example.org")).toBeNull();
+    expect(wl.offerBaseUrl("")).toBeNull();
+    expect(wl.offerBaseUrl("https://user:pw@praxis.example.org")).toBeNull();
+    expect(wl.offerBaseUrl("https://praxis.example.org/")).toBe("https://praxis.example.org");
+    expect(wl.offerBaseUrl("http://localhost:3117")).toBe("http://localhost:3117");
+    const org = await f.org();
+    const p = await f.patient(org, { email: "x@example.org", preferredChannel: "email" });
+    await f.consent(org, p, "email_reminders");
+    await waitFor(org, p, null, 1);
+    const id = await appt(org, null, berlinToUtc(futureWeekday(4), "15:00"), 30, "cancelled");
+    expect((await wl.offerFreedSlot(org, id, { ...deps, baseUrl: "http://praxis.example.org" })).skipped).toBe("no_https_url");
+    const n = (await f.pool.query("select count(*)::int n from patient_links where organization_id=$1", [org])).rows[0].n;
+    expect(n).toBe(0);
   });
 });

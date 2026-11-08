@@ -3,7 +3,9 @@
  * Aktiv nur, wenn SENTRY_DSN und/oder ERROR_WEBHOOK_URL gesetzt ist. Für Gesundheitsdaten gilt:
  * AVV mit dem Anbieter, EU-Region – und es verlassen den Server NUR diese Angaben:
  *   Route-Muster (z. B. /app/kunden/[id], nie der echte Pfad mit IDs/Tokens), Methode, Art (render/route/action),
- *   Fehlername, gekürzte und gefilterte Meldung, Digest, Zeitpunkt, Umgebung.
+ *   Fehlername, Digest, Zeitpunkt, Umgebung – und statt der Fehlermeldung höchstens der PostgreSQL-SQLSTATE-Code.
+ *   Fehlermeldungen (v. a. von Datenbank/ORM) können Parameterwerte und damit Gesundheitsdaten enthalten; eine
+ *   Filterung per Regex reicht dafür nicht. Die volle (gefilterte) Meldung steht nur im lokalen Server-Log.
  * Keine Header, keine Cookies, keine Query-Strings, kein Request-Body, keine Stacktraces, keine Nutzer-IDs.
  */
 import { errorSummary, scrubText } from "./log";
@@ -22,22 +24,26 @@ export type ErrorReport = {
 type RequestInfo = { path?: string; method?: string };
 type ContextInfo = { routePath?: string; routeType?: string };
 
-/** Route ohne Query-String; bevorzugt das Muster der Route-Datei statt des tatsächlichen Pfads. */
+/**
+ * Route-Muster der Route-Datei (z. B. /kunden/[id]). Ohne Muster wird KEIN echter Pfad übertragen (Segmente können
+ * Namen, kurze IDs oder Tokens enthalten) – nur der erste, statische Abschnitt, sofern er harmlos ist.
+ */
 export function scrubRoute(routePath: string | undefined, path: string | undefined): string {
   if (routePath) return scrubText(routePath.split("?")[0], 120);
-  // Fallback: echter Pfad – Query-String weg, ID-/Token-artige Segmente ersetzen
-  const p = (path ?? "").split("?")[0].split("#")[0];
-  return scrubText(
-    p
-      .split("/")
-      .map((seg) => (/^[0-9a-f-]{16,}$/i.test(seg) || /\d{3,}/.test(seg) || seg.length > 24 ? "[id]" : seg))
-      .join("/"),
-    120,
-  );
+  const first = (path ?? "").split("?")[0].split("#")[0].split("/").filter(Boolean)[0] ?? "";
+  return /^[a-z-]{2,20}$/.test(first) ? `/${first}/[…]` : "[unbekannt]";
+}
+
+/** Für externe Berichte: nur der SQLSTATE-Code (z. B. „SQLSTATE 23505“), sonst nichts. */
+export function externalErrorMessage(err: unknown): string {
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = typeof e?.code === "string" ? e.code : typeof e?.cause?.code === "string" ? e.cause.code : null;
+  return code && /^[0-9A-Z]{5}$/.test(code) ? `SQLSTATE ${code}` : "";
 }
 
 export function buildErrorReport(err: unknown, request: RequestInfo, context: ContextInfo): ErrorReport {
-  const { errorName, errorMessage, digest } = errorSummary(err);
+  const { errorName, digest } = errorSummary(err);
+  const errorMessage = externalErrorMessage(err);
   return {
     ts: new Date().toISOString(),
     env: process.env.NODE_ENV ?? "unknown",

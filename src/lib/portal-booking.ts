@@ -21,7 +21,11 @@ export const PORTAL_BOOKING_WEEKS = 6;
 export const PORTAL_BOOKING_STEP_MIN = 30;
 export const DEFAULT_LEAD_HOURS = 2;
 export const BOOKABLE_CATEGORIES = ["treatment", "cosmetic", "brace"] as const;
-/** Kennzeichen für Portal-Buchungen in appointments.external_id (Quelle bleibt „online“, siehe docs/SCHEMA_REQUESTS.md). */
+/**
+ * Portal-Buchungen: Quelle „portal“ (Migration 0016/0017). external_id „portal:<uuid>“ bleibt als Kennzeichen eigener
+ * Buchungen (Abgrenzung zu Nachrückern „waitlist:<link-id>“, die ebenfalls Quelle „portal“ haben) – für das Limit offener
+ * Portal-Buchungen je Person.
+ */
 export const PORTAL_EXTERNAL_PREFIX = "portal:";
 
 export type OnlineBookingSettings = { enabled: boolean; serviceCodes: string[]; leadHours: number; maxPerDay: number | null };

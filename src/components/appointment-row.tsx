@@ -5,7 +5,7 @@ import { timeDe } from "@/lib/format";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 
-const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon" };
+const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal" };
 const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },
