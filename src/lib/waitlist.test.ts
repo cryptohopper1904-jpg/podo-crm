@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { berlinToUtc } from "./format";
-import { matchWaitlist, offerExpiry, offerText, parseWishes, serializeWishes, wishesMatch } from "./waitlist";
+import { matchWaitlist, normalizeWishes, offerExpiry, offerText, parseWishes, wishesMatch, wishesOfRow } from "./waitlist";
 
 const svc = [
   { id: "s-pk", name: "Podologische Komplexbehandlung", code: "PK" },
@@ -10,9 +10,12 @@ const svc = [
 const slot = { startsAt: berlinToUtc("2030-03-05", "10:00"), endsAt: berlinToUtc("2030-03-05", "10:40"), serviceIds: ["s-pk"] };
 
 describe("Warteliste: Wünsche", () => {
-  it("JSON-Format hin und zurück", () => {
-    const w = parseWishes(serializeWishes({ serviceIds: ["s-pk"], weekdays: [2, 2, 9], dayparts: ["morning"], note: " gern früh " }));
-    expect(w).toEqual({ serviceIds: ["s-pk"], weekdays: [2], dayparts: ["morning"], note: "gern früh" });
+  it("Spalten: bereinigt; Altbestand (JSON/Freitext in wishes) wird weiter gelesen", () => {
+    expect(normalizeWishes({ serviceIds: ["s-pk", "s-pk"], weekdays: [2, 2, 9], dayparts: ["morning"], note: " gern früh " })).toEqual({ serviceIds: ["s-pk"], weekdays: [2], dayparts: ["morning"], note: "gern früh" });
+    const row = { wishes: null, serviceIds: ["s-pk"], weekdays: [4, 2], dayparts: ["evening", "x"], note: null };
+    expect(wishesOfRow(row)).toEqual({ serviceIds: ["s-pk"], weekdays: [2, 4], dayparts: ["evening"], note: null });
+    expect(wishesOfRow({ ...row, serviceIds: [], weekdays: [], dayparts: [], wishes: '{"v":1,"weekdays":[3]}' }).weekdays).toEqual([3]);
+    expect(wishesOfRow({ ...row, serviceIds: [], weekdays: [], dayparts: [], wishes: "Di vormittags" }, svc)).toMatchObject({ weekdays: [2], dayparts: ["morning"] });
   });
   it("Freitext-Heuristik: Wochentage, Tageszeit, Leistung", () => {
     const w = parseWishes("Di/Do vormittags, Komplexbehandlung", [{ id: "x", name: "Komplexbehandlung" }]);
@@ -36,19 +39,24 @@ describe("Warteliste: Wünsche", () => {
 });
 
 describe("Warteliste: Auswahl", () => {
-  const e = (id: string, patientId: string, wishes: string | null, day: number) => ({ id, patientId, wishes, createdAt: new Date(Date.UTC(2030, 0, day)) });
+  const e = (id: string, patientId: string, wishes: Parameters<typeof normalizeWishes>[0] | string, day: number) => ({
+    id,
+    patientId,
+    wishes: typeof wishes === "string" ? parseWishes(wishes, svc) : normalizeWishes(wishes),
+    createdAt: new Date(Date.UTC(2030, 0, day)),
+  });
   const entries = [
-    e("3", "p3", null, 3),
-    e("1", "p1", serializeWishes({ weekdays: [2] }), 1),
-    e("2", "p2", serializeWishes({ dayparts: ["afternoon"] }), 2),
-    e("4", "p1", null, 4), // doppelte Person
+    e("3", "p3", {}, 3),
+    e("1", "p1", { weekdays: [2] }, 1),
+    e("2", "p2", { dayparts: ["afternoon"] }, 2),
+    e("4", "p1", {}, 4), // doppelte Person
     e("5", "p5", "Fußpflege kosmetisch", 5),
     e("6", "p6", "Komplexbehandlung dienstags", 6),
   ];
   it("älteste passende zuerst, je Person einmal, ohne Ausgeschlossene, mit Limit", () => {
-    expect(matchWaitlist(entries, slot, { services: svc }).map((x) => x.id)).toEqual(["1", "3", "6"]);
-    expect(matchWaitlist(entries, slot, { services: svc, excludePatientIds: ["p1"] }).map((x) => x.id)).toEqual(["3", "6"]);
-    expect(matchWaitlist(entries, slot, { services: svc, limit: 1 }).map((x) => x.id)).toEqual(["1"]);
+    expect(matchWaitlist(entries, slot).map((x) => x.id)).toEqual(["1", "3", "6"]);
+    expect(matchWaitlist(entries, slot, { excludePatientIds: ["p1"] }).map((x) => x.id)).toEqual(["3", "6"]);
+    expect(matchWaitlist(entries, slot, { limit: 1 }).map((x) => x.id)).toEqual(["1"]);
   });
 });
 

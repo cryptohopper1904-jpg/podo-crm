@@ -46,8 +46,11 @@ export const MOVEMENT_SIGN: Record<MovementKind, 1 | -1> = {
 
 
 // ───────────────────────── TSE-Kennzeichnung ─────────────────────────
-export const tseLabel = (t: CashClosingTse) =>
-  t.mode === "fiskaly"
-    ? `TSE (fiskaly)${t.tssSerial ? ` – Seriennr. ${t.tssSerial}` : ""}${t.exportRef ? ` – Meldung ${t.exportRef}` : ""}`
-    : `Ohne TSE – nur zulässig, wenn keine elektronische Kasse im Sinne der KassenSichV${t.testSignatures ? " (Barzahlungen mit Test-Signaturen, keine gültige TSE)" : ""}`;
+export const tseLabel = (t: CashClosingTse, reg?: { closingRef: string; tssSerial: string | null } | null) => {
+  if (t.mode !== "fiskaly")
+    return `Ohne TSE – nur zulässig, wenn keine elektronische Kasse im Sinne der KassenSichV${t.testSignatures ? " (Kassenvorgänge mit Test-Signaturen, keine gültige TSE)" : ""}`;
+  const serial = reg?.tssSerial ?? t.tssSerial;
+  const ref = reg?.closingRef ?? t.exportRef;
+  return `TSE (fiskaly)${serial ? ` – Seriennr. ${serial}` : ""}${ref ? ` – Meldung ${ref}` : t.registration === "pending" ? " – Meldung an den TSE-Dienst ausstehend" : ""}${t.testSignatures ? " – enthält Vorgänge mit Test-Signatur" : ""}`;
+};
 

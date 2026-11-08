@@ -27,7 +27,7 @@ export function MovementForm() {
         <Field label="Betrag (€)" hint="immer positiv – Einlage/Entnahme ergibt sich aus der Art">
           <Input name="amount" inputMode="decimal" placeholder="20,00" required />
         </Field>
-        <Field label="Grund / Beleg *">
+        <Field label="Grund / Beleg *" hint="steht unveränderbar im Z-Bon – keine Namen oder Gesundheitsdaten">
           <Input name="reason" maxLength={300} placeholder="z. B. Briefmarken, Beleg Nr. 12" required />
         </Field>
       </div>

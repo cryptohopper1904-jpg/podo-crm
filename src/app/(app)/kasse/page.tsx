@@ -18,10 +18,10 @@ const METHODS = [
 ] as const;
 
 export default async function KassePage() {
-  const auth = await requireAuth("invoices.read");
+  const auth = await requireAuth("cash.read");
   const data = await kasseOverview(auth);
   const { open, calc } = data;
-  const canWrite = auth.can("invoices.write");
+  const canWrite = auth.can("cash.write");
   const by = calc.totals.byMethod;
   const other = by.payment_link ?? 0;
   const expectedWithoutOpening = calc.cashPaymentsCents + calc.movementsCents;
@@ -35,9 +35,11 @@ export default async function KassePage() {
             : "Noch kein Tagesabschluss"
         }
         actions={
-          <LinkButton href="/kasse/export" variant="secondary">
-            <FileDown size={18} aria-hidden /> DSFinV-K-Export
-          </LinkButton>
+          auth.can("cash.export") ? (
+            <LinkButton href="/kasse/export" variant="secondary">
+              <FileDown size={18} aria-hidden /> DSFinV-K-Export
+            </LinkButton>
+          ) : undefined
         }
       />
 

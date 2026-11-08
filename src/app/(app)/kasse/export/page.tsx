@@ -8,7 +8,7 @@ import { closingsInRange, exportRangeInput } from "@/server/kasse";
 export const metadata = { title: "DSFinV-K-Export" };
 
 export default async function KasseExportPage(props: PageProps<"/kasse/export">) {
-  const auth = await requireAuth("invoices.read");
+  const auth = await requireAuth("cash.export");
   const sp = await props.searchParams;
   const today = berlinDateIso();
   const from = typeof sp.from === "string" ? sp.from : `${today.slice(0, 4)}-01-01`;

@@ -18,7 +18,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (auth.can("patients.read")) allowed.push("kunden", "verordnungen", "pflegeheime");
   if (auth.can("medical.write")) allowed.push("doku");
   if (auth.can("messages.read")) allowed.push("posteingang", "telefon", "bewertungen");
-  if (auth.can("invoices.read")) allowed.push("rechnungen", "kasse", "gutscheine");
+  if (auth.can("invoices.read")) allowed.push("rechnungen", "gutscheine");
+  if (auth.can("cash.read")) allowed.push("kasse");
   if (auth.can("medical.read") || auth.can("patients.write")) allowed.push("hygiene");
   if (auth.role !== "accountant") allowed.push("team");
   allowed.push("news");

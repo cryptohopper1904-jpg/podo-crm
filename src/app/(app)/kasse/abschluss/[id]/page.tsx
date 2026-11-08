@@ -9,6 +9,7 @@ import { dateDe, dateTimeDe, money } from "@/lib/format";
 import { PAYMENT_METHOD_LABEL } from "@/lib/invoice-labels";
 import { DENOMINATIONS, denominationLabel, MOVEMENT_LABEL, tseLabel, type MovementKind } from "@/lib/kasse/labels";
 import { getClosing } from "@/server/kasse";
+import { retryRegistrationAction } from "../../actions";
 
 export const metadata = { title: "Z-Bon" };
 
@@ -23,11 +24,13 @@ const PRINT_CSS = `
 
 export default async function ClosingPage(props: PageProps<"/kasse/abschluss/[id]">) {
   const { id } = await props.params;
-  const auth = await requireAuth("invoices.read");
+  const sp = await props.searchParams;
+  const auth = await requireAuth("cash.read");
   if (!UUID.test(id)) notFound();
   const data = await getClosing(auth, id);
   if (!data) notFound();
   const { closing: z, organization: o } = data;
+  const pending = z.tse.mode === "fiskaly" && !z.tse.exportRef && !data.registration;
   const row = (label: string, value: string, strong = false) => (
     <Fragment key={label}>
       <dt className={strong ? "font-semibold" : undefined}>{label}</dt>
@@ -61,8 +64,19 @@ export default async function ClosingPage(props: PageProps<"/kasse/abschluss/[id
             {data.createdByName ? ` · ${data.createdByName}` : ""}
           </p>
           <p className="mt-2 text-sm">
-            {z.tse.mode === "fiskaly" ? <Badge tone="primary">TSE</Badge> : <Badge tone="warn">ohne TSE</Badge>} <span className="ml-1">{tseLabel(z.tse)}</span>
+            {z.tse.mode === "fiskaly" ? <Badge tone="primary">TSE</Badge> : <Badge tone="warn">ohne TSE</Badge>} <span className="ml-1">{tseLabel(z.tse, data.registration)}</span>
           </p>
+          {pending ? (
+            <div className="no-print mt-2 flex flex-wrap items-center gap-3 text-sm">
+              <span role="status">{sp.tse === "fehler" ? "Meldung erneut fehlgeschlagen – bitte später noch einmal versuchen." : "Die Meldung an den TSE-Dienst steht noch aus."}</span>
+              {auth.can("cash.write") ? (
+                <form action={retryRegistrationAction}>
+                  <input type="hidden" name="id" value={z.id} />
+                  <button type="submit" className="font-semibold text-primary underline">Meldung wiederholen</button>
+                </form>
+              ) : null}
+            </div>
+          ) : null}
           <p className="mt-2 text-sm text-muted">
             Belegnummern {z.lastBonNr >= z.firstBonNr ? `${z.firstBonNr}–${z.lastBonNr}` : "–"} · {z.paymentCount} Zahlungen · {z.movementCount} Kassenbuch-Einträge
           </p>

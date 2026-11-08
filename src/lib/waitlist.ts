@@ -1,9 +1,9 @@
 /**
  * Warteliste & Nachrücker – reine Regeln (ohne DB, testbar).
  *
- * waitlist.wishes ist Freitext (keine eigene Spalte für Präferenzen). Neue Einträge speichern die Wünsche
- * strukturiert als JSON (`{"v":1,…}`); ältere/handschriftliche Einträge werden heuristisch gelesen
- * („Di/Do vormittags“, „nachmittags“, Leistungsname). Leere Wünsche = jeder Termin passt.
+ * Wünsche stehen in eigenen Spalten (waitlist.service_ids, weekdays, dayparts, note – Migration 0016/0017).
+ * Altbestand mit Freitext in waitlist.wishes wird weiter heuristisch gelesen („Di/Do vormittags“, „nachmittags“,
+ * Leistungsname). Leere Wünsche = jeder Termin passt.
  *
  * Angebot: Wird ein Termin frei, bekommen passende Personen (älteste Einträge zuerst, höchstens
  * MAX_OFFERS_PER_SLOT) einen persönlichen Einmal-Link (patient_links, Zweck „waitlist_offer“) – nur mit
@@ -28,14 +28,23 @@ export type WaitlistWishes = { serviceIds: string[]; weekdays: number[]; daypart
 
 const uniq = <T,>(a: T[]) => [...new Set(a)];
 
-export function serializeWishes(w: Partial<WaitlistWishes>): string {
-  return JSON.stringify({
-    v: 1,
+/** Wünsche für die Spalten bereinigen (eindeutig, gültige Werte, Notiz gekürzt). */
+export function normalizeWishes(w: Partial<WaitlistWishes>): WaitlistWishes {
+  return {
     serviceIds: uniq(w.serviceIds ?? []).slice(0, 20),
     weekdays: uniq((w.weekdays ?? []).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7)).sort(),
     dayparts: uniq((w.dayparts ?? []).filter((d) => (DAYPARTS as readonly string[]).includes(d))),
     note: w.note?.trim() ? w.note.trim().slice(0, 500) : null,
-  });
+  };
+}
+
+/** Wünsche eines Eintrags: Spalten (neu) oder – bei Altbestand mit Freitext in `wishes` – Heuristik. */
+export function wishesOfRow(
+  r: { wishes: string | null; serviceIds: string[] | null; weekdays: number[] | null; dayparts: string[] | null; note: string | null },
+  services: { id: string; name: string; code?: string }[] = [],
+): WaitlistWishes {
+  if (r.wishes?.trim()) return parseWishes(r.wishes, services);
+  return normalizeWishes({ serviceIds: r.serviceIds ?? [], weekdays: (r.weekdays ?? []).map(Number), dayparts: (r.dayparts ?? []) as Daypart[], note: r.note });
 }
 
 const WEEKDAY_WORDS: [RegExp, number][] = [
@@ -48,7 +57,7 @@ const WEEKDAY_WORDS: [RegExp, number][] = [
   [/\bsonntags?\b/, 7], // „so“ allein ist ein häufiges Füllwort
 ];
 
-/** Liest gespeicherte Wünsche: JSON (neu) oder Freitext (Heuristik). `services` dient dem Namensabgleich im Freitext. */
+/** Liest Altbestand: JSON (`{"v":1,…}`) oder Freitext (Heuristik). `services` dient dem Namensabgleich im Freitext. */
 export function parseWishes(text: string | null | undefined, services: { id: string; name: string; code?: string }[] = []): WaitlistWishes {
   const empty: WaitlistWishes = { serviceIds: [], weekdays: [], dayparts: [], note: null };
   const t = (text ?? "").trim();
@@ -96,7 +105,7 @@ export function wishesMatch(w: WaitlistWishes, slot: FreedSlot): boolean {
   return true;
 }
 
-export type WaitlistCandidate = { id: string; patientId: string; wishes: string | null; createdAt: Date };
+export type WaitlistCandidate = { id: string; patientId: string; wishes: WaitlistWishes; createdAt: Date };
 
 /**
  * Wer bekommt ein Angebot? Passende, offene Einträge – älteste zuerst, je Person nur einmal,
@@ -105,7 +114,7 @@ export type WaitlistCandidate = { id: string; patientId: string; wishes: string 
 export function matchWaitlist(
   entries: WaitlistCandidate[],
   slot: FreedSlot,
-  opts: { services?: { id: string; name: string; code?: string }[]; excludePatientIds?: Iterable<string>; limit?: number } = {},
+  opts: { excludePatientIds?: Iterable<string>; limit?: number } = {},
 ): WaitlistCandidate[] {
   const exclude = new Set(opts.excludePatientIds ?? []);
   const seen = new Set<string>();
@@ -113,7 +122,7 @@ export function matchWaitlist(
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
     .filter((e) => {
       if (exclude.has(e.patientId) || seen.has(e.patientId)) return false;
-      if (!wishesMatch(parseWishes(e.wishes, opts.services), slot)) return false;
+      if (!wishesMatch(e.wishes, slot)) return false;
       seen.add(e.patientId);
       return true;
     })

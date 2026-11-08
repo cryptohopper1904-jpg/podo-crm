@@ -6,12 +6,12 @@ import { zBonPdfForOrg } from "@/server/kasse";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Z-Bon (Tagesabschluss) als PDF (Recht invoices.read). ?download=1 → als Datei speichern. */
+/** Z-Bon (Tagesabschluss) als PDF (Recht cash.read). ?download=1 → als Datei speichern. */
 export async function GET(req: NextRequest, ctx: RouteContext<"/api/kasse/z-bon/[id]">) {
   const { id } = await ctx.params;
   const auth = await getAuth();
   if (!auth) return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
-  if (!auth.can("invoices.read")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+  if (!auth.can("cash.read")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   if (!UUID.test(id)) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
   const pdf = await zBonPdfForOrg(auth.organization.id, id);
   if (!pdf) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });

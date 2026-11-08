@@ -12,6 +12,7 @@ const p = (id: string, method: KassePayment["method"], amountCents: number, minu
   voucher: null,
   soldVoucher: null,
   externalRef: null,
+  tse: null,
   createdBy: null,
 });
 

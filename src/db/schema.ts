@@ -20,6 +20,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -53,6 +54,8 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
   "whatsapp",
   "email",
   "voice_agent",
+  /** Kundenportal (Buchung/Verschieben per persönlichem Link, Nachrücker von der Warteliste) */
+  "portal",
 ]);
 export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", [
@@ -425,7 +428,15 @@ export const waitlist = pgTable("waitlist", {
   patientId: uuid("patient_id")
     .notNull()
     .references(() => patients.id, { onDelete: "cascade" }),
+  /** Altbestand: Freitext-Wunsch (wird heuristisch gelesen). Neue Einträge nutzen die strukturierten Spalten. */
   wishes: text("wishes"),
+  /** gewünschte Leistungen (leer = egal) */
+  serviceIds: uuid("service_ids").array().notNull().default(sql`'{}'::uuid[]`),
+  /** ISO-Wochentage 1 = Mo … 7 = So (leer = egal) */
+  weekdays: smallint("weekdays").array().notNull().default(sql`'{}'::smallint[]`),
+  /** morning | afternoon | evening (leer = egal) */
+  dayparts: text("dayparts").array().notNull().default(sql`'{}'::text[]`),
+  note: text("note"),
   createdAt: createdAt(),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 });
@@ -505,11 +516,14 @@ export const patientLinks = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     usedAt: timestamp("used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    /** Wartelisten-Angebot: der freie (abgesagte) Termin, der angeboten wird */
+    appointmentId: uuid("appointment_id").references((): AnyPgColumn => appointments.id, { onDelete: "cascade" }),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("patient_links_token").on(t.tokenHash),
+    index("patient_links_org_appointment").on(t.organizationId, t.appointmentId),
     // höchstens EIN aktiver (nicht widerrufener, nicht benutzter) Link je Kunde und Zweck
     uniqueIndex("patient_links_one_active")
       .on(t.organizationId, t.patientId, t.purpose)
@@ -863,6 +877,8 @@ export type CashClosingTse = {
   transactionNumber?: number | null;
   signatureCounter?: number | null;
   exportRef?: string | null;
+  /** Meldung des Abschlusses an den TSE-/DSFinV-K-Dienst erfolgt nach dem Speichern (siehe cash_closing_registrations) */
+  registration?: "pending";
   note?: string | null;
 };
 
@@ -897,6 +913,12 @@ export const cashClosings = pgTable(
     /** SHA-256 über die enthaltenen Zahlungen/Bewegungen (IDs, Beträge, Zeitpunkte) */
     itemsDigest: text("items_digest").notNull(),
     tse: jsonb("tse").$type<CashClosingTse>().notNull(),
+    /**
+     * Unveränderlicher Snapshot der Einzelaufzeichnungen (Bons inkl. Positionen, USt-Aufteilung, Gutscheine,
+     * TSE-Daten) zum Abschlusszeitpunkt – Teil der Hash-Kette; DSFinV-K-Export und Z-Bon lesen nur daraus.
+     * NULL nur bei Abschlüssen vor Migration 0016 (dort Rekonstruktion aus den Zahlungen).
+     */
+    bons: jsonb("bons").$type<unknown[]>(),
     differenceReason: text("difference_reason"),
     note: text("note"),
     prevHash: text("prev_hash"),
@@ -929,6 +951,54 @@ export const cashMovements = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("cash_movements_org_closing").on(t.organizationId, t.cashClosingId, t.occurredAt)],
+);
+
+/**
+ * TSE-Signaturen je Kassenvorgang (KassenSichV): Bar, Karte und Gutschein. Append-only (DB-Trigger), nur vom Server
+ * geschrieben – payments.external_ref ist für TSE-Daten nicht maßgeblich (frei eingebbar, z. B. Belegnummer des Terminals).
+ */
+export const fiscalTransactions = pgTable(
+  "fiscal_transactions",
+  {
+    id: id(),
+    organizationId: orgId(),
+    paymentId: uuid("payment_id")
+      .notNull()
+      .references(() => payments.id, { onDelete: "restrict" }),
+    vendor: text("vendor").notNull(),
+    tssSerial: text("tss_serial").notNull(),
+    txNumber: integer("tx_number").notNull(),
+    signatureCounter: integer("signature_counter").notNull(),
+    signature: text("signature").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }).notNull(),
+    /** DSFinV-K TSE_TA_VORGANGSART */
+    processType: text("process_type").notNull().default("Kassenbeleg-V1"),
+    /** true = Test-/Mock-Signatur (keine gültige TSE) */
+    isTest: boolean("is_test").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("fiscal_transactions_payment").on(t.paymentId), index("fiscal_transactions_org").on(t.organizationId, t.createdAt)],
+);
+
+/**
+ * Meldung eines Kassenabschlusses an den TSE-/DSFinV-K-Dienst (z. B. fiskaly). Erst NACH dem Speichern des Abschlusses
+ * (externer Dienst ist nicht Teil der DB-Transaktion), idempotent über die Abschluss-ID; append-only, je Abschluss einmal.
+ */
+export const cashClosingRegistrations = pgTable(
+  "cash_closing_registrations",
+  {
+    id: id(),
+    organizationId: orgId(),
+    cashClosingId: uuid("cash_closing_id")
+      .notNull()
+      .references(() => cashClosings.id, { onDelete: "restrict" }),
+    vendor: text("vendor").notNull(),
+    closingRef: text("closing_ref").notNull(),
+    tssSerial: text("tss_serial"),
+    registeredAt: timestamp("registered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("cash_closing_registrations_closing").on(t.cashClosingId)],
 );
 
 // ───────────────────────── Kommunikation ─────────────────────────

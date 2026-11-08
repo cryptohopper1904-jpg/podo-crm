@@ -2,9 +2,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { invoices, messages, payments, webhookEvents } from "@/db/schema";
+import { invoiceLines, invoices, messages, payments, webhookEvents } from "@/db/schema";
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort, ProviderId } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
+import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { adapterFor, logSync } from "./integrations";
 import { matchPatientByAddress } from "./messages";
 
@@ -112,7 +113,25 @@ export async function recordProviderPayment(organizationId: string, input: Provi
     if (inv.status !== "issued" && inv.status !== "partially_paid") return { ...base, reason: `Rechnung im Status ${inv.status}` };
     const open = inv.totalCents - inv.paidCents;
     if (input.amountCents > open) return { ...base, reason: `Überzahlung: ${(input.amountCents / 100).toFixed(2)} € bei offen ${(open / 100).toFixed(2)} €` };
+    // Kartenzahlung am Terminal ist ein Kassenvorgang → TSE-Signatur (KassenSichV). Fällt die TSE aus, wird die Zahlung
+    // trotzdem gebucht (das Geld ist eingegangen) und der Ausfall im Posteingang gemeldet (TSE-Ausfall dokumentieren).
+    let signed: SignedPayment | null = null;
+    let signFailed = false;
+    if (needsSignature(input.method)) {
+      const vat = await t
+        .select({ rate: invoiceLines.vatRate, gross: sql<number>`coalesce(sum(${invoiceLines.totalCents}), 0)::int` })
+        .from(invoiceLines)
+        .where(and(eq(invoiceLines.organizationId, organizationId), eq(invoiceLines.invoiceId, inv.id)))
+        .groupBy(invoiceLines.vatRate);
+      try {
+        signed = await signRegisterPayment({ reference: inv.number ?? inv.id, method: input.method, amountCents: input.amountCents, vatGroups: vat.map((v) => ({ rate: v.rate, grossCents: Number(v.gross) })) });
+      } catch (e) {
+        if (!(e instanceof FiscalSignError)) throw e;
+        signFailed = true;
+      }
+    }
     await t.insert(payments).values({
+      ...(signed ? { id: signed.paymentId } : {}),
       organizationId,
       invoiceId: inv.id,
       method: input.method,
@@ -120,6 +139,18 @@ export async function recordProviderPayment(organizationId: string, input: Provi
       paidAt: input.paidAt ?? new Date(),
       externalRef: input.externalRef,
     });
+    if (signed) await storeSignature(t, organizationId, signed);
+    if (signFailed)
+      await t.insert(messages).values({
+        organizationId,
+        patientId: null,
+        channel: "none",
+        direction: "inbound",
+        subject: "TSE-Ausfall: Kartenzahlung ohne Signatur gebucht",
+        body: `Die Kartenzahlung zu Rechnung ${inv.number ?? "?"} (${(input.amountCents / 100).toFixed(2).replace(".", ",")} €) wurde gebucht, konnte aber nicht über die TSE signiert werden. Bitte den TSE-Ausfall dokumentieren (Steuerberatung) und die TSE-Verbindung prüfen.`,
+        status: "new",
+        threadKey: `tse-fail:${input.externalRef}`.slice(0, 300),
+      });
     const [sum] = await t
       .select({ paid: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int` })
       .from(payments)

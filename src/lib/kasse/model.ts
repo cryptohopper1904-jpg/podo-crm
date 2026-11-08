@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { allocateByVat } from "@/integrations/tse/types";
 import { vatPortion } from "@/lib/invoice-math";
-import { canonical } from "@/lib/records";
+import { canonical, chainHash } from "@/lib/records";
 import { countedTotal, MOVEMENT_LABEL, type MovementKind } from "./labels";
 
 export * from "./labels";
@@ -34,6 +34,8 @@ export type KassePayment = {
   /** die Rechnung ist ein Gutscheinverkauf */
   soldVoucher: { code: string; purpose: string } | null;
   externalRef: string | null;
+  /** TSE-Signatur des Vorgangs (fiscal_transactions; Altbestand: Kurzreferenz aus external_ref bei Bar) */
+  tse: BonTse | null;
   createdBy: KassePerson;
 };
 
@@ -104,7 +106,17 @@ export type BonLine = {
 
 export type BonPayment = { typ: "Bar" | "Unbar"; name: string; amountCents: number };
 
-export type BonTse = { serial: string; number: number; signatureCounter: number; isTest: boolean };
+export type BonTse = {
+  serial: string;
+  number: number;
+  signatureCounter: number;
+  isTest: boolean;
+  /** vollständige Signaturdaten (ab Migration 0016; Altbestand nur Kurzreferenz) */
+  signature?: string | null;
+  startedAt?: Date | null;
+  finishedAt?: Date | null;
+  processType?: string | null;
+};
 
 export type Bon = {
   bonId: string;
@@ -229,7 +241,7 @@ export function buildBons(input: {
         payments: paymentMeans(p),
         totalCents: lines.reduce((s, l) => s + l.grossCents, 0),
         invoiceNumber: p.invoiceNumber,
-        tse: parseTseRef(p.externalRef),
+        tse: p.tse,
         note: null,
       });
     } else if ("m" in it && it.m) {
@@ -378,7 +390,72 @@ export function closingHashContent(c: {
   differenceReason: string | null;
   note: string | null;
   createdBy: string | null;
+  /** Snapshot der Bons (ab Migration 0016); bei Altbeständen nicht angeben (undefined), sonst ändert sich der Hash */
+  bons?: unknown[] | null;
 }): Record<string, unknown> {
   // JSON-Rundreise: identisch zu dem, was aus jsonb/timestamptz zurückkommt (undefined entfällt, Datum → ISO)
   return JSON.parse(JSON.stringify({ ...c, closedAt: c.closedAt.toISOString(), createdAt: c.createdAt.toISOString() })) as Record<string, unknown>;
+}
+
+// ───────────────────────── Snapshot & Hash-Kette ─────────────────────────
+/** Bons für jsonb (Datum → ISO-Text). */
+export const serializeBons = (bons: Bon[]): unknown[] => JSON.parse(JSON.stringify(bons)) as unknown[];
+
+/** Bons aus dem gespeicherten Snapshot (ISO-Text → Datum). */
+export function reviveBons(raw: unknown[]): Bon[] {
+  const d = (v: unknown) => (typeof v === "string" ? new Date(v) : null);
+  return (raw as (Omit<Bon, "start" | "end"> & { start: string; end: string; tse: (Omit<BonTse, "startedAt" | "finishedAt"> & { startedAt?: string; finishedAt?: string }) | null })[]).map((b) => ({
+    ...b,
+    start: new Date(b.start),
+    end: new Date(b.end),
+    tse: b.tse ? { ...b.tse, startedAt: d(b.tse.startedAt), finishedAt: d(b.tse.finishedAt) } : null,
+  }));
+}
+
+/** Zeile aus cash_closings (Drizzle-Form) – nur die für die Hash-Kette nötigen Felder. */
+export type ClosingChainRow = Parameters<typeof closingHashContent>[0] & { prevHash: string | null; hash: string };
+
+export const closingRowContent = (r: ClosingChainRow) =>
+  closingHashContent({
+    id: r.id,
+    organizationId: r.organizationId,
+    number: r.number,
+    businessDate: r.businessDate,
+    closedAt: r.closedAt,
+    createdAt: r.createdAt,
+    openingCents: r.openingCents,
+    cashPaymentsCents: r.cashPaymentsCents,
+    movementsCents: r.movementsCents,
+    expectedCashCents: r.expectedCashCents,
+    countedCashCents: r.countedCashCents,
+    differenceCents: r.differenceCents,
+    denominations: r.denominations,
+    totals: r.totals,
+    paymentCount: r.paymentCount,
+    movementCount: r.movementCount,
+    firstBonNr: r.firstBonNr,
+    lastBonNr: r.lastBonNr,
+    itemsDigest: r.itemsDigest,
+    tse: r.tse,
+    differenceReason: r.differenceReason,
+    note: r.note,
+    createdBy: r.createdBy,
+    bons: r.bons ?? undefined,
+  });
+
+/**
+ * Prüft die Kette der Abschlüsse EINER Praxis (nach Z-Nummer sortiert, ab Z 1): lückenlose Nummern, Verkettung,
+ * Inhalts-Hash und fortlaufende Belegnummern. Index des ersten ungültigen Eintrags, -1 wenn alles stimmt.
+ */
+export function verifyClosingRows(rows: ClosingChainRow[]): number {
+  let prev: string | null = null;
+  let lastBon = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.number !== i + 1 || r.prevHash !== prev || chainHash(prev, closingRowContent(r)) !== r.hash) return i;
+    if (r.firstBonNr !== lastBon + 1 || r.lastBonNr < r.firstBonNr - 1) return i;
+    prev = r.hash;
+    lastBon = r.lastBonNr;
+  }
+  return -1;
 }

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 import { buildDsfinvkFiles, buildDsfinvkZip, dateTime, decimal, indexXml, quote, splitCsvLine, TABLES, tableByFile, toCsv } from "./dsfinvk";
-import { computeClosing, type KasseMovement, type KassePayment } from "./model";
+import { computeClosing, parseTseRef, type KasseMovement, type KassePayment } from "./model";
 
 const org = { name: 'Praxis "Fußglück"; Berlin', street: "Hauptstr. 1", zip: "10115", city: "Berlin", taxNumber: "11/222/33333", vatId: null };
 const reg = { kasseId: "PODOCRM-test", brand: "PodoCRM", model: "Cloud", serial: "S-1", swBrand: "PodoCRM", swVersion: "0.1.0" };
 const at = (h: number, m = 0) => new Date(Date.UTC(2026, 10, 6, h, m));
 const pay = (id: string, method: KassePayment["method"], amountCents: number, extra: Partial<KassePayment> = {}): KassePayment => ({
+  tse: parseTseRef(extra.externalRef ?? null),
   id,
   method,
   amountCents,

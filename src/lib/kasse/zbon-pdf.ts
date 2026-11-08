@@ -34,6 +34,8 @@ export type ZBonData = {
   organization: { name: string; legalName: string | null; street: string | null; zip: string | null; city: string | null; taxNumber: string | null; vatId: string | null };
   createdByName: string | null;
   registerId: string;
+  /** Meldung an den TSE-/DSFinV-K-Dienst (nach dem Abschluss) */
+  registration?: { closingRef: string; tssSerial: string | null } | null;
   chainOk: boolean;
 };
 
@@ -161,7 +163,7 @@ export async function renderZBonPdf(data: ZBonData): Promise<Uint8Array> {
   row("Summe gezählt", money(z.countedCashCents), { bold: true });
 
   heading("TSE / KassenSichV");
-  wrapped(tseLabel(z.tse));
+  wrapped(tseLabel(z.tse, data.registration));
   if (z.tse.transactionNumber) wrapped(`Letzte TSE-Transaktion: ${z.tse.transactionNumber} (Signaturzähler ${z.tse.signatureCounter ?? "–"})`);
 
   if (z.note) {

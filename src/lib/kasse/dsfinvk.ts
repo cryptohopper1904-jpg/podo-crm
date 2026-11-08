@@ -596,12 +596,13 @@ export function buildDsfinvkFiles(org: DsfinvkOrg, reg: DsfinvkRegister, closing
           ...bc,
           TSE_ID: tseId || 1,
           TSE_TANR: b.tse.number,
-          // TODO DSFinV-K prüfen: Start/Ende, Signatur und Prozessdaten der TSE-Transaktion speichern und hier ausgeben
-          TSE_TA_START: "",
-          TSE_TA_ENDE: "",
-          TSE_TA_VORGANGSART: "Kassenbeleg-V1",
+          // Start/Ende/Signatur aus fiscal_transactions (ab Migration 0016; Altbestand: leer)
+          // TODO DSFinV-K prüfen: Prozessdaten (TSE_VORGANGSDATEN) laut TSE-Anbieter übernehmen
+          TSE_TA_START: b.tse.startedAt ? utcTime(b.tse.startedAt) : "",
+          TSE_TA_ENDE: b.tse.finishedAt ? utcTime(b.tse.finishedAt) : "",
+          TSE_TA_VORGANGSART: b.tse.processType || "Kassenbeleg-V1",
           TSE_TA_SIGZ: b.tse.signatureCounter,
-          TSE_TA_SIG: "",
+          TSE_TA_SIG: b.tse.signature ?? "",
           TSE_TA_FEHLER: "",
           TSE_VORGANGSDATEN: "",
         });
