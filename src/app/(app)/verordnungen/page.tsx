@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Receipt } from "lucide-react";
+import { FileInput, Receipt } from "lucide-react";
 import { Badge, Empty, LinkButton, PageHeader, Stat, Table } from "@/components/ui";
 import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
@@ -34,7 +34,12 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
       <PageHeader
         title="Verordnungen"
         subtitle="GKV-Heilmittelverordnungen Podologie"
-        actions={auth.can("invoices.write") && auth.can("medical.read") ? <LinkButton href="/verordnungen/abrechnung" variant="secondary"><Receipt size={18} aria-hidden /> Abrechnung ({ready.length})</LinkButton> : null}
+        actions={
+          <>
+            {auth.can("medical.write") ? <LinkButton href="/verordnungen/import" variant="secondary"><FileInput size={18} aria-hidden /> eVerordnung importieren</LinkButton> : null}
+            {auth.can("invoices.write") && auth.can("medical.read") ? <LinkButton href="/verordnungen/abrechnung" variant="secondary"><Receipt size={18} aria-hidden /> Abrechnung ({ready.length})</LinkButton> : null}
+          </>
+        }
       />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Beginn-Frist kritisch" value={critical.length} sub="verpasst oder in ≤ 5 Tagen" tone={critical.length ? "accent" : "neutral"} />

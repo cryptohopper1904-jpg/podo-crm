@@ -9,6 +9,7 @@ import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName, money } from "@/lib/format";
 import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
+import { ocrStatus } from "@/server/ocr";
 import { listPatientPrescriptions } from "@/server/prescriptions";
 import { copaymentPaidAction } from "./actions";
 import { PrescriptionForm, type PrescriptionInitial } from "./prescription-form";
@@ -31,6 +32,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
         tx.select({ position: services.gkvPosition, label: services.name }).from(services).where(and(eq(services.organizationId, org), isNotNull(services.gkvPosition), eq(services.active, true))).orderBy(asc(services.gkvPosition)),
       )
     : [];
+  const ocrInfo = showForm ? await ocrStatus(auth) : null;
   const editing = editId ? data.prescriptions.find((p) => p.id === editId && p.status === "open" && p.dates.length === 0) : undefined;
   const initial: PrescriptionInitial = editing
     ? {
@@ -95,7 +97,13 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
             <h2 className="font-display text-xl font-semibold">{editing ? "Verordnung bearbeiten" : "Neue Verordnung"}</h2>
             <Link href={`/kunden/${id}/verordnungen`} className="text-sm font-semibold text-primary">Abbrechen</Link>
           </div>
-          <PrescriptionForm patientId={id} initial={initial} catalog={catalog.filter((c): c is { position: string; label: string } => !!c.position)} />
+          <PrescriptionForm
+            patientId={id}
+            initial={initial}
+            catalog={catalog.filter((c): c is { position: string; label: string } => !!c.position)}
+            ocrInfo={ocrInfo ?? undefined}
+            patient={{ name: [data.patient.firstName, data.patient.lastName].filter(Boolean).join(" "), birthDate: data.patient.birthDate, insuranceNumber: data.patient.insuranceNumber, insurerName: data.patient.insurerName }}
+          />
         </section>
       ) : null}
 
@@ -145,6 +153,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                 </dl>
                 <div className="mt-3 flex flex-wrap gap-2 text-sm">
                   {vo.homeVisit ? <Badge tone="info">Hausbesuch</Badge> : null}
+                  {vo.source === "ocr" ? <Badge tone="info">aus Foto ausgelesen, geprüft</Badge> : null}
                   {vo.therapyReportRequested ? <Badge tone="warn">Therapiebericht angefordert</Badge> : null}
                   {vo.scanMediaId && auth.can("medical.read") ? (
                     <a href={`/api/media/${vo.scanMediaId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary"><FileImage size={16} aria-hidden /> Foto der Verordnung</a>
