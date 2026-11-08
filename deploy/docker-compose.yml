@@ -21,7 +21,9 @@ services:
     build: { context: .., dockerfile: deploy/Dockerfile.migrate }
     environment:
       DATABASE_MIGRATION_URL: postgres://podo_owner:${DB_OWNER_PASSWORD}@db:5432/podo
+      DATABASE_SEED_URL: postgres://podo_app:${DB_APP_PASSWORD}@db:5432/podo
       DB_APP_ROLE: podo_app
+      SEED_DEMO: ${SEED_DEMO:-false}
     depends_on: { db: { condition: service_healthy } }
     restart: "no"
 
