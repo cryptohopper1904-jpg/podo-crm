@@ -1,5 +1,6 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, isNull } from "drizzle-orm";
+import { cookies } from "next/headers";
+import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointmentServices, appointments, invoices, messages, organizations, patientLinks, patients, payments, services, vouchers } from "@/db/schema";
@@ -19,6 +20,7 @@ import {
   portalLinkValid,
   type PortalLink,
 } from "@/lib/portal";
+import { PORTAL_COOKIE, verifyPortalSession } from "@/lib/portal-session";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { invoicePdfForOrg } from "./invoice-delivery";
 
@@ -35,29 +37,74 @@ export async function createPortalLink(auth: AuthContext, patientId: string) {
   if (!p) throw new Error("Person nicht gefunden.");
   const token = newPortalToken();
   const expiresAt = new Date(Date.now() + PORTAL_DAYS * 86400_000);
-  // patient_links hat keine RLS (Zugriff nur über den Token-Hash) → Mandant immer explizit setzen/filtern
-  await db.transaction(async (tx) => {
-    await tx
-      .update(patientLinks)
-      .set({ revokedAt: new Date() })
-      .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.patientId, patientId), eq(patientLinks.purpose, PORTAL_PURPOSE), isNull(patientLinks.revokedAt)));
-    await tx.insert(patientLinks).values({ organizationId: org, patientId, purpose: PORTAL_PURPOSE, tokenHash: hashPortalToken(token), expiresAt, createdBy: auth.user.id });
-  });
+  await insertPortalLinkLocked(org, patientId, hashPortalToken(token), expiresAt, auth.user.id);
   await audit({ organizationId: org, userId: auth.user.id, action: "portal.link_create", entity: "patient", entityId: patientId, meta: { expiresAt: expiresAt.toISOString() } });
   const base = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   return { url: `${base}/portal/${token}`, expiresAt };
+}
+
+const isUniqueViolation = (e: unknown) => {
+  const err = e as { code?: string; cause?: { code?: string } };
+  return err?.code === "23505" || err?.cause?.code === "23505";
+};
+
+/**
+ * Höchstens ein aktiver Portal-Link je Person: pro (Praxis, Person, Zweck) serialisiert über einen
+ * transaktionalen Advisory-Lock; darin erst alle aktiven Links widerrufen, dann einfügen.
+ * Der partielle Unique-Index patient_links_one_active ist die zweite Sicherung – bei einer Verletzung
+ * (z. B. paralleler Schreiber ohne Lock) wird einmal erneut versucht.
+ * patient_links hat keine RLS → Mandant immer explizit filtern.
+ */
+export async function insertPortalLinkLocked(org: string, patientId: string, tokenHash: string, expiresAt: Date, createdBy: string | null) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`plink:${org}:${patientId}:${PORTAL_PURPOSE}`}))`);
+        await tx
+          .update(patientLinks)
+          .set({ revokedAt: new Date() })
+          .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.patientId, patientId), eq(patientLinks.purpose, PORTAL_PURPOSE), isNull(patientLinks.revokedAt)));
+        await tx.insert(patientLinks).values({ organizationId: org, patientId, purpose: PORTAL_PURPOSE, tokenHash, expiresAt, createdBy });
+      });
+      return;
+    } catch (e) {
+      if (attempt < 2 && isUniqueViolation(e)) continue;
+      throw e;
+    }
+  }
+}
+
+const linkCols = {
+  id: patientLinks.id,
+  organizationId: patientLinks.organizationId,
+  patientId: patientLinks.patientId,
+  purpose: patientLinks.purpose,
+  expiresAt: patientLinks.expiresAt,
+  revokedAt: patientLinks.revokedAt,
+};
+
+/** Link-ID aus der (bereits signaturgeprüften) Portal-Sitzung → Link, nur wenn noch gültig. */
+export async function resolvePortalLinkById(linkId: string): Promise<(PortalLink & { id: string }) | null> {
+  if (!z.uuid().safeParse(linkId).success) return null;
+  const [row] = await db.select(linkCols).from(patientLinks).where(eq(patientLinks.id, linkId)).limit(1);
+  return portalLinkValid(row) ? row : null;
+}
+
+/** Aktuelle Portal-Sitzung aus dem Cookie (Server Components, Route Handler, Server Actions). */
+export async function currentPortalLink() {
+  const linkId = verifyPortalSession((await cookies()).get(PORTAL_COOKIE)?.value);
+  return linkId ? resolvePortalLinkById(linkId) : null;
 }
 
 /** Token → gültiger Link (nur über den Hash, ohne RLS); danach wird mit withOrg(link.organizationId) gearbeitet. */
 export async function resolvePortalLink(token: string): Promise<(PortalLink & { id: string }) | null> {
   if (!isPortalToken(token)) return null;
   const [row] = await db
-    .select({ id: patientLinks.id, organizationId: patientLinks.organizationId, patientId: patientLinks.patientId, purpose: patientLinks.purpose, expiresAt: patientLinks.expiresAt, revokedAt: patientLinks.revokedAt, usedAt: patientLinks.usedAt })
+    .select(linkCols)
     .from(patientLinks)
     .where(eq(patientLinks.tokenHash, hashPortalToken(token)))
     .limit(1);
   if (!portalLinkValid(row)) return null;
-  if (!row.usedAt) await db.update(patientLinks).set({ usedAt: new Date() }).where(eq(patientLinks.id, row.id));
   return row;
 }
 

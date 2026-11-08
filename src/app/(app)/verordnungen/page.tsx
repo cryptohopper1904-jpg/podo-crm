@@ -20,6 +20,7 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
   const auth = await requireAuth("patients.read");
   const sp = await props.searchParams;
   const filter = typeof sp.filter === "string" ? sp.filter : "";
+  const medical = auth.can("medical.read");
   const all = await listRunningPrescriptions(auth);
   const critical = all.filter((r) => r.evaluation.startState === "missed" || r.evaluation.startState === "soon");
   const lastUnits = all.filter((r) => (r.vo.status === "active" || r.vo.status === "open") && r.evaluation.unitsRemaining <= 1);
@@ -33,7 +34,7 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
       <PageHeader
         title="Verordnungen"
         subtitle="GKV-Heilmittelverordnungen Podologie"
-        actions={auth.can("invoices.write") ? <LinkButton href="/verordnungen/abrechnung" variant="secondary"><Receipt size={18} aria-hidden /> Abrechnung ({ready.length})</LinkButton> : null}
+        actions={auth.can("invoices.write") && auth.can("medical.read") ? <LinkButton href="/verordnungen/abrechnung" variant="secondary"><Receipt size={18} aria-hidden /> Abrechnung ({ready.length})</LinkButton> : null}
       />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <Stat label="Beginn-Frist kritisch" value={critical.length} sub="verpasst oder in ≤ 5 Tagen" tone={critical.length ? "accent" : "neutral"} />
@@ -58,12 +59,12 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
             {rows.map(({ vo, p, evaluation: ev }) => (
               <tr key={vo.id}>
                 <td><TrafficLight light={ev.light} showLabel /></td>
-                <td><Link href={`/kunden/${p.id}/verordnungen`} className="font-semibold hover:text-primary">{fullName(p)}</Link><div className="text-xs text-muted">#{p.number}{p.insurerName ? ` · ${p.insurerName}` : ""}</div></td>
-                <td>{vo.diagnosisGroup}<div className="text-xs text-muted">{dateDe(vo.issuedAt)}</div></td>
+                <td>{medical ? <Link href={`/kunden/${p.id}/verordnungen`} className="font-semibold hover:text-primary">{fullName(p)}</Link> : <Link href={`/kunden/${p.id}`} className="font-semibold hover:text-primary">{fullName(p)}</Link>}<div className="text-xs text-muted">#{p.number}{p.insurerName ? ` · ${p.insurerName}` : ""}</div></td>
+                <td>{vo.diagnosisGroup || "GKV-VO"}<div className="text-xs text-muted">{dateDe(vo.issuedAt)}</div></td>
                 <td className="tabular-nums">{ev.startState === "started" ? <span className="text-muted">begonnen</span> : <>{dateDe(ev.startBy)}<div className="text-xs text-muted">{ev.daysToStartDeadline >= 0 ? `noch ${ev.daysToStartDeadline} Tage` : `${-ev.daysToStartDeadline} Tage drüber`}</div></>}</td>
                 <td className="tabular-nums">{ev.unitsUsed}/{vo.units}<div className="text-xs text-muted">{ev.unitsRemaining} offen</div></td>
                 <td><Badge tone={vo.status === "billing_ready" ? "info" : "neutral"}>{STATUS_LABEL[vo.status as PrescriptionStatus] ?? vo.status}</Badge></td>
-                <td className="max-w-72 text-sm text-muted">{ev.messages[0] ?? "–"}</td>
+                <td className="max-w-72 text-sm text-muted">{medical ? (ev.messages[0] ?? "–") : ev.startState === "missed" || ev.startState === "soon" ? "Beginn-Frist beachten" : "–"}</td>
               </tr>
             ))}
           </tbody>

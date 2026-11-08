@@ -52,6 +52,11 @@ export class SumupMock implements PaymentPort {
     return tx;
   }
 
+  async deactivateCheckout(checkoutId: string) {
+    const tx = this.transactions.get(checkoutId);
+    if (tx && tx.status === "pending") this.transactions.set(checkoutId, { ...tx, status: "cancelled" });
+  }
+
   verifyWebhook(rawBody: string, headers: Record<string, string | undefined>) {
     const sig = Object.entries(headers).find(([k]) => k.toLowerCase() === "x-payload-signature")?.[1];
     return verifyHmacSignature(rawBody, sig, this.webhookSecret);

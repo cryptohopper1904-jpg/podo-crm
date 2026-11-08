@@ -5,6 +5,7 @@ import { withOrg, type Tx } from "@/db";
 import { billingBatches, media, patients, prescriptions, services, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { assertCan } from "./authz";
+import { neutralizeCsvRows } from "@/lib/csv-safe";
 import type { AuthContext } from "@/lib/auth/session";
 import { ageYears, berlinDateIso, dateDe } from "@/lib/format";
 import {
@@ -358,5 +359,6 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     ]);
   }
   await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.export", entity: "billing_batch", entityId: batchId, meta: { count: data.rows.length } });
-  return { batch: data.batch, lines };
+  // Formel-Injection verhindern (Namen, Arzt, Freitexte stammen aus Eingaben)
+  return { batch: data.batch, lines: neutralizeCsvRows(lines) };
 }

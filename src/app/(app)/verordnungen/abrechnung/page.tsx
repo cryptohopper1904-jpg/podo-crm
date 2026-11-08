@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Download } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, Table } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
@@ -12,6 +13,8 @@ const PARTNER: Record<string, string> = { manual: "manuell", "opta-data": "opta 
 
 export default async function BillingPage() {
   const auth = await requireAuth("invoices.write");
+  // Abrechnungsdaten enthalten Diagnosen (ICD-10)
+  if (!auth.can("medical.read")) redirect("/kein-zugriff");
   const [ready, batches] = [await listRunningPrescriptions(auth, ["billing_ready"]), await listBillingBatches(auth)];
   const rows: ReadyRow[] = ready.map(({ vo, p, evaluation: ev }) => {
     const missing = [!vo.icd10 && "ICD-10", !vo.doctorLanr && "LANR", !vo.doctorBsnr && "BSNR"].filter(Boolean);

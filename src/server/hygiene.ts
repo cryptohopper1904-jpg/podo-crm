@@ -571,22 +571,26 @@ export async function saveMaterial(auth: AuthContext, id: string | null, input: 
     if (id) {
       const r = await tx.update(materials).set(input).where(and(eq(materials.organizationId, org), eq(materials.id, id))).returning({ id: materials.id });
       if (!r.length) return { error: "Material nicht gefunden." };
+      await audit({ organizationId: org, userId: auth.user.id, action: "material.update", entity: "material", entityId: id, meta: { stock: input.stock, minStock: input.minStock } });
     } else {
-      await tx.insert(materials).values({ ...input, organizationId: org });
+      const [r] = await tx.insert(materials).values({ ...input, organizationId: org }).returning({ id: materials.id });
+      await audit({ organizationId: org, userId: auth.user.id, action: "material.create", entity: "material", entityId: r.id });
     }
     return {};
   });
 }
 
-/** Bestand atomar ändern (nie unter 0). */
+/** Bestand atomar ändern (nie unter 0), Änderung wird protokolliert. */
 export async function adjustStock(auth: AuthContext, id: string, delta: number) {
   need(canWriteMaterials(auth), "Materialbestand ändern");
   const org = auth.organization.id;
-  if (!Number.isInteger(delta) || Math.abs(delta) > 10_000) return;
-  await withOrg(org, (tx) =>
+  if (!Number.isInteger(delta) || delta === 0 || Math.abs(delta) > 10_000) return;
+  const [row] = await withOrg(org, (tx) =>
     tx
       .update(materials)
       .set({ stock: sql`greatest(${materials.stock} + ${delta}, 0)` })
-      .where(and(eq(materials.organizationId, org), eq(materials.id, id))),
+      .where(and(eq(materials.organizationId, org), eq(materials.id, id)))
+      .returning({ stock: materials.stock }),
   );
+  if (row) await audit({ organizationId: org, userId: auth.user.id, action: "material.stock", entity: "material", entityId: id, meta: { delta, stock: row.stock } });
 }

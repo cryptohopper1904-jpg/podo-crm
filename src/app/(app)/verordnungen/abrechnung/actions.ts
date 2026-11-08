@@ -11,6 +11,7 @@ const PARTNERS = ["manual", "opta-data", "optica", "azh", "rzh", "other"] as con
 
 export async function createBatchAction(_: BatchState, form: FormData): Promise<BatchState> {
   const auth = await requireAuth("invoices.write");
+  if (!auth.can("medical.read")) return { error: "Keine Berechtigung." };
   const ids = z.array(z.string().uuid()).safeParse(form.getAll("prescriptionId"));
   if (!ids.success || ids.data.length === 0) return { error: "Bitte mindestens eine Verordnung auswählen." };
   const partner = z.enum(PARTNERS).catch("manual").parse(form.get("partner"));

@@ -150,6 +150,8 @@ export interface PaymentPort extends BasePort<"sumup"> {
   startTerminalPayment(input: TerminalPaymentInput): Promise<{ clientTransactionId: string }>;
   getTransaction(id: string, by?: "id" | "client_transaction_id" | "checkout"): Promise<PaymentTransaction>;
   verifyWebhook(rawBody: string, headers: Record<string, string | undefined>): boolean;
+  /** Offenen Online-Checkout (Zahlungslink) deaktivieren, z. B. nach Storno der Rechnung. */
+  deactivateCheckout?(checkoutId: string): Promise<void>;
 }
 
 // ───────────────────────── Termine (Doctolib) ─────────────────────────

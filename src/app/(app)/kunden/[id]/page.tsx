@@ -57,7 +57,9 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <LinkButton href={`/kunden/${p.id}/doku/neu`}><Stethoscope size={18} aria-hidden /> Behandlung dokumentieren</LinkButton>
           ) : null}
           <LinkButton href={`/kunden/${p.id}/anamnese`} variant="secondary"><ClipboardCheck size={18} aria-hidden /> Anamnese</LinkButton>
-          <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
+          {auth.can("medical.read") ? (
+            <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
+          ) : null}
           {auth.can("appointments.write") ? (
             <LinkButton href={`/kalender/neu?patient=${p.id}`} variant="secondary"><CalendarPlus size={18} aria-hidden /> Termin</LinkButton>
           ) : null}

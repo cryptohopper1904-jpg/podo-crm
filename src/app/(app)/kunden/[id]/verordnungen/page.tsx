@@ -19,7 +19,7 @@ export const metadata = { title: "Verordnungen" };
 export default async function PatientPrescriptionsPage(props: PageProps<"/kunden/[id]/verordnungen">) {
   const { id } = await props.params;
   const sp = await props.searchParams;
-  const auth = await requireAuth("patients.read");
+  const auth = await requireAuth("medical.read");
   const data = await listPatientPrescriptions(auth, id);
   if (!data) notFound();
   const org = auth.organization.id;

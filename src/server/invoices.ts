@@ -336,6 +336,27 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
   return result;
 }
 
+/** Zahlungslink bei SumUp deaktivieren (best effort; Fehler nur protokollieren). */
+async function deactivateProviderCheckout(org: string, checkoutRef: string) {
+  const [kind, ...rest] = checkoutRef.split(":");
+  const id = rest.join(":");
+  if (kind !== "checkout" || !id) {
+    // TODO: laufende Terminal-Zahlung abbrechen (SumUp Cloud API: POST /v0.1/merchants/{code}/readers/{id}/terminate)
+    return;
+  }
+  try {
+    const { adapterFor } = await import("./integrations");
+    const port = await adapterFor(org, "sumup");
+    if (port.deactivateCheckout) await port.deactivateCheckout(id);
+    await withOrg(org, (tx) => tx.insert(syncLog).values({ organizationId: org, provider: "sumup", direction: "out", ok: true, message: "Zahlungslink nach Storno deaktiviert" }));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "unbekannt";
+    await withOrg(org, (tx) =>
+      tx.insert(syncLog).values({ organizationId: org, provider: "sumup", direction: "out", ok: false, message: `Zahlungslink konnte nach Storno nicht deaktiviert werden: ${msg}`.slice(0, 500) }),
+    ).catch(() => undefined);
+  }
+}
+
 /**
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
@@ -406,9 +427,14 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
         paidCents,
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
-    await tx.update(invoices).set({ status: "cancelled" }).where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
-    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents };
+    // Storno: offene Zahlungslinks/Terminal-Zuordnung entfernen (eine spätere SumUp-Zahlung wird dann nicht gebucht, sondern gemeldet)
+    await tx
+      .update(invoices)
+      .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
+      .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
+    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents, checkoutRef: orig.checkoutRef };
   });
+  if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
     organizationId: org,
     userId: auth.user.id,
