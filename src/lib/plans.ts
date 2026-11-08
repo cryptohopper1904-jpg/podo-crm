@@ -1,0 +1,205 @@
+/**
+ * Tarife, Funktionsumfang und Zugriffsmodus (SaaS, Phase 3, PLAN.md 4.11).
+ *
+ * PREISE VORLÄUFIG – Platzhalter, noch nicht kalkuliert/freigegeben. Alle Preise netto pro Monat.
+ *
+ * Nur-Lesen-Modus: Ist die Testphase abgelaufen oder das Abo gekündigt/überfällig (nach 14 Tagen Kulanz),
+ * lehnt die App alle schreibenden Aktionen ab. LESEN UND EXPORTIEREN BLEIBEN IMMER MÖGLICH –
+ * Patient:innen haben Anspruch auf Einsicht/Kopie (§ 630g BGB, Art. 15/20 DSGVO), die Praxis
+ * auf ihre Aufbewahrungspflichten. Durchgesetzt in requireAuth()/getAuth() (src/lib/auth/session.ts).
+ */
+
+export const PRICES_PRELIMINARY = true;
+export const PRICES_NOTE = "Preise vorläufig – Platzhalter, Änderungen vorbehalten. Alle Preise netto zzgl. USt.";
+
+export const TRIAL_DAYS = 30;
+export const GRACE_DAYS = 14;
+export const EXTRA_SEAT_CENTS = 1500;
+
+export const FEATURES = ["portal", "voice_agent"] as const;
+export type Feature = (typeof FEATURES)[number];
+
+export const FEATURE_LABELS: Record<Feature, string> = {
+  portal: "Kundenportal",
+  voice_agent: "KI-Telefonagent (Pilot)",
+};
+
+export const PLAN_IDS = ["trial", "starter", "praxis", "plus", "internal"] as const;
+export type PlanId = (typeof PLAN_IDS)[number];
+/** Buchbare Tarife (Stripe) */
+export const PAID_PLANS = ["starter", "praxis", "plus"] as const;
+export type PaidPlan = (typeof PAID_PLANS)[number];
+
+export type PlanInfo = {
+  label: string;
+  /** Netto-Grundpreis pro Monat in Cent (vorläufig) */
+  priceCents: number;
+  /** im Grundpreis enthaltene Behandler-/Team-Plätze */
+  includedSeats: number;
+  /** Obergrenze (null = unbegrenzt) */
+  maxSeats: number | null;
+  features: readonly Feature[];
+  description: string;
+};
+
+export const PLANS: Record<PlanId, PlanInfo> = {
+  trial: {
+    label: "Testphase",
+    priceCents: 0,
+    includedSeats: 2,
+    maxSeats: 2,
+    features: FEATURES,
+    description: `${TRIAL_DAYS} Tage alle Funktionen, bis zu 2 Personen`,
+  },
+  starter: {
+    label: "Starter",
+    priceCents: 5900,
+    includedSeats: 1,
+    maxSeats: 1,
+    features: [],
+    description: "Für Einzelpraxen: 1 Person, ohne Kundenportal und KI-Telefon",
+  },
+  praxis: {
+    label: "Praxis",
+    priceCents: 9900,
+    includedSeats: 2,
+    maxSeats: 5,
+    features: ["portal"],
+    description: "Bis zu 5 Personen, alle Funktionen außer KI-Telefon",
+  },
+  plus: {
+    label: "Plus",
+    priceCents: 14900,
+    includedSeats: 3,
+    maxSeats: null,
+    features: ["portal", "voice_agent"],
+    description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (Pilot)",
+  },
+  internal: {
+    label: "Intern",
+    priceCents: 0,
+    includedSeats: 0,
+    maxSeats: null,
+    features: FEATURES,
+    description: "Betreiber-/Pilotpraxis ohne Abrechnung",
+  },
+};
+
+export const isPlanId = (v: unknown): v is PlanId => typeof v === "string" && (PLAN_IDS as readonly string[]).includes(v);
+export const isPaidPlan = (v: unknown): v is PaidPlan => typeof v === "string" && (PAID_PLANS as readonly string[]).includes(v);
+
+/** Die für Tarif/Zugriff relevanten Felder einer Organisation */
+export type OrgBilling = {
+  plan: string;
+  subscriptionStatus: string;
+  trialEndsAt: Date | null;
+  currentPeriodEnd: Date | null;
+  seats: number;
+};
+
+export type AccessInfo =
+  | { mode: "full"; trialDaysLeft?: number; graceEndsAt?: Date; reason?: undefined }
+  | { mode: "readonly"; reason: "trial_expired" | "payment_overdue" | "canceled"; trialDaysLeft?: undefined; graceEndsAt?: undefined };
+
+export const READONLY_REASON_LABELS: Record<"trial_expired" | "payment_overdue" | "canceled", string> = {
+  trial_expired: "Die Testphase ist abgelaufen.",
+  payment_overdue: "Die Zahlung für das Abo ist seit mehr als 14 Tagen überfällig.",
+  canceled: "Das Abo ist beendet.",
+};
+
+const DAY = 86_400_000;
+
+/** Monatlicher Netto-Preis (vorläufig) für Tarif + Plätze */
+export function monthlyPriceCents(plan: PaidPlan, seats: number): number {
+  const p = PLANS[plan];
+  return p.priceCents + Math.max(0, seats - p.includedSeats) * EXTRA_SEAT_CENTS;
+}
+
+/** Ermittelt, ob die Praxis schreiben darf (voll) oder nur lesen/exportieren. */
+export function accessMode(org: OrgBilling, now: Date = new Date()): AccessInfo {
+  if (org.plan === "internal") return { mode: "full" };
+  const status = org.subscriptionStatus;
+  if (status === "active") return { mode: "full" };
+  if (status === "trialing" || (org.plan === "trial" && status === "none")) {
+    if (!org.trialEndsAt) return { mode: "full" };
+    const left = org.trialEndsAt.getTime() - now.getTime();
+    if (left > 0) return { mode: "full", trialDaysLeft: Math.ceil(left / DAY) };
+    return { mode: "readonly", reason: "trial_expired" };
+  }
+  // past_due, canceled, paused, none …: 14 Tage Kulanz ab Ende des bezahlten Zeitraums
+  const base = org.currentPeriodEnd ?? org.trialEndsAt;
+  if (base) {
+    const graceEndsAt = new Date(base.getTime() + GRACE_DAYS * DAY);
+    if (now < graceEndsAt) return { mode: "full", graceEndsAt };
+  }
+  return { mode: "readonly", reason: status === "past_due" ? "payment_overdue" : "canceled" };
+}
+
+export type Entitlements = {
+  plan: PlanId;
+  planLabel: string;
+  features: ReadonlySet<Feature>;
+  /** Anzahl erlaubter Team-Plätze (Steuerberatung zählt nicht), Infinity = unbegrenzt */
+  seatLimit: number;
+  access: AccessInfo;
+  readOnly: boolean;
+};
+
+export function seatLimit(org: Pick<OrgBilling, "plan" | "seats">): number {
+  const plan = isPlanId(org.plan) ? org.plan : "starter";
+  const p = PLANS[plan];
+  if (plan === "trial") return p.includedSeats;
+  if (plan === "internal") return Infinity;
+  const paid = Math.max(org.seats, p.includedSeats);
+  return p.maxSeats === null ? paid : Math.min(paid, p.maxSeats);
+}
+
+export function entitlements(org: OrgBilling, now: Date = new Date()): Entitlements {
+  const plan: PlanId = isPlanId(org.plan) ? org.plan : "starter";
+  const access = accessMode(org, now);
+  return {
+    plan,
+    planLabel: PLANS[plan].label,
+    features: new Set(PLANS[plan].features),
+    seatLimit: seatLimit(org),
+    access,
+    readOnly: access.mode === "readonly",
+  };
+}
+
+export class EntitlementError extends Error {
+  constructor(
+    public readonly feature: Feature | "write" | "seats",
+    message: string,
+  ) {
+    super(message);
+    this.name = "EntitlementError";
+  }
+}
+
+/** Wirft, wenn der Tarif die Funktion nicht enthält oder die Praxis im Nur-Lesen-Modus ist. */
+export function assertEntitled(org: OrgBilling, feature: Feature, now: Date = new Date()): void {
+  const e = entitlements(org, now);
+  if (e.readOnly) throw new EntitlementError("write", `${READONLY_REASON_LABELS[e.access.reason!]} Die Praxis ist im Nur-Lesen-Modus.`);
+  if (!e.features.has(feature)) {
+    throw new EntitlementError(
+      feature,
+      `${FEATURE_LABELS[feature]} ist im Tarif „${e.planLabel}“ nicht enthalten. Bitte unter Einstellungen → Abo & Tarif upgraden.`,
+    );
+  }
+}
+
+/** Rollen, die einen Platz belegen (die Steuerberatung ist kostenlos) */
+export const seatCounts = (role: string) => role !== "accountant";
+
+/**
+ * Prüft, ob eine weitere Person mit `role` hinzukommen darf. `usedSeats` = aktive Mitgliedschaften
+ * ohne Steuerberatung. Gibt eine Fehlermeldung zurück oder null.
+ */
+export function seatProblem(org: Pick<OrgBilling, "plan" | "seats">, usedSeats: number, role: string): string | null {
+  if (!seatCounts(role)) return null;
+  const limit = seatLimit(org);
+  if (usedSeats + 1 <= limit) return null;
+  const plan = isPlanId(org.plan) ? PLANS[org.plan].label : org.plan;
+  return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. (Die Steuerberatung belegt keinen Platz.)`;
+}

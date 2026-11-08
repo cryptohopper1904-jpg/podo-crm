@@ -21,6 +21,7 @@ jobs:
       DATABASE_MIGRATION_URL: postgres://podo_owner:podo_owner@localhost:5432/podo_test
       DATABASE_URL: postgres://podo_app:podo_app@localhost:5432/podo_test
       TEST_DATABASE_URL: postgres://podo_app:podo_app@localhost:5432/podo_test
+      TEST_OWNER_DATABASE_URL: postgres://podo_owner:podo_owner@localhost:5432/podo_test
       APP_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       INTEGRATIONS_MODE: mock
     steps:
@@ -29,6 +30,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - name: Abhängigkeiten prüfen (nicht blockierend, siehe docs/compliance/PENTEST-CHECKLISTE.md)
+        run: pnpm audit --prod --audit-level high
+        continue-on-error: true
       - name: App-Rolle anlegen
         run: PGPASSWORD=podo_owner psql -h localhost -U podo_owner -d podo_test -c "create role podo_app login password 'podo_app' nosuperuser nobypassrls"
       - run: pnpm db:migrate

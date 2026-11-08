@@ -9,6 +9,7 @@
 | [LOESCHKONZEPT.md](LOESCHKONZEPT.md) | Aufbewahrung und Löschung je Datenklasse | Entwurf |
 | [DSFA.md](DSFA.md) | Datenschutz-Folgenabschätzung (Art. 35) – Gerüst | Entwurf |
 | [UNTERAUFTRAGNEHMER.md](UNTERAUFTRAGNEHMER.md) | AVV-Kette (Hosting, KI, WhatsApp, SMS …) | offen |
+| [PENTEST-CHECKLISTE.md](PENTEST-CHECKLISTE.md) | Pentest-Plan (OWASP ASVS L2) inkl. `pnpm audit --prod` | Entwurf |
 
 ## Checkliste vor dem ersten echten Patienten
 - [ ] AVV mit Hoster, § 203-Verpflichtung der IT-Dienstleister

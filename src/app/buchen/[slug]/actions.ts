@@ -51,7 +51,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
 
   const result = await withOrg(org.id, async (tx) => {
     // Buchungen je Praxis serialisieren → keine Doppelbelegung bei gleichzeitigen Anfragen
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"book:" + org.id}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org.id}, 0))`);
     const [svc] = await tx
       .select({ id: services.id, name: services.name, durationMin: services.durationMin })
       .from(services)

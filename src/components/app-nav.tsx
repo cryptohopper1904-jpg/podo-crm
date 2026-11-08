@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Phone,
   BarChart3,
   Building2,
   ClipboardList,
   ShieldCheck,
+  ShieldAlert,
   UsersRound,
   CalendarDays,
   FileText,
@@ -37,7 +39,9 @@ export type NavKey =
   | "verordnungen"
   | "pflegeheime"
   | "hygiene"
-  | "team";
+  | "team"
+  | "telefon"
+  | "plattform";
 
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
   { key: "heute", href: "/heute", label: "Heute", icon: Home, mobile: true },
@@ -49,12 +53,14 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "pflegeheime", href: "/pflegeheime", label: "Pflegeheime", icon: Building2 },
   { key: "rechnungen", href: "/rechnungen", label: "Rechnungen", icon: FileText },
   { key: "gutscheine", href: "/gutscheine", label: "Gutscheine", icon: Gift },
+  { key: "telefon", href: "/telefon", label: "Telefon", icon: Phone },
   { key: "bewertungen", href: "/bewertungen", label: "Bewertungen", icon: Star },
   { key: "news", href: "/news", label: "News", icon: Newspaper },
   { key: "hygiene", href: "/hygiene", label: "Hygiene & Geräte", icon: ShieldCheck },
   { key: "team", href: "/team", label: "Team-Planung", icon: UsersRound },
   { key: "auswertung", href: "/auswertung", label: "Auswertung", icon: BarChart3 },
   { key: "einstellungen", href: "/einstellungen", label: "Einstellungen", icon: Settings },
+  { key: "plattform", href: "/plattform", label: "Plattform", icon: ShieldAlert },
 ];
 
 export function SideNav({ allowed, badges }: { allowed: NavKey[]; badges?: Partial<Record<NavKey, number>> }) {

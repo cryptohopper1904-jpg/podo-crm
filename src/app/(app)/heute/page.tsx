@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
+import { OnboardingCard } from "@/components/onboarding-card";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
@@ -60,6 +61,8 @@ export default async function TodayPage() {
         </div>
         {auth.can("appointments.write") ? <LinkButton href="/kalender/neu">+ Termin</LinkButton> : null}
       </header>
+
+      <OnboardingCard auth={auth} />
 
       <section aria-label="Kennzahlen" className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Termine heute" value={active.length} sub={homeVisits ? `davon ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : "keine Hausbesuche"} tone="primary" />

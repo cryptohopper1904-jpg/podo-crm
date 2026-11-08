@@ -11,12 +11,19 @@ import { requestMeta, requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { clientKey } from "@/lib/rate-limit";
 import { cancelPortalAppointment, createPortalLink, currentPortalLink, portalFailLimiter, portalLimiter } from "./portal-core";
+import { assertEntitled, EntitlementError } from "@/lib/plans";
 
 export type PortalLinkState = { error?: string; url?: string; expires?: string } | undefined;
 export type PortalCancelState = { error?: string; ok?: string; phone?: string | null } | undefined;
 
 export async function createPortalLinkAction(_: PortalLinkState, form: FormData): Promise<PortalLinkState> {
   const auth = await requireAuth("patients.write");
+  try {
+    assertEntitled(auth.billing, "portal");
+  } catch (e) {
+    if (e instanceof EntitlementError) return { error: e.message };
+    throw e;
+  }
   try {
     const r = await createPortalLink(auth, String(form.get("patientId") ?? ""));
     return { url: r.url, expires: dateDe(r.expiresAt) };

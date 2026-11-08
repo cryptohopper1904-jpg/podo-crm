@@ -1,0 +1,24 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { Markdown } from "@/components/markdown";
+
+export const LEGAL_FILES = {
+  agb: "AGB.md",
+  avv: "AVV.md",
+  datenschutz: "DATENSCHUTZ.md",
+  impressum: "IMPRESSUM.md",
+  unterauftragnehmer: "UNTERAUFTRAGNEHMER.md",
+} as const;
+
+/**
+ * Rechtstext aus docs/legal/*.md. Die Seiten sind statisch (force-static) – die Dateien werden
+ * beim Build gelesen und müssen daher nicht im Produktions-Image liegen.
+ */
+export async function LegalDoc({ doc }: { doc: keyof typeof LEGAL_FILES }) {
+  const source = await readFile(path.join(process.cwd(), "docs", "legal", LEGAL_FILES[doc]), "utf8");
+  return (
+    <article className="mx-auto max-w-3xl px-4 py-14 sm:px-6">
+      <Markdown source={source} />
+    </article>
+  );
+}

@@ -106,10 +106,10 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   {
     provider: "voice_agent",
     label: "KI-Telefonagent",
-    description: "Platzhalter (Ausbaustufe 2): Anrufe annehmen, Termine buchen/absagen über Vapi, Retell, Fonio oder sipgate.",
-    privacy: "Hinweis zu Gesprächsbeginn, Einwilligung „Gesprächsaufzeichnung“, EU-Verarbeitung und AVV.",
-    secretFields: [{ name: "apiKey", label: "API-Schlüssel" }],
-    configFields: [{ name: "vendor", label: "Anbieter (vapi, retell, fonio, sipgate)" }],
+    description: "Pilot: Anrufe annehmen, freie Termine nennen, Terminwünsche, Absagewünsche und Rückrufbitten in den Posteingang (umgesetzt: Vapi; Retell, Fonio, sipgate folgen). Einrichtung unter „Telefon“.",
+    privacy: "KI-Hinweis zu Gesprächsbeginn (AI Act Art. 50), Transkript nur mit Ansage und Einstellung, EU-Verarbeitung und AVV.",
+    secretFields: [{ name: "vapiSecret", label: "Server-URL-Secret (optional – sonst gilt das Webhook-Token)" }],
+    configFields: [{ name: "vendor", label: "Anbieter (Pilot: vapi)", placeholder: "vapi" }],
   },
   {
     provider: "transcription",

@@ -17,7 +17,7 @@ export default async function SetupPage() {
       <p className="mt-1 text-sm text-muted">
         In zwei Minuten startklar. Leistungskatalog und Schnittstellen (Testmodus) werden automatisch angelegt.
       </p>
-      <SetupForm needsToken={n === 0 && !!process.env.SETUP_TOKEN} />
+      <SetupForm needsToken={n === 0 && !!process.env.SETUP_TOKEN} saas={n > 0 && process.env.ALLOW_SIGNUP === "true"} />
     </>
   );
 }

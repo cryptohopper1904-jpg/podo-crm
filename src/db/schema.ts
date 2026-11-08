@@ -144,8 +144,59 @@ export const organizations = pgTable("organizations", {
   /** Bundesland für Feiertage, z. B. "BB" */
   state: text("state").notNull().default("BB"),
   settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
+  // ── SaaS-Abo (Phase 3) ──
+  /** trial | starter | praxis | plus | internal */
+  plan: text("plan").notNull().default("trial"),
+  /** trialing | active | past_due | canceled | paused | none */
+  subscriptionStatus: text("subscription_status").notNull().default("trialing"),
+  trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  seats: integer("seats").notNull().default(1),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  /** Onboarding-Fortschritt, z. B. { practice: true, services: true, team: false, import: false, integrations: false } */
+  onboarding: jsonb("onboarding").$type<Record<string, boolean>>().notNull().default({}),
+  /** Löschung beantragt (Kündigung): nach Frist + Aufbewahrungsprüfung endgültig */
+  deletionRequestedAt: timestamp("deletion_requested_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+/**
+ * Support-Freigaben (Break-Glass): Plattform-Betreiber sehen Praxisdaten NUR mit zeitlich begrenzter,
+ * von der Praxis erteilter Freigabe. Jede Nutzung wird im Audit-Log der Praxis protokolliert.
+ */
+export const supportGrants = pgTable("support_grants", {
+  id: id(),
+  organizationId: orgId(),
+  grantedBy: uuid("granted_by")
+    .notNull()
+    .references(() => users.id),
+  /** Plattform-Admin, der zugreifen darf (null = jeder Plattform-Admin) */
+  granteeUserId: uuid("grantee_user_id").references(() => users.id),
+  reason: text("reason").notNull(),
+  /** read | write */
+  scope: text("scope").notNull().default("read"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+/** Abo-Ereignisse von Stripe (Idempotenz + Nachvollziehbarkeit), plattformweit */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: id(),
+    provider: text("provider").notNull().default("stripe"),
+    externalId: text("external_id").notNull(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    type: text("type").notNull(),
+    payload: jsonb("payload").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    error: text("error"),
+  },
+  (t) => [uniqueIndex("billing_events_idem").on(t.provider, t.externalId)],
+);
 
 export const locations = pgTable("locations", {
   id: id(),
@@ -911,4 +962,27 @@ export const auditLog = pgTable(
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("audit_org_time").on(t.organizationId, t.at)],
+);
+
+/** KI-Telefonagent: Anrufe (Pilot). Transkript nur mit Einwilligung / nach Hinweis gespeichert. */
+export const voiceCalls = pgTable(
+  "voice_calls",
+  {
+    id: id(),
+    organizationId: orgId(),
+    provider: text("provider").notNull(),
+    externalId: text("external_id").notNull(),
+    /** gekürzt/maskiert gespeichert, z. B. +49 151 ••• 23 */
+    callerMasked: text("caller_masked"),
+    patientId: uuid("patient_id").references(() => patients.id, { onDelete: "set null" }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    durationSec: integer("duration_sec"),
+    /** booked | rescheduled | cancelled | info | callback | handover | failed */
+    outcome: text("outcome"),
+    summary: text("summary"),
+    transcript: text("transcript"),
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("voice_calls_ext").on(t.organizationId, t.provider, t.externalId)],
 );
