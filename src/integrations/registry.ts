@@ -25,7 +25,7 @@ import { SumupMock } from "./sumup/mock";
 import { SumupAdapter } from "./sumup/sumup";
 import { TranscriptionMock, WhisperCompatibleTranscription } from "./transcription/transcription";
 import type { FetchLike, IntegrationConnection, PortByProvider, SupportedProvider } from "./types";
-import { VoiceAgentAdapter, VoiceAgentMock } from "./voice/voice-agent";
+import { voiceAgentFor, VoiceAgentMock } from "./voice/voice-agent";
 
 export interface RegistryOptions {
   /** überschreibt process.env.INTEGRATIONS_MODE */
@@ -102,8 +102,7 @@ const REAL: { [P in SupportedProvider]: Builder<P> } = {
     new WhatsAppAdapter({ accessToken: sec.accessToken, phoneNumberId: str(cfg.phoneNumberId), baseUrl: str(cfg.baseUrl), fetch: f }),
   sms: (cfg, sec, f) =>
     new SmsAdapter({ apiKey: sec.apiKey, sender: str(cfg.sender), vendor: cfg.vendor === "sipgate" ? "sipgate" : "seven", fetch: f }),
-  voice_agent: (cfg, sec) =>
-    new VoiceAgentAdapter({ vendor: str(cfg.vendor) as "vapi" | "retell" | "fonio" | "sipgate" | undefined, apiKey: sec.apiKey }),
+  voice_agent: (cfg) => voiceAgentFor(str(cfg.vendor)),
   transcription: (cfg, sec, f) =>
     new WhisperCompatibleTranscription({
       baseUrl: str(cfg.baseUrl),

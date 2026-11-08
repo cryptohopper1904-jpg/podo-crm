@@ -6,7 +6,7 @@ import { handleLexofficeWebhook } from "./lexoffice/lexoffice";
 import { parseSevenSmsWebhook, parseWhatsAppWebhook } from "./messaging/messaging";
 import { handleSumupWebhook } from "./sumup/sumup";
 import type { InboundMessage, VoiceCallEvent } from "./types";
-import { parseGenericVoiceEvent } from "./voice/voice-agent";
+import { parseVapiEvent } from "./voice/vapi";
 
 export { handleLexofficeWebhook, handleSumupWebhook };
 
@@ -18,6 +18,7 @@ export function handleSmsWebhook(payload: unknown): InboundMessage[] {
   return parseSevenSmsWebhook(payload);
 }
 
+/** Altpfad /api/webhooks/voice_agent: nur Parsen (keine Wirkung). Der Telefonagent nutzt /api/voice/{vendor}. */
 export function handleVoiceAgentWebhook(payload: unknown): VoiceCallEvent {
-  return parseGenericVoiceEvent(payload);
+  return parseVapiEvent(payload);
 }
