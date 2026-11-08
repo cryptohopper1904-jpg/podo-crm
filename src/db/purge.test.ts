@@ -12,7 +12,14 @@ import { Pool, type PoolClient } from "pg";
 import { assertTableOwner, findDueOrganizations, purgeOrganization } from "@/server/purge-organization";
 
 const ownerUrl =
-  process.env.TEST_OWNER_DATABASE_URL ?? (process.env.TEST_DATABASE_URL ? "postgres://podo_owner:podo_owner@localhost:5433/podo_test" : undefined);
+  process.env.TEST_OWNER_DATABASE_URL ?? (process.env.TEST_DATABASE_URL ? ownerUrlFrom(process.env.TEST_DATABASE_URL) : undefined);
+/** Gleiche Datenbank (Host/Port/Name) wie TEST_DATABASE_URL, aber mit der Eigentümer-Rolle podo_owner. */
+function ownerUrlFrom(appUrl: string): string {
+  const u = new URL(appUrl);
+  u.username = "podo_owner";
+  u.password = "podo_owner";
+  return u.toString();
+}
 const d = ownerUrl ? describe : describe.skip;
 
 type Seed = { org: string; user: string; patient: string; record: string; invoice: string };
