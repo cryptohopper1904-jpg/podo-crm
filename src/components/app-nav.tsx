@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Phone,
   BarChart3,
   Building2,
   ClipboardList,
@@ -39,6 +40,7 @@ export type NavKey =
   | "pflegeheime"
   | "hygiene"
   | "team"
+  | "telefon"
   | "plattform";
 
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
@@ -51,6 +53,7 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "pflegeheime", href: "/pflegeheime", label: "Pflegeheime", icon: Building2 },
   { key: "rechnungen", href: "/rechnungen", label: "Rechnungen", icon: FileText },
   { key: "gutscheine", href: "/gutscheine", label: "Gutscheine", icon: Gift },
+  { key: "telefon", href: "/telefon", label: "Telefon", icon: Phone },
   { key: "bewertungen", href: "/bewertungen", label: "Bewertungen", icon: Star },
   { key: "news", href: "/news", label: "News", icon: Newspaper },
   { key: "hygiene", href: "/hygiene", label: "Hygiene & Geräte", icon: ShieldCheck },

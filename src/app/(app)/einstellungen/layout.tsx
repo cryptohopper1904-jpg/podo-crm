@@ -12,6 +12,7 @@ const TABS = [
   ["protokoll", "Zugriffsprotokoll"],
   ["abo", "Abo & Tarif"],
   ["support", "Support-Zugriff"],
+  ["daten", "Daten & Kündigung"],
 ] as const;
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
