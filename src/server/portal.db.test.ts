@@ -52,6 +52,35 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(view?.invoices.map((i) => i.id)).toEqual([mine]);
   });
 
+  it("Sitzung (Cookie) gilt nur, solange der Link gültig ist; Widerruf beendet die Sitzung", async () => {
+    const { signPortalSession, verifyPortalSession } = await import("@/lib/portal-session");
+    const org = await f.org();
+    const p = await f.patient(org);
+    const l = (await core.resolvePortalLink(await link(org, p)))!;
+    const session = signPortalSession(l.id, l.expiresAt);
+    const id = verifyPortalSession(session.value);
+    expect(id).toBe(l.id);
+    expect((await core.resolvePortalLinkById(id!))?.patientId).toBe(p);
+    await f.pool.query("update patient_links set revoked_at = now() where id = $1", [l.id]);
+    expect(await core.resolvePortalLinkById(id!)).toBeNull();
+  });
+
+  it("parallele Link-Erzeugung hinterlässt genau einen aktiven Link", async () => {
+    const org = await f.org();
+    const user = await f.user();
+    const p = await f.patient(org);
+    const auth = { organization: { id: org, name: "T" }, user: { id: user, name: "Test" }, can: () => true } as never;
+    const urls = await Promise.all(Array.from({ length: 6 }, () => core.createPortalLink(auth, p)));
+    expect(new Set(urls.map((u) => u.url)).size).toBe(6);
+    const active = (await f.pool.query("select count(*)::int n from patient_links where patient_id = $1 and revoked_at is null", [p])).rows[0].n;
+    expect(active).toBe(1);
+    // nur der zuletzt erzeugte Link funktioniert
+    const valid = await Promise.all(urls.map((u) => core.resolvePortalLink(u.url.split("/portal/")[1])));
+    expect(valid.filter(Boolean)).toHaveLength(1);
+    // ohne Recht: Fehler
+    await expect(core.createPortalLink({ ...(auth as object), can: () => false } as never, p)).rejects.toThrow(/Berechtigung/);
+  });
+
   it("abgelaufene/widerrufene/ungültige Tokens werden abgelehnt", async () => {
     const org = await f.org();
     const p = await f.patient(org);

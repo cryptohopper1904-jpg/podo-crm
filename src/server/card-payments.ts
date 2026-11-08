@@ -82,6 +82,10 @@ export async function createPaymentLink(auth: AuthContext, invoiceId: string) {
     throw new InvoiceError("Zahlungslink konnte nicht erzeugt werden (Details im Synchronisationsprotokoll).");
   }
   if (!res.url) throw new InvoiceError("SumUp hat keinen Zahlungslink geliefert (Hosted Checkout im SumUp-Konto aktivieren).");
+  if (!isAllowedPaymentUrl(res.url, port.isMock)) {
+    await logSync(org, "sumup", { direction: "out", ok: false, message: "Zahlungslink mit unerwarteter Adresse verworfen", entity: "invoice", entityId: inv.id });
+    throw new InvoiceError("SumUp hat einen ungültigen Zahlungslink geliefert.");
+  }
   await withOrg(org, (tx) =>
     tx.update(invoices).set({ paymentLinkUrl: res.url, checkoutRef: `checkout:${res.checkoutId}` }).where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.id))),
   );
@@ -89,6 +93,23 @@ export async function createPaymentLink(auth: AuthContext, invoiceId: string) {
   await audit({ organizationId: org, userId: auth.user.id, action: "invoice.payment_link", entity: "invoice", entityId: inv.id, meta: { amountCents: open, mock: port.isMock } });
   return { url: res.url, mock: port.isMock };
 }
+
+/** Nur https-Links von SumUp (bzw. der Mock-Domain im Testmodus) speichern und ausliefern. */
+export function isAllowedPaymentUrl(url: string, mock: boolean): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" || u.username || u.password) return false;
+  const host = u.hostname.toLowerCase();
+  if (host === "sumup.com" || host.endsWith(".sumup.com")) return true;
+  return mock && host === "pay.example.invalid";
+}
+
+const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
+const validPhone = (p: string) => /^\+?[\d\s()/-]{6,25}$/.test(p) && p.replace(/\D/g, "").length >= 7 && p.replace(/\D/g, "").length <= 15;
 
 const PROVIDER: Record<"email" | "sms" | "whatsapp", MessagingProvider> = { email: "email_imap", sms: "sms", whatsapp: "whatsapp" };
 
@@ -124,7 +145,10 @@ export async function sendPaymentLink(auth: AuthContext, invoiceId: string, chan
     if (channel === "whatsapp" && !data.whatsappOk) throw new InvoiceError("Keine WhatsApp-Einwilligung hinterlegt.");
     to = p.phoneMobile;
   }
+  to = to?.trim() || null;
   if (!to) throw new InvoiceError(channel === "email" ? "Keine E-Mail-Adresse hinterlegt." : "Keine Mobilnummer hinterlegt.");
+  if (channel === "email" ? !EMAIL_RE.test(to) : !validPhone(to)) throw new InvoiceError("Die hinterlegte Empfängeradresse ist ungültig.");
+  if (!isAllowedPaymentUrl(inv.paymentLinkUrl, true)) throw new InvoiceError("Der gespeicherte Zahlungslink ist ungültig – bitte neu erzeugen.");
   const open = inv.totalCents - inv.paidCents;
   const body = `Zahlungslink für Rechnung ${inv.number} über ${money(open)} (${auth.organization.name}): ${inv.paymentLinkUrl}`;
   const subject = `Zahlungslink zu Rechnung ${inv.number}`;
@@ -165,6 +189,10 @@ export async function simulateTestPayment(auth: AuthContext, invoiceId: string) 
   const org = auth.organization.id;
   const { port } = await sumupPort(org);
   if (!port.isMock) throw new InvoiceError("Testzahlungen sind nur im Testmodus möglich.");
+  // Testbuchungen landen in payments (external_ref „sumup:mock_…“) – in Produktion nur mit ausdrücklicher Freigabe
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_TEST_PAYMENTS !== "true") {
+    throw new InvoiceError("Testzahlungen sind in Produktion deaktiviert (ALLOW_TEST_PAYMENTS=true für eine Testpraxis).");
+  }
   const { inv } = await loadOpenInvoice(org, invoiceId);
   let ref = inv.checkoutRef;
   if (!ref) {

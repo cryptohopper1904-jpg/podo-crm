@@ -62,7 +62,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const orgB = await f.org();
     const invA = await f.invoice(orgA, await f.patient(orgA), 5000);
     // Referenz zeigt auf Rechnung von A, Ereignis kommt aber für Praxis B → RLS findet nichts
-    expect((await wh.recordProviderPayment(orgB, { invoiceId: invA, externalRef: "sumup:x1", amountCents: 5000, method: "card" })).status).toBe("Rechnung nicht gefunden");
+    expect(await wh.recordProviderPayment(orgB, { invoiceId: invA, externalRef: "sumup:x1", amountCents: 5000, method: "card" })).toMatchObject({ status: "nicht zugeordnet", reason: "Rechnung nicht gefunden" });
 
     const port = new SumupMock();
     const failed = await port.createCheckout({ reference: invA, amountCents: 5013 }); // Mock: …13 Cent = fehlgeschlagen
@@ -71,6 +71,67 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await wh.recordProviderPayment(orgA, { invoiceId: invA, externalRef: "sumup:part", amountCents: 2000, method: "payment_link" })).status).toBe("gebucht");
     const s = await state(orgA, invA);
     expect(s.inv).toEqual({ status: "partially_paid", paid_cents: 2000 });
+  });
+
+  it("Überzahlung und stornierte Rechnung: nicht buchen, Posteingang + Protokoll, Wiederholung ohne Doppelmeldung", async () => {
+    const org = await f.org();
+    const inv = await f.invoice(org, await f.patient(org), 5000);
+    // Teilzahlung bar/anderweitig: offen nur noch 1000
+    await f.asOrg(org, (c) => c.query("insert into payments (organization_id, invoice_id, method, amount_cents) values ($1,$2,'transfer',4000)", [org, inv]));
+    await f.asOrg(org, (c) => c.query("update invoices set paid_cents = 4000, status = 'partially_paid' where id = $1", [inv]));
+    const over = { invoiceId: inv, externalRef: "sumup:over", amountCents: 5000, method: "payment_link" as const };
+    expect(await wh.recordProviderPayment(org, over)).toMatchObject({ status: "nicht zugeordnet" });
+    expect(await wh.recordProviderPayment(org, over)).toMatchObject({ status: "nicht zugeordnet" });
+
+    const cancelled = await f.invoice(org, await f.patient(org), 3000);
+    await f.asOrg(org, (c) => c.query("update invoices set status = 'cancelled' where id = $1", [cancelled]));
+    expect(await wh.recordProviderPayment(org, { invoiceId: cancelled, externalRef: "sumup:canc", amountCents: 3000, method: "card" })).toMatchObject({
+      status: "nicht zugeordnet",
+      reason: "Rechnung storniert",
+    });
+
+    const r = await f.asOrg(org, async (c) => ({
+      payments: (await c.query("select count(*)::int n from payments where invoice_id = any($1)", [[inv, cancelled]])).rows[0].n,
+      inv: (await c.query("select status, paid_cents from invoices where id = $1", [inv])).rows[0],
+      inbox: (await c.query("select subject from messages where organization_id = $1 and direction = 'inbound'", [org])).rows,
+      sync: (await c.query("select count(*)::int n from sync_log where organization_id = $1 and ok = false", [org])).rows[0].n,
+    }));
+    expect(r.payments).toBe(1); // nur die Überweisung
+    expect(r.inv).toEqual({ status: "partially_paid", paid_cents: 4000 });
+    expect(r.inbox).toHaveLength(2);
+    expect(r.inbox[0].subject).toBe(wh.UNASSIGNED_PAYMENT_SUBJECT);
+    expect(r.sync).toBeGreaterThanOrEqual(2);
+  });
+
+  it("Storno entfernt Zahlungslink/checkout_ref; spätere SumUp-Zahlung wird gemeldet statt gebucht", async () => {
+    const { cancelInvoice } = await import("./invoices");
+    const org = await f.org();
+    const user = await f.user();
+    const inv = await f.invoice(org, await f.patient(org), 2500);
+    await f.asOrg(org, (c) => c.query("update invoices set checkout_ref = 'checkout:abc', payment_link_url = 'https://pay.example.invalid/x' where id = $1", [inv]));
+    const auth = { organization: { id: org, name: "T" }, user: { id: user, name: "Test" }, can: () => true } as never;
+    await cancelInvoice(auth, inv, "Test");
+    const row = await f.asOrg(org, async (c) => (await c.query("select status, checkout_ref, payment_link_url from invoices where id = $1", [inv])).rows[0]);
+    expect(row).toEqual({ status: "cancelled", checkout_ref: null, payment_link_url: null });
+    expect(await wh.recordProviderPayment(org, { checkoutRef: "checkout:abc", externalRef: "sumup:late", amountCents: 2500, method: "payment_link" })).toMatchObject({ status: "nicht zugeordnet" });
+  });
+
+  it("Rechtsprüfung in den Fachfunktionen (Defense in Depth)", async () => {
+    const { cancelInvoice } = await import("./invoices");
+    const { startTerminalPayment } = await import("./card-payments");
+    const auth = { organization: { id: "00000000-0000-4000-8000-000000000000", name: "T" }, user: { id: "x", name: "x" }, can: () => false } as never;
+    await expect(cancelInvoice(auth, "00000000-0000-4000-8000-000000000001", "")).rejects.toThrow(/Berechtigung/);
+    await expect(startTerminalPayment(auth, "00000000-0000-4000-8000-000000000001")).rejects.toThrow(/Berechtigung/);
+  });
+
+  it("Zahlungslinks nur https von SumUp (Mock-Domain nur im Testmodus)", async () => {
+    const { isAllowedPaymentUrl } = await import("./card-payments");
+    expect(isAllowedPaymentUrl("https://checkout.sumup.com/pay/abc", false)).toBe(true);
+    expect(isAllowedPaymentUrl("javascript:alert(1)", false)).toBe(false);
+    expect(isAllowedPaymentUrl("http://checkout.sumup.com/x", false)).toBe(false);
+    expect(isAllowedPaymentUrl("https://sumup.com.evil.example/x", false)).toBe(false);
+    expect(isAllowedPaymentUrl("https://pay.example.invalid/checkout/x", false)).toBe(false);
+    expect(isAllowedPaymentUrl("https://pay.example.invalid/checkout/x", true)).toBe(true);
   });
 
   it("Referenz-Format: Rechnungs-ID mit Suffix", () => {

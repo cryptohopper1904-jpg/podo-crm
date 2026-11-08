@@ -151,7 +151,9 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
     return {
       firstName: p.firstName,
       appointments: appts.map((a) => ({ ...a, services: svc.filter((s) => s.appointmentId === a.id).map((s) => s.name), cancellable: canCancelOnline(a.startsAt) })),
-      invoices: invs.filter((i) => i.totalCents - i.paidCents > 0),
+      invoices: invs
+        .filter((i) => i.totalCents - i.paidCents > 0)
+        .map((i) => ({ ...i, paymentLinkUrl: i.paymentLinkUrl && /^https:\/\//i.test(i.paymentLinkUrl) ? i.paymentLinkUrl : null })),
       vouchers: vs
         .map((v) => ({ code: v.code, validUntil: v.validUntil, balanceCents: voucherBalance(v.amountCents, used.filter((u) => u.voucherId === v.id)) }))
         .filter((v) => v.balanceCents > 0),

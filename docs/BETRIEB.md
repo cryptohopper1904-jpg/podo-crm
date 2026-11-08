@@ -57,7 +57,9 @@ gpg -d db-XXXX.dump.gpg | pg_restore -h <testserver> -U podo_owner -d podo_resto
 ## Rechnungen: PDF, E-Mail, SumUp, Kundenportal
 - PDF: `GET /api/invoices/<id>/pdf` (Recht „Rechnungen lesen“, protokolliert, nicht gecacht). E-Mail-Versand mit PDF-Anhang über die E-Mail-Schnittstelle; **echter SMTP-Versand ist noch nicht implementiert** (Testmodus protokolliert nur).
 - SumUp: Webhook-URL im SumUp-Konto: `https://DOMAIN/api/webhooks/sumup?org=<Praxis-ID>`; Reader-ID des Solo-Terminals unter Einstellungen → Schnittstellen → SumUp. `PUBLIC_URL` muss gesetzt sein (Rückmeldung an den Webhook).
-- Kundenportal: `/portal/<token>` (30 Tage gültig, nicht einmalig, neuer Link widerruft den alten). Gedrosselt je IP (Prozessspeicher – bei mehreren App-Instanzen Redis o. Ä. nötig).
+- Kundenportal: `/portal/<token>` (30 Tage gültig, nicht einmalig, neuer Link widerruft den alten). Beim Öffnen wird der Token gegen eine signierte Sitzung (Cookie `podo_portal`, HttpOnly, SameSite=Strict, 2 h) getauscht und auf `/portal` (ohne Token) weitergeleitet; PDFs laufen über `/portal/rechnung/<id>` mit dieser Sitzung. **Reverse-Proxy-/Zugriffslogs für `/portal/*` und `/anamnese/*` redigieren** (Token im Pfad beim ersten Aufruf). Gedrosselt je IP; Anfragen ohne IP bekommen einen eigenen, strengeren Eimer je User-Agent (Prozessspeicher – bei mehreren App-Instanzen Redis o. Ä. nötig).
+- Nicht zuordenbare SumUp-Zahlungen (Überzahlung, storniert, unbekannte Rechnung) werden nicht gebucht, sondern landen im Posteingang („Zahlung konnte nicht zugeordnet werden … – bitte prüfen“). Storno deaktiviert einen offenen Zahlungslink.
+- „Testzahlung simulieren“ ist in Produktion gesperrt, außer `ALLOW_TEST_PAYMENTS=true` (nur für eine reine Testpraxis).
 
 ## Kasse / TSE (KassenSichV)
 - **Vor dem ersten echten Bargeld-Einsatz ist ein Vertrag mit einer zertifizierten TSE Pflicht** (z. B. fiskaly SIGN DE), dazu die Meldung der Kasse ans Finanzamt (§ 146a Abs. 4 AO) und die Verfahrensdokumentation.
