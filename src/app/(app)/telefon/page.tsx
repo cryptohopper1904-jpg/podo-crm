@@ -47,7 +47,7 @@ export default async function TelefonPage() {
           .replaceAll("<SERVER_SECRET>", secret)
           .replaceAll("<PRAXISNAME>", auth.organization.name.replace(/["\\]/g, ""))
       : null;
-  const tomorrow = berlinDateIso(new Date(Date.now() + 86400_000));
+  const tomorrow = new Date(Date.parse(`${berlinDateIso()}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
   const statusText = !conn || conn.status === "disconnected" ? "aus" : conn.status === "mock" ? "Testmodus" : conn.status === "connected" ? "verbunden" : "Fehler";
 
   return (

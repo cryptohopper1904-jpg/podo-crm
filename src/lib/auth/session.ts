@@ -64,6 +64,21 @@ export async function markSessionVerified() {
   if (old) await createSession(old.userId, old.organizationId, true);
 }
 
+/** Liest die Sitzung (gecacht pro Request). Gibt null zurück, wenn keine gültige Sitzung existiert. */
+export const getSession = cache(async () => {
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const id = sha256(token);
+  const [row] = await db
+    .select({ session: sessions, user: users })
+    .from(sessions)
+    .innerJoin(users, eq(users.id, sessions.userId))
+    .where(and(eq(sessions.id, id), gt(sessions.expiresAt, new Date())))
+    .limit(1);
+  return row ?? null;
+});
+
 export type AuthContext = {
   sessionId: string;
   user: { id: string; email: string; name: string; totpEnabled: boolean; isPlatformAdmin: boolean };

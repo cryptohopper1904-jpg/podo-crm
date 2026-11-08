@@ -7,7 +7,10 @@ import { db } from "@/db";
 import { locations, memberships, organizations, sessions, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
-import { createSession, destroySession, getSession, markSessionVerified } from "@/lib/auth/session";
+import { createSession, destroySession, getSession, markSessionVerified, requestMeta } from "@/lib/auth/session";
+import { legalAcceptance } from "@/lib/legal";
+import { PLANS, TRIAL_DAYS } from "@/lib/plans";
+import { clientKey, createRateLimiter } from "@/lib/rate-limit";
 import { matchTotpStep } from "@/lib/auth/totp";
 import { decryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
@@ -97,13 +100,23 @@ const setupSchema = z.object({
   state: z.string().length(2).default("BB"),
   privacy: z.literal("on", { message: "Bitte die AVV/Datenschutzhinweise bestätigen." }),
   setupToken: z.string().optional(),
+  agb: z.string().optional(),
+  avv: z.string().optional(),
 });
+
+/** Registrierungen je IP drosseln (SaaS-Modus): max. 5 pro Stunde */
+const signupLimiter = createRateLimiter({ windowMs: 3600_000, max: 5 });
 
 /** Registrierung einer neuen Praxis. Die erste Praxis ist immer erlaubt, weitere nur mit ALLOW_SIGNUP=true. */
 export async function setupAction(_: FormState, form: FormData): Promise<FormState> {
   const parsed = setupSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
+  const saas = process.env.ALLOW_SIGNUP === "true";
+  const legalOk = d.agb === "on" && d.avv === "on";
+  if (saas && signupLimiter.limited(clientKey(await requestMeta()))) {
+    return { error: "Zu viele Registrierungen von diesem Anschluss. Bitte in einer Stunde erneut versuchen." };
+  }
   const pwProblem = passwordProblem(d.password);
   if (pwProblem) return { error: pwProblem };
 
@@ -126,23 +139,41 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     if (n > 0 && process.env.ALLOW_SIGNUP !== "true") return null;
     // Ersteinrichtung nur mit Einmal-Token aus der Server-Konfiguration (sonst könnte jeder zuerst kommen)
     if (n === 0 && process.env.SETUP_TOKEN && d.setupToken !== process.env.SETUP_TOKEN) return "token" as const;
-    const [org] = await tx.insert(organizations).values({ name: d.practiceName, slug, state: d.state }).returning();
+    // Selbstregistrierung (SaaS): AGB + AVV (versioniert) sind Pflicht
+    if (n > 0 && !legalOk) return "legal" as const;
+    // Erste Praxis = Betreiber-Praxis („intern“, ohne Abo); jede weitere startet mit 30 Tagen Testphase
+    const [org] = await tx
+      .insert(organizations)
+      .values({
+        name: d.practiceName,
+        slug,
+        state: d.state,
+        plan: n === 0 ? "internal" : "trial",
+        subscriptionStatus: n === 0 ? "active" : "trialing",
+        trialEndsAt: n === 0 ? null : new Date(Date.now() + TRIAL_DAYS * 86_400_000),
+        seats: n === 0 ? 1 : PLANS.trial.includedSeats,
+      })
+      .returning();
     const [user] = await tx
       .insert(users)
       .values({ email: d.email, name: d.name, passwordHash, isPlatformAdmin: n === 0 })
       .returning();
+    if (n > 0) {
+      await tx.update(organizations).set({ settings: { legalAcceptance: legalAcceptance(user.id) } }).where(eq(organizations.id, org.id));
+    }
     await tx.insert(memberships).values({ organizationId: org.id, userId: user.id, role: "owner" });
     await tx.execute(sql`select set_config('app.org_id', ${org.id}, true)`);
     await tx.insert(locations).values({ organizationId: org.id, name: "Hauptpraxis" });
     await seedOrganizationDefaults(tx, org.id);
-    return { userId: user.id, orgId: org.id };
+    return { userId: user.id, orgId: org.id, legal: n > 0 };
   });
   if (!result) return { error: "Neue Registrierungen sind auf diesem Server deaktiviert." };
   if (result === "token") return { error: "Einrichtungs-Code ist falsch (siehe SETUP_TOKEN in der Server-Konfiguration)." };
-  const { userId, orgId } = result;
+  if (result === "legal") return { error: "Bitte AGB und Auftragsverarbeitungsvertrag (AVV) akzeptieren." };
+  const { userId, orgId, legal } = result;
   await createSession(userId, orgId, true);
-  await audit({ organizationId: orgId, userId, action: "organization.created" });
-  redirect("/heute");
+  await audit({ organizationId: orgId, userId, action: "organization.created", meta: legal ? { legal: legalAcceptance(userId) } : undefined });
+  redirect("/willkommen");
 }
 
 /** Wechselt die aktive Praxis (für Nutzer mit mehreren Mitgliedschaften). */

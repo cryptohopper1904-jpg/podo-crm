@@ -35,7 +35,6 @@ export function safeHref(href: string): string | null {
   const h = href.trim();
   if (!SAFE_HREF.test(h)) return null;
   // Steuerzeichen/Leerzeichen in URLs nicht zulassen
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\s]/.test(h)) return null;
   return h;
 }

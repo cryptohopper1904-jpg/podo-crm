@@ -122,7 +122,7 @@ export async function findVoiceSlots(
       .from(appointments)
       .where(and(eq(appointments.organizationId, org), lt(appointments.startsAt, to), gte(appointments.endsAt, from))),
   );
-  return proposeSlots({ days, busy: busy.filter((b) => b.status !== "cancelled"), durationMin: input.durationMin, earliest: input.earliest, limit: input.limit, perDay: input.perDay });
+  return proposeSlots({ days, busy: busy.filter((b) => b.status !== "cancelled"), durationMin: input.durationMin, earliest: input.earliest, limit: input.limit, perDay: input.perDay ?? (input.fromIso === input.toIso ? input.limit : 2) });
 }
 
 const berlinDay = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(d);

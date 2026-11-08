@@ -25,6 +25,15 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/api/calendar": "iCal-Feed (signiertes Token)",
   "/api/health": "Health-Check ohne Daten",
   "/api/cron": "Cron (Bearer CRON_SECRET)",
+  // öffentliche Website und Rechtstexte (src/app/(public)) – statisch, ohne Praxisdaten
+  "/agb": "Website",
+  "/avv": "Website",
+  "/datenschutz": "Website",
+  "/impressum": "Website",
+  "/preise": "Website",
+  "/funktionen": "Website",
+  "/sicherheit": "Website",
+  "/unterauftragnehmer": "Website",
 };
 
 const isIntendedPublic = (p: string) => p === "/" || Object.keys(INTENDED_PUBLIC).some((x) => p === x || p.startsWith(x + "/"));

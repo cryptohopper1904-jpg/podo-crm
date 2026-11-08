@@ -4,9 +4,10 @@ import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { Button, Checkbox, Field, FormError, Input, Select } from "@/components/ui";
 import { STATES } from "@/lib/holidays";
+import { LEGAL_VERSIONS } from "@/lib/legal";
 import { setupAction } from "../actions";
 
-export function SetupForm({ needsToken = false }: { needsToken?: boolean }) {
+export function SetupForm({ needsToken = false, saas = false }: { needsToken?: boolean; saas?: boolean }) {
   const [state, action, pending] = useActionState(setupAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
@@ -38,8 +39,23 @@ export function SetupForm({ needsToken = false }: { needsToken?: boolean }) {
       <Checkbox
         name="privacy"
         required
-        label={<>Ich habe die Datenschutzhinweise und den Auftragsverarbeitungsvertrag (AVV) gelesen.</>}
+        label={<>Ich habe die <a href="/datenschutz" target="_blank" rel="noreferrer" className="font-semibold text-primary underline">Datenschutzhinweise</a> gelesen.</>}
       />
+      {saas ? (
+        <>
+          <Checkbox
+            name="agb"
+            required
+            label={<>Ich akzeptiere die <a href="/agb" target="_blank" rel="noreferrer" className="font-semibold text-primary underline">AGB</a> (Version {LEGAL_VERSIONS.agb}) und handle als Unternehmer:in (§ 14 BGB).</>}
+          />
+          <Checkbox
+            name="avv"
+            required
+            label={<>Ich schließe den <a href="/avv" target="_blank" rel="noreferrer" className="font-semibold text-primary underline">Auftragsverarbeitungsvertrag (AVV)</a> nach Art. 28 DSGVO (Version {LEGAL_VERSIONS.avv}) ab.</>}
+          />
+          <p className="text-xs text-muted">30 Tage kostenlos testen, alle Funktionen, keine Zahlungsdaten nötig. Danach Tarif wählen – sonst bleibt die Praxis nur lesbar (Daten bleiben exportierbar).</p>
+        </>
+      ) : null}
       <Button type="submit" disabled={pending} className="mt-2">
         {pending ? "Wird eingerichtet …" : "Praxis anlegen"}
       </Button>
