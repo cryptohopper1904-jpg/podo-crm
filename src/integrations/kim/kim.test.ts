@@ -115,7 +115,10 @@ function fakePop3(mails: string[], opts: { password?: string; noUidl?: boolean; 
           const [cmd, ...args] = line.split(" ");
           log.push(cmd === "PASS" ? "PASS ***" : line);
           const reply = (s: string) => d.push(s);
-          if (cmd === "USER") ((userOk = args[0] === "praxis"), reply("+OK\r\n"));
+          if (cmd === "USER") {
+            userOk = args[0] === "praxis";
+            reply("+OK\r\n");
+          }
           else if (cmd === "PASS") {
             authed = userOk && args.join(" ") === (opts.password ?? "geheim");
             reply(authed ? "+OK angemeldet\r\n" : "-ERR [AUTH] falsch für praxis\r\n");
@@ -128,8 +131,15 @@ function fakePop3(mails: string[], opts: { password?: string; noUidl?: boolean; 
             const m = mails[Number(args[0]) - 1];
             if (!m) reply("-ERR keine Nachricht\r\n");
             else reply(`+OK ${m.length} Oktette\r\n${m.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..")}\r\n.\r\n`);
-          } else if (cmd === "DELE") (deleted.add(Number(args[0])), reply("+OK gelöscht\r\n"));
-          else if (cmd === "QUIT") ((committed = true), reply("+OK bye\r\n"), d.push(null));
+          } else if (cmd === "DELE") {
+            deleted.add(Number(args[0]));
+            reply("+OK gelöscht\r\n");
+          }
+          else if (cmd === "QUIT") {
+            committed = true;
+            reply("+OK bye\r\n");
+            d.push(null);
+          }
           else reply("-ERR unbekannt\r\n");
         }
         cb();
@@ -256,7 +266,10 @@ describe("SMTP-Client (In-Memory-Server)", () => {
             const line = buf.slice(0, i);
             buf = buf.slice(i + 2);
             if (inData) {
-              if (line === ".") ((inData = false), d.push("250 OK queued\r\n"));
+              if (line === ".") {
+                inData = false;
+                d.push("250 OK queued\r\n");
+              }
               else data += `${line}\r\n`;
               continue;
             }
@@ -264,8 +277,14 @@ describe("SMTP-Client (In-Memory-Server)", () => {
             if (line.startsWith("EHLO")) d.push(`250-kim.example\r\n250-${auth}\r\n250 8BITMIME\r\n`);
             else if (line.startsWith("AUTH PLAIN")) d.push(Buffer.from(line.slice(11), "base64").toString() === "\u0000praxis\u0000geheim" ? "235 ok\r\n" : "535 nein\r\n");
             else if (line.startsWith("MAIL FROM") || line.startsWith("RCPT TO")) d.push("250 ok\r\n");
-            else if (line === "DATA") ((inData = true), d.push("354 go\r\n"));
-            else if (line === "QUIT") (d.push("221 bye\r\n"), d.push(null));
+            else if (line === "DATA") {
+              inData = true;
+              d.push("354 go\r\n");
+            }
+            else if (line === "QUIT") {
+              d.push("221 bye\r\n");
+              d.push(null);
+            }
             else d.push("500 ?\r\n");
           }
           cb();

@@ -142,7 +142,6 @@ export class SimpleSmtpTransport implements SmtpTransport {
 /** RFC 2047 für Kopfzeilen mit Nicht-ASCII-Zeichen. */
 export function encodeHeader(v: string): string {
   const clean = v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
-  // eslint-disable-next-line no-control-regex
   if (/^[\x20-\x7e]*$/.test(clean)) return clean;
   return `=?UTF-8?B?${Buffer.from(clean, "utf8").toString("base64")}?=`;
 }

@@ -65,16 +65,16 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46,
     const before = await f.asOrg(org, (c) => c.query("select count(*)::int n from prescriptions where patient_id = $1", [patientId]));
     expect(before.rows[0].n).toBe(0);
 
-    const importData = JSON.stringify({ kind: "ocr", mock: true, at: new Date().toISOString(), fields: s, edited: ["units"] });
+    const importData = JSON.stringify({ kind: "ocr", mock: true, at: new Date().toISOString(), fields: s, edited: ["positions"] });
     const input = rx.prescriptionInput.parse({
       patientId,
       issuedAt: s.issuedAt!.value,
       diagnosisGroup: "DF",
       icd10: s.icd10!.value,
-      units: "5",
+      units: "6",
       doctorLanr: s.doctorLanr!.value,
       doctorBsnr: s.doctorBsnr!.value,
-      positions: JSON.stringify(s.positions!.value),
+      positions: JSON.stringify([{ label: "Podologische Komplexbehandlung", units: 5 }]),
       scanMediaId: mediaId,
       source: "ocr",
       importData,
@@ -83,11 +83,11 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46,
     if ("error" in saved) throw new Error(saved.error);
     const row = (await f.asOrg(org, (c) => c.query("select source, import_data, units, scan_media_id from prescriptions where id = $1", [saved.id]))).rows[0];
     expect(row.source).toBe("ocr");
-    expect(row.units).toBe(5);
+    expect(row.units).toBe(6);
     expect(row.scan_media_id).toBe(mediaId);
     expect(row.import_data.kind).toBe("ocr");
-    expect(row.import_data.edited).toEqual(["units"]);
-    expect(row.import_data.fields.units.value).toBe(6); // Vorschlag bleibt nachvollziehbar
+    expect(row.import_data.edited).toEqual(["positions"]);
+    expect(row.import_data.fields.positions.value[0].units).toBe(6); // Vorschlag bleibt nachvollziehbar
     expect(JSON.stringify(row.import_data)).not.toMatch(/base64|data:image/);
 
     const logs = (await f.pool.query("select action, meta from audit_log where organization_id = $1 and action = 'prescription.ocr'", [org]).catch(() => ({ rows: [] as { meta: unknown }[] }))).rows;
@@ -96,7 +96,7 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46,
 
   it("source „ocr“ ohne gültige importData wird abgelehnt", async () => {
     const { auth, patientId, mediaId } = await setup({ ocr: { enabled: true, mode: "mock" } });
-    const input = rx.prescriptionInput.parse({ patientId, issuedAt: new Date().toISOString().slice(0, 10), diagnosisGroup: "DF", units: "6", positions: "[]", scanMediaId: mediaId, source: "ocr", importData: "{kaputt" });
+    const input = rx.prescriptionInput.parse({ patientId, issuedAt: new Date().toISOString().slice(0, 10), diagnosisGroup: "DF", units: "6", positions: JSON.stringify([{ label: "PK", units: 6 }]), scanMediaId: mediaId, source: "ocr", importData: "{kaputt" });
     expect(await rx.savePrescription(auth, input)).toEqual({ error: expect.stringMatching(/ungültig/) });
   });
 

@@ -16,7 +16,7 @@ export const metadata = { title: "Heute" };
 
 const PROVIDER_LABEL: Record<string, string> = {
   lexoffice: "lexoffice", sumup: "SumUp", doctolib: "Doctolib", google_business: "Google", email_imap: "E-Mail", whatsapp: "WhatsApp",
-  sms: "SMS", voice_agent: "KI-Telefon", transcription: "Transkription", llm: "KI-Assistent", calendar_ics: "Kalender-Abo",
+  sms: "SMS", voice_agent: "KI-Telefon", transcription: "Transkription", llm: "KI-Assistent", calendar_ics: "Kalender-Abo", gkv_billing: "KIM",
 };
 
 function greeting() {

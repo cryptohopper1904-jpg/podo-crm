@@ -409,3 +409,8 @@ export interface PortByProvider {
 }
 
 export type SupportedProvider = keyof PortByProvider;
+
+// ───────────────────────── Verordnungs-OCR ─────────────────────────
+// Port + Adapter in src/integrations/ocr; Konfiguration je Praxis in organizations.settings.ocr
+// (nicht in integration_connections – der Provider-Enum der DB kennt „ocr“ nicht).
+export type { OcrImage, OcrPort } from "./ocr/ocr";
