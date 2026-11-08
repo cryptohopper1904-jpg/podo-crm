@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import {
@@ -12,6 +12,7 @@ import {
   payments,
   services,
   syncLog,
+  treatmentRecords,
   vouchers,
 } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
@@ -44,6 +45,8 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 
 export const lineInput = z.object({
   serviceId: optUuid,
+  /** Sammelrechnung: abgerechnete Behandlung (Doku-Eintrag) – verhindert Doppelabrechnung */
+  treatmentRecordId: optUuid,
   description: z.string().trim().max(300).default(""),
   quantity: z.coerce.number().positive("Menge muss größer 0 sein").max(9999),
   factor: z.coerce.number().positive("Faktor muss größer 0 sein").max(99),
@@ -165,6 +168,35 @@ async function applyPayments(
 }
 
 /**
+ * Doppelabrechnung verhindern: Jede Behandlung (treatment_record) darf nur in einer nicht stornierten
+ * Rechnung stehen. Pro Praxis serialisiert (Advisory-Lock), damit zwei gleichzeitige Sammelrechnungen
+ * dieselbe Behandlung nicht beide abrechnen. Die Behandlung muss zur Person bzw. zum Pflegeheim gehören.
+ */
+async function assertRecordsNotInvoiced(tx: Tx, org: string, recordIds: string[], patientId: string | null, billingContactId: string | null) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
+  const recs = await tx
+    .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, careHomeId: patients.careHomeId })
+    .from(treatmentRecords)
+    .innerJoin(patients, eq(patients.id, treatmentRecords.patientId))
+    .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recordIds)));
+  if (recs.length !== recordIds.length) throw new InvoiceError("Behandlung zur Position nicht gefunden.");
+  for (const r of recs) {
+    const ok = (patientId && r.patientId === patientId) || (billingContactId && r.careHomeId === billingContactId);
+    if (!ok) throw new InvoiceError(`Die Behandlung vom ${dateDe(r.treatedAt)} gehört nicht zu diesem Rechnungsempfänger.`);
+  }
+  const billed = await tx
+    .select({ recordId: invoiceLines.treatmentRecordId, number: invoices.number })
+    .from(invoiceLines)
+    .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+    .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recordIds), notInArray(invoices.status, ["cancelled", "draft"])))
+    .limit(1);
+  if (billed[0]) {
+    const r = recs.find((x) => x.id === billed[0].recordId);
+    throw new InvoiceError(`Die Behandlung vom ${r ? dateDe(r.treatedAt) : "?"} ist bereits in Rechnung ${billed[0].number} abgerechnet.`);
+  }
+}
+
+/**
  * Legt eine Rechnung an und stellt sie sofort aus (GoBD: Entwurf → Positionen → Nummer + Summen
  * in derselben Transaktion; danach sind Nummer/Beträge per DB-Trigger unveränderbar).
  */
@@ -214,6 +246,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       const vatRate = effectiveVatRate(l.vatRate, { smallBusiness });
       return {
         serviceId: s?.id ?? null,
+        treatmentRecordId: l.treatmentRecordId ?? null,
         description,
         quantity: l.quantity,
         factor: l.factor,
@@ -224,6 +257,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         requiresTherapeuticPurpose: input.kind === "no_show_fee" ? false : s ? s.requiresTherapeuticPurpose : true,
       };
     });
+
+    const recordIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
+    if (recordIds.length) await assertRecordsNotInvoiced(tx, org, recordIds, input.patientId ?? null, input.billingContactId ?? null);
 
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
     if (needsConfirm && !input.therapeuticConfirmed) {
@@ -265,6 +301,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         organizationId: org,
         invoiceId: draft.id,
         serviceId: l.serviceId,
+        treatmentRecordId: l.treatmentRecordId,
         description: l.description,
         quantity: String(l.quantity),
         factor: String(l.factor),

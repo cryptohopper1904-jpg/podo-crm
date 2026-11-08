@@ -4,7 +4,7 @@ import { db, withOrg } from "@/db";
 import { anamneses, auditLog, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
-import { riskFlagsFromAnamnesis, type AnamnesisData } from "@/lib/anamnesis";
+import { mergeRiskFlagsAdditive, riskFlagsFromAnamnesis, type AnamnesisData } from "@/lib/anamnesis";
 import { assertCan } from "./authz";
 import { generateLinkToken, hashLinkToken, isWellFormedToken, linkExpiry, linkState } from "@/lib/patient-link";
 
@@ -13,8 +13,13 @@ export async function listAnamneses(auth: AuthContext, patientId: string) {
   const org = auth.organization.id;
   const medical = auth.can("medical.read");
   const res = await withOrg(org, async (tx) => {
-    const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
-    if (!p) return null;
+    // Ohne medizinisches Leserecht keine Risikomerkmale (Art. 9 DSGVO) – nur nicht-klinische Spalten
+    const [row] = await tx
+      .select({ id: patients.id, salutation: patients.salutation, title: patients.title, firstName: patients.firstName, lastName: patients.lastName, riskFlags: patients.riskFlags })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+    if (!row) return null;
+    const p = medical ? row : { ...row, riskFlags: {} };
     const rows = await tx
       .select({ id: anamneses.id, createdAt: anamneses.createdAt, data: anamneses.data, author: users.name })
       .from(anamneses)
@@ -34,7 +39,7 @@ export async function listAnamneses(auth: AuthContext, patientId: string) {
       links: links.map((l) => ({ ...l, state: linkState(l) })),
     };
   });
-  if (res && medical) await audit({ organizationId: org, userId: auth.user.id, action: "anamnesis.read", entity: "patient", entityId: patientId });
+  if (res) await audit({ organizationId: org, userId: auth.user.id, action: medical ? "anamnesis.read" : "anamnesis.read_meta", entity: "patient", entityId: patientId });
   return res;
 }
 
@@ -107,11 +112,19 @@ export async function publicLinkInfo(token: string) {
   if (!link || linkState(link) !== "valid") return null;
   return withOrg(link.organizationId, async (tx) => {
     const [org] = await tx.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, link.organizationId));
-    const [p] = await tx.select({ firstName: patients.firstName }).from(patients).where(and(eq(patients.organizationId, link.organizationId), eq(patients.id, link.patientId)));
+    const [p] = await tx
+      .select({ firstName: patients.firstName })
+      .from(patients)
+      .where(and(eq(patients.organizationId, link.organizationId), eq(patients.id, link.patientId), isNull(patients.archivedAt)));
     if (!org || !p) return null;
     return { practiceName: org.name, practicePhone: org.phone, firstName: p.firstName };
   });
 }
+
+/** Version des Einwilligungstextes im Online-Bogen (wird je Einwilligung gespeichert) */
+export const ONLINE_CONSENT_VERSION = "online-2026-11";
+
+class LinkRejected extends Error {}
 
 export const ONLINE_CONSENTS = ["photo_documentation", "email_reminders", "sms_reminders", "whatsapp"] as const;
 export type OnlineConsent = (typeof ONLINE_CONSENTS)[number];
@@ -124,7 +137,7 @@ export type OnlineConsent = (typeof ONLINE_CONSENTS)[number];
 export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, granted: OnlineConsent[], meta: { ip?: string | null } = {}): Promise<{ ok: true } | { ok: false }> {
   if (!isWellFormedToken(token)) return { ok: false };
   const tokenHash = hashLinkToken(token);
-  const result = await db.transaction(async (tx) => {
+  const result = await swallowRejected(db.transaction(async (tx) => {
     const [link] = await tx
       .update(patientLinks)
       .set({ usedAt: sql`now()` })
@@ -134,15 +147,22 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
     // ab hier wie withOrg: Mandant aus dem gefundenen Link (RLS greift)
     await tx.execute(sql`select set_config('app.org_id', ${link.organizationId}, true)`);
     const org = link.organizationId;
-    const [p] = await tx.select({ number: patients.number }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
-    if (!p) throw new Error("Patient zum Link fehlt");
+    const [p] = await tx
+      .select({ number: patients.number, archivedAt: patients.archivedAt, riskFlags: patients.riskFlags })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
+    // archivierte Akte: nichts speichern, Link NICHT verbrauchen (Rollback)
+    if (!p || p.archivedAt) throw new LinkRejected();
     const [a] = await tx.insert(anamneses).values({ organizationId: org, patientId: link.patientId, data: { ...data, source: "online" }, authorId: null }).returning({ id: anamneses.id });
     // Jede Online-Einwilligung mit dem tatsächlichen Wert speichern (nicht angehakt = Widerruf/keine Einwilligung)
     const consentRows = [
       { type: "privacy_notice" as const, granted: true },
       ...ONLINE_CONSENTS.map((type) => ({ type, granted: granted.includes(type) })),
-    ].map((c) => ({ ...c, organizationId: org, patientId: link.patientId, via: "online-anamnese", recordedBy: null }));
+    ].map((c) => ({ ...c, organizationId: org, patientId: link.patientId, via: "online-anamnese", version: ONLINE_CONSENT_VERSION, recordedBy: null }));
     await tx.insert(consents).values(consentRows);
+    // Sicherheitsrelevante Risiken (Diabetes, Blutverdünner …) sofort sichtbar machen – nur ergänzend,
+    // Online-Angaben entfernen nie bestehende Merkmale (Bestätigung durch die Praxis-Version)
+    await tx.update(patients).set({ riskFlags: mergeRiskFlagsAdditive(p.riskFlags, riskFlagsFromAnamnesis(data)), updatedAt: new Date() }).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
     await tx.insert(messages).values({
       organizationId: org,
       patientId: link.patientId,
@@ -161,11 +181,20 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
       entity: "patient",
       entityId: link.patientId,
       ip: meta.ip ?? null,
-      meta: { anamnesisId: a.id, linkId: link.id, consents: Object.fromEntries(consentRows.map((c) => [c.type, c.granted])) },
+      meta: { anamnesisId: a.id, linkId: link.id, consentVersion: ONLINE_CONSENT_VERSION, consents: Object.fromEntries(consentRows.map((c) => [c.type, c.granted])) },
     });
     return true;
-  });
+  }));
   return result ? { ok: true } : { ok: false };
+}
+
+async function swallowRejected<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch (e) {
+    if (e instanceof LinkRejected) return null;
+    throw e;
+  }
 }
 
 function isUniqueViolation(e: unknown): boolean {

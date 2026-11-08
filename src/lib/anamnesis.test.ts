@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasLops, parseAnamnesis, riskFlagsFromAnamnesis, suggestIwgdfRisk } from "./anamnesis";
+import { hasLops, mergeRiskFlagsAdditive, parseAnamnesis, riskFlagsFromAnamnesis, suggestIwgdfRisk } from "./anamnesis";
 
 describe("Anamnese – Datensparsamkeit", () => {
   it("verwirft den Diabetes-Block ohne Diabetes", () => {
@@ -79,5 +79,12 @@ describe("Vorbelegung aus Kundenakte", () => {
     expect(i.anticoagulation).toBe(true);
     expect(i.allergies).toBe("Latex");
     expect(i.pavk).toBe(false);
+  });
+});
+
+describe("Online-Risiken nur ergänzend", () => {
+  it("setzt gemeldete Merkmale, entfernt nie bestehende", () => {
+    const merged = mergeRiskFlagsAdditive({ mrsa: true, allergies: "Latex", diabetesType: "Typ 1", diabetes: true }, { diabetes: false, mrsa: false, anticoagulation: true, allergies: "Pflaster" });
+    expect(merged).toMatchObject({ mrsa: true, diabetes: true, diabetesType: "Typ 1", anticoagulation: true, allergies: "Latex; Pflaster" });
   });
 });

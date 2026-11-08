@@ -103,6 +103,21 @@ const url = process.env.TEST_DATABASE_URL;
     expect(active.rows[0].n).toBe(1);
   });
 
+  it("setzt gemeldete Risiken ergänzend am Patienten", async () => {
+    const [p] = await asOrg<{ risk_flags: { diabetes?: boolean } }>("select risk_flags from patients where id = $1", [patientId]);
+    expect(p.risk_flags.diabetes).toBe(true);
+  });
+
+  it("archivierte Akte: Link wird abgewiesen und nicht verbraucht", async () => {
+    const archived = (await asOrg<{ id: string }>("insert into patients (organization_id, number, last_name, archived_at) values ($1, 99, 'Archiv', now()) returning id", [orgId]))[0].id;
+    const { token, tokenHash } = generateLinkToken();
+    await pool.query("insert into patient_links (organization_id, patient_id, purpose, token_hash, expires_at) values ($1,$2,'anamnesis',$3, now() + interval '1 day')", [orgId, archived, tokenHash]);
+    expect(await submit(token, data, [])).toEqual({ ok: false });
+    const link = await pool.query("select used_at from patient_links where token_hash = $1", [tokenHash]);
+    expect(link.rows[0].used_at).toBeNull();
+    expect(await asOrg("select 1 from anamneses where patient_id = $1", [archived])).toHaveLength(0);
+  });
+
   it("anamneses bleiben unveränderbar (Versionen)", async () => {
     await expect(asOrg("update anamneses set data = '{}'::jsonb where patient_id = $1", [patientId])).rejects.toThrow(/unveränderbar/);
   });

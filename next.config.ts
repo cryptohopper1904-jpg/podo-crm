@@ -22,6 +22,9 @@ const nextConfig: NextConfig = {
       { source: "/:path*", headers: securityHeaders },
       // Einmal-Token im Pfad: nie als Referrer weitergeben, nicht cachen (spätere Regel überschreibt)
       { source: "/anamnese/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
+      // Kundenportal: keine Referrer (persönlicher Link darf nicht an Dritte gelangen), nicht cachen
+      { source: "/portal", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/portal/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "Cache-Control", value: "private, no-store" }] },
     ];
   },
 };

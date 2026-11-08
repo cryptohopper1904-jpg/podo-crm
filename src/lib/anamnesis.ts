@@ -187,6 +187,24 @@ export function riskFlagsFromAnamnesis(d: AnamnesisData, existing: RiskFlags = {
   };
 }
 
+/**
+ * Nur ergänzend zusammenführen (für ungeprüfte Online-Angaben): ein Merkmal wird gesetzt, wenn eine
+ * Quelle es meldet; bestehende Merkmale/Texte werden nie entfernt oder überschrieben.
+ */
+export function mergeRiskFlagsAdditive(existing: RiskFlags, reported: RiskFlags): RiskFlags {
+  const allergies = [existing.allergies, reported.allergies && reported.allergies !== existing.allergies ? reported.allergies : undefined].filter(Boolean).join("; ");
+  return {
+    ...existing,
+    diabetes: !!(existing.diabetes || reported.diabetes),
+    diabetesType: existing.diabetesType ?? (reported.diabetes ? reported.diabetesType : undefined),
+    anticoagulation: !!(existing.anticoagulation || reported.anticoagulation),
+    pavk: !!(existing.pavk || reported.pavk),
+    neuropathy: !!(existing.neuropathy || reported.neuropathy),
+    mrsa: !!(existing.mrsa || reported.mrsa),
+    allergies: allergies || undefined,
+  };
+}
+
 /** Lesbare Zusammenfassung (Akte, Verlauf) */
 export function anamnesisSummary(d: AnamnesisData): [string, string][] {
   const yes = (b: boolean | undefined) => (b ? "ja" : "nein");
