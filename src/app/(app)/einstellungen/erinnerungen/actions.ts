@@ -31,7 +31,7 @@ export async function saveReminderSettingsAction(_: State, form: FormData): Prom
   return { ok: "Gespeichert." };
 }
 
-export async function runRemindersNowAction(_: State): Promise<State> {
+export async function runRemindersNowAction(): Promise<State> {
   const auth = await requireAuth("settings.manage");
   const r = await runReminders({ organizationId: auth.organization.id });
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "reminders.run_manual", meta: { sent: r.sent, failed: r.failed } });

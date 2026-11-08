@@ -20,7 +20,7 @@
  * Meldung der Kasse ans Finanzamt (§ 146a Abs. 4 AO), Verfahrensdokumentation.
  */
 import { randomUUID } from "node:crypto";
-import { FiscalNotConfiguredError, type FiscalExportInput, type FiscalFinishInput, type FiscalPort, type FiscalSignature, type FiscalStartInput } from "./types";
+import { FiscalNotConfiguredError, type FiscalExportInput, type FiscalFinishInput, type FiscalPort, type FiscalSignature } from "./types";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -75,7 +75,7 @@ export class FiskalyAdapter implements FiscalPort {
     return r.access_token;
   }
 
-  async startTransaction(_input: FiscalStartInput) {
+  async startTransaction() {
     const txId = randomUUID();
     const r = await this.call<{ time_start?: number }>(this.base, "PUT", `/tss/${this.opts.tssId}/tx/${txId}?tx_revision=1`, {
       state: "ACTIVE",

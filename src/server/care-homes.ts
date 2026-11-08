@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, desc, eq, isNull, max, ne, or } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, max, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { billingContacts, patients, services, treatmentRecords } from "@/db/schema";
@@ -116,11 +116,12 @@ export async function visitDay(auth: AuthContext, id: string) {
       .from(patients)
       .where(and(eq(patients.organizationId, org), eq(patients.careHomeId, id), isNull(patients.archivedAt)))
       .orderBy(asc(patients.lastName), asc(patients.firstName));
-    const last = medical
+    const ids = residents.map((r) => r.id);
+    const last = medical && ids.length
       ? await tx
           .select({ patientId: treatmentRecords.patientId, last: max(treatmentRecords.treatedAt) })
           .from(treatmentRecords)
-          .where(eq(treatmentRecords.organizationId, org))
+          .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.patientId, ids)))
           .groupBy(treatmentRecords.patientId)
       : [];
     const lastBy = new Map(last.map((l) => [l.patientId, l.last]));
@@ -130,7 +131,7 @@ export async function visitDay(auth: AuthContext, id: string) {
       .select({ id: services.id, code: services.code, name: services.name })
       .from(services)
       .where(and(eq(services.organizationId, org), eq(services.active, true)))
-      .orderBy(desc(services.category), asc(services.code));
+      .orderBy(asc(services.code));
     return {
       home,
       services: svc,

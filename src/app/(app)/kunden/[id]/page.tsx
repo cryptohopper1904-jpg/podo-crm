@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarPlus, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
@@ -55,6 +55,8 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
           {auth.can("medical.write") ? (
             <LinkButton href={`/kunden/${p.id}/doku/neu`}><Stethoscope size={18} aria-hidden /> Behandlung dokumentieren</LinkButton>
           ) : null}
+          <LinkButton href={`/kunden/${p.id}/anamnese`} variant="secondary"><ClipboardCheck size={18} aria-hidden /> Anamnese</LinkButton>
+          <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
           {auth.can("appointments.write") ? (
             <LinkButton href={`/kalender/neu?patient=${p.id}`} variant="secondary"><CalendarPlus size={18} aria-hidden /> Termin</LinkButton>
           ) : null}

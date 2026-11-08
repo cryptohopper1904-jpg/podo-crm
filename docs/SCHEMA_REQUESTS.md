@@ -20,3 +20,13 @@ Hinweis: Der Excel-Import übernimmt SR-Teilzeilen weiterhin als Positionen der 
 | media | `patient_id` nullable + Zweck `device_document` (oder eigene Tabelle) | Prüfprotokolle/Wartungsberichte im Gerätebuch hochladen; derzeit nur Freitext-Notiz |
 | treatment_records | Index auf `(organization_id, upper(regexp_replace(sterile_batch_code, '\s', '', 'g')))` | Rückverfolgung Charge → Patient:innen (`/hygiene/charge/[code]`) ohne Seq-Scan |
 | sterile_batches | `created_by` uuid | Wer hat die Charge angelegt (Freigebende:r steht in `released_by`) |
+
+## Offen (Verordnungen, Anamnese, Pflegeheim – Phase 2)
+| Tabelle | Wunsch | Grund |
+|---|---|---|
+| anamneses | Spalte `source` text (practice/online) + `rules_version` | derzeit in `data.source`/`data.schemaVersion` (JSON) – für Filter/Auswertung als Spalte besser |
+| prescriptions | `positions[].priceCents` (Typ in schema.ts) bzw. Spalte `remedy_cost_cents` | Zuzahlung wird beim Anlegen aus `services.gkv_position` berechnet; der Preis-Snapshot fehlt für spätere Nachvollziehbarkeit |
+| billing_batches | `remedy_total_cents` + `copayment_total_cents` statt `total_cents` | `total_cents` enthält derzeit die Summe der Zuzahlungen (Heilmittelkosten sind nicht gespeichert) |
+| patient_links | Index `(organization_id, patient_id, purpose)` | Liste/Widerruf der Links je Patient ohne Seq-Scan |
+| messages | Kanal `web` (channel-Enum) | Eingang „Anamnesebogen eingegangen“ nutzt derzeit `none` |
+| treatment_records | Index `(organization_id, prescription_id)` | Einheiten-Zählung je Verordnung |

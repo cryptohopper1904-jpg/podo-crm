@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { FiscalFinishInput, FiscalPort, FiscalSignature, FiscalStartInput } from "./types";
+import type { FiscalFinishInput, FiscalPort, FiscalSignature } from "./types";
 
 /**
  * Mock-TSE: erzeugt fortlaufende Test-Signaturen (prozesslokal). KEINE gültige TSE –
@@ -11,7 +11,7 @@ export class FiscalMock implements FiscalPort {
   private static counter = 0;
   private readonly open = new Map<string, string>();
 
-  async startTransaction(_input: FiscalStartInput) {
+  async startTransaction() {
     const transactionId = randomUUID();
     const startedAt = new Date().toISOString();
     this.open.set(transactionId, startedAt);
