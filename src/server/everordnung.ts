@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, ilike, isNull, max, or, sql } from "drizzle-orm";
+import { and, eq, ilike, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { patients, prescriptions } from "@/db/schema";
 import { audit } from "@/lib/audit";
@@ -39,7 +39,7 @@ async function findExisting(org: string, externalRef: string) {
 
 /** Mögliche Personen: gleiche KVNR oder gleicher Nachname + Geburtsdatum. Keine automatische Zuordnung. */
 async function findCandidates(org: string, s: EverordnungSummary): Promise<PatientCandidate[]> {
-  const conds = [];
+  const conds: (SQL | undefined)[] = [];
   if (s.patient.kvnr) conds.push(sql`upper(left(coalesce(${patients.insuranceNumber}, ''), 10)) = ${s.patient.kvnr}`);
   if (s.patient.lastName && s.patient.birthDate) conds.push(and(ilike(patients.lastName, s.patient.lastName), eq(patients.birthDate, s.patient.birthDate)));
   if (!conds.length) return [];
