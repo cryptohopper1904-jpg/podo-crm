@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, eq, ne } from "drizzle-orm";
+import { and, count, eq, ne, sql } from "drizzle-orm";
 import { db, type Db, type Tx } from "@/db";
 import { auditLog, billingEvents, memberships, organizations } from "@/db/schema";
 import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/stripe/events";
@@ -19,7 +19,7 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
   return db.transaction(async (tx) => {
     await tx
       .insert(billingEvents)
-      .values({ provider: "stripe", externalId: ev.id, type: ev.type, payload: ev })
+      .values({ provider: "stripe", externalId: ev.id, type: ev.type, payload: minimalPayload(ev) })
       .onConflictDoNothing({ target: [billingEvents.provider, billingEvents.externalId] });
     const [row] = await tx
       .select()
@@ -44,9 +44,11 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
     // Reihenfolge: ältere Abo-Events überschreiben keine neueren
     const settings = (org.settings ?? {}) as Record<string, unknown>;
     const last = typeof settings.billingLastEventAt === "number" ? settings.billingLastEventAt : 0;
-    if (ev.type.startsWith("customer.subscription.") && ev.created < last) return done("ignored", org.id, "veraltetes Event");
+    if ((ev.type.startsWith("customer.subscription.") || ev.type.startsWith("invoice.")) && ev.created < last) {
+      return done("ignored", org.id, "veraltetes Event");
+    }
 
-    await applyPatch(tx, org.id, upd.patch, { ...settings, billingLastEventAt: Math.max(last, ev.created) });
+    await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created));
     await tx.insert(auditLog).values({
       organizationId: org.id,
       action: "billing.event",
@@ -60,21 +62,39 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
 
 async function findOrg(tx: Tx, organizationId: string | null, customerId: string | null) {
   if (organizationId) {
-    const [o] = await tx.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1);
+    const [o] = await tx.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1).for("update");
     if (o) return o;
   }
   if (customerId) {
-    const [o] = await tx.select().from(organizations).where(eq(organizations.stripeCustomerId, customerId)).limit(1);
+    const [o] = await tx.select().from(organizations).where(eq(organizations.stripeCustomerId, customerId)).limit(1).for("update");
     if (o) return o;
   }
   return null;
 }
 
-async function applyPatch(tx: Tx, organizationId: string, patch: OrgBillingPatch, settings?: Record<string, unknown>) {
+/** Nur die Abo-Felder setzen; settings wird per jsonb-Merge ergänzt (keine parallelen Einstellungsänderungen überschreiben). */
+async function applyPatch(tx: Tx, organizationId: string, patch: OrgBillingPatch, lastEventAt?: number) {
   await tx
     .update(organizations)
-    .set({ ...patch, ...(settings ? { settings } : {}) })
+    .set({
+      ...patch,
+      ...(lastEventAt !== undefined
+        ? { settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingLastEventAt', ${lastEventAt}::bigint)` }
+        : {}),
+    })
     .where(eq(organizations.id, organizationId));
+}
+
+/** Datensparsam: keine Namen/E-Mails/Adressen der Stripe-Kunden plattformweit speichern (billing_events hat kein RLS). */
+function minimalPayload(ev: StripeEvent) {
+  const o = (ev.data?.object ?? {}) as Record<string, unknown>;
+  const id = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : null);
+  return {
+    id: ev.id,
+    type: ev.type,
+    created: ev.created,
+    object: { id: id(o.id), object: o.object ?? null, customer: id(o.customer), subscription: id(o.subscription), status: o.status ?? null, payment_status: o.payment_status ?? null },
+  };
 }
 
 /** Nur Mock/Entwicklung: Tarif sofort umstellen (ohne Stripe). */

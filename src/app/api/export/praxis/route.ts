@@ -11,7 +11,8 @@ const limiter = createRateLimiter({ windowMs: 10 * 60_000, max: 1, maxKeys: 5_00
 /** Vollständiger Datenexport der Praxis (nur Inhaber:in) als ZIP – Art. 20 DSGVO, Rückgabe nach Art. 28 Abs. 3 lit. g. */
 export async function GET() {
   const auth = await getAuth();
-  if (!auth || auth.role !== "owner") return NextResponse.json({ error: "Nur Inhaber:innen können die Praxis exportieren." }, { status: 403 });
+  // Support-Zugriff (Break-Glass) ist ausdrücklich ausgeschlossen – auch mit Freigabe kein Vollexport.
+  if (!auth || auth.support || auth.role !== "owner") return NextResponse.json({ error: "Nur Inhaber:innen können die Praxis exportieren." }, { status: 403 });
   const org = auth.organization.id;
   if (limiter.limited(`org:${org}`)) {
     return NextResponse.json({ error: "Ein Export wurde gerade erstellt. Bitte in 10 Minuten erneut versuchen." }, { status: 429, headers: { "Retry-After": "600" } });

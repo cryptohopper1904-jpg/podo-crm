@@ -29,7 +29,7 @@ function RetentionNotice() {
 
 export default async function DataSettings() {
   const auth = await requireAuth("settings.manage");
-  if (auth.role !== "owner") {
+  if (auth.role !== "owner" || auth.support) {
     return (
       <Card>
         <CardTitle>Daten & Kündigung</CardTitle>

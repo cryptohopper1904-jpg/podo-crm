@@ -12,7 +12,7 @@ export type DataState = { error?: string; ok?: string } | undefined;
 
 async function requireOwner() {
   const auth = await requireAuth("settings.manage");
-  if (auth.role !== "owner") throw new Error("Nur Inhaber:innen können die Praxis kündigen.");
+  if (auth.role !== "owner" || auth.support) throw new Error("Nur Inhaber:innen können die Praxis kündigen.");
   return auth;
 }
 

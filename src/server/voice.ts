@@ -136,7 +136,7 @@ async function upsertCall(
 ) {
   await withOrg(org, async (tx) => {
     // serialisiert parallele Ereignisse desselben Anrufs
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`voice:${org}:${vendor}:${callId}`}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`voice:${org}:${vendor}:${callId}`}, 0))`);
     const [row] = await tx
       .select()
       .from(voiceCalls)
@@ -196,7 +196,7 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
       const end = new Date(startsAt.getTime() + service.durationMin * 60_000);
       const res = await withOrg(org, async (tx) => {
         // gleiche Sperre wie die Online-Buchung → keine Doppelbelegung bei gleichzeitigen Anfragen
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"book:" + org}))`);
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org}, 0))`);
         const [dup] = await tx
           .select({ id: appointments.id, startsAt: appointments.startsAt })
           .from(appointments)
@@ -253,9 +253,17 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
       return res;
     },
     async inbox({ subject, body, from }) {
-      await withOrg(org, (tx) =>
-        tx.insert(messages).values({ organizationId: org, patientId: null, channel: "phone", direction: "inbound", fromAddress: from, subject, body, status: "new", threadKey: externalId }),
-      );
+      // Wiederholte Zustellungen (Anbieter-Retry/Replay) desselben Anrufs erzeugen keine doppelten Nachrichten
+      await withOrg(org, async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`voice-inbox:${org}:${externalId}`}, 0))`);
+        const [dup] = await tx
+          .select({ id: messages.id })
+          .from(messages)
+          .where(and(eq(messages.organizationId, org), eq(messages.channel, "phone"), eq(messages.threadKey, externalId), eq(messages.subject, subject), eq(messages.body, body)))
+          .limit(1);
+        if (dup) return;
+        await tx.insert(messages).values({ organizationId: org, patientId: null, channel: "phone", direction: "inbound", fromAddress: from, subject, body, status: "new", threadKey: externalId });
+      });
     },
     async practiceInfo() {
       const op = openingOf(o.settings);

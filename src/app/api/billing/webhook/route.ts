@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
     throw e;
   }
   try {
-    const result = await processBillingEvent(event);
-    return NextResponse.json({ received: true, result });
+    await processBillingEvent(event);
+    return NextResponse.json({ received: true });
   } catch (e) {
     console.error("[billing] Verarbeitung fehlgeschlagen", event.id, event.type, e instanceof Error ? e.message : e);
     return NextResponse.json({ error: "Verarbeitung fehlgeschlagen" }, { status: 500 });

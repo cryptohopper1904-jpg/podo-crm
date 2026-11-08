@@ -20,7 +20,13 @@ export type FormState = { error?: string; ok?: string } | undefined;
 const LOCK_AFTER = 8;
 const LOCK_MINUTES = 15;
 
+/** Gegen Password-Spraying über viele Konten: Anmeldeversuche je Anschluss begrenzen (zusätzlich zur Kontosperre). */
+const loginLimiter = createRateLimiter({ windowMs: 15 * 60_000, max: 30 });
+
 export async function loginAction(_: FormState, form: FormData): Promise<FormState> {
+  if (loginLimiter.limited(clientKey(await requestMeta()))) {
+    return { error: "Zu viele Anmeldeversuche von diesem Anschluss. Bitte in 15 Minuten erneut versuchen." };
+  }
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const password = String(form.get("password") ?? "");
   const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -50,7 +56,7 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
     .from(memberships)
     .where(and(eq(memberships.userId, user.id), eq(memberships.active, true)))
     .limit(1);
-  if (!m) return { error: "Für dieses Konto ist keine Praxis freigeschaltet." };
+  if (!m) return { error: generic };
   await db.update(users).set({ failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }).where(eq(users.id, user.id));
   await createSession(user.id, m.organizationId, !user.totpEnabled);
   await audit({ organizationId: m.organizationId, userId: user.id, action: "login.success" });
@@ -82,7 +88,13 @@ export async function verifyTotpAction(_: FormState, form: FormData): Promise<Fo
     }
     return { error: "Der Code stimmt nicht. Bitte den aktuellen Code aus der Authenticator-App eingeben." };
   }
-  await db.update(users).set({ totpLastStep: step }).where(eq(users.id, row.user.id));
+  // Atomar: parallele Anfragen mit demselben Code dürfen nicht beide durchkommen
+  const [claimed] = await db
+    .update(users)
+    .set({ totpLastStep: step })
+    .where(and(eq(users.id, row.user.id), sql`(${users.totpLastStep} is null or ${users.totpLastStep} < ${step})`))
+    .returning({ id: users.id });
+  if (!claimed) return { error: "Dieser Code wurde bereits verwendet. Bitte den nächsten Code abwarten." };
   await markSessionVerified();
   redirect("/heute");
 }
@@ -112,16 +124,15 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   const parsed = setupSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
-  const saas = process.env.ALLOW_SIGNUP === "true";
   const legalOk = d.agb === "on" && d.avv === "on";
-  if (saas && signupLimiter.limited(clientKey(await requestMeta()))) {
+  if (signupLimiter.limited(clientKey(await requestMeta()))) {
     return { error: "Zu viele Registrierungen von diesem Anschluss. Bitte in einer Stunde erneut versuchen." };
   }
   const pwProblem = passwordProblem(d.password);
   if (pwProblem) return { error: pwProblem };
 
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, d.email)).limit(1);
-  if (existing) return { error: "Für diese E-Mail gibt es bereits ein Konto." };
+  if (existing) return { error: "Mit diesen Angaben ist keine Registrierung möglich. Bereits registriert? Bitte anmelden oder das Passwort zurücksetzen lassen." };
 
   const slugBase = d.practiceName
     .toLowerCase()
@@ -138,7 +149,9 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     const [{ n }] = await tx.select({ n: count() }).from(users);
     if (n > 0 && process.env.ALLOW_SIGNUP !== "true") return null;
     // Ersteinrichtung nur mit Einmal-Token aus der Server-Konfiguration (sonst könnte jeder zuerst kommen)
-    if (n === 0 && process.env.SETUP_TOKEN && d.setupToken !== process.env.SETUP_TOKEN) return "token" as const;
+    // In Produktion ist SETUP_TOKEN Pflicht (fail-closed); lokal in der Entwicklung optional.
+    const setupToken = process.env.SETUP_TOKEN;
+    if (n === 0 && (setupToken ? d.setupToken !== setupToken : process.env.NODE_ENV === "production")) return "token" as const;
     // Selbstregistrierung (SaaS): AGB + AVV (versioniert) sind Pflicht
     if (n > 0 && !legalOk) return "legal" as const;
     // Erste Praxis = Betreiber-Praxis („intern“, ohne Abo); jede weitere startet mit 30 Tagen Testphase

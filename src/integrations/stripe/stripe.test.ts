@@ -53,6 +53,14 @@ describe("Stripe-Events → Abo", () => {
     );
     expect(u).toEqual({ organizationId: ORG, customerId: "cus_1", patch: { subscriptionStatus: "active", plan: "praxis", seats: 4, stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" } });
   });
+  it("checkout.session.completed ohne Zahlung (z. B. SEPA ausstehend) schaltet nicht frei", () => {
+    const u = billingUpdateFromEvent(
+      ev("checkout.session.completed", { mode: "subscription", payment_status: "unpaid", client_reference_id: ORG, customer: "cus_1", metadata: { plan: "praxis", seats: "2" } }),
+      prices,
+    );
+    expect(u?.patch.subscriptionStatus).toBeUndefined();
+    expect(u?.patch.stripeCustomerId).toBe("cus_1");
+  });
   it("subscription.updated: Plan/Plätze aus Positionen, Status, Periodenende (neue API je Position)", () => {
     const u = billingUpdateFromEvent(
       ev("customer.subscription.updated", {

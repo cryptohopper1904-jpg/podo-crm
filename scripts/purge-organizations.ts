@@ -10,6 +10,7 @@
  * Unveränderbarkeits-Trigger innerhalb der Lösch-Transaktion aussetzen (Details: src/server/purge-organization.ts).
  * Löscht anschließend <STORAGE_DIR>/<org-id>/. Verschlüsselte Backups laufen nach ihrer Frist (14 Tage) aus.
  */
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import { assertTableOwner, findDueOrganizations, purgeOrganization } from "../src/server/purge-organization";
@@ -40,6 +41,27 @@ async function main() {
       } catch (e) {
         failed++;
         console.error(`FEHLER bei ${o.slug} (${o.id}): ${(e as Error).message}`);
+      }
+    }
+    // Verwaiste Ablage-Ordner (Praxis existiert nicht mehr, z. B. weil das Löschen der Dateien nach dem DB-Commit
+    // fehlschlug) werden bei jedem Lauf erneut erkannt und – mit --execute – entfernt.
+    if (!orgArg) {
+      const dirs = await readdir(storageRoot, { withFileTypes: true }).catch(() => []);
+      const ids = dirs.filter((d) => d.isDirectory() && /^[0-9a-f-]{36}$/.test(d.name)).map((d) => d.name);
+      if (ids.length) {
+        const { rows } = await client.query<{ id: string }>("select id::text from organizations where id = any($1::uuid[])", [ids]);
+        const existing = new Set(rows.map((r) => r.id));
+        for (const id of ids.filter((x) => !existing.has(x))) {
+          if (execute) {
+            try {
+              await rm(path.join(storageRoot, id), { recursive: true, force: true });
+              console.log(`verwaiste Ablage entfernt: ${id}`);
+            } catch (e) {
+              failed++;
+              console.error(`FEHLER beim Entfernen der Ablage ${id}: ${(e as Error).message}`);
+            }
+          } else console.log(`würde verwaiste Ablage entfernen: ${id}`);
+        }
       }
     }
     if (failed) process.exitCode = 1;

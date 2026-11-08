@@ -32,6 +32,9 @@ describe("Support-Modus (Break-Glass)", () => {
       expect(effectiveCan(s, "patients.write")).toBe(false);
       expect(effectiveCan(s, "medical.write")).toBe(false);
       expect(effectiveCan(s, "users.manage")).toBe(false);
+    // Review Phase 3: kein Import und keine Schreibaktionen ohne explizites Recht im Support-Modus
+    expect(effectiveCan(s, "import.run")).toBe(false);
+    expect(mutationAllowedWithoutPermission({ support: s.support, mutating: true })).toBe(false);
       expect(effectiveCan(s, "settings.manage")).toBe(false);
     }
     expect(mutationAllowedWithoutPermission({ support, mutating: true })).toBe(false);

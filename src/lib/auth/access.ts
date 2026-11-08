@@ -14,7 +14,7 @@ export const isReadPermission = (p: Permission) => p.endsWith(".read");
  * Support mit Scope „write“ darf zusätzlich nur Konfiguration korrigieren – nie Team/Rechte,
  * nie Patientendaten oder Dokumentation ändern.
  */
-export const SUPPORT_WRITE_PERMISSIONS: readonly Permission[] = ["settings.manage", "integrations.manage", "import.run"];
+export const SUPPORT_WRITE_PERMISSIONS: readonly Permission[] = ["settings.manage", "integrations.manage"];
 
 export type SupportScope = "read" | "write";
 export type SupportContext = { grantId: string; scope: SupportScope; expiresAt: Date };
@@ -42,11 +42,12 @@ export function effectiveCan(s: AccessState, p: Permission): boolean {
 
 /**
  * Darf eine schreibende Anfrage, die keine konkrete Berechtigung prüft (requireAuth() ohne Recht), passieren?
- * Im Support-Lesemodus nie – Support verändert nichts, auch nicht „nebenbei“.
+ * Im Support-Modus nie (auch nicht mit Scope „write“).
  */
 export function mutationAllowedWithoutPermission(s: Pick<AccessState, "support" | "mutating">): boolean {
   if (!s.mutating) return true;
-  return !s.support || s.support.scope === "write";
+  // Support schreibt nie „nebenbei“ – auch mit Scope „write“ nur über die explizit erlaubten Rechte.
+  return !s.support;
 }
 
 export type GrantRow = {

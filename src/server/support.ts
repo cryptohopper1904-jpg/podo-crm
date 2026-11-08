@@ -100,7 +100,7 @@ export async function enterSupport(user: PlatformUser, sessionId: string, organi
   if (own) return false;
   const grant = await findActiveSupportGrant(organizationId, user.id);
   if (!grant) return false;
-  await db.update(sessions).set({ organizationId }).where(eq(sessions.id, sessionId));
+  await db.update(sessions).set({ organizationId }).where(and(eq(sessions.id, sessionId), eq(sessions.userId, user.id)));
   await audit({ organizationId, userId: user.id, action: "support.enter", entity: "support_grant", entityId: grant.grantId, meta: { scope: grant.scope } });
   return true;
 }
@@ -112,6 +112,6 @@ export async function exitSupport(userId: string, sessionId: string, fromOrganiz
     .from(memberships)
     .where(and(eq(memberships.userId, userId), eq(memberships.active, true)))
     .limit(1);
-  await db.update(sessions).set({ organizationId: own?.organizationId ?? null }).where(eq(sessions.id, sessionId));
+  await db.update(sessions).set({ organizationId: own?.organizationId ?? null }).where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)));
   if (fromOrganizationId) await audit({ organizationId: fromOrganizationId, userId, action: "support.exit" });
 }

@@ -47,15 +47,31 @@
 
 Noch offen nach Phase 2: echter SMTP-Versand, fiskaly-Vertrag und DSFinV-K-Export, Vertrag mit einem Abrechnungszentrum, Verordnungs-OCR, Kundenportal-Buchung, Sterilgut-Prüfung direkt im Doku-Formular.
 
+## Phase 3 (Stand 08.11.2026) – verkaufsfähig als SaaS
+| Bereich | Umgesetzt |
+|---|---|
+| **Tarife & Abo** | Testphase 30 Tage, Starter/Praxis/Plus (Preise vorläufig in `src/lib/plans.ts`), Plätze je Behandler:in, Stripe-Checkout + Kundenportal + signierte Webhooks (idempotent, Reihenfolge geprüft, datensparsam gespeichert). Abo abgelaufen → **Nur-Lesen-Modus**: Lesen und Export bleiben immer möglich |
+| **Onboarding** | Assistent `/willkommen` (Praxisdaten, Leistungsvorlage, Team, Import, Schnittstellen), Checkliste auf „Heute“; Registrierung nur mit AGB+AVV-Zustimmung (versioniert), Rate-Limit |
+| **Plattform-Konsole** | `/plattform` nur für Betreiber mit 2FA: Praxen, Tarife, Testphase verlängern – **ohne Patientendaten** |
+| **Support-Zugriff (Break-Glass)** | Praxis gibt Zugriff zeitlich begrenzt frei (1–72 h, standardmäßig nur lesen), jeder Seitenaufruf im Zugriffsprotokoll der Praxis, roter Hinweisbalken, Widerruf jederzeit. Kein Export, keine Kündigung, kein Import im Support-Modus |
+| **Öffentliche Website** | Startseite, Funktionen, Preise, Sicherheit, Impressum, Datenschutz, AGB, AVV, Unterauftragnehmer (Texte als **Entwürfe** in `docs/legal/`) |
+| **Daten & Kündigung** | Vollexport der Praxis als ZIP (alle Tabellen + entschlüsselte Fotos), Kündigung mit 30 Tagen Karenz, Lösch-Skript für den Betreiber (`scripts/purge-organizations.ts`, Probelauf als Standard) |
+| **KI-Telefonagent (Pilot)** | Anbindung an Vapi: freie Termine nennen, Terminwunsch anlegen (immer zur Bestätigung im Posteingang, nie an eine bestehende Akte gehängt), Absage-/Rückrufwunsch, Praxisinfos. KI-Hinweis (AI Act) am Gesprächsbeginn, keine medizinische Beratung, Notfall → Arzt/112. Vorlage `src/integrations/voice/vapi-assistant.json`, Simulation unter `/telefon` |
+| **Sicherheit** | Automatische Tests: jede Route/API/Server-Action ist geschützt oder ausdrücklich öffentlich, Sicherheits-Header; Pentest-Checkliste `docs/compliance/PENTEST-CHECKLISTE.md`; externe Reviews (4 Modelle) – alle kritischen/hohen Befunde behoben (`docs/reviews/code/phase3-*`) |
+
+### Was du vor dem Verkauf tun musst
+- Rechtstexte (`docs/legal/*`) und Platzhalter wie [FIRMENNAME] **anwaltlich prüfen lassen** und ausfüllen.
+- Stripe-Konto anlegen, Produkte/Preise anlegen, `STRIPE_*`-Variablen setzen (siehe `.env.example`), Webhook auf `/api/billing/webhook`.
+- Preise final festlegen (aktuell vorläufig).
+- Für den Telefonagenten: Vapi-Konto + AVV mit Vapi, Telefonnummer, Vorlage einfügen.
+- Externer Pentest vor dem ersten fremden Mandanten.
+
 ## Offen / nächste Schritte
-- PDF-Rechnungen (aktuell Druck über den Browser), Rechnungsversand per E-Mail
-- SumUp-Terminalzahlung direkt aus der Rechnung starten (Adapter ist fertig, UI-Knopf fehlt)
-- GKV-Abrechnung über ein Abrechnungszentrum (Phase 2), Verordnungs-OCR
-- Erinnerungen automatisch versenden (Cron-Job), Rückhol-Kampagnen
-- Dienstplan/Urlaub, Hygiene-Modul (Sterilisator-Chargen freigeben), Material/Bestellungen
-- KI-Telefonagent anbinden (Platzhalter steht), Kundenportal
-- 3D-Fuß, native iOS-Hülle bauen (Konfiguration liegt bei, braucht Mac + Apple-Developer-Konto)
-- Pentest vor dem ersten fremden Mandanten
+- Echter SMTP-Versand, fiskaly-Vertrag + DSFinV-K-Export, Vertrag mit Abrechnungszentrum, Verordnungs-OCR
+- Support-Freigabe an eine bestimmte Person binden (aktuell: alle Betreiber-Admins mit 2FA)
+- Praxis-Export streamend erzeugen (aktuell im Arbeitsspeicher – für sehr große Fotobestände)
+- 3D-Fuß, native iOS-Hülle (braucht Mac + Apple-Developer-Konto)
+- Externer Pentest
 
 ## Lokal ausprobieren
 Siehe README. Demo-Login: `demo@podocrm.local` / `demo-passwort-123`.

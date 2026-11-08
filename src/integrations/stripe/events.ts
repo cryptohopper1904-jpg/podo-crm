@@ -99,7 +99,10 @@ export function billingUpdateFromEvent(ev: StripeEvent, prices: PriceIds): Billi
       const meta = obj(o.metadata);
       const plan = isPaidPlan(meta.plan) ? meta.plan : undefined;
       const seatsNum = Number(meta.seats);
-      const patch: OrgBillingPatch = { subscriptionStatus: "active" };
+      // Nur bei tatsächlich bezahlter (oder kostenfreier, z. B. Testphase) Sitzung freischalten;
+      // asynchrone Zahlarten (SEPA) aktivieren später über customer.subscription.updated.
+      const paid = o.payment_status === undefined || o.payment_status === "paid" || o.payment_status === "no_payment_required";
+      const patch: OrgBillingPatch = paid ? { subscriptionStatus: "active" } : {};
       if (plan) {
         patch.plan = plan;
         if (Number.isInteger(seatsNum) && seatsNum >= 1 && seatsNum <= 999) {
