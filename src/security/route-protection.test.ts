@@ -5,7 +5,7 @@
  *  - die PUBLIC-Liste des Proxys darf nur bewusst freigegebene Präfixe enthalten.
  * Neue öffentliche Präfixe → hier in INTENDED_PUBLIC mit Begründung eintragen (Review!).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import path from "node:path";
 import { proxy } from "@/proxy";
@@ -79,6 +79,17 @@ describe("Proxy: Routen-Schutz", () => {
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
     const res = await call("/kunden", "podo_session=abc");
     expect(redirectsToLogin(res)).toBe(false);
+    expect(redirectsToLogin(await call("/kunden", "__Host-podo_session=abc"))).toBe(false);
+  });
+
+  it("Produktion: nur das __Host-Cookie zählt (altes podo_session → Login)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(redirectsToLogin(await call("/kunden", "podo_session=abc"))).toBe(true);
+      expect(redirectsToLogin(await call("/kunden", "__Host-podo_session=abc"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("die PUBLIC-Liste des Proxys enthält nur bewusst freigegebene Präfixe", () => {

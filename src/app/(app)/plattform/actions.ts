@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { isPlanId } from "@/lib/plans";
-import { extendTrial, requirePlatformAdmin, setPracticePlan } from "@/server/platform";
+import { extendTrial, requirePlatformAdmin, setPracticePlan, setVoiceAddon } from "@/server/platform";
 import { enterSupport, exitSupport } from "@/server/support";
 
 export async function setPlanAction(form: FormData) {
@@ -21,6 +21,14 @@ export async function extendTrialAction(form: FormData) {
   const d = z.object({ organizationId: z.string().uuid(), days: z.coerce.number().int().min(1).max(90) }).safeParse(Object.fromEntries(form));
   if (!d.success) redirect("/plattform?fehler=eingabe");
   await extendTrial(row.user.id, d.data.organizationId, d.data.days);
+  revalidatePath("/plattform");
+}
+
+export async function setVoiceAddonAction(form: FormData) {
+  const row = await requirePlatformAdmin();
+  const d = z.object({ organizationId: z.string().uuid(), on: z.enum(["0", "1"]) }).safeParse(Object.fromEntries(form));
+  if (!d.success) redirect("/plattform?fehler=eingabe");
+  await setVoiceAddon(row.user.id, d.data.organizationId, d.data.on === "1");
   revalidatePath("/plattform");
 }
 
