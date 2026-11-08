@@ -10,6 +10,7 @@ import { STATUS_LABEL } from "@/lib/patient-status";
 import { CONSENT_LABELS } from "@/lib/consents";
 import { currentConsents, getPatient } from "@/server/patients";
 import { recordConsentAction } from "../actions";
+import { WaitlistCard } from "./waitlist-card";
 
 export const metadata = { title: "Kundenakte" };
 
@@ -181,6 +182,8 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             </ul>
             <p className="mt-3 text-xs text-muted">Die Behandlungsdoku selbst braucht keine Einwilligung (Art. 9 Abs. 2 lit. h DSGVO). Jede Änderung wird mit Zeitpunkt protokolliert.</p>
           </Card>
+
+          {auth.can("appointments.write") ? <WaitlistCard auth={auth} patientId={p.id} /> : null}
 
           <Card>
             <CardTitle>Datenschutz</CardTitle>

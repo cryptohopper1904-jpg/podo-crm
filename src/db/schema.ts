@@ -10,6 +10,7 @@
  */
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigserial,
   boolean,
   date,
@@ -830,7 +831,105 @@ export const payments = pgTable("payments", {
   voucherId: uuid("voucher_id").references(() => vouchers.id),
   externalRef: text("external_ref"),
   createdBy: uuid("created_by").references(() => users.id),
-});
+  /**
+   * Kassenabschluss (Z-Bon), in dem die Zahlung erfasst ist. Wird genau einmal gesetzt (NULL → Abschluss);
+   * danach – und für jede Zahlung eines abgeschlossenen Tages – verhindert ein DB-Trigger Änderung/Löschung.
+   */
+  cashClosingId: uuid("cash_closing_id").references((): AnyPgColumn => cashClosings.id),
+}, (t) => [index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt)]);
+
+// ───────────────────────── Kasse (KassenSichV / GoBD, Phase 5) ─────────────────────────
+/** Zählprotokoll: Stückzahl je Stückelung in Cent, z. B. { "5000": 2, "200": 3 } */
+export type CashDenominations = Record<string, number>;
+
+/** Summen eines Kassenabschlusses (in Cent) – Grundlage für Z-Bon und DSFinV-K */
+export type CashClosingTotals = {
+  /** alle Zahlungseingänge des Abschlusses je Zahlart (auch nicht kassenrelevante wie Überweisung) */
+  byMethod: Record<string, number>;
+  /** kassenrelevante Umsätze (Bar/Karte/Gutschein) je Steuersatz, brutto/netto/USt */
+  byVat: { rate: number; grossCents: number; netCents: number; vatCents: number }[];
+  /** Summe der Einlagen/Entnahmen je Art (vorzeichenbehaftet) */
+  movements: Record<string, number>;
+  /** Summen je DSFinV-K-Geschäftsvorfall und USt-Schlüssel */
+  businessCases: { gvTyp: string; ustKey: number; grossCents: number; netCents: number; vatCents: number }[];
+};
+
+/** TSE-Angaben zum Abschluss (KassenSichV) – mode "none" = ohne TSE */
+export type CashClosingTse = {
+  mode: "fiskaly" | "none";
+  /** true, wenn Zahlungen nur mit Test-Signaturen (Mock) versehen wurden */
+  testSignatures?: boolean;
+  tssSerial?: string | null;
+  transactionNumber?: number | null;
+  signatureCounter?: number | null;
+  exportRef?: string | null;
+  note?: string | null;
+};
+
+/**
+ * Kassenabschlüsse (Z-Bon / Tagesabschluss). Append-only (DB-Trigger), je Praxis lückenlos nummeriert
+ * (Advisory-Lock + Trigger-Prüfung) und per Hash-Kette verbunden (wie die Behandlungsdoku).
+ */
+export const cashClosings = pgTable(
+  "cash_closings",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** Z-Nummer, je Praxis lückenlos ab 1 */
+    number: integer("number").notNull(),
+    /** Buchungstag (Europe/Berlin) */
+    businessDate: date("business_date").notNull(),
+    /** Stichzeitpunkt: alle bis dahin nicht abgeschlossenen Zahlungen/Bewegungen gehören zu diesem Abschluss */
+    closedAt: timestamp("closed_at", { withTimezone: true }).notNull(),
+    openingCents: integer("opening_cents").notNull(),
+    cashPaymentsCents: integer("cash_payments_cents").notNull(),
+    movementsCents: integer("movements_cents").notNull(),
+    expectedCashCents: integer("expected_cash_cents").notNull(),
+    countedCashCents: integer("counted_cash_cents").notNull(),
+    differenceCents: integer("difference_cents").notNull(),
+    denominations: jsonb("denominations").$type<CashDenominations>().notNull(),
+    totals: jsonb("totals").$type<CashClosingTotals>().notNull(),
+    paymentCount: integer("payment_count").notNull(),
+    movementCount: integer("movement_count").notNull(),
+    /** fortlaufende Belegnummern (DSFinV-K BON_NR) der kassenrelevanten Vorgänge dieses Abschlusses */
+    firstBonNr: integer("first_bon_nr").notNull(),
+    lastBonNr: integer("last_bon_nr").notNull(),
+    /** SHA-256 über die enthaltenen Zahlungen/Bewegungen (IDs, Beträge, Zeitpunkte) */
+    itemsDigest: text("items_digest").notNull(),
+    tse: jsonb("tse").$type<CashClosingTse>().notNull(),
+    differenceReason: text("difference_reason"),
+    note: text("note"),
+    prevHash: text("prev_hash"),
+    hash: text("hash").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("cash_closings_org_number").on(t.organizationId, t.number),
+    uniqueIndex("cash_closings_org_date").on(t.organizationId, t.businessDate),
+  ],
+);
+
+/**
+ * Kassenbuch: Einlagen/Entnahmen (Bargeld ohne Rechnung), vorzeichenbehaftet (+ in die Kasse, − aus der Kasse).
+ * Append-only; Korrektur nur durch Gegenbuchung. cash_closing_id wird beim Abschluss einmalig gesetzt.
+ */
+export const cashMovements = pgTable(
+  "cash_movements",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** private_deposit | private_withdrawal | transit_in | transit_out | payout | payin */
+    kind: text("kind").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    cashClosingId: uuid("cash_closing_id").references(() => cashClosings.id),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("cash_movements_org_closing").on(t.organizationId, t.cashClosingId, t.occurredAt)],
+);
 
 // ───────────────────────── Kommunikation ─────────────────────────
 export const messages = pgTable(

@@ -120,7 +120,12 @@ else
 fi
 
 echo
-for i in $(seq 1 30); do curl -fsS -m 5 "http://$UPSTREAM:$PORT/api/health" >/dev/null 2>&1 && break; sleep 5; done
+for _ in $(seq 1 30); do curl -fsS -m 5 "http://$UPSTREAM:$PORT/api/health" >/dev/null 2>&1 && break; sleep 5; done
 say "Fertig: https://$DOMAIN"
 echo "Demo-Login: demo@podocrm.local / demo-passwort-123   (Testbetrieb – keine echten Patientendaten)"
-echo "Update später: PODO_REF=$REF bash $APP_DIR/deploy/install-subdomain.sh $DOMAIN"
+if [ "$REF" = main ]; then
+  echo "Update später:  bash $APP_DIR/deploy/update.sh            (Probelauf: --dry-run)"
+else
+  echo "Update später:  bash $APP_DIR/deploy/update.sh $REF       (Probelauf: --dry-run)"
+fi
+echo "Backup-Test:    bash $APP_DIR/deploy/restore-test.sh      (einmal im Quartal)"

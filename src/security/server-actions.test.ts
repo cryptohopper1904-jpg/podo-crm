@@ -17,6 +17,8 @@ export const PUBLIC_ACTIONS: Record<string, string> = {
   "src/app/buchen/[slug]/actions.ts#bookAction": "Online-Buchung (Rate-Limit, Honeypot, nie Aktenzuordnung)",
   "src/app/anamnese/[token]/actions.ts": "Anamnese per Einmal-Token",
   "src/server/portal.ts#cancelPortalAppointmentAction": "Kundenportal (signierte Portal-Sitzung)",
+  "src/server/portal.ts#bookPortalAppointmentAction": "Kundenportal-Buchung (signierte Portal-Sitzung, Rate-Limit je IP und Person)",
+  "src/app/portal/angebot/[token]/actions.ts#acceptOfferAction": "Wartelisten-Angebot (Einmal-Token, Rate-Limit, Buchungssperre)",
 };
 
 const files = walk(SRC)

@@ -17,6 +17,9 @@ async function main() {
     await pool.query(`grant usage on schema public to ${appRole}`);
     await pool.query(`grant select, insert, update, delete on all tables in schema public to ${appRole}`);
     await pool.query(`grant usage, select on all sequences in schema public to ${appRole}`);
+    // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
+    await pool.query(`grant usage on schema drizzle to ${appRole}`);
+    await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);
   }
   await pool.end();
   console.log("Migrationen ausgeführt.");

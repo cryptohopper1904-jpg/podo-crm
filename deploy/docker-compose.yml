@@ -1,5 +1,6 @@
 # PodoCRM auf eigenem Server (Docker + Caddy für HTTPS)
 # Start:  cp deploy/.env.example deploy/.env  &&  (Werte setzen)  &&  docker compose -f deploy/docker-compose.yml up -d --build
+# Update: bash deploy/update.sh   (siehe docs/BETRIEB.md)
 services:
   db:
     image: postgres:16-alpine
@@ -34,8 +35,18 @@ services:
     environment:
       DATABASE_URL: postgres://podo_app:${DB_APP_PASSWORD}@db:5432/podo
       STORAGE_DIR: /data/storage
+      # Zeitstempel der letzten Backup-/Cron-Läufe (für /api/health/deep), nur lesend eingebunden
+      STATUS_DIR: /data/status
     volumes:
       - storage:/data/storage
+      - ops_status:/data/status:ro
+    # Das Image enthält kein curl → dieselbe Prüfung von /api/health per Node-fetch
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     depends_on:
       db: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
@@ -51,17 +62,28 @@ services:
       - caddy_data:/data
     depends_on: [app]
 
+  # Tägliches verschlüsseltes Backup (erstes direkt beim Start). update.sh erstellt den Container bei jedem Update neu.
   backup:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       PGPASSWORD: ${DB_OWNER_PASSWORD}
       BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
     volumes:
       - ./backup.sh:/backup.sh:ro
       - backups:/backups
       - storage:/data/storage:ro
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache gnupg >/dev/null && while true; do /backup.sh; sleep 86400; done"]
+      - ops_status:/status
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache gnupg >/dev/null
+        while true; do
+          /backup.sh || echo "$$(date -Iseconds) Backup FEHLGESCHLAGEN"
+          sleep 86400
+        done
     depends_on: [db]
 
   # Erinnerungen/Rückholung: alle 15 Minuten den Erinnerungs-Lauf der App auslösen (intern, nicht über Caddy)
@@ -70,6 +92,8 @@ services:
     restart: unless-stopped
     environment:
       CRON_SECRET: ${CRON_SECRET:-}
+    volumes:
+      - ops_status:/status
     entrypoint:
       - /bin/sh
       - -c
@@ -77,14 +101,26 @@ services:
         apk add --no-cache curl >/dev/null
         while true; do
           sleep 900
-          curl -fsS -m 120 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/reminders >/dev/null || echo "$$(date -Iseconds) Erinnerungs-Lauf fehlgeschlagen"
+          # Nach jedem erfolgreichen Lauf ein Zeitstempel nach /status (für /api/health/deep)
+          if curl -fsS -m 120 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/reminders >/dev/null; then
+            date +%s > /status/cron-reminders.last
+          else
+            echo "$$(date -Iseconds) Erinnerungs-Lauf fehlgeschlagen"
+          fi
           # KIM-Abruf (nur Praxen mit aktiver KIM-Verbindung; ohne CRON_SECRET antwortet die App mit 503)
-          curl -fsS -m 300 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/kim >/dev/null || echo "$$(date -Iseconds) KIM-Abruf fehlgeschlagen"
+          if curl -fsS -m 300 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/kim >/dev/null; then
+            date +%s > /status/cron-kim.last
+          else
+            echo "$$(date -Iseconds) KIM-Abruf fehlgeschlagen"
+          fi
         done
-    depends_on: [app]
+    depends_on:
+      app: { condition: service_healthy }
 
 volumes:
   pgdata:
   storage:
   caddy_data:
   backups:
+  # Zeitstempel der letzten Backup-/Cron-Läufe (keine Personendaten)
+  ops_status:

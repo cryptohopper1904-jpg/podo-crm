@@ -180,7 +180,7 @@ export async function portalInvoicePdf(link: PortalLink, invoiceId: string) {
   return pdf;
 }
 
-export type PortalCancelResult = { ok: true; message: string } | { ok: false; error: string; phone?: string | null };
+export type PortalCancelResult = { ok: true; message: string; appointmentId: string } | { ok: false; error: string; phone?: string | null };
 
 /** Absage durch die Person: ≥ 24 h vorher → Status „abgesagt“ + Nachricht im Posteingang; sonst Telefonnummer zeigen. */
 export async function cancelPortalAppointment(link: PortalLink, appointmentId: string): Promise<PortalCancelResult> {
@@ -206,7 +206,7 @@ export async function cancelPortalAppointment(link: PortalLink, appointmentId: s
       status: "new",
       threadKey: `portal:${link.patientId}`,
     });
-    return { ok: true as const, message: `Ihr Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde abgesagt.` };
+    return { ok: true as const, appointmentId: a.id, message: `Ihr Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde abgesagt.` };
   });
   if (res.ok) await audit({ organizationId: org, action: "portal.appointment_cancel", entity: "appointment", entityId: appointmentId });
   return res;

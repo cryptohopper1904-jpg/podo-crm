@@ -60,6 +60,21 @@ export interface FiscalPort {
   finishTransaction(input: FiscalFinishInput): Promise<FiscalSignature>;
   /** DSFinV-K-Export (Kassendaten für die Betriebsprüfung) – liefert eine Export-ID/Download-Referenz */
   exportDsfinvk(input: FiscalExportInput): Promise<{ exportId: string; status: "pending" | "ready"; downloadUrl?: string | null }>;
+  /** Kassenabschluss (Z-Bon) an den TSE-/DSFinV-K-Dienst melden – liefert eine Referenz für den Abschluss */
+  registerCashPointClosing?(input: FiscalClosingInput): Promise<{ closingRef: string; tssSerial?: string | null }>;
+}
+
+export interface FiscalClosingInput {
+  /** eigene ID des Abschlusses (UUID) */
+  closingId: string;
+  /** Z-Nummer (fortlaufend) */
+  number: number;
+  /** YYYY-MM-DD */
+  businessDate: string;
+  /** Summen je Zahlart (DSFinV-K-Typ) in Cent */
+  payments: { type: "Bar" | "Unbar"; name: string; amountCents: number }[];
+  /** Summen je Geschäftsvorfall und USt-Schlüssel in Cent */
+  businessCases: { gvTyp: string; ustKey: number; grossCents: number; netCents: number; vatCents: number }[];
 }
 
 export class FiscalNotConfiguredError extends Error {

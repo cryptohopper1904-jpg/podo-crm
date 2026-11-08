@@ -1,27 +1,16 @@
 import { CalendarDays, FileText, Gift } from "lucide-react";
-import { Logo } from "@/components/logo";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { Card, Empty } from "@/components/ui";
+import { Card, Empty, LinkButton } from "@/components/ui";
 import { requestMeta } from "@/lib/auth/session";
 import { dateDe, money, timeDe, weekdayLong } from "@/lib/format";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
 import { clientKey } from "@/lib/rate-limit";
 import { currentPortalLink, loadPortalView, portalFailLimiter, portalLimiter } from "@/server/portal-core";
 import { CancelAppointmentButton } from "./cancel-button";
+import { PortalShell } from "./shell";
 
 export const metadata = { title: "Kundenportal", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-6 px-4 py-6">
-      <header className="flex items-center justify-between">
-        <Logo />
-        <ThemeToggle />
-      </header>
-      {children}
-    </div>
-  );
-}
+const Shell = PortalShell;
 
 /**
  * Öffentliches Kundenportal. Zugang nur über die kurzlebige Sitzung (Cookie), die beim Öffnen des
@@ -58,11 +47,14 @@ export default async function PortalPage() {
       </div>
 
       <Card>
-        <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-semibold">
-          <CalendarDays size={20} aria-hidden /> Ihre nächsten Termine
-        </h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 font-display text-lg font-semibold">
+            <CalendarDays size={20} aria-hidden /> Ihre nächsten Termine
+          </h2>
+          <LinkButton href="/portal/buchen">Termin buchen</LinkButton>
+        </div>
         {view.appointments.length === 0 ? (
-          <p className="text-sm text-muted">Keine Termine geplant.{practice.phone ? ` Termin vereinbaren: ${practice.phone}` : ""}</p>
+          <p className="text-sm text-muted">Keine Termine geplant.{practice.phone ? ` Oder telefonisch: ${practice.phone}` : ""}</p>
         ) : (
           <ul className="flex flex-col divide-y divide-border">
             {view.appointments.map((a) => (
@@ -72,9 +64,12 @@ export default async function PortalPage() {
                   <p className="text-sm text-muted">{a.services.length ? a.services.join(", ") : "Termin"}</p>
                 </div>
                 {a.cancellable ? (
-                  <CancelAppointmentButton appointmentId={a.id} label={`${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr`} />
+                  <div className="flex flex-wrap items-start gap-2">
+                    <LinkButton href={`/portal/buchen?verschieben=${a.id}`} variant="secondary">Verschieben</LinkButton>
+                    <CancelAppointmentButton appointmentId={a.id} label={`${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr`} />
+                  </div>
                 ) : (
-                  <p className="max-w-56 text-sm text-muted">Absage nur noch telefonisch{practice.phone ? `: ${practice.phone}` : ""}</p>
+                  <p className="max-w-56 text-sm text-muted">Absage/Verschieben nur noch telefonisch{practice.phone ? `: ${practice.phone}` : ""}</p>
                 )}
               </li>
             ))}

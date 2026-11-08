@@ -56,3 +56,4 @@ echo
 echo "PodoCRM läuft: https://$TARGET"
 if grep -q "^SEED_DEMO=true" "$ENV"; then echo "Demo-Login: demo@podocrm.local / demo-passwort-123"; fi
 echo "Eigene Praxis anlegen: https://$TARGET/einrichtung  ·  Einrichtungs-Code: $(grep ^SETUP_TOKEN "$ENV" | cut -d= -f2)"
+echo "Update später: bash $APP_DIR/deploy/update.sh   ·  Backup-Test (quartalsweise): bash $APP_DIR/deploy/restore-test.sh"
