@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
@@ -102,13 +102,16 @@ export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
 
 // ───────────── Sammelrechnung Pflegeheim ─────────────
 
-export type CollectiveSuggestionLine = { serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number };
+export type CollectiveSuggestionLine = { treatmentRecordId: string; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number };
 
 function monthRange(month: string) {
   const [y, m] = month.split("-").map(Number);
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
   return { from: berlinToUtc(`${month}-01`, "00:00"), to: berlinToUtc(next, "00:00") };
 }
+
+/** date-Spalte (YYYY-MM-DD) oder Zeitpunkt → Kalendertag in Berlin */
+const isoDay = (d: string | Date) => (typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : berlinDateIso(new Date(d)));
 
 /** Kennung einer Vorschlagszeile: „Nachname, Vorname, TT.MM.JJJJ“ – dient auch der Doppelt-Erkennung. */
 export const collectiveLineKey = (p: { lastName: string; firstName: string | null }, day: Date) =>
@@ -119,10 +122,10 @@ export const collectiveLineKey = (p: { lastName: string; firstName: string | nul
  * (patients.care_home_id = Pflegeheim) im gewählten Monat eine Position – mit den Leistungen des
  * verknüpften Termins (Katalogpreis), sonst als Freitext ohne Preis.
  *
- * Einfache Heuristik „noch nicht abgerechnet“: übersprungen wird ein Eintrag, wenn
- *  - eine nicht stornierte Sammelrechnung an dieses Pflegeheim bereits eine Position mit derselben
- *    Kennung (Name + Datum) enthält, oder
- *  - für die Person am selben Tag bereits eine eigene, nicht stornierte Rechnung ausgestellt wurde.
+ * „Noch nicht abgerechnet“: übersprungen wird ein Eintrag, wenn
+ *  - eine nicht stornierte Rechnung bereits eine Position mit diesem Doku-Eintrag (treatment_record_id) hat, oder
+ *  - (Altbestand ohne Bezug) für die Person am selben Tag bereits eine eigene Rechnung ausgestellt wurde.
+ * createInvoice prüft die Doppelabrechnung zusätzlich verbindlich.
  * Es werden nur Datum/Termin der Doku gelesen, keine medizinischen Inhalte.
  */
 export async function collectiveSuggestion(auth: AuthContext, billingContactId: string, month: string) {
@@ -153,41 +156,37 @@ export async function collectiveSuggestion(auth: AuthContext, billingContactId: 
           .innerJoin(services, eq(services.id, appointmentServices.serviceId))
           .where(and(eq(appointmentServices.organizationId, org), inArray(appointmentServices.appointmentId, apptIds)))
       : [];
-    // bereits abgerechnet?
-    const prevCollective = await tx
-      .select({ description: invoiceLines.description })
-      .from(invoiceLines)
-      .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-      .where(
-        and(
-          eq(invoiceLines.organizationId, org),
-          eq(invoices.billingContactId, billingContactId),
-          eq(invoices.kind, "collective"),
-          ne(invoices.status, "cancelled"),
-          ne(invoices.status, "draft"),
-        ),
-      );
+    // bereits abgerechnet? → exakt über invoice_lines.treatment_record_id (nicht stornierte Rechnungen)
+    const recIds = recs.map((r) => r.id);
+    const billedRows = recIds.length
+      ? await tx
+          .select({ recordId: invoiceLines.treatmentRecordId })
+          .from(invoiceLines)
+          .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recIds), notInArray(invoices.status, ["cancelled", "draft"])))
+      : [];
+    const billed = new Set(billedRows.map((b) => b.recordId));
+    // Zusatz-Heuristik für Altbestand ohne Behandlungsbezug: eigene Rechnung der Person am Behandlungstag
     const own = await tx
       .select({ patientId: invoices.patientId, issuedAt: invoices.issuedAt })
       .from(invoices)
-      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), ne(invoices.status, "cancelled"), ne(invoices.kind, "credit_note"), ne(invoices.kind, "collective")));
-    const ownKeys = new Set(own.map((o) => `${o.patientId}|${o.issuedAt}`));
-    const billed = prevCollective.map((l) => l.description);
+      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), notInArray(invoices.status, ["cancelled", "draft"]), notInArray(invoices.kind, ["credit_note", "collective"])));
+    const ownKeys = new Set(own.filter((o) => o.issuedAt).map((o) => `${o.patientId}|${isoDay(o.issuedAt!)}`));
 
     const lines: CollectiveSuggestionLine[] = [];
     let skipped = 0;
     for (const r of recs) {
       const p = byId.get(r.patientId)!;
-      const key = collectiveLineKey(p, r.treatedAt);
-      if (billed.some((d) => d.includes(key)) || ownKeys.has(`${r.patientId}|${berlinDateIso(r.treatedAt)}`)) {
+      if (billed.has(r.id) || ownKeys.has(`${r.patientId}|${berlinDateIso(r.treatedAt)}`)) {
         skipped++;
         continue;
       }
-      const svc = r.appointmentId ? svcRows.filter((s) => s.appointmentId === r.appointmentId) : [];
+      const key = collectiveLineKey(p, r.treatedAt);
+      const svc = r.appointmentId ? svcRows.filter((x) => x.appointmentId === r.appointmentId) : [];
       if (svc.length) {
-        for (const s of svc) lines.push({ serviceId: s.serviceId, description: `${key}: ${s.name}`, quantity: Number(s.quantity) || 1, unitPriceCents: s.priceCents, vatRate: s.vatRate });
+        for (const x of svc) lines.push({ treatmentRecordId: r.id, serviceId: x.serviceId, description: `${key}: ${x.name}`, quantity: Number(x.quantity) || 1, unitPriceCents: x.priceCents, vatRate: x.vatRate });
       } else {
-        lines.push({ serviceId: null, description: `${key}: Behandlung`, quantity: 1, unitPriceCents: null, vatRate: 0 });
+        lines.push({ treatmentRecordId: r.id, serviceId: null, description: `${key}: Behandlung`, quantity: 1, unitPriceCents: null, vatRate: 0 });
       }
     }
     return { contact, lines, skipped, records: recs.length };

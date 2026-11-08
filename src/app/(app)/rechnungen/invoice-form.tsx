@@ -19,10 +19,10 @@ export type InvoicePreset = {
   kind: CreatableKind;
   billingContactId?: string | null;
   notes?: string | null;
-  lines: { serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
+  lines: { treatmentRecordId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
 
-type Line = { key: string; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
+type Line = { key: string; treatmentRecordId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
 
 let seq = 0;
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -70,6 +70,7 @@ export function InvoiceForm({
     preset?.lines.length
       ? preset.lines.map((l) =>
           newLine({
+            treatmentRecordId: l.treatmentRecordId ?? null,
             // inaktive/unbekannte Leistung → Freitext mit Katalogpreis
             serviceId: l.serviceId && svcById.has(l.serviceId) ? l.serviceId : "",
             description: l.description,
@@ -136,6 +137,7 @@ export function InvoiceForm({
   const linesJson = JSON.stringify(
     computed.map((l) => ({
       serviceId: l.serviceId || null,
+      treatmentRecordId: l.treatmentRecordId || null,
       description: l.description,
       quantity: num(l.quantity),
       factor: num(l.factor),
