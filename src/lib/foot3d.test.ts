@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FOOT_POINTS } from "./foot-points";
-import { REGION_ANCHORS, TOES, displayPos, parseFootPoints, pointFrom3d, regionFor3d, roundPos, serializeFootPoints, toeTip } from "./foot3d";
+import { REGION_ANCHORS, TOES, displayPos, pointFrom3d, regionFor3d, roundPos, serializeFootPoints, toeTip } from "./foot3d";
+import { parseFootPoints } from "./foot3d-schema";
 
 describe("3D-Fuß: Regionen", () => {
   it("jeder Anker liegt in seiner eigenen Region (2D ↔ 3D konsistent)", () => {

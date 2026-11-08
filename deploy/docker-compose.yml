@@ -78,6 +78,8 @@ services:
         while true; do
           sleep 900
           curl -fsS -m 120 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/reminders >/dev/null || echo "$$(date -Iseconds) Erinnerungs-Lauf fehlgeschlagen"
+          # KIM-Abruf (nur Praxen mit aktiver KIM-Verbindung; ohne CRON_SECRET antwortet die App mit 503)
+          curl -fsS -m 300 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/kim >/dev/null || echo "$$(date -Iseconds) KIM-Abruf fehlgeschlagen"
         done
     depends_on: [app]
 

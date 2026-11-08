@@ -34,6 +34,9 @@
   --warn-soft-text: #5e4a00;
   --danger: #c2412a;
   --ring: #0b7f73;
+  /* 3D-Fuß (src/components/foot3d) */
+  --foot-skin: #f4dccb;
+  --foot-nail: #fff7f1;
   color-scheme: light;
 }
 
@@ -61,6 +64,8 @@
   --warn-soft-text: #f7ebb5;
   --danger: #ff8a73;
   --ring: #5ee0cd;
+  --foot-skin: #d9b7a3;
+  --foot-nail: #f6e9e0;
   color-scheme: dark;
 }
 

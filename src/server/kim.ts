@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { integrationConnections, messages, organizations, patients } from "@/db/schema";
 import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
@@ -142,7 +142,7 @@ export async function runKimSyncAll(): Promise<{ organizations: number; imported
 export async function kimPatientSuggestions(organizationId: string, msg: { subject: string | null; body: string }): Promise<PatientSuggestion[]> {
   const hints = extractKimHints(msg.subject, msg.body);
   if (!hints.kvnrs.length && !hints.nameTokens.length) return [];
-  const conds = [];
+  const conds: SQL[] = [];
   if (hints.kvnrs.length) conds.push(sql`upper(left(coalesce(${patients.insuranceNumber}, ''), 10)) in (${sql.join(hints.kvnrs.map((k) => sql`${k}`), sql`, `)})`);
   if (hints.nameTokens.length) conds.push(sql`lower(${patients.lastName}) in (${sql.join(hints.nameTokens.map((k) => sql`${k}`), sql`, `)})`);
   const candidates = await withOrg(organizationId, (tx) =>

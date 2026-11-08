@@ -18,14 +18,18 @@ export async function GET() {
     return NextResponse.json({ error: "Ein Export wurde gerade erstellt. Bitte in 10 Minuten erneut versuchen." }, { status: 429, headers: { "Retry-After": "600" } });
   }
   const result = await buildPracticeExport({ organizationId: org, exportedBy: { name: auth.user.name, email: auth.user.email } });
-  await audit({
-    organizationId: org,
-    userId: auth.user.id,
-    action: "org.export",
-    entity: "organization",
-    entityId: org,
-    meta: { tables: Object.keys(result.counts).length, rows: Object.values(result.counts).reduce((a, b) => a + b, 0), mediaFiles: result.mediaFiles, mediaErrors: result.mediaErrors },
-  });
+  // Der Export wird gestreamt: Beginn sofort protokollieren, Abschluss (mit Zahlen) bzw. Abbruch danach
+  const base = { organizationId: org, userId: auth.user.id, entity: "organization", entityId: org } as const;
+  await audit({ ...base, action: "org.export", meta: { status: "started" } });
+  result.done.then(
+    (r) =>
+      audit({
+        ...base,
+        action: "org.export.completed",
+        meta: { tables: Object.keys(r.counts).length, rows: Object.values(r.counts).reduce((a, b) => a + b, 0), mediaFiles: r.mediaFiles, mediaErrors: r.mediaErrors },
+      }),
+    (e: unknown) => audit({ ...base, action: "org.export.failed", meta: { error: e instanceof Error ? e.message.slice(0, 200) : "unbekannt" } }),
+  ).catch(() => undefined);
   const slug = auth.organization.slug.replace(/[^a-z0-9-]/g, "");
   return new Response(result.stream, {
     headers: {

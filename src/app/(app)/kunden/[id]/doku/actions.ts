@@ -8,7 +8,7 @@ import { withOrg } from "@/db";
 import { braceEpisodes, media, recordAddenda, treatmentRecords, type FootPoint } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
-import { parseFootPoints } from "@/lib/foot3d";
+import { parseFootPoints } from "@/lib/foot3d-schema";
 import { chainHash } from "@/lib/records";
 import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/rules/brace";
 import { RecordInputError, checkTreatmentRefs, insertTreatmentRecord, lockPatientChain } from "@/server/records";
