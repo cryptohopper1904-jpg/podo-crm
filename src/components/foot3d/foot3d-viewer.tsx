@@ -48,7 +48,7 @@ export interface Foot3dViewerProps {
 type Orbit = { theta: number; phi: number; radius: number };
 
 const TARGET = new Vector3(0, 0.22, -0.02);
-/** Ansichten für den rechten Fuß (theta: 0 = von vorn, negativ = von medial); links gespiegelt */
+/** Ansichten für die ungespiegelte Geometrie (= linker Fuß; theta: 0 = von vorn, negativ = von medial); rechts gespiegelt */
 const PRESETS: Record<ViewPreset, Orbit> = {
   default: { theta: -0.75, phi: 0.95, radius: 3.4 },
   top: { theta: Math.PI, phi: 0.12, radius: 3.2 },
@@ -111,10 +111,10 @@ export default function Foot3dViewer({ side, points, readOnly = false, selected 
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(35, 1, 0.05, 50);
-    const hemi = new HemisphereLight(0xffffff, 0x8a9a98, 2.2);
+    const hemi = new HemisphereLight(0xffffff, 0xe4ecea, 2.1);
     const sun = new DirectionalLight(0xffffff, 1.4);
     sun.position.set(-1.5, 3, 2.5);
-    const fill = new DirectionalLight(0xffffff, 0.5);
+    const fill = new DirectionalLight(0xffffff, 0.9);
     fill.position.set(2, -1.5, -2);
     scene.add(hemi, sun, fill);
 
@@ -128,7 +128,6 @@ export default function Foot3dViewer({ side, points, readOnly = false, selected 
       nail.color.copy(cssColor("--foot-nail", "#fff6f0"));
       markerMat.color.copy(cssColor("--primary", "#0b7f73"));
       markerSelMat.color.copy(cssColor("--accent", "#f2715a"));
-      hemi.groundColor.copy(cssColor("--border-strong", "#a9c2bf"));
     };
     applyTheme();
 
@@ -138,7 +137,7 @@ export default function Foot3dViewer({ side, points, readOnly = false, selected 
     let markers: { mesh: Mesh; index: number }[] = [];
 
     let currentSide: Side = "right";
-    const presetFor = (p: ViewPreset): Orbit => ({ ...PRESETS[p], theta: currentSide === "left" ? -PRESETS[p].theta : PRESETS[p].theta });
+    const presetFor = (p: ViewPreset): Orbit => ({ ...PRESETS[p], theta: currentSide === "right" ? -PRESETS[p].theta : PRESETS[p].theta });
     let orbit: Orbit = presetFor("default");
     let frame = 0;
     const render = () => {
@@ -177,10 +176,12 @@ export default function Foot3dViewer({ side, points, readOnly = false, selected 
       tween = requestAnimationFrame(step);
     };
 
+    // Geometrie = linker Fuß → rechts spiegeln (three.js dreht dabei die Flächenorientierung selbst um)
+    foot.group.scale.x = -1;
     const setSide = (s: Side) => {
       if (s === currentSide) return;
       currentSide = s;
-      foot.group.scale.x = s === "left" ? -1 : 1;
+      foot.group.scale.x = s === "right" ? -1 : 1;
       orbit = { ...orbit, theta: -orbit.theta }; // gleiche anatomische Ansicht behalten
       invalidate();
     };

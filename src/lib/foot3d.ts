@@ -5,8 +5,9 @@
  *   x: medial (Großzehenseite) negativ → lateral (Kleinzehenseite) positiv
  *   y: Fußsohle 0 → dorsal/oben positiv
  *   z: Ferse -1 → Zehenspitzen +1
- * Der linke Fuß wird nur gespiegelt DARGESTELLT; gespeicherte pos3d sind seitenunabhängig,
- * d. h. dieselbe anatomische Stelle hat links und rechts dieselben Koordinaten.
+ * (In einem rechtshändigen System ist das die Geometrie eines LINKEN Fußes; der rechte Fuß wird
+ * gespiegelt DARGESTELLT.) Gespeicherte pos3d sind seitenunabhängig, d. h. dieselbe anatomische
+ * Stelle hat links und rechts dieselben Koordinaten.
  */
 import type { FootPoint } from "@/db/schema";
 import { footPointLabel } from "./foot-points";
@@ -39,7 +40,7 @@ export function toeTip(t: ToeSpec): Vec3 {
   return [t.x + Math.sin(t.splay) * t.length, t.y, t.z + Math.cos(t.splay) * t.length];
 }
 
-/** Umriss der Fußsohle (Aufsicht, rechter Fuß, x/z), im Uhrzeigersinn ab Fersenmitte. */
+/** Umriss der Fußsohle (Aufsicht, x/z im Modellsystem), ab Fersenmitte. */
 export const SOLE_OUTLINE: readonly [number, number][] = [
   [0, -1],
   [-0.17, -0.94],

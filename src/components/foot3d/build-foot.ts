@@ -3,7 +3,7 @@
  *  - Fußkörper als „Loft“ entlang der Fußlänge: Querschnitte (Superellipse, flache Sohle,
  *    runder Rücken) mit Breite aus dem Sohlenumriss und Höhe aus dem Rückenprofil,
  *  - Zehen als abgerundete Kapseln, Nägel als flache Ellipsoide, Knöchelansatz als Zylinder.
- * Koordinaten wie in src/lib/foot3d.ts (rechter Fuß; links wird die Gruppe gespiegelt).
+ * Koordinaten wie in src/lib/foot3d.ts (Geometrie = linker Fuß; für rechts wird die Gruppe gespiegelt).
  */
 import { BufferGeometry, CapsuleGeometry, CylinderGeometry, Float32BufferAttribute, Group, Mesh, SphereGeometry, Vector2, SplineCurve, type Material } from "three";
 import { ANKLE, SOLE_OUTLINE, TOES, dorsumHeight, toeTip } from "@/lib/foot3d";
@@ -74,6 +74,24 @@ function bodyGeometry(): BufferGeometry {
       const c = (r + 1) * SEG + s;
       const d = (r + 1) * SEG + ((s + 1) % SEG);
       idx.push(a, b, c, b, d, c); // gegen den Uhrzeigersinn von außen → Normalen zeigen nach außen
+    }
+  }
+  // Enden (Ferse, Vorfußkante) mit einem Fächer schließen – sonst bleibt ein schmaler Schlitz offen
+  for (const [ring, flip] of [[0, true], [RINGS, false]] as const) {
+    const start = ring * SEG;
+    let cx = 0, cy = 0, cz = 0;
+    for (let s = 0; s < SEG; s++) {
+      cx += pos[(start + s) * 3];
+      cy += pos[(start + s) * 3 + 1];
+      cz += pos[(start + s) * 3 + 2];
+    }
+    const center = pos.length / 3;
+    pos.push(cx / SEG, cy / SEG, cz / SEG + (flip ? -0.004 : 0.004));
+    for (let s = 0; s < SEG; s++) {
+      const a = start + s;
+      const b = start + ((s + 1) % SEG);
+      if (flip) idx.push(center, b, a);
+      else idx.push(center, a, b);
     }
   }
   const g = new BufferGeometry();
