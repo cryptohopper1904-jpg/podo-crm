@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LogOut } from "lucide-react";
 import { and, count, eq } from "drizzle-orm";
+import { AccessBanner } from "@/components/access-banner";
 import { BottomNav, SideNav, type NavKey } from "@/components/app-nav";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -23,6 +24,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   allowed.push("news");
   if (auth.can("finance.read")) allowed.push("auswertung");
   if (auth.can("settings.manage")) allowed.push("einstellungen");
+  if (auth.user.isPlatformAdmin && auth.user.totpEnabled && !auth.support) allowed.push("plattform");
 
   let unread = 0;
   if (auth.can("messages.read")) {
@@ -75,6 +77,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             </form>
           </div>
         </header>
+        <AccessBanner auth={auth} />
         <main className="flex-1 px-4 pb-28 pt-6 lg:px-8 lg:pb-10">{children}</main>
       </div>
       <BottomNav allowed={allowed} />

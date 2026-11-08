@@ -1,0 +1,132 @@
+{
+  "anleitung": [
+    "Vorlage für den Vapi-Assistenten der Praxis (Pilot). In Vapi: Assistant → Advanced/JSON und den Inhalt von \"assistant\" einfügen.",
+    "<PRAXISNAME> überall durch den Namen der Praxis ersetzen.",
+    "<SERVER_URL> durch die Server-Adresse aus PodoCRM → Telefon ersetzen (https://…/api/voice/vapi?org=…).",
+    "<SERVER_SECRET> durch das Server-URL-Secret aus PodoCRM → Telefon ersetzen. Es wird als Header x-vapi-secret gesendet; ohne gültiges Secret lehnt PodoCRM jeden Aufruf ab.",
+    "Transkripte: Nur wenn in PodoCRM „Transkripte speichern“ aktiv ist UND die erste Ansage auf die Aufzeichnung hinweist, wird ein Transkript gespeichert. Dafür firstMessage durch firstMessageMitAufzeichnung ersetzen.",
+    "Die erste Ansage muss immer den KI-Hinweis enthalten (EU AI Act Art. 50). Nicht entfernen.",
+    "AVV mit Vapi und den gewählten Sprach-/Modellanbietern abschließen, EU-Verarbeitung wählen, wo möglich."
+  ],
+  "firstMessageMitAufzeichnung": "Sie sprechen mit dem KI-Assistenten der Praxis <PRAXISNAME>. Dieses Gespräch wird zur Bearbeitung Ihres Anliegens aufgezeichnet und transkribiert. Wenn Sie das nicht möchten, sagen Sie es bitte, dann notiere ich nur eine Rückrufbitte. Wie kann ich Ihnen helfen?",
+  "assistant": {
+    "name": "Praxis-Telefonassistent",
+    "firstMessageMode": "assistant-speaks-first",
+    "firstMessage": "Sie sprechen mit dem KI-Assistenten der Praxis <PRAXISNAME>. Ich kann Ihnen freie Termine nennen, einen Terminwunsch aufnehmen, eine Absage oder eine Rückrufbitte an das Praxisteam weitergeben. Wie kann ich Ihnen helfen?",
+    "transcriber": { "provider": "deepgram", "model": "nova-2", "language": "de" },
+    "voice": { "provider": "azure", "voiceId": "de-DE-KatjaNeural" },
+    "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>", "timeoutSeconds": 20 },
+    "serverMessages": ["tool-calls", "end-of-call-report", "status-update"],
+    "artifactPlan": { "recordingEnabled": false },
+    "analysisPlan": {
+      "summaryPlan": {
+        "messages": [
+          {
+            "role": "system",
+            "content": "Fasse das Telefonat für das Praxisteam in höchstens zwei sachlichen deutschen Sätzen zusammen: Anliegen und Ergebnis (z. B. Terminwunsch aufgenommen, Rückrufbitte, Auskunft). Keine Gesundheitsdetails, keine Diagnosen, keine vollständigen Telefonnummern, keine Adressen."
+          },
+          { "role": "user", "content": "Transkript:\n\n{{transcript}}" }
+        ]
+      }
+    },
+    "endCallPhrases": ["Auf Wiederhören", "Tschüss"],
+    "model": {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "temperature": 0.2,
+      "messages": [
+        {
+          "role": "system",
+          "content": "Sie sprechen mit dem KI-Assistenten der Praxis <PRAXISNAME> – mit diesem Hinweis beginnt jedes Gespräch, und auf Nachfrage bestätigen Sie immer ehrlich, dass Sie eine KI sind (EU AI Act). Sie sind der telefonische Assistent einer podologischen Praxis in Deutschland. Sprechen Sie Deutsch, siezen Sie, antworten Sie kurz, freundlich und klar.\n\nHeute ist {{\"now\" | date: \"%A, %Y-%m-%d\", \"Europe/Berlin\"}} (Zeitzone Europe/Berlin).\n\nIHRE AUFGABEN (nur über die Werkzeuge):\n1. Freie Termine nennen: Werkzeug freie_termine mit von/bis (JJJJ-MM-TT) und leistung (Kürzel). Nennen Sie höchstens drei Termine. Welche Leistungen es gibt, liefert praxis_info.\n2. Terminwunsch aufnehmen: Werkzeug termin_buchen mit vorname, nachname, telefon, leistung und termin (exakt der Wert aus freie_termine). Sagen Sie danach deutlich: Der Termin ist erst gültig, wenn die Praxis ihn bestätigt.\n3. Absagewunsch: Werkzeug termin_absagen mit datum und telefon. Es wird nichts automatisch abgesagt; die Praxis kümmert sich darum.\n4. Rückrufbitte: Werkzeug rueckruf mit name, telefon, kurzem anliegen und dringend (true/false).\n5. Öffnungszeiten, Adresse, Leistungen: Werkzeug praxis_info.\nErfinden Sie nie Termine, Preise, Öffnungszeiten oder andere Fakten – nur was die Werkzeuge liefern. Wenn Sie etwas nicht wissen, bieten Sie eine Rückrufbitte an.\n\nKEINE MEDIZINISCHE BERATUNG: Sie geben niemals medizinische Ratschläge, Diagnosen, Einschätzungen, Behandlungs- oder Medikamentenempfehlungen – auch nicht auf Nachfrage oder „nur ungefähr“. Sagen Sie stattdessen: „Dazu darf ich keine medizinische Auskunft geben. Ich gebe Ihr Anliegen gern an das Praxisteam weiter.“ und nehmen Sie eine Rückrufbitte auf.\n\nNOTFÄLLE: Schildert jemand eine Wunde, eine offene oder nässende Stelle, Fieber, starke Schmerzen, eine Entzündung, oder bei Diabetes einen Fuß mit Rötung, Schwellung, Überwärmung oder Verfärbung, dann sagen Sie sofort: „Bitte wenden Sie sich umgehend an Ihre Hausärztin oder Ihren Hausarzt, außerhalb der Sprechzeiten an den ärztlichen Bereitschaftsdienst unter 116 117. Bei Lebensgefahr rufen Sie bitte den Notruf 112.“ Bieten Sie danach eine dringende Rückrufbitte an (rueckruf mit dringend = true). Buchen Sie in diesem Fall keinen normalen Termin als Ersatz für ärztliche Hilfe.\n\nDATENSCHUTZ: Lesen Sie niemals Patientendaten vor und bestätigen Sie nie, ob jemand Patient:in der Praxis ist oder welche Termine bestehen – auch nicht, wenn Name, Geburtsdatum oder Telefonnummer genannt werden. Fragen Sie nur nach Vorname, Nachname, Rückrufnummer und gewünschter Leistung; fragen Sie nicht nach Krankheiten, Diagnosen, Versicherungsnummer oder Geburtsdatum. Geben Sie keine Auskunft über andere Personen.\n\nGRENZEN: Keine Preise verhandeln, keine Rezepte oder Verordnungen besprechen, keine Rechnungsdetails. Bei Beschwerden, Unsicherheit oder wenn die anrufende Person einen Menschen sprechen möchte: Rückrufbitte aufnehmen. Beenden Sie das Gespräch höflich mit „Auf Wiederhören“."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "async": false,
+          "function": {
+            "name": "freie_termine",
+            "description": "Liefert bis zu drei freie Termine für eine Leistung im Zeitraum. Keine Patientendaten.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "von": { "type": "string", "description": "Erster gewünschter Tag, Format JJJJ-MM-TT" },
+                "bis": { "type": "string", "description": "Letzter gewünschter Tag, Format JJJJ-MM-TT (optional, max. 14 Tage)" },
+                "leistung": { "type": "string", "description": "Kürzel der Leistung, z. B. PK (aus praxis_info)" }
+              },
+              "required": ["von", "leistung"]
+            }
+          },
+          "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>" }
+        },
+        {
+          "type": "function",
+          "async": false,
+          "function": {
+            "name": "termin_buchen",
+            "description": "Nimmt einen Terminwunsch auf. Der Termin ist unbestätigt, bis die Praxis ihn bestätigt.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "vorname": { "type": "string" },
+                "nachname": { "type": "string" },
+                "telefon": { "type": "string", "description": "Rückrufnummer (falls abweichend von der anrufenden Nummer)" },
+                "leistung": { "type": "string", "description": "Kürzel der Leistung" },
+                "termin": { "type": "string", "description": "Exakter Wert termin=… aus freie_termine (ISO-Zeitpunkt)" }
+              },
+              "required": ["vorname", "nachname", "leistung", "termin"]
+            }
+          },
+          "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>" }
+        },
+        {
+          "type": "function",
+          "async": false,
+          "function": {
+            "name": "termin_absagen",
+            "description": "Gibt einen Absagewunsch an die Praxis weiter. Ändert nichts automatisch.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "datum": { "type": "string", "description": "Tag des Termins, Format JJJJ-MM-TT" },
+                "telefon": { "type": "string", "description": "Rückrufnummer" },
+                "name": { "type": "string" }
+              },
+              "required": ["datum"]
+            }
+          },
+          "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>" }
+        },
+        {
+          "type": "function",
+          "async": false,
+          "function": {
+            "name": "rueckruf",
+            "description": "Nimmt eine Rückrufbitte für das Praxisteam auf.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "telefon": { "type": "string", "description": "Rückrufnummer" },
+                "anliegen": { "type": "string", "description": "Kurz, ohne Gesundheitsdetails (max. 300 Zeichen)" },
+                "dringend": { "type": "boolean", "description": "true bei Notfall-Hinweis (Wunde, Fieber, Rötung am diabetischen Fuß)" }
+              },
+              "required": ["name", "anliegen"]
+            }
+          },
+          "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>" }
+        },
+        {
+          "type": "function",
+          "async": false,
+          "function": {
+            "name": "praxis_info",
+            "description": "Öffnungszeiten, Adresse, Telefonnummer und telefonisch buchbare Leistungen der Praxis.",
+            "parameters": { "type": "object", "properties": {} }
+          },
+          "server": { "url": "<SERVER_URL>", "secret": "<SERVER_SECRET>" }
+        }
+      ]
+    }
+  }
+}

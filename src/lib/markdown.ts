@@ -18,7 +18,8 @@ export type Inline =
   | { type: "em"; children: Inline[] }
   | { type: "code"; value: string }
   | { type: "link"; href: string; children: Inline[] }
-  | { type: "placeholder"; value: string };
+  | { type: "placeholder"; value: string }
+  | { type: "br" };
 
 export type Block =
   | { type: "heading"; level: 1 | 2 | 3 | 4; id: string; children: Inline[] }
@@ -51,7 +52,8 @@ export function slugify(text: string): string {
     .slice(0, 80);
 }
 
-const PLACEHOLDER = /^\[([A-ZÄÖÜ][A-ZÄÖÜ0-9 _\-/.,]*)\](?!\()/;
+/** Platzhalter: beginnt mit mindestens drei Großbuchstaben, z. B. [FIRMENNAME] oder [ZAHLUNGSDIENSTLEISTER, z. B. STRIPE] */
+const PLACEHOLDER = /^\[([A-ZÄÖÜ][A-ZÄÖÜ0-9_\-/]{2,}[^\]\n]*)\](?!\()/;
 
 /** Inline-Elemente parsen (rekursiv für fett/kursiv/Linktext). */
 export function parseInline(src: string): Inline[] {
@@ -68,6 +70,12 @@ export function parseInline(src: string): Inline[] {
     if (ch === "\\" && i + 1 < src.length && /[\\`*_[\]()#>|-]/.test(src[i + 1])) {
       buf += src[i + 1];
       i += 2;
+      continue;
+    }
+    if (ch === "\n") {
+      flush();
+      out.push({ type: "br" });
+      i++;
       continue;
     }
     if (ch === "`") {
@@ -210,7 +218,8 @@ export function parseMarkdown(src: string): Block[] {
       para.push(lines[i].trim());
       i++;
     }
-    blocks.push({ type: "paragraph", children: parseInline(para.join(" ")) });
+    // Zeilenumbrüche innerhalb eines Absatzes bleiben erhalten (Anschriften im Impressum)
+    blocks.push({ type: "paragraph", children: parseInline(para.join("\n")) });
   }
   return blocks;
 }
@@ -218,6 +227,6 @@ export function parseMarkdown(src: string): Block[] {
 /** Reiner Text eines Inline-Baums (z. B. für Überschriften im Inhaltsverzeichnis). */
 export function inlineText(nodes: Inline[]): string {
   return nodes
-    .map((n) => (n.type === "text" || n.type === "code" || n.type === "placeholder" ? n.value : inlineText(n.children)))
+    .map((n) => (n.type === "br" ? " " : n.type === "text" || n.type === "code" || n.type === "placeholder" ? n.value : inlineText(n.children)))
     .join("");
 }

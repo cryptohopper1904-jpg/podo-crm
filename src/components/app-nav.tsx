@@ -7,6 +7,7 @@ import {
   Building2,
   ClipboardList,
   ShieldCheck,
+  ShieldAlert,
   UsersRound,
   CalendarDays,
   FileText,
@@ -37,7 +38,8 @@ export type NavKey =
   | "verordnungen"
   | "pflegeheime"
   | "hygiene"
-  | "team";
+  | "team"
+  | "plattform";
 
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
   { key: "heute", href: "/heute", label: "Heute", icon: Home, mobile: true },
@@ -55,6 +57,7 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "team", href: "/team", label: "Team-Planung", icon: UsersRound },
   { key: "auswertung", href: "/auswertung", label: "Auswertung", icon: BarChart3 },
   { key: "einstellungen", href: "/einstellungen", label: "Einstellungen", icon: Settings },
+  { key: "plattform", href: "/plattform", label: "Plattform", icon: ShieldAlert },
 ];
 
 export function SideNav({ allowed, badges }: { allowed: NavKey[]; badges?: Partial<Record<NavKey, number>> }) {

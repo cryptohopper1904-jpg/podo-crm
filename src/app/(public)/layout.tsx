@@ -1,0 +1,104 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Menu } from "lucide-react";
+import { Logo } from "@/components/logo";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { LinkButton } from "@/components/ui";
+
+/**
+ * Öffentliche Website (ohne Anmeldung). Indexierung erst einschalten, wenn Impressum/AGB/AVV
+ * ausgefüllt und anwaltlich geprüft sind: PUBLIC_SITE_INDEX=true.
+ */
+export const metadata: Metadata = {
+  title: { default: "PodoCRM – Praxissoftware für Podologie", template: "%s · PodoCRM" },
+  description:
+    "Praxissoftware für Podologie: Kundenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
+  robots: process.env.PUBLIC_SITE_INDEX === "true" ? { index: true, follow: true } : { index: false, follow: false },
+};
+
+const NAV = [
+  ["/funktionen", "Funktionen"],
+  ["/preise", "Preise"],
+  ["/sicherheit", "Sicherheit"],
+] as const;
+
+const LEGAL = [
+  ["/impressum", "Impressum"],
+  ["/datenschutz", "Datenschutz"],
+  ["/agb", "AGB"],
+  ["/avv", "AVV"],
+  ["/unterauftragnehmer", "Unterauftragnehmer"],
+] as const;
+
+export default function PublicLayout({ children }: LayoutProps<"/">) {
+  return (
+    <div className="flex min-h-screen flex-col">
+      <a href="#inhalt" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:font-semibold">
+        Zum Inhalt springen
+      </a>
+      <header className="sticky top-0 z-40 border-b border-border bg-bg/90 backdrop-blur">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4 sm:px-6">
+          <Link href="/" aria-label="PodoCRM – Startseite" className="shrink-0 rounded-lg">
+            <Logo />
+          </Link>
+          <nav aria-label="Hauptnavigation" className="ml-6 hidden items-center gap-1 md:flex">
+            {NAV.map(([href, label]) => (
+              <Link key={href} href={href} className="rounded-lg px-3 py-2 text-[15px] font-medium text-muted hover:bg-surface-2 hover:text-text">
+                {label}
+              </Link>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
+            <LinkButton href="/login" variant="ghost" className="hidden sm:inline-flex">Anmelden</LinkButton>
+            <LinkButton href="/einrichtung" variant="accent" className="hidden sm:inline-flex">Kostenlos testen</LinkButton>
+            {/* Mobiles Menü ohne JavaScript (details/summary ist per Tastatur bedienbar) */}
+            <details className="group relative md:hidden">
+              <summary className="inline-flex size-11 cursor-pointer list-none items-center justify-center rounded-xl border border-border bg-surface [&::-webkit-details-marker]:hidden" aria-label="Menü">
+                <Menu size={20} aria-hidden />
+              </summary>
+              <nav aria-label="Mobile Navigation" className="absolute right-0 top-13 flex w-60 flex-col gap-1 rounded-[var(--radius-card)] border border-border bg-surface p-2 shadow-lg">
+                {NAV.map(([href, label]) => (
+                  <Link key={href} href={href} className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">{label}</Link>
+                ))}
+                <hr className="my-1 border-border" />
+                <Link href="/login" className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">Anmelden</Link>
+                <LinkButton href="/einrichtung" variant="accent">Kostenlos testen</LinkButton>
+              </nav>
+            </details>
+          </div>
+        </div>
+      </header>
+
+      <main id="inhalt" className="flex-1">{children}</main>
+
+      <footer className="border-t border-border bg-surface">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-[2fr_1fr_1fr] sm:px-6">
+          <div>
+            <Logo />
+            <p className="mt-3 max-w-sm text-sm text-muted">
+              Praxissoftware für Podologie. Entwickelt in Deutschland, betrieben auf Servern in Deutschland.
+            </p>
+          </div>
+          <nav aria-label="Produkt" className="flex flex-col gap-2 text-sm">
+            <p className="font-semibold">Produkt</p>
+            {NAV.map(([href, label]) => (
+              <Link key={href} href={href} className="text-muted hover:text-text">{label}</Link>
+            ))}
+            <Link href="/einrichtung" className="text-muted hover:text-text">Kostenlos testen</Link>
+            <Link href="/login" className="text-muted hover:text-text">Anmelden</Link>
+          </nav>
+          <nav aria-label="Rechtliches" className="flex flex-col gap-2 text-sm">
+            <p className="font-semibold">Rechtliches</p>
+            {LEGAL.map(([href, label]) => (
+              <Link key={href} href={href} className="text-muted hover:text-text">{label}</Link>
+            ))}
+          </nav>
+        </div>
+        <p className="mx-auto max-w-6xl px-4 pb-8 text-xs text-muted sm:px-6">
+          Alle Preise zzgl. USt., Preise vorläufig. Rechtstexte sind Entwürfe und werden vor dem Start anwaltlich geprüft.
+        </p>
+      </footer>
+    </div>
+  );
+}

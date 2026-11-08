@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Field, Input, Select, Table } from "@/components/ui";
@@ -5,12 +6,17 @@ import { db } from "@/db";
 import { memberships, users } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { ROLE_LABELS, ROLES, permissionsFor } from "@/lib/auth/permissions";
+import { seatLimit } from "@/lib/plans";
+import { usedSeats } from "@/server/billing";
 import { inviteMemberAction, updateMemberAction } from "../actions";
 
 export const metadata = { title: "Team" };
 
-export default async function TeamSettings() {
+export default async function TeamSettings({ searchParams }: PageProps<"/einstellungen/team">) {
   const auth = await requireAuth("users.manage");
+  const { plaetze } = await searchParams;
+  const used = await usedSeats(auth.organization.id);
+  const limit = seatLimit(auth.billing);
   const team = await db
     .select({ m: memberships, name: users.name, email: users.email, totp: users.totpEnabled, last: users.lastLoginAt })
     .from(memberships)
@@ -18,6 +24,13 @@ export default async function TeamSettings() {
     .where(eq(memberships.organizationId, auth.organization.id));
   return (
     <div className="flex flex-col gap-6">
+      <div className={`flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-sm ${plaetze === "voll" || used >= limit ? "bg-warn-soft text-warn-soft-text" : "bg-surface-2"}`}>
+        <span>
+          {plaetze === "voll" ? "Änderung nicht gespeichert: Alle Plätze sind belegt. " : null}
+          Plätze belegt: <strong className="tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</strong> (Steuerberatung zählt nicht)
+        </span>
+        {auth.role === "owner" && used >= limit ? <Link href="/einstellungen/abo" className="font-semibold text-primary">Weitere Plätze buchen / Tarif wechseln →</Link> : null}
+      </div>
       <Table>
         <thead><tr><th>Name</th><th>Rolle</th><th>2FA</th><th>Status</th><th></th></tr></thead>
         <tbody>

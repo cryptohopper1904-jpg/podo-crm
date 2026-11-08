@@ -4,12 +4,20 @@ import { NextResponse, type NextRequest } from "next/server";
  * Optimistische Prüfung: ohne Session-Cookie direkt zum Login.
  * Die echte Prüfung (Session gültig, Rolle, Mandant) passiert serverseitig in requireAuth().
  */
-const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff"];
+const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook"];
+
+/** Methode/Pfad für requireAuth (Nur-Lesen-/Support-Modus, Audit) – überschreibt vom Client gesendete Werte. */
+function next(request: NextRequest) {
+  const h = new Headers(request.headers);
+  h.set("x-podo-method", request.method);
+  h.set("x-podo-path", request.nextUrl.pathname);
+  return NextResponse.next({ request: { headers: h } });
+}
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/" || PUBLIC.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    return NextResponse.next();
+    return next(request);
   }
   if (!request.cookies.get("podo_session")) {
     const url = request.nextUrl.clone();
@@ -17,7 +25,7 @@ export function proxy(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
-  return NextResponse.next();
+  return next(request);
 }
 
 export const config = {

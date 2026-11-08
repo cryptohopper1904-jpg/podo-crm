@@ -10,6 +10,8 @@ const TABS = [
   ["import", "Import"],
   ["sicherheit", "Sicherheit"],
   ["protokoll", "Zugriffsprotokoll"],
+  ["abo", "Abo & Tarif"],
+  ["support", "Support-Zugriff"],
 ] as const;
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {

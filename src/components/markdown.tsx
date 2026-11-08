@@ -9,6 +9,8 @@ function renderInline(nodes: Inline[], keyPrefix = ""): ReactNode[] {
     switch (n.type) {
       case "text":
         return n.value;
+      case "br":
+        return <br key={key} />;
       case "strong":
         return <strong key={key} className="font-semibold">{renderInline(n.children, key + "-")}</strong>;
       case "em":
