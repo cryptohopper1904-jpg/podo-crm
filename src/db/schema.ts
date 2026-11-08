@@ -398,10 +398,79 @@ export const prescriptions = pgTable("prescriptions", {
   copaymentExempt: boolean("copayment_exempt").notNull().default(false),
   /** spätester Behandlungsbeginn (Regelwerk, versioniert in src/lib/rules) */
   startBy: date("start_by"),
+  /** open | active | completed | billing_ready | billed | expired | cancelled */
   status: text("status").notNull().default("open"),
+  doctorBsnr: text("doctor_bsnr"),
+  /** Behandlungseinheiten je Position, z. B. [{ position: "78100", label: "Hornhautabtragung", units: 6 }] */
+  positions: jsonb("positions").$type<{ position?: string; label: string; units: number }[]>().notNull().default([]),
+  therapyReportRequested: boolean("therapy_report_requested").notNull().default(false),
+  /** Zuzahlung erhalten (10 € + 10 %) */
+  copaymentCents: integer("copayment_cents"),
+  copaymentPaidAt: timestamp("copayment_paid_at", { withTimezone: true }),
+  interruptionNote: text("interruption_note"),
+  scanMediaId: uuid("scan_media_id"),
+  rulesVersion: text("rules_version"),
   billedAt: timestamp("billed_at", { withTimezone: true }),
+  billingBatchId: uuid("billing_batch_id"),
+  createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
 });
+
+/** Abrechnungslauf für GKV-Verordnungen (Übergabe an ein Abrechnungszentrum, § 302 SGB V) */
+export const billingBatches = pgTable("billing_batches", {
+  id: id(),
+  organizationId: orgId(),
+  createdAt: createdAt(),
+  createdBy: uuid("created_by").references(() => users.id),
+  /** z. B. opta-data, azh, rzh, manual */
+  partner: text("partner").notNull().default("manual"),
+  status: text("status").notNull().default("draft"),
+  prescriptionCount: integer("prescription_count").notNull().default(0),
+  totalCents: integer("total_cents").notNull().default(0),
+  exportedAt: timestamp("exported_at", { withTimezone: true }),
+  note: text("note"),
+});
+
+/** Einmal-Links für die Online-Anamnese / das Kundenportal (nur Hash des Tokens gespeichert) */
+export const patientLinks = pgTable(
+  "patient_links",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    /** anamnesis | portal */
+    purpose: text("purpose").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("patient_links_token").on(t.tokenHash)],
+);
+
+/** Versandprotokoll für Erinnerungen und Rückholungen (verhindert Doppelversand) */
+export const reminderLog = pgTable(
+  "reminder_log",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id").references(() => patients.id, { onDelete: "cascade" }),
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "cascade" }),
+    /** reminder_24h | recall | brace_check | birthday */
+    kind: text("kind").notNull(),
+    channel: channelEnum("channel").notNull(),
+    /** sent | skipped | failed */
+    status: text("status").notNull(),
+    detail: text("detail"),
+    dedupeKey: text("dedupe_key").notNull(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("reminder_log_dedupe").on(t.organizationId, t.dedupeKey)],
+);
 
 // ───────────────────────── Dokumentation (append-only) ─────────────────────────
 export const sterileBatches = pgTable(
@@ -416,9 +485,90 @@ export const sterileBatches = pgTable(
     releasedBy: uuid("released_by").references(() => users.id),
     releasedAt: timestamp("released_at", { withTimezone: true }),
     expiresAt: date("expires_at"),
+    deviceId: uuid("device_id"),
+    /** pending | released | rejected */
+    result: text("result").notNull().default("pending"),
+    indicatorOk: boolean("indicator_ok"),
+    note: text("note"),
   },
   (t) => [uniqueIndex("sterile_batches_org_code").on(t.organizationId, t.code)],
 );
+
+/** Medizinprodukte/Geräte (MPBetreibV): Sterilisator, Thermodesinfektor, Fräse, Ultraschallbad … */
+export const devices = pgTable("devices", {
+  id: id(),
+  organizationId: orgId(),
+  name: text("name").notNull(),
+  /** sterilizer | thermo_disinfector | drill | ultrasonic | sealer | other */
+  kind: text("kind").notNull().default("other"),
+  manufacturer: text("manufacturer"),
+  serialNumber: text("serial_number"),
+  location: text("location"),
+  /** Fristen: Wartung, Validierung (Aufbereitung), elektrische Prüfung (DGUV V3) */
+  nextMaintenanceAt: date("next_maintenance_at"),
+  nextValidationAt: date("next_validation_at"),
+  nextElectricalCheckAt: date("next_electrical_check_at"),
+  active: boolean("active").notNull().default(true),
+  notes: text("notes"),
+  createdAt: createdAt(),
+});
+
+/** Gerätebuch (append-only): Wartung, Validierung, Prüfung, Störung, Einweisung */
+export const deviceEvents = pgTable("device_events", {
+  id: id(),
+  organizationId: orgId(),
+  deviceId: uuid("device_id")
+    .notNull()
+    .references(() => devices.id, { onDelete: "restrict" }),
+  kind: text("kind").notNull(),
+  occurredAt: date("occurred_at").notNull(),
+  performedBy: text("performed_by"),
+  note: text("note"),
+  mediaId: uuid("media_id"),
+  authorId: uuid("author_id").references(() => users.id),
+  createdAt: createdAt(),
+});
+
+/** Verbrauchsmaterial mit Mindestbestand */
+export const materials = pgTable("materials", {
+  id: id(),
+  organizationId: orgId(),
+  name: text("name").notNull(),
+  unit: text("unit").notNull().default("Stück"),
+  stock: integer("stock").notNull().default(0),
+  minStock: integer("min_stock").notNull().default(0),
+  supplier: text("supplier"),
+  orderUrl: text("order_url"),
+  active: boolean("active").notNull().default(true),
+  createdAt: createdAt(),
+});
+
+/** Arbeitszeiten je Behandler:in und Wochentag (1 = Montag … 7 = Sonntag) */
+export const workingHours = pgTable("working_hours", {
+  id: id(),
+  organizationId: orgId(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  weekday: integer("weekday").notNull(),
+  startTime: text("start_time").notNull(),
+  endTime: text("end_time").notNull(),
+});
+
+/** Urlaub, Krankheit, Fortbildung */
+export const absences = pgTable("absences", {
+  id: id(),
+  organizationId: orgId(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  startsOn: date("starts_on").notNull(),
+  endsOn: date("ends_on").notNull(),
+  /** vacation | sick | training | other */
+  kind: text("kind").notNull().default("vacation"),
+  note: text("note"),
+  createdAt: createdAt(),
+});
 
 export type FootPoint = { side: "left" | "right"; point: string; label?: string; note?: string };
 
@@ -551,6 +701,10 @@ export const invoices = pgTable(
     source: text("source").notNull().default("crm"),
     externalRef: text("external_ref"),
     externalSyncedAt: timestamp("external_synced_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentTo: text("sent_to"),
+    paymentLinkUrl: text("payment_link_url"),
+    checkoutRef: text("checkout_ref"),
     notes: text("notes"),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
