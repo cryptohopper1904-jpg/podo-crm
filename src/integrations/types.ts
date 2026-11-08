@@ -271,27 +271,53 @@ export interface MessagingPort extends BasePort<MessagingProvider> {
   parseInbound(payload: unknown): InboundMessage[];
 }
 
-// ───────────────────────── KI-Telefonagent (Platzhalter, P2) ─────────────────────────
-export type VoiceCallEvent =
-  | { type: "call_started"; callId: string; from: string | null; at: string }
-  | { type: "call_ended"; callId: string; durationSec: number | null; summary?: string | null; at: string }
-  | { type: "tool_call"; callId: string; tool: VoiceTool; args: Record<string, unknown>; toolCallId: string }
-  | { type: "unknown"; raw: unknown };
+// ───────────────────────── KI-Telefonagent (Pilot, PLAN 4.6) ─────────────────────────
+/** Unterstützte Telefonagent-Anbieter (Pfad /api/voice/{vendor}). Umgesetzt: vapi. */
+export type VoiceVendorId = "vapi" | "retell" | "fonio" | "sipgate";
 
-export type VoiceTool = "check_availability" | "book_appointment" | "cancel_appointment";
+/** Werkzeuge, die der Agent über unseren Server aufrufen darf (Namen wie im Assistenten-Prompt). */
+export type VoiceTool = "freie_termine" | "termin_buchen" | "termin_absagen" | "rueckruf" | "praxis_info";
 
-/** Vom CRM bereitgestellte Funktionen, die der Agent über Tool-Endpunkte aufruft. */
-export interface VoiceToolHandlers {
-  checkAvailability(args: { from: string; to: string; serviceCode?: string }): Promise<{ slots: string[] }>;
-  bookAppointment(args: { startsAt: string; name: string; phone?: string; serviceCode?: string }): Promise<{ ok: boolean; reference?: string; message: string }>;
-  cancelAppointment(args: { reference?: string; phone?: string; startsAt?: string }): Promise<{ ok: boolean; message: string }>;
+export interface VoiceToolCall {
+  toolCallId: string;
+  /** Name wie vom Anbieter geliefert – unbekannte Namen werden abgelehnt */
+  tool: string;
+  args: Record<string, unknown>;
 }
 
+export interface VoiceToolResult {
+  toolCallId: string;
+  /** Kurzer deutscher Text, den der Agent vorlesen/verwenden kann – nie Patientendaten */
+  result: string;
+}
+
+export type VoiceCallEvent =
+  | { type: "status"; callId: string; from: string | null; status: string }
+  | { type: "tool_calls"; callId: string; from: string | null; calls: VoiceToolCall[] }
+  | {
+      type: "call_ended";
+      callId: string;
+      from: string | null;
+      startedAt: string | null;
+      endedAt: string | null;
+      durationSec: number | null;
+      endedReason: string | null;
+      summary: string | null;
+      transcript: string | null;
+    }
+  | { type: "unknown"; raw: unknown };
+
 export interface VoiceAgentPort extends BasePort<"voice_agent"> {
-  /** Vendor-Payload (Vapi/Retell/Fonio/sipgate) → normalisiertes Ereignis */
+  readonly vendor: VoiceVendorId;
+  /**
+   * Prüft die Echtheit eines Aufrufs (fail closed: ohne hinterlegtes Geheimnis immer false).
+   * `secret` = entschlüsseltes Geheimnis der Verbindung (integration_connections.secret_enc).
+   */
+  verify(headers: Record<string, string | undefined>, secret: Record<string, string>): boolean;
+  /** Vendor-Payload → normalisiertes Ereignis */
   parseEvent(payload: unknown): VoiceCallEvent;
-  /** Führt einen Tool-Aufruf aus und liefert die Antwort im Vendor-Format. */
-  handleToolCall(event: Extract<VoiceCallEvent, { type: "tool_call" }>, handlers: VoiceToolHandlers): Promise<unknown>;
+  /** Werkzeug-Ergebnisse → Antwort im Vendor-Format */
+  formatToolResults(results: VoiceToolResult[]): unknown;
 }
 
 // ───────────────────────── Transkription ─────────────────────────
