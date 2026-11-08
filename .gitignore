@@ -12,6 +12,9 @@
 
 # testing
 /coverage
+/playwright-report/
+/test-results/
+/blob-report/
 
 # next.js
 /.next/
@@ -48,3 +51,4 @@ next-env.d.ts
 !.env.example
 !deploy/.env.example
 deploy/docker-compose.subdomain.yml
+deploy/.update.lock

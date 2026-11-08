@@ -38,6 +38,7 @@ BACKUP_PASSPHRASE=$(rnd)
 APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
 SETUP_TOKEN=$(rnd | cut -c1-16)
 CRON_SECRET=$(rnd)
+HEALTH_TOKEN=$(rnd)
 ALLOW_SIGNUP=false
 INTEGRATIONS_MODE=mock
 SEED_DEMO=$([[ "$TARGET" =~ ^[0-9.]+$ ]] && echo true || echo false)
@@ -50,9 +51,15 @@ fi
 if ! grep -q '^CRON_SECRET=' "$ENV"; then
   echo "CRON_SECRET=$(openssl rand -base64 32 | tr -d '\n/+=' | cut -c1-40)" >> "$ENV"
 fi
+# Eigenes Token für /api/health/deep (kein Rückgriff mehr auf CRON_SECRET)
+if ! grep -q '^HEALTH_TOKEN=.\{16,\}' "$ENV"; then
+  sed -i '/^HEALTH_TOKEN=/d' "$ENV"
+  echo "HEALTH_TOKEN=$(openssl rand -base64 32 | tr -d '\n/+=' | cut -c1-40)" >> "$ENV"
+fi
 
 docker compose -f deploy/docker-compose.yml --env-file "$ENV" up -d --build
 echo
 echo "PodoCRM läuft: https://$TARGET"
 if grep -q "^SEED_DEMO=true" "$ENV"; then echo "Demo-Login: demo@podocrm.local / demo-passwort-123"; fi
 echo "Eigene Praxis anlegen: https://$TARGET/einrichtung  ·  Einrichtungs-Code: $(grep ^SETUP_TOKEN "$ENV" | cut -d= -f2)"
+echo "Update später: bash $APP_DIR/deploy/update.sh   ·  Backup-Test (quartalsweise): bash $APP_DIR/deploy/restore-test.sh"

@@ -11,7 +11,7 @@
 import { berlinDateIso, dateDe, timeDe } from "./format";
 import { patientStatus } from "./patient-status";
 
-export type ReminderKind = "reminder_24h" | "recall" | "brace_check";
+export type ReminderKind = "reminder_24h" | "recall" | "brace_check" | "waitlist_offer";
 export type ReminderChannel = "email" | "sms" | "whatsapp";
 
 export type ReminderSettings = { r24: boolean; recall: boolean; braceCheck: boolean; recallAfterWeeks: number };
@@ -192,6 +192,7 @@ export const REMINDER_KIND_LABEL: Record<string, string> = {
   recall: "Rückholung",
   brace_check: "Spangen-Kontrolle",
   birthday: "Geburtstag",
+  waitlist_offer: "Warteliste: Terminangebot",
 };
 
 export const REMINDER_STATUS_LABEL: Record<string, string> = {

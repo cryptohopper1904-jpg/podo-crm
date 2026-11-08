@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -10,6 +11,7 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { findConflicts } from "@/server/appointments";
+import { offerFreedSlotSafe } from "@/server/waitlist";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
@@ -80,8 +82,14 @@ export async function setAppointmentStatusAction(form: FormData) {
   const org = auth.organization.id;
   const id = z.string().uuid().parse(form.get("id"));
   const status = z.enum(["planned", "confirmed", "done", "cancelled", "no_show"]).parse(form.get("status"));
-  await withOrg(org, (tx) => tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))));
+  const prev = await withOrg(org, async (tx) => {
+    const [a] = await tx.select({ status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
+    if (a) await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
+    return a?.status ?? null;
+  });
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.status", entity: "appointment", entityId: id, meta: { status } });
+  // Absage durch die Praxis (auch nach einem Absagewunsch per KI-Telefon) → frei gewordenen Termin der Warteliste anbieten
+  if (status === "cancelled" && prev && prev !== "cancelled") after(() => offerFreedSlotSafe(org, id));
   revalidatePath("/kalender");
   revalidatePath("/heute");
 }

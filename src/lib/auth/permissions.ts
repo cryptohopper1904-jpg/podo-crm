@@ -23,6 +23,12 @@ export const PERMISSIONS = [
   "invoices.read",
   "invoices.write",
   "finance.read",
+  /** Kasse ansehen (Kassenbuch, Z-Bons) */
+  "cash.read",
+  /** Kassenbuch-Einträge und Tagesabschluss (unveränderbare Fiskaldaten) */
+  "cash.write",
+  /** DSFinV-K-Export (alle Kassendaten für die Betriebsprüfung) – nur Inhaber:in und Steuerberatung */
+  "cash.export",
   "messages.read",
   "messages.write",
   "settings.manage",
@@ -44,6 +50,8 @@ const MATRIX: Record<Role, readonly Permission[]> = {
     "appointments.write",
     "invoices.read",
     "invoices.write",
+    "cash.read",
+    "cash.write",
     "messages.read",
     "messages.write",
   ],
@@ -54,11 +62,13 @@ const MATRIX: Record<Role, readonly Permission[]> = {
     "appointments.write",
     "invoices.read",
     "invoices.write",
+    "cash.read",
+    "cash.write",
     "messages.read",
     "messages.write",
   ],
   trainee: ["patients.read", "medical.read", "medical.write", "appointments.read"],
-  accountant: ["invoices.read", "finance.read"],
+  accountant: ["invoices.read", "finance.read", "cash.read", "cash.export"],
 };
 
 export function can(role: Role, permission: Permission): boolean {

@@ -17,6 +17,10 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   "src/app/api/cron/reminders/route.ts": ["Cron: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/kim/route.ts": ["Cron KIM-Abruf: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/health/route.ts": ["Health-Check ohne Daten", /./],
+  // Betriebs-Check für Monitoring: kein Sitzungs-Login, sondern Bearer HEALTH_TOKEN (Fallback CRON_SECRET),
+  // zeitkonstant per safeEqual geprüft; ohne konfiguriertes Token 503, falsches Token 401.
+  // Antwort enthält nur Zustände/Zeiten/Zähler, keine Personendaten.
+  "src/app/api/health/deep/route.ts": ["Health-Deep: Bearer HEALTH_TOKEN", /safeEqual\([^)]*secret/],
   "src/app/api/calendar/[token]/route.ts": ["iCal-Feed: signiertes Token", /verifyCalendarToken\(/],
   "src/app/portal/[token]/route.ts": ["Portal-Einstieg: Token + Rate-Limit", /resolvePortalLink\(/],
   "src/app/portal/rechnung/[id]/route.ts": ["Portal-Rechnung: Portal-Sitzung (Cookie)", /currentPortalLink\(/],
@@ -44,7 +48,7 @@ describe("API-Routen: Authentisierung", () => {
   });
 
   it("öffentliche Handler antworten bei fehlender Prüfung nicht mit Daten (fail closed: 401/503 im Code)", () => {
-    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts"]) {
+    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts", "src/app/api/health/deep/route.ts"]) {
       expect(read(path.join(ROOT, f)), f).toMatch(/status:\s*(401|503)/);
     }
   });

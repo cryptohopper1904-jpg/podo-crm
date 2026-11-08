@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { safeEqual } from "@/lib/safe-equal";
+import { log } from "@/lib/log";
 import { runKimSyncAll } from "@/server/kim";
 
 /**
@@ -19,7 +20,7 @@ async function handle(req: NextRequest) {
     const result = await runKimSyncAll();
     return NextResponse.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
-    console.error("[cron/kim]", e instanceof Error ? e.message : e);
+    log.error("cron.kim.failed", { error: e });
     return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });
   }
 }

@@ -79,12 +79,25 @@ Noch offen nach Phase 2: echter SMTP-Versand, fiskaly-Vertrag und DSFinV-K-Expor
 
 **Online-Test:** `deploy/install-subdomain.sh` installiert PodoCRM neben einem vorhandenen Caddy (z. B. `podo.algoverdict.com`).
 
+## Phase 5 (Stand 08.11.2026)
+| Bereich | Umgesetzt |
+|---|---|
+| **Kasse / DSFinV-K** | Kassenbuch (Einlagen/Entnahmen, Gegenbuchung statt Änderung), Zählprotokoll, Tagesabschluss (Z-Bon) lückenlos nummeriert, append-only, Hash-Kette inkl. unveränderlichem Bon-Snapshot; Sperre abgeschlossener Zeiträume per DB-Trigger. **TSE-Signatur für jeden Kassenvorgang** (Bar, Karte, Gutschein; vollständig in `fiscal_transactions`), Meldung an fiskaly nach dem Commit mit „Meldung wiederholen“. DSFinV-K-Export (ZIP) mit Kettenprüfung; eigene Rechte `cash.read/write/export` (Export nur Inhaber:in/Steuerberatung). Details/offene Punkte: `docs/KASSE.md` |
+| **Portal-Buchung** | `/portal/buchen`: online buchbare Leistungen, freie Zeiten (6 Wochen, Arbeits-/Öffnungszeiten, Abwesenheiten, Feiertage), Vorlaufzeit, Tageslimit, höchstens 3 offene Buchungen je Person, Verschieben bis 24 h vorher. Termin direkt an der Akte, Quelle **„Kundenportal“** (`portal`) |
+| **Warteliste** | Wünsche als eigene Spalten (Leistung, Wochentage, Tageszeit, Notiz). Bei Absage Einmal-Link an bis zu 5 passende Personen (nur mit Einwilligung, nur über HTTPS-Links, Link direkt mit dem freien Termin verknüpft); wer zuerst annimmt, bekommt den Termin – unter Sperre erneut geprüft, auch wenn die Praxis den Termin inzwischen reaktiviert. Ohne Einwilligung: Anruf-Vorschlag an der Akte |
+| **E2E** | Playwright (`e2e/`, `pnpm e2e`): Login, Kunde, Doku mit Fußpunkt, Rechnung, öffentliche Buchung, Portal (buchen/verschieben), Posteingang, Kasse (Kassenbuch, Formel-Schutz, Export-Seite), Abmelden, Routen-Schutz, keine Konsolenfehler; CI-Job `e2e` |
+| **Betrieb** | `deploy/update.sh` mit Sicherung, Rollback und Sperre im Installationsverzeichnis; `deploy/restore.sh` (DB über Hilfsdatenbank, Dateien in leeres Verzeichnis + Quarantäne des Altbestands); `deploy/restore-test.sh` + `scripts/verify-hash-chains.ts` prüfen Behandlungsdoku **und Kassenabschlüsse** (lückenlose Z-Nummern, Kette, Inhalt); `/api/health/deep` nur mit eigenem `HEALTH_TOKEN`; Fehlerberichte an Sentry/Webhook ohne Fehlermeldungstexte (nur SQLSTATE) und ohne echte Pfade |
+| **Sicherheit** | Externe Reviews (4 Modelle) geprüft, alle kritischen/hohen/mittleren Befunde behoben oder begründet offen: `docs/reviews/code/phase5-umsetzung.md` |
+
+Schema-Wünsche Phase 5 erledigt (Migrationen 0016/0017): `docs/SCHEMA_REQUESTS.md`.
+
 ## Offen / nächste Schritte
-- Echter SMTP-Versand, fiskaly-Vertrag + DSFinV-K-Export, Vertrag mit Abrechnungszentrum, Verordnungs-OCR
-- Support-Freigabe an eine bestimmte Person binden (aktuell: alle Betreiber-Admins mit 2FA)
-- Praxis-Export streamend erzeugen (aktuell im Arbeitsspeicher – für sehr große Fotobestände)
-- 3D-Fuß, native iOS-Hülle (braucht Mac + Apple-Developer-Konto)
-- Externer Pentest
+- **fiskaly-Vertrag** und Abgleich mit der fiskaly-Doku: Kassenabschluss mit Einzeltransaktionen, `tse.csv` (Public Key,
+  Zertifikate, Algorithmus), Prozessdaten; TSE-Pflichtangaben/QR-Code auf dem Beleg (`docs/KASSE.md`, Abschnitt 3)
+- **Steuerberatung**: USt-Schlüssel (Kleinunternehmer), Gutschein-Geschäftsvorfälle, Soll-/Ist-Versteuerung, Meldung über ELSTER
+- Vertrag mit Abrechnungszentrum; KIM/TI-Komponenten für den Echtbetrieb (`docs/TI.md`)
+- Native iOS-Hülle (braucht Mac + Apple-Developer-Konto)
+- Externer Pentest vor dem ersten fremden Mandanten
 
 ## Lokal ausprobieren
 Siehe README. Demo-Login: `demo@podocrm.local` / `demo-passwort-123`.

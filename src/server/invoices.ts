@@ -19,7 +19,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
-import { allocateByVat, fiscalRef, getFiscalPort } from "@/integrations/tse";
+import { fiscalRef } from "@/integrations/tse";
+import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { nextNumber } from "@/lib/numbering";
 import {
@@ -85,25 +86,17 @@ async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
 }
 
 /**
- * Barzahlung über die TSE signieren (KassenSichV). Solange kein zertifizierter TSE-Vertrag besteht,
- * läuft der Mock (Referenz „tse:test:…“) – für echten Bargeldeinsatz ist eine echte TSE Pflicht.
- * Die Signaturreferenz landet in payments.external_ref.
+ * Kassenvorgang (Bar, Karte, Gutschein) über die TSE signieren (KassenSichV: jeder Vorgang des Aufzeichnungssystems).
+ * Solange kein zertifizierter TSE-Vertrag besteht, läuft der Mock (Test-Signatur) – für echten Betrieb ist eine echte
+ * TSE Pflicht. Die vollständige Signatur landet in fiscal_transactions; bei Bar zusätzlich die Kurzreferenz in
+ * payments.external_ref (Anzeige/Altbestand).
  */
-async function signCashPayment(inv: { id: string; number?: string | null }, amountCents: number, vatGroups: { rate: number; grossCents: number }[]) {
-  const fiscal = getFiscalPort();
+async function signPayment(inv: { id: string; number?: string | null }, method: string, amountCents: number, vatGroups: { rate: number; grossCents: number }[]) {
   try {
-    const reference = inv.number ?? inv.id;
-    const { transactionId } = await fiscal.startTransaction({ reference });
-    const sig = await fiscal.finishTransaction({
-      transactionId,
-      reference,
-      amounts: allocateByVat(amountCents, vatGroups),
-      paymentType: "cash",
-      paymentCents: amountCents,
-    });
-    return fiscalRef(sig);
+    return await signRegisterPayment({ reference: inv.number ?? inv.id, method, amountCents, vatGroups });
   } catch (e) {
-    throw new InvoiceError(`Barzahlung konnte nicht über die TSE signiert werden: ${e instanceof Error ? e.message : "unbekannter Fehler"}`);
+    if (e instanceof FiscalSignError) throw new InvoiceError(e.message);
+    throw e;
   }
 }
 
@@ -147,8 +140,15 @@ async function applyPayments(
       voucherId = v.id;
     }
     let externalRef = p.externalRef ?? null;
-    if (p.method === "cash") externalRef = await signCashPayment(inv, p.amountCents, vatGroups);
+    // TSE-Kurzreferenzen vergibt nur der Server (sonst ließe sich eine Signatur vortäuschen)
+    if (externalRef?.toLowerCase().startsWith("tse:")) throw new InvoiceError("Die Referenz darf nicht mit „tse:“ beginnen.");
+    let signed: SignedPayment | null = null;
+    if (needsSignature(p.method)) {
+      signed = await signPayment(inv, p.method, p.amountCents, vatGroups);
+      if (p.method === "cash") externalRef = fiscalRef(signed.signature);
+    }
     await tx.insert(payments).values({
+      ...(signed ? { id: signed.paymentId } : {}),
       organizationId: org,
       invoiceId: inv.id,
       method: p.method,
@@ -157,6 +157,7 @@ async function applyPayments(
       externalRef,
       createdBy: userId,
     });
+    if (signed) await storeSignature(tx, org, signed);
   }
   const paidCents = inv.paidCents + list.reduce((s, p) => s + p.amountCents, 0);
   const status = statusFromPayments(inv.totalCents, paidCents);

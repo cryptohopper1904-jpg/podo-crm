@@ -77,6 +77,7 @@ BACKUP_PASSPHRASE=$(rnd)
 APP_ENCRYPTION_KEY=$(openssl rand -base64 32)
 SETUP_TOKEN=$(rnd | cut -c1-16)
 CRON_SECRET=$(rnd)
+HEALTH_TOKEN=$(rnd)
 ALLOW_SIGNUP=false
 INTEGRATIONS_MODE=mock
 SEED_DEMO=true
@@ -88,6 +89,7 @@ CONF
 else
   sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|; s|^PUBLIC_URL=.*|PUBLIC_URL=https://$DOMAIN|" "$ENV"
   grep -q '^CRON_SECRET=' "$ENV" || echo "CRON_SECRET=$(rnd)" >> "$ENV"
+  grep -q '^HEALTH_TOKEN=.\{16,\}' "$ENV" || { sed -i '/^HEALTH_TOKEN=/d' "$ENV"; echo "HEALTH_TOKEN=$(rnd)" >> "$ENV"; }
 fi
 cat > deploy/docker-compose.subdomain.yml <<YML
 # erzeugt von install-subdomain.sh – App nur lokal erreichbar, der vorhandene Caddy leitet weiter
@@ -120,7 +122,12 @@ else
 fi
 
 echo
-for i in $(seq 1 30); do curl -fsS -m 5 "http://$UPSTREAM:$PORT/api/health" >/dev/null 2>&1 && break; sleep 5; done
+for _ in $(seq 1 30); do curl -fsS -m 5 "http://$UPSTREAM:$PORT/api/health" >/dev/null 2>&1 && break; sleep 5; done
 say "Fertig: https://$DOMAIN"
 echo "Demo-Login: demo@podocrm.local / demo-passwort-123   (Testbetrieb – keine echten Patientendaten)"
-echo "Update später: PODO_REF=$REF bash $APP_DIR/deploy/install-subdomain.sh $DOMAIN"
+if [ "$REF" = main ]; then
+  echo "Update später:  bash $APP_DIR/deploy/update.sh            (Probelauf: --dry-run)"
+else
+  echo "Update später:  bash $APP_DIR/deploy/update.sh $REF       (Probelauf: --dry-run)"
+fi
+echo "Backup-Test:    bash $APP_DIR/deploy/restore-test.sh      (einmal im Quartal)"

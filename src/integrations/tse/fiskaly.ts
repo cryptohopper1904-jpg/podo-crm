@@ -20,7 +20,7 @@
  * Meldung der Kasse ans Finanzamt (§ 146a Abs. 4 AO), Verfahrensdokumentation.
  */
 import { randomUUID } from "node:crypto";
-import { FiscalNotConfiguredError, type FiscalExportInput, type FiscalFinishInput, type FiscalPort, type FiscalSignature } from "./types";
+import { FiscalNotConfiguredError, type FiscalClosingInput, type FiscalExportInput, type FiscalFinishInput, type FiscalPort, type FiscalSignature } from "./types";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -114,6 +114,35 @@ export class FiskalyAdapter implements FiscalPort {
       tssSerial: r.tss_serial_number,
       isTest: false,
     };
+  }
+
+  /**
+   * Kassenabschluss an fiskaly DSFinV-K melden (PUT /cash_point_closings/{closing_id}).
+   * TODO DSFinV-K prüfen: fiskaly verlangt zusätzlich alle Einzeltransaktionen (transactions[]) mit TSE-Transaktions-IDs
+   * und eine fortlaufende cash_point_closing_export_id – vor Echtbetrieb gegen die fiskaly-Doku vervollständigen.
+   */
+  async registerCashPointClosing(input: FiscalClosingInput) {
+    const sum = input.payments.reduce((s, p) => s + p.amountCents, 0);
+    const cash = input.payments.filter((p) => p.type === "Bar").reduce((s, p) => s + p.amountCents, 0);
+    await this.call(this.dsfinvkBase, "PUT", `/cash_point_closings/${input.closingId}`, {
+      client_id: this.opts.clientId,
+      cash_point_closing_export_id: input.number,
+      head: { export_creation_date: Math.floor(Date.now() / 1000), business_date: input.businessDate },
+      cash_statement: {
+        business_cases: input.businessCases.map((b) => ({
+          type: b.gvTyp,
+          amounts_per_vat_id: [{ vat_definition_export_id: b.ustKey, incl_vat: euro(b.grossCents), excl_vat: euro(b.netCents), vat: euro(b.vatCents) }],
+        })),
+        payment: {
+          full_amount: euro(sum),
+          cash_amount: euro(cash),
+          cash_amounts_by_currency: [{ currency_code: "EUR", amount: euro(cash) }],
+          payment_types: input.payments.map((p) => ({ type: p.type === "Bar" ? "Bar" : "Unbar", currency_code: "EUR", amount: euro(p.amountCents), name: p.name })),
+        },
+      },
+      transactions: [],
+    });
+    return { closingRef: `fiskaly:cash_point_closing:${input.closingId}`, tssSerial: null };
   }
 
   async exportDsfinvk(input: FiscalExportInput) {
