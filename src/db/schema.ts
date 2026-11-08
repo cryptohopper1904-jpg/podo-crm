@@ -449,7 +449,13 @@ export const patientLinks = pgTable(
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("patient_links_token").on(t.tokenHash)],
+  (t) => [
+    uniqueIndex("patient_links_token").on(t.tokenHash),
+    // höchstens EIN aktiver (nicht widerrufener, nicht benutzter) Link je Kunde und Zweck
+    uniqueIndex("patient_links_one_active")
+      .on(t.organizationId, t.patientId, t.purpose)
+      .where(sql`${t.revokedAt} is null and ${t.usedAt} is null`),
+  ],
 );
 
 /** Versandprotokoll für Erinnerungen und Rückholungen (verhindert Doppelversand) */
@@ -728,6 +734,8 @@ export const invoiceLines = pgTable("invoice_lines", {
   unitPriceCents: integer("unit_price_cents").notNull(),
   vatRate: integer("vat_rate").notNull().default(0),
   totalCents: integer("total_cents").notNull(),
+  /** Bezug zur Behandlung (Sammelrechnung Pflegeheim: verhindert Doppelabrechnung) */
+  treatmentRecordId: uuid("treatment_record_id").references(() => treatmentRecords.id),
   position: integer("position").notNull().default(0),
 });
 
@@ -831,7 +839,8 @@ export const webhookEvents = pgTable(
     processedAt: timestamp("processed_at", { withTimezone: true }),
     error: text("error"),
   },
-  (t) => [uniqueIndex("webhook_events_idem").on(t.provider, t.externalId)],
+  // je Praxis eindeutig (gleiche Provider-Event-ID bei zwei Praxen darf nicht kollidieren)
+  (t) => [uniqueIndex("webhook_events_idem_org").on(t.provider, t.organizationId, t.externalId)],
 );
 
 export const syncLog = pgTable("sync_log", {
