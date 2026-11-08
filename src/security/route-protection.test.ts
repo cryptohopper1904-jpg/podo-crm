@@ -20,7 +20,7 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/anamnese": "Anamnese-Link (Einmal-Token)",
   "/portal": "Kundenportal (Token → signierte Cookie-Sitzung)",
   "/api/webhooks": "Webhooks (HMAC-Signatur bzw. Token je Praxis)",
-  "/api/voice": "KI-Telefonagent (x-vapi-secret je Praxis)",
+  "/api/voice": "KI-Telefonagent (x-vapi-secret bzw. x-retell-signature je Praxis)",
   "/api/billing/webhook": "Stripe-Webhook (Stripe-Signature)",
   "/api/calendar": "iCal-Feed (signiertes Token)",
   "/api/health": "Health-Check ohne Daten",

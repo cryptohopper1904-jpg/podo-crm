@@ -12,7 +12,7 @@ const AUTH = /\b(getAuth|requireAuth)\s*\(/;
 /** Datei → [Begründung, Muster, das die eigene Absicherung belegt] */
 export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   "src/app/api/webhooks/[provider]/route.ts": ["Webhooks: HMAC-Signatur bzw. Token je Praxis", /verifyHmacSignature[\s\S]*safeEqual/],
-  "src/app/api/voice/[provider]/route.ts": ["KI-Telefonagent: x-vapi-secret je Praxis", /\.verify\(/],
+  "src/app/api/voice/[provider]/route.ts": ["KI-Telefonagent: x-vapi-secret bzw. x-retell-signature (HMAC) je Praxis", /\.verify\(/],
   "src/app/api/billing/webhook/route.ts": ["Stripe-Webhook: Stripe-Signature", /verifyWebhook\(/],
   "src/app/api/cron/reminders/route.ts": ["Cron: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/kim/route.ts": ["Cron KIM-Abruf: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
