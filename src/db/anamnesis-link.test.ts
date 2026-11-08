@@ -58,15 +58,21 @@ const url = process.env.TEST_DATABASE_URL;
 
   it("speichert einmal und verweigert die zweite Nutzung", async () => {
     const token = await newLink();
-    expect(await submit(token, data, ["sms_reminders"])).toEqual({ ok: true });
+    expect(await submit(token, data, ["sms_reminders"], { ip: "203.0.113.7" })).toEqual({ ok: true });
     expect(await submit(token, data, ["sms_reminders"])).toEqual({ ok: false });
 
     const an = await asOrg<{ data: { source: string; diabetes: boolean } }>("select data from anamneses where patient_id = $1", [patientId]);
     expect(an).toHaveLength(1);
     expect(an[0].data).toMatchObject({ source: "online", diabetes: true });
-    const cons = await asOrg<{ type: string; via: string }>("select type, via from consents where patient_id = $1 order by type", [patientId]);
-    expect(cons.map((c) => c.type)).toEqual(["privacy_notice", "sms_reminders"]);
+    const cons = await asOrg<{ type: string; via: string; granted: boolean }>("select type, via, granted from consents where patient_id = $1 order by type", [patientId]);
+    // jede Online-Einwilligung mit tatsächlichem Wert (nicht angehakt = false)
+    expect(Object.fromEntries(cons.map((c) => [c.type, c.granted]))).toEqual({
+      privacy_notice: true, sms_reminders: true, email_reminders: false, photo_documentation: false, whatsapp: false,
+    });
     expect(cons.every((c) => c.via === "online-anamnese")).toBe(true);
+    const aud = await asOrg<{ action: string; ip: string | null }>("select action, ip from audit_log where entity_id = $1 and action = 'anamnesis.online.submit'", [patientId]);
+    expect(aud).toHaveLength(1);
+    expect(aud[0].ip).toBe("203.0.113.7");
     const msg = await asOrg<{ subject: string; body: string }>("select subject, body from messages where patient_id = $1", [patientId]);
     expect(msg).toHaveLength(1);
     expect(msg[0].subject).toBe("Anamnesebogen eingegangen");
@@ -84,6 +90,17 @@ const url = process.env.TEST_DATABASE_URL;
     expect(await submit(await newLink({ revoked: true }), data, [])).toEqual({ ok: false });
     expect(await submit(generateLinkToken().token, data, [])).toEqual({ ok: false });
     expect(await submit("kaputt", data, [])).toEqual({ ok: false });
+  });
+
+  it("parallele Link-Erzeugung hinterlässt genau einen gültigen Link", async () => {
+    const { createAnamnesisLink } = await import("@/server/anamnesis");
+    const { can } = await import("@/lib/auth/permissions");
+    const userId = (await pool.query("insert into users (email, name, password_hash) values ($1, 'T', 'x') returning id", [`an-${Date.now()}@example.org`])).rows[0].id;
+    const auth = { sessionId: "s", user: { id: userId, email: "t@example.org", name: "T", totpEnabled: false }, organization: { id: orgId, name: "P", slug: "p", smallBusiness: false, state: "BB" }, role: "owner" as const, can: (p: Parameters<typeof can>[1]) => can("owner", p) };
+    const results = await Promise.all(Array.from({ length: 5 }, () => createAnamnesisLink(auth, patientId)));
+    expect(results.filter((r) => "token" in r).length).toBeGreaterThanOrEqual(1);
+    const active = await pool.query("select count(*)::int n from patient_links where patient_id = $1 and purpose = 'anamnesis' and used_at is null and revoked_at is null", [patientId]);
+    expect(active.rows[0].n).toBe(1);
   });
 
   it("anamneses bleiben unveränderbar (Versionen)", async () => {

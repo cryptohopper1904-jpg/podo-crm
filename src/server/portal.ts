@@ -9,7 +9,8 @@
 import { revalidatePath } from "next/cache";
 import { requestMeta, requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
-import { cancelPortalAppointment, createPortalLink, portalFailLimiter, portalLimiter, resolvePortalLink } from "./portal-core";
+import { clientKey } from "@/lib/rate-limit";
+import { cancelPortalAppointment, createPortalLink, currentPortalLink, portalFailLimiter, portalLimiter } from "./portal-core";
 
 export type PortalLinkState = { error?: string; url?: string; expires?: string } | undefined;
 export type PortalCancelState = { error?: string; ok?: string; phone?: string | null } | undefined;
@@ -25,15 +26,17 @@ export async function createPortalLinkAction(_: PortalLinkState, form: FormData)
 }
 
 export async function cancelPortalAppointmentAction(_: PortalCancelState, form: FormData): Promise<PortalCancelState> {
-  const ip = (await requestMeta()).ip ?? "unbekannt";
-  if (portalFailLimiter.exceeded(ip) || portalLimiter.limited(`cancel:${ip}`)) return { error: "Zu viele Anfragen. Bitte später erneut versuchen." };
-  const link = await resolvePortalLink(String(form.get("token") ?? ""));
-  if (!link) {
-    portalFailLimiter.limited(ip);
-    return { error: "Der Link ist abgelaufen oder ungültig. Bitte wenden Sie sich an die Praxis." };
-  }
+  const key = clientKey(await requestMeta());
+  if (portalFailLimiter.exceeded(key) || portalLimiter.limited(`cancel:${key}`)) return { error: "Zu viele Anfragen. Bitte später erneut versuchen." };
+  // Sitzung aus dem HttpOnly-Cookie (SameSite=Strict) – kein Token im Formular
+  const link = await currentPortalLink();
+  if (!link) return { error: "Ihre Sitzung ist abgelaufen. Bitte öffnen Sie den Link aus Ihrer Nachricht erneut." };
   const r = await cancelPortalAppointment(link, String(form.get("appointmentId") ?? ""));
-  if (!r.ok) return { error: r.error, phone: r.phone };
+  if (!r.ok) {
+    portalFailLimiter.limited(key);
+    return { error: r.error, phone: r.phone };
+  }
   revalidatePath("/kalender");
+  revalidatePath("/portal");
   return { ok: r.message };
 }
