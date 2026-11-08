@@ -4,7 +4,7 @@
  * (zusätzliche Plätze über die im Tarif enthaltenen hinaus, Menge = Anzahl Zusatzplätze).
  */
 import { randomUUID } from "node:crypto";
-import { PLANS, type PaidPlan } from "@/lib/plans";
+import { PLANS } from "@/lib/plans";
 import { parseVerifiedEvent } from "./signature";
 import { BillingHttpError, BillingNotConfiguredError, type BillingPort, type CheckoutInput, type FetchLike, type StripeEvent } from "./types";
 

@@ -68,3 +68,14 @@ gpg -d db-XXXX.dump.gpg | pg_restore -h <testserver> -U podo_owner -d podo_resto
 
 ## Datenschutz-Checkliste vor dem ersten echten Patienten
 Siehe [`docs/compliance/`](compliance/).
+
+## Gekündigte Praxen endgültig löschen
+
+Praxen beantragen die Löschung unter *Einstellungen → Daten & Kündigung* (`organizations.deletion_requested_at`). Nach 30 Tagen Karenzzeit löscht der Betreiber:
+
+```bash
+DATABASE_MIGRATION_URL=postgres://podo_owner:…@db/podo STORAGE_DIR=/data/storage pnpm exec tsx scripts/purge-organizations.ts            # Probelauf
+DATABASE_MIGRATION_URL=…                                    STORAGE_DIR=/data/storage pnpm exec tsx scripts/purge-organizations.ts --execute  # löschen
+```
+
+Nur mit der **Eigentümer-Rolle**: Die Unveränderbarkeits-Trigger werden ausschließlich innerhalb der Lösch-Transaktion (mit exklusiver Tabellensperre) ausgesetzt und vor dem COMMIT wiederhergestellt. Das Skript löscht alle Zeilen der Praxis in FK-sicherer Reihenfolge, Benutzer ohne weitere Mitgliedschaft, das Verzeichnis `<STORAGE_DIR>/<org-id>/` und schreibt eine Zeile `platform.org_purged` ins Audit-Log. Backups laufen nach 14 Tagen aus.

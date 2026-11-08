@@ -160,7 +160,7 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
         .where(and(eq(memberships.userId, row.user.id), eq(memberships.active, true)))
         .limit(1);
       await db.update(sessions).set({ organizationId: own?.organizationId ?? null }).where(eq(sessions.id, row.session.id));
-      await db.insert(auditLog).values({ organizationId: orgId, userId: row.user.id, action: "support.ended", meta: { reason: "Freigabe abgelaufen oder widerrufen" }, ip: row.session.ip });
+      await db.insert(auditLog).values({ organizationId: orgId, userId: row.user.id, action: "support.ended", meta: { reason: "keine gültige Freigabe (abgelaufen, widerrufen oder nie erteilt)" }, ip: row.session.ip });
       if (!own) return null;
       return loadOwn(row, own.organizationId, req);
     }

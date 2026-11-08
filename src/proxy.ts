@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * Optimistische Prüfung: ohne Session-Cookie direkt zum Login.
  * Die echte Prüfung (Session gültig, Rolle, Mandant) passiert serverseitig in requireAuth().
  */
-const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook",
+const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook", "/api/voice",
   // öffentliche Website/Rechtstexte (src/app/(public)) – u. a. aus der Registrierung verlinkt
   "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer"];
 
