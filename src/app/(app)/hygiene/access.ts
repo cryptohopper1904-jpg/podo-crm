@@ -1,6 +1,5 @@
 import "server-only";
-import { redirect } from "next/navigation";
-import { requireAuth, type AuthContext } from "@/lib/auth/session";
+import { denyAccess, requireAuth, type AuthContext } from "@/lib/auth/session";
 
 /**
  * Rechte im Hygiene-Modul:
@@ -15,6 +14,6 @@ export const canEditMaterials = (a: AuthContext) => a.can("medical.write") || a.
 
 export async function requireHygiene(check: (a: AuthContext) => boolean): Promise<AuthContext> {
   const auth = await requireAuth();
-  if (!check(auth)) redirect("/kein-zugriff");
+  if (!check(auth)) denyAccess(auth);
   return auth;
 }
