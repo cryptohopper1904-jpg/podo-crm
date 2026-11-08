@@ -3,52 +3,65 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Empty, PageHeader, Table } from "@/components/ui";
+import { VoiceQuotaBanner, VoiceUsageBar } from "@/components/voice-quota-banner";
+import { retellAgentConfig, vapiAssistantConfig } from "@/integrations/voice/assistant-config";
 import { OUTCOME_LABEL } from "@/integrations/voice/core";
-import { VapiVoiceAgent } from "@/integrations/voice/vapi";
-import assistantTemplate from "@/integrations/voice/vapi-assistant.json";
+import { VOICE_VENDOR_LABEL } from "@/integrations/voice/voice-agent";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateTimeDe } from "@/lib/format";
-import { decryptSecret } from "@/lib/secrets";
-import { loadConnection } from "@/server/integrations";
-import { listVoiceCalls, simulationAllowed, voicePageInfo } from "@/server/voice";
+import { listVoiceCalls, simulationAllowed, voiceMonthlyReport, voicePageInfo, voiceSetupState } from "@/server/voice";
 import { saveVoiceSettingsAction } from "./actions";
 import { CallSimulator } from "./call-simulator";
+import { CopyField, DownloadButton, LiveToggle, VendorSetupForm } from "./setup-wizard";
 
 export const metadata = { title: "Telefon" };
 
 const OUTCOME_TONE: Record<string, "primary" | "info" | "accent" | "neutral"> = { booked: "primary", cancelled: "accent", callback: "info", failed: "accent" };
 
 const duration = (s: number | null) => (s === null ? "–" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} Min.`);
+const monthLabel = (m: string) => new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${m}-15T12:00:00Z`));
+
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <li className="flex gap-3 border-t border-border pt-4 first:border-t-0 first:pt-0">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-semibold text-primary-soft-text">{n}</span>
+      <div className="flex min-w-0 flex-1 flex-col gap-2 text-sm">
+        <p className="font-semibold">{title}</p>
+        {children}
+      </div>
+    </li>
+  );
+}
 
 export default async function TelefonPage() {
   const auth = await requireAuth("messages.read");
   const org = auth.organization.id;
-  const [calls, info, conn] = await Promise.all([listVoiceCalls(auth), voicePageInfo(auth), loadConnection(org, "voice_agent")]);
   const canSettings = auth.can("settings.manage");
   const canIntegrations = auth.can("integrations.manage");
+  const calls = await listVoiceCalls(auth);
+  const info = await voicePageInfo(auth);
+  const report = await voiceMonthlyReport(auth, 6);
+  const setup = canIntegrations ? await voiceSetupState(auth) : null;
   const canSimulate = auth.can("messages.write") && (await simulationAllowed(org));
+  const { entitlement, usage } = info.quota;
 
-  // Server-Adresse + Secret nur für Personen, die Schnittstellen verwalten dürfen (Secret wie ein Passwort behandeln)
-  let secret: string | null = null;
-  if (canIntegrations && conn?.secretEnc) {
-    try {
-      secret = VapiVoiceAgent.sharedSecret(JSON.parse(decryptSecret(conn.secretEnc, org)));
-    } catch {
-      secret = null;
-    }
-  }
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost"}`;
-  const serverUrl = `${origin}/api/voice/vapi?org=${org}`;
-  const filledTemplate =
-    canIntegrations && secret
-      ? JSON.stringify(assistantTemplate.assistant, null, 2)
-          .replaceAll("<SERVER_URL>", serverUrl)
-          .replaceAll("<SERVER_SECRET>", secret)
-          .replaceAll("<PRAXISNAME>", auth.organization.name.replace(/["\\]/g, ""))
+  const vendor = setup?.vendor ?? "vapi";
+  const serverUrl = `${origin}/api/voice/${vendor}?org=${org}`;
+  // Vorlage nur für Personen, die Schnittstellen verwalten dürfen (Vapi-Vorlage enthält das Secret)
+  const config =
+    setup && setup.hasSecret
+      ? vendor === "vapi" && setup.vapiSecret
+        ? { filename: "podocrm-vapi-assistant.json", content: vapiAssistantConfig({ serverUrl, secret: setup.vapiSecret, practiceName: auth.organization.name }) }
+        : vendor === "retell"
+          ? { filename: "podocrm-retell-agent.json", content: JSON.stringify(retellAgentConfig({ serverUrl, practiceName: auth.organization.name, recordingNotice: info.settings.storeTranscripts }), null, 2) }
+          : null
       : null;
   const tomorrow = new Date(Date.parse(`${berlinDateIso()}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
-  const statusText = !conn || conn.status === "disconnected" ? "aus" : conn.status === "mock" ? "Testmodus" : conn.status === "connected" ? "verbunden" : "Fehler";
+  const status = setup?.status;
+  const statusText = !status || status === "disconnected" ? "aus" : status === "mock" ? "Testmodus" : status === "connected" ? "live" : "Fehler";
+  const isOwner = auth.role === "owner";
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">

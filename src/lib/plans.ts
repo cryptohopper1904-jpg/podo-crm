@@ -21,7 +21,7 @@ export type Feature = (typeof FEATURES)[number];
 
 export const FEATURE_LABELS: Record<Feature, string> = {
   portal: "Kundenportal",
-  voice_agent: "KI-Telefonagent (Pilot)",
+  voice_agent: "KI-Telefonagent",
 };
 
 export const PLAN_IDS = ["trial", "starter", "praxis", "plus", "internal"] as const;
@@ -39,6 +39,8 @@ export type PlanInfo = {
   /** Obergrenze (null = unbegrenzt) */
   maxSeats: number | null;
   features: readonly Feature[];
+  /** Im Tarif enthaltene KI-Telefon-Minuten je Kalendermonat (0 = nur als Zusatzmodul) */
+  voiceMinutesIncluded: number;
   description: string;
 };
 
@@ -49,6 +51,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     includedSeats: 2,
     maxSeats: 2,
     features: FEATURES,
+    voiceMinutesIncluded: 30,
     description: `${TRIAL_DAYS} Tage alle Funktionen, bis zu 2 Personen`,
   },
   starter: {
@@ -57,6 +60,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     includedSeats: 1,
     maxSeats: 1,
     features: [],
+    voiceMinutesIncluded: 0,
     description: "Für Einzelpraxen: 1 Person, ohne Kundenportal und KI-Telefon",
   },
   praxis: {
@@ -65,7 +69,8 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     includedSeats: 2,
     maxSeats: 5,
     features: ["portal"],
-    description: "Bis zu 5 Personen, alle Funktionen außer KI-Telefon",
+    voiceMinutesIncluded: 0,
+    description: "Bis zu 5 Personen, alle Funktionen; KI-Telefon als Zusatzmodul",
   },
   plus: {
     label: "Plus",
@@ -73,7 +78,8 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     includedSeats: 3,
     maxSeats: null,
     features: ["portal", "voice_agent"],
-    description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (Pilot)",
+    voiceMinutesIncluded: 300,
+    description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (300 Minuten/Monat)",
   },
   internal: {
     label: "Intern",
@@ -81,6 +87,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     includedSeats: 0,
     maxSeats: null,
     features: FEATURES,
+    voiceMinutesIncluded: 300,
     description: "Betreiber-/Pilotpraxis ohne Abrechnung",
   },
 };
@@ -202,4 +209,44 @@ export function seatProblem(org: Pick<OrgBilling, "plan" | "seats">, usedSeats: 
   if (usedSeats + 1 <= limit) return null;
   const plan = isPlanId(org.plan) ? PLANS[org.plan].label : org.plan;
   return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. (Die Steuerberatung belegt keinen Platz.)`;
+}
+
+// ───────────── KI-Telefon: Zusatzmodul und Minuten ─────────────
+
+/** Tarife, in denen das KI-Telefon als Zusatzmodul gebucht werden kann (organizations.settings.voiceAddon). */
+export const VOICE_ADDON_PLANS: readonly PlanId[] = ["praxis"];
+/** Minuten je Kalendermonat mit Zusatzmodul */
+export const VOICE_ADDON_MINUTES = 300;
+
+export type VoiceEntitlement = {
+  /** Telefonagent darf Anrufe bearbeiten (Tarif oder Zusatzmodul, nicht im Nur-Lesen-Modus) */
+  enabled: boolean;
+  /** Freiminuten je Kalendermonat */
+  includedMinutes: number;
+  source: "plan" | "addon" | null;
+  /** Grund, falls nicht freigeschaltet (für die Oberfläche) */
+  reason: string | null;
+  /** Zusatzmodul ist im Tarif buchbar, aber nicht aktiv */
+  addonAvailable: boolean;
+};
+
+/** Zusatzmodul-Schalter (setzt der Plattform-Betreiber bzw. später Stripe). */
+export const voiceAddonActive = (settings: Record<string, unknown> | null | undefined) => settings?.voiceAddon === true;
+
+export function voiceEntitlement(org: OrgBilling, settings: Record<string, unknown> | null | undefined, now: Date = new Date()): VoiceEntitlement {
+  const e = entitlements(org, now);
+  const addonAvailable = VOICE_ADDON_PLANS.includes(e.plan);
+  const addon = addonAvailable && voiceAddonActive(settings);
+  if (e.readOnly) return { enabled: false, includedMinutes: 0, source: null, reason: `${READONLY_REASON_LABELS[e.access.reason!]} Das KI-Telefon nimmt keine Termine an.`, addonAvailable };
+  if (e.features.has("voice_agent")) return { enabled: true, includedMinutes: PLANS[e.plan].voiceMinutesIncluded, source: "plan", reason: null, addonAvailable: false };
+  if (addon) return { enabled: true, includedMinutes: VOICE_ADDON_MINUTES, source: "addon", reason: null, addonAvailable };
+  return {
+    enabled: false,
+    includedMinutes: 0,
+    source: null,
+    reason: addonAvailable
+      ? `Das KI-Telefon ist im Tarif „${e.planLabel}“ als Zusatzmodul buchbar (${VOICE_ADDON_MINUTES} Minuten/Monat).`
+      : `Das KI-Telefon ist im Tarif „${e.planLabel}“ nicht enthalten. Bitte unter Einstellungen → Abo & Tarif upgraden.`,
+    addonAvailable,
+  };
 }

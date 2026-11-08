@@ -1,5 +1,6 @@
 /** Anzeige-Metadaten der Schnittstellen für die Einstellungen (Felder, Hinweise, Datenschutz). */
-import type { SupportedProvider } from "./types";
+import { KIM_CONNECTION_PROVIDER } from "./kim/provider";
+import type { ProviderId } from "./types";
 
 export interface ProviderField {
   name: string;
@@ -8,7 +9,10 @@ export interface ProviderField {
 }
 
 export interface ProviderInfo {
-  provider: SupportedProvider;
+  /** `integration_provider` der Verbindung (KIM: siehe src/integrations/kim/provider.ts) */
+  provider: ProviderId;
+  /** Anzeige-/Fach-ID, falls abweichend vom gespeicherten Provider (z. B. „kim“) */
+  key?: string;
   label: string;
   description: string;
   privacy: string;
@@ -79,6 +83,26 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     ],
   },
   {
+    provider: KIM_CONNECTION_PROVIDER,
+    key: "kim",
+    label: "KIM (Kommunikation im Medizinwesen, TI)",
+    description:
+      "KIM-Postfach der Praxis: Arztbriefe und Rückfragen empfangen, Antworten senden. Verbindung zum KIM-Clientmodul bzw. TI-Gateway Ihres KIM-Anbieters über POP3S (Abruf) und SMTPS (Versand). Voraussetzung: SMC-B, Konnektor oder TI-Gateway, KIM-Vertrag – siehe Einstellungen → TI.",
+    privacy:
+      "Ende-zu-Ende-Verschlüsselung und Signatur übernimmt das Clientmodul des zugelassenen KIM-Anbieters. PodoCRM ist kein zertifiziertes TI-Produkt. Anhänge werden nicht gespeichert, nur ihre Namen. Nachrichten werden auf dem Server nur gelöscht, wenn „Nach Abruf löschen“ = ja.",
+    docs: "https://fachportal.gematik.de/anwendungen/kommunikation-im-medizinwesen",
+    secretFields: [{ name: "password", label: "Passwort (KIM-Konto)" }],
+    configFields: [
+      { name: "address", label: "KIM-Adresse der Praxis", placeholder: "praxis@anbieter.kim.telematik" },
+      { name: "user", label: "Benutzername (Format laut KIM-Anbieter)" },
+      { name: "pop3Host", label: "POP3S-Host (Clientmodul/Gateway)" },
+      { name: "pop3Port", label: "POP3S-Port", placeholder: "995" },
+      { name: "smtpHost", label: "SMTPS-Host (Clientmodul/Gateway)" },
+      { name: "smtpPort", label: "SMTPS-Port", placeholder: "465" },
+      { name: "deleteAfterFetch", label: "Nach Abruf löschen (ja/nein)", placeholder: "nein" },
+    ],
+  },
+  {
     provider: "whatsapp",
     label: "WhatsApp Business (Cloud API)",
     description: "Terminerinnerungen und Rückfragen über einen Business Solution Provider (z. B. 360dialog).",
@@ -106,10 +130,13 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   {
     provider: "voice_agent",
     label: "KI-Telefonagent",
-    description: "Pilot: Anrufe annehmen, freie Termine nennen, Terminwünsche, Absagewünsche und Rückrufbitten in den Posteingang (umgesetzt: Vapi; Retell, Fonio, sipgate folgen). Einrichtung unter „Telefon“.",
+    description: "Anrufe annehmen, freie Termine nennen, Terminwünsche, Absagewünsche und Rückrufbitten in den Posteingang (Vapi oder Retell AI). Einrichtung mit Assistent unter „Telefon“.",
     privacy: "KI-Hinweis zu Gesprächsbeginn (AI Act Art. 50), Transkript nur mit Ansage und Einstellung, EU-Verarbeitung und AVV.",
-    secretFields: [{ name: "vapiSecret", label: "Server-URL-Secret (optional – sonst gilt das Webhook-Token)" }],
-    configFields: [{ name: "vendor", label: "Anbieter (Pilot: vapi)", placeholder: "vapi" }],
+    secretFields: [
+      { name: "vapiSecret", label: "Vapi: Server-URL-Secret (optional – sonst gilt das Webhook-Token)" },
+      { name: "retellApiKey", label: "Retell: API-Schlüssel (prüft x-retell-signature)" },
+    ],
+    configFields: [{ name: "vendor", label: "Anbieter (vapi oder retell)", placeholder: "vapi" }],
   },
   {
     provider: "transcription",
@@ -137,9 +164,9 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
 ];
 
 /** Anbieter ohne (umgesetzte) Signatur: Webhook nur mit zufälligem Token `?token=` */
-export const TOKEN_WEBHOOK_PROVIDERS: SupportedProvider[] = ["lexoffice", "sms", "voice_agent"];
+export const TOKEN_WEBHOOK_PROVIDERS: ProviderId[] = ["lexoffice", "sms", "voice_agent"];
 /** Anbieter mit HMAC-Signatur: Geheimnis ist Pflicht */
-export const HMAC_WEBHOOK_SECRET: Partial<Record<SupportedProvider, string>> = { sumup: "webhookSecret", whatsapp: "appSecret" };
+export const HMAC_WEBHOOK_SECRET: Partial<Record<ProviderId, string>> = { sumup: "webhookSecret", whatsapp: "appSecret" };
 
 export const STATUS_LABEL: Record<string, string> = {
   mock: "Testmodus",

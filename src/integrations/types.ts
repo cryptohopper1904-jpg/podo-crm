@@ -272,7 +272,7 @@ export interface MessagingPort extends BasePort<MessagingProvider> {
 }
 
 // ───────────────────────── KI-Telefonagent (Pilot, PLAN 4.6) ─────────────────────────
-/** Unterstützte Telefonagent-Anbieter (Pfad /api/voice/{vendor}). Umgesetzt: vapi. */
+/** Unterstützte Telefonagent-Anbieter (Pfad /api/voice/{vendor}). Umgesetzt: vapi, retell. */
 export type VoiceVendorId = "vapi" | "retell" | "fonio" | "sipgate";
 
 /** Werkzeuge, die der Agent über unseren Server aufrufen darf (Namen wie im Assistenten-Prompt). */
@@ -312,8 +312,9 @@ export interface VoiceAgentPort extends BasePort<"voice_agent"> {
   /**
    * Prüft die Echtheit eines Aufrufs (fail closed: ohne hinterlegtes Geheimnis immer false).
    * `secret` = entschlüsseltes Geheimnis der Verbindung (integration_connections.secret_enc).
+   * `rawBody` = unveränderter Request-Body (für HMAC-Signaturen, z. B. Retell).
    */
-  verify(headers: Record<string, string | undefined>, secret: Record<string, string>): boolean;
+  verify(headers: Record<string, string | undefined>, secret: Record<string, string>, rawBody?: string): boolean;
   /** Vendor-Payload → normalisiertes Ereignis */
   parseEvent(payload: unknown): VoiceCallEvent;
   /** Werkzeug-Ergebnisse → Antwort im Vendor-Format */
@@ -345,6 +346,52 @@ export interface LlmPort extends BasePort<"llm"> {
   structureReport(transcript: string, opts?: { knownNames?: string[] }): Promise<StructuredReport>;
   suggestReply(message: string, context?: { practiceName?: string; tone?: "formal" | "friendly"; knownNames?: string[]; facts?: string[] }): Promise<string>;
   summarizeNews(items: NewsItemInput[]): Promise<{ url: string; summary: string }[]>;
+}
+
+// ───────────────────────── KIM (Kommunikation im Medizinwesen, TI) ─────────────────────────
+/**
+ * KIM-Postfach über das KIM-Clientmodul des KIM-Anbieters (bzw. einen TI-Gateway-Dienst).
+ * Das Clientmodul übernimmt S/MIME-Ver-/Entschlüsselung, Signatur und Verzeichnisdienst (VZD);
+ * wir sprechen nur die Standard-Schnittstellen SMTP (Versand) und POP3 (Abruf) über TLS.
+ * Voraussetzungen der Praxis: SMC-B (Praxisausweis), Konnektor/TI-Gateway, KIM-Vertrag.
+ */
+export interface KimAttachmentInfo {
+  filename: string;
+  contentType: string;
+  /** Größe der dekodierten Daten in Byte */
+  size: number;
+}
+
+export interface KimInboundMessage {
+  /** Message-ID-Header (ohne spitze Klammern) – Dedupe-Schlüssel */
+  messageId: string;
+  from: string;
+  to: string | null;
+  subject: string | null;
+  /** ISO-Zeitpunkt (Date-Header, sonst Abrufzeit) */
+  receivedAt: string;
+  /** text/plain-Inhalt (bei reinem HTML: Text ohne Tags) */
+  text: string;
+  attachments: KimAttachmentInfo[];
+  inReplyTo: string | null;
+  /** X-KIM-Dienstkennung, z. B. „eArztbrief;Brief;V1.2“ */
+  kimService: string | null;
+}
+
+export interface KimSendAttachment {
+  filename: string;
+  contentType: string;
+  data: Uint8Array;
+}
+
+export interface KimPort {
+  readonly provider: "kim";
+  readonly isMock: boolean;
+  /** Ruft neue Nachrichten ab (Löschen auf dem Server nur, wenn in der Verbindung ausdrücklich aktiviert). */
+  fetchInbox(opts?: { limit?: number }): Promise<KimInboundMessage[]>;
+  send(to: string, subject: string, body: string, attachments?: KimSendAttachment[], opts?: { inReplyTo?: string | null }): Promise<{ messageId: string }>;
+  /** Anmeldung an POP3 (und SMTP) prüfen, ohne Nachrichten zu lesen. */
+  ping(): Promise<{ messages: number }>;
 }
 
 /** Zuordnung Provider → Port */

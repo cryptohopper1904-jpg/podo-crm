@@ -8,6 +8,7 @@ import { withOrg } from "@/db";
 import { braceEpisodes, media, recordAddenda, treatmentRecords, type FootPoint } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { parseFootPoints } from "@/lib/foot3d";
 import { chainHash } from "@/lib/records";
 import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/rules/brace";
 import { RecordInputError, checkTreatmentRefs, insertTreatmentRecord, lockPatientChain } from "@/server/records";
@@ -47,7 +48,7 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
   let footPoints: FootPoint[] = [];
   let mediaIds: string[] = [];
   try {
-    footPoints = z.array(z.object({ side: z.enum(["left", "right"]), point: z.string(), label: z.string().optional(), note: z.string().max(500).optional() })).parse(JSON.parse(String(form.get("footPoints") ?? "[]")));
+    footPoints = parseFootPoints(String(form.get("footPoints") ?? "[]"));
     mediaIds = z.array(z.string().uuid()).parse(JSON.parse(String(form.get("mediaIds") ?? "[]")));
   } catch {
     return { error: "Fußschema oder Fotos konnten nicht gelesen werden." };

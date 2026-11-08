@@ -38,6 +38,6 @@ export async function enterSupportAction(form: FormData) {
 export async function exitSupportAction() {
   const row = await getSession();
   if (!row || !row.session.verified) redirect("/login");
-  await exitSupport(row.user.id, row.session.id, row.session.organizationId);
+  if (!(await exitSupport(row.user.id, row.session.id, row.session.organizationId))) redirect("/login");
   redirect(row.user.isPlatformAdmin && row.user.totpEnabled ? "/plattform" : "/heute");
 }

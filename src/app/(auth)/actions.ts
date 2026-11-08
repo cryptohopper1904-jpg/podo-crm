@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { locations, memberships, organizations, sessions, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
-import { createSession, destroySession, getSession, markSessionVerified, requestMeta } from "@/lib/auth/session";
+import { createSession, destroySession, getSession, markSessionVerified, requestMeta, revokeUserSessions, rotateSession } from "@/lib/auth/session";
 import { legalAcceptance } from "@/lib/legal";
 import { PLANS, TRIAL_DAYS } from "@/lib/plans";
 import { clientKey, createRateLimiter } from "@/lib/rate-limit";
@@ -81,8 +81,11 @@ export async function verifyTotpAction(_: FormState, form: FormData): Promise<Fo
       .returning({ n: sessions.totpFailures });
     await audit({ userId: row.user.id, action: "login.2fa_failed" });
     if ((s?.n ?? MAX_TOTP_FAILURES) >= MAX_TOTP_FAILURES) {
-      // Sitzung verwerfen und Konto kurz sperren
+      // Konto kurz sperren und ALLE Sitzungen der Person beenden: wer hier scheitert, kannte das Passwort.
+      // (Passwort-Fehlversuche sperren nur neue Anmeldungen – sonst könnte jeder die echte Person ausloggen.)
       await db.update(users).set({ lockedUntil: sql`now() + make_interval(mins => ${LOCK_MINUTES})` }).where(eq(users.id, row.user.id));
+      await revokeUserSessions(row.user.id);
+      await audit({ userId: row.user.id, action: "login.2fa_locked" });
       await destroySession();
       redirect("/login");
     }
@@ -200,7 +203,8 @@ export async function switchOrganizationAction(form: FormData) {
     .where(and(eq(memberships.userId, row.user.id), eq(memberships.organizationId, orgId), eq(memberships.active, true)))
     .limit(1);
   if (m) {
-    await db.update(sessions).set({ organizationId: orgId }).where(eq(sessions.id, row.session.id));
+    // Neues Token je Praxiswechsel (altes Token danach wertlos)
+    if (!(await rotateSession(row.session.id, row.user.id, orgId))) redirect("/login");
     await audit({ organizationId: orgId, userId: row.user.id, action: "organization.switched" });
   }
   redirect("/heute");

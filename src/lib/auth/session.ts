@@ -3,14 +3,18 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { auditLog, memberships, organizations, sessions, supportGrants, users } from "@/db/schema";
 import { accessMode, type AccessInfo, type OrgBilling } from "@/lib/plans";
 import { effectiveCan, isReadPermission, mutationAllowedWithoutPermission, pickActiveGrant, type SupportContext } from "./access";
 import { can, type Permission, type Role } from "./permissions";
+import { clientIpFrom } from "./client-ip";
+import { acceptedSessionCookieNames, readSessionToken, sessionCookieName, sessionCookieOptions } from "./cookie";
+import { createSupportViewLog, isPrefetch } from "./support-view";
 
-export const SESSION_COOKIE = "podo_session";
+/** Name des Sitzungs-Cookies in dieser Umgebung (Produktion: __Host-podo_session), siehe ./cookie.ts */
+export const SESSION_COOKIE = sessionCookieName();
 const SESSION_HOURS = 12;
 
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -18,14 +22,21 @@ const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
 export async function requestMeta() {
   const h = await headers();
   return {
-    // Letzter Eintrag = vom eigenen Reverse-Proxy (Caddy) angehängt; der erste wäre vom Client fälschbar
-    ip: h.get("x-forwarded-for")?.split(",").pop()?.trim() ?? h.get("x-real-ip") ?? null,
+    // Nur so viele X-Forwarded-For-Einträge von rechts, wie Proxys vertraut wird (TRUSTED_PROXY_HOPS, docs/BETRIEB.md)
+    ip: clientIpFrom(h.get("x-forwarded-for"), h.get("x-real-ip")),
     userAgent: h.get("user-agent")?.slice(0, 300) ?? null,
   };
 }
 
+const newToken = () => randomBytes(32).toString("base64url");
+
+async function setSessionCookie(token: string, expiresAt: Date) {
+  const jar = await cookies();
+  jar.set(sessionCookieName(), token, sessionCookieOptions(expiresAt));
+}
+
 export async function createSession(userId: string, organizationId: string | null, verified: boolean) {
-  const token = randomBytes(32).toString("base64url");
+  const token = newToken();
   const meta = await requestMeta();
   // Unbestätigte Sitzungen (2FA ausstehend) laufen nach 10 Minuten ab
   const expiresAt = new Date(Date.now() + (verified ? SESSION_HOURS * 3600_000 : 10 * 60_000));
@@ -38,27 +49,65 @@ export async function createSession(userId: string, organizationId: string | nul
     ip: meta.ip,
     userAgent: meta.userAgent,
   });
-  const jar = await cookies();
-  jar.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    expires: expiresAt,
+  await setSessionCookie(token, expiresAt);
+}
+
+/**
+ * Neues Token beim Wechsel der Praxis (eigene Praxis, Support betreten/verlassen): alte Zeile löschen,
+ * neue mit gleichem Bestätigungs-Status (2FA) und gleichem Ablauf anlegen (kein Verlängern durch Wechseln).
+ * Das alte Token ist danach wertlos. false, wenn die Sitzung nicht (mehr) existiert oder fremd ist.
+ */
+export async function rotateSession(sessionId: string, userId: string, organizationId: string | null): Promise<boolean> {
+  const token = newToken();
+  const meta = await requestMeta().catch(() => ({ ip: null, userAgent: null }));
+  const created = await db.transaction(async (tx) => {
+    const [old] = await tx
+      .delete(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId), gt(sessions.expiresAt, new Date())))
+      .returning();
+    if (!old) return null;
+    await tx.insert(sessions).values({
+      id: sha256(token),
+      userId,
+      organizationId,
+      verified: old.verified,
+      totpFailures: old.totpFailures,
+      expiresAt: old.expiresAt,
+      ip: meta.ip ?? old.ip,
+      userAgent: meta.userAgent ?? old.userAgent,
+    });
+    return old;
   });
+  if (!created) return false;
+  await setSessionCookie(token, created.expiresAt);
+  return true;
+}
+
+/**
+ * Entzug: alle Sitzungen einer Person löschen (optional nur die einer Praxis bzw. außer der aktuellen).
+ * Aufgerufen bei 2FA-Sperre (das Passwort war bekannt), Deaktivierung der Mitgliedschaft und Passwortwechsel.
+ * NICHT bei Passwort-Fehlversuchen – sonst könnte ein Angreifer die echte Person ausloggen (DoS).
+ */
+export async function revokeUserSessions(userId: string, opts: { organizationId?: string; exceptSessionId?: string } = {}): Promise<number> {
+  const conds = [eq(sessions.userId, userId)];
+  if (opts.organizationId) conds.push(eq(sessions.organizationId, opts.organizationId));
+  if (opts.exceptSessionId) conds.push(ne(sessions.id, opts.exceptSessionId));
+  const gone = await db.delete(sessions).where(and(...conds)).returning({ id: sessions.id });
+  return gone.length;
 }
 
 export async function destroySession() {
   const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
+  const token = readSessionToken(jar);
   if (token) await db.delete(sessions).where(eq(sessions.id, sha256(token)));
-  jar.delete(SESSION_COOKIE);
+  // __Host-Cookies lassen sich nur mit denselben Attributen (Secure, Path=/) löschen
+  for (const name of acceptedSessionCookieNames()) if (jar.get(name)) jar.set(name, "", { ...sessionCookieOptions(new Date(0)), maxAge: 0 });
 }
 
 /** Nach erfolgreicher 2FA: alte Sitzung verwerfen und ein NEUES Token ausgeben (Session-Fixation). */
 export async function markSessionVerified() {
   const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
+  const token = readSessionToken(jar);
   if (!token) return;
   const [old] = await db.delete(sessions).where(eq(sessions.id, sha256(token))).returning();
   if (old) await createSession(old.userId, old.organizationId, true);
@@ -67,7 +116,7 @@ export async function markSessionVerified() {
 /** Liest die Sitzung (gecacht pro Request). Gibt null zurück, wenn keine gültige Sitzung existiert. */
 export const getSession = cache(async () => {
   const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
+  const token = readSessionToken(jar);
   if (!token) return null;
   const id = sha256(token);
   const [row] = await db
@@ -104,11 +153,14 @@ async function requestInfo() {
   try {
     const h = await headers();
     const method = h.get("x-podo-method")?.toUpperCase() ?? null;
-    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null };
+    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null, prefetch: isPrefetch(h) };
   } catch {
-    return { mutating: true, path: null };
+    return { mutating: true, path: null, prefetch: false };
   }
 }
+
+/** Entprellung der support.view-Einträge (je Freigabe + Pfad höchstens 1× je 60 s), siehe ./support-view.ts */
+const supportViews = createSupportViewLog();
 
 const billingOf = (o: typeof organizations.$inferSelect): OrgBilling => ({
   plan: o.plan,
@@ -167,17 +219,20 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
     org = o;
     role = "owner"; // nur für Anzeige; die Rechte begrenzt effectiveCan()
     support = grant;
-    // Jede Seitenansicht/Anfrage im Support-Modus wird im Audit-Log der Praxis protokolliert
-    const meta = await requestMeta().catch(() => ({ ip: null }));
-    await db.insert(auditLog).values({
-      organizationId: org.id,
-      userId: row.user.id,
-      action: "support.view",
-      entity: "support_grant",
-      entityId: grant.grantId,
-      meta: { path: req.path, method: req.mutating ? "write" : "read" },
-      ip: meta.ip,
-    });
+    // Seitenansichten, Downloads und jede schreibende Anfrage im Support-Modus → Audit-Log der Praxis
+    // (ohne Router-Prefetch; derselbe Pfad je Freigabe höchstens einmal pro Minute)
+    if (supportViews.shouldLog(grant.grantId, req)) {
+      const meta = await requestMeta().catch(() => ({ ip: null }));
+      await db.insert(auditLog).values({
+        organizationId: org.id,
+        userId: row.user.id,
+        action: "support.view",
+        entity: "support_grant",
+        entityId: grant.grantId,
+        meta: { path: req.path, method: req.mutating ? "write" : "read" },
+        ip: meta.ip,
+      });
+    }
   }
   return build(row, org, role, support, req.mutating);
 });

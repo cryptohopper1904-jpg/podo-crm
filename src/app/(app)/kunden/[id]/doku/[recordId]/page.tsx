@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { FootRecordView } from "@/components/foot3d";
 import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
@@ -68,9 +69,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
             <div className="sm:col-span-2">
               <dt className="text-xs font-semibold uppercase tracking-wide text-muted">Befund am Fuß</dt>
               <dd className="mt-1">
-                <ul className="list-disc pl-5">
-                  {r.footPoints.map((f, i) => <li key={i}>{f.side === "left" ? "links" : "rechts"} · {f.label ?? f.point}{f.note ? `: ${f.note}` : ""}</li>)}
-                </ul>
+                <FootRecordView points={r.footPoints} />
               </dd>
             </div>
           ) : null}

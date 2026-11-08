@@ -11,6 +11,8 @@ import type { MessagingProvider } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { adapterFor, logSync } from "@/server/integrations";
+import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
+import { kimAdapterFor, syncKimInbox } from "@/server/kim";
 import { matchPatientByAddress } from "@/server/messages";
 import { replyFacts } from "@/server/reply-context";
 
@@ -38,6 +40,9 @@ export async function matchPatientAction(_: InboxState, form: FormData): Promise
     const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.number, n))));
     if (!p) return { error: `Kundennummer ${n} nicht gefunden.` };
     patientId = p.id;
+  } else if (m.channel === "kim") {
+    // KIM: Absender ist eine Arztpraxis – nie über die Adresse zuordnen, nur bewusst per Kundennummer
+    return { error: "Bitte die Kundennummer angeben oder einen Vorschlag wählen." };
   } else {
     patientId = await matchPatientByAddress(org, m.fromAddress);
     if (!patientId) return { error: "Keine eindeutige Zuordnung über Absender möglich – bitte Kundennummer angeben." };
@@ -69,7 +74,7 @@ export async function suggestReplyAction(_: InboxState, form: FormData): Promise
       practiceName,
       tone: "friendly",
       knownNames,
-      facts: [...facts, m.channel === "whatsapp" || m.channel === "sms" ? "Kanal ist WhatsApp/SMS: nur Organisatorisches, keine medizinischen Inhalte, kurz halten." : "Kanal ist E-Mail."],
+      facts: [...facts, m.channel === "whatsapp" || m.channel === "sms" ? "Kanal ist WhatsApp/SMS: nur Organisatorisches, keine medizinischen Inhalte, kurz halten." : m.channel === "kim" ? "Kanal ist KIM: fachliche Antwort an eine Arztpraxis, sachlich und kollegial." : "Kanal ist E-Mail."],
     });
     const suggestion = restore(raw, map);
     await withOrg(org, (tx) =>
@@ -114,6 +119,7 @@ export async function sendReplyAction(_: InboxState, form: FormData): Promise<In
   const m = await loadMessage(org, id.data);
   if (!m) return { error: "Nachricht nicht gefunden." };
   if (m.status !== "new" && m.status !== "suggested") return { error: "Diese Nachricht wurde bereits beantwortet." };
+  if (m.channel === "kim") return sendKimReply(auth, m, body.data);
   const provider = CHANNEL_PROVIDER[m.channel];
   if (!provider) return { error: "Für diesen Kanal ist kein Versand möglich – bitte telefonisch/per Brief antworten und „Erledigt“ wählen." };
 
@@ -177,6 +183,66 @@ export async function sendReplyAction(_: InboxState, form: FormData): Promise<In
   await audit({ organizationId: org, userId: auth.user.id, action: "message.reply", entity: "message", entityId: m.id, meta: { channel: m.channel, mock } });
   revalidatePath("/posteingang");
   return { ok: mock ? "Testmodus: Antwort gespeichert, aber nicht wirklich versendet." : "Antwort versendet." };
+}
+
+type Msg = NonNullable<Awaited<ReturnType<typeof loadMessage>>>;
+
+/** Antwort per KIM (nur Text, keine Anhänge) – Versand über das KIM-Clientmodul. */
+async function sendKimReply(auth: Awaited<ReturnType<typeof requireAuth>>, m: Msg, text: string): Promise<InboxState> {
+  const org = auth.organization.id;
+  const to = clean(m.fromAddress ?? "");
+  if (!EMAIL_RE.test(to)) return { error: "KIM-Adresse des Absenders ist ungültig." };
+  const subject = clean(`Re: ${(m.subject ?? "Ihre Nachricht").replace(/^\[[^\]]*\]\s*/, "").replace(/^re:\s*/i, "")}`).slice(0, 200);
+  const adapter = await kimAdapterFor(org).catch(() => null);
+  if (!adapter) return { error: "KIM ist nicht eingerichtet (Einstellungen → Schnittstellen)." };
+  const claimed = await withOrg(org, (tx) =>
+    tx
+      .update(messages)
+      .set({ status: "answered" })
+      .where(and(eq(messages.organizationId, org), eq(messages.id, m.id), eq(messages.status, m.status)))
+      .returning({ id: messages.id }),
+  );
+  if (claimed.length === 0) return { error: "Diese Nachricht wurde bereits gesendet." };
+  let externalId: string;
+  try {
+    externalId = (await adapter.send(to, subject, text, [], { inReplyTo: m.externalId })).messageId;
+  } catch (e) {
+    await withOrg(org, (tx) =>
+      tx.update(messages).set({ status: m.status }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id), eq(messages.status, "answered"))),
+    );
+    await logSync(org, KIM_CONNECTION_PROVIDER, { direction: "out", ok: false, message: `KIM-Versand: ${describeError(e)}`, entity: "message", entityId: m.id });
+    return { error: "KIM-Versand fehlgeschlagen (Details im Synchronisationsprotokoll)." };
+  }
+  await withOrg(org, (tx) =>
+    tx.insert(messages).values({
+      organizationId: org,
+      patientId: m.patientId,
+      channel: "kim",
+      direction: "outbound",
+      fromAddress: m.toAddress,
+      toAddress: to,
+      subject,
+      body: text,
+      status: "answered",
+      externalId,
+      threadKey: m.threadKey ?? m.externalId ?? to,
+    }),
+  );
+  await logSync(org, KIM_CONNECTION_PROVIDER, { direction: "out", ok: true, message: adapter.isMock ? "KIM Testmodus – nicht wirklich versendet" : "KIM versendet", entity: "message", entityId: m.id });
+  await audit({ organizationId: org, userId: auth.user.id, action: "message.reply", entity: "message", entityId: m.id, meta: { channel: "kim", mock: adapter.isMock } });
+  revalidatePath("/posteingang");
+  return { ok: adapter.isMock ? "KIM-Testmodus: Antwort gespeichert, aber nicht wirklich versendet." : "Antwort per KIM versendet." };
+}
+
+/** „KIM abrufen“: neue Nachrichten aus dem KIM-Postfach holen (Dubletten werden übersprungen). */
+export async function syncKimAction(_: InboxState, form: FormData): Promise<InboxState> {
+  void form;
+  const auth = await requireAuth("messages.write");
+  const res = await syncKimInbox(auth.organization.id, { userId: auth.user.id });
+  if ("error" in res) return { error: res.error };
+  revalidatePath("/posteingang");
+  const prefix = res.mock ? "Testmodus (Beispielnachrichten): " : "";
+  return { ok: `${prefix}${res.fetched} abgerufen, ${res.imported} neu${res.duplicates ? `, ${res.duplicates} bereits vorhanden` : ""}.` };
 }
 
 export async function markDoneAction(_: InboxState, form: FormData): Promise<InboxState> {

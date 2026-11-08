@@ -17,14 +17,24 @@ export async function grantSupportAction(_: SupportState, form: FormData): Promi
   const auth = await ownerAuth();
   if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann Support-Zugriff freigeben." };
   const d = z
-    .object({ reason: z.string().trim(), hours: z.coerce.number().int(), scope: z.enum(["read", "write"]).default("read"), confirm: z.literal("on", { message: "Bitte die Freigabe bestätigen." }) })
+    .object({
+      reason: z.string().trim(),
+      hours: z.coerce.number().int(),
+      scope: z.enum(["read", "write"]).default("read"),
+      granteeUserId: z.string().uuid({ message: "Bitte die Person beim Support auswählen, die zugreifen darf." }),
+      confirm: z.literal("on", { message: "Bitte die Freigabe bestätigen." }),
+    })
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben prüfen." };
   const problem = validateGrantInput(d.data);
   if (problem) return { error: problem };
-  await createSupportGrant(auth, d.data);
+  try {
+    await createSupportGrant(auth, d.data);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Freigabe nicht möglich." };
+  }
   revalidatePath("/einstellungen/support");
-  return { ok: `Support-Zugriff für ${d.data.hours} Stunden freigegeben. Du kannst ihn jederzeit widerrufen.` };
+  return { ok: `Support-Zugriff für ${d.data.hours} Stunden freigegeben (nur für die ausgewählte Person). Du kannst ihn jederzeit widerrufen.` };
 }
 
 export async function revokeSupportAction(form: FormData) {

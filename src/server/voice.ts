@@ -1,7 +1,8 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { appointmentServices, appointments, messages, organizations, services, voiceCalls } from "@/db/schema";
+import { appointmentServices, appointments, integrationConnections, messages, organizations, services, voiceCalls } from "@/db/schema";
 import type { VoiceCallEvent, VoiceToolCall, VoiceToolResult, VoiceVendorId } from "@/integrations/types";
 import {
   maskPhone,
@@ -16,12 +17,16 @@ import {
   type VoiceToolDeps,
 } from "@/integrations/voice/core";
 import { isMockMode } from "@/integrations/registry";
+import { configuredVoiceVendor, isImplementedVoiceVendor } from "@/integrations/voice/voice-agent";
 import { describeError } from "@/integrations/test-connection";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availability";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { voiceEntitlement, type OrgBilling, type VoiceEntitlement } from "@/lib/plans";
+import { decryptSecret, encryptSecret } from "@/lib/secrets";
+import { berlinMonth, monthBounds, recentMonths, voiceMonthReport, voiceUsage, type VoiceUsage } from "@/lib/voice-usage";
 import { assertCan } from "./authz";
 import { freeSlots } from "./appointments";
 import { loadConnection, logSync } from "./integrations";
@@ -34,14 +39,56 @@ import { availability, staffMembers } from "./staff";
 
 const BOOKABLE_CATEGORIES = ["treatment", "cosmetic", "brace"];
 
-type OrgRow = { id: string; name: string; street: string | null; zip: string | null; city: string | null; phone: string | null; state: string; settings: Record<string, unknown> };
+type OrgRow = { id: string; name: string; street: string | null; zip: string | null; city: string | null; phone: string | null; state: string; settings: Record<string, unknown>; billing?: OrgBilling };
 
 async function loadOrg(org: string): Promise<OrgRow | null> {
   const [o] = await db
-    .select({ id: organizations.id, name: organizations.name, street: organizations.street, zip: organizations.zip, city: organizations.city, phone: organizations.phone, state: organizations.state, settings: organizations.settings })
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      street: organizations.street,
+      zip: organizations.zip,
+      city: organizations.city,
+      phone: organizations.phone,
+      state: organizations.state,
+      settings: organizations.settings,
+      plan: organizations.plan,
+      subscriptionStatus: organizations.subscriptionStatus,
+      trialEndsAt: organizations.trialEndsAt,
+      currentPeriodEnd: organizations.currentPeriodEnd,
+      seats: organizations.seats,
+    })
     .from(organizations)
     .where(eq(organizations.id, org));
-  return o ?? null;
+  if (!o) return null;
+  const { plan, subscriptionStatus, trialEndsAt, currentPeriodEnd, seats, ...rest } = o;
+  return { ...rest, billing: { plan, subscriptionStatus, trialEndsAt, currentPeriodEnd, seats } };
+}
+
+// ───────────────────────── Minuten & Freischaltung ─────────────────────────
+
+/** Summe der Gesprächssekunden eines Kalendermonats (Berlin) aus voice_calls.duration_sec. */
+export async function usedVoiceSeconds(org: string, month: string): Promise<number> {
+  const { from, to } = monthBounds(month);
+  const [r] = await withOrg(org, (tx) =>
+    tx
+      .select({ sec: sql<string | null>`coalesce(sum(${voiceCalls.durationSec}), 0)` })
+      .from(voiceCalls)
+      // Testanrufe aus der Simulation (/telefon) zählen nicht
+      .where(and(eq(voiceCalls.organizationId, org), gte(voiceCalls.startedAt, from), lt(voiceCalls.startedAt, to), sql`${voiceCalls.externalId} not like 'sim-%'`)),
+  );
+  return Number(r?.sec ?? 0);
+}
+
+export type VoiceQuotaStatus = { entitlement: VoiceEntitlement; usage: VoiceUsage; month: string; blocked: boolean };
+
+/** Freischaltung (Tarif/Zusatzmodul) + Verbrauch im laufenden Monat. blocked = keine Buchungen per Telefon. */
+export async function voiceQuotaStatus(o: Pick<OrgRow, "id" | "settings" | "billing">, now: Date = new Date()): Promise<VoiceQuotaStatus> {
+  const billing: OrgBilling = o.billing ?? { plan: "starter", subscriptionStatus: "none", trialEndsAt: null, currentPeriodEnd: null, seats: 1 };
+  const entitlement = voiceEntitlement(billing, o.settings, now);
+  const month = berlinMonth(now);
+  const usage = voiceUsage(entitlement.enabled ? await usedVoiceSeconds(o.id, month) : 0, entitlement.includedMinutes);
+  return { entitlement, usage, month, blocked: !entitlement.enabled || usage.exceeded };
 }
 
 const openingOf = (settings: Record<string, unknown>): TimeRange => {
@@ -180,9 +227,20 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
   const externalId = `${ctx.vendor}:${ctx.callId}`.slice(0, 250);
   const callerMasked = maskPhone(ctx.caller);
   let svcCache: BookableService[] | null = null;
+  let blocked: boolean | null = null;
   return {
     now,
     caller: ctx.caller,
+    async quotaExceeded() {
+      if (blocked === null) {
+        const q = await voiceQuotaStatus(o, now());
+        blocked = q.blocked;
+        if (blocked) {
+          await audit({ organizationId: org, action: "voice.quota_blocked", meta: { vendor: ctx.vendor, month: q.month, usedMinutes: q.usage.usedMinutes, includedMinutes: q.usage.includedMinutes, enabled: q.entitlement.enabled } }).catch(() => undefined);
+        }
+      }
+      return blocked;
+    },
     async services() {
       svcCache ??= await bookableServices(org, o.settings);
       return svcCache;
@@ -337,7 +395,112 @@ export async function voicePageInfo(auth: AuthContext) {
   assertCan(auth, "messages.read");
   const o = await loadOrg(auth.organization.id);
   if (!o) throw new Error("Praxis nicht gefunden");
-  return { settings: readVoiceSettings(o.settings), opening: openingOf(o.settings), services: await bookableServices(o.id, o.settings) };
+  const services = await bookableServices(o.id, o.settings);
+  const quota = await voiceQuotaStatus(o);
+  return { settings: readVoiceSettings(o.settings), opening: openingOf(o.settings), services, quota };
+}
+
+/** Kontingent-Hinweis (z. B. Banner für Inhaber:innen) – ohne Rechteprüfung auf Inhalte, nur Zählwerte. */
+export async function voiceQuotaFor(auth: AuthContext): Promise<VoiceQuotaStatus | null> {
+  const o = await loadOrg(auth.organization.id);
+  return o ? voiceQuotaStatus(o) : null;
+}
+
+/** Monatsbericht: Anrufe, gebuchte Terminwünsche, Rückrufbitten, Ø Dauer, Minuten (neuester Monat zuerst). */
+export async function voiceMonthlyReport(auth: AuthContext, months = 6, now: Date = new Date()) {
+  assertCan(auth, "messages.read");
+  const org = auth.organization.id;
+  const list = recentMonths(now, Math.max(1, Math.min(months, 24)));
+  const { from } = monthBounds(list[list.length - 1]);
+  const { to } = monthBounds(list[0]);
+  const rows = await withOrg(org, (tx) =>
+    tx
+      .select({ startedAt: voiceCalls.startedAt, durationSec: voiceCalls.durationSec, outcome: voiceCalls.outcome })
+      .from(voiceCalls)
+      .where(and(eq(voiceCalls.organizationId, org), gte(voiceCalls.startedAt, from), lt(voiceCalls.startedAt, to))),
+  );
+  return voiceMonthReport(rows, list);
+}
+
+// ───────────────────────── Einrichtungsassistent ─────────────────────────
+
+export type VoiceSetupState = {
+  vendor: "vapi" | "retell";
+  status: "disconnected" | "mock" | "connected" | "error";
+  /** Geheimnis für den gewählten Anbieter hinterlegt */
+  hasSecret: boolean;
+  /** Vapi: Server-URL-Secret (nur für integrations.manage), Retell: null (Schlüssel wird nie angezeigt) */
+  vapiSecret: string | null;
+};
+
+function readSecret(secretEnc: string | null | undefined, org: string): Record<string, string> {
+  if (!secretEnc) return {};
+  try {
+    return JSON.parse(decryptSecret(secretEnc, org));
+  } catch {
+    return {};
+  }
+}
+
+export async function voiceSetupState(auth: AuthContext): Promise<VoiceSetupState> {
+  assertCan(auth, "integrations.manage");
+  const org = auth.organization.id;
+  const conn = await loadConnection(org, "voice_agent");
+  const v = configuredVoiceVendor(conn?.config);
+  const vendor = v === "retell" ? "retell" : "vapi";
+  const secret = readSecret(conn?.secretEnc, org);
+  const vapiSecret = secret.vapiSecret || secret.webhookToken || null;
+  return { vendor, status: conn?.status ?? "disconnected", hasSecret: vendor === "retell" ? !!secret.retellApiKey : !!vapiSecret, vapiSecret: vendor === "vapi" ? vapiSecret : null };
+}
+
+export class VoiceSetupError extends Error {}
+
+/** Schritt 1+2: Anbieter wählen und Geheimnis hinterlegen (verschlüsselt, nie im Audit). Neue Verbindung startet im Testmodus. */
+export async function saveVoiceSetup(auth: AuthContext, input: { vendor: string; secret?: string | null }) {
+  assertCan(auth, "integrations.manage");
+  const org = auth.organization.id;
+  if (!isImplementedVoiceVendor(input.vendor)) throw new VoiceSetupError("Bitte einen verfügbaren Anbieter wählen.");
+  const vendor = input.vendor;
+  const value = (input.secret ?? "").trim();
+  if (value && (value.length < 16 || value.length > 300 || /\s/.test(value))) throw new VoiceSetupError("Das Geheimnis muss 16–300 Zeichen lang sein und darf keine Leerzeichen enthalten.");
+  const conn = await loadConnection(org, "voice_agent");
+  const secret = readSecret(conn?.secretEnc, org);
+  if (value) secret[vendor === "retell" ? "retellApiKey" : "vapiSecret"] = value;
+  if (vendor === "retell" && !secret.retellApiKey) throw new VoiceSetupError("Für Retell AI bitte den API-Schlüssel eingeben (damit werden die Aufrufe signiert).");
+  secret.webhookToken ||= randomBytes(32).toString("base64url");
+  const config = { ...(conn?.config ?? {}), vendor };
+  const status = conn?.status && conn.status !== "disconnected" ? conn.status : "mock";
+  const values = { status, config, secretEnc: encryptSecret(JSON.stringify(secret), org), updatedAt: new Date() };
+  await withOrg(org, (tx) =>
+    tx
+      .insert(integrationConnections)
+      .values({ organizationId: org, provider: "voice_agent", ...values })
+      .onConflictDoUpdate({ target: [integrationConnections.organizationId, integrationConnections.provider], set: values }),
+  );
+  await audit({ organizationId: org, userId: auth.user.id, action: "integration.save", entity: "integration", entityId: "voice_agent", meta: { vendor, secretChanged: !!value, status, via: "telefon-assistent" } });
+}
+
+/** Schritt 5: Go-live (verbunden) bzw. zurück in den Testmodus. */
+export async function setVoiceLive(auth: AuthContext, live: boolean) {
+  assertCan(auth, "integrations.manage");
+  const org = auth.organization.id;
+  const conn = await loadConnection(org, "voice_agent");
+  if (!conn) throw new VoiceSetupError("Bitte zuerst Anbieter und Geheimnis speichern.");
+  if (live) {
+    const o = await loadOrg(org);
+    const q = o ? await voiceQuotaStatus(o) : null;
+    if (!q?.entitlement.enabled) throw new VoiceSetupError(q?.entitlement.reason ?? "Das KI-Telefon ist nicht freigeschaltet.");
+    const setup = await voiceSetupState(auth);
+    if (!setup.hasSecret) throw new VoiceSetupError("Ohne hinterlegtes Geheimnis kann der Assistent nicht live gehen.");
+  }
+  const status = live ? "connected" : "mock";
+  await withOrg(org, (tx) =>
+    tx
+      .update(integrationConnections)
+      .set({ status, updatedAt: new Date(), ...(live ? { lastError: null } : {}) })
+      .where(and(eq(integrationConnections.organizationId, org), eq(integrationConnections.provider, "voice_agent"))),
+  );
+  await audit({ organizationId: org, userId: auth.user.id, action: live ? "voice.go_live" : "voice.test_mode", entity: "integration", entityId: "voice_agent", meta: { vendor: configuredVoiceVendor(conn.config) } });
 }
 
 export async function saveVoiceSettings(auth: AuthContext, input: { storeTranscripts: boolean }) {
