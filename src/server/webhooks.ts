@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { invoices, messages, payments, webhookEvents } from "@/db/schema";
-import type { InboundMessage, NormalizedWebhookEvent, ProviderId } from "@/integrations/types";
+import type { InboundMessage, NormalizedWebhookEvent, PaymentPort, ProviderId } from "@/integrations/types";
+import { statusFromPayments } from "@/lib/invoice-math";
 import { adapterFor, logSync } from "./integrations";
 import { matchPatientByAddress } from "./messages";
 
@@ -49,48 +50,97 @@ export async function finishWebhookEvent(id: string, error?: string) {
     .where(eq(webhookEvents.id, id));
 }
 
+/** Rechnungs-ID aus einer SumUp-Referenz: „<uuid>“ oder „<uuid>.<suffix>“ (Zahlungslinks brauchen eindeutige Referenzen). */
+export function invoiceIdFromReference(ref: string | null | undefined): string | null {
+  if (!ref) return null;
+  const head = ref.slice(0, 36);
+  return isUuid(head) && (ref.length === 36 || ref[36] === ".") ? head : null;
+}
+
+export type ProviderPaymentInput = {
+  /** Rechnungs-ID (aus der Referenz), falls bekannt */
+  invoiceId?: string | null;
+  /** invoices.checkout_ref, z. B. „reader:<client_transaction_id>“ oder „checkout:<id>“ */
+  checkoutRef?: string | null;
+  /** Idempotenz-Schlüssel, z. B. „sumup:<transaktions-id>“ (payments.external_ref) */
+  externalRef: string;
+  amountCents: number;
+  method: "card" | "payment_link";
+  paidAt?: Date | null;
+};
+
+export type ProviderPaymentResult = { status: "gebucht" | "bereits gebucht" | "Rechnung nicht gefunden" | "Rechnung nicht offen" | "Betrag ungültig"; invoiceId: string | null };
+
 /**
- * SumUp: Status immer per API nachladen. Ist die Referenz (checkout_reference bzw. foreign_transaction_id)
- * eine Rechnungs-ID, wird die Zahlung gebucht (idempotent über payments.external_ref = Transaktions-ID).
+ * Bucht eine bestätigte Kartenzahlung/Zahlungslink-Zahlung idempotent:
+ * Rechnung wird gesperrt (FOR UPDATE) → parallele Zustellungen desselben Ereignisses laufen nacheinander,
+ * die zweite findet die Zahlung über external_ref und bucht nicht erneut.
  */
-export async function processSumupEvent(organizationId: string, ev: NormalizedWebhookEvent) {
-  if (!ev.objectId) return "ohne Objekt-ID";
-  const sumup = await adapterFor(organizationId, "sumup");
-  const isReader = ev.type.startsWith("solo.");
-  const tx = await sumup.getTransaction(ev.objectId, isReader ? "client_transaction_id" : "checkout");
-  if (tx.status !== "paid") return `Status ${tx.status}`;
-  if (!isUuid(tx.reference)) return "Referenz ist keine Rechnung";
-  const invoiceId = tx.reference;
-  const result = await withOrg(organizationId, async (t) => {
-    const [inv] = await t.select().from(invoices).where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, invoiceId)));
-    if (!inv) return "Rechnung nicht gefunden";
-    if (inv.status === "draft" || inv.status === "cancelled") return `Rechnung im Status ${inv.status}`;
+export async function recordProviderPayment(organizationId: string, input: ProviderPaymentInput): Promise<ProviderPaymentResult> {
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) return { status: "Betrag ungültig", invoiceId: null };
+  return withOrg(organizationId, async (t) => {
+    const byId = isUuid(input.invoiceId)
+      ? await t.select().from(invoices).where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, input.invoiceId))).for("update")
+      : [];
+    const byRef = !byId[0] && input.checkoutRef
+      ? await t.select().from(invoices).where(and(eq(invoices.organizationId, organizationId), eq(invoices.checkoutRef, input.checkoutRef))).limit(1).for("update")
+      : [];
+    const inv = byId[0] ?? byRef[0];
+    if (!inv) return { status: "Rechnung nicht gefunden" as const, invoiceId: null };
     const [dup] = await t
       .select({ id: payments.id })
       .from(payments)
-      .where(and(eq(payments.organizationId, organizationId), eq(payments.externalRef, `sumup:${tx.id}`)));
-    if (dup) return "bereits gebucht";
+      .where(and(eq(payments.organizationId, organizationId), eq(payments.externalRef, input.externalRef)));
+    if (dup) return { status: "bereits gebucht" as const, invoiceId: inv.id };
+    if (inv.status === "draft" || inv.status === "cancelled") return { status: "Rechnung nicht offen" as const, invoiceId: inv.id };
     await t.insert(payments).values({
       organizationId,
-      invoiceId,
-      method: isReader ? "card" : "payment_link",
-      amountCents: tx.amountCents,
-      paidAt: tx.paidAt ? new Date(tx.paidAt) : new Date(),
-      externalRef: `sumup:${tx.id}`,
+      invoiceId: inv.id,
+      method: input.method,
+      amountCents: input.amountCents,
+      paidAt: input.paidAt ?? new Date(),
+      externalRef: input.externalRef,
     });
     const [sum] = await t
       .select({ paid: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int` })
       .from(payments)
-      .where(and(eq(payments.organizationId, organizationId), eq(payments.invoiceId, invoiceId)));
+      .where(and(eq(payments.organizationId, organizationId), eq(payments.invoiceId, inv.id)));
     const paid = Number(sum?.paid ?? 0);
     await t
       .update(invoices)
-      .set({ paidCents: paid, status: paid >= inv.totalCents ? "paid" : "partially_paid" })
-      .where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, invoiceId)));
-    return "gebucht";
+      .set({ paidCents: paid, status: statusFromPayments(inv.totalCents, paid) })
+      .where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, inv.id)));
+    return { status: "gebucht" as const, invoiceId: inv.id };
   });
-  await logSync(organizationId, "sumup", { direction: "in", ok: result === "gebucht" || result === "bereits gebucht", message: `Zahlung ${tx.id}: ${result}`, entity: "invoice", entityId: invoiceId });
-  return result;
+}
+
+/**
+ * SumUp: Status immer per API nachladen (Payload ist nicht autoritativ). Zuordnung zur Rechnung über
+ * die Referenz (Rechnungs-ID) oder – beim Solo-Terminal, das keine Referenz kennt – über invoices.checkout_ref.
+ * Gebucht wird idempotent über payments.external_ref = „sumup:<Transaktions-ID>“.
+ */
+export async function processSumupEvent(organizationId: string, ev: NormalizedWebhookEvent, deps: { port?: PaymentPort } = {}) {
+  if (!ev.objectId) return "ohne Objekt-ID";
+  const sumup = deps.port ?? (await adapterFor(organizationId, "sumup"));
+  const isReader = ev.type.startsWith("solo.");
+  const tx = await sumup.getTransaction(ev.objectId, isReader ? "client_transaction_id" : "checkout");
+  if (tx.status !== "paid") return `Status ${tx.status}`;
+  const res = await recordProviderPayment(organizationId, {
+    invoiceId: invoiceIdFromReference(tx.reference),
+    checkoutRef: `${isReader ? "reader" : "checkout"}:${ev.objectId}`,
+    externalRef: `sumup:${tx.id}`,
+    amountCents: tx.amountCents,
+    method: isReader ? "card" : "payment_link",
+    paidAt: tx.paidAt ? new Date(tx.paidAt) : null,
+  });
+  await logSync(organizationId, "sumup", {
+    direction: "in",
+    ok: res.status === "gebucht" || res.status === "bereits gebucht",
+    message: `Zahlung ${tx.id}: ${res.status}`,
+    entity: "invoice",
+    entityId: res.invoiceId ?? undefined,
+  });
+  return res.status;
 }
 
 /** Eingehende Nachrichten (WhatsApp/SMS) speichern und – falls eindeutig – einer Person zuordnen. */

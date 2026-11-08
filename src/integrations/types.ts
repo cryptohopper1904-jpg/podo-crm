@@ -242,6 +242,14 @@ export interface OutboundMessage {
   subject?: string;
   /** WhatsApp: freigegebene Vorlage (außerhalb des 24-h-Fensters Pflicht) */
   template?: { name: string; language: string; params?: string[] };
+  /** nur E-Mail: Anhänge (z. B. Rechnungs-PDF). SMS/WhatsApp lehnen Anhänge ab. */
+  attachments?: MessageAttachment[];
+}
+
+export interface MessageAttachment {
+  filename: string;
+  contentType: string;
+  data: Uint8Array;
 }
 
 export interface InboundMessage {

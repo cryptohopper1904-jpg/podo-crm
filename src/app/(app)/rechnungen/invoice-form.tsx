@@ -15,6 +15,13 @@ type Service = { id: string; code: string; name: string; priceCents: number; vat
 type PatientOpt = { id: string; number: number; firstName: string | null; lastName: string; billingContactId: string | null; careHomeId: string | null };
 type ContactOpt = { id: string; name: string; kind: string };
 
+export type InvoicePreset = {
+  kind: CreatableKind;
+  billingContactId?: string | null;
+  notes?: string | null;
+  lines: { serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
+};
+
 type Line = { key: string; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
 
 let seq = 0;
@@ -41,6 +48,7 @@ export function InvoiceForm({
   smallBusiness,
   today,
   preselectPatientId,
+  preset,
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -48,16 +56,30 @@ export function InvoiceForm({
   smallBusiness: boolean;
   today: string;
   preselectPatientId?: string | null;
+  preset?: InvoicePreset;
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
   const initialPatient = patients.find((p) => p.id === preselectPatientId);
 
-  const [kind, setKind] = useState<CreatableKind>("invoice");
-  const [patientId, setPatientId] = useState(initialPatient?.id ?? "");
-  const [billingContactId, setBillingContactId] = useState(initialPatient?.billingContactId ?? "");
+  const [kind, setKind] = useState<CreatableKind>(preset?.kind ?? "invoice");
+  const [patientId, setPatientId] = useState(preset ? "" : (initialPatient?.id ?? ""));
+  const [billingContactId, setBillingContactId] = useState(preset?.billingContactId ?? initialPatient?.billingContactId ?? "");
   const [patientFilter, setPatientFilter] = useState("");
-  const [lines, setLines] = useState<Line[]>([newLine()]);
+  const [lines, setLines] = useState<Line[]>(() =>
+    preset?.lines.length
+      ? preset.lines.map((l) =>
+          newLine({
+            // inaktive/unbekannte Leistung → Freitext mit Katalogpreis
+            serviceId: l.serviceId && svcById.has(l.serviceId) ? l.serviceId : "",
+            description: l.description,
+            quantity: String(l.quantity).replace(".", ","),
+            price: l.unitPriceCents === null ? "" : euro(l.unitPriceCents),
+            vatRate: l.vatRate,
+          }),
+        )
+      : [newLine()],
+  );
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [confirmed, setConfirmed] = useState(false);
 
@@ -290,7 +312,7 @@ export function InvoiceForm({
 
       <Card>
         <Field label="Hinweis auf der Rechnung (keine Diagnosen)">
-          <Textarea name="notes" placeholder="z. B. Behandlungszeitraum, Bezug auf Verordnung" />
+          <Textarea name="notes" defaultValue={preset?.notes ?? ""} placeholder="z. B. Behandlungszeitraum, Bezug auf Verordnung" />
         </Field>
       </Card>
 

@@ -17,6 +17,7 @@ import {
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { getAdapter } from "@/integrations/registry";
+import { allocateByVat, fiscalRef, getFiscalPort } from "@/integrations/tse";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { nextNumber } from "@/lib/numbering";
 import {
@@ -80,6 +81,29 @@ async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
 }
 
 /**
+ * Barzahlung über die TSE signieren (KassenSichV). Solange kein zertifizierter TSE-Vertrag besteht,
+ * läuft der Mock (Referenz „tse:test:…“) – für echten Bargeldeinsatz ist eine echte TSE Pflicht.
+ * Die Signaturreferenz landet in payments.external_ref.
+ */
+async function signCashPayment(inv: { id: string; number?: string | null }, amountCents: number, vatGroups: { rate: number; grossCents: number }[]) {
+  const fiscal = getFiscalPort();
+  try {
+    const reference = inv.number ?? inv.id;
+    const { transactionId } = await fiscal.startTransaction({ reference });
+    const sig = await fiscal.finishTransaction({
+      transactionId,
+      reference,
+      amounts: allocateByVat(amountCents, vatGroups),
+      paymentType: "cash",
+      paymentCents: amountCents,
+    });
+    return fiscalRef(sig);
+  } catch (e) {
+    throw new InvoiceError(`Barzahlung konnte nicht über die TSE signiert werden: ${e instanceof Error ? e.message : "unbekannter Fehler"}`);
+  }
+}
+
+/**
  * Bucht Zahlungen auf eine (bereits ausgestellte) Rechnung und aktualisiert paidCents/Status.
  * Gutschein-Zahlungen werden gegen das Restguthaben geprüft (Zeile wird gesperrt).
  */
@@ -87,9 +111,10 @@ async function applyPayments(
   tx: Tx,
   org: string,
   userId: string,
-  inv: { id: string; totalCents: number; paidCents: number },
+  inv: { id: string; totalCents: number; paidCents: number; number?: string | null },
   list: PaymentInput[],
   today: string,
+  vatGroups: { rate: number; grossCents: number }[] = [],
 ) {
   if (!list.length) return { paidCents: inv.paidCents, status: statusFromPayments(inv.totalCents, inv.paidCents) };
   const err = validatePayments(inv.totalCents - inv.paidCents, list.map((p) => p.amountCents));
@@ -117,13 +142,15 @@ async function applyPayments(
       voucherUse.set(v.id, (voucherUse.get(v.id) ?? 0) + p.amountCents);
       voucherId = v.id;
     }
+    let externalRef = p.externalRef ?? null;
+    if (p.method === "cash") externalRef = await signCashPayment(inv, p.amountCents, vatGroups);
     await tx.insert(payments).values({
       organizationId: org,
       invoiceId: inv.id,
       method: p.method,
       amountCents: p.amountCents,
       voucherId,
-      externalRef: p.externalRef ?? null,
+      externalRef,
       createdBy: userId,
     });
   }
@@ -263,7 +290,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
     // 4) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, totalCents: totals.totalCents, paidCents: 0 }, input.payments, today);
+    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: 0 }, input.payments, today, totals.groups);
     return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
   });
 
@@ -289,7 +316,11 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
       .for("update");
     if (!inv) throw new InvoiceError("Rechnung nicht gefunden.");
     if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Für diese Rechnung kann keine Zahlung erfasst werden.");
-    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso());
+    const vatLines = await tx
+      .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+      .from(invoiceLines)
+      .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, inv.id)));
+    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), computeTotals(vatLines).groups);
   });
   await audit({
     organizationId: org,
@@ -444,50 +475,55 @@ export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFi
   });
 }
 
+/** Lädt eine Rechnung mit allem, was Druckansicht und PDF brauchen (innerhalb von withOrg). */
+export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
+  const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, id)));
+  if (!inv) return null;
+  const lines = await tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position));
+  const pays = await tx
+    .select({ payment: payments, voucherCode: vouchers.code })
+    .from(payments)
+    .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
+    .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
+    .orderBy(asc(payments.paidAt));
+  const o = await loadOrg(tx, org);
+  const patient = inv.patientId
+    ? await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((r) => r[0] ?? null)
+    : null;
+  const billing = inv.billingContactId
+    ? await tx
+        .select()
+        .from(billingContacts)
+        .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId)))
+        .then((r) => r[0] ?? null)
+    : null;
+  // Storno-Beziehung in beide Richtungen
+  const related = await tx
+    .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, cancelsInvoiceId: invoices.cancelsInvoiceId })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.organizationId, org),
+        or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
+      ),
+    );
+  return {
+    invoice: inv,
+    lines,
+    payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
+    organization: o,
+    patient,
+    billingContact: billing,
+    cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
+    cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
+  };
+}
+export type InvoiceBundle = NonNullable<Awaited<ReturnType<typeof loadInvoiceBundle>>>;
+
 export async function getInvoice(auth: AuthContext, id: string) {
   const org = auth.organization.id;
-  const data = await withOrg(org, async (tx) => {
-    const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, id)));
-    if (!inv) return null;
-    const lines = await (tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position)));
-    const pays = await (tx
-        .select({ payment: payments, voucherCode: vouchers.code })
-        .from(payments)
-        .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
-        .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
-        .orderBy(asc(payments.paidAt)));
-    const o = await (loadOrg(tx, org));
-    const patient = await (inv.patientId
-        ? tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((r) => r[0] ?? null)
-        : Promise.resolve(null));
-    const billing = await (inv.billingContactId
-        ? tx
-            .select()
-            .from(billingContacts)
-            .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId)))
-            .then((r) => r[0] ?? null)
-        : Promise.resolve(null));
-    const related = await (// Storno-Beziehung in beide Richtungen
-      tx
-        .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, cancelsInvoiceId: invoices.cancelsInvoiceId })
-        .from(invoices)
-        .where(
-          and(
-            eq(invoices.organizationId, org),
-            or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
-          ),
-        ));
-    return {
-      invoice: inv,
-      lines,
-      payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
-      organization: o,
-      patient,
-      billingContact: billing,
-      cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
-      cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
-    };
-  });
+  if (!z.uuid().safeParse(id).success) return null;
+  const data = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, id));
   if (data) await audit({ organizationId: org, userId: auth.user.id, action: "invoice.read", entity: "invoice", entityId: id });
   return data;
 }

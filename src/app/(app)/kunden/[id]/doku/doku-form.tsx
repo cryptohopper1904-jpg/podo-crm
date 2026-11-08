@@ -30,12 +30,17 @@ export function DokuForm({
   services,
   activeBrace,
   voiceEnabled,
+  prescriptions = [],
+  defaultPrescriptionId,
 }: {
   patientId: string;
   appointmentId?: string;
   services: Service[];
   activeBrace: { id: string; side: string; toe: number; braceType: string | null; stage: string | null } | null;
   voiceEnabled: boolean;
+  /** buchbare Verordnungen (open/active mit Resteinheiten) */
+  prescriptions?: { id: string; label: string; remaining: number; warning: string | null }[];
+  defaultPrescriptionId?: string | null;
 }) {
   const [state, action, pending] = useActionState<DokuFormState, FormData>(saveTreatmentAction, undefined);
   const [points, setPoints] = useState<FootPoint[]>([]);
@@ -48,6 +53,8 @@ export function DokuForm({
   const [picked, setPicked] = useState<string[]>([]);
   const [batch, setBatch] = useState("");
   const [ai, setAi] = useState(false);
+  const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
+  const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // ── Pflichtfotos Nagelspange (versionierte Regel, siehe src/lib/rules/brace.ts) ──
@@ -92,6 +99,23 @@ export function DokuForm({
       <input type="hidden" name="braceAction" value={braceAction} />
       {activeBrace ? <input type="hidden" name="braceEpisodeId" value={activeBrace.id} /> : null}
       <FormError message={state?.error} />
+
+      {prescriptions.length ? (
+        <Card>
+          <h2 className="mb-3 font-display text-lg font-semibold">Verordnung</h2>
+          <Field label="Behandlung auf Verordnung buchen" hint="Mit dem Speichern wird eine Einheit der Verordnung gezählt.">
+            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => setPrescriptionId(e.target.value)}>
+              <option value="">– ohne Verordnung (Selbstzahler) –</option>
+              {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </Select>
+          </Field>
+          {selectedVo ? (
+            <p className={cx("mt-3 rounded-xl p-3 text-sm font-medium", selectedVo.warning ? "bg-warn-soft text-warn-soft-text" : "bg-primary-soft text-primary-soft-text")}>
+              Nach dieser Behandlung noch {selectedVo.remaining - 1} Einheit(en) offen.{selectedVo.warning ? ` ${selectedVo.warning}` : ""}
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
 
       {voiceEnabled ? <VoiceReport patientId={patientId} onResult={(r) => { setFields((f) => ({ ...f, ...r })); setAi(true); }} /> : null}
 

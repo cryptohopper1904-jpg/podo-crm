@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileDown } from "lucide-react";
 import { Badge, Card } from "@/components/ui";
+import { PortalLinkButton } from "@/components/portal-link-button";
 import { PrintButton } from "@/components/print-button";
+import { isMockMode } from "@/integrations/registry";
+import { fiscalIsTestMode } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
-import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
+import { dateDe, dateTimeDe, money } from "@/lib/format";
 import { computeTotals } from "@/lib/invoice-math";
 import {
-  INTERNAL_NOTE_PREFIX,
   INVOICE_KIND_LABEL,
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_TONE,
@@ -16,12 +18,14 @@ import {
   NOTE_VAT_EXEMPT,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
+import { formatIban, hasExemptNote, internalNotes as internalNoteLines, invoiceRecipient, invoiceTitle, publicNotes as publicNoteText, qtyDe, senderLine as senderLineOf, showsDueDate } from "@/lib/invoice-view";
+import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
-import { CancelPanel, LexofficeButton, PaymentPanel } from "./invoice-actions";
+import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
 
 export const metadata = { title: "Rechnung" };
 
-const qty = (s: string) => Number(s).toLocaleString("de-DE", { maximumFractionDigits: 2 });
+const qty = qtyDe;
 
 /** Druck: A4, Papierfarben unabhängig vom Dunkelmodus. */
 const PRINT_CSS = `
@@ -43,23 +47,19 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const open = inv.totalCents - inv.paidCents;
   const canPay = auth.can("invoices.write") && (inv.status === "issued" || inv.status === "partially_paid") && open !== 0;
   const canCancel = auth.can("invoices.write") && inv.kind !== "credit_note" && inv.status !== "cancelled" && inv.status !== "draft";
-  const hasExempt = !o.smallBusiness && inv.kind !== "no_show_fee" && lines.some((l) => l.vatRate === 0);
-  const publicNotes = (inv.notes ?? "")
-    .split("\n")
-    .filter((l) => l.trim() && !l.startsWith(INTERNAL_NOTE_PREFIX))
-    .join("\n");
-  const internalNotes = (inv.notes ?? "").split("\n").filter((l) => l.startsWith(INTERNAL_NOTE_PREFIX));
-
-  const recipient = b
-    ? { name: b.name, street: b.street, city: [b.zip, b.city].filter(Boolean).join(" "), care: p ? fullName(p) : null }
-    : p
-      ? { name: [p.salutation, fullName(p)].filter(Boolean).join(" "), street: p.street, city: [p.zip, p.city].filter(Boolean).join(" "), care: null }
-      : { name: "–", street: null, city: "", care: null };
-  const senderLine = [o.legalName ?? o.name, o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-  const title =
-    inv.kind === "credit_note"
-      ? `Stornorechnung ${inv.number}`
-      : `${INVOICE_KIND_LABEL[inv.kind]} ${inv.number}`;
+  const hasExempt = hasExemptNote(o, inv, lines);
+  const publicNotes = publicNoteText(inv.notes);
+  const internalNotes = internalNoteLines(inv.notes);
+  const recipient = invoiceRecipient(p, b);
+  const senderLine = senderLineOf(o);
+  const title = invoiceTitle(inv);
+  const canWrite = auth.can("invoices.write");
+  const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
+  const sumupMock = canWrite && isOpen ? isMockMode(await loadConnection(o.id, "sumup")) : false;
+  const recipientEmail = b?.email || p?.email || null;
+  const linkChannels: { value: "email" | "sms" | "whatsapp"; label: string }[] = [];
+  if (recipientEmail) linkChannels.push({ value: "email", label: `E-Mail (${recipientEmail})` });
+  if (p?.phoneMobile) linkChannels.push({ value: "sms", label: "SMS" }, { value: "whatsapp", label: "WhatsApp (nur mit Einwilligung)" });
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -85,9 +85,23 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <PrintButton />
-          {auth.can("invoices.write") && inv.status !== "draft" ? <LexofficeButton invoiceId={inv.id} /> : null}
+          {inv.status !== "draft" ? (
+            <a
+              href={`/api/invoices/${inv.id}/pdf`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+            >
+              <FileDown size={18} aria-hidden /> PDF
+            </a>
+          ) : null}
+          {canWrite && inv.status !== "draft" ? (
+            <EmailInvoiceButton invoiceId={inv.id} sentTo={inv.sentTo} sentAt={inv.sentAt ? dateTimeDe(inv.sentAt) : null} recipientEmail={recipientEmail} />
+          ) : null}
+          {canWrite && inv.status !== "draft" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
           {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
+          {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
               Zur Kundenakte
@@ -95,10 +109,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
         </div>
         {internalNotes.length ? (
-          <p className="rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">
-            {internalNotes.map((n) => n.slice(INTERNAL_NOTE_PREFIX.length)).join(" · ")}
+          <p className="rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">{internalNotes.join(" · ")}</p>
+        ) : null}
+        {canPay && fiscalIsTestMode() ? (
+          <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
+            Kasse/TSE im Testmodus: Barzahlungen erhalten nur eine Test-Signatur. Vor dem echten Bargeldeinsatz ist ein Vertrag mit einer
+            zertifizierten TSE (z. B. fiskaly SIGN DE) und die Kassenmeldung ans Finanzamt Pflicht (KassenSichV, § 146a AO).
           </p>
         ) : null}
+        {canWrite && isOpen ? <SumupPanel invoiceId={inv.id} paymentLinkUrl={inv.paymentLinkUrl} mock={sumupMock} channels={linkChannels} /> : null}
       </div>
 
       <article className="invoice-sheet mx-auto max-w-[210mm] rounded-[var(--radius-card)] border border-border bg-surface p-6 text-[14px] leading-relaxed sm:p-10">
@@ -137,7 +156,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <dd className="tabular-nums">{p.number}</dd>
             </div>
           ) : null}
-          {inv.kind !== "receipt" && inv.kind !== "credit_note" && inv.status !== "paid" ? (
+          {showsDueDate(inv) ? (
             <div>
               <dt className="text-xs text-muted">Zahlbar bis</dt>
               <dd className="font-semibold tabular-nums">{dateDe(inv.dueAt)}</dd>
@@ -230,7 +249,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
-          {inv.kind !== "receipt" && inv.kind !== "credit_note" && inv.status !== "paid" && o.iban ? (
+          {showsDueDate(inv) && o.iban ? (
             <p>
               Bitte überweisen Sie den Betrag bis zum <strong>{dateDe(inv.dueAt)}</strong> unter Angabe der Rechnungsnummer{" "}
               <strong>{inv.number}</strong> auf das unten genannte Konto.
@@ -251,7 +270,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           <div>
             {o.taxNumber ? <p>Steuernummer: {o.taxNumber}</p> : null}
             {o.vatId ? <p>USt-IdNr.: {o.vatId}</p> : null}
-            {o.iban ? <p>IBAN: {o.iban.replace(/(.{4})/g, "$1 ").trim()}</p> : null}
+            {o.iban ? <p>IBAN: {formatIban(o.iban)}</p> : null}
           </div>
         </footer>
       </article>

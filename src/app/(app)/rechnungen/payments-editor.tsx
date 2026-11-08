@@ -89,6 +89,11 @@ export function PaymentsEditor({
           </div>
         </div>
       ))}
+      {rows.some((r) => r.method === "cash") ? (
+        <p className="rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn-soft-text">
+          Barzahlung wird über die TSE signiert (ohne angebundene zertifizierte TSE nur Test-Signatur). Für echten Bargeldeinsatz ist ein TSE-Vertrag, z. B. fiskaly SIGN DE, Pflicht (KassenSichV).
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="secondary" onClick={() => onChange([...rows, newPaymentRow(rest > 0 ? rest : undefined)])}>
           <Plus size={18} aria-hidden /> {refund ? "Erstattung" : "Zahlung"} hinzufügen
