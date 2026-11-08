@@ -15,7 +15,7 @@ const stepBtn = "inline-flex size-11 items-center justify-center rounded-xl bord
 export default async function MaterialsPage(props: PageProps<"/hygiene/material">) {
   const auth = await requireHygiene(canViewMaterials);
   const sp = await props.searchParams;
-  const mats = await listMaterials(auth.organization.id);
+  const mats = await listMaterials(auth);
   const edit = canEditMaterials(auth);
   const editing = typeof sp.edit === "string" ? mats.find((m) => m.id === sp.edit) : undefined;
   const low = mats.filter((m) => m.active && needsReorder(m)).length;

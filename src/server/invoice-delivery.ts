@@ -5,6 +5,7 @@ import { withOrg } from "@/db";
 import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
 import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
@@ -58,6 +59,7 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
 /** Rechnung per E-Mail (MessagingPort email_imap) mit PDF-Anhang an den Rechnungsempfänger bzw. die Person senden. */
 export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const pdf = await invoicePdfForOrg(org, invoiceId);
   if (!pdf) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
@@ -124,6 +126,7 @@ export const collectiveLineKey = (p: { lastName: string; firstName: string | nul
  * Es werden nur Datum/Termin der Doku gelesen, keine medizinischen Inhalte.
  */
 export async function collectiveSuggestion(auth: AuthContext, billingContactId: string, month: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(billingContactId).success) return null;
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) month = berlinDateIso().slice(0, 7);
@@ -194,6 +197,7 @@ export async function collectiveSuggestion(auth: AuthContext, billingContactId: 
 }
 
 export async function careHomes(auth: AuthContext) {
+  assertCan(auth, "invoices.read");
   const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx

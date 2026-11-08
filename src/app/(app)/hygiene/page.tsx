@@ -19,9 +19,9 @@ export default async function HygieneOverview() {
   await syncHygieneTasks(org, today);
   const [checks, devs, batches, mats, list] = await Promise.all([
     checklistState(org, today),
-    listDevices(org, { activeOnly: true }),
+    listDevices(auth, { activeOnly: true }),
     listBatches(auth, 100),
-    canViewMaterials(auth) ? listMaterials(org, { activeOnly: true }) : Promise.resolve([]),
+    canViewMaterials(auth) ? listMaterials(auth, { activeOnly: true }) : Promise.resolve([]),
     auth.can("settings.manage") ? getChecklist(org) : Promise.resolve(null),
   ]);
   const edit = canEditHygiene(auth);

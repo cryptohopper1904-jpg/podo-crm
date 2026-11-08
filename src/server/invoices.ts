@@ -16,6 +16,7 @@ import {
 } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
 import { allocateByVat, fiscalRef, getFiscalPort } from "@/integrations/tse";
 import { berlinDateIso, dateDe } from "@/lib/format";
@@ -168,6 +169,7 @@ async function applyPayments(
  * in derselben Transaktion; danach sind Nummer/Beträge per DB-Trigger unveränderbar).
  */
 export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (input.issuedAt > today) throw new InvoiceError("Das Rechnungsdatum darf nicht in der Zukunft liegen.");
@@ -306,6 +308,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 }
 
 export async function addPayments(auth: AuthContext, invoiceId: string, list: PaymentInput[]) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   if (!list.length) throw new InvoiceError("Keine Zahlung angegeben.");
   const result = await withOrg(org, async (tx) => {
@@ -338,6 +341,7 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
 export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
   const result = await withOrg(org, async (tx) => {
@@ -419,6 +423,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
 export type InvoiceFilter = "open" | "paid" | "all";
 
 export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFilter; q?: string; limit?: number } = {}) {
+  assertCan(auth, "invoices.read");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const where: SQL[] = [eq(invoices.organizationId, org), sql`${invoices.status} <> 'draft'`];
@@ -521,6 +526,7 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
 export type InvoiceBundle = NonNullable<Awaited<ReturnType<typeof loadInvoiceBundle>>>;
 
 export async function getInvoice(auth: AuthContext, id: string) {
+  assertCan(auth, "invoices.read");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(id).success) return null;
   const data = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, id));
@@ -530,6 +536,7 @@ export async function getInvoice(auth: AuthContext, id: string) {
 
 /** Stammdaten für das Rechnungsformular. */
 export async function invoiceFormData(auth: AuthContext, preselectPatientId?: string | null) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const cols = {
@@ -582,6 +589,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
  * Der externe Aufruf läuft außerhalb der DB-Transaktion.
  */
 export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: string): Promise<{ ok: boolean; message: string }> {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const prep = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));

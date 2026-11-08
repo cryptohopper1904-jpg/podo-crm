@@ -4,6 +4,7 @@ import { requestMeta } from "@/lib/auth/session";
 import { parseAnamnesis } from "@/lib/anamnesis";
 import { isWellFormedToken } from "@/lib/patient-link";
 import { createRateLimiter } from "@/lib/rate-limit";
+import { formWithinLimits } from "@/lib/form-limits";
 import { ONLINE_CONSENTS, submitOnlineAnamnesis, type OnlineConsent } from "@/server/anamnesis";
 
 export type OnlineAnamnesisState = { error?: string; done?: boolean } | undefined;
@@ -16,6 +17,7 @@ const INVALID = "Dieser Link ist ungültig, abgelaufen oder wurde bereits verwen
 export async function submitOnlineAnamnesisAction(_: OnlineAnamnesisState, form: FormData): Promise<OnlineAnamnesisState> {
   const { ip } = await requestMeta();
   if (limiter.limited(ip ?? "unbekannt")) return { error: "Zu viele Versuche. Bitte später erneut versuchen oder die Praxis anrufen." };
+  if (!formWithinLimits(form)) return { error: "Das Formular ist zu groß. Bitte Angaben kürzen." };
   if (String(form.get("website") ?? "") !== "") return { error: INVALID }; // Honeypot
   const token = form.get("token");
   if (!isWellFormedToken(token)) return { error: INVALID };
@@ -23,7 +25,7 @@ export async function submitOnlineAnamnesisAction(_: OnlineAnamnesisState, form:
   const parsed = parseAnamnesis(Object.fromEntries(form), "online");
   if (!parsed.ok) return { error: parsed.error };
   const granted = ONLINE_CONSENTS.filter((c): c is OnlineConsent => form.get(`consent_${c}`) === "on");
-  const res = await submitOnlineAnamnesis(token, parsed.data, granted);
+  const res = await submitOnlineAnamnesis(token, parsed.data, granted, { ip });
   if (!res.ok) return { error: INVALID };
   // Keine Daten zurückgeben – nur Bestätigung
   return { done: true };

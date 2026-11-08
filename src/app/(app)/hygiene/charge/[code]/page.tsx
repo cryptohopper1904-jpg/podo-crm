@@ -16,9 +16,8 @@ export default async function BatchTracePage(props: PageProps<"/hygiene/charge/[
   const auth = await requireHygiene(canViewHygiene);
   const code = codeFromParam((await props.params).code);
   if (!code) notFound();
-  const org = auth.organization.id;
   const today = berlinDateIso();
-  const [batch, records] = await Promise.all([getBatchByCode(org, code), traceBatch(auth, code)]);
+  const [batch, records] = await Promise.all([getBatchByCode(auth, code), traceBatch(auth, code)]);
   const patientsById = new Map<string, (typeof records)[number] & { count: number; last: Date }>();
   for (const r of records) {
     const p = patientsById.get(r.patientId);

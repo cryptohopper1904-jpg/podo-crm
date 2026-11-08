@@ -3,6 +3,8 @@ import { and, desc, eq, gte, inArray, isNull, lt, max, sql } from "drizzle-orm";
 import { db, withOrg, type Tx } from "@/db";
 import { appointments, braceEpisodes, consents, messages, organizations, patients, reminderLog, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
+import type { AuthContext } from "@/lib/auth/session";
 import {
   grantedConsents,
   parseReminderSettings,
@@ -265,4 +267,38 @@ export async function reminderLogFor(org: string, limit = 50) {
       .orderBy(desc(reminderLog.at))
       .limit(limit),
   );
+}
+
+// ───────────── Einstellungen (mit Rechteprüfung) ─────────────
+
+/** Einstellungen speichern (organizations hat keine RLS → nur die eigene Praxis aus der Sitzung). */
+export async function saveReminderSettings(auth: AuthContext, settings: ReminderSettings) {
+  assertCan(auth, "settings.manage");
+  const clean = parseReminderSettings(settings);
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('reminders', ${JSON.stringify(clean)}::jsonb)` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.reminders", meta: clean });
+  return clean;
+}
+
+export async function loadReminderSettings(auth: AuthContext) {
+  assertCan(auth, "settings.manage");
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
+  return parseReminderSettings((o?.settings as Record<string, unknown> | undefined)?.reminders);
+}
+
+export async function runRemindersForPractice(auth: AuthContext) {
+  assertCan(auth, "settings.manage");
+  const r = await runReminders({ organizationId: auth.organization.id });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "reminders.run_manual", meta: { sent: r.sent, failed: r.failed } });
+  return r;
+}
+
+export async function listReminderLog(auth: AuthContext, limit = 50) {
+  assertCan(auth, "settings.manage");
+  const rows = await reminderLogFor(auth.organization.id, limit);
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "reminders.log_read", meta: { n: rows.length } });
+  return rows;
 }

@@ -27,7 +27,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
   const auth = await requireHygiene(canViewHygiene);
   const { id } = await props.params;
   if (!UUID.test(id)) notFound();
-  const data = await getDevice(auth.organization.id, id);
+  const data = await getDevice(auth, id);
   if (!data) notFound();
   const { device, events, batches } = data;
   const today = berlinDateIso();

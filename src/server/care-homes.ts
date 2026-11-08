@@ -6,6 +6,7 @@ import { billingContacts, patients, services, treatmentRecords } from "@/db/sche
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { mapSequential } from "@/lib/seq";
+import { assertCan } from "./authz";
 import { bookablePrescriptions } from "./prescriptions";
 
 const opt = (max: number) => z.preprocess((v) => (typeof v === "string" ? v.trim() || null : v), z.string().max(max).nullable().optional());
@@ -24,6 +25,7 @@ export type CareHomeInput = z.infer<typeof careHomeInput>;
 const homeWhere = (org: string, id: string) => and(eq(billingContacts.organizationId, org), eq(billingContacts.id, id), eq(billingContacts.kind, "care_home"));
 
 export async function listCareHomes(auth: AuthContext) {
+  assertCan(auth, "patients.read");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const homes = await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.kind, "care_home"))).orderBy(asc(billingContacts.name));
@@ -38,6 +40,7 @@ export async function listCareHomes(auth: AuthContext) {
 }
 
 export async function getCareHome(auth: AuthContext, id: string) {
+  assertCan(auth, "patients.read");
   const org = auth.organization.id;
   const res = await withOrg(org, async (tx) => {
     const [home] = await tx.select().from(billingContacts).where(homeWhere(org, id));
@@ -60,6 +63,7 @@ export async function getCareHome(auth: AuthContext, id: string) {
 }
 
 export async function saveCareHome(auth: AuthContext, d: CareHomeInput) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   const values = { name: d.name, street: d.street ?? null, zip: d.zip ?? null, city: d.city ?? null, email: d.email ?? null, phone: d.phone ?? null };
   const id = await withOrg(org, async (tx) => {
@@ -76,6 +80,7 @@ export async function saveCareHome(auth: AuthContext, d: CareHomeInput) {
 
 /** Bewohner:in zuordnen; optional das Pflegeheim auch als Rechnungsempfänger setzen. */
 export async function assignResident(auth: AuthContext, input: { careHomeId: string; patientId: string; billToHome: boolean }) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   const ok = await withOrg(org, async (tx) => {
     const [home] = await tx.select({ id: billingContacts.id }).from(billingContacts).where(homeWhere(org, input.careHomeId));
@@ -92,6 +97,7 @@ export async function assignResident(auth: AuthContext, input: { careHomeId: str
 }
 
 export async function removeResident(auth: AuthContext, input: { careHomeId: string; patientId: string }) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   await withOrg(org, async (tx) => {
     const [p] = await tx.select({ billingContactId: patients.billingContactId }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId), eq(patients.careHomeId, input.careHomeId)));
@@ -106,6 +112,7 @@ export async function removeResident(auth: AuthContext, input: { careHomeId: str
 
 /** Daten für den Besuchstag: Bewohner mit Risiken, letzter Behandlung und buchbaren Verordnungen. */
 export async function visitDay(auth: AuthContext, id: string) {
+  assertCan(auth, "patients.read");
   const org = auth.organization.id;
   const medical = auth.can("medical.read");
   const res = await withOrg(org, async (tx) => {
@@ -125,7 +132,8 @@ export async function visitDay(auth: AuthContext, id: string) {
           .groupBy(treatmentRecords.patientId)
       : [];
     const lastBy = new Map(last.map((l) => [l.patientId, l.last]));
-    const vos = await mapSequential(residents, async (r) => [r.id, await bookablePrescriptions(tx, org, r.id)] as const);
+    // Verordnungsdetails (Diagnosegruppe) nur für Behandler:innen
+    const vos = medical ? await mapSequential(residents, async (r) => [r.id, await bookablePrescriptions(tx, org, r.id)] as const) : [];
     const vosBy = new Map(vos);
     const svc = await tx
       .select({ id: services.id, code: services.code, name: services.name })
@@ -144,6 +152,7 @@ export async function visitDay(auth: AuthContext, id: string) {
 
 /** Prüft, dass der Patient im Pflegeheim wohnt (für die Listen-Doku). */
 export async function isResident(auth: AuthContext, careHomeId: string, patientId: string) {
+  assertCan(auth, "patients.read");
   const org = auth.organization.id;
   const [p] = await withOrg(org, (tx) =>
     tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), eq(patients.careHomeId, careHomeId))),

@@ -21,7 +21,7 @@ const LIGHT = {
 export default async function DevicesPage() {
   const auth = await requireHygiene(canViewHygiene);
   const today = berlinDateIso();
-  const devs = await listDevices(auth.organization.id);
+  const devs = await listDevices(auth);
 
   return (
     <div className="flex flex-col gap-6">

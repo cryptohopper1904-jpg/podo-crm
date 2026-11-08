@@ -10,7 +10,7 @@ export const metadata = { title: "Bestellliste" };
 /** Druckbare Bestellliste: alle aktiven Artikel mit Bestand ≤ Mindestbestand, nach Lieferant gruppiert. */
 export default async function OrderListPage() {
   const auth = await requireHygiene(canViewMaterials);
-  const items = await reorderList(auth.organization.id);
+  const items = await reorderList(auth);
   const bySupplier = new Map<string, typeof items>();
   for (const m of items) {
     const k = m.supplier?.trim() || "ohne Lieferant";

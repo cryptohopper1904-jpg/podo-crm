@@ -4,6 +4,7 @@ import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { billingBatches, media, patients, prescriptions, services, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { assertCan } from "./authz";
 import type { AuthContext } from "@/lib/auth/session";
 import { ageYears, berlinDateIso, dateDe } from "@/lib/format";
 import {
@@ -85,11 +86,17 @@ function evaluate(vo: PrescriptionRow, dates: string[], today = berlinDateIso())
   });
 }
 
+/** Entfernt medizinische Details (für Rollen ohne medical.read). */
+export function redact(vo: PrescriptionRow): PrescriptionRow {
+  return { ...vo, diagnosisGroup: "", icd10: null, remedy: null, positions: [], doctorName: null, doctorLanr: null, doctorBsnr: null, interruptionNote: null, scanMediaId: null };
+}
+
 export function prescriptionLabel(vo: Pick<PrescriptionRow, "diagnosisGroup" | "issuedAt" | "units">, remaining: number) {
   return `${vo.diagnosisGroup} vom ${dateDe(vo.issuedAt)} · noch ${remaining} von ${vo.units} Einheiten`;
 }
 
 export async function listPatientPrescriptions(auth: AuthContext, patientId: string) {
+  assertCan(auth, "medical.read");
   const org = auth.organization.id;
   const result = await withOrg(org, async (tx) => {
     const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
@@ -120,6 +127,8 @@ export async function bookablePrescriptions(tx: Tx, org: string, patientId: stri
 
 /** Übersicht aller laufenden Verordnungen der Praxis (Ampel). */
 export async function listRunningPrescriptions(auth: AuthContext, statuses: PrescriptionStatus[] = ["open", "active", "completed", "billing_ready"]) {
+  assertCan(auth, "patients.read");
+  const medical = auth.can("medical.read");
   const org = auth.organization.id;
   const rows = await withOrg(org, async (tx) => {
     const list = await tx
@@ -129,7 +138,8 @@ export async function listRunningPrescriptions(auth: AuthContext, statuses: Pres
       .where(and(eq(prescriptions.organizationId, org), inArray(prescriptions.status, statuses)))
       .orderBy(asc(prescriptions.startBy), asc(prescriptions.issuedAt));
     const usage = await usageFor(tx, org, list.map((r) => r.vo.id));
-    return list.map((r) => ({ ...r, evaluation: evaluate(r.vo, usage.get(r.vo.id) ?? []) }));
+    // Ohne medizinisches Leserecht (Empfang): nur Fristen/Einheiten, keine Diagnose-/Arztdetails
+    return list.map((r) => ({ ...r, vo: medical ? r.vo : redact(r.vo), evaluation: evaluate(r.vo, usage.get(r.vo.id) ?? []) }));
   });
   await audit({ organizationId: org, userId: auth.user.id, action: "prescriptions.list", meta: { n: rows.length } });
   return rows;
@@ -137,6 +147,7 @@ export async function listRunningPrescriptions(auth: AuthContext, statuses: Pres
 
 /** Legt eine Verordnung an oder ändert sie (nur solange noch keine Einheit erbracht wurde). */
 export async function savePrescription(auth: AuthContext, d: PrescriptionInput): Promise<{ id: string; warnings: string[] } | { error: string }> {
+  assertCan(auth, "medical.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
   const positions = d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })).filter((p) => p.label || p.position);
@@ -202,6 +213,7 @@ export async function changePrescriptionStatus(
   auth: AuthContext,
   input: { id: string; patientId: string; to: PrescriptionStatus; interruptionNote?: string | null },
 ): Promise<{ ok: true } | { error: string }> {
+  assertCan(auth, "medical.write");
   const org = auth.organization.id;
   const result = await withOrg(org, async (tx) => {
     const [vo] = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))).for("update");
@@ -220,6 +232,7 @@ export async function changePrescriptionStatus(
 }
 
 export async function setCopaymentPaid(auth: AuthContext, input: { id: string; patientId: string; paid: boolean }) {
+  assertCan(auth, "medical.write");
   const org = auth.organization.id;
   await withOrg(org, (tx) =>
     tx.update(prescriptions).set({ copaymentPaidAt: input.paid ? new Date() : null }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))),
@@ -230,12 +243,14 @@ export async function setCopaymentPaid(auth: AuthContext, input: { id: string; p
 // ───────────────────────── Abrechnungslauf ─────────────────────────
 
 export async function listBillingBatches(auth: AuthContext) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   return withOrg(org, (tx) => tx.select().from(billingBatches).where(eq(billingBatches.organizationId, org)).orderBy(desc(billingBatches.createdAt)).limit(50));
 }
 
 /** Erstellt einen Abrechnungslauf aus abrechnungsreifen Verordnungen und markiert sie als abgerechnet. */
 export async function createBillingBatch(auth: AuthContext, ids: string[], opts: { partner: string; note?: string | null }): Promise<{ id: string; count: number } | { error: string }> {
+  assertCan(auth, "invoices.write", "medical.read");
   const org = auth.organization.id;
   if (!ids.length) return { error: "Bitte mindestens eine Verordnung auswählen." };
   const result = await withOrg(org, async (tx) => {
@@ -290,6 +305,8 @@ export const GKV_BATCH_HEADER = [
 
 /** Zeilen für den neutralen CSV-Export eines Abrechnungslaufs (Übergabe an ein Abrechnungszentrum). */
 export async function billingBatchExport(auth: AuthContext, batchId: string) {
+  // enthält Diagnosen (ICD-10) → zusätzlich medizinisches Leserecht
+  assertCan(auth, "invoices.write", "medical.read");
   const org = auth.organization.id;
   const data = await withOrg(org, async (tx) => {
     const [batch] = await tx.select().from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));

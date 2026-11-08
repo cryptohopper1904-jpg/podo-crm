@@ -22,7 +22,7 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
   const release = canReleaseBatch(auth);
   const [batches, devs, suggestion] = await Promise.all([
     listBatches(auth, 200),
-    listDevices(org, { activeOnly: true }),
+    listDevices(auth, { activeOnly: true }),
     edit ? suggestCodeForToday(org, today) : Promise.resolve(""),
   ]);
   const sterilizers = devs.filter((d) => d.kind === "sterilizer");

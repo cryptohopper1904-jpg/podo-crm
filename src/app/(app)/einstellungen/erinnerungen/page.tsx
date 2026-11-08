@@ -1,13 +1,9 @@
-import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, Checkbox, Empty, Field, Input, Table } from "@/components/ui";
-import { db } from "@/db";
-import { organizations } from "@/db/schema";
-import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateTimeDe } from "@/lib/format";
-import { CHANNEL_LABEL, parseReminderSettings, REMINDER_KIND_LABEL, REMINDER_STATUS_LABEL } from "@/lib/reminders";
-import { reminderLogFor } from "@/server/reminders";
+import { CHANNEL_LABEL, REMINDER_KIND_LABEL, REMINDER_STATUS_LABEL } from "@/lib/reminders";
+import { listReminderLog, loadReminderSettings } from "@/server/reminders";
 import { saveReminderSettingsAction } from "./actions";
 import { RunNowButton } from "./run-now";
 
@@ -17,10 +13,8 @@ const TONE: Record<string, "primary" | "warn" | "neutral" | "accent"> = { sent: 
 
 export default async function ReminderSettingsPage() {
   const auth = await requireAuth("settings.manage");
-  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
-  const s = parseReminderSettings((o?.settings as Record<string, unknown> | undefined)?.reminders);
-  const log = await reminderLogFor(auth.organization.id, 50);
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "reminders.log_read", meta: { n: log.length } });
+  const s = await loadReminderSettings(auth);
+  const log = await listReminderLog(auth, 50);
   const cronReady = !!process.env.CRON_SECRET;
 
   return (

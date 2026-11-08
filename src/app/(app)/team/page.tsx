@@ -20,14 +20,13 @@ const WD_SHORT = ["", "Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 export default async function TeamPlanningPage() {
   const auth = await requireAuth();
   if (!canViewTeam(auth)) redirect("/kein-zugriff");
-  const org = auth.organization.id;
   const edit = canEditTeam(auth);
   const today = berlinDateIso();
   const until = addDaysIso(today, DAYS - 1);
   const [{ staff, hours, absences }, conflicts, past] = await Promise.all([
-    teamOverview(org, today, until),
-    appointmentsInAbsences(org, today),
-    teamOverview(org, addDaysIso(today, -60), addDaysIso(today, -1)),
+    teamOverview(auth, today, until),
+    appointmentsInAbsences(auth, today),
+    teamOverview(auth, addDaysIso(today, -60), addDaysIso(today, -1)),
   ]);
   const state = auth.organization.state as StateCode;
   const days = Array.from({ length: DAYS }, (_, i) => addDaysIso(today, i));

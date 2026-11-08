@@ -18,7 +18,7 @@ export default async function BatchLabelPage(props: PageProps<"/hygiene/charge/[
   const auth = await requireHygiene(canViewHygiene);
   const code = codeFromParam((await props.params).code);
   if (!code) notFound();
-  const batch = await getBatchByCode(auth.organization.id, code);
+  const batch = await getBatchByCode(auth, code);
   if (!batch) notFound();
   const sp = await props.searchParams;
   const n = Math.min(60, Math.max(1, Number.parseInt(typeof sp.n === "string" ? sp.n : "1", 10) || 1));

@@ -5,7 +5,7 @@ import { db, withOrg, type Tx } from "@/db";
 import { deviceEvents, devices, materials, organizations, patients, sterileBatches, tasks, treatmentRecords, users } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
-import { berlinDateIso } from "@/lib/format";
+import { berlinDateIso, dateDe } from "@/lib/format";
 import {
   BATCH_REASON_TEXT,
   BATCH_RELEASE_ROLES,
@@ -35,6 +35,29 @@ const optUuid = z.preprocess((v) => (v === "" || v === undefined ? null : v), z.
 export const BATCH_CODE_RE = /^[A-Z0-9][A-Z0-9._-]{1,59}$/;
 /** SQL-Ausdruck: Chargennummer normalisiert (wie normalizeBatchCode) */
 const normCol = (col: unknown) => sql`upper(regexp_replace(${col}, '\\s', '', 'g'))`;
+
+/** Fehlendes Recht in der Serverschicht (Defense in Depth – zusätzlich zu requireAuth in Seiten/Actions). */
+export class ForbiddenError extends Error {
+  constructor(what: string) {
+    super(`Kein Zugriff: ${what}`);
+    this.name = "ForbiddenError";
+  }
+}
+const need = (ok: boolean, what: string) => {
+  if (!ok) throw new ForbiddenError(what);
+};
+const canReadHygiene = (a: AuthContext) => a.can("medical.read");
+const canWriteHygiene = (a: AuthContext) => a.can("medical.write");
+const canReadMaterials = (a: AuthContext) => a.can("medical.read") || a.can("patients.write");
+const canWriteMaterials = (a: AuthContext) => a.can("medical.write") || a.can("patients.write");
+
+/** PostgreSQL unique_violation (23505), auch wenn Drizzle den Fehler einpackt. */
+function isUniqueViolation(e: unknown): boolean {
+  for (let cur = e as { code?: string; cause?: unknown } | undefined, i = 0; cur && i < 5; cur = cur.cause as typeof cur, i++) {
+    if (cur.code === "23505") return true;
+  }
+  return false;
+}
 
 // ───────────────────────── Sterilgut-Chargen ─────────────────────────
 
@@ -67,7 +90,9 @@ export async function batchStatus(org: string, code: string) {
       code: b?.code ?? n,
       ok: check.ok,
       reason: check.reason,
-      message: check.reason ? BATCH_REASON_TEXT[check.reason] : "Charge freigegeben.",
+      message: check.reason
+        ? BATCH_REASON_TEXT[check.reason]
+        : `Charge freigegeben${b?.expiresAt ? `, verwendbar bis ${dateDe(b.expiresAt)}` : ""}.`,
       result: b?.result ?? null,
       expiresAt: b?.expiresAt ?? null,
     };
@@ -75,6 +100,7 @@ export async function batchStatus(org: string, code: string) {
 }
 
 export async function listBatches(auth: AuthContext, limit = 50) {
+  need(canReadHygiene(auth), "Chargen ansehen");
   const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx
@@ -113,35 +139,40 @@ export const batchInput = z.object({
 export type BatchInput = z.infer<typeof batchInput>;
 
 export async function createBatch(auth: AuthContext, input: BatchInput): Promise<{ error?: string; id?: string }> {
+  need(canWriteHygiene(auth), "Chargen anlegen");
   const org = auth.organization.id;
-  return withOrg(org, async (tx) => {
-    let deviceName: string | null = null;
-    if (input.deviceId) {
-      const [d] = await tx.select().from(devices).where(and(eq(devices.organizationId, org), eq(devices.id, input.deviceId)));
-      if (!d) return { error: "Gerät nicht gefunden." };
-      deviceName = d.name;
-    }
-    const [dup] = await tx
-      .select({ id: sterileBatches.id })
-      .from(sterileBatches)
-      .where(and(eq(sterileBatches.organizationId, org), sql`${normCol(sterileBatches.code)} = ${input.code}`));
-    if (dup) return { error: `Chargennummer ${input.code} ist bereits vergeben.` };
-    const [row] = await tx
-      .insert(sterileBatches)
-      .values({
-        organizationId: org,
-        code: input.code,
-        deviceId: input.deviceId,
-        sterilizer: deviceName,
-        cycleNo: input.cycleNo ?? null,
-        indicatorOk: input.indicatorOk,
-        expiresAt: input.expiresAt,
-        note: input.note ?? null,
-      })
-      .returning({ id: sterileBatches.id });
-    await audit({ organizationId: org, userId: auth.user.id, action: "sterile_batch.create", entity: "sterile_batch", entityId: row.id, meta: { code: input.code } });
-    return { id: row.id };
-  });
+  // immer normalisiert speichern – der Unique-Index (organization_id, code) greift dann auch für „st-…“ vs. „ST-…“
+  const code = normalizeBatchCode(input.code);
+  if (!BATCH_CODE_RE.test(code)) return { error: "Chargennummer ungültig." };
+  try {
+    return await withOrg(org, async (tx) => {
+      let deviceName: string | null = null;
+      if (input.deviceId) {
+        const [d] = await tx.select().from(devices).where(and(eq(devices.organizationId, org), eq(devices.id, input.deviceId)));
+        if (!d) return { error: "Gerät nicht gefunden." };
+        deviceName = d.name;
+      }
+      const [row] = await tx
+        .insert(sterileBatches)
+        .values({
+          organizationId: org,
+          code,
+          deviceId: input.deviceId,
+          sterilizer: deviceName,
+          cycleNo: input.cycleNo ?? null,
+          indicatorOk: input.indicatorOk,
+          expiresAt: input.expiresAt,
+          note: input.note ?? null,
+        })
+        .returning({ id: sterileBatches.id });
+      await audit({ organizationId: org, userId: auth.user.id, action: "sterile_batch.create", entity: "sterile_batch", entityId: row.id, meta: { code } });
+      return { id: row.id };
+    });
+  } catch (e) {
+    // Unique-Index sterile_batches_org_code – atomar statt Vorab-SELECT
+    if (isUniqueViolation(e)) return { error: `Chargennummer ${code} ist bereits vergeben.` };
+    throw e;
+  }
 }
 
 export const canReleaseBatch = (auth: AuthContext) =>
@@ -157,6 +188,7 @@ export async function decideBatch(
   decision: "released" | "rejected",
   opts: { indicatorConfirmed: boolean; note?: string | null },
 ): Promise<{ error?: string }> {
+  need(canWriteHygiene(auth), "Chargen freigeben/sperren");
   if (!canReleaseBatch(auth)) return { error: "Nur Inhaber:in oder Podolog:in dürfen Chargen freigeben/sperren." };
   const org = auth.organization.id;
   if (decision === "released" && !opts.indicatorConfirmed) return { error: "Freigabe nur mit bestätigtem Indikator/Prozessprotokoll." };
@@ -188,7 +220,9 @@ export async function decideBatch(
   }
 }
 
-export async function getBatchByCode(org: string, code: string) {
+export async function getBatchByCode(auth: AuthContext, code: string) {
+  need(canReadHygiene(auth), "Chargen ansehen");
+  const org = auth.organization.id;
   const n = normalizeBatchCode(code);
   return withOrg(org, async (tx) => {
     const [row] = await tx
@@ -207,7 +241,7 @@ export async function getBatchByCode(org: string, code: string) {
  * Gesundheitsdaten: nur mit medical.read, Zugriff wird protokolliert.
  */
 export async function traceBatch(auth: AuthContext, code: string) {
-  if (!auth.can("medical.read")) throw new Error("forbidden");
+  need(auth.can("medical.read"), "Rückverfolgung (Gesundheitsdaten)");
   const org = auth.organization.id;
   const n = normalizeBatchCode(code);
   const rows = await withOrg(org, (tx) =>
@@ -257,7 +291,9 @@ export const deviceInput = z.object({
 });
 export type DeviceInput = z.infer<typeof deviceInput>;
 
-export async function listDevices(org: string, opts: { activeOnly?: boolean } = {}) {
+export async function listDevices(auth: AuthContext, opts: { activeOnly?: boolean } = {}) {
+  need(canReadHygiene(auth), "Geräte ansehen");
+  const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx
       .select()
@@ -267,7 +303,9 @@ export async function listDevices(org: string, opts: { activeOnly?: boolean } = 
   );
 }
 
-export async function getDevice(org: string, id: string) {
+export async function getDevice(auth: AuthContext, id: string) {
+  need(canReadHygiene(auth), "Gerätebuch ansehen");
+  const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const [device] = await tx.select().from(devices).where(and(eq(devices.organizationId, org), eq(devices.id, id)));
     if (!device) return null;
@@ -288,6 +326,7 @@ export async function getDevice(org: string, id: string) {
 }
 
 export async function saveDevice(auth: AuthContext, id: string | null, input: DeviceInput): Promise<{ error?: string; id?: string }> {
+  need(canWriteHygiene(auth), "Geräte bearbeiten");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     if (id) {
@@ -315,6 +354,7 @@ export type DeviceEventInput = z.infer<typeof deviceEventInput>;
 
 /** Gerätebuch-Eintrag anhängen (append-only, per DB-Trigger geschützt). */
 export async function addDeviceEvent(auth: AuthContext, input: DeviceEventInput): Promise<{ error?: string }> {
+  need(canWriteHygiene(auth), "Gerätebuch schreiben");
   const org = auth.organization.id;
   if (input.occurredAt > berlinDateIso()) return { error: "Das Datum liegt in der Zukunft." };
   const field = DEADLINE_BY_EVENT[input.kind];
@@ -413,6 +453,7 @@ export async function getChecklist(org: string): Promise<HygieneChecklist> {
 }
 
 export async function saveChecklist(auth: AuthContext, list: HygieneChecklist) {
+  need(auth.can("settings.manage"), "Checkliste bearbeiten");
   const org = auth.organization.id;
   // atomar mergen, damit parallele Einstellungsänderungen nicht überschrieben werden
   await db
@@ -446,6 +487,7 @@ export async function checklistState(org: string, todayIso = berlinDateIso()): P
 
 /** Checklisten-Punkt abhaken: erledigte Aufgabe (kind 'hygiene') mit Zeitstempel und Person. */
 export async function completeChecklistItem(auth: AuthContext, interval: "daily" | "weekly", item: string): Promise<{ error?: string }> {
+  need(canWriteHygiene(auth), "Checkliste abhaken");
   const org = auth.organization.id;
   const list = await getChecklist(org);
   if (!(interval === "daily" ? list.daily : list.weekly).includes(item)) return { error: "Punkt ist nicht (mehr) in der Checkliste." };
@@ -465,6 +507,7 @@ export async function completeChecklistItem(auth: AuthContext, interval: "daily"
 
 /** Versehentliches Abhaken am selben Tag zurücknehmen (nur eigener Eintrag oder mit medical.write als Inhaber:in). */
 export async function undoChecklistItem(auth: AuthContext, taskId: string): Promise<{ error?: string }> {
+  need(canWriteHygiene(auth), "Checkliste abhaken");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const [t] = await tx.select().from(tasks).where(and(eq(tasks.organizationId, org), eq(tasks.id, taskId), eq(tasks.kind, "hygiene")));
@@ -504,7 +547,9 @@ export const materialInput = z.object({
 });
 export type MaterialInput = z.infer<typeof materialInput>;
 
-export async function listMaterials(org: string, opts: { activeOnly?: boolean } = {}) {
+export async function listMaterials(auth: AuthContext, opts: { activeOnly?: boolean } = {}) {
+  need(canReadMaterials(auth), "Material ansehen");
+  const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx
       .select()
@@ -514,12 +559,13 @@ export async function listMaterials(org: string, opts: { activeOnly?: boolean } 
   );
 }
 
-export async function reorderList(org: string) {
-  const all = await listMaterials(org, { activeOnly: true });
+export async function reorderList(auth: AuthContext) {
+  const all = await listMaterials(auth, { activeOnly: true });
   return all.filter(needsReorder);
 }
 
 export async function saveMaterial(auth: AuthContext, id: string | null, input: MaterialInput): Promise<{ error?: string }> {
+  need(canWriteMaterials(auth), "Material bearbeiten");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     if (id) {
@@ -534,6 +580,7 @@ export async function saveMaterial(auth: AuthContext, id: string | null, input: 
 
 /** Bestand atomar ändern (nie unter 0). */
 export async function adjustStock(auth: AuthContext, id: string, delta: number) {
+  need(canWriteMaterials(auth), "Materialbestand ändern");
   const org = auth.organization.id;
   if (!Number.isInteger(delta) || Math.abs(delta) > 10_000) return;
   await withOrg(org, (tx) =>

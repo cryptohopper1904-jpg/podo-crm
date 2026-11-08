@@ -15,6 +15,17 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 export const canViewTeam = (auth: AuthContext) => auth.role !== "accountant";
 export const canEditTeam = (auth: AuthContext) => auth.can("users.manage");
 
+/** Fehlendes Recht in der Serverschicht (Defense in Depth – zusätzlich zu requireAuth in Seiten/Actions). */
+export class StaffForbiddenError extends Error {
+  constructor(what: string) {
+    super(`Kein Zugriff: ${what}`);
+    this.name = "ForbiddenError";
+  }
+}
+const need = (ok: boolean, what: string) => {
+  if (!ok) throw new StaffForbiddenError(what);
+};
+
 /** Aktive Personen der Praxis, die behandeln/arbeiten (ohne Steuerberatung). */
 export async function staffMembers(org: string) {
   return db
@@ -63,7 +74,9 @@ export async function availability(org: string, userId: string, dateIso: string)
   return computeAvailability({ dateIso, hours, absences: abs, holiday: holidayOn(dateIso, info.state), opening: info.opening });
 }
 
-export async function teamOverview(org: string, fromIso: string, toIso: string) {
+export async function teamOverview(auth: AuthContext, fromIso: string, toIso: string) {
+  need(canViewTeam(auth), "Team-Planung ansehen");
+  const org = auth.organization.id;
   const staff = await staffMembers(org);
   const ids = staff.map((s) => s.id);
   return withOrg(org, async (tx) => {
@@ -86,6 +99,7 @@ export async function teamOverview(org: string, fromIso: string, toIso: string) 
 
 /** Ersetzt die Arbeitszeiten einer Person komplett (je Wochentag beliebig viele Zeitfenster). */
 export async function saveWorkingHours(auth: AuthContext, userId: string, byWeekday: Record<number, TimeRange[]>): Promise<{ error?: string }> {
+  need(canEditTeam(auth), "Arbeitszeiten bearbeiten");
   const org = auth.organization.id;
   if (!(await isMember(org, userId))) return { error: "Person nicht gefunden." };
   const rows = Object.entries(byWeekday).flatMap(([wd, ranges]) =>
@@ -113,6 +127,7 @@ export const absenceInput = z
 export type AbsenceInput = z.infer<typeof absenceInput>;
 
 export async function addAbsence(auth: AuthContext, input: AbsenceInput): Promise<{ error?: string }> {
+  need(canEditTeam(auth), "Abwesenheiten bearbeiten");
   const org = auth.organization.id;
   if (!(await isMember(org, input.userId))) return { error: "Person nicht gefunden." };
   await withOrg(org, (tx) => tx.insert(absences).values({ ...input, note: input.note ?? null, organizationId: org }));
@@ -122,6 +137,7 @@ export async function addAbsence(auth: AuthContext, input: AbsenceInput): Promis
 }
 
 export async function deleteAbsence(auth: AuthContext, id: string) {
+  need(canEditTeam(auth), "Abwesenheiten bearbeiten");
   const org = auth.organization.id;
   const [row] = await withOrg(org, (tx) =>
     tx.delete(absences).where(and(eq(absences.organizationId, org), eq(absences.id, id))).returning({ userId: absences.userId }),
@@ -130,7 +146,9 @@ export async function deleteAbsence(auth: AuthContext, id: string) {
 }
 
 /** Künftige Termine, die in eine Abwesenheit der zugeordneten Person fallen (Konfliktliste). */
-export async function appointmentsInAbsences(org: string, fromIso = berlinDateIso()) {
+export async function appointmentsInAbsences(auth: AuthContext, fromIso = berlinDateIso()) {
+  need(canViewTeam(auth), "Team-Planung ansehen");
+  const org = auth.organization.id;
   return withOrg(org, (tx) =>
     tx
       .select({

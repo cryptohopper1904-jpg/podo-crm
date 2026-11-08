@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointmentServices, appointments, invoices, messages, organizations, patientLinks, patients, payments, services, vouchers } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { dateDe, timeDe } from "@/lib/format";
 import { voucherBalance } from "@/lib/invoice-math";
@@ -27,6 +28,7 @@ export const portalFailLimiter = createRateLimiter({ windowMs: 10 * 60_000, max:
 
 /** Praxis erzeugt einen Portal-Link (30 Tage). Ältere Portal-Links der Person werden widerrufen. */
 export async function createPortalLink(auth: AuthContext, patientId: string) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(patientId).success) throw new Error("Person nicht gefunden.");
   const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt))));

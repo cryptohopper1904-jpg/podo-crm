@@ -1,13 +1,15 @@
 import "server-only";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { anamneses, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
+import { anamneses, auditLog, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { riskFlagsFromAnamnesis, type AnamnesisData } from "@/lib/anamnesis";
+import { assertCan } from "./authz";
 import { generateLinkToken, hashLinkToken, isWellFormedToken, linkExpiry, linkState } from "@/lib/patient-link";
 
 export async function listAnamneses(auth: AuthContext, patientId: string) {
+  assertCan(auth, "patients.read");
   const org = auth.organization.id;
   const medical = auth.can("medical.read");
   const res = await withOrg(org, async (tx) => {
@@ -37,6 +39,7 @@ export async function listAnamneses(auth: AuthContext, patientId: string) {
 }
 
 export async function saveAnamnesis(auth: AuthContext, patientId: string, data: AnamnesisData, opts: { updateRiskFlags: boolean }) {
+  assertCan(auth, "medical.write");
   const org = auth.organization.id;
   const id = await withOrg(org, async (tx) => {
     const [p] = await tx.select({ id: patients.id, riskFlags: patients.riskFlags }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
@@ -53,12 +56,17 @@ export async function saveAnamnesis(auth: AuthContext, patientId: string, data: 
 
 /** Neuer Einmal-Link für die Online-Anamnese. Der Klartext-Token wird nur EINMAL zurückgegeben. */
 export async function createAnamnesisLink(auth: AuthContext, patientId: string) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   const { token, tokenHash } = generateLinkToken();
   const expiresAt = linkExpiry();
-  const ok = await withOrg(org, async (tx) => {
+  let ok = false;
+  try {
+    ok = await withOrg(org, async (tx) => {
     const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
     if (!p) return false;
+    // Parallele Erzeugung serialisieren; zusätzlich sichert der partielle Unique-Index patient_links_one_active ab
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`plink:${org}:${patientId}:anamnesis`}))`);
     // ältere, noch offene Links desselben Zwecks werden widerrufen (nur ein gültiger Link je Patient)
     await tx
       .update(patientLinks)
@@ -66,13 +74,19 @@ export async function createAnamnesisLink(auth: AuthContext, patientId: string) 
       .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.patientId, patientId), eq(patientLinks.purpose, "anamnesis"), isNull(patientLinks.usedAt), isNull(patientLinks.revokedAt)));
     await tx.insert(patientLinks).values({ organizationId: org, patientId, purpose: "anamnesis", tokenHash, expiresAt, createdBy: auth.user.id });
     return true;
-  });
-  if (!ok) return null;
+    });
+  } catch (e) {
+    // 23505 = unique_violation (patient_links_one_active): gleichzeitige Erzeugung → kein zweiter gültiger Link
+    if (isUniqueViolation(e)) return { error: "Gerade wurde parallel ein Link erzeugt. Bitte erneut versuchen." } as const;
+    throw e;
+  }
+  if (!ok) return { error: "Kunde nicht gefunden." } as const;
   await audit({ organizationId: org, userId: auth.user.id, action: "patient_link.create", entity: "patient", entityId: patientId, meta: { purpose: "anamnesis" } });
   return { token, expiresAt };
 }
 
 export async function revokeAnamnesisLink(auth: AuthContext, patientId: string, linkId: string) {
+  assertCan(auth, "patients.write");
   const org = auth.organization.id;
   await withOrg(org, (tx) =>
     tx.update(patientLinks).set({ revokedAt: new Date() }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, linkId), eq(patientLinks.patientId, patientId), isNull(patientLinks.revokedAt), isNull(patientLinks.usedAt))),
@@ -107,7 +121,7 @@ export type OnlineConsent = (typeof ONLINE_CONSENTS)[number];
  * Alles in EINER Transaktion: Das atomare UPDATE … WHERE used_at IS NULL … RETURNING verhindert eine
  * Doppelnutzung (auch parallel); schlägt das Speichern fehl, bleibt der Link unbenutzt.
  */
-export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, granted: OnlineConsent[]): Promise<{ ok: true } | { ok: false }> {
+export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, granted: OnlineConsent[], meta: { ip?: string | null } = {}): Promise<{ ok: true } | { ok: false }> {
   if (!isWellFormedToken(token)) return { ok: false };
   const tokenHash = hashLinkToken(token);
   const result = await db.transaction(async (tx) => {
@@ -123,9 +137,10 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
     const [p] = await tx.select({ number: patients.number }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
     if (!p) throw new Error("Patient zum Link fehlt");
     const [a] = await tx.insert(anamneses).values({ organizationId: org, patientId: link.patientId, data: { ...data, source: "online" }, authorId: null }).returning({ id: anamneses.id });
+    // Jede Online-Einwilligung mit dem tatsächlichen Wert speichern (nicht angehakt = Widerruf/keine Einwilligung)
     const consentRows = [
       { type: "privacy_notice" as const, granted: true },
-      ...granted.map((type) => ({ type, granted: true })),
+      ...ONLINE_CONSENTS.map((type) => ({ type, granted: granted.includes(type) })),
     ].map((c) => ({ ...c, organizationId: org, patientId: link.patientId, via: "online-anamnese", recordedBy: null }));
     await tx.insert(consents).values(consentRows);
     await tx.insert(messages).values({
@@ -138,9 +153,25 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
       body: `Der Online-Anamnesebogen von Kunde #${p.number} ist eingegangen. Bitte in der Akte unter „Anamnese“ prüfen und in einer Praxis-Version bestätigen.`,
       threadKey: `anamnesis:${a.id}`,
     });
-    return { org, patientId: link.patientId, anamnesisId: a.id, linkId: link.id, consents: consentRows.map((c) => c.type) };
+    // Audit in derselben Transaktion: Daten, Token-Verbrauch und Nachweis gelingen nur gemeinsam
+    await tx.insert(auditLog).values({
+      organizationId: org,
+      userId: null,
+      action: "anamnesis.online.submit",
+      entity: "patient",
+      entityId: link.patientId,
+      ip: meta.ip ?? null,
+      meta: { anamnesisId: a.id, linkId: link.id, consents: Object.fromEntries(consentRows.map((c) => [c.type, c.granted])) },
+    });
+    return true;
   });
-  if (!result) return { ok: false };
-  await audit({ organizationId: result.org, userId: null, action: "anamnesis.online.submit", entity: "patient", entityId: result.patientId, meta: { anamnesisId: result.anamnesisId, linkId: result.linkId, consents: result.consents } });
-  return { ok: true };
+  return result ? { ok: true } : { ok: false };
+}
+
+function isUniqueViolation(e: unknown): boolean {
+  for (let cur: unknown = e, i = 0; cur && i < 5; i++) {
+    if (typeof cur === "object" && (cur as { code?: string }).code === "23505") return true;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return false;
 }

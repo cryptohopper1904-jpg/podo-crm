@@ -36,7 +36,7 @@ export async function createLinkAction(_: LinkState, form: FormData): Promise<Li
   const patientId = z.string().uuid().safeParse(form.get("patientId"));
   if (!patientId.success) return { error: "Ungültige Anfrage." };
   const res = await createAnamnesisLink(auth, patientId.data);
-  if (!res) return { error: "Kunde nicht gefunden." };
+  if ("error" in res) return { error: res.error };
   revalidatePath(`/kunden/${patientId.data}/anamnese`);
   return { url: `${await baseUrl()}/anamnese/${res.token}`, expiresAt: res.expiresAt.toISOString() };
 }

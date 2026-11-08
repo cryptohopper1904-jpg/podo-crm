@@ -7,6 +7,7 @@ import { getAdapter } from "@/integrations/registry";
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingProvider, NormalizedWebhookEvent } from "@/integrations/types";
 import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { money } from "@/lib/format";
 import { adapterFor, loadConnection, logSync } from "./integrations";
@@ -40,6 +41,7 @@ async function sumupPort(org: string) {
 const webhookUrl = (org: string) => (process.env.PUBLIC_URL ? `${process.env.PUBLIC_URL.replace(/\/$/, "")}/api/webhooks/sumup?org=${org}` : undefined);
 
 export async function startTerminalPayment(auth: AuthContext, invoiceId: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const { inv, open } = await loadOpenInvoice(org, invoiceId);
   const { port, conn } = await sumupPort(org);
@@ -66,6 +68,7 @@ export async function startTerminalPayment(auth: AuthContext, invoiceId: string)
 }
 
 export async function createPaymentLink(auth: AuthContext, invoiceId: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const { inv, open } = await loadOpenInvoice(org, invoiceId);
   const { port } = await sumupPort(org);
@@ -91,6 +94,7 @@ const PROVIDER: Record<"email" | "sms" | "whatsapp", MessagingProvider> = { emai
 
 /** Zahlungslink versenden – Text nur mit Rechnungsnummer und Betrag, keine Leistungen. */
 export async function sendPaymentLink(auth: AuthContext, invoiceId: string, channel: "email" | "sms" | "whatsapp") {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const data = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
@@ -157,6 +161,7 @@ export async function sendPaymentLink(auth: AuthContext, invoiceId: string, chan
  * ein echter SumUp-Webhook (processSumupEvent → getTransaction → recordProviderPayment).
  */
 export async function simulateTestPayment(auth: AuthContext, invoiceId: string) {
+  assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const { port } = await sumupPort(org);
   if (!port.isMock) throw new InvoiceError("Testzahlungen sind nur im Testmodus möglich.");

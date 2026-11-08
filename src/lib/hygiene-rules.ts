@@ -53,11 +53,12 @@ export const BATCH_RELEASE_ROLES = ["owner", "therapist"] as const;
 export type BatchUnusableReason = "unknown" | "rejected" | "pending" | "expired";
 export type BatchCheck = { ok: true; reason: null } | { ok: false; reason: BatchUnusableReason };
 
+/** Hinweistexte (u. a. im Doku-Formular beim Verlassen des Chargenfelds). */
 export const BATCH_REASON_TEXT: Record<BatchUnusableReason, string> = {
-  unknown: "Unbekannte Charge – bitte Etikett prüfen.",
-  rejected: "Charge ist GESPERRT – Sterilgut nicht verwenden!",
-  pending: "Charge ist noch nicht freigegeben.",
-  expired: "Lagerfrist der Charge ist abgelaufen – neu aufbereiten.",
+  unknown: "Charge nicht im Chargenbuch – bitte Nummer prüfen. Speichern ist trotzdem möglich.",
+  rejected: "Charge GESPERRT – Sterilgut nicht verwenden. Mit dieser Charge kann nicht gespeichert werden.",
+  pending: "Charge noch nicht freigegeben – bitte vor der Verwendung freigeben lassen.",
+  expired: "Lagerfrist der Charge abgelaufen – Sterilgut neu aufbereiten. Mit dieser Charge kann nicht gespeichert werden.",
 };
 
 /** Normalisiert eine eingegebene/gescannte Chargennummer (Leerzeichen, Groß-/Kleinschreibung). */
