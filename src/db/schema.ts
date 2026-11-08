@@ -1,0 +1,751 @@
+/**
+ * PodoCRM – Datenbankschema (Drizzle ORM, PostgreSQL 16)
+ *
+ * Grundregeln:
+ * - Jede fachliche Tabelle trägt `organization_id` (Mandant = Praxis). Zusätzlich zur
+ *   App-seitigen Filterung schützt Row-Level-Security (siehe drizzle/0001_security.sql).
+ * - Geldbeträge in Cent (integer), nie als Float.
+ * - Medizinische Dokumentation (treatment_records, record_addenda) ist append-only
+ *   (§ 630f BGB): DB-Trigger verhindern UPDATE/DELETE; Korrekturen nur als Nachtrag.
+ */
+import { sql } from "drizzle-orm";
+import {
+  bigserial,
+  boolean,
+  date,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+const id = () => uuid("id").primaryKey().default(sql`gen_random_uuid()`);
+const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+const updatedAt = () => timestamp("updated_at", { withTimezone: true }).notNull().defaultNow();
+const orgId = () =>
+  uuid("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" });
+
+// ───────────────────────── Enums ─────────────────────────
+export const roleEnum = pgEnum("role", ["owner", "therapist", "reception", "trainee", "accountant"]);
+export const channelEnum = pgEnum("channel", ["email", "whatsapp", "sms", "phone", "letter", "none"]);
+export const insuranceTypeEnum = pgEnum("insurance_type", ["gkv", "pkv", "self", "beihilfe"]);
+export const appointmentStatusEnum = pgEnum("appointment_status", [
+  "planned",
+  "confirmed",
+  "done",
+  "cancelled",
+  "no_show",
+]);
+export const appointmentSourceEnum = pgEnum("appointment_source", [
+  "manual",
+  "doctolib",
+  "online",
+  "phone",
+  "whatsapp",
+  "email",
+  "voice_agent",
+]);
+export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee"]);
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "draft",
+  "issued",
+  "partially_paid",
+  "paid",
+  "cancelled",
+]);
+export const paymentMethodEnum = pgEnum("payment_method", [
+  "cash",
+  "card",
+  "transfer",
+  "voucher",
+  "payment_link",
+]);
+export const mediaKindEnum = pgEnum("media_kind", ["photo", "audio", "document"]);
+export const mediaPurposeEnum = pgEnum("media_purpose", [
+  "brace_before",
+  "brace_progress",
+  "brace_complication",
+  "brace_after",
+  "finding",
+  "wound",
+  "document",
+  "prescription",
+  "voice_report",
+  "marketing",
+]);
+export const footSideEnum = pgEnum("foot_side", ["left", "right"]);
+export const consentTypeEnum = pgEnum("consent_type", [
+  "privacy_notice",
+  "photo_documentation",
+  "photo_marketing",
+  "whatsapp",
+  "email_reminders",
+  "sms_reminders",
+  "marketing",
+  "review_request",
+  "ai_processing",
+  "call_recording",
+  "no_show_terms",
+]);
+export const billingContactKindEnum = pgEnum("billing_contact_kind", [
+  "guardian",
+  "relative",
+  "care_home",
+  "other",
+]);
+export const integrationProviderEnum = pgEnum("integration_provider", [
+  "lexoffice",
+  "sumup",
+  "doctolib",
+  "google_business",
+  "email_imap",
+  "whatsapp",
+  "sms",
+  "voice_agent",
+  "transcription",
+  "llm",
+  "calendar_ics",
+  "stripe",
+  "gkv_billing",
+]);
+export const integrationStatusEnum = pgEnum("integration_status", [
+  "disconnected",
+  "mock",
+  "connected",
+  "error",
+]);
+export const messageDirectionEnum = pgEnum("message_direction", ["inbound", "outbound"]);
+export const messageStatusEnum = pgEnum("message_status", ["new", "suggested", "answered", "archived"]);
+
+// ───────────────────────── Mandanten & Benutzer ─────────────────────────
+export const organizations = pgTable("organizations", {
+  id: id(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  legalName: text("legal_name"),
+  street: text("street"),
+  zip: text("zip"),
+  city: text("city"),
+  phone: text("phone"),
+  email: text("email"),
+  taxNumber: text("tax_number"),
+  vatId: text("vat_id"),
+  iban: text("iban"),
+  /** § 19 UStG – Kleinunternehmerregelung */
+  smallBusiness: boolean("small_business").notNull().default(false),
+  /** Bundesland für Feiertage, z. B. "BB" */
+  state: text("state").notNull().default("BB"),
+  settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
+  createdAt: createdAt(),
+});
+
+export const locations = pgTable("locations", {
+  id: id(),
+  organizationId: orgId(),
+  name: text("name").notNull(),
+  street: text("street"),
+  zip: text("zip"),
+  city: text("city"),
+  createdAt: createdAt(),
+});
+
+export const users = pgTable("users", {
+  id: id(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull(),
+  passwordHash: text("password_hash").notNull(),
+  totpSecretEnc: text("totp_secret_enc"),
+  totpEnabled: boolean("totp_enabled").notNull().default(false),
+  /** zuletzt akzeptierter TOTP-Zeitschritt – verhindert Wiederverwendung (Replay) */
+  totpLastStep: integer("totp_last_step"),
+  /** Betreiber der SaaS – hat KEINEN Datenzugriff ohne Freigabe (Break-Glass) */
+  isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
+  failedLogins: integer("failed_logins").notNull().default(0),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+export const memberships = pgTable(
+  "memberships",
+  {
+    id: id(),
+    organizationId: orgId(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: roleEnum("role").notNull(),
+    active: boolean("active").notNull().default(true),
+    color: text("color"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("memberships_org_user").on(t.organizationId, t.userId)],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    /** sha256 des Session-Tokens – das Token selbst steht nur im Cookie */
+    id: text("id").primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
+    /** false bis 2FA bestätigt ist */
+    verified: boolean("verified").notNull().default(true),
+    totpFailures: integer("totp_failures").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    userAgent: text("user_agent"),
+    ip: text("ip"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sessions_user").on(t.userId)],
+);
+
+// ───────────────────────── Kunden / Patienten ─────────────────────────
+export type RiskFlags = {
+  diabetes?: boolean;
+  diabetesType?: string;
+  anticoagulation?: boolean;
+  pavk?: boolean;
+  neuropathy?: boolean;
+  allergies?: string;
+  mrsa?: boolean;
+  other?: string;
+};
+
+export const billingContacts = pgTable("billing_contacts", {
+  id: id(),
+  organizationId: orgId(),
+  kind: billingContactKindEnum("kind").notNull(),
+  name: text("name").notNull(),
+  street: text("street"),
+  zip: text("zip"),
+  city: text("city"),
+  email: text("email"),
+  phone: text("phone"),
+  createdAt: createdAt(),
+});
+
+export const patients = pgTable(
+  "patients",
+  {
+    id: id(),
+    organizationId: orgId(),
+    number: integer("number").notNull(),
+    salutation: text("salutation"),
+    title: text("title"),
+    lastName: text("last_name").notNull(),
+    firstName: text("first_name"),
+    birthDate: date("birth_date"),
+    street: text("street"),
+    zip: text("zip"),
+    city: text("city"),
+    phoneMobile: text("phone_mobile"),
+    phoneLandline: text("phone_landline"),
+    email: text("email"),
+    preferredChannel: channelEnum("preferred_channel").notNull().default("none"),
+    insuranceType: insuranceTypeEnum("insurance_type").notNull().default("self"),
+    insurerName: text("insurer_name"),
+    insuranceNumber: text("insurance_number"),
+    gpName: text("gp_name"),
+    notes: text("notes"),
+    riskFlags: jsonb("risk_flags").$type<RiskFlags>().notNull().default({}),
+    /** Wunsch-Intervall in Wochen (für „überfällig“-Status und Rückholung) */
+    visitIntervalWeeks: integer("visit_interval_weeks"),
+    homeVisit: boolean("home_visit").notNull().default(false),
+    careHomeId: uuid("care_home_id").references(() => billingContacts.id),
+    billingContactId: uuid("billing_contact_id").references(() => billingContacts.id),
+    householdKey: text("household_key"),
+    /** Tour/Route für Hausbesuche */
+    route: text("route"),
+    /** Zusatzangaben aus Importen (Doctolib: maiden_name, occupation, referrer, gp_city, crucial_info, no_reminders) */
+    extra: jsonb("extra").$type<Record<string, unknown>>().notNull().default({}),
+    /** z. B. { doctolib: "123", legacyExcel: 17 } */
+    externalIds: jsonb("external_ids").$type<Record<string, string | number | undefined>>().notNull().default({}),
+    source: text("source"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("patients_org_number").on(t.organizationId, t.number),
+    index("patients_org_name").on(t.organizationId, t.lastName, t.firstName),
+  ],
+);
+
+export const consents = pgTable("consents", {
+  id: id(),
+  organizationId: orgId(),
+  patientId: uuid("patient_id")
+    .notNull()
+    .references(() => patients.id, { onDelete: "cascade" }),
+  type: consentTypeEnum("type").notNull(),
+  granted: boolean("granted").notNull(),
+  version: text("version").notNull().default("1"),
+  via: text("via"),
+  recordedBy: uuid("recorded_by").references(() => users.id),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const anamneses = pgTable("anamneses", {
+  id: id(),
+  organizationId: orgId(),
+  patientId: uuid("patient_id")
+    .notNull()
+    .references(() => patients.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+  authorId: uuid("author_id").references(() => users.id),
+  createdAt: createdAt(),
+});
+
+// ───────────────────────── Leistungen & Termine ─────────────────────────
+export const services = pgTable(
+  "services",
+  {
+    id: id(),
+    organizationId: orgId(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    priceCents: integer("price_cents").notNull(),
+    /** 0 = steuerfreie Heilbehandlung § 4 Nr. 14 UStG (nur mit therapeutischem Ziel!), 19 = kosmetisch/Verkauf */
+    vatRate: integer("vat_rate").notNull().default(0),
+    durationMin: integer("duration_min").notNull().default(30),
+    category: text("category").notNull().default("treatment"),
+    gkvPosition: text("gkv_position"),
+    requiresTherapeuticPurpose: boolean("requires_therapeutic_purpose").notNull().default(true),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("services_org_code").on(t.organizationId, t.code)],
+);
+
+export const appointments = pgTable(
+  "appointments",
+  {
+    id: id(),
+    organizationId: orgId(),
+    locationId: uuid("location_id").references(() => locations.id),
+    patientId: uuid("patient_id").references(() => patients.id, { onDelete: "set null" }),
+    therapistId: uuid("therapist_id").references(() => users.id),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    status: appointmentStatusEnum("status").notNull().default("planned"),
+    source: appointmentSourceEnum("source").notNull().default("manual"),
+    externalId: text("external_id"),
+    title: text("title"),
+    notes: text("notes"),
+    homeVisit: boolean("home_visit").notNull().default(false),
+    prescriptionId: uuid("prescription_id"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("appointments_org_time").on(t.organizationId, t.startsAt),
+    uniqueIndex("appointments_external").on(t.organizationId, t.source, t.externalId),
+  ],
+);
+
+export const appointmentServices = pgTable("appointment_services", {
+  id: id(),
+  organizationId: orgId(),
+  appointmentId: uuid("appointment_id")
+    .notNull()
+    .references(() => appointments.id, { onDelete: "cascade" }),
+  serviceId: uuid("service_id")
+    .notNull()
+    .references(() => services.id),
+  quantity: numeric("quantity", { precision: 6, scale: 2 }).notNull().default("1"),
+});
+
+export const waitlist = pgTable("waitlist", {
+  id: id(),
+  organizationId: orgId(),
+  patientId: uuid("patient_id")
+    .notNull()
+    .references(() => patients.id, { onDelete: "cascade" }),
+  wishes: text("wishes"),
+  createdAt: createdAt(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+// ───────────────────────── Verordnungen (GKV, B-light) ─────────────────────────
+export const prescriptions = pgTable("prescriptions", {
+  id: id(),
+  organizationId: orgId(),
+  patientId: uuid("patient_id")
+    .notNull()
+    .references(() => patients.id, { onDelete: "cascade" }),
+  issuedAt: date("issued_at").notNull(),
+  doctorName: text("doctor_name"),
+  doctorLanr: text("doctor_lanr"),
+  /** Diagnosegruppe nach HeilM-RL, z. B. DF, NF, QF, UI1, UI2 */
+  diagnosisGroup: text("diagnosis_group").notNull(),
+  icd10: text("icd10"),
+  remedy: text("remedy"),
+  units: integer("units").notNull(),
+  frequencyPerWeek: text("frequency_per_week"),
+  homeVisit: boolean("home_visit").notNull().default(false),
+  urgent: boolean("urgent").notNull().default(false),
+  copaymentExempt: boolean("copayment_exempt").notNull().default(false),
+  /** spätester Behandlungsbeginn (Regelwerk, versioniert in src/lib/rules) */
+  startBy: date("start_by"),
+  status: text("status").notNull().default("open"),
+  billedAt: timestamp("billed_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+// ───────────────────────── Dokumentation (append-only) ─────────────────────────
+export const sterileBatches = pgTable(
+  "sterile_batches",
+  {
+    id: id(),
+    organizationId: orgId(),
+    code: text("code").notNull(),
+    sterilizer: text("sterilizer"),
+    cycleNo: text("cycle_no"),
+    processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+    releasedBy: uuid("released_by").references(() => users.id),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    expiresAt: date("expires_at"),
+  },
+  (t) => [uniqueIndex("sterile_batches_org_code").on(t.organizationId, t.code)],
+);
+
+export type FootPoint = { side: "left" | "right"; point: string; label?: string; note?: string };
+
+export const treatmentRecords = pgTable(
+  "treatment_records",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    appointmentId: uuid("appointment_id").references(() => appointments.id),
+    prescriptionId: uuid("prescription_id").references(() => prescriptions.id),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id),
+    treatedAt: timestamp("treated_at", { withTimezone: true }).notNull(),
+    findings: text("findings"),
+    servicesText: text("services_text"),
+    material: text("material"),
+    sterileBatchCode: text("sterile_batch_code"),
+    reaction: text("reaction"),
+    recommendation: text("recommendation"),
+    footPoints: jsonb("foot_points").$type<FootPoint[]>().notNull().default([]),
+    structured: jsonb("structured").$type<Record<string, unknown>>().notNull().default({}),
+    /** „Pflichtfoto fehlt“ – Begründung statt Blockade */
+    missingPhotoReason: text("missing_photo_reason"),
+    aiAssisted: boolean("ai_assisted").notNull().default(false),
+    countersignRequired: boolean("countersign_required").notNull().default(false),
+    prevHash: text("prev_hash"),
+    hash: text("hash").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("treatment_records_patient").on(t.organizationId, t.patientId, t.treatedAt)],
+);
+
+export const recordAddenda = pgTable("record_addenda", {
+  id: id(),
+  organizationId: orgId(),
+  recordId: uuid("record_id")
+    .notNull()
+    .references(() => treatmentRecords.id, { onDelete: "restrict" }),
+  authorId: uuid("author_id")
+    .notNull()
+    .references(() => users.id),
+  kind: text("kind").notNull().default("addendum"),
+  text: text("text").notNull(),
+  prevHash: text("prev_hash"),
+  hash: text("hash").notNull(),
+  createdAt: createdAt(),
+});
+
+export const braceEpisodes = pgTable("brace_episodes", {
+  id: id(),
+  organizationId: orgId(),
+  patientId: uuid("patient_id")
+    .notNull()
+    .references(() => patients.id, { onDelete: "cascade" }),
+  side: footSideEnum("side").notNull(),
+  toe: integer("toe").notNull(),
+  stage: text("stage"),
+  braceType: text("brace_type"),
+  startedAt: date("started_at").notNull(),
+  endedAt: date("ended_at"),
+  status: text("status").notNull().default("active"),
+  createdAt: createdAt(),
+});
+
+export const media = pgTable(
+  "media",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    recordId: uuid("record_id").references(() => treatmentRecords.id),
+    braceEpisodeId: uuid("brace_episode_id").references(() => braceEpisodes.id),
+    kind: mediaKindEnum("kind").notNull(),
+    purpose: mediaPurposeEnum("purpose").notNull(),
+    storageKey: text("storage_key").notNull(),
+    mime: text("mime").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    footSide: footSideEnum("foot_side"),
+    toe: integer("toe"),
+    view: text("view"),
+    caption: text("caption"),
+    takenAt: timestamp("taken_at", { withTimezone: true }).notNull().defaultNow(),
+    uploadedBy: uuid("uploaded_by")
+      .notNull()
+      .references(() => users.id),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [index("media_patient").on(t.organizationId, t.patientId)],
+);
+
+// ───────────────────────── Rechnungen, Kasse, Gutscheine ─────────────────────────
+export const numberSequences = pgTable(
+  "number_sequences",
+  {
+    id: id(),
+    organizationId: orgId(),
+    key: text("key").notNull(),
+    year: integer("year").notNull(),
+    next: integer("next").notNull().default(1),
+  },
+  (t) => [uniqueIndex("number_sequences_key").on(t.organizationId, t.key, t.year)],
+);
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id").references(() => patients.id, { onDelete: "restrict" }),
+    billingContactId: uuid("billing_contact_id").references(() => billingContacts.id),
+    number: text("number"),
+    kind: invoiceKindEnum("kind").notNull().default("invoice"),
+    status: invoiceStatusEnum("status").notNull().default("draft"),
+    issuedAt: date("issued_at"),
+    dueAt: date("due_at"),
+    netCents: integer("net_cents").notNull().default(0),
+    vatCents: integer("vat_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull().default(0),
+    paidCents: integer("paid_cents").notNull().default(0),
+    cancelsInvoiceId: uuid("cancels_invoice_id"),
+    collectiveInvoiceId: uuid("collective_invoice_id"),
+    /** crm | excel-import | … */
+    source: text("source").notNull().default("crm"),
+    externalRef: text("external_ref"),
+    externalSyncedAt: timestamp("external_synced_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("invoices_org_number").on(t.organizationId, t.number),
+    index("invoices_org_status").on(t.organizationId, t.status),
+  ],
+);
+
+export const invoiceLines = pgTable("invoice_lines", {
+  id: id(),
+  organizationId: orgId(),
+  invoiceId: uuid("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  serviceId: uuid("service_id").references(() => services.id),
+  description: text("description").notNull(),
+  quantity: numeric("quantity", { precision: 8, scale: 2 }).notNull().default("1"),
+  factor: numeric("factor", { precision: 5, scale: 2 }).notNull().default("1"),
+  unitPriceCents: integer("unit_price_cents").notNull(),
+  vatRate: integer("vat_rate").notNull().default(0),
+  totalCents: integer("total_cents").notNull(),
+  position: integer("position").notNull().default(0),
+});
+
+export const vouchers = pgTable(
+  "vouchers",
+  {
+    id: id(),
+    organizationId: orgId(),
+    code: text("code").notNull(),
+    issuedAt: date("issued_at").notNull(),
+    validUntil: date("valid_until").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    /** Einzweck (single) / Mehrzweck (multi) – § 3 Abs. 13–15 UStG */
+    purpose: text("purpose").notNull().default("multi"),
+    /** bereits vor dem Import eingelöster Betrag (Altdaten) */
+    openingRedeemedCents: integer("opening_redeemed_cents").notNull().default(0),
+    note: text("note"),
+    soldInvoiceId: uuid("sold_invoice_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("vouchers_org_code").on(t.organizationId, t.code)],
+);
+
+export const payments = pgTable("payments", {
+  id: id(),
+  organizationId: orgId(),
+  invoiceId: uuid("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "restrict" }),
+  method: paymentMethodEnum("method").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  paidAt: timestamp("paid_at", { withTimezone: true }).notNull().defaultNow(),
+  voucherId: uuid("voucher_id").references(() => vouchers.id),
+  externalRef: text("external_ref"),
+  createdBy: uuid("created_by").references(() => users.id),
+});
+
+// ───────────────────────── Kommunikation ─────────────────────────
+export const messages = pgTable(
+  "messages",
+  {
+    id: id(),
+    organizationId: orgId(),
+    patientId: uuid("patient_id").references(() => patients.id, { onDelete: "set null" }),
+    channel: channelEnum("channel").notNull(),
+    direction: messageDirectionEnum("direction").notNull(),
+    fromAddress: text("from_address"),
+    toAddress: text("to_address"),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    status: messageStatusEnum("status").notNull().default("new"),
+    aiSuggestion: text("ai_suggestion"),
+    externalId: text("external_id"),
+    threadKey: text("thread_key"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("messages_org_time").on(t.organizationId, t.receivedAt)],
+);
+
+export const reviews = pgTable("reviews", {
+  id: id(),
+  organizationId: orgId(),
+  provider: text("provider").notNull().default("google"),
+  externalId: text("external_id").notNull(),
+  author: text("author"),
+  rating: integer("rating"),
+  text: text("text"),
+  reply: text("reply"),
+  aiSuggestion: text("ai_suggestion"),
+  createdAtExternal: timestamp("created_at_external", { withTimezone: true }),
+  repliedAt: timestamp("replied_at", { withTimezone: true }),
+});
+
+// ───────────────────────── Integrationen ─────────────────────────
+export const integrationConnections = pgTable(
+  "integration_connections",
+  {
+    id: id(),
+    organizationId: orgId(),
+    provider: integrationProviderEnum("provider").notNull(),
+    status: integrationStatusEnum("status").notNull().default("disconnected"),
+    config: jsonb("config").$type<Record<string, unknown>>().notNull().default({}),
+    /** AES-256-GCM verschlüsselt (src/lib/crypto.ts) */
+    secretEnc: text("secret_enc"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("integration_org_provider").on(t.organizationId, t.provider)],
+);
+
+export const webhookEvents = pgTable(
+  "webhook_events",
+  {
+    id: id(),
+    provider: integrationProviderEnum("provider").notNull(),
+    organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    error: text("error"),
+  },
+  (t) => [uniqueIndex("webhook_events_idem").on(t.provider, t.externalId)],
+);
+
+export const syncLog = pgTable("sync_log", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  organizationId: orgId(),
+  provider: integrationProviderEnum("provider").notNull(),
+  direction: text("direction").notNull(),
+  entity: text("entity"),
+  entityId: text("entity_id"),
+  ok: boolean("ok").notNull(),
+  message: text("message"),
+  at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ───────────────────────── Praxis-Finanzen, Aufgaben, News ─────────────────────────
+export const fixedCosts = pgTable("fixed_costs", {
+  id: id(),
+  organizationId: orgId(),
+  category: text("category").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  /** monthly | quarterly | yearly */
+  interval: text("interval").notNull().default("monthly"),
+  startDate: date("start_date").notNull(),
+  note: text("note"),
+  active: boolean("active").notNull().default(true),
+});
+
+export const tasks = pgTable("tasks", {
+  id: id(),
+  organizationId: orgId(),
+  title: text("title").notNull(),
+  kind: text("kind").notNull().default("manual"),
+  patientId: uuid("patient_id").references(() => patients.id, { onDelete: "cascade" }),
+  assigneeId: uuid("assignee_id").references(() => users.id),
+  dueAt: date("due_at"),
+  doneAt: timestamp("done_at", { withTimezone: true }),
+  createdAt: createdAt(),
+});
+
+export const newsItems = pgTable(
+  "news_items",
+  {
+    id: id(),
+    source: text("source").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    summary: text("summary"),
+    category: text("category").notNull().default("allgemein"),
+    sponsored: boolean("sponsored").notNull().default(false),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("news_items_url").on(t.url)],
+);
+
+// ───────────────────────── Audit ─────────────────────────
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    organizationId: uuid("organization_id"),
+    userId: uuid("user_id"),
+    action: text("action").notNull(),
+    entity: text("entity"),
+    entityId: text("entity_id"),
+    ip: text("ip"),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("audit_org_time").on(t.organizationId, t.at)],
+);

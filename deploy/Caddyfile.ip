@@ -1,0 +1,14 @@
+# Variante ohne Domain (nur zum Testen, keine echten Patientendaten):
+# HTTPS mit selbst signiertem Zertifikat auf der Server-IP. Der Browser zeigt eine Warnung.
+{
+	default_sni {$DOMAIN}
+}
+https://{$DOMAIN} {
+	tls internal
+	encode zstd gzip
+	reverse_proxy app:3000
+	header -Server
+}
+http://{$DOMAIN} {
+	redir https://{host}{uri} permanent
+}
