@@ -115,6 +115,7 @@ export const integrationProviderEnum = pgEnum("integration_provider", [
   "calendar_ics",
   "stripe",
   "gkv_billing",
+  "kim",
 ]);
 export const integrationStatusEnum = pgEnum("integration_status", [
   "disconnected",
