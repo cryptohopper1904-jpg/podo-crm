@@ -35,7 +35,7 @@ const orgId = () =>
 
 // ───────────────────────── Enums ─────────────────────────
 export const roleEnum = pgEnum("role", ["owner", "therapist", "reception", "trainee", "accountant"]);
-export const channelEnum = pgEnum("channel", ["email", "whatsapp", "sms", "phone", "letter", "none"]);
+export const channelEnum = pgEnum("channel", ["email", "whatsapp", "sms", "phone", "letter", "none", "kim"]);
 export const insuranceTypeEnum = pgEnum("insurance_type", ["gkv", "pkv", "self", "beihilfe"]);
 export const appointmentStatusEnum = pgEnum("appointment_status", [
   "planned",
@@ -460,6 +460,12 @@ export const prescriptions = pgTable("prescriptions", {
   copaymentPaidAt: timestamp("copayment_paid_at", { withTimezone: true }),
   interruptionNote: text("interruption_note"),
   scanMediaId: uuid("scan_media_id"),
+  /** Herkunft: paper (Muster 13), ocr (Foto + KI-Auslesung, bestätigt), everordnung (TI/FHIR) */
+  source: text("source").notNull().default("paper"),
+  /** eVerordnung: Task-/Verordnungs-ID bzw. Token aus der TI (eindeutig je Praxis) */
+  externalRef: text("external_ref"),
+  /** Rohdaten der Auslesung (OCR-Vorschlag bzw. FHIR-Bundle-Zusammenfassung) – nur zur Nachvollziehbarkeit */
+  importData: jsonb("import_data"),
   rulesVersion: text("rules_version"),
   billedAt: timestamp("billed_at", { withTimezone: true }),
   billingBatchId: uuid("billing_batch_id"),
@@ -627,7 +633,8 @@ export const absences = pgTable("absences", {
   createdAt: createdAt(),
 });
 
-export type FootPoint = { side: "left" | "right"; point: string; label?: string; note?: string };
+/** Markierung am Fuß. pos3d: optionale Position am 3D-Modell (Modellkoordinaten, normiert -1..1). */
+export type FootPoint = { side: "left" | "right"; point: string; label?: string; note?: string; pos3d?: [number, number, number] };
 
 export const treatmentRecords = pgTable(
   "treatment_records",
