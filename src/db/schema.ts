@@ -25,6 +25,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().default(sql`gen_random_uuid()`);
@@ -1265,4 +1266,124 @@ export const calendarFeedEvents = pgTable(
     uniqueIndex("calendar_feed_events_key").on(t.feedId, t.eventKey),
     index("calendar_feed_events_appointment").on(t.organizationId, t.appointmentId),
   ],
+);
+
+// ───────────────────────── Fahrten & Hausbesuchs-Touren ─────────────────────────
+/**
+ * Startorte für Fahrten zu Hausbesuchen (Praxis, Zuhause, Lager …). Gespeichert werden Adresse und die
+ * geokodierten Koordinaten NUR dieser Startorte. Fahrzeug, km-Satz und Hin-/Rückweg-Regel stehen in
+ * organizations.settings.trips.
+ */
+export const tripStartLocations = pgTable(
+  "trip_start_locations",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    street: text("street"),
+    zip: text("zip"),
+    city: text("city"),
+    lat: doublePrecision("lat"),
+    lon: doublePrecision("lon"),
+    isDefault: boolean("is_default").notNull().default(false),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("trip_start_locations_org").on(t.organizationId),
+    // höchstens EIN Standard-Startort je Praxis
+    uniqueIndex("trip_start_locations_one_default").on(t.organizationId).where(sql`${t.isDefault} and ${t.active}`),
+  ],
+);
+
+/**
+ * Fahrtenbuch-Hilfe (append-only, DB-Trigger): eine Zeile je Fahrt. Ziel ist IMMER pseudonymisiert
+ * („Hausbesuch K-<Nummer>“), nie der Name. Korrekturen (Ankunft, km, Storno) nur als trip_corrections.
+ * appointment_id bewusst ohne Fremdschlüssel: das Löschen eines Termins darf den Eintrag nicht ändern.
+ */
+export const trips = pgTable(
+  "trips",
+  {
+    id: id(),
+    organizationId: orgId(),
+    driverId: uuid("driver_id").references(() => users.id),
+    /** Tag der Fahrt (Europe/Berlin) */
+    tripDate: date("trip_date").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    fromLabel: text("from_label").notNull(),
+    toLabel: text("to_label").notNull(),
+    purpose: text("purpose").notNull().default("Hausbesuch"),
+    distanceM: integer("distance_m").notNull(),
+    durationSec: integer("duration_sec"),
+    /** route (Routing-Dienst) | estimate (Luftlinie × 1,3) | manual */
+    distanceSource: text("distance_source").notNull(),
+    provider: text("provider"),
+    appointmentId: uuid("appointment_id"),
+    vehicleLabel: text("vehicle_label"),
+    plate: text("plate"),
+    odometerStart: integer("odometer_start"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("trips_org_date").on(t.organizationId, t.tripDate), index("trips_org_appointment").on(t.organizationId, t.appointmentId)],
+);
+
+/** Nachträge zu Fahrten (append-only): Ankunft, Korrektur, Storno – mit Person und Zeitpunkt. */
+export const tripCorrections = pgTable(
+  "trip_corrections",
+  {
+    id: id(),
+    organizationId: orgId(),
+    tripId: uuid("trip_id")
+      .notNull()
+      .references(() => trips.id, { onDelete: "restrict" }),
+    /** arrival | correction | void */
+    kind: text("kind").notNull(),
+    distanceM: integer("distance_m"),
+    durationSec: integer("duration_sec"),
+    purpose: text("purpose"),
+    odometerStart: integer("odometer_start"),
+    odometerEnd: integer("odometer_end"),
+    arrivedAt: timestamp("arrived_at", { withTimezone: true }),
+    voided: boolean("voided").notNull().default(false),
+    reason: text("reason"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("trip_corrections_trip").on(t.organizationId, t.tripId)],
+);
+
+/**
+ * Zwischenspeicher für Routing-Ergebnisse (30 Tage) je Praxis. Schlüssel = sha256 über Anbieter und gerundete
+ * Koordinaten – keine Adressen/Koordinaten im Klartext. Fahrten ab „aktuellem Standort“ werden nie gespeichert.
+ */
+export const routeCache = pgTable(
+  "route_cache",
+  {
+    id: id(),
+    organizationId: orgId(),
+    keyHash: text("key_hash").notNull(),
+    provider: text("provider").notNull(),
+    distanceM: integer("distance_m").notNull(),
+    durationSec: integer("duration_sec").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("route_cache_org_key").on(t.organizationId, t.keyHash)],
+);
+
+/** Geokodierung (Photon) je Praxis: sha256 der normalisierten Adresse → Koordinaten (4 Nachkommastellen), 90 Tage. */
+export const geocodeCache = pgTable(
+  "geocode_cache",
+  {
+    id: id(),
+    organizationId: orgId(),
+    addressHash: text("address_hash").notNull(),
+    lat: doublePrecision("lat"),
+    lon: doublePrecision("lon"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("geocode_cache_org_address").on(t.organizationId, t.addressHash)],
 );

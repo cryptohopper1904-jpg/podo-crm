@@ -17,6 +17,7 @@ import {
   Home,
   Inbox,
   Newspaper,
+  Route,
   Settings,
   Star,
   Stethoscope,
@@ -28,6 +29,7 @@ import { cx } from "./ui";
 export type NavKey =
   | "heute"
   | "kalender"
+  | "touren"
   | "kunden"
   | "doku"
   | "posteingang"
@@ -48,6 +50,7 @@ export type NavKey =
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
   { key: "heute", href: "/heute", label: "Heute", icon: Home, mobile: true },
   { key: "kalender", href: "/kalender", label: "Kalender", icon: CalendarDays, mobile: true },
+  { key: "touren", href: "/touren", label: "Touren", icon: Route },
   { key: "kunden", href: "/kunden", label: "Kunden", icon: Users, mobile: true },
   { key: "doku", href: "/doku", label: "Behandlung", icon: Stethoscope, mobile: true },
   { key: "posteingang", href: "/posteingang", label: "Posteingang", icon: Inbox, mobile: true },

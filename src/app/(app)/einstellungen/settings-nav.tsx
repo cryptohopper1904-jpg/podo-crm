@@ -12,6 +12,7 @@ export const SETTINGS_GROUPS = [
       ["team", "Team & Rollen"],
       ["leistungen", "Leistungen"],
       ["erinnerungen", "Erinnerungen"],
+      ["fahrten", "Fahrten & Startorte"],
       ["website", "Website"],
     ],
   },

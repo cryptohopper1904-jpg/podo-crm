@@ -3,7 +3,7 @@
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
-import { AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
@@ -21,6 +21,16 @@ export type InvoicePreset = {
   notes?: string | null;
   lines: { treatmentRecordId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
+
+/** Wegegeld für Hausbesuche (nur vor dem Ausstellen, nur Privat/Selbstzahler) – siehe src/server/trips.ts */
+export type TravelOptions = {
+  patientId: string;
+  eligible: boolean;
+  rateCents: number | null;
+  billing: "oneway" | "roundtrip";
+  flatServices: { id: string; name: string; priceCents: number }[];
+  suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
+} | null;
 
 type Line = { key: string; treatmentRecordId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
 
@@ -49,6 +59,7 @@ export function InvoiceForm({
   today,
   preselectPatientId,
   preset,
+  travel,
   privateOnly = false,
 }: {
   patients: PatientOpt[];
@@ -58,6 +69,7 @@ export function InvoiceForm({
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
+  travel?: TravelOptions;
   /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
   privateOnly?: boolean;
 }) {
@@ -129,6 +141,20 @@ export function InvoiceForm({
     setPatientId(id);
     const p = patients.find((x) => x.id === id);
     if (p) setBillingContactId(p.billingContactId ?? (kind === "collective" ? (p.careHomeId ?? "") : ""));
+  }
+
+  const [addedTrips, setAddedTrips] = useState<string[]>([]);
+  const showTravel = !!travel && travel.patientId === patientId && (kind === "invoice" || kind === "receipt");
+  /** Position anhängen (leere Startzeile ersetzen) */
+  const appendLine = (l: Line) => setLines((ls) => [...ls.filter((x) => x.serviceId || x.description || x.price), l]);
+  function addTravel(s: NonNullable<TravelOptions>["suggestions"][number]) {
+    if (!travel?.rateCents) return;
+    appendLine(newLine({ description: s.description, quantity: String(s.km).replace(".", ","), price: euro(travel.rateCents), vatRate: 0 }));
+    setAddedTrips((a) => [...a, s.tripId]);
+  }
+  function addFlat(svcId: string) {
+    const sv = svcById.get(svcId);
+    if (sv) appendLine(newLine({ serviceId: sv.id, description: sv.name, price: euro(sv.priceCents), vatRate: sv.vatRate }));
   }
 
   const vatOptions = (l: Line) => {
@@ -267,6 +293,34 @@ export function InvoiceForm({
             </Button>
           </div>
         </div>
+
+        {showTravel && travel ? (
+          <div className="mt-5 rounded-xl border border-dashed border-border-strong p-4">
+            <p className="flex items-center gap-2 font-semibold"><Car size={18} aria-hidden /> Wegegeld (Hausbesuch)</p>
+            {!travel.eligible ? (
+              <p className="mt-1 text-sm text-muted">Nur für Privat- und Selbstzahler – bei GKV läuft das Wegegeld über die Verordnung.</p>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {travel.rateCents === null ? (
+                  <p className="w-full text-sm text-muted">Kein km-Satz hinterlegt (Einstellungen → Fahrten &amp; Startorte).</p>
+                ) : travel.suggestions.length === 0 ? (
+                  <p className="w-full text-sm text-muted">Keine erfassten Fahrten zu dieser Person in den letzten 120 Tagen.</p>
+                ) : (
+                  travel.suggestions.map((s) => (
+                    <Button key={s.tripId} type="button" variant="secondary" disabled={addedTrips.includes(s.tripId)} onClick={() => addTravel(s)} title={s.maybeBilled ? "Möglicherweise bereits abgerechnet" : undefined}>
+                      <Plus size={16} aria-hidden /> Wegegeld hinzufügen: {s.date.slice(8, 10)}.{s.date.slice(5, 7)}. · {String(s.km).replace(".", ",")} km × {euro(travel.rateCents ?? 0)} €{s.maybeBilled ? " (evtl. schon abgerechnet)" : ""}
+                    </Button>
+                  ))
+                )}
+                {travel.flatServices.map((f) => (
+                  <Button key={f.id} type="button" variant="secondary" onClick={() => addFlat(f.id)}>
+                    <Plus size={16} aria-hidden /> {f.name} (Pauschale {euro(f.priceCents)} €)
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <dl className="mt-5 ml-auto grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-[15px]">
           {totals.groups.map((g) => (

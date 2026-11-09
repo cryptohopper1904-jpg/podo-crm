@@ -65,6 +65,7 @@ export const DOWNLOAD_KINDS = [
   "cash_export",
   "invoice_pdf",
   "z_bon_pdf",
+  "trip_log_export",
 ] as const;
 export type DownloadKind = (typeof DOWNLOAD_KINDS)[number];
 

@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-09-g",
+    date: "2026-11-09",
+    title: "Touren & Fahrtenbuch",
+    items: [
+      { tag: "neu", text: "Hausbesuche als Tour planen: PodoHero schlägt eine sinnvolle Reihenfolge vor und zeigt die Strecke – ab Praxis, Zuhause oder vom letzten Kunden.", href: "/touren" },
+      { tag: "neu", text: "„Ich fahre los“: Ein Tipp genügt, die Kilometer werden automatisch ins Fahrtenbuch eingetragen – praktisch für die Steuer und fürs Wegegeld.", href: "/touren" },
+      { tag: "neu", text: "Startorte, Fahrzeug und km-Satz legen Sie unter Einstellungen → Fahrten & Startorte fest." },
+    ],
+  },
+  {
     id: "2026-11-09-f",
     date: "2026-11-09",
     title: "Doctolib-Termine im Kalender",
@@ -90,12 +100,3 @@ export const CHANGELOG: ChangelogEntry[] = [
 // Kommende Einträge (beim Merge der jeweiligen Funktion freischalten)
 // Zum Freischalten: Eintrag OBEN in CHANGELOG einfügen, id/Datum auf den Tag des Merges setzen.
 //
-// {
-//   id: "JJJJ-MM-TT",
-//   date: "JJJJ-MM-TT",
-//   title: "Touren & Fahrtenbuch",
-//   items: [
-//     { tag: "neu", text: "Hausbesuche als Tour planen: PodoHero schlägt eine sinnvolle Reihenfolge vor und zeigt die Strecke.", href: "/touren" },
-//     { tag: "neu", text: "Fahrtenbuch: Gefahrene Kilometer werden automatisch notiert – praktisch für die Steuer." },
-//   ],
-// },

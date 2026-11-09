@@ -6,6 +6,7 @@ import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso } from "@/lib/format";
 import { careHomes, collectiveSuggestion } from "@/server/invoice-delivery";
 import { invoiceFormData } from "@/server/invoices";
+import { travelSuggestions } from "@/server/trips";
 import { InvoiceForm, type InvoicePreset } from "../invoice-form";
 
 export const metadata = { title: "Neue Rechnung" };
@@ -23,6 +24,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   const month = typeof sp.monat === "string" && /^\d{4}-\d{2}$/.test(sp.monat) ? sp.monat : prevMonth();
   const data = await invoiceFormData(auth, patient);
   const homes = await careHomes(auth);
+  const travel = patient ? await travelSuggestions(auth, patient) : null;
   const suggestion = careHomeId ? await collectiveSuggestion(auth, careHomeId, month) : null;
 
   const preset: InvoicePreset | undefined = suggestion
@@ -68,7 +70,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           </form>
         </Card>
       ) : null}
-      <InvoiceForm key={suggestion ? `${suggestion.contact.id}-${month}` : "plain"} {...data} preselectPatientId={patient} preset={preset} privateOnly={isPrivateOnly(auth.organization)} />
+      <InvoiceForm key={suggestion ? `${suggestion.contact.id}-${month}` : "plain"} {...data} preselectPatientId={patient} preset={preset} travel={travel} privateOnly={isPrivateOnly(auth.organization)} />
     </div>
   );
 }
