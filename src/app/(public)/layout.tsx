@@ -50,8 +50,8 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
-            <LinkButton href="/login" variant="ghost" className="hidden sm:inline-flex">Anmelden</LinkButton>
-            <LinkButton href="/einrichtung" variant="accent" className="hidden sm:inline-flex">Kostenlos testen</LinkButton>
+            <LinkButton href="/login" variant="ghost" className="max-sm:hidden">Anmelden</LinkButton>
+            <LinkButton href="/einrichtung" variant="accent" className="max-sm:hidden">Kostenlos testen</LinkButton>
             {/* Mobiles Menü ohne JavaScript (details/summary ist per Tastatur bedienbar) */}
             <details className="group relative md:hidden">
               <summary className="inline-flex size-11 cursor-pointer list-none items-center justify-center rounded-xl border border-border bg-surface [&::-webkit-details-marker]:hidden" aria-label="Menü">
