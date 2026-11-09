@@ -93,6 +93,15 @@ export async function mailPortFor(org: string): Promise<MailPort> {
   return mailAdapterFor(settings, factoryOverride);
 }
 
+/**
+ * Plattform-Versand (SMTP_URL/SMTP_FROM) für Konto-E-Mails ohne Praxis-Bezug, z. B. „Passwort vergessen“.
+ * Wirft MailNotConfiguredError, wenn in Produktion kein Plattform-SMTP gesetzt ist (Entwicklung: Testmodus).
+ */
+export function platformMailPort(env: Record<string, string | undefined> = process.env): MailPort {
+  const settings = resolveMailSettings({ connection: null, env, practice: { name: "PodoHero", email: null } });
+  return mailAdapterFor(settings, factoryOverride);
+}
+
 export type MailContext = { purpose: string; userId?: string | null; entity?: string; entityId?: string };
 
 /**

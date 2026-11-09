@@ -14,6 +14,8 @@ import { appRoutes, read, SRC } from "./app-files";
 /** Bewusst öffentlich (ohne Sitzung) – jeweils mit eigener Absicherung. */
 export const INTENDED_PUBLIC: Record<string, string> = {
   "/login": "Anmeldung",
+  "/login/passwort-vergessen": "Passwort vergessen: neutrale Antwort, Rate-Limit je IP und E-Mail",
+  "/login/passwort-neu": "Neues Passwort per Einmal-Token (30 min, nur sha256 gespeichert)",
   "/einrichtung": "Ersteinrichtung (SETUP_TOKEN / ALLOW_SIGNUP)",
   "/kein-zugriff": "Hinweisseite ohne Daten",
   "/buchen": "Online-Buchung (Rate-Limit, nie Aktenzuordnung)",

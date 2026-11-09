@@ -101,6 +101,18 @@ test("Rechnung erstellen und ausstellen", async () => {
   await expect(page.getByText(/R\d{4}-\d{4}/).first()).toBeVisible();
 });
 
+test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", async () => {
+  await page.setViewportSize({ width: 1024, height: 1366 });
+  try {
+    await page.goto(`/rechnungen/neu?patient=${patientUrl.split("/").pop()}`);
+    await expect(page.getByLabel("Pos. 1: Leistung")).toBeVisible();
+    const { scroll, client } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+    expect(scroll).toBeLessThanOrEqual(client);
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
+});
+
 test("öffentliche Online-Buchung", async ({ browser }) => {
   // eigener, anonymer Browser-Kontext (ohne Praxis-Sitzung)
   const ctx = await browser.newContext();

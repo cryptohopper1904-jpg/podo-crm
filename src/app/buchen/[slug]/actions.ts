@@ -1,12 +1,13 @@
 "use server";
 
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
-import { appointmentServices, appointments, messages, organizations, services } from "@/db/schema";
+import { appointmentServices, appointments, messages, organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
+import { checkPublicSlot, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
 
@@ -47,19 +48,18 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   const [org] = await db.select().from(organizations).where(eq(organizations.slug, d.slug));
   if (!org) return { error: "Praxis nicht gefunden." };
   const start = berlinToUtc(d.date, d.time);
-  if (start.getTime() < Date.now() + 2 * 3600_000) return { error: "Bitte einen späteren Termin wählen." };
+  // Serverseitig dieselbe Verfügbarkeit wie Portal/Telefon: Freigabe, Leistungsliste, Arbeitszeiten, Abwesenheiten,
+  // Feiertage, Vorlauf und Buchungsfenster – nur exakt angebotene Startzeiten (Gesamt-Review M1)
+  const check = await checkPublicSlot(org.id, d.serviceId, start);
+  if (!check.ok) return { error: check.error };
+  const svc = check.service;
+  const end = new Date(start.getTime() + svc.durationMin * 60_000);
 
   const result = await withOrg(org.id, async (tx) => {
-    // Buchungen je Praxis serialisieren → keine Doppelbelegung bei gleichzeitigen Anfragen
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org.id}, 0))`);
-    const [svc] = await tx
-      .select({ id: services.id, name: services.name, durationMin: services.durationMin })
-      .from(services)
-      .where(and(eq(services.organizationId, org.id), eq(services.id, d.serviceId), eq(services.active, true)));
-    if (!svc) return { error: "Leistung nicht verfügbar." };
-    const end = new Date(start.getTime() + svc.durationMin * 60_000);
-    const clash = await tx.select({ id: appointments.id, status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org.id), lt(appointments.startsAt, end), gte(appointments.endsAt, start)));
-    if (clash.some((c) => c.status !== "cancelled")) return { error: "Dieser Termin wurde gerade vergeben. Bitte einen anderen wählen." };
+    // Buchungen je Praxis serialisieren → keine Doppelbelegung bei gleichzeitigen Anfragen (gleiche Sperre wie überall)
+    await lockBooking(tx, org.id);
+    if (await clashes(tx, org.id, start, end)) return { error: "Dieser Termin wurde gerade vergeben. Bitte einen anderen wählen." };
+    if (await overDayLimit(tx, org.id, check.cfg, start)) return { error: "An diesem Tag sind keine Online-Termine mehr frei. Bitte einen anderen Tag wählen." };
     // Sicherheit: Eine öffentliche Anfrage wird NIE automatisch an eine bestehende Akte gehängt
     // (sonst könnte jemand mit Name + Telefonnummer fremde Akten verändern). Die Praxis ordnet im Posteingang zu.
     const initials = `${d.firstName} ${d.lastName.slice(0, 1)}.`;

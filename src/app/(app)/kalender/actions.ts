@@ -6,11 +6,11 @@ import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
-import { appointmentServices, appointments, services } from "@/db/schema";
+import { appointments, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
-import { findConflicts } from "@/server/appointments";
+import { createInternalAppointments } from "@/server/appointments";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
@@ -46,31 +46,19 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   const firstStart = berlinToUtc(d.date, d.time);
   const occurrences = Array.from({ length: d.repeatWeeks ? d.repeatCount : 1 }, (_, i) => new Date(firstStart.getTime() + i * d.repeatWeeks * 7 * 86400_000));
 
-  if (!d.allowConflict) {
-    for (const s of occurrences) {
-      const c = await findConflicts(org, d.therapistId ?? null, s, new Date(s.getTime() + duration * 60_000));
-      if (c.length) return { error: "Zu dieser Zeit ist bereits ein Termin eingetragen.", conflict: true };
-    }
-  }
-  await withOrg(org, async (tx) => {
-    for (const s of occurrences) {
-      const [a] = await tx
-        .insert(appointments)
-        .values({
-          organizationId: org,
-          patientId: d.patientId ?? null,
-          therapistId: d.therapistId ?? auth.user.id,
-          startsAt: s,
-          endsAt: new Date(s.getTime() + duration * 60_000),
-          source: d.source,
-          title: d.title ?? (svc.map((x) => x.name).join(", ") || "Behandlung"),
-          notes: d.notes ?? null,
-          homeVisit: !!d.homeVisit,
-        })
-        .returning({ id: appointments.id });
-      if (svc.length) await tx.insert(appointmentServices).values(svc.map((x) => ({ organizationId: org, appointmentId: a.id, serviceId: x.id })));
-    }
+  const res = await createInternalAppointments(org, {
+    patientId: d.patientId ?? null,
+    therapistId: d.therapistId ?? auth.user.id,
+    occurrences,
+    durationMin: duration,
+    source: d.source,
+    title: d.title ?? (svc.map((x) => x.name).join(", ") || "Behandlung"),
+    notes: d.notes ?? null,
+    homeVisit: !!d.homeVisit,
+    serviceIds: svc.map((x) => x.id),
+    allowConflict: !!d.allowConflict,
   });
+  if (!res.ok) return { error: "Zu dieser Zeit ist bereits ein Termin eingetragen.", conflict: true };
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length } });
   revalidatePath("/kalender");
   revalidatePath("/heute");

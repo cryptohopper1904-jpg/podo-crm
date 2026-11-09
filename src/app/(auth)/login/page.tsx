@@ -9,7 +9,8 @@ import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Anmelden" };
 
-export default async function LoginPage() {
+export default async function LoginPage(props: PageProps<"/login">) {
+  const sp = await props.searchParams;
   const state = await getAuthState();
   if (state.auth) redirect("/heute");
   // Pflicht-2FA noch nicht eingerichtet (Inhaber:in, Plattform-Admin, ggf. alle Rollen): zur Einrichtung
@@ -23,6 +24,9 @@ export default async function LoginPage() {
     <>
       <h1 className="font-display text-2xl font-semibold">Anmelden</h1>
       <p className="mt-1 text-sm text-muted">Willkommen zurück in deiner Praxis.</p>
+      {sp.passwort === "neu" ? (
+        <p role="status" className="mt-4 rounded-xl bg-primary-soft p-3 text-sm">Dein Passwort wurde geändert und alle Sitzungen wurden beendet. Bitte melde dich neu an.</p>
+      ) : null}
       <LoginForm />
       {process.env.ALLOW_SIGNUP === "true" ? (
         <p className="mt-6 text-center text-sm text-muted">

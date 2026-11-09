@@ -226,7 +226,7 @@ async function isFreeSlot(o: OrgRow, start: Date, durationMin: number, now: Date
 }
 
 /** Überschneidung mit einem nicht abgesagten Termin (innerhalb der Buchungssperre prüfen). */
-async function clashes(tx: Tx, org: string, start: Date, end: Date, excludeId?: string) {
+export async function clashes(tx: Tx, org: string, start: Date, end: Date, excludeId?: string) {
   const rows = await tx
     .select({ id: appointments.id, status: appointments.status, startsAt: appointments.startsAt, endsAt: appointments.endsAt })
     .from(appointments)
@@ -234,7 +234,7 @@ async function clashes(tx: Tx, org: string, start: Date, end: Date, excludeId?: 
   return rows.some((r) => r.id !== excludeId && r.status !== "cancelled" && r.startsAt < end && r.endsAt > start);
 }
 
-async function overDayLimit(tx: Tx, org: string, cfg: OnlineBookingSettings, start: Date) {
+export async function overDayLimit(tx: Tx, org: string, cfg: OnlineBookingSettings, start: Date) {
   if (!cfg.maxPerDay) return false;
   const day = berlinDateIso(start);
   const from = berlinToUtc(day, "00:00");
@@ -242,7 +242,8 @@ async function overDayLimit(tx: Tx, org: string, cfg: OnlineBookingSettings, sta
   return (onlinePerDay.get(day) ?? 0) >= cfg.maxPerDay;
 }
 
-const lockBooking = (tx: Tx, org: string) => tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org}, 0))`);
+/** Buchungssperre je Praxis – gemeinsam für /buchen, Portal, Telefon, Warteliste und interne Terminanlage. */
+export const lockBooking = (tx: Tx, org: string) => tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"book:" + org}, 0))`);
 
 /**
  * Buchung durch die (über den Portal-Link verifizierte) Person: Termin an IHRE Akte, Status „geplant“,
@@ -396,4 +397,64 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
   });
   if (res.ok) await audit({ organizationId: org, action: "portal.appointment_reschedule", entity: "appointment", entityId: res.appointmentId, meta: { from: res.cancelledId } });
   return res;
+}
+
+// ───────────────────────── Öffentliche Buchung /buchen/[slug] (Gesamt-Review M1) ─────────────────────────
+
+/** Die öffentliche Seite zeigt die nächsten 14 Tage. */
+export const PUBLIC_BOOKING_DAYS = 14;
+
+export type PublicBookingOptions = {
+  services: { id: string; code: string; name: string; durationMin: number; priceCents: number }[];
+  /** je Dauer: freie Startzeiten (HH:MM, Europe/Berlin) */
+  days: { date: string; slots: Record<number, string[]> }[];
+};
+
+const inPublicWindow = (dateIso: string, now: Date) => {
+  const days = dayRange(berlinDateIso(now), PUBLIC_BOOKING_DAYS + 1);
+  return days.includes(dateIso);
+};
+
+/**
+ * Leistungen und freie Zeiten für /buchen – dieselbe Verfügbarkeit wie Portal und Telefon (Arbeitszeiten,
+ * Abwesenheiten, Feiertage, Vorlauf, Tageslimit). null = Online-Buchung ausgeschaltet bzw. Praxis unbekannt.
+ */
+export async function publicBookingOptions(organizationId: string, now = new Date()): Promise<PublicBookingOptions | null> {
+  const o = await loadOrg(organizationId);
+  if (!o) return null;
+  const cfg = parseOnlineBookingSettings(o.settings);
+  if (!cfg.enabled) return null;
+  const svc = await bookableServicesFor(o, cfg);
+  const byDay = new Map<string, Record<number, string[]>>();
+  for (const dur of [...new Set(svc.map((s) => s.durationMin))]) {
+    for (const d of await portalFreeSlots(o, { durationMin: dur, now, cfg })) {
+      if (!inPublicWindow(d.dateIso, now) || !d.slots.length) continue;
+      const rec = byDay.get(d.dateIso) ?? {};
+      rec[dur] = d.slots.map((x) => timeDe(x));
+      byDay.set(d.dateIso, rec);
+    }
+  }
+  return {
+    services: svc.map(({ id, code, name, durationMin, priceCents }) => ({ id, code, name, durationMin, priceCents })),
+    days: [...byDay].sort(([a], [b]) => a.localeCompare(b)).map(([date, slots]) => ({ date, slots })),
+  };
+}
+
+export type PublicSlotCheck = { ok: true; service: { id: string; name: string; durationMin: number }; cfg: OnlineBookingSettings } | { ok: false; error: string };
+
+/**
+ * Serverseitige Prüfung einer öffentlichen Buchung VOR dem Speichern: Freigabe, Leistungsliste, Buchungsfenster und
+ * dass `start` exakt einer der angebotenen freien Startzeiten entspricht. Die Überschneidung prüft der Aufrufer
+ * danach noch einmal unter lockBooking().
+ */
+export async function checkPublicSlot(organizationId: string, serviceId: string, start: Date, now = new Date()): Promise<PublicSlotCheck> {
+  const o = await loadOrg(organizationId);
+  if (!o) return { ok: false, error: "Praxis nicht gefunden." };
+  const cfg = parseOnlineBookingSettings(o.settings);
+  if (!cfg.enabled) return { ok: false, error: "Die Online-Buchung ist in dieser Praxis derzeit ausgeschaltet." };
+  const svc = (await bookableServicesFor(o, cfg)).find((x) => x.id === serviceId);
+  if (!svc) return { ok: false, error: "Diese Leistung ist online nicht buchbar." };
+  if (Number.isNaN(start.getTime()) || !inPublicWindow(berlinDateIso(start), now)) return { ok: false, error: "Bitte einen Termin in den nächsten zwei Wochen wählen." };
+  if (!(await isFreeSlot(o, start, svc.durationMin, now))) return { ok: false, error: "Dieser Termin ist nicht (mehr) frei. Bitte einen anderen wählen." };
+  return { ok: true, service: { id: svc.id, name: svc.name, durationMin: svc.durationMin }, cfg };
 }
