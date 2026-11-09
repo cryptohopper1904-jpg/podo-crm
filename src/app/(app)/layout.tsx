@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { LogOut } from "lucide-react";
+import { LogOut, Sparkles } from "lucide-react";
 import { and, count, eq } from "drizzle-orm";
 import { AccessBanner } from "@/components/access-banner";
 import { BottomNav, SideNav, type NavKey } from "@/components/app-nav";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { LoginChangelog } from "@/components/login-changelog";
 import { withOrg } from "@/db";
 import { messages } from "@/db/schema";
 import { getAuth, getSession, requireAuth } from "@/lib/auth/session";
@@ -13,6 +14,15 @@ import { OrgSwitcher } from "@/components/org-switcher";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
+
+/** Dauerhafter Zugang zu den Neuigkeiten (Popup „Neu in PodoHero“ erscheint einmal je Anmeldung) */
+function NewsLink() {
+  return (
+    <Link href="/neuigkeiten" aria-label="Neuigkeiten" title="Neuigkeiten" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
+      <Sparkles size={19} aria-hidden />
+    </Link>
+  );
+}
 
 /**
  * Plattform-Admin OHNE Praxis-Mitgliedschaft (z. B. per BOOTSTRAP_ADMIN_* angelegt): schlanke Hülle nur für
@@ -27,6 +37,7 @@ function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: st
         <span className="hidden text-sm text-muted sm:inline">Plattform-Konsole · {name}</span>
         <div className="ml-auto flex items-center gap-2">
           {switcher?.show ? <OrgSwitcher model={{ ...switcher, platformLink: false }} /> : null}
+          <NewsLink />
           <ThemeToggle />
           <form action={logoutAction}>
             <button type="submit" aria-label="Abmelden" title="Abmelden" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
@@ -44,6 +55,7 @@ function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: st
           </div>
         )}
       </main>
+      {totpEnabled ? <LoginChangelog /> : null}
     </div>
   );
 }
@@ -102,6 +114,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <div className="mt-auto rounded-xl bg-surface-2 p-3 text-sm">
           <p className="font-semibold">{auth.user.name}</p>
           <p className="text-muted">{ROLE_LABELS[auth.role]} · {auth.organization.name}</p>
+          <Link href="/neuigkeiten" className="mt-2 inline-flex min-h-8 items-center gap-1.5 font-semibold text-primary hover:underline">
+            <Sparkles size={15} aria-hidden /> Neuigkeiten
+          </Link>
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
@@ -120,6 +135,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </form>
           <div className="ml-auto flex items-center gap-2 md:ml-0">
             <OrgSwitcher model={switcher} />
+            <NewsLink />
             <ThemeToggle />
             <form action={logoutAction}>
               <button
@@ -137,6 +153,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <main className="flex-1 px-4 pb-28 pt-6 lg:px-8 lg:pb-10">{children}</main>
       </div>
       <BottomNav allowed={allowed} />
+      {auth.support ? null : <LoginChangelog />}
     </div>
   );
 }

@@ -73,6 +73,8 @@ export async function rotateSession(sessionId: string, userId: string, organizat
       organizationId,
       verified: old.verified,
       totpFailures: old.totpFailures,
+      // Praxiswechsel/Support ist keine neue Anmeldung – Neuigkeiten nicht erneut zeigen
+      changelogShownAt: old.changelogShownAt,
       expiresAt: old.expiresAt,
       ip: meta.ip ?? old.ip,
       userAgent: meta.userAgent ?? old.userAgent,
