@@ -18,8 +18,8 @@ export default async function TotpEnrollPage() {
   const { twoFactorSetupRequired } = await getAuthState();
   return (
     <>
-      <h1 className="font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung einrichten</h1>
-      <p className="mt-1 mb-6 text-sm text-muted">
+      <h1 className="text-center font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung einrichten</h1>
+      <p className="mt-1 mb-6 text-center text-sm text-muted">
         {!row.session.organizationId
           ? "Die Plattform-Konsole ist nur mit aktiver Zwei-Faktor-Anmeldung zugänglich."
           : twoFactorSetupRequired
