@@ -10,7 +10,7 @@ und [FIRMENNAME], [ANSCHRIFT], vertreten durch [VERTRETUNGSBERECHTIGTE PERSON] (
 
 ## § 1 Gegenstand und Dauer
 
-1. Der Auftragsverarbeiter betreibt für den Verantwortlichen die Praxissoftware „PodoCRM“ als Software-as-a-Service. Dabei verarbeitet er personenbezogene Daten ausschließlich im Auftrag und nach Weisung des Verantwortlichen.
+1. Der Auftragsverarbeiter betreibt für den Verantwortlichen die Praxissoftware „PodoHero“ als Software-as-a-Service. Dabei verarbeitet er personenbezogene Daten ausschließlich im Auftrag und nach Weisung des Verantwortlichen.
 2. Die Dauer dieses Vertrags entspricht der Laufzeit des Hauptvertrags (Nutzungsvertrag nach den [AGB](/agb)). Die Pflichten nach § 10 (Löschung/Rückgabe) gelten über das Vertragsende hinaus.
 
 ## § 2 Art, Zweck und Umfang der Verarbeitung
@@ -21,7 +21,7 @@ und [FIRMENNAME], [ANSCHRIFT], vertreten durch [VERTRETUNGSBERECHTIGTE PERSON] (
 | **Zweck** | Praxisverwaltung: Patientenakte, Termine, Behandlungsdokumentation, Abrechnung, Kommunikation, Auswertungen |
 | **Kategorien betroffener Personen** | Patientinnen und Patienten, Angehörige/Betreuer, Rechnungsempfänger, Mitarbeitende des Verantwortlichen |
 | **Kategorien von Daten** | Stamm- und Kontaktdaten, Termin- und Abrechnungsdaten, **Gesundheitsdaten nach Art. 9 DSGVO** (Anamnese, Befunde, Behandlungsdokumentation, Fotos), Versicherungsdaten, Kommunikationsinhalte, Protokolldaten |
-| **Ort der Verarbeitung** | Rechenzentren in Deutschland ([HOSTER]); eine Verarbeitung außerhalb der EU/des EWR findet nur nach § 7 statt |
+| **Ort der Verarbeitung** | PodoHero-Cloud: Rechenzentrum bei Hetzner in Deutschland (Hetzner Online GmbH); eine Verarbeitung außerhalb der EU/des EWR findet nur nach § 7 statt. Vom Verantwortlichen aktivierte Schnittstellen (z. B. Messenger, Telefonagent) siehe Unterauftragnehmer-Liste |
 
 ## § 3 Weisungen
 
@@ -54,7 +54,7 @@ Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn d
 
 ## § 8 Unterstützung des Verantwortlichen
 
-1. Der Auftragsverarbeiter unterstützt den Verantwortlichen mit geeigneten Maßnahmen bei der Erfüllung der **Betroffenenrechte** (Art. 12–22 DSGVO). Die Software stellt hierzu u. a. eine Auskunft je Patient (maschinenlesbar) und Sperr-/Löschfunktionen bereit.
+1. Der Auftragsverarbeiter unterstützt den Verantwortlichen mit geeigneten Maßnahmen bei der Erfüllung der **Betroffenenrechte** (Art. 12–22 DSGVO). Die Software stellt hierzu u. a. eine Auskunft je Patient (maschinenlesbar), eine Archivierung (Sperre) und eine Löschfunktion je Patient bereit: vollständige Löschung, wenn keine Aufbewahrungspflicht besteht; sonst Löschung der Kontaktdaten und Widerruf der Werbe-Einwilligungen bis zum Ende der Aufbewahrungsfrist.
 2. Er unterstützt den Verantwortlichen bei den Pflichten nach Art. 32–36 DSGVO (Sicherheit, Meldung von Datenpannen, Datenschutz-Folgenabschätzung, vorherige Konsultation).
 3. Verletzungen des Schutzes personenbezogener Daten meldet der Auftragsverarbeiter dem Verantwortlichen **unverzüglich, spätestens innerhalb von 24 Stunden** nach Kenntnis, mit den Angaben nach Art. 33 Abs. 3 DSGVO, soweit verfügbar.
 

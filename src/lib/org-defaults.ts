@@ -47,7 +47,11 @@ export async function seedOrganizationDefaults(tx: Tx, organizationId: string) {
       requiresTherapeuticPurpose: "requiresTherapeuticPurpose" in s ? s.requiresTherapeuticPurpose : true,
     })),
   );
-  // Alle Schnittstellen starten im Mock-Modus, damit die Praxis alles gefahrlos ausprobieren kann
+  await seedIntegrationDefaults(tx, organizationId);
+}
+
+/** Alle Schnittstellen starten im Mock-Modus, damit die Praxis alles gefahrlos ausprobieren kann. */
+export async function seedIntegrationDefaults(tx: Tx, organizationId: string) {
   await tx
     .insert(integrationConnections)
     .values(PROVIDERS.map((provider) => ({ organizationId, provider, status: "mock" as const })));

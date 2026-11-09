@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { clientIpFrom, trustedProxyHops } from "./client-ip";
 import { acceptedSessionCookieNames, readSessionToken, sessionCookieName, sessionCookieOptions } from "./cookie";
-import { createSupportViewLog, isPrefetch } from "./support-view";
+import { createSupportViewLog } from "./support-view";
 
 const jar = (c: Record<string, string>) => ({ get: (n: string) => (n in c ? { value: c[n] } : undefined) });
 
@@ -54,7 +54,7 @@ describe("Client-IP (TRUSTED_PROXY_HOPS)", () => {
 });
 
 describe("support.view – nur echte Ansichten, entprellt", () => {
-  const view = (path: string, o: Partial<{ mutating: boolean; prefetch: boolean }> = {}) => ({ path, mutating: false, prefetch: false, ...o });
+  const view = (path: string, o: Partial<{ mutating: boolean }> = {}) => ({ path, mutating: false, ...o });
 
   it("gleicher Pfad je Freigabe höchstens einmal je 60 s; andere Pfade/Freigaben unabhängig", () => {
     const log = createSupportViewLog();
@@ -66,14 +66,14 @@ describe("support.view – nur echte Ansichten, entprellt", () => {
     expect(log.shouldLog("g1", view("/kunden"), t + 60_001)).toBe(true);
   });
 
-  it("Prefetch nie, schreibende Anfragen immer", () => {
+  it("schreibende Anfragen immer; keine Ausnahme per Client-Header (H6: `Purpose: prefetch`)", () => {
     const log = createSupportViewLog();
-    expect(log.shouldLog("g", view("/kunden", { prefetch: true }), 1)).toBe(false);
+    // Ein vom Client gesetzter Prefetch-Header darf das Audit nicht abschalten: die Anfrage enthält
+    // diese Information gar nicht mehr, jeder Lesezugriff zählt.
+    const forged = { ...view("/kunden"), prefetch: true } as ReturnType<typeof view>;
+    expect(log.shouldLog("g", forged, 1)).toBe(true);
     expect(log.shouldLog("g", view("/kunden", { mutating: true }), 1)).toBe(true);
     expect(log.shouldLog("g", view("/kunden", { mutating: true }), 2)).toBe(true);
-    expect(isPrefetch(new Headers({ "next-router-prefetch": "1" }))).toBe(true);
-    expect(isPrefetch(new Headers({ "sec-purpose": "prefetch;prerender" }))).toBe(true);
-    expect(isPrefetch(new Headers({ rsc: "1" }))).toBe(false);
   });
 
   it("Speicher begrenzt (LRU)", () => {

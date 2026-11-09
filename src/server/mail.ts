@@ -93,6 +93,15 @@ export async function mailPortFor(org: string): Promise<MailPort> {
   return mailAdapterFor(settings, factoryOverride);
 }
 
+/**
+ * Plattform-Versand (SMTP_URL/SMTP_FROM) für Konto-E-Mails ohne Praxis-Bezug, z. B. „Passwort vergessen“.
+ * Wirft MailNotConfiguredError, wenn in Produktion kein Plattform-SMTP gesetzt ist (Entwicklung: Testmodus).
+ */
+export function platformMailPort(env: Record<string, string | undefined> = process.env): MailPort {
+  const settings = resolveMailSettings({ connection: null, env, practice: { name: "PodoHero", email: null } });
+  return mailAdapterFor(settings, factoryOverride);
+}
+
 export type MailContext = { purpose: string; userId?: string | null; entity?: string; entityId?: string };
 
 /**
@@ -117,6 +126,9 @@ export async function sendMail(org: string, msg: MailMessage, ctx: MailContext):
     const res = await port.send(msg);
     if (port.isMock) {
       await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.mock", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, attachments: msg.attachments?.length ?? 0 } }).catch(() => undefined);
+    } else {
+      // Zähler für die Nutzungsstatistik (Plattform-Konsole): nur Zweck, nie Empfänger oder Inhalt
+      await logSync(org, "email_imap", { direction: "out", ok: true, message: `E-Mail (${ctx.purpose}) versendet` }).catch(() => undefined);
     }
     return { messageId: res.messageId, mock: port.isMock };
   } catch (e) {
@@ -160,15 +172,15 @@ export async function sendTestMail(auth: AuthContext, to?: string | null) {
     org,
     {
       to: target,
-      subject: `Testmail aus PodoCRM – ${auth.organization.name}`,
+      subject: `Testmail aus PodoHero – ${auth.organization.name}`,
       text: [
         "Guten Tag,",
         "",
-        "dies ist eine Testmail aus PodoCRM. Wenn Sie diese Nachricht lesen, funktioniert der E-Mail-Versand Ihrer Praxis.",
+        "dies ist eine Testmail aus PodoHero. Wenn Sie diese Nachricht lesen, funktioniert der E-Mail-Versand Ihrer Praxis.",
         "Bitte prüfen Sie auch, ob die Mail im Spam-Ordner gelandet ist – dann SPF/DKIM/DMARC der Absenderdomain prüfen.",
         "",
         "Mit freundlichen Grüßen",
-        "PodoCRM",
+        "PodoHero",
       ].join("\n"),
     },
     { purpose: "test", userId: auth.user.id },

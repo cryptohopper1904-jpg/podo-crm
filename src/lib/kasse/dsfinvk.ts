@@ -6,7 +6,7 @@
  * Format: UTF-8, Spaltentrenner „;“, Zeilenende CRLF, Text in doppelten Anführungszeichen (innere verdoppelt),
  * Dezimalkomma ohne Tausendertrennzeichen, erste Zeile = Spaltennamen (index.xml: Range From 2).
  *
- * Zuordnung PodoCRM → DSFinV-K: ein Kassenabschluss (cash_closings) = ein Z-Bon (Z_NR); Zahlungen an der Kasse
+ * Zuordnung PodoHero → DSFinV-K: ein Kassenabschluss (cash_closings) = ein Z-Bon (Z_NR); Zahlungen an der Kasse
  * (Bar/Karte/Gutschein) und Einlagen/Entnahmen = Bons (Bonkopf/Bonpos). Rechnungsnummern stehen in Bon_Referenzen
  * (REF_TYP „ExterneRechnung“).
  *
@@ -400,7 +400,7 @@ ${t.columns.filter((x) => !x.key).map(columnXml).join("\n")}
   <DataSupplier>
     <Name>${xmlEsc(opts.supplier)}</Name>
     <Location>${xmlEsc(opts.location)}</Location>
-    <Comment>DSFinV-K Export aus PodoCRM</Comment>
+    <Comment>DSFinV-K Export aus PodoHero</Comment>
   </DataSupplier>
   <Media>
     <Name>DSFinV-K</Name>

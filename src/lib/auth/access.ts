@@ -50,6 +50,32 @@ export function mutationAllowedWithoutPermission(s: Pick<AccessState, "support" 
   return !s.support;
 }
 
+/**
+ * Datei-Downloads und Exporte (Gesamt-Review H5). Support (Break-Glass) darf Daten in der Praxis ansehen,
+ * aber nichts massenhaft oder als Datei mitnehmen (§ 203 Abs. 3 StGB: Offenbarung nur, soweit für die
+ * Fehlersuche erforderlich). Erlaubt bleiben nur einzelne Belege, deren Darstellung Support prüfen muss
+ * (Rechnungs-PDF, Z-Bon) – jeder Abruf landet als support.view im Audit-Log der Praxis.
+ */
+export const DOWNLOAD_KINDS = [
+  "practice_export",
+  "patient_export",
+  "patient_list_export",
+  "media",
+  "billing_batch_export",
+  "cash_export",
+  "invoice_pdf",
+  "z_bon_pdf",
+] as const;
+export type DownloadKind = (typeof DOWNLOAD_KINDS)[number];
+
+export const SUPPORT_DOWNLOAD_DENIED = "Im Support-Modus sind Exporte und Datei-Downloads gesperrt.";
+
+const SUPPORT_DOWNLOADS: readonly DownloadKind[] = ["invoice_pdf", "z_bon_pdf"];
+
+export function downloadAllowed(s: Pick<AccessState, "support">, kind: DownloadKind): boolean {
+  return !s.support || SUPPORT_DOWNLOADS.includes(kind);
+}
+
 export type GrantRow = {
   id: string;
   granteeUserId: string | null;

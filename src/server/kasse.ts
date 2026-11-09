@@ -557,10 +557,10 @@ function registerOf(o: Pick<OrgInfo, "id" | "slug" | "settings">): DsfinvkRegist
   const kasseId = typeof k.kasseId === "string" && k.kasseId.trim() ? k.kasseId.trim().slice(0, 50) : fallback;
   return {
     kasseId,
-    brand: "PodoCRM",
-    model: "PodoCRM Cloud-Kasse",
+    brand: "PodoHero",
+    model: "PodoHero Cloud-Kasse",
     serial: typeof k.serial === "string" && k.serial.trim() ? k.serial.trim().slice(0, 70) : `${kasseId}-${o.id.slice(0, 8)}`,
-    swBrand: "PodoCRM",
+    swBrand: "PodoHero",
     swVersion: process.env.APP_VERSION?.slice(0, 50) || "0.1.0",
   };
 }

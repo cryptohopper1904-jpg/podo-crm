@@ -14,6 +14,8 @@ import { appRoutes, read, SRC } from "./app-files";
 /** Bewusst öffentlich (ohne Sitzung) – jeweils mit eigener Absicherung. */
 export const INTENDED_PUBLIC: Record<string, string> = {
   "/login": "Anmeldung",
+  "/login/passwort-vergessen": "Passwort vergessen: neutrale Antwort, Rate-Limit je IP und E-Mail",
+  "/login/passwort-neu": "Neues Passwort per Einmal-Token (30 min, nur sha256 gespeichert)",
   "/einrichtung": "Ersteinrichtung (SETUP_TOKEN / ALLOW_SIGNUP)",
   "/kein-zugriff": "Hinweisseite ohne Daten",
   "/buchen": "Online-Buchung (Rate-Limit, nie Aktenzuordnung)",
@@ -25,6 +27,7 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/api/calendar": "iCal-Feed (signiertes Token)",
   "/api/health": "Health-Check ohne Daten",
   "/api/cron": "Cron (Bearer CRON_SECRET)",
+  "/p": "Praxis-Website (Zusatzmodul): nur veröffentlichte Geschäftsangaben der Praxis, ohne Cookies/Tracking",
   // öffentliche Website und Rechtstexte (src/app/(public)) – statisch, ohne Praxisdaten
   "/agb": "Website",
   "/avv": "Website",
@@ -73,7 +76,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {

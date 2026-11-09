@@ -6,6 +6,8 @@ Für alle, die PodoCRM auf einem eigenen Server betreiben. Jeder Abschnitt ist e
 |---|---|---|
 | Update | `bash /opt/podo-crm/deploy/update.sh` | bei neuen Versionen |
 | Probelauf Update | `bash /opt/podo-crm/deploy/update.sh --dry-run` | vor jedem Update |
+| Automatisches Update | `bash /opt/podo-crm/deploy/install-autoupdate.sh` (Timer `podo-update.timer`, täglich 03:30 Europe/Berlin + 10 min nach Boot, `update.sh --auto` gegen `main`, Log `/var/log/podo-update.log`; entfernen mit `--remove`) | einmalig |
+| Bootstrap ohne Shell | `BOOTSTRAP_ADMIN_*` / `BOOTSTRAP_PRACTICE_JSON` + `BOOTSTRAP_PRACTICE_OWNER_PASSWORD` in `deploy/.env` (siehe `.env.example`, `deploy/cloud/hetzner-user-data.sh`); läuft idempotent im migrate-Container, Passwörter danach entfernen | Erstinstallation |
 | Wiederherstellung testen | `bash /opt/podo-crm/deploy/restore-test.sh` | **einmal im Quartal** |
 | Backup einspielen | `bash /opt/podo-crm/deploy/restore.sh --db … [--files …]` | Notfall |
 | Zustand prüfen | `curl -H "Authorization: Bearer $TOKEN" https://DOMAIN/api/health/deep` | Monitoring, alle 5 min |
@@ -58,7 +60,17 @@ curl -fsSL https://raw.githubusercontent.com/cryptohopper1904-jpg/podo-crm/main/
 ```
 Das Skript erkennt den vorhandenen Caddy (systemd oder Docker), startet PodoCRM **ohne** eigenen Caddy (`db migrate app backup cron`), veröffentlicht die App nur lokal (`127.0.0.1:3010` bzw. Docker-Bridge, Port per `PODO_PORT` änderbar) und hängt einen Block an das vorhandene Caddyfile an (Sicherung `Caddyfile.bak.<zeit>`). Erzeugt wird `deploy/docker-compose.subdomain.yml` – an dieser Datei erkennen `update.sh`, `restore.sh` und `restore-test.sh` den Subdomain-Modus. Diese Datei nicht löschen.
 
-Standard ist Testbetrieb mit Demo-Praxis (`SEED_DEMO=true`, Login `demo@podocrm.local` / `demo-passwort-123`) – **keine echten Patientendaten**. Für Echtbetrieb `SEED_DEMO=false` setzen und die Demo-Praxis löschen (Abschnitt 7).
+Standard ist Testbetrieb mit Demo-Praxis (`SEED_DEMO=true`, Login `demo@podocrm.local`) – **keine echten Patientendaten**. Für Echtbetrieb `SEED_DEMO=false` setzen und die Demo-Praxis löschen (Abschnitt 7).
+
+**Demo-Passwort** (`scripts/seed-demo.ts`, Gesamt-Review K1) – der Seed läuft nur einmal (solange die Demo-Praxis nicht existiert):
+
+| Situation | Passwort der Demo-Inhaber:in |
+|---|---|
+| `SEED_DEMO_PASSWORD` in `deploy/.env` gesetzt (mind. 12 Zeichen) | dieses Passwort |
+| `PUBLIC_URL` ist eine echte Domain, kein `SEED_DEMO_PASSWORD` | **Zufallspasswort**, wird genau einmal im migrate-Log ausgegeben: `docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs migrate \| grep Demo-Praxis` |
+| IP-Adresse oder `localhost` (Test, Entwicklung, E2E) | bekanntes `demo-passwort-123` |
+
+Auf einer öffentlichen Domain wird das bekannte Passwort nie verwendet (auch nicht über `SEED_DEMO_PASSWORD`). Beim ersten Login muss die Demo-Inhaber:in 2FA einrichten (Pflicht für Inhaber:innen). Ist eine Instanz früher mit dem bekannten Passwort angelegt worden: Passwort sofort ändern oder die Demo-Praxis löschen.
 
 ### Wichtige Einstellungen in `deploy/.env`
 | Variable | Bedeutung |
@@ -176,6 +188,7 @@ Token: `HEALTH_TOKEN` aus `deploy/.env` (wird von `install.sh` erzeugt). Fehlt e
 | `storage` | Testdatei in `STORAGE_DIR` schreib-/löschbar | – | nicht beschreibbar |
 | `backup` | letztes Backup ≤ 26 h | noch keins erfasst | älter |
 | `cronReminders`, `cronKim` | letzter erfolgreicher Lauf ≤ 45 min | noch keiner erfasst (z. B. ohne `CRON_SECRET`) | älter |
+| `webhooks` | keine Webhook-Ereignisse älter als 1 h offen | endgültig aufgegebene Ereignisse (`dead`, Hinweis im Posteingang der Praxis) | Ereignisse seit über 1 h unverarbeitet |
 
 Antwort: `{ ok, status: "ok"|"warn"|"fail", checkedAt, checks: { … } }` mit Zeiten und Zählern, ohne Personendaten. HTTP 200 bei `ok`/`warn`, **503 bei `fail`** – so kann jeder Uptime-Dienst (z. B. Uptime Kuma, selbst gehostet) einfach den Statuscode überwachen: HTTP-Monitor, Intervall 5 min, Header `Authorization: Bearer …`. Die Zeitstempel schreiben `backup` und `cron` in das Volume `ops_status`, die App liest es nur.
 
@@ -237,10 +250,14 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 
 ## 6. Sicherheit im Betrieb
 - App-Datenbankrolle `podo_app` ist **kein Superuser** (`NOBYPASSRLS`), damit die Mandantentrennung greift. Migrationen und Backups laufen als Eigentümer `podo_owner`.
-- Server-Admins sehen keine Fotos im Klartext (verschlüsselt mit `APP_ENCRYPTION_KEY`).
+- Fotos/Dokumente liegen verschlüsselt (`APP_ENCRYPTION_KEY`) in der Dateiablage. Das schützt bei Verlust einzelner Volumes oder Backups ohne `deploy/.env` – **nicht** gegen Server-Admins mit root-Zugriff: Der Schlüssel liegt in `deploy/.env` auf demselben Server.
+- **Umgebung je Container** (Gesamt-Review H2): Die App erhält nur die in `deploy/docker-compose.yml` unter `app.environment` gelisteten Variablen (kein `env_file`). `DB_OWNER_PASSWORD` bekommen nur `db`, `migrate` und `backup`, `BACKUP_PASSPHRASE` nur `backup`, `BOOTSTRAP_*` nur `migrate`. Neue App-Variablen dort ergänzen (Test `src/lib/deploy-env.test.ts`).
 - **Client-IP / `TRUSTED_PROXY_HOPS`** (Standard `1`): Die App nimmt die IP für Audit-Log und Rate-Limits aus `X-Forwarded-For`, und zwar den *n*-ten Eintrag von rechts – n = Anzahl der vertrauenswürdigen Proxys vor der App. Standard-Setup (nur Caddy, App-Port nicht öffentlich): `1`. Mit vorgeschaltetem CDN/Load-Balancer, der selbst `X-Forwarded-For` anhängt: `2` usw. Ohne Proxy: `0` – dann werden die Header ignoriert. Einträge weiter links sind vom Client fälschbar und werden nie verwendet. Der App-Port darf nicht an Caddy vorbei erreichbar sein (im Subdomain-Modus nur an `127.0.0.1`/Docker-Bridge gebunden).
 - **Sitzungs-Cookie**: In Produktion `__Host-podo_session` (nur HTTPS, `Path=/`, ohne `Domain`), lokal `podo_session`.
 - **Sitzungs-Entzug**: Neue Tokens bei Praxiswechsel und Support betreten/verlassen. Alle Sitzungen einer Person enden bei 2FA-Sperre (5 falsche Codes), beim eigenen Passwortwechsel (außer der aktuellen) und beim Löschen des Kontos; bei Deaktivierung im Team die Sitzungen in dieser Praxis. Passwort-Fehlversuche sperren nur neue Anmeldungen.
+- **2FA-Pflicht** (Gesamt-Review H1): Inhaber:innen und Plattform-Admins brauchen immer 2FA, andere Rollen, wenn die Praxis es unter *Einstellungen → Sicherheit* festlegt. Ohne eingerichtete 2FA ist die Anmeldung möglich, aber es öffnet sich nur `/login/2fa-einrichten` (und Abmelden); Seiten leiten dorthin, API-Routen antworten 401/403.
+- **Passwort vergessen**: `/login/passwort-vergessen` antwortet immer gleich (Drosselung je IP und je E-Mail), der Link (`PUBLIC_URL/login/passwort-neu?token=…`) ist 30 Minuten gültig und einmalig; in der DB steht nur der sha256 (`password_resets`). Nach dem Zurücksetzen enden alle Sitzungen, 2FA bleibt Pflicht. Versand über den Plattform-SMTP (`SMTP_URL`, `SMTP_FROM`) – ohne ihn in Produktion nur eine Warnung im Log (`password_reset.no_mail_transport`), keine Mail.
+- **Support-Modus**: keine Exporte und keine Foto-/Datei-Downloads (Doctolib-CSV, Auskunft je Person, Praxis-Export, GKV-Abrechnung, DSFinV-K, Medien); erlaubt sind nur einzelne Belege (Rechnungs-PDF, Z-Bon). Jede Seitenansicht und jeder Download wird als `support.view` protokolliert – ohne Ausnahme nach Anfrage-Headern.
 - **Praxis-Export** (`/api/export/praxis`) wird gestreamt (Tabellen seitenweise, Medien einzeln, ZIP64 ab 4 GB). Audit-Log: `org.export`, `org.export.completed`/`org.export.failed`.
 
 ---
@@ -250,6 +267,8 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 - **Restore-Tests** laufen in einem Wegwerf-Container auf dem Produktionsserver und werden danach gelöscht. Backups nicht auf Arbeitsplatz-Rechnern oder Laptops entschlüsseln.
 - **Löschfristen**: Nach dem endgültigen Löschen einer Praxis (Abschnitt 9) sind ihre Daten noch so lange in Backups vorhanden, wie diese aufbewahrt werden – lokal `BACKUP_RETENTION_DAYS` (14 Tage), offsite 90 Tage (Beispielskript). Diese Fristen im Löschkonzept/AVV so angeben; bei einer Wiederherstellung bereits gelöschte Praxen erneut mit `scripts/purge-organizations.ts` löschen.
 - **Aufbewahrungspflichten** (Behandlungsdoku 10 Jahre, § 630f BGB; Rechnungen GoBD) erfüllt die Datenbank selbst, nicht das Backup.
+- **Kund:in löschen** (Inhaber:in, *Kunde bearbeiten → Kund:in löschen*): ohne Behandlungsdoku, Anamnese, Behandlungsfotos und Rechnungen vollständige Löschung (DB-Funktion `podo_delete_patient`, Audit `patient.deleted`); sonst Löschung der Kontaktdaten, Widerruf der Werbe-/Kanal-Einwilligungen, Löschen der Marketing-Fotos und Archivierung (Audit `patient.contact_erased`). Die endgültige Löschung nach Fristablauf ist noch ein Betreiber-Schritt (offen, siehe `docs/reviews/GESAMT-REVIEW.md` H3).
+- **Webhook-Rohdaten** (`webhook_events`, RLS je Praxis): Inhalt nur bis zur erfolgreichen Verarbeitung, Einträge werden nach 30 Tagen gelöscht (Cron).
 - **Logs und Fehlerberichte** ohne Patientendaten (Abschnitt 4.3/4.4). Fehlertracking nur mit AVV und EU-Region.
 - **Support-Zugriffe** nur über die Freigabe der Praxis (Break-Glass, protokolliert). Admin-Zugriff auf Server/Datenbank auf das Nötigste beschränken und dokumentieren.
 - Checkliste vor dem ersten echten Patienten: [`docs/compliance/`](compliance/).
@@ -269,6 +288,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 - PDF: `GET /api/invoices/<id>/pdf` (Recht „Rechnungen lesen“, protokolliert, nicht gecacht). Versand per E-Mail über Praxis-SMTP oder Plattform-SMTP (`SMTP_URL`, `SMTP_FROM`), nur mit TLS.
 - SumUp: Webhook-URL im SumUp-Konto `https://DOMAIN/api/webhooks/sumup?org=<Praxis-ID>`; Reader-ID unter Einstellungen → Schnittstellen → SumUp. `PUBLIC_URL` muss gesetzt sein.
 - Kundenportal: `/portal/<token>` (30 Tage gültig, neuer Link widerruft den alten). Der Token wird gegen eine signierte Sitzung (Cookie `podo_portal`, HttpOnly, SameSite=Strict, 2 h) getauscht. Rate-Limits liegen im Prozessspeicher – bei mehreren App-Instanzen Redis o. Ä. nötig.
+- Webhooks (SumUp, WhatsApp, SMS, lexoffice) werden erst gespeichert (`webhook_events`, Status `pending`), dann verarbeitet. Fehler oder ein Neustart mitten in der Verarbeitung → der Cron-Lauf `/api/cron/reminders` wiederholt mit Backoff (5, 10, 20, 40, 80 min), nach 6 Versuchen `dead` + Hinweis im Posteingang. Status: *Einstellungen → Schnittstellen → Eingehende Ereignisse* und `/api/health/deep` (`webhooks`). Kann ein Ereignis nicht gespeichert werden, antwortet die App 503 (Anbieter stellt erneut zu).
 - Nicht zuordenbare SumUp-Zahlungen landen im Posteingang („bitte prüfen“). „Testzahlung simulieren“ ist in Produktion gesperrt, außer `ALLOW_TEST_PAYMENTS=true` (nur reine Testpraxis).
 
 ### Kasse / TSE (KassenSichV)

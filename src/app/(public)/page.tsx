@@ -19,7 +19,7 @@ import { Badge, LinkButton } from "@/components/ui";
 import { getAuth } from "@/lib/auth/session";
 import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
 
-export const metadata = { title: { absolute: "PodoCRM – Praxissoftware für Podologie" } };
+export const metadata = { title: { absolute: "PodoHero – Praxissoftware für Podologie" } };
 
 const HIGHLIGHTS = [
   { id: "doku", icon: Camera, title: "Doku mit Fotos am Stuhl", text: "Leistungen antippen, Fußschema markieren, Fotos direkt aus der Kamera – verschlüsselt und unveränderbar." },
@@ -31,7 +31,7 @@ const HIGHLIGHTS = [
 ] as const;
 
 const SECURITY = [
-  { icon: ServerCog, title: "Hosting in Deutschland", text: "Betrieb auf Servern in Deutschland, ohne US-Cloud." },
+  { icon: ServerCog, title: "Hosting in Deutschland", text: "Die PodoHero-Cloud läuft bei Hetzner in Deutschland." },
   { icon: Lock, title: "Verschlüsselt", text: "Fotos und Dokumente mit eigenem Schlüssel je Praxis." },
   { icon: ShieldCheck, title: "Doppelte Mandantentrennung", text: "In der Anwendung und per Row-Level-Security der Datenbank." },
   { icon: Sparkles, title: "Kein KI-Training", text: "Ihre Daten trainieren keine Modelle. KI nur mit AVV." },
@@ -86,7 +86,7 @@ export default async function Landing() {
               Pflichtdoku, Termine und Kasse – <span className="text-primary">in einem System.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoCRM ersetzt Excel-Listen, Papierakte und Fotos auf dem Privathandy. Gebaut für den Behandlungsstuhl am iPad, mit
+              PodoHero ersetzt Excel-Listen, Papierakte und Fotos auf dem Privathandy. Gebaut für den Behandlungsstuhl am iPad, mit
               Risiko-Ampel, unveränderbarer Dokumentation und Rechnungen nach GoBD.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -152,7 +152,7 @@ export default async function Landing() {
       {/* Highlights */}
       <section aria-labelledby="highlights" className="border-y border-border bg-surface">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-          <h2 id="highlights" className="font-display text-3xl font-semibold tracking-tight">Was PodoCRM heute kann</h2>
+          <h2 id="highlights" className="font-display text-3xl font-semibold tracking-tight">Was PodoHero heute kann</h2>
           <p className="mt-2 max-w-2xl text-muted">Kein Funktionsversprechen für irgendwann: Hier steht, was eingebaut ist. Was noch fehlt, kennzeichnen wir auf der Funktionsseite.</p>
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {HIGHLIGHTS.map(({ id, icon: Icon, title, text }) => (
@@ -175,16 +175,16 @@ export default async function Landing() {
       <section aria-labelledby="vergleich" className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Anders als typische Podologie-Software</h2>
         <p className="mt-2 max-w-3xl text-muted">
-          Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoCRM setzt den Schwerpunkt auf mobile Doku, Kundenbindung
+          Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Kundenbindung
           und Selbstzahler – und sagt offen, was noch fehlt. Allgemeine Einordnung, kein Vergleich mit einem bestimmten Produkt.
         </p>
         <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
           <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">
-            <caption className="sr-only">Funktionsvergleich PodoCRM und typische Podologie-Software</caption>
+            <caption className="sr-only">Funktionsvergleich PodoHero und typische Podologie-Software</caption>
             <thead>
               <tr className="bg-surface-2 text-sm">
                 <th scope="col" className="px-4 py-3 font-semibold">Thema</th>
-                <th scope="col" className="px-4 py-3 font-semibold">PodoCRM</th>
+                <th scope="col" className="px-4 py-3 font-semibold">PodoHero</th>
                 <th scope="col" className="px-4 py-3 font-semibold">Typische Podologie-Software</th>
               </tr>
             </thead>

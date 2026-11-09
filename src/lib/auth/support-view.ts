@@ -2,10 +2,11 @@
  * Welche Anfragen im Support-Modus als „support.view“ ins Audit-Log der Praxis gehören.
  *
  * - Schreibende Anfragen: immer (ohne Entprellung).
- * - Prefetch des Next-Routers (Header `next-router-prefetch`/`purpose: prefetch`): nein – das ist keine
- *   Ansicht; der Prefetch liefert für dynamische Seiten nur die Ladehülle.
- * - Seiten (Dokument- und RSC-Navigation) sowie Daten-Downloads unter /api (Fotos, PDFs, Kundenexport):
- *   ja, aber derselbe Pfad für dieselbe Freigabe höchstens einmal je 60 s.
+ * - Alle übrigen Anfragen – Seiten (Dokument-, RSC-Navigation und Router-Prefetch) sowie Daten-Downloads
+ *   unter /api (Fotos, PDFs, Kundenexport): ja, derselbe Pfad für dieselbe Freigabe höchstens einmal je 60 s.
+ * - Es gibt bewusst KEINE Ausnahme nach Anfrage-Headern (`purpose`, `sec-purpose`, `next-router-prefetch`,
+ *   `rsc`): Diese Header setzt der Client frei – eine Ausnahme ließe sich zum Abschalten des Audits
+ *   missbrauchen (Gesamt-Review H6). Ein Prefetch erzeugt schlimmstenfalls einen zusätzlichen Eintrag.
  * Die Entprellung liegt im Prozessspeicher (LRU, begrenzte Größe) – bei mehreren Instanzen schlimmstenfalls
  * ein Eintrag je Instanz, nie ein fehlender.
  */
@@ -14,8 +15,6 @@ export const SUPPORT_VIEW_DEDUP_MS = 60_000;
 export type SupportRequest = {
   mutating: boolean;
   path: string | null;
-  /** Router-Prefetch (next-router-prefetch: 1 bzw. purpose/sec-purpose: prefetch) */
-  prefetch: boolean;
 };
 
 export function createSupportViewLog(opts: { windowMs?: number; maxKeys?: number } = {}) {
@@ -26,7 +25,6 @@ export function createSupportViewLog(opts: { windowMs?: number; maxKeys?: number
     /** true = protokollieren. Merkt sich den Aufruf (nur wenn protokolliert wird). */
     shouldLog(grantId: string, req: SupportRequest, now = Date.now()): boolean {
       if (req.mutating) return true;
-      if (req.prefetch) return false;
       const key = `${grantId}\u0000${req.path ?? ""}`;
       const last = seen.get(key);
       if (last !== undefined && now - last < windowMs) return false;
@@ -41,9 +39,4 @@ export function createSupportViewLog(opts: { windowMs?: number; maxKeys?: number
     },
     size: () => seen.size,
   };
-}
-
-/** Prefetch-Erkennung aus den Anfrage-Headern. */
-export function isPrefetch(h: { get(name: string): string | null }): boolean {
-  return h.get("next-router-prefetch") === "1" || /prefetch/i.test(h.get("purpose") ?? "") || /prefetch/i.test(h.get("sec-purpose") ?? "");
 }

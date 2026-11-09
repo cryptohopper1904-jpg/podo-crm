@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { buildDsfinvkExport, exportRangeInput, KasseError } from "@/server/kasse";
@@ -11,6 +12,7 @@ export async function GET(req: NextRequest) {
   const auth = await getAuth();
   if (!auth) return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   if (!auth.can("cash.export")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+  if (!downloadAllowed(auth, "cash_export")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   const parsed = exportRangeInput.safeParse({ from: req.nextUrl.searchParams.get("from"), to: req.nextUrl.searchParams.get("to") });
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Zeitraum ungültig" }, { status: 400 });
   if (limiter.limited(`org:${auth.organization.id}`)) return NextResponse.json({ error: "Bitte kurz warten." }, { status: 429, headers: { "Retry-After": "60" } });

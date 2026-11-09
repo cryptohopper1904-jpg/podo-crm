@@ -6,14 +6,25 @@ import { Button, Field, FormError, FormSuccess, Input } from "@/components/ui";
 import { otpauthUrl } from "@/lib/auth/totp-url";
 import { confirmTotpAction, startTotpAction } from "../actions";
 
-export function TotpSetup({ email }: { email: string }) {
+type State = { error?: string; ok?: string } | undefined;
+
+/** Standard: Aktionen der Einstellungen (Praxis-Sitzung); /login/2fa-einrichten übergibt eigene (ohne Praxis). */
+export function TotpSetup({
+  email,
+  startAction = startTotpAction,
+  confirmAction = confirmTotpAction,
+}: {
+  email: string;
+  startAction?: () => Promise<{ secret?: string; error?: string } | undefined>;
+  confirmAction?: (s: State, f: FormData) => Promise<State>;
+}) {
   const [secret, setSecret] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  const [state, confirm, confirming] = useActionState(confirmTotpAction, undefined);
+  const [state, confirm, confirming] = useActionState(confirmAction, undefined);
   if (state?.ok) return <FormSuccess message={state.ok} />;
   if (!secret) {
     return (
-      <Button type="button" disabled={pending} onClick={() => start(async () => setSecret((await startTotpAction())?.secret ?? null))}>
+      <Button type="button" disabled={pending} onClick={() => start(async () => setSecret((await startAction())?.secret ?? null))}>
         Jetzt einrichten
       </Button>
     );

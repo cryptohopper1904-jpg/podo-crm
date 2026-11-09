@@ -5,7 +5,8 @@
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD } from "./support";
+import { totpCode } from "../src/lib/auth/totp";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, resetDemoTotp } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -37,11 +38,21 @@ test("geschützte Routen leiten ohne Sitzung zum Login", async () => {
   }
 });
 
-test("Login mit Demo-Zugang", async () => {
+test("Login mit Demo-Zugang: Pflicht-2FA für Inhaber:innen wird eingerichtet", async () => {
+  await resetDemoTotp();
   await page.goto("/login");
   await page.getByLabel("E-Mail", { exact: true }).fill(DEMO_EMAIL);
   await page.getByLabel("Passwort", { exact: true }).fill(DEMO_PASSWORD);
   await page.getByRole("button", { name: "Anmelden" }).click();
+  // Ohne 2FA kein Praxis-Zugriff (Gesamt-Review H1): jede Praxis-Seite leitet zur Einrichtung
+  await expect(page).toHaveURL(/\/login\/2fa-einrichten/);
+  await page.goto("/kunden");
+  await expect(page).toHaveURL(/\/login\/2fa-einrichten/);
+  expect((await page.request.get("/api/export/doctolib")).status()).toBe(403);
+  await page.getByRole("button", { name: "Jetzt einrichten" }).click();
+  const secret = (await page.locator("code").innerText()).replace(/\s/g, "");
+  await page.getByLabel("Code", { exact: true }).fill(totpCode(secret));
+  await page.getByRole("button", { name: "Bestätigen" }).click();
   await expect(page).toHaveURL(/\/heute/);
 });
 
@@ -88,6 +99,18 @@ test("Rechnung erstellen und ausstellen", async () => {
   await page.getByRole("button", { name: "Rechnung ausstellen" }).click();
   await expect(page).toHaveURL(/\/rechnungen\/[0-9a-f-]{36}$/);
   await expect(page.getByText(/R\d{4}-\d{4}/).first()).toBeVisible();
+});
+
+test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", async () => {
+  await page.setViewportSize({ width: 1024, height: 1366 });
+  try {
+    await page.goto(`/rechnungen/neu?patient=${patientUrl.split("/").pop()}`);
+    await expect(page.getByLabel("Pos. 1: Leistung")).toBeVisible();
+    const { scroll, client } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+    expect(scroll).toBeLessThanOrEqual(client);
+  } finally {
+    await page.setViewportSize({ width: 1280, height: 720 });
+  }
 });
 
 test("öffentliche Online-Buchung", async ({ browser }) => {

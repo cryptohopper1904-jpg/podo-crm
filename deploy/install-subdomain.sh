@@ -124,7 +124,10 @@ fi
 echo
 for _ in $(seq 1 30); do curl -fsS -m 5 "http://$UPSTREAM:$PORT/api/health" >/dev/null 2>&1 && break; sleep 5; done
 say "Fertig: https://$DOMAIN"
-echo "Demo-Login: demo@podocrm.local / demo-passwort-123   (Testbetrieb – keine echten Patientendaten)"
+if grep -q "^SEED_DEMO=true" "$ENV"; then
+  # Öffentliche Domain: Zufallspasswort (scripts/seed-demo.ts), steht nur einmal im migrate-Log (Gesamt-Review K1)
+  echo "Demo-Login: demo@podocrm.local – Passwort: \"${COMPOSE[*]}\" logs migrate | grep Demo-Praxis   (Testbetrieb – keine echten Patientendaten; 2FA wird beim ersten Login eingerichtet)"
+fi
 if [ "$REF" = main ]; then
   echo "Update später:  bash $APP_DIR/deploy/update.sh            (Probelauf: --dry-run)"
 else

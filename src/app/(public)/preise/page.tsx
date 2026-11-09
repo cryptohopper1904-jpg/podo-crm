@@ -1,10 +1,10 @@
 import { Check } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
-import { PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
+import { ADDONS, PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
 
 export const metadata = {
   title: "Preise",
-  description: "PodoCRM-Tarife: 30 Tage kostenlos testen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
+  description: "PodoHero-Tarife: 30 Tage kostenlos testen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
 };
 
 const INCLUDED = [
@@ -14,7 +14,7 @@ const INCLUDED = [
   "Erinnerungen, Kundenportal, Online-Buchung",
   "Hygiene, Gerätebuch, Pflegeheime, Team",
   "Vollständiger Datenexport jederzeit",
-  "Hosting in Deutschland, verschlüsselte Datensicherung",
+  "Hosting bei Hetzner in Deutschland, tägliche verschlüsselte Datensicherung",
 ];
 
 const FAQ = [
@@ -58,6 +58,22 @@ export default function PricingPage() {
           </section>
         ))}
       </div>
+
+      <section aria-labelledby="zusatzmodule" className="mt-12">
+        <h2 id="zusatzmodule" className="font-display text-2xl font-semibold">Zusatzmodule</h2>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {ADDONS.map((a) => (
+            <section key={a.id} aria-labelledby={`addon-${a.id}`} className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 id={`addon-${a.id}`} className="font-display text-xl font-semibold">{a.name}</h3>
+                <Badge tone="warn">vorläufig</Badge>
+              </div>
+              <p className="mt-2 text-[15px] text-muted">{a.description}</p>
+              <p className="mt-3 font-semibold">{a.pricing}</p>
+            </section>
+          ))}
+        </div>
+      </section>
 
       <section aria-labelledby="inklusive" className="mt-12 rounded-[var(--radius-card)] border border-border bg-surface p-6">
         <h2 id="inklusive" className="font-display text-2xl font-semibold">In jedem Tarif enthalten</h2>

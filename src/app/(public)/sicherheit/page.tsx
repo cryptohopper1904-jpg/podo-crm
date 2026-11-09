@@ -3,14 +3,14 @@ import { Badge, LinkButton } from "@/components/ui";
 
 export const metadata = {
   title: "Sicherheit",
-  description: "Wie PodoCRM Gesundheitsdaten schützt: Hosting in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
+  description: "Wie PodoHero Gesundheitsdaten schützt: Hosting bei Hetzner in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
 };
 
 const MEASURES = [
   {
     icon: ServerCog,
     title: "Hosting in Deutschland",
-    text: "PodoCRM läuft auf Servern in Deutschland (Docker, PostgreSQL, automatisches HTTPS). Keine US-Cloud für Praxisdaten. Datensicherungen werden verschlüsselt und rollierend 14 Tage aufbewahrt.",
+    text: "Die PodoHero-Cloud läuft bei Hetzner in Deutschland (Docker, PostgreSQL, automatisches HTTPS). Praxisdaten liegen nicht bei US-Cloud-Anbietern. Optionale Schnittstellen (z. B. WhatsApp, Google-Bewertungen, KI-Telefon) übermitteln erst nach Ihrer Aktivierung die jeweils nötigen Daten an den gewählten Anbieter. Datensicherungen werden täglich verschlüsselt erstellt und 14 Tage aufbewahrt; eine zweite Kopie an einem anderen Standort ist in Vorbereitung.",
   },
   {
     icon: Lock,
@@ -35,7 +35,7 @@ const MEASURES = [
   {
     icon: KeyRound,
     title: "Anmeldung & Zwei-Faktor",
-    text: "Passwörter mit Argon2id, Sperre nach wiederholten Fehlversuchen, Zwei-Faktor-Anmeldung mit jeder Authenticator-App, kurze Sitzungen mit sicherem Cookie.",
+    text: "Passwörter mit Argon2id, Sperre nach wiederholten Fehlversuchen, Zwei-Faktor-Anmeldung mit jeder Authenticator-App – Pflicht für Inhaber:innen, für das Team einstellbar –, kurze Sitzungen mit sicherem Cookie.",
   },
   {
     icon: UserCog,

@@ -6,7 +6,7 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /*
- * PodoCRM Design-Tokens – flach, frisch, hell.
+ * PodoHero Design-Tokens – flach, frisch, hell.
  * Primär: Mint/Petrol (Frische, Medizin), Akzent: Koralle (Aktionen), Info: Himmelblau, Warnung: Sonnengelb.
  * Kontraste geprüft: Text auf Fläche ≥ 4.5:1.
  */

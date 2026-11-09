@@ -14,6 +14,8 @@ export const PUBLIC_ACTIONS: Record<string, string> = {
   "src/app/(auth)/actions.ts#verifyTotpAction": "2FA-Schritt (unverifizierte Sitzung)",
   "src/app/(auth)/actions.ts#logoutAction": "Abmelden",
   "src/app/(auth)/actions.ts#setupAction": "Ersteinrichtung (SETUP_TOKEN / ALLOW_SIGNUP)",
+  "src/app/(auth)/password-actions.ts#requestPasswordResetAction": "Passwort vergessen (neutrale Antwort, Rate-Limit je IP und E-Mail, Mindestlaufzeit)",
+  "src/app/(auth)/password-actions.ts#resetPasswordAction": "Neues Passwort per Einmal-Token (sha256, 30 min, einmalig)",
   "src/app/buchen/[slug]/actions.ts#bookAction": "Online-Buchung (Rate-Limit, Honeypot, nie Aktenzuordnung)",
   "src/app/anamnese/[token]/actions.ts": "Anamnese per Einmal-Token",
   "src/server/portal.ts#cancelPortalAppointmentAction": "Kundenportal (signierte Portal-Sitzung)",

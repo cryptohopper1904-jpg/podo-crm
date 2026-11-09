@@ -6,18 +6,18 @@
 
 ## 1. Unterauftragnehmer des Betreibers
 
-Diese Dienstleister setzen wir selbst ein, um PodoCRM zu betreiben. Sie verarbeiten Daten nur nach unserer Weisung, mit Auftragsverarbeitungsvertrag und Verpflichtung auf die Verschwiegenheit nach § 203 StGB (siehe [AVV](/avv) § 6).
+Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbeiten Daten nur nach unserer Weisung, mit Auftragsverarbeitungsvertrag und Verpflichtung auf die Verschwiegenheit nach § 203 StGB (siehe [AVV](/avv) § 6).
 
 | Dienst | Zweck | Standort | Daten | Status |
 |---|---|---|---|---|
-| [HOSTER] | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt) | AVV und § 203-Verpflichtung **abzuschließen** |
+| Hetzner Online GmbH (PodoHero-Cloud) | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt) | AVV und § 203-Verpflichtung **abzuschließen** |
 | [BACKUP-SPEICHERORT] | zweite Kopie der verschlüsselten Datensicherung | Deutschland | verschlüsselte Sicherungen | **einzurichten** |
 | [ZAHLUNGSDIENSTLEISTER, z. B. STRIPE] | Abrechnung des Abonnements der Praxis | [STANDORT] | Rechnungs- und Zahlungsdaten der Praxis, **keine Patientendaten** | vorgesehen |
 | [E-MAIL-VERSAND] | Versand von System-E-Mails (z. B. Rechnungen, Erinnerungen) | [STANDORT] | Empfängeradresse, Inhalt der Nachricht | vorgesehen, AVV **abzuschließen** |
 
 ## 2. Dienste, die die Praxis selbst verbindet
 
-Die folgenden Schnittstellen sind in PodoCRM vorbereitet. Sie sind standardmäßig im **Testmodus** (es werden keine Daten übertragen). Für den Echtbetrieb schließt die Praxis einen eigenen Vertrag mit dem jeweiligen Anbieter; diese Anbieter sind dann **nicht** Unterauftragnehmer des Betreibers.
+Die folgenden Schnittstellen sind in PodoHero vorbereitet. Sie sind standardmäßig im **Testmodus** (es werden keine Daten übertragen). Für den Echtbetrieb schließt die Praxis einen eigenen Vertrag mit dem jeweiligen Anbieter; diese Anbieter sind dann **nicht** Unterauftragnehmer des Betreibers.
 
 | Dienst | Zweck | Standort | Hinweis |
 |---|---|---|---|

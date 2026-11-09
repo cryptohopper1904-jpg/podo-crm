@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { Button, Field, FormError, Input } from "@/components/ui";
@@ -19,6 +20,7 @@ export function LoginForm() {
       <Button type="submit" disabled={pending} className="mt-2">
         {pending ? "Anmelden …" : "Anmelden"}
       </Button>
+      <Link href="/login/passwort-vergessen" className="text-center text-sm font-semibold text-primary">Passwort vergessen?</Link>
     </form>
   );
 }

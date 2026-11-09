@@ -58,7 +58,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/calendar/[t
       }
     });
   }
-  return new NextResponse(buildIcs("PodoCRM Termine", events), {
+  return new NextResponse(buildIcs("PodoHero Termine", events), {
     headers: { "Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "no-store" },
   });
 }

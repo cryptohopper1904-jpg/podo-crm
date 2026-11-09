@@ -1,8 +1,13 @@
 import { Badge, Card, Table } from "@/components/ui";
 import { dateDe } from "@/lib/format";
 import { PLAN_IDS, PLANS, isPlanId, VOICE_ADDON_PLANS } from "@/lib/plans";
+import { audit } from "@/lib/audit";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
-import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction } from "./actions";
+import { platformUsage } from "@/server/platform-stats";
+import { UsageDashboard } from "./usage-dashboard";
+import { ResetButton } from "./reset-button";
+import { WEBSITE_ADDON_PLANS } from "@/lib/website";
+import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction, setWebsiteAddonAction } from "./actions";
 
 export const metadata = { title: "Plattform" };
 
@@ -15,6 +20,9 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
   const row = await requirePlatformAdmin();
   const { fehler } = await searchParams;
   const practices = await listPractices(row.user.id);
+  const usage = await platformUsage();
+  // Plattform-weiter Eintrag (ohne Praxisbezug): wer hat wann die Nutzungsdaten angesehen
+  await audit({ userId: row.user.id, action: "platform.view", entity: "platform", meta: { practices: usage.summary.practices } });
   return (
     <div className="mx-auto max-w-7xl">
       <h1 className="font-display text-3xl font-semibold">Plattform</h1>
@@ -23,7 +31,9 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
         Support-Zugriff ist nur mit Freigabe der Praxis möglich.
       </p>
       {typeof fehler === "string" && ERR[fehler] ? <p role="alert" className="mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">{ERR[fehler]}</p> : null}
-      <Card className="mt-6 p-0">
+      <UsageDashboard usage={usage} />
+      <h2 className="mt-10 font-display text-2xl font-semibold">Praxen verwalten</h2>
+      <Card className="mt-4 p-0">
         <Table>
           <thead>
             <tr><th>Praxis</th><th>Tarif</th><th>Test bis</th><th>Plätze</th><th>Kund:innen</th><th>Termine 30 T.</th><th>Angelegt</th><th>Aktionen</th></tr>
@@ -64,12 +74,21 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
                         <button className="text-sm font-semibold text-primary">{p.voiceAddon ? "abschalten" : "aktivieren"}</button>
                       </form>
                     ) : null}
+                    {isPlanId(p.plan) && WEBSITE_ADDON_PLANS.includes(p.plan) ? (
+                      <form action={setWebsiteAddonAction} className="flex items-center gap-2">
+                        <input type="hidden" name="organizationId" value={p.id} />
+                        <input type="hidden" name="on" value={p.websiteAddon ? "0" : "1"} />
+                        <span className="text-xs">Website-Zusatzmodul: {p.websiteAddon ? "aktiv" : "aus"}</span>
+                        <button className="text-sm font-semibold text-primary">{p.websiteAddon ? "abschalten" : "aktivieren"}</button>
+                      </form>
+                    ) : null}
                     {p.activeGrantForMe ? (
                       <form action={enterSupportAction}>
                         <input type="hidden" name="organizationId" value={p.id} />
                         <button className="text-sm font-semibold text-danger">Support-Zugriff starten</button>
                       </form>
                     ) : <span className="text-xs text-muted">keine Support-Freigabe</span>}
+                    {p.owners.map((o) => <ResetButton key={o.id} userId={o.id} label={o.email} />)}
                   </div>
                 </td>
               </tr>

@@ -5,10 +5,19 @@
 #   - subdomain:  hinter einem vorhandenen Caddy, zusätzlich deploy/docker-compose.subdomain.yml
 #                 (von install-subdomain.sh erzeugt, ohne den caddy-Dienst)
 
-say()  { printf '\n\033[1;32m▶ %s\033[0m\n' "$*"; }
-info() { printf '  %s\n' "$*"; }
-warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$*" >&2; }
-die()  { printf '\n\033[1;31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
+# Nicht-interaktiv (PODO_NONINTERACTIVE=1, z. B. systemd-Timer → Logdatei): ohne Farben, mit Zeitstempel.
+if [ "${PODO_NONINTERACTIVE:-0}" = 1 ]; then
+  _ts() { date '+%Y-%m-%d %H:%M:%S'; }
+  say()  { printf '%s ▶ %s\n' "$(_ts)" "$*"; }
+  info() { printf '%s   %s\n' "$(_ts)" "$*"; }
+  warn() { printf '%s ⚠ %s\n' "$(_ts)" "$*" >&2; }
+  die()  { printf '%s ✖ %s\n' "$(_ts)" "$*" >&2; exit 1; }
+else
+  say()  { printf '\n\033[1;32m▶ %s\033[0m\n' "$*"; }
+  info() { printf '  %s\n' "$*"; }
+  warn() { printf '\033[1;33m⚠ %s\033[0m\n' "$*" >&2; }
+  die()  { printf '\n\033[1;31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
+fi
 
 # Setzt APP_DIR, ENV_FILE, PODO_MODE, COMPOSE (Array) und SERVICES (Array).
 # shellcheck disable=SC2034  # Variablen werden von den aufrufenden Skripten genutzt

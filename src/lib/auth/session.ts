@@ -11,7 +11,8 @@ import { effectiveCan, isReadPermission, mutationAllowedWithoutPermission, pickA
 import { can, type Permission, type Role } from "./permissions";
 import { clientIpFrom } from "./client-ip";
 import { acceptedSessionCookieNames, readSessionToken, sessionCookieName, sessionCookieOptions } from "./cookie";
-import { createSupportViewLog, isPrefetch } from "./support-view";
+import { createSupportViewLog } from "./support-view";
+import { TWO_FACTOR_SETUP_PATH, twoFactorPending } from "./two-factor";
 
 /** Name des Sitzungs-Cookies in dieser Umgebung (Produktion: __Host-podo_session), siehe ./cookie.ts */
 export const SESSION_COOKIE = sessionCookieName();
@@ -153,9 +154,9 @@ async function requestInfo() {
   try {
     const h = await headers();
     const method = h.get("x-podo-method")?.toUpperCase() ?? null;
-    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null, prefetch: isPrefetch(h) };
+    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null };
   } catch {
-    return { mutating: true, path: null, prefetch: false };
+    return { mutating: true, path: null };
   }
 }
 
@@ -181,9 +182,21 @@ export async function findActiveSupportGrant(organizationId: string, userId: str
   return pickActiveGrant(rows, userId, now);
 }
 
-export const getAuth = cache(async (): Promise<AuthContext | null> => {
+/**
+ * Ergebnis der Anmeldeprüfung: `auth` = Praxis-Zugriff; `twoFactorSetupRequired` = bestätigte Sitzung, aber die
+ * Pflicht-2FA (Inhaber:in, Plattform-Admin, ggf. alle Rollen der Praxis – ./two-factor.ts) ist noch nicht aktiv.
+ * Dann gibt es KEINEN Praxis-Zugriff (auch nicht für Route-Handler), Seiten leiten zur 2FA-Einrichtung.
+ */
+export type AuthState = { auth: AuthContext | null; twoFactorSetupRequired: boolean };
+const NONE: AuthState = { auth: null, twoFactorSetupRequired: false };
+const PENDING_2FA: AuthState = { auth: null, twoFactorSetupRequired: true };
+
+export const getAuth = cache(async (): Promise<AuthContext | null> => (await getAuthState()).auth);
+
+export const getAuthState = cache(async (): Promise<AuthState> => {
   const row = await getSession();
-  if (!row || !row.session.verified || !row.session.organizationId) return null;
+  if (!row || !row.session.verified) return NONE;
+  if (!row.session.organizationId) return row.user.isPlatformAdmin && !row.user.totpEnabled ? PENDING_2FA : NONE;
   const orgId = row.session.organizationId;
   const req = await requestInfo();
   const [m] = await db
@@ -197,6 +210,7 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
   let role: Role;
   let support: SupportContext | null = null;
   if (m) {
+    if (twoFactorPending({ totpEnabled: row.user.totpEnabled, role: m.membership.role as Role, isPlatformAdmin: row.user.isPlatformAdmin, orgSettings: m.org.settings })) return PENDING_2FA;
     org = m.org;
     role = m.membership.role as Role;
   } else {
@@ -204,7 +218,7 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
     const grant = row.user.isPlatformAdmin && row.user.totpEnabled ? await findActiveSupportGrant(orgId, row.user.id) : null;
     const [o] = grant ? await db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1) : [];
     if (!grant || !o) {
-      if (!row.user.isPlatformAdmin) return null;
+      if (!row.user.isPlatformAdmin) return NONE;
       // Freigabe abgelaufen/widerrufen: zurück in die eigene Praxis (falls vorhanden)
       const [own] = await db
         .select({ organizationId: memberships.organizationId })
@@ -213,14 +227,14 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
         .limit(1);
       await db.update(sessions).set({ organizationId: own?.organizationId ?? null }).where(eq(sessions.id, row.session.id));
       await db.insert(auditLog).values({ organizationId: orgId, userId: row.user.id, action: "support.ended", meta: { reason: "keine gültige Freigabe (abgelaufen, widerrufen oder nie erteilt)" }, ip: row.session.ip });
-      if (!own) return null;
+      if (!own) return row.user.totpEnabled ? NONE : PENDING_2FA;
       return loadOwn(row, own.organizationId, req);
     }
     org = o;
     role = "owner"; // nur für Anzeige; die Rechte begrenzt effectiveCan()
     support = grant;
     // Seitenansichten, Downloads und jede schreibende Anfrage im Support-Modus → Audit-Log der Praxis
-    // (ohne Router-Prefetch; derselbe Pfad je Freigabe höchstens einmal pro Minute)
+    // (ohne Ausnahme nach Client-Headern; derselbe Pfad je Freigabe höchstens einmal pro Minute)
     if (supportViews.shouldLog(grant.grantId, req)) {
       const meta = await requestMeta().catch(() => ({ ip: null }));
       await db.insert(auditLog).values({
@@ -234,19 +248,21 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
       });
     }
   }
-  return build(row, org, role, support, req.mutating);
+  return { auth: build(row, org, role, support, req.mutating), twoFactorSetupRequired: false };
 });
 
 type SessionRow = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
-async function loadOwn(row: SessionRow, orgId: string, req: { mutating: boolean }): Promise<AuthContext | null> {
+async function loadOwn(row: SessionRow, orgId: string, req: { mutating: boolean }): Promise<AuthState> {
   const [m] = await db
     .select({ membership: memberships, org: organizations })
     .from(memberships)
     .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
     .where(and(eq(memberships.userId, row.user.id), eq(memberships.organizationId, orgId), eq(memberships.active, true)))
     .limit(1);
-  return m ? build(row, m.org, m.membership.role as Role, null, req.mutating) : null;
+  if (!m) return NONE;
+  if (twoFactorPending({ totpEnabled: row.user.totpEnabled, role: m.membership.role as Role, isPlatformAdmin: row.user.isPlatformAdmin, orgSettings: m.org.settings })) return PENDING_2FA;
+  return { auth: build(row, m.org, m.membership.role as Role, null, req.mutating), twoFactorSetupRequired: false };
 }
 
 function build(row: SessionRow, org: typeof organizations.$inferSelect, role: Role, support: SupportContext | null, mutating: boolean): AuthContext {
@@ -288,8 +304,8 @@ export function denyAccess(auth: AuthContext, permission?: Permission): never {
  * ohne Recht werden im Lesemodus ebenfalls abgelehnt.
  */
 export async function requireAuth(permission?: Permission, opts: { allowReadOnly?: boolean } = {}): Promise<AuthContext> {
-  const auth = await getAuth();
-  if (!auth) redirect("/login");
+  const { auth, twoFactorSetupRequired } = await getAuthState();
+  if (!auth) redirect(twoFactorSetupRequired ? TWO_FACTOR_SETUP_PATH : "/login");
   if (!mutationAllowedWithoutPermission(auth)) denyAccess(auth, permission);
   if (permission && !auth.can(permission)) {
     const fixingSubscription = opts.allowReadOnly && auth.readOnly && !auth.support && can(auth.role, permission);

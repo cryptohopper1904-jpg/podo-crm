@@ -1,4 +1,4 @@
-# Allgemeine Geschäftsbedingungen (AGB) für PodoCRM
+# Allgemeine Geschäftsbedingungen (AGB) für PodoHero
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Platzhalter in eckigen Klammern (z. B. [FIRMENNAME]) sind vom Betreiber auszufüllen.
 >
@@ -6,7 +6,7 @@
 
 ## § 1 Geltungsbereich, Vertragspartner
 
-1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoCRM“ (nachfolgend „Dienst“) zwischen [FIRMENNAME], [ANSCHRIFT] (nachfolgend „Anbieter“) und dem Kunden.
+1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoHero“ (nachfolgend „Dienst“) zwischen [FIRMENNAME], [ANSCHRIFT] (nachfolgend „Anbieter“) und dem Kunden.
 2. Der Dienst richtet sich ausschließlich an **Unternehmer** im Sinne des § 14 BGB, insbesondere podologische Praxen, Praxen für medizinische Fußpflege und vergleichbare Heilmittelerbringer. Verbraucher sind von der Nutzung ausgeschlossen.
 3. Abweichende Bedingungen des Kunden gelten nur, wenn der Anbieter ihnen ausdrücklich in Textform zustimmt.
 

@@ -61,8 +61,8 @@ export async function renderZBonPdf(data: ZBonData): Promise<Uint8Array> {
       .join("");
   doc.setTitle(safe(`Z-Bon Nr. ${z.number} – ${dateDe(z.businessDate)}`));
   doc.setAuthor(safe(o.legalName ?? o.name));
-  doc.setCreator("PodoCRM");
-  doc.setProducer("PodoCRM (pdf-lib)");
+  doc.setCreator("PodoHero");
+  doc.setProducer("PodoHero (pdf-lib)");
 
   let page: PDFPage = doc.addPage(A4);
   let y = 790;

@@ -73,8 +73,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   const title = invoiceTitle(inv);
   doc.setTitle(safe(title));
   doc.setAuthor(safe(o.legalName ?? o.name));
-  doc.setCreator("PodoCRM");
-  doc.setProducer("PodoCRM (pdf-lib)");
+  doc.setCreator("PodoHero");
+  doc.setProducer("PodoHero (pdf-lib)");
 
   const width = A4[0] - ML - MR;
   let page: PDFPage = doc.addPage(A4);

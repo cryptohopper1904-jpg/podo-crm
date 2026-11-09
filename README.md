@@ -1,4 +1,4 @@
-# PodoCRM
+# PodoHero
 
 Praxis- und Kundensystem für Podologie: Kundenakte, Termine, Pflichtdokumentation mit Fotos und Sprachbericht (iPad/iPhone), Rechnungen, Gutscheine, Kommunikation, KI-Assistenz und vorbereitete Schnittstellen (lexoffice, SumUp, Doctolib, Google, WhatsApp, SMS, KI-Telefon). Mandantenfähig, damit es später auch an andere Praxen verkauft werden kann.
 

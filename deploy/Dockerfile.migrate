@@ -6,7 +6,10 @@ RUN pnpm install --frozen-lockfile
 COPY drizzle ./drizzle
 COPY scripts ./scripts
 COPY src/db ./src/db
-COPY src/lib/org-defaults.ts src/lib/records.ts ./src/lib/
+COPY src/lib/org-defaults.ts src/lib/records.ts src/lib/bootstrap.ts src/lib/plans.ts src/lib/website.ts src/lib/demo-seed.ts ./src/lib/
+COPY src/lib/auth/password.ts ./src/lib/auth/
+# Bootstrap-Vorlagen (nur öffentliche Geschäftsangaben, keine Passwörter): BOOTSTRAP_PRACTICE_JSON=deploy/bootstrap/<datei>.json
+COPY deploy/bootstrap ./deploy/bootstrap
 COPY src/lib/kasse/chain.ts ./src/lib/kasse/
-# Migrationen als Eigentümer; optional Demo-Praxis (erfundene Daten) als App-Rolle
-CMD ["sh", "-c", "pnpm exec tsx scripts/migrate.ts && if [ \"$SEED_DEMO\" = \"true\" ]; then DATABASE_URL=\"$DATABASE_SEED_URL\" pnpm exec tsx scripts/seed-demo.ts; fi"]
+# Migrationen als Eigentümer, danach Bootstrap aus BOOTSTRAP_* (idempotent); optional Demo-Praxis (erfundene Daten) als App-Rolle
+CMD ["sh", "-c", "pnpm exec tsx scripts/migrate.ts && pnpm exec tsx scripts/bootstrap.ts && if [ \"$SEED_DEMO\" = \"true\" ]; then DATABASE_URL=\"$DATABASE_SEED_URL\" pnpm exec tsx scripts/seed-demo.ts; fi"]

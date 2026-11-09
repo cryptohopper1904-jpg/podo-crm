@@ -73,7 +73,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
   {
     provider: "email_imap",
     label: "E-Mail (SMTP/IMAP)",
-    description: "Versand (Rechnungen, Erinnerungen, Antworten) über das Praxispostfach per SMTP. Ohne eigene Zugangsdaten nutzt PodoCRM – falls eingerichtet – den Plattform-Server.",
+    description: "Versand (Rechnungen, Erinnerungen, Antworten) über das Praxispostfach per SMTP. Ohne eigene Zugangsdaten nutzt PodoHero – falls eingerichtet – den Plattform-Server.",
     privacy: "Postfach bei einem Anbieter mit AVV und Serverstandort EU. Gesundheitsdaten nur verschlüsselt (TLS) übertragen.",
     secretFields: [{ name: "password", label: "Passwort / App-Passwort" }],
     configFields: [
@@ -91,7 +91,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     description:
       "KIM-Postfach der Praxis: Arztbriefe und Rückfragen empfangen, Antworten senden. Verbindung zum KIM-Clientmodul bzw. TI-Gateway Ihres KIM-Anbieters über POP3S (Abruf) und SMTPS (Versand). Voraussetzung: SMC-B, Konnektor oder TI-Gateway, KIM-Vertrag – siehe Einstellungen → TI.",
     privacy:
-      "Ende-zu-Ende-Verschlüsselung und Signatur übernimmt das Clientmodul des zugelassenen KIM-Anbieters. PodoCRM ist kein zertifiziertes TI-Produkt. Anhänge werden nicht gespeichert, nur ihre Namen. Nachrichten werden auf dem Server nur gelöscht, wenn „Nach Abruf löschen“ = ja.",
+      "Ende-zu-Ende-Verschlüsselung und Signatur übernimmt das Clientmodul des zugelassenen KIM-Anbieters. PodoHero ist kein zertifiziertes TI-Produkt. Anhänge werden nicht gespeichert, nur ihre Namen. Nachrichten werden auf dem Server nur gelöscht, wenn „Nach Abruf löschen“ = ja.",
     docs: "https://fachportal.gematik.de/anwendungen/kommunikation-im-medizinwesen",
     secretFields: [{ name: "password", label: "Passwort (KIM-Konto)" }],
     configFields: [
@@ -166,7 +166,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
 ];
 
 /** Anbieter ohne (umgesetzte) Signatur: Webhook nur mit zufälligem Token `?token=` */
-export const TOKEN_WEBHOOK_PROVIDERS: ProviderId[] = ["lexoffice", "sms", "voice_agent"];
+export const TOKEN_WEBHOOK_PROVIDERS: ProviderId[] = ["lexoffice", "sms"];
 /** Anbieter mit HMAC-Signatur: Geheimnis ist Pflicht */
 export const HMAC_WEBHOOK_SECRET: Partial<Record<ProviderId, string>> = { sumup: "webhookSecret", whatsapp: "appSecret" };
 

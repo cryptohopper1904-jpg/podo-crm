@@ -2,9 +2,10 @@ import "server-only";
 import { notFound } from "next/navigation";
 import { and, count, desc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { appointments, auditLog, memberships, organizations, patients, supportGrants } from "@/db/schema";
+import { appointments, auditLog, memberships, organizations, patients, supportGrants, users } from "@/db/schema";
 import { getSession, requestMeta } from "@/lib/auth/session";
 import { isPlanId, PLANS, voiceAddonActive, type PlanId } from "@/lib/plans";
+import { websiteAddonActive } from "@/lib/website";
 
 /**
  * Plattform-Konsole (SaaS-Betreiber). Zugang NUR für users.is_platform_admin MIT aktiver 2FA – sonst 404.
@@ -31,6 +32,10 @@ export type PracticeOverview = {
   activeGrantForMe: boolean;
   /** KI-Telefon als Zusatzmodul gebucht (organizations.settings.voiceAddon) */
   voiceAddon: boolean;
+  /** Praxis-Website als Zusatzmodul gebucht (organizations.settings.websiteAddon) */
+  websiteAddon: boolean;
+  /** Praxis-Inhaber:innen (Konto, kein Kundendatum) – für „Passwort-Reset senden“ */
+  owners: { id: string; name: string; email: string }[];
 };
 
 /**
@@ -44,6 +49,11 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
     .from(memberships)
     .where(eq(memberships.active, true))
     .groupBy(memberships.organizationId, memberships.role);
+  const ownerRows = await db
+    .select({ org: memberships.organizationId, id: users.id, name: users.name, email: users.email })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.active, true), eq(memberships.role, "owner")));
   const since = new Date(Date.now() - 30 * 86_400_000);
   const now = new Date();
   const out: PracticeOverview[] = [];
@@ -71,6 +81,8 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       appointments30d: c.appointments30d,
       activeGrantForMe: c.grant,
       voiceAddon: voiceAddonActive(o.settings),
+      websiteAddon: websiteAddonActive(o.settings),
+      owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),
     });
   }
   return out;
@@ -114,4 +126,15 @@ export async function setVoiceAddon(adminUserId: string, organizationId: string,
     .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('voiceAddon', ${on}::boolean)` })
     .where(eq(organizations.id, organizationId));
   await platformAudit(organizationId, adminUserId, "platform.voice_addon", { from: voiceAddonActive(o.settings), to: on });
+}
+
+/** Zusatzmodul Praxis-Website an-/abschalten (Starter; bis zur Stripe-Anbindung manuell durch den Betreiber). */
+export async function setWebsiteAddon(adminUserId: string, organizationId: string, on: boolean) {
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, organizationId));
+  if (!o) throw new Error("Praxis nicht gefunden");
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('websiteAddon', ${on}::boolean)` })
+    .where(eq(organizations.id, organizationId));
+  await platformAudit(organizationId, adminUserId, "platform.website_addon", { from: websiteAddonActive(o.settings), to: on });
 }

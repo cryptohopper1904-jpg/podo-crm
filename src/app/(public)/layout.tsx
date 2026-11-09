@@ -10,7 +10,7 @@ import { LinkButton } from "@/components/ui";
  * ausgefüllt und anwaltlich geprüft sind: PUBLIC_SITE_INDEX=true.
  */
 export const metadata: Metadata = {
-  title: { default: "PodoCRM – Praxissoftware für Podologie", template: "%s · PodoCRM" },
+  title: { default: "PodoHero – Praxissoftware für Podologie", template: "%s · PodoHero" },
   description:
     "Praxissoftware für Podologie: Kundenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
   robots: process.env.PUBLIC_SITE_INDEX === "true" ? { index: true, follow: true } : { index: false, follow: false },
@@ -38,7 +38,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
       </a>
       <header className="sticky top-0 z-40 border-b border-border bg-bg/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4 sm:px-6">
-          <Link href="/" aria-label="PodoCRM – Startseite" className="shrink-0 rounded-lg">
+          <Link href="/" aria-label="PodoHero – Startseite" className="shrink-0 rounded-lg">
             <Logo />
           </Link>
           <nav aria-label="Hauptnavigation" className="ml-6 hidden items-center gap-1 md:flex">
@@ -77,7 +77,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
           <div>
             <Logo />
             <p className="mt-3 max-w-sm text-sm text-muted">
-              Praxissoftware für Podologie. Entwickelt in Deutschland, betrieben auf Servern in Deutschland.
+              Praxissoftware für Podologie. Entwickelt in Deutschland, die Cloud läuft bei Hetzner in Deutschland.
             </p>
           </div>
           <nav aria-label="Produkt" className="flex flex-col gap-2 text-sm">

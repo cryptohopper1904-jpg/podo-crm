@@ -18,7 +18,7 @@ export default async function SupportSettings() {
       <Card>
         <CardTitle>Support-Zugriff freigeben</CardTitle>
         <p className="mb-4 text-sm text-muted">
-          Der PodoCRM-Support hat <strong>keinen</strong> Zugriff auf eure Praxisdaten. Nur wenn du hier eine zeitlich begrenzte Freigabe erteilst,
+          Der PodoHero-Support hat <strong>keinen</strong> Zugriff auf eure Praxisdaten. Nur wenn du hier eine zeitlich begrenzte Freigabe erteilst,
           kann sich die ausgewählte Person beim Support (mit Zwei-Faktor-Anmeldung) die Praxis ansehen – standardmäßig nur lesend. Jede aufgerufene Seite wird im{" "}
           <Link href="/einstellungen/protokoll" className="font-semibold text-primary">Zugriffsprotokoll</Link> festgehalten. Der Zugriff endet automatisch
           oder sofort, wenn du ihn widerrufst.

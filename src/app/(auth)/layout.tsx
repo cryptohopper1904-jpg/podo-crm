@@ -13,7 +13,7 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
         </div>
         <div className="rounded-[var(--radius-card)] border border-border bg-surface p-6 sm:p-8">{children}</div>
         <p className="mt-6 text-center text-xs text-muted">
-          Gesundheitsdaten werden verschlüsselt übertragen und auf Servern in Deutschland gespeichert.
+          Gesundheitsdaten werden verschlüsselt übertragen; Fotos und Dokumente werden zusätzlich verschlüsselt gespeichert.
         </p>
       </div>
     </main>

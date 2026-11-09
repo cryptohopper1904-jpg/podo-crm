@@ -7,11 +7,50 @@ import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { withOrg } from "@/db";
 import { messages } from "@/db/schema";
-import { requireAuth } from "@/lib/auth/session";
+import { getAuth, getSession, requireAuth } from "@/lib/auth/session";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
 import { logoutAction } from "../(auth)/actions";
 
+/**
+ * Plattform-Admin OHNE Praxis-Mitgliedschaft (z. B. per BOOTSTRAP_ADMIN_* angelegt): schlanke Hülle nur für
+ * die Plattform-Konsole. Alle anderen Seiten prüfen selbst requireAuth() und leiten mangels Praxis zum Login,
+ * das wiederum zur Konsole bzw. zur 2FA-Einrichtung weiterleitet. Die Konsole verlangt aktive 2FA.
+ */
+function PlatformOnlyShell({ name, totpEnabled, children }: { name: string; totpEnabled: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen flex-col">
+      <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
+        <Link href="/plattform"><Logo /></Link>
+        <span className="hidden text-sm text-muted sm:inline">Plattform-Konsole · {name}</span>
+        <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle />
+          <form action={logoutAction}>
+            <button type="submit" aria-label="Abmelden" title="Abmelden" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
+              <LogOut size={19} aria-hidden />
+            </button>
+          </form>
+        </div>
+      </header>
+      <main className="flex-1 px-4 pb-10 pt-6 lg:px-8">
+        {totpEnabled ? children : (
+          <div className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-surface p-6">
+            <h1 className="font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung erforderlich</h1>
+            <p className="mt-2 text-sm text-muted">Die Plattform-Konsole ist nur mit aktiver Zwei-Faktor-Anmeldung zugänglich.</p>
+            <Link href="/login/2fa-einrichten" className="mt-4 inline-block font-semibold text-primary">Jetzt einrichten</Link>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
 export default async function AppLayout({ children }: LayoutProps<"/">) {
+  if (!(await getAuth())) {
+    const row = await getSession();
+    if (row?.session.verified && !row.session.organizationId && row.user.isPlatformAdmin) {
+      return <PlatformOnlyShell name={row.user.name} totpEnabled={row.user.totpEnabled}>{children}</PlatformOnlyShell>;
+    }
+  }
   const auth = await requireAuth();
   const allowed: NavKey[] = ["heute"];
   if (auth.can("appointments.read")) allowed.push("kalender");

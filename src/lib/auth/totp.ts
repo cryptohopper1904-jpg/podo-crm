@@ -71,6 +71,6 @@ export function matchTotpStep(secret: string, code: string, time = Date.now()): 
   return null;
 }
 
-export function otpauthUrl(secret: string, account: string, issuer = "PodoCRM"): string {
+export function otpauthUrl(secret: string, account: string, issuer = "PodoHero"): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(account)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&period=30&digits=6`;
 }

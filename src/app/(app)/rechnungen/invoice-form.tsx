@@ -169,11 +169,12 @@ export function InvoiceForm({
             </button>
           ))}
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Kunde suchen" className="lg:col-span-1">
+        {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl vier (Gesamt-Review M8) */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+          <Field label="Kunde suchen">
             <Input value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)} placeholder="Name oder Nummer" autoComplete="off" />
           </Field>
-          <Field label={kind === "collective" ? "Kunde (optional)" : "Kunde *"} className="lg:col-span-1">
+          <Field label={kind === "collective" ? "Kunde (optional)" : "Kunde *"}>
             <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective"}>
               <option value="">– bitte wählen –</option>
               {filteredPatients.map((p) => (
@@ -208,8 +209,10 @@ export function InvoiceForm({
           {computed.map((l, i) => {
             const s = l.serviceId ? svcById.get(l.serviceId) : undefined;
             return (
-              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] md:items-end">
-                <Field label={`Pos. ${i + 1}: Leistung`}>
+              // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
+              // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
+              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
+                <Field label={`Pos. ${i + 1}: Leistung`} className="md:col-span-3 2xl:col-span-1">
                   <Select value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
                     <option value="">Freitext</option>
                     {services.map((sv) => (
@@ -217,7 +220,7 @@ export function InvoiceForm({
                     ))}
                   </Select>
                 </Field>
-                <Field label="Beschreibung">
+                <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
                   <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
                 </Field>
                 <Field label="Menge">
@@ -240,7 +243,7 @@ export function InvoiceForm({
                     </Select>
                   )}
                 </Field>
-                <div className="flex items-center justify-between gap-2 md:flex-col md:items-end">
+                <div className="flex items-center justify-between gap-2 md:col-span-2 md:justify-end 2xl:col-span-1 2xl:flex-col 2xl:items-end">
                   <span className="font-semibold tabular-nums">{money(l.totalCents)}</span>
                   <Button
                     type="button"

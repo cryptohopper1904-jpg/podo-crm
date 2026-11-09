@@ -238,7 +238,7 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
 
 function readme(p: { orgName: string; exportedBy: { name: string; email: string }; counts: Record<string, number>; mediaFiles: number; mediaErrors: string[] }) {
   const lines = [
-    "PodoCRM – Vollständiger Datenexport",
+    "PodoHero – Vollständiger Datenexport",
     "===================================",
     "",
     `Praxis:        ${p.orgName}`,
@@ -271,7 +271,7 @@ function readme(p: { orgName: string; exportedBy: { name: string; email: string 
     "Gesetzliche Aufbewahrungsfristen gelten für die Praxis weiter, auch nach einer Kündigung:",
     "- Behandlungsdokumentation: 10 Jahre nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)",
     "- Rechnungen und Buchungsbelege: 8 Jahre, Bücher und Jahresabschlüsse: 10 Jahre (§ 147 AO, § 14b UStG)",
-    "Nach der Löschung der Praxis in PodoCRM ist dieser Export Ihre einzige Kopie.",
+    "Nach der Löschung der Praxis in PodoHero ist dieser Export Ihre einzige Kopie.",
     "",
   ];
   return lines.join("\n");

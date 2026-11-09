@@ -5,7 +5,9 @@ import { readSessionToken } from "@/lib/auth/cookie";
  * Optimistische Prüfung: ohne Session-Cookie direkt zum Login.
  * Die echte Prüfung (Session gültig, Rolle, Mandant) passiert serverseitig in requireAuth().
  */
-const PUBLIC = ["/login", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook", "/api/voice",
+const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook", "/api/voice",
+  // Zusatzmodul Praxis-Website (/p/[slug]) – nur veröffentlichte Geschäftsangaben, keine Sitzung
+  "/p",
   // öffentliche Website/Rechtstexte (src/app/(public)) – u. a. aus der Registrierung verlinkt
   "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer"];
 

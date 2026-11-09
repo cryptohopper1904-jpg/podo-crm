@@ -7,7 +7,7 @@ export const metadata = { title: "Bestätigung" };
 export default async function TwoFactorPage() {
   const row = await getSession();
   if (!row) redirect("/login");
-  if (row.session.verified) redirect("/heute");
+  if (row.session.verified) redirect(row.session.organizationId ? "/heute" : "/plattform");
   return (
     <>
       <h1 className="font-display text-2xl font-semibold">Zwei-Faktor-Bestätigung</h1>

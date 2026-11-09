@@ -18,7 +18,16 @@
 #   --skip-backup    keine Datenbank-Sicherung vorher (nicht empfohlen)
 #   --force          lokale Änderungen an versionierten Dateien ignorieren (werden überschrieben!)
 #   --timeout SEK    Wartezeit auf /api/health (Standard 240)
+#   --auto           nicht-interaktiv für den systemd-Timer (deploy/install-autoupdate.sh): keine Farben,
+#                    Zeitstempel, kein --force; ist der Stand aktuell, passiert nichts; läuft schon ein
+#                    Update, wird still beendet
 set -euo pipefail
+# --auto muss vor dem Laden von lib.sh bekannt sein (Ausgabeformat)
+for _a in "$@"; do [ "$_a" = "--auto" ] && export PODO_NONINTERACTIVE=1; done
+if [ "${PODO_NONINTERACTIVE:-0}" = 1 ]; then
+  export GIT_TERMINAL_PROMPT=0 BUILDKIT_PROGRESS=plain DEBIAN_FRONTEND=noninteractive
+  exec </dev/null
+fi
 
 # Das ganze Skript steckt in main(): Bash liest es so vollständig ein, bevor git checkout
 # diese Datei durch eine neuere Version ersetzt.
@@ -26,7 +35,7 @@ main() {
   # shellcheck source=deploy/lib.sh
   source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-  local REF=main DRY_RUN=0 SKIP_BACKUP=0 FORCE=0 TIMEOUT=240
+  local REF=main DRY_RUN=0 SKIP_BACKUP=0 FORCE=0 TIMEOUT=240 AUTO=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --ref) REF="${2:?--ref braucht einen Wert}"; shift 2 ;;
@@ -35,12 +44,14 @@ main() {
       --skip-backup) SKIP_BACKUP=1; shift ;;
       --force) FORCE=1; shift ;;
       --timeout) TIMEOUT="${2:?--timeout braucht einen Wert}"; shift 2 ;;
-      -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      --auto) AUTO=1; shift ;;
+      -h|--help) sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
       -*) die "Unbekannte Option: $1 (siehe --help)" ;;
       *) REF="$1"; shift ;;
     esac
   done
   [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || die "--timeout muss eine Zahl (Sekunden) sein."
+  [ "$AUTO" = 1 ] && [ "$FORCE" = 1 ] && die "--auto und --force schließen sich aus (lokale Änderungen werden automatisch nie überschrieben)."
 
   podo_detect
   cd "$APP_DIR"
@@ -63,7 +74,10 @@ main() {
     local LOCK="$APP_DIR/deploy/.update.lock"
     [ -L "$LOCK" ] && die "Sperrdatei $LOCK ist ein Symlink – Abbruch."
     exec 9>>"$LOCK"
-    flock -n 9 || die "Es läuft bereits ein Update (Sperre $LOCK)."
+    if ! flock -n 9; then
+      [ "$AUTO" = 1 ] && { info "Es läuft bereits ein Update – automatischer Lauf übersprungen."; exit 0; }
+      die "Es läuft bereits ein Update (Sperre $LOCK)."
+    fi
   fi
   # Seit Phase 5: eigenes HEALTH_TOKEN für /api/health/deep (kein Rückgriff mehr auf CRON_SECRET)
   if [ "$DRY_RUN" != 1 ] && ! grep -q '^HEALTH_TOKEN=.\{16,\}' "$ENV_FILE"; then
@@ -101,6 +115,10 @@ main() {
   local SAME=0
   if [ "$TARGET" = "$PREV" ]; then
     SAME=1
+    if [ "$AUTO" = 1 ]; then
+      info "Bereits auf dem neuesten Stand – nichts zu tun."
+      return 0
+    fi
     info "Bereits auf diesem Stand – Container werden nur abgeglichen."
   else
     local n; n=$(git rev-list --count "$PREV..$TARGET" 2>/dev/null || echo "?")

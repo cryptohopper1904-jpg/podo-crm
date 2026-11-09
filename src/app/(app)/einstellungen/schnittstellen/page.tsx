@@ -10,6 +10,7 @@ import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
 import { decryptSecret } from "@/lib/secrets";
 import { recentSyncLog } from "@/server/integrations";
+import { webhookStatus } from "@/server/webhooks";
 import { saveIntegrationAction, testIntegrationAction } from "./actions";
 import { MailCard } from "./mail-card";
 
@@ -22,6 +23,7 @@ export default async function IntegrationsSettings() {
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) => tx.select().from(integrationConnections).where(eq(integrationConnections.organizationId, org)));
   const log = await recentSyncLog(org, 15);
+  const hooks = await webhookStatus(org);
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost"}`;
   const mockEnv = process.env.INTEGRATIONS_MODE === "mock";
@@ -140,6 +142,38 @@ export default async function IntegrationsSettings() {
         <p className="mb-2 text-sm">Ihre Termine in Apple-, Google- oder Outlook-Kalender abonnieren. Der Feed enthält keine Namen – nur Initialen und Leistung.</p>
         {feedUrl ? <code className="block break-all rounded-xl bg-surface-2 p-3 text-xs">{feedUrl}</code> : <p className="text-sm text-danger">APP_ENCRYPTION_KEY fehlt – Feed nicht verfügbar.</p>}
         <p className="mt-2 text-xs text-muted">Den Link wie ein Passwort behandeln und nicht weitergeben.</p>
+      </Card>
+
+      <Card>
+        <CardTitle>Eingehende Ereignisse (Webhooks)</CardTitle>
+        <p className="mb-3 text-sm text-muted">
+          Zahlungen und Nachrichten werden erst gespeichert und dann verarbeitet. Schlägt die Verarbeitung fehl, wird sie automatisch wiederholt
+          (bis zu 6 Versuche über etwa 2,5 Stunden); danach erscheint ein Hinweis im Posteingang. Inhalte werden nach erfolgreicher Verarbeitung gelöscht,
+          die Einträge nach 30 Tagen.
+        </p>
+        <div className="mb-3 flex flex-wrap gap-2 text-sm">
+          <Badge tone="primary">verarbeitet: {hooks.counts.done ?? 0}</Badge>
+          <Badge tone="info">in Arbeit: {(hooks.counts.pending ?? 0) + (hooks.counts.processing ?? 0)}</Badge>
+          <Badge tone="warn">Wiederholung geplant: {hooks.counts.failed ?? 0}</Badge>
+          <Badge tone="accent">aufgegeben: {hooks.counts.dead ?? 0}</Badge>
+        </div>
+        {hooks.problems.length ? (
+          <Table>
+            <thead><tr><th>Eingang</th><th>Schnittstelle</th><th>Status</th><th>Versuche</th><th>Nächster Versuch</th><th>Fehler</th></tr></thead>
+            <tbody>
+              {hooks.problems.map((h) => (
+                <tr key={h.id}>
+                  <td className="whitespace-nowrap text-sm tabular-nums">{dateTimeDe(h.receivedAt)}</td>
+                  <td className="text-sm">{PROVIDER_CATALOG.find((p) => p.provider === h.provider)?.label ?? h.provider}</td>
+                  <td className="text-sm">{{ pending: "wartet", processing: "in Arbeit", failed: "Wiederholung", dead: "aufgegeben" }[h.status] ?? h.status}</td>
+                  <td className="text-sm tabular-nums">{h.attempts}</td>
+                  <td className="whitespace-nowrap text-sm tabular-nums">{h.nextAttemptAt ? dateTimeDe(h.nextAttemptAt) : "–"}</td>
+                  <td className="text-sm text-muted">{h.error ?? "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        ) : null}
       </Card>
 
       <Card>

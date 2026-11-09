@@ -11,8 +11,10 @@ import { createSession, destroySession, getSession, markSessionVerified, request
 import { legalAcceptance } from "@/lib/legal";
 import { PLANS, TRIAL_DAYS } from "@/lib/plans";
 import { clientKey, createRateLimiter } from "@/lib/rate-limit";
-import { matchTotpStep } from "@/lib/auth/totp";
-import { decryptSecret } from "@/lib/secrets";
+import { generateTotpSecret, matchTotpStep } from "@/lib/auth/totp";
+import { TWO_FACTOR_SETUP_PATH, twoFactorRequired } from "@/lib/auth/two-factor";
+import type { Role } from "@/lib/auth/permissions";
+import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
 
 export type FormState = { error?: string; ok?: string } | undefined;
@@ -56,11 +58,24 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
     .from(memberships)
     .where(and(eq(memberships.userId, user.id), eq(memberships.active, true)))
     .limit(1);
-  if (!m) return { error: generic };
+  // Plattform-Admin ohne Praxis (z. B. per BOOTSTRAP_ADMIN_* angelegt): Sitzung ohne Praxis – nur Plattform-Konsole
+  // (die ihrerseits aktive 2FA verlangt). Ohne 2FA geht es direkt zur Einrichtung der 2FA.
+  if (!m && !user.isPlatformAdmin) return { error: generic };
   await db.update(users).set({ failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() }).where(eq(users.id, user.id));
-  await createSession(user.id, m.organizationId, !user.totpEnabled);
-  await audit({ organizationId: m.organizationId, userId: user.id, action: "login.success" });
-  redirect(user.totpEnabled ? "/login/2fa" : "/heute");
+  await createSession(user.id, m?.organizationId ?? null, !user.totpEnabled);
+  await audit({ organizationId: m?.organizationId ?? null, userId: user.id, action: "login.success", meta: m ? undefined : { platformOnly: true } });
+  if (user.totpEnabled) redirect("/login/2fa");
+  // Pflicht-2FA (Inhaber:in, Plattform-Admin, ggf. alle Rollen der Praxis): Anmeldung erlaubt, aber erst nach
+  // Einrichtung Zugriff auf die Praxis (Gesamt-Review H1, src/lib/auth/two-factor.ts)
+  const [org] = m ? await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, m.organizationId)).limit(1) : [];
+  const required = twoFactorRequired({ role: (m?.role as Role | undefined) ?? null, isPlatformAdmin: user.isPlatformAdmin, orgSettings: org?.settings });
+  if (required) await audit({ organizationId: m?.organizationId ?? null, userId: user.id, action: "2fa.setup_required" });
+  redirect(required ? TWO_FACTOR_SETUP_PATH : "/heute");
+}
+
+/** Startseite nach der Anmeldung: Praxis-Sitzung → /heute, Plattform-Sitzung ohne Praxis → /plattform. */
+function homeFor(session: { organizationId: string | null }) {
+  return session.organizationId ? "/heute" : "/plattform";
 }
 
 const MAX_TOTP_FAILURES = 5;
@@ -68,7 +83,7 @@ const MAX_TOTP_FAILURES = 5;
 export async function verifyTotpAction(_: FormState, form: FormData): Promise<FormState> {
   const row = await getSession();
   if (!row) redirect("/login");
-  if (row.session.verified) redirect("/heute");
+  if (row.session.verified) redirect(homeFor(row.session));
   const code = String(form.get("code") ?? "");
   const secret = row.user.totpSecretEnc ? decryptSecret(row.user.totpSecretEnc) : null;
   const step = secret ? matchTotpStep(secret, code) : null;
@@ -99,7 +114,35 @@ export async function verifyTotpAction(_: FormState, form: FormData): Promise<Fo
     .returning({ id: users.id });
   if (!claimed) return { error: "Dieser Code wurde bereits verwendet. Bitte den nächsten Code abwarten." };
   await markSessionVerified();
-  redirect("/heute");
+  redirect(homeFor(row.session));
+}
+
+/**
+ * 2FA-Einrichtung OHNE Praxis-Kontext (/login/2fa-einrichten) – für Plattform-Admins ohne Mitgliedschaft,
+ * die die Plattform-Konsole erst mit aktiver 2FA öffnen dürfen. Nur mit bestätigter Sitzung und solange 2FA noch aus ist.
+ */
+export async function startOwnTotpAction(): Promise<{ secret?: string; error?: string }> {
+  const row = await getSession();
+  if (!row || !row.session.verified) redirect("/login");
+  if (row.user.totpEnabled) return { error: "2FA ist bereits aktiv." };
+  const secret = generateTotpSecret();
+  await db.update(users).set({ totpSecretEnc: encryptSecret(secret), totpEnabled: false }).where(and(eq(users.id, row.user.id), eq(users.totpEnabled, false)));
+  return { secret };
+}
+
+export async function confirmOwnTotpAction(_: FormState, form: FormData): Promise<FormState> {
+  const row = await getSession();
+  if (!row || !row.session.verified) redirect("/login");
+  if (row.user.totpEnabled) redirect(homeFor(row.session));
+  const [u] = await db.select().from(users).where(eq(users.id, row.user.id));
+  if (!u?.totpSecretEnc) return { error: "Bitte zuerst einrichten." };
+  const step = matchTotpStep(decryptSecret(u.totpSecretEnc), String(form.get("code") ?? ""));
+  if (step === null) return { error: "Code stimmt nicht." };
+  await db.update(users).set({ totpEnabled: true, totpLastStep: step }).where(eq(users.id, row.user.id));
+  await audit({ organizationId: row.session.organizationId, userId: row.user.id, action: "2fa.enabled" });
+  // neue Sitzung (Session-Fixation), Bestätigungs-Status bleibt
+  await markSessionVerified();
+  redirect(homeFor(row.session));
 }
 
 export async function logoutAction() {
