@@ -130,6 +130,13 @@ main() {
   fi
 
   # ── 2. Datenbank-Sicherung ────────────────────────────────────────────────
+  # Platz schaffen, bevor die Sicherung geschrieben wird (alte Images/Build-Cache früherer Updates)
+  if [ "$DRY_RUN" != 1 ]; then
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+    info "Freier Speicher: $(df -Ph /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')"
+  fi
+
   say "2/6 Datenbank sichern (verschlüsselt)"
   local BACKUP_FILE=""
   if [ "$SKIP_BACKUP" = 1 ]; then
@@ -173,6 +180,23 @@ main() {
 
   # ── 4. Bauen (alte Container laufen weiter) ───────────────────────────────
   say "4/6 Images bauen (die laufende Version bleibt so lange online)"
+  GIT_SHA=$(git rev-parse --short HEAD); export GIT_SHA
+  if [ "$DRY_RUN" != 1 ]; then
+    # Alte Images und Build-Cache wachsen mit jedem Update; ohne Aufräumen läuft die Platte voll
+    # (nur ungenutzte Images und Cache – laufende Container und Volumes bleiben unberührt)
+    docker image prune -f >/dev/null 2>&1 || true
+    docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+    local free_kb; free_kb=$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$free_kb" ] && [ "$free_kb" -lt 4000000 ]; then
+      warn "Wenig freier Speicher ($((free_kb / 1024)) MB) – Build-Cache wird vollständig geleert."
+      docker builder prune -af >/dev/null 2>&1 || true
+      free_kb=$(df -Pk /var/lib/docker 2>/dev/null | awk 'NR==2{print $4}')
+      if [ -n "$free_kb" ] && [ "$free_kb" -lt 2500000 ]; then
+        rollback_code
+        die "Zu wenig freier Speicher für den Build ($((free_kb / 1024)) MB). Die bisherige Version läuft unverändert weiter."
+      fi
+    fi
+  fi
   if [ "$DRY_RUN" = 1 ]; then
     run "${COMPOSE[@]}" build migrate app
   elif ! "${COMPOSE[@]}" build migrate app; then
@@ -218,6 +242,7 @@ main() {
   fi
   say "Rollback auf $(git log -1 --format='%h %s' "$PREV")"
   rollback_code
+  GIT_SHA=$(git rev-parse --short HEAD); export GIT_SHA
   local rb_ok=0
   if "${COMPOSE[@]}" up -d --build "${SERVICES[@]}" && "${COMPOSE[@]}" up -d --force-recreate --no-deps backup cron >/dev/null && wait_healthy "$TIMEOUT"; then
     rb_ok=1

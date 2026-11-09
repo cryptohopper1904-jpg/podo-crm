@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     await db.execute(sql`select 1`);
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, version: process.env.APP_VERSION || "unknown" });
   } catch {
     return NextResponse.json({ ok: false }, { status: 503 });
   }

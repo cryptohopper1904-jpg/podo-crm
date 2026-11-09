@@ -15,6 +15,9 @@ RUN pnpm build
 
 FROM node:22-bookworm-slim AS runner
 WORKDIR /app
+# Eingespielter Commit (vom Update-Skript gesetzt) – /api/health meldet ihn, damit ein Deploy ohne Login prüfbar ist
+ARG GIT_SHA=unknown
+ENV APP_VERSION=$GIT_SHA
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 RUN groupadd -r podo && useradd -r -g podo podo && mkdir -p /data/storage && chown podo:podo /data/storage
 COPY --from=build /app/.next/standalone ./
