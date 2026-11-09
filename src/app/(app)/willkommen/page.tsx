@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
+import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { Button, Card, Checkbox, Field, Input, LinkButton, Select } from "@/components/ui";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
@@ -58,8 +59,8 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
             <ActionForm action={savePracticeStepAction} submit="Speichern und weiter">
               <Field label="Name der Praxis"><Input name="name" required defaultValue={org.name} /></Field>
               <div className="grid gap-4 sm:grid-cols-3">
-                <Field label="Straße" className="sm:col-span-3"><Input name="street" defaultValue={org.street ?? ""} /></Field>
-                <Field label="PLZ"><Input name="zip" defaultValue={org.zip ?? ""} inputMode="numeric" /></Field>
+                <Field label="Straße" className="sm:col-span-3"><AddressAutocomplete name="street" defaultValue={org.street ?? ""} /></Field>
+                <Field label="PLZ"><ZipInput name="zip" defaultValue={org.zip ?? ""} /></Field>
                 <Field label="Ort" className="sm:col-span-2"><Input name="city" defaultValue={org.city ?? ""} /></Field>
                 <Field label="Telefon"><Input name="phone" defaultValue={org.phone ?? ""} /></Field>
                 <Field label="E-Mail"><Input name="email" type="email" defaultValue={org.email ?? ""} /></Field>

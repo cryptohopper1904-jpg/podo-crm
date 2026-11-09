@@ -7,27 +7,30 @@ import { newsItems } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { filterNewsForOrg } from "@/lib/features";
 import { dateDe } from "@/lib/format";
-import { NEWS_CATEGORIES } from "@/lib/news-sources";
+import { isRelevantNews } from "@/lib/news-relevance";
+import { isPodiatrySourceName, NEWS_CATEGORIES } from "@/lib/news-sources";
 import { refreshNewsAction } from "./actions";
 
-export const metadata = { title: "News" };
+export const metadata = { title: "News für Podolog:innen" };
 
 export default async function NewsPage(props: PageProps<"/news">) {
   const auth = await requireAuth();
   const sp = await props.searchParams;
   const category = typeof sp.kategorie === "string" && (NEWS_CATEGORIES as readonly string[]).includes(sp.kategorie) ? sp.kategorie : "";
-  const rows = await db
+  const all = await db
     .select()
     .from(newsItems)
     .where(category ? eq(newsItems.category, category) : undefined)
     .orderBy(desc(sql`coalesce(${newsItems.publishedAt}, ${newsItems.fetchedAt})`))
-    .limit(100)
-    .then((r) => filterNewsForOrg(auth.organization, r)); // GKV-/Heilmittel-Meldungen bei „nur Privat“ ausblenden
+    .limit(200);
+  // Sicherheitsnetz: Altbestände ohne Podologie-Bezug ausblenden, bis der nächste Abruf sie entfernt.
+  const relevant = all.filter((n) => isRelevantNews(`${n.title} ${n.summary ?? ""}`, isPodiatrySourceName(n.source)));
+  const rows = filterNewsForOrg(auth.organization, relevant).slice(0, 100); // GKV-/Heilmittel-Meldungen bei „nur Privat“ ausblenden
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader
-        title="News & Wissen"
-        subtitle="Recht, Abrechnung, Techniken und Fortbildung für die Podologie"
+        title="News für Podolog:innen"
+        subtitle="Nur Meldungen mit Podologie-Bezug: Heilmittel & Abrechnung, Fußgesundheit, Techniken und Fortbildung"
         actions={<ActionForm action={refreshNewsAction} submit="Jetzt aktualisieren" className="flex items-center gap-2">{null}</ActionForm>}
       />
       <nav aria-label="Kategorien" className="mb-4 flex flex-wrap gap-1.5">
@@ -42,7 +45,9 @@ export default async function NewsPage(props: PageProps<"/news">) {
         ))}
       </nav>
       {rows.length === 0 ? (
-        <Empty title="Noch keine Meldungen">Mit „Jetzt aktualisieren“ werden die hinterlegten Nachrichtenquellen abgerufen.</Empty>
+        <Empty title={category ? `Keine Podologie-Meldungen in „${category}“` : "Noch keine Podologie-Meldungen"}>
+          Mit „Jetzt aktualisieren“ werden Fachverband, Fachzeitschrift und gefilterte Nachrichtenquellen abgerufen. Angezeigt werden nur Meldungen mit Bezug zur Podologie.
+        </Empty>
       ) : (
         <div className="flex flex-col gap-3">
           {rows.map((n) => (
@@ -59,7 +64,10 @@ export default async function NewsPage(props: PageProps<"/news">) {
           ))}
         </div>
       )}
-      <p className="mt-6 text-xs text-muted">Zusammenfassungen sind automatisch erstellt und können Fehler enthalten – maßgeblich ist die verlinkte Originalquelle.</p>
+      <p className="mt-6 text-xs text-muted">
+        Quellen: Verband Deutscher Podologen, Fachzeitschrift PODOLOGIE, Google News (Podologie-Suchen), G-BA, Deutsches Ärzteblatt, diabetes-news – allgemeine Quellen nur gefiltert nach Podologie-Bezug.
+        Angezeigt werden Titel, kurzer Anriss und Quelle; Zusammenfassungen sind automatisch erstellt und können Fehler enthalten – maßgeblich ist die verlinkte Originalquelle.
+      </p>
     </div>
   );
 }
