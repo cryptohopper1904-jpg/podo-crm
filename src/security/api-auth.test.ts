@@ -16,6 +16,7 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   "src/app/api/billing/webhook/route.ts": ["Stripe-Webhook: Stripe-Signature", /verifyWebhook\(/],
   "src/app/api/cron/reminders/route.ts": ["Cron: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/kim/route.ts": ["Cron KIM-Abruf: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
+  "src/app/api/cron/kalender-abo/route.ts": ["Cron Kalender-Abo: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/news/route.ts": ["Cron News-Abruf: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/health/route.ts": ["Health-Check ohne Daten", /./],
   // Betriebs-Check für Monitoring: kein Sitzungs-Login, sondern Bearer HEALTH_TOKEN (Fallback CRON_SECRET),
@@ -49,7 +50,7 @@ describe("API-Routen: Authentisierung", () => {
   });
 
   it("öffentliche Handler antworten bei fehlender Prüfung nicht mit Daten (fail closed: 401/503 im Code)", () => {
-    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts", "src/app/api/cron/news/route.ts", "src/app/api/health/deep/route.ts"]) {
+    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts", "src/app/api/cron/kalender-abo/route.ts", "src/app/api/cron/news/route.ts", "src/app/api/health/deep/route.ts"]) {
       expect(read(path.join(ROOT, f)), f).toMatch(/status:\s*(401|503)/);
     }
   });

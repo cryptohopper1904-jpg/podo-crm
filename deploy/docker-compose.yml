@@ -144,7 +144,7 @@ services:
         done
     depends_on: [db]
 
-  # Erinnerungen/Rückholung: alle 15 Minuten den Erinnerungs-Lauf der App auslösen (intern, nicht über Caddy)
+  # Cron (intern, nicht über Caddy): Kalender-Abo alle 5 min, Erinnerungen/Rückholung und KIM alle 15 min
   cron:
     image: alpine:3.20
     restart: unless-stopped
@@ -157,8 +157,18 @@ services:
       - -c
       - |
         apk add --no-cache curl >/dev/null
+        i=0
         while true; do
-          sleep 900
+          sleep 300
+          i=$$((i + 1))
+          # Kalender-Abo (iCal-Import, alle 5 min; nur Praxen mit aktivem Abo)
+          if curl -fsS -m 240 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/kalender-abo >/dev/null; then
+            date +%s > /status/cron-kalender-abo.last
+          else
+            echo "$$(date -Iseconds) Kalender-Abo-Abruf fehlgeschlagen"
+          fi
+          # Erinnerungen und KIM alle 15 min (jeder 3. Durchlauf)
+          [ $$((i % 3)) -eq 0 ] || continue
           # Nach jedem erfolgreichen Lauf ein Zeitstempel nach /status (für /api/health/deep)
           if curl -fsS -m 120 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/reminders >/dev/null; then
             date +%s > /status/cron-reminders.last

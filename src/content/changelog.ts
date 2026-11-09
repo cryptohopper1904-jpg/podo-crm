@@ -25,6 +25,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-09-f",
+    date: "2026-11-09",
+    title: "Doctolib-Termine im Kalender",
+    items: [
+      { tag: "neu", text: "Kalender-Abo: Termine aus Doctolib erscheinen automatisch in Ihrem PodoHero-Kalender – über Ihren Google-Kalender, ohne doppeltes Eintragen.", href: "/einstellungen/kalender-abo" },
+    ],
+  },
+  {
     id: "2026-11-09-e",
     date: "2026-11-09",
     title: "Nur Privat & Selbstzahler",
@@ -82,14 +90,6 @@ export const CHANGELOG: ChangelogEntry[] = [
 // Kommende Einträge (beim Merge der jeweiligen Funktion freischalten)
 // Zum Freischalten: Eintrag OBEN in CHANGELOG einfügen, id/Datum auf den Tag des Merges setzen.
 //
-// {
-//   id: "JJJJ-MM-TT",
-//   date: "JJJJ-MM-TT",
-//   title: "Doctolib-Termine im Kalender",
-//   items: [
-//     { tag: "neu", text: "Kalender-Abo: Termine aus Doctolib erscheinen automatisch in Ihrem PodoHero-Kalender – über Ihren Google-Kalender, ohne doppeltes Eintragen.", href: "/einstellungen/schnittstellen" },
-//   ],
-// },
 // {
 //   id: "JJJJ-MM-TT",
 //   date: "JJJJ-MM-TT",

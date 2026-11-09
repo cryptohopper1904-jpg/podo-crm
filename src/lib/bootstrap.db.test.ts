@@ -151,7 +151,6 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     };
     const email = `admin-${sfx()}@example.org`;
     const env = { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_NAME: "Admin Demo", BOOTSTRAP_ADMIN_PASSWORD: "erstes-passwort-123" };
-    const orgsBefore = (await pool.query("select count(*)::int n from organizations")).rows[0].n;
     const first = await runBootstrap(db, env);
     expect(first.admin).toBe("created");
     expect(["created", "exists"]).toContain(first.demo); // die Demo-Praxis kann aus früheren Testläufen stammen
@@ -161,7 +160,8 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     expect(org).toMatchObject({ name: DEMO_PRACTICE_NAME, plan: "internal", subscription_status: "active", trial_ends_at: null });
     expect(org.settings.demo).toBe(true);
     expect(org.settings.billingMode ?? "with_gkv").toBe("with_gkv"); // Demo-Praxis bleibt mit Kassenzulassung
-    expect((await pool.query("select count(*)::int n from organizations")).rows[0].n).toBe(orgsBefore + (first.demo === "created" ? 1 : 0));
+    // nur die Demo-Praxis zählen – andere Testdateien legen parallel eigene Praxen an
+    expect((await pool.query("select count(*)::int n from organizations where slug = $1", [DEMO_PRACTICE_SLUG])).rows[0].n).toBe(1);
 
     const admin = (await pool.query("select id from users where email = $1", [email])).rows[0];
     const m = await pool.query("select organization_id, role, active from memberships where user_id = $1", [admin.id]);

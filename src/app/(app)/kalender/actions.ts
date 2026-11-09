@@ -11,6 +11,7 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { createInternalAppointments } from "@/server/appointments";
+import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
@@ -70,6 +71,8 @@ export async function setAppointmentStatusAction(form: FormData) {
   const org = auth.organization.id;
   const id = z.string().uuid().parse(form.get("id"));
   const status = z.enum(["planned", "confirmed", "done", "cancelled", "no_show"]).parse(form.get("status"));
+  // Termine aus dem Kalender-Abo werden in der Quelle (z. B. Doctolib) abgesagt – der Abgleich übernimmt die Absage
+  if (status === "cancelled" && (await isFeedAppointment(org, id))) return;
   const prev = await withOrg(org, async (tx) => {
     const [a] = await tx.select({ status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
     if (a) await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
@@ -80,4 +83,20 @@ export async function setAppointmentStatusAction(form: FormData) {
   if (status === "cancelled" && prev && prev !== "cancelled") after(() => offerFreedSlotSafe(org, id));
   revalidatePath("/kalender");
   revalidatePath("/heute");
+}
+
+export type AssignState = { error?: string; ok?: string } | undefined;
+
+/** Importierten Termin (Kalender-Abo) manuell einer Kund:in zuordnen – nie automatisch. */
+export async function assignFeedPatientAction(_: AssignState, form: FormData): Promise<AssignState> {
+  const auth = await requireAuth("appointments.write");
+  const id = z.string().uuid().safeParse(form.get("appointmentId"));
+  const patient = z.string().uuid().safeParse(form.get("patientId"));
+  if (!id.success) return { error: "Termin fehlt." };
+  if (!patient.success) return { error: "Bitte eine Kund:in wählen." };
+  const ok = await assignFeedAppointmentPatient(auth, id.data, patient.data);
+  if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Kund:in nicht gefunden)." };
+  revalidatePath("/kalender");
+  revalidatePath("/heute");
+  return { ok: "Termin zugeordnet." };
 }
