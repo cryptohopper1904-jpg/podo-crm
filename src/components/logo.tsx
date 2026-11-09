@@ -18,7 +18,7 @@ export function Logo() {
   return (
     <span className="inline-flex items-center gap-2.5">
       <LogoMark />
-      <span className="font-display text-xl font-bold">PodoCRM</span>
+      <span className="font-display text-xl font-bold">PodoHero</span>
     </span>
   );
 }

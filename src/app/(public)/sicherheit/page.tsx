@@ -3,14 +3,14 @@ import { Badge, LinkButton } from "@/components/ui";
 
 export const metadata = {
   title: "Sicherheit",
-  description: "Wie PodoCRM Gesundheitsdaten schützt: Hosting in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
+  description: "Wie PodoHero Gesundheitsdaten schützt: Hosting in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
 };
 
 const MEASURES = [
   {
     icon: ServerCog,
     title: "Hosting in Deutschland",
-    text: "PodoCRM läuft auf Servern in Deutschland (Docker, PostgreSQL, automatisches HTTPS). Keine US-Cloud für Praxisdaten. Datensicherungen werden verschlüsselt und rollierend 14 Tage aufbewahrt.",
+    text: "PodoHero läuft auf Servern in Deutschland (Docker, PostgreSQL, automatisches HTTPS). Keine US-Cloud für Praxisdaten. Datensicherungen werden verschlüsselt und rollierend 14 Tage aufbewahrt.",
   },
   {
     icon: Lock,

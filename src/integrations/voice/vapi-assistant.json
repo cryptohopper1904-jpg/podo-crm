@@ -2,9 +2,9 @@
   "anleitung": [
     "Vorlage für den Vapi-Assistenten der Praxis (Pilot). In Vapi: Assistant → Advanced/JSON und den Inhalt von \"assistant\" einfügen.",
     "<PRAXISNAME> überall durch den Namen der Praxis ersetzen.",
-    "<SERVER_URL> durch die Server-Adresse aus PodoCRM → Telefon ersetzen (https://…/api/voice/vapi?org=…).",
-    "<SERVER_SECRET> durch das Server-URL-Secret aus PodoCRM → Telefon ersetzen. Es wird als Header x-vapi-secret gesendet; ohne gültiges Secret lehnt PodoCRM jeden Aufruf ab.",
-    "Transkripte: Nur wenn in PodoCRM „Transkripte speichern“ aktiv ist UND die erste Ansage auf die Aufzeichnung hinweist, wird ein Transkript gespeichert. Dafür firstMessage durch firstMessageMitAufzeichnung ersetzen.",
+    "<SERVER_URL> durch die Server-Adresse aus PodoHero → Telefon ersetzen (https://…/api/voice/vapi?org=…).",
+    "<SERVER_SECRET> durch das Server-URL-Secret aus PodoHero → Telefon ersetzen. Es wird als Header x-vapi-secret gesendet; ohne gültiges Secret lehnt PodoHero jeden Aufruf ab.",
+    "Transkripte: Nur wenn in PodoHero „Transkripte speichern“ aktiv ist UND die erste Ansage auf die Aufzeichnung hinweist, wird ein Transkript gespeichert. Dafür firstMessage durch firstMessageMitAufzeichnung ersetzen.",
     "Die erste Ansage muss immer den KI-Hinweis enthalten (EU AI Act Art. 50). Nicht entfernen.",
     "AVV mit Vapi und den gewählten Sprach-/Modellanbietern abschließen, EU-Verarbeitung wählen, wo möglich."
   ],

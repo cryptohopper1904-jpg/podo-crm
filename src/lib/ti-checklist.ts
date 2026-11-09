@@ -1,6 +1,6 @@
 /**
  * TI-Vorbereitung der Praxis (Telematikinfrastruktur): Checkliste, gespeichert in organizations.settings.ti.
- * Nur Selbstauskunft der Praxis – PodoCRM prüft nichts davon gegen die TI und ist kein zertifiziertes TI-Produkt.
+ * Nur Selbstauskunft der Praxis – PodoHero prüft nichts davon gegen die TI und ist kein zertifiziertes TI-Produkt.
  */
 import { z } from "zod";
 

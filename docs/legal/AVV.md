@@ -10,7 +10,7 @@ und [FIRMENNAME], [ANSCHRIFT], vertreten durch [VERTRETUNGSBERECHTIGTE PERSON] (
 
 ## § 1 Gegenstand und Dauer
 
-1. Der Auftragsverarbeiter betreibt für den Verantwortlichen die Praxissoftware „PodoCRM“ als Software-as-a-Service. Dabei verarbeitet er personenbezogene Daten ausschließlich im Auftrag und nach Weisung des Verantwortlichen.
+1. Der Auftragsverarbeiter betreibt für den Verantwortlichen die Praxissoftware „PodoHero“ als Software-as-a-Service. Dabei verarbeitet er personenbezogene Daten ausschließlich im Auftrag und nach Weisung des Verantwortlichen.
 2. Die Dauer dieses Vertrags entspricht der Laufzeit des Hauptvertrags (Nutzungsvertrag nach den [AGB](/agb)). Die Pflichten nach § 10 (Löschung/Rückgabe) gelten über das Vertragsende hinaus.
 
 ## § 2 Art, Zweck und Umfang der Verarbeitung

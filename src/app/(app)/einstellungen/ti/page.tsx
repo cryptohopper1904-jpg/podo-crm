@@ -38,9 +38,9 @@ export default async function TiSettingsPage() {
   return (
     <div className="flex flex-col gap-4">
       <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
-        <strong>Wichtig:</strong> PodoCRM ist <strong>kein zertifiziertes TI-Produkt</strong> und stellt selbst keine Verbindung zur
+        <strong>Wichtig:</strong> PodoHero ist <strong>kein zertifiziertes TI-Produkt</strong> und stellt selbst keine Verbindung zur
         Telematikinfrastruktur her. Für den echten Anschluss braucht Ihre Praxis SMC-B (Praxisausweis), ggf. eHBA, einen Konnektor oder ein
-        TI-Gateway und einen KIM-Anbieter. PodoCRM nutzt die Standard-Schnittstellen dieser Komponenten (KIM: POP3/SMTP über TLS;
+        TI-Gateway und einen KIM-Anbieter. PodoHero nutzt die Standard-Schnittstellen dieser Komponenten (KIM: POP3/SMTP über TLS;
         eVerordnung: Import von FHIR-Dateien). Hintergrund und Ablauf: <code>docs/TI.md</code>.
       </p>
 
@@ -93,9 +93,9 @@ export default async function TiSettingsPage() {
         </p>
         <ul className="mb-3 list-disc pl-6 text-sm text-muted">
           <li>Abruf: manuell im Posteingang („KIM abrufen“) und automatisch alle 15 Minuten (Cron).</li>
-          <li>Nachrichten werden nie automatisch einer Person zugeordnet – PodoCRM schlägt nur vor (KVNR, Name, Geburtsdatum).</li>
+          <li>Nachrichten werden nie automatisch einer Person zugeordnet – PodoHero schlägt nur vor (KVNR, Name, Geburtsdatum).</li>
           <li>Anhänge (z. B. PDF-Arztbriefe) werden nicht übernommen, nur ihre Namen. Antworten per KIM: nur Text.</li>
-          <li>Das Clientmodul muss für den PodoCRM-Server per TLS über einen öffentlichen Hostnamen erreichbar sein (z. B. TI-Gateway-Dienst); lokale Adressen im Praxisnetz sind aus Sicherheitsgründen gesperrt.</li>
+          <li>Das Clientmodul muss für den PodoHero-Server per TLS über einen öffentlichen Hostnamen erreichbar sein (z. B. TI-Gateway-Dienst); lokale Adressen im Praxisnetz sind aus Sicherheitsgründen gesperrt.</li>
         </ul>
         {lastSync?.lastSyncAt ? <p className="mb-2 text-xs text-muted">Zuletzt erfolgreich: {dateTimeDe(lastSync.lastSyncAt)}</p> : null}
         {lastSync?.lastError ? <p className="mb-2 text-sm text-danger">Letzter Fehler: {lastSync.lastError}</p> : null}

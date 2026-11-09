@@ -41,9 +41,9 @@ export function retellAgentConfig(p: { serverUrl: string; practiceName: string; 
     anleitung: [
       "Vorlage für Retell AI. 1) Unter „LLM“ ein Retell-LLM mit den Werten aus \"llm\" anlegen (API: POST /create-retell-llm).",
       "2) Einen Agenten mit den Werten aus \"agent\" anlegen und das LLM auswählen (API: POST /create-agent). Stimme (voice_id) in Retell wählen.",
-      "3) In PodoCRM → Telefon den API-Schlüssel des Retell-Kontos hinterlegen. Retell signiert jeden Aufruf (x-retell-signature); ohne gültige Signatur lehnt PodoCRM ab.",
+      "3) In PodoHero → Telefon den API-Schlüssel des Retell-Kontos hinterlegen. Retell signiert jeden Aufruf (x-retell-signature); ohne gültige Signatur lehnt PodoHero ab.",
       "Die erste Ansage muss den KI-Hinweis enthalten (EU AI Act Art. 50). Nicht entfernen.",
-      "Transkripte werden nur gespeichert, wenn in PodoCRM „Transkripte speichern“ aktiv ist UND die erste Ansage auf die Aufzeichnung hinweist.",
+      "Transkripte werden nur gespeichert, wenn in PodoHero „Transkripte speichern“ aktiv ist UND die erste Ansage auf die Aufzeichnung hinweist.",
       "AVV mit Retell und den gewählten Sprach-/Modellanbietern abschließen, EU-Verarbeitung wählen, wo möglich.",
     ],
     llm: {

@@ -7,7 +7,7 @@ import { isRegisterMethod } from "@/lib/kasse/model";
 import { log } from "@/lib/log";
 
 /**
- * KassenSichV: JEDER Vorgang, den PodoCRM als Kassenvorgang aufzeichnet (Bar, Karte, Gutschein), wird über die TSE
+ * KassenSichV: JEDER Vorgang, den PodoHero als Kassenvorgang aufzeichnet (Bar, Karte, Gutschein), wird über die TSE
  * abgesichert – nicht nur Bargeld. Überweisung/Zahlungslink sind keine Kassenvorgänge (keine Signatur).
  * Die Signatur wird vollständig in fiscal_transactions gespeichert (append-only); payments.external_ref ist dafür
  * nicht maßgeblich.

@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "PodoCRM",
-    short_name: "PodoCRM",
+    name: "PodoHero",
+    short_name: "PodoHero",
     description: "Praxis- und Kundensystem für Podologie",
     start_url: "/heute",
     display: "standalone",

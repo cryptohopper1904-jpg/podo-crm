@@ -126,7 +126,7 @@ export class LexofficeAdapter implements AccountingPort {
     }
     if (input.email) body.emailAddresses = { private: [input.email] };
     if (input.phone) body.phoneNumbers = { private: [input.phone] };
-    if (input.customerNumber !== undefined && input.customerNumber !== null) body.note = `PodoCRM-Kundennr. ${input.customerNumber}`;
+    if (input.customerNumber !== undefined && input.customerNumber !== null) body.note = `PodoHero-Kundennr. ${input.customerNumber}`;
     return body;
   }
 
@@ -170,7 +170,7 @@ export class LexofficeAdapter implements AccountingPort {
       taxType: "gross",
       useCollectiveContact: !input.contactExternalId,
       contactId: input.contactExternalId ?? undefined,
-      remark: input.remark ?? `${input.kind === "receipt" ? "Quittung" : "Rechnung"} ${input.number} (PodoCRM)`,
+      remark: input.remark ?? `${input.kind === "receipt" ? "Quittung" : "Rechnung"} ${input.number} (PodoHero)`,
       voucherItems,
     };
   }

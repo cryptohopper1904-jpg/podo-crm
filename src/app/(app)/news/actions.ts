@@ -16,7 +16,7 @@ const PER_FEED = 15;
 
 async function fetchFeed(url: string): Promise<FeedItem[]> {
   const res = await fetch(url, {
-    headers: { "User-Agent": "PodoCRM-News/0.1 (+https://podocrm.invalid)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" },
+    headers: { "User-Agent": "PodoHero-News/0.1 (+https://podocrm.invalid)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml" },
     signal: AbortSignal.timeout(10_000),
     cache: "no-store",
   });

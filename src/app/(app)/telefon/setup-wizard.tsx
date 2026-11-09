@@ -11,7 +11,7 @@ const VENDOR_HINT: Record<Vendor, { label: string; secret: string; hint: string 
   vapi: {
     label: "Vapi",
     secret: "Server-URL-Secret (optional)",
-    hint: "Leer lassen: PodoCRM erzeugt ein sicheres Secret, das in der Vorlage steht. Vapi sendet es als Header x-vapi-secret.",
+    hint: "Leer lassen: PodoHero erzeugt ein sicheres Secret, das in der Vorlage steht. Vapi sendet es als Header x-vapi-secret.",
   },
   retell: {
     label: "Retell AI",

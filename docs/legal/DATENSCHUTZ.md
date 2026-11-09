@@ -4,7 +4,7 @@
 >
 > Version 0.1 · Stand 08.11.2026
 
-Diese Datenschutzerklärung gilt für die **Website** von PodoCRM und für die **Konten der Praxen**, die PodoCRM nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoCRM verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
+Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
 ## 1. Verantwortlicher
 

@@ -32,7 +32,7 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="font-display text-3xl font-semibold">Willkommen bei PodoCRM</h1>
+      <h1 className="font-display text-3xl font-semibold">Willkommen bei PodoHero</h1>
       <p className="mt-1 text-muted">In wenigen Schritten ist {org.name} startklar. Du kannst jeden Schritt überspringen und später in den Einstellungen nachholen.</p>
       <ol aria-label="Schritte" className="my-6 flex flex-wrap gap-2">
         {ONBOARDING_STEPS.map((s, i) => (

@@ -6,7 +6,7 @@
 
 ## 1. Unterauftragnehmer des Betreibers
 
-Diese Dienstleister setzen wir selbst ein, um PodoCRM zu betreiben. Sie verarbeiten Daten nur nach unserer Weisung, mit Auftragsverarbeitungsvertrag und Verpflichtung auf die Verschwiegenheit nach § 203 StGB (siehe [AVV](/avv) § 6).
+Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbeiten Daten nur nach unserer Weisung, mit Auftragsverarbeitungsvertrag und Verpflichtung auf die Verschwiegenheit nach § 203 StGB (siehe [AVV](/avv) § 6).
 
 | Dienst | Zweck | Standort | Daten | Status |
 |---|---|---|---|---|
@@ -17,7 +17,7 @@ Diese Dienstleister setzen wir selbst ein, um PodoCRM zu betreiben. Sie verarbei
 
 ## 2. Dienste, die die Praxis selbst verbindet
 
-Die folgenden Schnittstellen sind in PodoCRM vorbereitet. Sie sind standardmäßig im **Testmodus** (es werden keine Daten übertragen). Für den Echtbetrieb schließt die Praxis einen eigenen Vertrag mit dem jeweiligen Anbieter; diese Anbieter sind dann **nicht** Unterauftragnehmer des Betreibers.
+Die folgenden Schnittstellen sind in PodoHero vorbereitet. Sie sind standardmäßig im **Testmodus** (es werden keine Daten übertragen). Für den Echtbetrieb schließt die Praxis einen eigenen Vertrag mit dem jeweiligen Anbieter; diese Anbieter sind dann **nicht** Unterauftragnehmer des Betreibers.
 
 | Dienst | Zweck | Standort | Hinweis |
 |---|---|---|---|

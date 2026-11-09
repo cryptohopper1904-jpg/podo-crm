@@ -34,7 +34,7 @@ function fold(line: string): string {
 }
 
 export function buildIcs(calName: string, events: IcsEvent[], now = new Date()): string {
-  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PodoCRM//DE", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", `X-WR-CALNAME:${esc(calName)}`, "X-WR-TIMEZONE:Europe/Berlin"];
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PodoHero//DE", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", `X-WR-CALNAME:${esc(calName)}`, "X-WR-TIMEZONE:Europe/Berlin"];
   for (const e of events) {
     lines.push(
       "BEGIN:VEVENT",

@@ -1,5 +1,5 @@
 /**
- * PodoCRM – Datenbankschema (Drizzle ORM, PostgreSQL 16)
+ * PodoHero – Datenbankschema (Drizzle ORM, PostgreSQL 16)
  *
  * Grundregeln:
  * - Jede fachliche Tabelle trägt `organization_id` (Mandant = Praxis). Zusätzlich zur

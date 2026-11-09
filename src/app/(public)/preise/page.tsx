@@ -4,7 +4,7 @@ import { PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
 
 export const metadata = {
   title: "Preise",
-  description: "PodoCRM-Tarife: 30 Tage kostenlos testen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
+  description: "PodoHero-Tarife: 30 Tage kostenlos testen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
 };
 
 const INCLUDED = [

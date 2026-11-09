@@ -12,7 +12,7 @@ export default async function EverordnungImportPage() {
       <p className="mb-4 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         Die Heilmittel-eVerordnung ist laut gematik geplant, aber noch nicht überall verfügbar – Stand prüfen. Der Import liest FHIR-Bundles in
         KBV-ähnlicher Struktur; die finalen Profile können abweichen. Bitte jede Vorschau mit der Verordnung vergleichen. Der Abruf direkt aus der
-        TI (E-Rezept-Fachdienst) ist nicht Teil von PodoCRM – die Datei kommt aus Ihrem TI-Zugang bzw. vom Anbieter.
+        TI (E-Rezept-Fachdienst) ist nicht Teil von PodoHero – die Datei kommt aus Ihrem TI-Zugang bzw. vom Anbieter.
       </p>
       <EverordnungImport canCreatePatient={auth.can("patients.write")} />
     </div>

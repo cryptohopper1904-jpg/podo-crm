@@ -160,15 +160,15 @@ export async function sendTestMail(auth: AuthContext, to?: string | null) {
     org,
     {
       to: target,
-      subject: `Testmail aus PodoCRM – ${auth.organization.name}`,
+      subject: `Testmail aus PodoHero – ${auth.organization.name}`,
       text: [
         "Guten Tag,",
         "",
-        "dies ist eine Testmail aus PodoCRM. Wenn Sie diese Nachricht lesen, funktioniert der E-Mail-Versand Ihrer Praxis.",
+        "dies ist eine Testmail aus PodoHero. Wenn Sie diese Nachricht lesen, funktioniert der E-Mail-Versand Ihrer Praxis.",
         "Bitte prüfen Sie auch, ob die Mail im Spam-Ordner gelandet ist – dann SPF/DKIM/DMARC der Absenderdomain prüfen.",
         "",
         "Mit freundlichen Grüßen",
-        "PodoCRM",
+        "PodoHero",
       ].join("\n"),
     },
     { purpose: "test", userId: auth.user.id },

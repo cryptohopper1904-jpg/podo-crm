@@ -2,10 +2,10 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: { default: "PodoCRM", template: "%s · PodoCRM" },
+  title: { default: "PodoHero", template: "%s · PodoHero" },
   description: "Praxis- und Kundensystem für Podologie",
-  applicationName: "PodoCRM",
-  appleWebApp: { capable: true, title: "PodoCRM", statusBarStyle: "default" },
+  applicationName: "PodoHero",
+  appleWebApp: { capable: true, title: "PodoHero", statusBarStyle: "default" },
   robots: { index: false, follow: false },
 };
 
