@@ -16,12 +16,13 @@ export const TRIAL_DAYS = 30;
 export const GRACE_DAYS = 14;
 export const EXTRA_SEAT_CENTS = 1500;
 
-export const FEATURES = ["portal", "voice_agent"] as const;
+export const FEATURES = ["portal", "voice_agent", "website"] as const;
 export type Feature = (typeof FEATURES)[number];
 
 export const FEATURE_LABELS: Record<Feature, string> = {
   portal: "Kundenportal",
   voice_agent: "KI-Telefonagent",
+  website: "Praxis-Website",
 };
 
 export const PLAN_IDS = ["trial", "starter", "praxis", "plus", "internal"] as const;
@@ -61,14 +62,14 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: 1,
     features: [],
     voiceMinutesIncluded: 0,
-    description: "Für Einzelpraxen: 1 Person, ohne Kundenportal und KI-Telefon",
+    description: "Für Einzelpraxen: 1 Person, ohne Kundenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
   },
   praxis: {
     label: "Praxis",
     priceCents: 9900,
     includedSeats: 2,
     maxSeats: 5,
-    features: ["portal"],
+    features: ["portal", "website"],
     voiceMinutesIncluded: 0,
     description: "Bis zu 5 Personen, alle Funktionen; KI-Telefon als Zusatzmodul",
   },
@@ -77,7 +78,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     priceCents: 14900,
     includedSeats: 3,
     maxSeats: null,
-    features: ["portal", "voice_agent"],
+    features: ["portal", "voice_agent", "website"],
     voiceMinutesIncluded: 300,
     description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (300 Minuten/Monat)",
   },

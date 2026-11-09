@@ -117,6 +117,9 @@ export async function sendMail(org: string, msg: MailMessage, ctx: MailContext):
     const res = await port.send(msg);
     if (port.isMock) {
       await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.mock", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, attachments: msg.attachments?.length ?? 0 } }).catch(() => undefined);
+    } else {
+      // Zähler für die Nutzungsstatistik (Plattform-Konsole): nur Zweck, nie Empfänger oder Inhalt
+      await logSync(org, "email_imap", { direction: "out", ok: true, message: `E-Mail (${ctx.purpose}) versendet` }).catch(() => undefined);
     }
     return { messageId: res.messageId, mock: port.isMock };
   } catch (e) {

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podologie Kiehne – Entwurf</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Figtree:wght@400;500;600&display=swap">
+<style>
+/* Layout: ruhige, helle Praxisseite – eine Spalte, breite Bänder, Hausbesuch-Karte als Herzstück */
+:root{
+  --bg:#f7faf8; --surface:#ffffff; --ink:#16302b; --muted:#557069; --line:#d9e6e1;
+  --sage:#2f7d6b; --sage-soft:#e3f1ec; --peach:#f2a07b; --peach-soft:#fdeee6;
+  --display:"Fraunces", Georgia, serif; --body:"Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1916; --surface:#15221e; --ink:#e7f2ee; --muted:#9db8b0; --line:#25372f;
+  --sage:#6cc4ad; --sage-soft:#1a2f29; --peach:#f4b08f; --peach-soft:#2c211b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1916; --surface:#15221e; --ink:#e7f2ee; --muted:#9db8b0; --line:#25372f;
+  --sage:#6cc4ad; --sage-soft:#1a2f29; --peach:#f4b08f; --peach-soft:#2c211b; color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.6 var(--body)}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.wrap{max-width:1080px;margin:0 auto;padding-left:max(20px,env(safe-area-inset-left,0px));padding-right:max(20px,env(safe-area-inset-right,0px))}
+a{color:var(--sage)} a:focus-visible,button:focus-visible{outline:3px solid var(--peach);outline-offset:3px;border-radius:6px}
+h1,h2,h3{font-family:var(--display);font-weight:650;line-height:1.15;text-wrap:balance;margin:0}
+.draft{background:var(--peach-soft);color:var(--ink);font-size:14px;text-align:center;padding-block:8px}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+header.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:14px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-size:20px;font-weight:650;text-decoration:none;color:var(--ink)}
+.brand svg{flex:none}
+nav{display:flex;gap:20px;flex-wrap:wrap;font-size:15px}
+nav a{color:var(--muted);text-decoration:none} nav a:hover{color:var(--ink)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 20px;border-radius:999px;background:var(--sage);color:var(--bg);font-weight:600;text-decoration:none;border:0}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line)}
+.hero{padding-block:72px 56px}
+.hero .wrap{display:grid;grid-template-columns:1.2fr .8fr;gap:48px;align-items:center}
+.eyebrow{text-transform:uppercase;letter-spacing:.12em;font-size:13px;font-weight:600;color:var(--sage)}
+.hero h1{font-size:clamp(36px,5.2vw,60px);margin-top:12px}
+.hero h1 em{font-style:italic;color:var(--sage)}
+.hero p.lead{font-size:19px;color:var(--muted);max-width:34em;margin:20px 0 28px}
+.actions{display:flex;gap:12px;flex-wrap:wrap}
+.news{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px;display:grid;gap:12px}
+.news .date{font-family:var(--display);font-size:42px;line-height:1;color:var(--peach)}
+.news small{color:var(--muted)}
+section{padding-block:64px}
+section.alt{background:var(--surface);border-block:1px solid var(--line)}
+.sec-head{max-width:40em;margin-bottom:32px}
+.sec-head p{color:var(--muted);margin:10px 0 0}
+.services{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.svc{padding:22px;border-radius:18px;background:var(--bg);border:1px solid var(--line);display:grid;gap:8px;align-content:start}
+.svc h3{font-size:20px}
+.svc p{margin:0;color:var(--muted);font-size:15.5px}
+.svc .tag{justify-self:start;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sage);background:var(--sage-soft);padding:4px 10px;border-radius:999px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:start}
+.area{background:var(--sage-soft);border-radius:24px;padding:28px}
+.towns{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 0;padding:0;list-style:none}
+.towns li{background:var(--surface);border:1px solid var(--line);padding:8px 14px;border-radius:999px;font-weight:500}
+.hours{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.hours td{padding:12px 0;border-bottom:1px solid var(--line)}
+.hours td:last-child{text-align:right;color:var(--muted)}
+.hours tr.on td:last-child{color:var(--ink);font-weight:600}
+.about{display:grid;grid-template-columns:auto 1fr;gap:28px;align-items:start}
+.avatar{width:180px;height:180px;border-radius:50%;object-fit:cover;background:var(--peach-soft);display:grid;place-items:center;font-family:var(--display);font-size:40px;color:var(--peach)}
+.creds{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.creds span{font-size:14px;border:1px solid var(--line);padding:6px 12px;border-radius:999px}
+.contact{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:22px;min-width:0}
+.card h3{font-size:18px;margin-bottom:8px}
+.card .val{font-size:18px;font-weight:600;word-break:break-word;user-select:all}
+.card button{margin-top:10px;font:inherit;font-size:14px;background:none;border:1.5px solid var(--line);color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer}
+footer{padding-block:40px;color:var(--muted);font-size:14px;border-top:1px solid var(--line)}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.photo{width:100%;aspect-ratio:4/3;max-width:100%;border-radius:22px;object-fit:cover;background:var(--sage-soft);display:grid;place-items:center;color:var(--muted);font-size:15px;text-align:center;border:1.5px dashed var(--line)}
+.gallery{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:28px}
+@media (max-width:820px){.gallery{grid-template-columns:1fr}}
+.ph{background:var(--peach-soft);padding:0 4px;border-radius:4px}
+@media (max-width:820px){
+  .hero .wrap,.split,.about{grid-template-columns:1fr}
+  .services,.contact{grid-template-columns:1fr}
+  nav{display:none}
+  .hero{padding-block:44px 36px}
+}
+</style>
+</head>
+<body>
+<div class="draft">Entwurf von PodoHero für Podologie Kiehne – noch nicht veröffentlicht. Inhalte bitte prüfen.</div>
+
+<header class="top"><div class="wrap">
+  <a class="brand" href="#start" aria-label="Podologie Kiehne – Start">
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true"><rect width="34" height="34" rx="10" fill="var(--sage)"/><path d="M12 26c-2.5 0-3.6-2.4-3.6-6s1.3-8.3 4.8-10.6 6 0 6 3.6-1.2 6-1.2 8.3 1.2 4.7-1.2 4.7H12z" fill="var(--bg)"/><circle cx="22.5" cy="9" r="1.9" fill="var(--bg)"/><circle cx="25.6" cy="13.3" r="1.5" fill="var(--bg)"/></svg>
+    Podologie Kiehne
+  </a>
+  <nav aria-label="Seitennavigation">
+    <a href="#leistungen">Leistungen</a><a href="#hausbesuche">Hausbesuche</a><a href="#ueber">Über uns</a><a href="#kontakt">Kontakt</a>
+  </nav>
+  <a class="btn" href="#termin">Termin buchen</a>
+</div></header>
+
+<main id="start">
+<section class="hero"><div class="wrap">
+  <div>
+    <div class="eyebrow">Podologie in Hohen Neuendorf</div>
+    <h1>Gesunde Füße – <em>in der Praxis</em> oder bei Ihnen zu Hause.</h1>
+    <p class="lead">Medizinische Fußbehandlung durch eine staatlich anerkannte Podologin. Für Diabetiker:innen, bei eingewachsenen Nägeln, Hühneraugen und Nagelpilz, mit moderner Nagelkorrektur und Kaltplasma-Therapie.</p>
+    <div class="actions">
+      <a class="btn" href="#termin">Online-Termin vereinbaren</a>
+      <a class="btn ghost" href="#hausbesuche">Hausbesuch anfragen</a>
+    </div>
+  </div>
+  <div style="display:grid;gap:16px">
+  <div class="photo" role="img" aria-label="Foto der Praxis">Foto: Praxis Goethestraße 68 (Außenansicht)</div>
+  <aside class="news" aria-label="Neuigkeit">
+    <div class="eyebrow">Neu</div>
+    <div class="date">1.11.2026</div>
+    <strong>Unsere neue Praxis öffnet</strong>
+    <span>Goethestraße 68, 16540 Hohen Neuendorf</span>
+    <small>Hausbesuche bieten wir weiterhin an.</small>
+  </aside>
+  </div>
+</div></section>
+
+<section class="alt" id="leistungen"><div class="wrap">
+  <div class="sec-head">
+    <div class="eyebrow">Leistungen</div>
+    <h2>Was wir für Ihre Füße tun</h2>
+    <p>Jede Behandlung beginnt mit einem Blick auf Ihre Vorgeschichte, besonders bei Diabetes, Blutverdünnern oder Durchblutungsstörungen.</p>
+  </div>
+  <div class="services">
+    <article class="svc"><span class="tag">Kernleistung</span><h3>Podologische Komplexbehandlung</h3><p>Nagelbearbeitung, Entfernung von Hornhaut und Hühneraugen, Nagelfalzpflege, Beratung zur Fußpflege zu Hause.</p></article>
+    <article class="svc"><span class="tag">Eingewachsene Nägel</span><h3>Nagelkorrekturspange</h3><p>Moderne Spangensysteme richten den Nagel schonend auf und nehmen Druck und Schmerz, ohne Operation.</p></article>
+    <article class="svc"><span class="tag">Ästhetik &amp; Schutz</span><h3>Nagelprothetik</h3><p>Ersatz für fehlende oder geschädigte Nagelteile, damit das Nagelbett geschützt ist und natürlich aussieht.</p></article>
+    <article class="svc"><span class="tag">Druckentlastung</span><h3>Individuelle Orthosen</h3><p>Maßgefertigte Zehen-Orthosen aus Silikon entlasten Druckstellen und korrigieren Fehlstellungen.</p></article>
+    <article class="svc"><span class="tag">Neu</span><h3>Kaltplasma-Therapie</h3><p>Unterstützende Behandlung bei Nagelpilz und schlecht heilenden Hautstellen, schmerzfrei und ohne Chemie.</p></article>
+    <article class="svc"><span class="tag">Mobil</span><h3>Hausbesuche</h3><p>Für alle, denen der Weg in die Praxis schwerfällt, auch in Pflegeeinrichtungen.</p></article>
+  </div>
+</div></section>
+
+<section id="hausbesuche"><div class="wrap split">
+  <div class="area">
+    <div class="eyebrow">Mobile Podologie</div>
+    <h2>Wir kommen zu Ihnen</h2>
+    <p style="color:var(--muted)">Hausbesuche in Hohen Neuendorf und Umgebung:</p>
+    <ul class="towns">
+      <li>Hohen Neuendorf</li><li>Stolpe</li><li>Borgsdorf</li><li>Birkenwerder</li><li>Glienicke/Nordbahn</li><li>Berlin-Frohnau</li>
+    </ul>
+  </div>
+  <div>
+    <div class="eyebrow">Praxiszeiten</div>
+    <h2 style="margin-bottom:12px">Termine in der Praxis</h2>
+    <table class="hours" aria-label="Praxiszeiten">
+      <tr><td>Montag</td><td>Hausbesuche</td></tr>
+      <tr class="on"><td>Dienstag</td><td>08:00–17:00</td></tr>
+      <tr class="on"><td>Mittwoch</td><td>08:00–17:00</td></tr>
+      <tr><td>Donnerstag</td><td>Hausbesuche</td></tr>
+      <tr><td>Freitag</td><td>Hausbesuche</td></tr>
+    </table>
+    <p style="color:var(--muted);font-size:15px">Termine nur nach Vereinbarung. <span class="ph">Bitte prüfen: Hausbesuchstage</span></p>
+  </div>
+</div></section>
+
+<section class="alt" id="ueber"><div class="wrap about">
+  <div class="avatar" role="img" aria-label="Porträt Victoria Kiehne">VK</div>
+  <div>
+    <div class="eyebrow">Über uns</div>
+    <h2>Victoria Kiehne</h2>
+    <p>Staatlich anerkannte Podologin und Heilpraktikerin. Mit Ruhe, Erfahrung und moderner Technik kümmere ich mich um Ihre Füße, in meiner Praxis oder bei Ihnen zu Hause.</p>
+    <div class="creds"><span>Staatlich anerkannte Podologin</span><span>Heilpraktikerin</span><span>Mitglied im Bundesverband für Podologie</span></div>
+    <p style="color:var(--muted);font-size:15px;margin-top:14px"><span class="ph">Platzhalter: persönlicher Text</span></p>
+  </div>
+</div>
+<div class="wrap gallery" aria-label="Einblicke in die Praxis">
+  <div class="photo" role="img" aria-label="Behandlungsraum">Foto: Behandlungsraum</div>
+  <div class="photo" role="img" aria-label="Empfang">Foto: Empfang / Wartebereich</div>
+  <div class="photo" role="img" aria-label="Victoria Kiehne bei der Behandlung">Foto: Victoria bei der Arbeit</div>
+</div></section>
+
+<section id="termin"><div class="wrap">
+  <div class="sec-head">
+    <div class="eyebrow">Termin</div>
+    <h2>Termin online buchen</h2>
+    <p>Wählen Sie Leistung und Wunschzeit, Sie erhalten eine Bestätigung per E-Mail. Die Online-Buchung wird über PodoHero angebunden.</p>
+  </div>
+  <div class="actions"><a class="btn" href="#kontakt">Jetzt Termin wählen</a><span style="color:var(--muted);align-self:center;font-size:15px">Vorschau, Buchung noch nicht aktiv</span></div>
+</div></section>
+
+<section class="alt" id="kontakt"><div class="wrap">
+  <div class="sec-head"><div class="eyebrow">Kontakt</div><h2>So erreichen Sie uns</h2></div>
+  <div class="contact">
+    <div class="card"><h3>Telefon</h3><div class="val" id="tel">0160 96210972</div><button type="button" data-copy="tel">Nummer kopieren</button></div>
+    <div class="card"><h3>E-Mail</h3><div class="val" id="mail">termin@podologie-kiehne.de</div><button type="button" data-copy="mail">Adresse kopieren</button></div>
+    <div class="card"><h3>Praxis</h3><div class="val">Goethestraße 68<br>16540 Hohen Neuendorf</div><a href="https://www.openstreetmap.org/search?query=Goethestra%C3%9Fe%2068%2C%2016540%20Hohen%20Neuendorf" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;font-size:15px">Route öffnen</a></div>
+  </div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>© 2026 Podologie Kiehne · Hohen Neuendorf</span>
+  <span><a href="#impressum">Impressum</a> · <a href="#datenschutz">Datenschutz</a> · erstellt mit PodoHero</span>
+</div></footer>
+
+<script>
+document.querySelectorAll("[data-copy]").forEach(function(b){
+  b.addEventListener("click",function(){
+    var el=document.getElementById(b.dataset.copy), t=el.innerText.trim(), old=b.textContent;
+    function done(ok){b.textContent=ok?"Kopiert":"Bitte markieren";setTimeout(function(){b.textContent=old},1600)}
+    try{navigator.clipboard.writeText(t).then(function(){done(true)},function(){done(false)})}catch(e){done(false)}
+  });
+});
+</script>
+</body>
+</html>

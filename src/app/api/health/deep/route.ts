@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/db";
 import { safeEqual } from "@/lib/safe-equal";
 import { log } from "@/lib/log";
-import { evaluateMigrations, evaluateTimestamp, MAX_AGE_SECONDS, overallStatus, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { overallStatus, type CheckResult } from "@/lib/ops-health";
+import { checkMigrations, checkTimestamps, withTimeout } from "@/server/ops-status";
 
 export const dynamic = "force-dynamic";
 
@@ -21,18 +22,6 @@ export const dynamic = "force-dynamic";
  * Das öffentliche /api/health bleibt minimal ({ ok: true }) für Container-Healthchecks.
  */
 
-function withTimeout<T>(p: Promise<T>, ms = 3000): Promise<T> {
-  return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
-}
-
-async function readStatus(dir: string, file: string): Promise<string | null> {
-  try {
-    return await readFile(path.join(dir, file), "utf8");
-  } catch {
-    return null;
-  }
-}
-
 async function checkDb(): Promise<CheckResult> {
   const t = Date.now();
   try {
@@ -41,27 +30,6 @@ async function checkDb(): Promise<CheckResult> {
   } catch {
     return { status: "fail", hint: "Datenbank nicht erreichbar" };
   }
-}
-
-async function checkMigrations(): Promise<CheckResult> {
-  let journal: { count: number; latestWhen: number | null; latestTag: string | null } | null = null;
-  try {
-    const raw = JSON.parse(await readFile(path.join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as { entries?: { when: number; tag: string }[] };
-    const entries = raw.entries ?? [];
-    const last = entries.at(-1);
-    journal = { count: entries.length, latestWhen: last?.when ?? null, latestTag: last?.tag ?? null };
-  } catch {
-    journal = null;
-  }
-  let applied: { count: number; latestWhen: number | null } | null = null;
-  try {
-    const r = await withTimeout(db.execute<{ n: number; w: string | null }>(sql`select count(*)::int as n, max(created_at)::text as w from drizzle.__drizzle_migrations`));
-    const row = r.rows[0];
-    applied = { count: Number(row?.n ?? 0), latestWhen: row?.w ? Number(row.w) : null };
-  } catch {
-    applied = null;
-  }
-  return evaluateMigrations(applied, journal);
 }
 
 async function checkStorage(): Promise<CheckResult> {
@@ -76,21 +44,6 @@ async function checkStorage(): Promise<CheckResult> {
     await rm(f, { force: true }).catch(() => {});
     return { status: "fail", hint: "Dateiablage nicht beschreibbar" };
   }
-}
-
-async function checkTimestamps(): Promise<Record<string, CheckResult>> {
-  const dir = process.env.STATUS_DIR;
-  if (!dir) {
-    const skipped: CheckResult = { status: "skipped", hint: "STATUS_DIR nicht gesetzt" };
-    return { backup: skipped, cronReminders: skipped, cronKim: skipped };
-  }
-  const now = Date.now();
-  const [backup, reminders, kim] = await Promise.all([readStatus(dir, "backup.last"), readStatus(dir, "cron-reminders.last"), readStatus(dir, "cron-kim.last")]);
-  return {
-    backup: evaluateTimestamp(parseEpoch(backup), MAX_AGE_SECONDS.backup, now, "noch kein Backup erfasst"),
-    cronReminders: evaluateTimestamp(parseEpoch(reminders), MAX_AGE_SECONDS.cron, now),
-    cronKim: evaluateTimestamp(parseEpoch(kim), MAX_AGE_SECONDS.cron, now),
-  };
 }
 
 export async function GET(req: NextRequest) {

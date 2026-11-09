@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 64" width="260" height="64" role="img" aria-label="PodoHero">
+  <style>
+    .ph-root{--ph-p:#0b7f73;--ph-a:#f2715a;--ph-t:#0f2a2e}
+    @media (prefers-color-scheme:dark){.ph-root{--ph-p:#34d1bc;--ph-a:#ff8a73;--ph-t:#e8f3f1}}
+    .ph-p{fill:var(--primary,var(--ph-p))}
+    .ph-ps{fill:none;stroke:var(--primary,var(--ph-p))}
+    .ph-a{fill:var(--accent,var(--ph-a))}
+    .ph-t{fill:var(--text,var(--ph-t))}
+    .ph-word{font-family:"Space Grotesk Variable","Space Grotesk","Inter Variable",Inter,ui-sans-serif,system-ui,sans-serif;font-weight:700;font-size:38px;letter-spacing:-0.5px}
+  </style>
+  <g class="ph-root">
+    <path class="ph-ps" d="M19 57V38a12 12 0 1 1 12 12h-2" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle class="ph-p" cx="17.5" cy="13" r="5.5"/>
+    <circle class="ph-p" cx="38" cy="9.5" r="3.6"/>
+    <circle class="ph-p" cx="45" cy="12.8" r="3.1"/>
+    <circle class="ph-p" cx="50" cy="18" r="2.6"/>
+    <polygon class="ph-a" points="28.50,4.70 29.73,7.80 33.07,8.02 30.50,10.15 31.32,13.38 28.50,11.60 25.68,13.38 26.50,10.15 23.93,8.02 27.27,7.80" stroke="var(--accent,var(--ph-a))" stroke-width="0.8" stroke-linejoin="round"/>
+    <text class="ph-word" x="66" y="46"><tspan class="ph-t">Podo</tspan><tspan class="ph-p">Hero</tspan></text>
+  </g>
+</svg>

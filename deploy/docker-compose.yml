@@ -25,6 +25,14 @@ services:
       DATABASE_SEED_URL: postgres://podo_app:${DB_APP_PASSWORD}@db:5432/podo
       DB_APP_ROLE: podo_app
       SEED_DEMO: ${SEED_DEMO:-false}
+      # Bootstrap für frische Server ohne Shell (scripts/bootstrap.ts, idempotent). Passwörter nach dem
+      # ersten Start aus deploy/.env entfernen – vorhandene Konten werden nie überschrieben.
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_NAME: ${BOOTSTRAP_ADMIN_NAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_PRACTICE_JSON: ${BOOTSTRAP_PRACTICE_JSON:-}
+      BOOTSTRAP_PRACTICE_OWNER_PASSWORD: ${BOOTSTRAP_PRACTICE_OWNER_PASSWORD:-}
+      BOOTSTRAP_STRICT: ${BOOTSTRAP_STRICT:-false}
     depends_on: { db: { condition: service_healthy } }
     restart: "no"
 
