@@ -8,6 +8,7 @@ import { safeEqual } from "@/lib/safe-equal";
 import { log } from "@/lib/log";
 import { overallStatus, type CheckResult } from "@/lib/ops-health";
 import { checkMigrations, checkTimestamps, withTimeout } from "@/server/ops-status";
+import { webhookBacklog } from "@/server/webhooks";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,18 @@ async function checkStorage(): Promise<CheckResult> {
   }
 }
 
+/** Gesamt-Review H7: Webhook-Ereignisse, die seit über 1 h unverarbeitet bzw. endgültig fehlgeschlagen sind (nur Zähler). */
+async function checkWebhooks(): Promise<CheckResult> {
+  try {
+    const { open, dead } = await withTimeout(webhookBacklog(3600_000), 5000);
+    if (open > 0) return { status: "fail", open, dead, hint: "Webhook-Ereignisse seit über 1 h unverarbeitet" };
+    if (dead > 0) return { status: "warn", open, dead, hint: "endgültig fehlgeschlagene Webhook-Ereignisse (Posteingang der Praxis)" };
+    return { status: "ok", open, dead };
+  } catch {
+    return { status: "fail", hint: "Webhook-Status nicht lesbar" };
+  }
+}
+
 export async function GET(req: NextRequest) {
   // nur ein eigenes Token – kein Rückgriff auf CRON_SECRET (getrennte Geheimnisse für Monitoring und Cron)
   const secret = process.env.HEALTH_TOKEN;
@@ -54,8 +67,8 @@ export async function GET(req: NextRequest) {
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!safeEqual(token, secret)) return NextResponse.json({ error: "Nicht autorisiert" }, { status: 401 });
 
-  const [database, migrations, storage, stamps] = await Promise.all([checkDb(), checkMigrations(), checkStorage(), checkTimestamps()]);
-  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps };
+  const [database, migrations, storage, stamps, webhooks] = await Promise.all([checkDb(), checkMigrations(), checkStorage(), checkTimestamps(), checkWebhooks()]);
+  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps, webhooks };
   const status = overallStatus(checks);
   if (status !== "ok") {
     log.warn("health.deep", { status, failed: Object.entries(checks).filter(([, c]) => c.status === "fail").map(([k]) => k).join(",") || null });

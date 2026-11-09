@@ -1,18 +1,10 @@
 import { after, NextResponse, type NextRequest } from "next/server";
-import { describeError } from "@/integrations/test-connection";
 import { verifyHmacSignature } from "@/integrations/sumup/sumup";
-import type { NormalizedWebhookEvent } from "@/integrations/types";
-import {
-  handleLexofficeWebhook,
-  handleSmsWebhook,
-  handleSumupWebhook,
-  handleVoiceAgentWebhook,
-  handleWhatsAppWebhook,
-} from "@/integrations/webhooks";
+import { handleLexofficeWebhook, handleSumupWebhook } from "@/integrations/webhooks";
 import { safeEqual } from "@/lib/safe-equal";
 import { decryptSecret } from "@/lib/secrets";
-import { loadConnection, logSync } from "@/server/integrations";
-import { bodyHash, claimWebhookEvent, finishWebhookEvent, isUuid, processSumupEvent, storeInboundMessages } from "@/server/webhooks";
+import { loadConnection } from "@/server/integrations";
+import { bodyHash, isUuid, processWebhookEvent, storeWebhookEvent, type WebhookProvider } from "@/server/webhooks";
 
 /**
  * Webhook-Eingang: /api/webhooks/{provider}?org={organizationId}[&token=…]
@@ -20,14 +12,15 @@ import { bodyHash, claimWebhookEvent, finishWebhookEvent, isUuid, processSumupEv
  * FAIL CLOSED:
  *  1. Größe prüfen (Content-Length und gestreamt, max. 512 KB)
  *  2. Verbindung muss existieren und „verbunden“ sein („Testmodus“ nur außerhalb von Produktion)
- *  3. Authentisierung ist Pflicht: SumUp/WhatsApp per HMAC-Signatur, lexoffice/SMS/Telefonagent per
+ *  3. Authentisierung ist Pflicht: SumUp/WhatsApp per HMAC-Signatur, lexoffice/SMS per
  *     zufälligem Token je Praxis (`?token=`, zeitkonstanter Vergleich)
- *  4. erst danach idempotent speichern; fehlgeschlagene Ereignisse werden bei erneuter Zustellung neu verarbeitet
- *  5. sofort 200, Verarbeitung nach der Antwort (after())
+ *  4. erst danach idempotent und DAUERHAFT speichern (webhook_events, Status „pending“) – erst dann 200
+ *  5. Verarbeitung nach der Antwort (after()); Fehler/Absturz → Wiederholung per Cron mit Backoff
+ *     (src/server/webhooks.ts, Gesamt-Review H7). Rohdaten werden nach erfolgreicher Verarbeitung gelöscht (H4).
+ * Der frühere Altpfad `voice_agent` ist entfernt – der Telefonagent nutzt /api/voice/{vendor} (Gesamt-Review M6).
  * Fehlerantworten sind bewusst generisch (kein Orakel für Praxis-IDs).
  */
-const PROVIDERS = ["sumup", "lexoffice", "whatsapp", "sms", "voice_agent"] as const;
-type WebhookProvider = (typeof PROVIDERS)[number];
+const PROVIDERS = ["sumup", "lexoffice", "whatsapp", "sms"] as const satisfies readonly WebhookProvider[];
 const MAX_BODY = 512 * 1024;
 
 const denied = () => NextResponse.json({ error: "Nicht autorisiert" }, { status: 401 });
@@ -118,46 +111,20 @@ export async function POST(req: NextRequest, ctx: RouteContext<"/api/webhooks/[p
     return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
   }
 
-  let normalized: NormalizedWebhookEvent | null = null;
   let externalId = bodyHash(rawBody);
-  if (provider === "sumup") {
-    normalized = handleSumupWebhook(payload, headers);
-    externalId = normalized.externalId;
-  } else if (provider === "lexoffice") {
-    normalized = handleLexofficeWebhook(payload);
-    externalId = normalized.externalId;
-  }
+  if (provider === "sumup") externalId = handleSumupWebhook(payload, headers).externalId;
+  else if (provider === "lexoffice") externalId = handleLexofficeWebhook(payload).externalId;
 
-  let claim: Awaited<ReturnType<typeof claimWebhookEvent>>;
+  let stored: Awaited<ReturnType<typeof storeWebhookEvent>>;
   try {
-    claim = await claimWebhookEvent(provider, org, externalId, payload);
+    stored = await storeWebhookEvent(provider, org, externalId, payload, bodyHash(rawBody));
   } catch {
+    // nicht gespeichert → KEIN 200, damit der Anbieter erneut zustellt
     return NextResponse.json({ error: "Vorübergehender Fehler" }, { status: 503 });
   }
-  if (!claim) return NextResponse.json({ ok: true });
-  const eventId = claim.id;
-
-  after(async () => {
-    try {
-      let note: string | undefined;
-      if (provider === "sumup" && normalized) {
-        const r = await processSumupEvent(org, normalized);
-        // nicht zugeordnete Zahlung: verarbeitet (keine Wiederholung), aber mit Hinweis – Praxis prüft im Posteingang
-        if (r.startsWith("nicht zugeordnet")) note = r;
-      }
-      else if (provider === "whatsapp") await storeInboundMessages(org, handleWhatsAppWebhook(payload));
-      else if (provider === "sms") await storeInboundMessages(org, handleSmsWebhook(payload));
-      else if (provider === "voice_agent") handleVoiceAgentWebhook(payload);
-      else if (provider === "lexoffice") {
-        // TODO: Zahlungsstatus per getPaymentStatus nachladen und Rechnung abgleichen
-        await logSync(org, "lexoffice", { direction: "in", ok: true, message: `Ereignis ${normalized?.type ?? "unbekannt"}` });
-      }
-      await finishWebhookEvent(eventId, undefined, note);
-    } catch (e) {
-      const detail = describeError(e);
-      await finishWebhookEvent(eventId, detail).catch(() => undefined);
-      await logSync(org, provider, { direction: "in", ok: false, message: `Webhook-Verarbeitung fehlgeschlagen: ${detail}` }).catch(() => undefined);
-    }
-  });
+  if (!stored) return NextResponse.json({ ok: true });
+  const eventId = stored.id;
+  // Fehler landen als „failed“ in webhook_events und werden per Cron wiederholt
+  after(() => processWebhookEvent(org, eventId).then(() => undefined, () => undefined));
   return NextResponse.json({ ok: true });
 }

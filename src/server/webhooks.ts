@@ -1,8 +1,9 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { invoiceLines, invoices, messages, payments, webhookEvents } from "@/db/schema";
+import { invoiceLines, invoices, messages, organizations, payments, webhookEvents } from "@/db/schema";
+import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWhatsAppWebhook } from "@/integrations/webhooks";
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort, ProviderId } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
@@ -14,45 +15,219 @@ export const isUuid = (v: string | null | undefined): v is string => !!v && UUID
 export const bodyHash = (raw: string) => createHash("sha256").update(raw).digest("hex");
 
 /**
- * Reserviert ein Ereignis zur Verarbeitung (erst NACH erfolgreicher Signatur-/Token-Prüfung aufrufen).
- * - neu → wird angelegt
- * - schon vorhanden, aber fehlgeschlagen (error gesetzt, processed_at leer) → atomar erneut reserviert
- * - sonst (erfolgreich verarbeitet oder gerade in Arbeit) → null = Duplikat
+ * Dauerhafte Webhook-Verarbeitung (Gesamt-Review H4/H7): erst speichern, dann verarbeiten, bei Fehler oder Absturz
+ * per Cron mit Backoff erneut versuchen.
+ *
+ *   pending ──lease──▶ processing ──ok──▶ done (payload := NULL)
+ *                          │ Fehler
+ *                          ▼
+ *                       failed ──Backoff──▶ processing … ──nach WEBHOOK_MAX_ATTEMPTS──▶ dead (+ Posteingang)
+ *
+ * - Ein Absturz während der Verarbeitung (z. B. Neustart durch update.sh) hinterlässt „processing“ mit abgelaufener
+ *   Lease → der Cron übernimmt.
+ * - Rohdaten (payload) nur bis zur erfolgreichen Verarbeitung, Zeilen höchstens WEBHOOK_RETENTION_DAYS Tage.
+ * - Tabelle unter RLS (tenant_isolation) – jeder Zugriff mit Praxis-Kontext (withOrg).
  */
-export async function claimWebhookEvent(provider: ProviderId, organizationId: string, externalId: string, payload: unknown): Promise<{ id: string; retry: boolean } | null> {
+export const WEBHOOK_MAX_ATTEMPTS = 6;
+export const WEBHOOK_LEASE_MS = 5 * 60_000;
+export const WEBHOOK_RETENTION_DAYS = 30;
+/** Ereignisse, die frisch eingegangen sind, verarbeitet die Anfrage selbst (after()) – der Cron wartet so lange. */
+const FRESH_GRACE_MS = 2 * 60_000;
+
+/** 5, 10, 20, 40, 80 … Minuten, höchstens 12 h */
+export function webhookBackoffMs(attempts: number): number {
+  return Math.min(5 * 60_000 * 2 ** Math.max(0, attempts - 1), 12 * 3600_000);
+}
+
+export type WebhookProvider = "sumup" | "lexoffice" | "whatsapp" | "sms";
+
+/**
+ * Speichert ein Ereignis (erst NACH erfolgreicher Signatur-/Token-Prüfung aufrufen).
+ * - neu → angelegt (pending)
+ * - schon vorhanden und fehlgeschlagen/aufgegeben → erneute Zustellung des Anbieters: sofort wieder „pending“
+ * - sonst (verarbeitet oder in Arbeit) → null = Duplikat
+ */
+export async function storeWebhookEvent(provider: WebhookProvider, organizationId: string, externalId: string, payload: unknown, payloadHash: string): Promise<{ id: string; retry: boolean } | null> {
   const ext = externalId.slice(0, 300);
-  const rows = await db
-    .insert(webhookEvents)
-    .values({ provider, organizationId, externalId: ext, payload: payload as object })
-    .onConflictDoNothing({ target: [webhookEvents.provider, webhookEvents.organizationId, webhookEvents.externalId] })
-    .returning({ id: webhookEvents.id });
-  if (rows[0]) return { id: rows[0].id, retry: false };
-  const again = await db
-    .update(webhookEvents)
-    .set({ error: null, receivedAt: new Date() })
-    .where(
-      and(
-        eq(webhookEvents.provider, provider),
-        eq(webhookEvents.externalId, ext),
-        eq(webhookEvents.organizationId, organizationId),
-        isNotNull(webhookEvents.error),
-        isNull(webhookEvents.processedAt),
-      ),
-    )
-    .returning({ id: webhookEvents.id });
-  return again[0] ? { id: again[0].id, retry: true } : null;
+  return withOrg(organizationId, async (t) => {
+    const rows = await t
+      .insert(webhookEvents)
+      .values({ provider, organizationId, externalId: ext, payload: payload as object, payloadHash, status: "pending" })
+      .onConflictDoNothing({ target: [webhookEvents.provider, webhookEvents.organizationId, webhookEvents.externalId] })
+      .returning({ id: webhookEvents.id });
+    if (rows[0]) return { id: rows[0].id, retry: false };
+    const again = await t
+      .update(webhookEvents)
+      .set({ status: "pending", nextAttemptAt: null, payload: payload as object, payloadHash })
+      .where(
+        and(
+          eq(webhookEvents.provider, provider),
+          eq(webhookEvents.externalId, ext),
+          eq(webhookEvents.organizationId, organizationId),
+          inArray(webhookEvents.status, ["failed", "dead"]),
+        ),
+      )
+      .returning({ id: webhookEvents.id });
+    return again[0] ? { id: again[0].id, retry: true } : null;
+  });
+}
+
+/** Fachliche Verarbeitung je Anbieter. Rückgabe: Hinweis (verarbeitet, aber z. B. Zahlung nicht zugeordnet). */
+export async function dispatchWebhook(provider: WebhookProvider, organizationId: string, payload: unknown, deps: { port?: PaymentPort } = {}): Promise<string | undefined> {
+  if (provider === "sumup") {
+    const r = await processSumupEvent(organizationId, handleSumupWebhook(payload, {}), deps);
+    return r.startsWith("nicht zugeordnet") ? r : undefined;
+  }
+  if (provider === "whatsapp") await storeInboundMessages(organizationId, handleWhatsAppWebhook(payload));
+  else if (provider === "sms") await storeInboundMessages(organizationId, handleSmsWebhook(payload));
+  else if (provider === "lexoffice") {
+    // TODO: Zahlungsstatus per getPaymentStatus nachladen und Rechnung abgleichen
+    await logSync(organizationId, "lexoffice", { direction: "in", ok: true, message: `Ereignis ${handleLexofficeWebhook(payload).type ?? "unbekannt"}` });
+  }
+  return undefined;
+}
+
+export type WebhookOutcome = "done" | "failed" | "dead" | "skipped";
+
+/**
+ * Verarbeitet EIN Ereignis mit Lease (parallel laufende Verarbeiter – after() und Cron – schließen sich aus).
+ * Fehler werfen nicht, sondern führen zu „failed“ (mit nächstem Versuch) bzw. „dead“.
+ */
+export async function processWebhookEvent(organizationId: string, id: string, deps: { dispatch?: typeof dispatchWebhook } = {}): Promise<WebhookOutcome> {
+  const [ev] = await withOrg(organizationId, (t) =>
+    t
+      .update(webhookEvents)
+      .set({ status: "processing", attempts: sql`${webhookEvents.attempts} + 1`, leaseUntil: new Date(Date.now() + WEBHOOK_LEASE_MS) })
+      .where(
+        and(
+          eq(webhookEvents.organizationId, organizationId),
+          eq(webhookEvents.id, id),
+          or(inArray(webhookEvents.status, ["pending", "failed"]), and(eq(webhookEvents.status, "processing"), lt(webhookEvents.leaseUntil, new Date()))),
+        ),
+      )
+      .returning(),
+  );
+  if (!ev) return "skipped";
+  try {
+    if (ev.payload === null) throw new Error("Rohdaten fehlen (bereits gelöscht)");
+    const note = await (deps.dispatch ?? dispatchWebhook)(ev.provider as WebhookProvider, organizationId, ev.payload);
+    await withOrg(organizationId, (t) =>
+      t
+        .update(webhookEvents)
+        .set({ status: "done", processedAt: new Date(), payload: null, leaseUntil: null, nextAttemptAt: null, error: note ? note.slice(0, 500) : null })
+        .where(and(eq(webhookEvents.organizationId, organizationId), eq(webhookEvents.id, id))),
+    );
+    return "done";
+  } catch (e) {
+    const detail = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+    const dead = ev.attempts >= WEBHOOK_MAX_ATTEMPTS;
+    await withOrg(organizationId, async (t) => {
+      await t
+        .update(webhookEvents)
+        .set({ status: dead ? "dead" : "failed", error: detail, leaseUntil: null, processedAt: null, nextAttemptAt: dead ? null : new Date(Date.now() + webhookBackoffMs(ev.attempts)) })
+        .where(and(eq(webhookEvents.organizationId, organizationId), eq(webhookEvents.id, id)));
+      if (dead) {
+        await t.insert(messages).values({
+          organizationId,
+          patientId: null,
+          channel: "none",
+          direction: "inbound",
+          subject: `Eingang von ${ev.provider} konnte nicht verarbeitet werden – bitte prüfen`,
+          body: [
+            `Ein Ereignis von ${ev.provider} (eingegangen ${ev.receivedAt.toISOString()}) ist nach ${ev.attempts} Versuchen endgültig fehlgeschlagen.`,
+            `Fehler: ${detail}`,
+            ev.provider === "sumup" ? "Bitte im SumUp-Konto prüfen, ob eine Zahlung eingegangen ist, und sie ggf. manuell buchen." : "Bitte beim Anbieter prüfen, ob eine Nachricht fehlt.",
+            "Status: Einstellungen → Schnittstellen.",
+          ].join("\n"),
+          status: "new",
+          threadKey: `webhook-dead:${id}`,
+        });
+      }
+    });
+    await logSync(organizationId, ev.provider as WebhookProvider, { direction: "in", ok: false, message: `Webhook-Verarbeitung fehlgeschlagen (Versuch ${ev.attempts}${dead ? ", aufgegeben" : ""}): ${detail}` }).catch(() => undefined);
+    return dead ? "dead" : "failed";
+  }
 }
 
 /**
- * Erfolg → processed_at setzen. Fehler → nur error setzen (processed_at bleibt leer, damit eine erneute
- * Zustellung neu verarbeitet). `note` = verarbeitet, aber mit Hinweis (z. B. Zahlung nicht zugeordnet) –
- * wird NICHT erneut verarbeitet.
+ * Cron (alle 15 min, /api/cron/reminders): fällige Wiederholungen und liegengebliebene Ereignisse je Praxis
+ * verarbeiten, danach alte Ereignisse löschen (Aufbewahrung WEBHOOK_RETENTION_DAYS).
  */
-export async function finishWebhookEvent(id: string, error?: string, note?: string) {
-  await db
-    .update(webhookEvents)
-    .set(error ? { error: error.slice(0, 500), processedAt: null } : { processedAt: new Date(), error: note ? note.slice(0, 500) : null })
-    .where(eq(webhookEvents.id, id));
+export async function retryDueWebhooks(opts: { now?: Date; limitPerOrg?: number; dispatch?: typeof dispatchWebhook; organizationIds?: string[] } = {}) {
+  const now = opts.now ?? new Date();
+  const out = { processed: 0, failed: 0, dead: 0, purged: 0 };
+  const orgs = opts.organizationIds?.map((id) => ({ id })) ?? (await db.select({ id: organizations.id }).from(organizations));
+  for (const { id: org } of orgs) {
+    const due = await withOrg(org, async (t) => {
+      const del = await t
+        .delete(webhookEvents)
+        .where(and(eq(webhookEvents.organizationId, org), lt(webhookEvents.receivedAt, new Date(now.getTime() - WEBHOOK_RETENTION_DAYS * 86400_000)), inArray(webhookEvents.status, ["done", "dead"])))
+        .returning({ id: webhookEvents.id });
+      out.purged += del.length;
+      return t
+        .select({ id: webhookEvents.id })
+        .from(webhookEvents)
+        .where(
+          and(
+            eq(webhookEvents.organizationId, org),
+            or(
+              and(eq(webhookEvents.status, "pending"), lt(webhookEvents.receivedAt, new Date(now.getTime() - FRESH_GRACE_MS))),
+              and(eq(webhookEvents.status, "failed"), or(isNull(webhookEvents.nextAttemptAt), lte(webhookEvents.nextAttemptAt, now))),
+              and(eq(webhookEvents.status, "processing"), lt(webhookEvents.leaseUntil, now)),
+            ),
+          ),
+        )
+        .orderBy(webhookEvents.receivedAt)
+        .limit(opts.limitPerOrg ?? 50);
+    });
+    for (const ev of due) {
+      const r = await processWebhookEvent(org, ev.id, { dispatch: opts.dispatch });
+      if (r === "done") out.processed++;
+      else if (r === "failed") out.failed++;
+      else if (r === "dead") out.dead++;
+    }
+  }
+  return out;
+}
+
+/** Übersicht für die Praxis (Einstellungen → Schnittstellen): Anzahl je Status und die letzten Probleme. */
+export async function webhookStatus(organizationId: string) {
+  return withOrg(organizationId, async (t) => {
+    const counts = await t
+      .select({ status: webhookEvents.status, n: sql<number>`count(*)::int` })
+      .from(webhookEvents)
+      .where(eq(webhookEvents.organizationId, organizationId))
+      .groupBy(webhookEvents.status);
+    const problems = await t
+      .select({ id: webhookEvents.id, provider: webhookEvents.provider, status: webhookEvents.status, attempts: webhookEvents.attempts, error: webhookEvents.error, receivedAt: webhookEvents.receivedAt, nextAttemptAt: webhookEvents.nextAttemptAt })
+      .from(webhookEvents)
+      .where(and(eq(webhookEvents.organizationId, organizationId), inArray(webhookEvents.status, ["failed", "dead", "processing", "pending"])))
+      .orderBy(desc(webhookEvents.receivedAt))
+      .limit(10);
+    return { counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])) as Record<string, number>, problems };
+  });
+}
+
+/** Health-Check: Anzahl Ereignisse, die seit über `olderThanMs` unverarbeitet sind (über alle Praxen, nur Zähler). */
+export async function webhookBacklog(olderThanMs = 3600_000, organizationIds?: string[]): Promise<{ open: number; dead: number }> {
+  const cutoff = new Date(Date.now() - olderThanMs);
+  const orgs = organizationIds?.map((id) => ({ id })) ?? (await db.select({ id: organizations.id }).from(organizations));
+  let open = 0;
+  let dead = 0;
+  for (const { id: org } of orgs) {
+    const rows = await withOrg(org, (t) =>
+      t
+        .select({ status: webhookEvents.status, n: sql<number>`count(*)::int` })
+        .from(webhookEvents)
+        .where(and(eq(webhookEvents.organizationId, org), inArray(webhookEvents.status, ["pending", "processing", "failed", "dead"]), lt(webhookEvents.receivedAt, cutoff)))
+        .groupBy(webhookEvents.status),
+    );
+    for (const r of rows) {
+      if (r.status === "dead") dead += Number(r.n);
+      else open += Number(r.n);
+    }
+  }
+  return { open, dead };
 }
 
 /** Rechnungs-ID aus einer SumUp-Referenz: „<uuid>“ oder „<uuid>.<suffix>“ (Zahlungslinks brauchen eindeutige Referenzen). */

@@ -166,7 +166,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
 ];
 
 /** Anbieter ohne (umgesetzte) Signatur: Webhook nur mit zufälligem Token `?token=` */
-export const TOKEN_WEBHOOK_PROVIDERS: ProviderId[] = ["lexoffice", "sms", "voice_agent"];
+export const TOKEN_WEBHOOK_PROVIDERS: ProviderId[] = ["lexoffice", "sms"];
 /** Anbieter mit HMAC-Signatur: Geheimnis ist Pflicht */
 export const HMAC_WEBHOOK_SECRET: Partial<Record<ProviderId, string>> = { sumup: "webhookSecret", whatsapp: "appSecret" };
 
