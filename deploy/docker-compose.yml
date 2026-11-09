@@ -181,6 +181,15 @@ services:
           else
             echo "$$(date -Iseconds) KIM-Abruf fehlgeschlagen"
           fi
+          # Podologie-News alle 6 Stunden (öffentliche Feeds, keine Personendaten)
+          LAST=$$(cat /status/cron-news.last 2>/dev/null || echo 0)
+          if [ $$(( $$(date +%s) - LAST )) -ge 21600 ]; then
+            if curl -fsS -m 300 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/news >/dev/null; then
+              date +%s > /status/cron-news.last
+            else
+              echo "$$(date -Iseconds) News-Abruf fehlgeschlagen"
+            fi
+          fi
         done
     depends_on:
       app: { condition: service_healthy }
