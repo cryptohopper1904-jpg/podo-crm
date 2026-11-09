@@ -3,6 +3,7 @@
  * Läuft im migrate-Container NACH scripts/migrate.ts (als DB-Eigentümer). Idempotent – siehe src/lib/bootstrap.ts.
  *   BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_NAME / BOOTSTRAP_ADMIN_PASSWORD
  *   BOOTSTRAP_PRACTICE_JSON (Pfad oder JSON) / BOOTSTRAP_PRACTICE_OWNER_PASSWORD
+ *   BOOTSTRAP_ADMIN_DEMO=false → keine „Demo-Praxis (Beispieldaten)“ für den Plattform-Admin (Standard: an)
  *   BOOTSTRAP_STRICT=true → Konfigurationsfehler lassen den Container fehlschlagen (Standard: nur Warnung,
  *   damit die App trotzdem startet).
  */
@@ -22,7 +23,7 @@ async function main() {
   const pool = new Pool({ connectionString: url });
   try {
     const r = await runBootstrap(drizzle(pool, { schema }), env);
-    console.log(`Bootstrap: Plattform-Admin ${r.admin}, Praxis ${r.practice}${r.practiceSlug ? ` (${r.practiceSlug})` : ""}.`);
+    console.log(`Bootstrap: Plattform-Admin ${r.admin}, Praxis ${r.practice}${r.practiceSlug ? ` (${r.practiceSlug})` : ""}, Demo-Praxis ${r.demo}.`);
     for (const w of r.warnings) console.warn(`Bootstrap-Hinweis: ${w}`);
   } finally {
     await pool.end();

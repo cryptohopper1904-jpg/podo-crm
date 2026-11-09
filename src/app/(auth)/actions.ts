@@ -16,6 +16,8 @@ import { TWO_FACTOR_SETUP_PATH, twoFactorRequired } from "@/lib/auth/two-factor"
 import type { Role } from "@/lib/auth/permissions";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
+import { isDemoPractice } from "@/lib/demo-practice";
+import { PLATFORM_TARGET } from "@/lib/org-switcher";
 
 export type FormState = { error?: string; ok?: string } | undefined;
 
@@ -53,11 +55,15 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
     await audit({ userId: user.id, action: "login.failed" });
     return { error: generic };
   }
-  const [m] = await db
-    .select()
+  const all = await db
+    .select({ organizationId: memberships.organizationId, role: memberships.role, settings: organizations.settings })
     .from(memberships)
+    .innerJoin(organizations, eq(organizations.id, memberships.organizationId))
     .where(and(eq(memberships.userId, user.id), eq(memberships.active, true)))
-    .limit(1);
+    .orderBy(memberships.createdAt);
+  // Plattform-Admins starten nie in einer Demo-Praxis (Bootstrap), sondern in der Plattform-Konsole –
+  // die Demo-Praxis öffnen sie über „Demo-Praxis öffnen“ bzw. den Praxis-Wechsel.
+  const m = user.isPlatformAdmin ? all.find((x) => !isDemoPractice(x.settings)) : all[0];
   // Plattform-Admin ohne Praxis (z. B. per BOOTSTRAP_ADMIN_* angelegt): Sitzung ohne Praxis – nur Plattform-Konsole
   // (die ihrerseits aktive 2FA verlangt). Ohne 2FA geht es direkt zur Einrichtung der 2FA.
   if (!m && !user.isPlatformAdmin) return { error: generic };
@@ -67,8 +73,7 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   if (user.totpEnabled) redirect("/login/2fa");
   // Pflicht-2FA (Inhaber:in, Plattform-Admin, ggf. alle Rollen der Praxis): Anmeldung erlaubt, aber erst nach
   // Einrichtung Zugriff auf die Praxis (Gesamt-Review H1, src/lib/auth/two-factor.ts)
-  const [org] = m ? await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, m.organizationId)).limit(1) : [];
-  const required = twoFactorRequired({ role: (m?.role as Role | undefined) ?? null, isPlatformAdmin: user.isPlatformAdmin, orgSettings: org?.settings });
+  const required = twoFactorRequired({ role: (m?.role as Role | undefined) ?? null, isPlatformAdmin: user.isPlatformAdmin, orgSettings: m?.settings });
   if (required) await audit({ organizationId: m?.organizationId ?? null, userId: user.id, action: "2fa.setup_required" });
   redirect(required ? TWO_FACTOR_SETUP_PATH : "/heute");
 }
@@ -235,11 +240,23 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   redirect("/willkommen");
 }
 
-/** Wechselt die aktive Praxis (für Nutzer mit mehreren Mitgliedschaften). */
+/**
+ * Wechselt die aktive Praxis (für Nutzer mit mehreren Mitgliedschaften). Plattform-Admins mit 2FA können mit
+ * organizationId = "plattform" in eine Sitzung ohne Praxis (nur Plattform-Konsole) wechseln.
+ */
 export async function switchOrganizationAction(form: FormData) {
   const row = await getSession();
   if (!row || !row.session.verified) redirect("/login");
   const orgId = String(form.get("organizationId") ?? "");
+  if (orgId === PLATFORM_TARGET) {
+    if (!row.user.isPlatformAdmin || !row.user.totpEnabled) redirect("/heute");
+    if (row.session.organizationId) {
+      if (!(await rotateSession(row.session.id, row.user.id, null))) redirect("/login");
+      await audit({ userId: row.user.id, action: "organization.switched", meta: { to: "platform", from: row.session.organizationId } });
+    }
+    redirect("/plattform");
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orgId)) redirect("/heute");
   const [m] = await db
     .select()
     .from(memberships)

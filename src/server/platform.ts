@@ -6,6 +6,7 @@ import { appointments, auditLog, memberships, organizations, patients, supportGr
 import { getSession, requestMeta } from "@/lib/auth/session";
 import { isPlanId, PLANS, voiceAddonActive, type PlanId } from "@/lib/plans";
 import { websiteAddonActive } from "@/lib/website";
+import { isDemoPractice } from "@/lib/demo-practice";
 
 /**
  * Plattform-Konsole (SaaS-Betreiber). Zugang NUR für users.is_platform_admin MIT aktiver 2FA – sonst 404.
@@ -34,6 +35,8 @@ export type PracticeOverview = {
   voiceAddon: boolean;
   /** Praxis-Website als Zusatzmodul gebucht (organizations.settings.websiteAddon) */
   websiteAddon: boolean;
+  /** Demo-Praxis mit erfundenen Daten (organizations.settings.demo, Bootstrap) */
+  demo: boolean;
   /** Praxis-Inhaber:innen (Konto, kein Kundendatum) – für „Passwort-Reset senden“ */
   owners: { id: string; name: string; email: string }[];
 };
@@ -82,6 +85,7 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       activeGrantForMe: c.grant,
       voiceAddon: voiceAddonActive(o.settings),
       websiteAddon: websiteAddonActive(o.settings),
+      demo: isDemoPractice(o.settings),
       owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),
     });
   }

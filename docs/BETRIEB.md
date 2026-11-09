@@ -7,7 +7,7 @@ Für alle, die PodoCRM auf einem eigenen Server betreiben. Jeder Abschnitt ist e
 | Update | `bash /opt/podo-crm/deploy/update.sh` | bei neuen Versionen |
 | Probelauf Update | `bash /opt/podo-crm/deploy/update.sh --dry-run` | vor jedem Update |
 | Automatisches Update | `bash /opt/podo-crm/deploy/install-autoupdate.sh` (Timer `podo-update.timer`, täglich 03:30 Europe/Berlin + 10 min nach Boot, `update.sh --auto` gegen `main`, Log `/var/log/podo-update.log`; entfernen mit `--remove`) | einmalig |
-| Bootstrap ohne Shell | `BOOTSTRAP_ADMIN_*` / `BOOTSTRAP_PRACTICE_JSON` + `BOOTSTRAP_PRACTICE_OWNER_PASSWORD` in `deploy/.env` (siehe `.env.example`, `deploy/cloud/hetzner-user-data.sh`); läuft idempotent im migrate-Container, Passwörter danach entfernen | Erstinstallation |
+| Bootstrap ohne Shell | `BOOTSTRAP_ADMIN_*` / `BOOTSTRAP_PRACTICE_JSON` + `BOOTSTRAP_PRACTICE_OWNER_PASSWORD` in `deploy/.env` (siehe `.env.example`, `deploy/cloud/hetzner-user-data.sh`); läuft idempotent im migrate-Container, Passwörter danach entfernen. Der Plattform-Admin erhält zusätzlich die „Demo-Praxis (Beispieldaten)“ (erfundene Daten, Tarif intern; abschalten mit `BOOTSTRAP_ADMIN_DEMO=false`) | Erstinstallation |
 | Wiederherstellung testen | `bash /opt/podo-crm/deploy/restore-test.sh` | **einmal im Quartal** |
 | Backup einspielen | `bash /opt/podo-crm/deploy/restore.sh --db … [--files …]` | Notfall |
 | Zustand prüfen | `curl -H "Authorization: Bearer $TOKEN" https://DOMAIN/api/health/deep` | Monitoring, alle 5 min |

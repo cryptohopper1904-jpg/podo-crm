@@ -9,6 +9,9 @@ import { withOrg } from "@/db";
 import { messages } from "@/db/schema";
 import { getAuth, getSession, requireAuth } from "@/lib/auth/session";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
+import { OrgSwitcher } from "@/components/org-switcher";
+import { loadSwitcherModel } from "@/server/org-switcher";
+import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
 
 /**
@@ -16,13 +19,14 @@ import { logoutAction } from "../(auth)/actions";
  * die Plattform-Konsole. Alle anderen Seiten prüfen selbst requireAuth() und leiten mangels Praxis zum Login,
  * das wiederum zur Konsole bzw. zur 2FA-Einrichtung weiterleitet. Die Konsole verlangt aktive 2FA.
  */
-function PlatformOnlyShell({ name, totpEnabled, children }: { name: string; totpEnabled: boolean; children: React.ReactNode }) {
+function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: string; totpEnabled: boolean; switcher: SwitcherModel | null; children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
       <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
         <Link href="/plattform"><Logo /></Link>
         <span className="hidden text-sm text-muted sm:inline">Plattform-Konsole · {name}</span>
         <div className="ml-auto flex items-center gap-2">
+          {switcher?.show ? <OrgSwitcher model={{ ...switcher, platformLink: false }} /> : null}
           <ThemeToggle />
           <form action={logoutAction}>
             <button type="submit" aria-label="Abmelden" title="Abmelden" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
@@ -48,7 +52,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (!(await getAuth())) {
     const row = await getSession();
     if (row?.session.verified && !row.session.organizationId && row.user.isPlatformAdmin) {
-      return <PlatformOnlyShell name={row.user.name} totpEnabled={row.user.totpEnabled}>{children}</PlatformOnlyShell>;
+      const switcher = row.user.totpEnabled
+        ? await loadSwitcherModel({ userId: row.user.id, currentOrgId: null, isPlatformAdmin: true, totpEnabled: true, support: false })
+        : null;
+      return <PlatformOnlyShell name={row.user.name} totpEnabled={row.user.totpEnabled} switcher={switcher}>{children}</PlatformOnlyShell>;
     }
   }
   const auth = await requireAuth();
@@ -65,6 +72,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (auth.can("finance.read")) allowed.push("auswertung");
   if (auth.can("settings.manage")) allowed.push("einstellungen");
   if (auth.user.isPlatformAdmin && auth.user.totpEnabled && !auth.support) allowed.push("plattform");
+
+  const switcher = await loadSwitcherModel({
+    userId: auth.user.id,
+    currentOrgId: auth.organization.id,
+    isPlatformAdmin: auth.user.isPlatformAdmin,
+    totpEnabled: auth.user.totpEnabled,
+    support: !!auth.support,
+  });
 
   let unread = 0;
   if (auth.can("messages.read")) {
@@ -104,6 +119,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             />
           </form>
           <div className="ml-auto flex items-center gap-2 md:ml-0">
+            <OrgSwitcher model={switcher} />
             <ThemeToggle />
             <form action={logoutAction}>
               <button

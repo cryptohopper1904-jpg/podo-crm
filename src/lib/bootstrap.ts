@@ -9,8 +9,12 @@
  *  2) Praxis (BOOTSTRAP_PRACTICE_JSON = Pfad oder JSON-Text; Passwort der Inhaber:in NUR aus
  *     BOOTSTRAP_PRACTICE_OWNER_PASSWORD, nie aus der Datei) → Praxis (Testphase 30 Tage), Inhaber:in,
  *     Leistungen, Einstellungen. Idempotent über den slug: existiert er, wird nichts verändert.
+ *  3) Demo-Praxis für den Plattform-Admin (Standard AN, aus mit BOOTSTRAP_ADMIN_DEMO=false): Praxis
+ *     „Demo-Praxis (Beispieldaten)“ (slug demo-praxis, Tarif „internal“ → läuft nie ab, settings.demo = true)
+ *     mit den ERFUNDENEN Beispieldaten aus src/lib/demo-data.ts; der Admin wird aktive:r Inhaber:in.
+ *     Existiert die Praxis, wird nur die Mitgliedschaft sichergestellt. Andere Praxen werden nie verändert.
  *
- * Nur öffentliche Geschäftsangaben – keine Patientendaten.
+ * Nur öffentliche Geschäftsangaben bzw. erfundene Beispieldaten – keine echten Patientendaten.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -19,6 +23,10 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { z } from "zod";
 import * as schema from "../db/schema";
 import { hashPassword, passwordProblem } from "./auth/password";
+import { DEMO_PRACTICE_FIELDS, seedDemoPracticeData } from "./demo-data";
+import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-practice";
+
+export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
 import { seedIntegrationDefaults } from "./org-defaults";
 import { PLANS, TRIAL_DAYS } from "./plans";
 import { LIMITS } from "./website";
@@ -78,8 +86,11 @@ export type BootstrapResult = {
   admin: "created" | "exists" | "promoted" | "skipped";
   practice: "created" | "exists" | "skipped";
   practiceSlug?: string;
+  /** Demo-Praxis des Plattform-Admins: angelegt / vorhanden (Mitgliedschaft sichergestellt) / übersprungen */
+  demo: "created" | "exists" | "skipped";
   warnings: string[];
 };
+
 
 export class BootstrapError extends Error {
   constructor(message: string) {
@@ -265,10 +276,66 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
   return { practice: "created", practiceSlug: slug };
 }
 
-/** Führt beide Schritte aus. Wirft BootstrapError bei ungültiger Konfiguration. */
+async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<BootstrapResult["demo"]> {
+  const email = env.BOOTSTRAP_ADMIN_EMAIL?.trim().toLowerCase();
+  if (!email || env.BOOTSTRAP_ADMIN_DEMO?.trim().toLowerCase() === "false") return "skipped";
+  const [admin] = await db.select({ id: schema.users.id, isPlatformAdmin: schema.users.isPlatformAdmin }).from(schema.users).where(eq(schema.users.email, email));
+  if (!admin?.isPlatformAdmin) return "skipped";
+  return db.transaction(async (tx) => {
+    // gleichzeitige Läufe serialisieren
+    await tx.execute(sql`select pg_advisory_xact_lock(4711003)`);
+    const [existing] = await tx
+      .select({ id: schema.organizations.id, settings: schema.organizations.settings })
+      .from(schema.organizations)
+      .where(eq(schema.organizations.slug, DEMO_PRACTICE_SLUG));
+    let orgId: string;
+    let result: BootstrapResult["demo"];
+    if (existing) {
+      // Slug von einer echten Praxis belegt → nichts anfassen
+      if (!isDemoPractice(existing.settings)) {
+        warnings.push(`Slug „${DEMO_PRACTICE_SLUG}“ gehört zu einer Praxis ohne Demo-Kennzeichen – Demo-Praxis übersprungen.`);
+        return "skipped";
+      }
+      orgId = existing.id;
+      result = "exists";
+    } else {
+      const [org] = await tx
+        .insert(schema.organizations)
+        .values({
+          name: DEMO_PRACTICE_NAME,
+          slug: DEMO_PRACTICE_SLUG,
+          ...DEMO_PRACTICE_FIELDS,
+          plan: "internal",
+          subscriptionStatus: "active",
+          trialEndsAt: null,
+          seats: 1,
+          settings: { demo: true, bootstrap: { source: "env-demo", at: new Date().toISOString() } },
+        })
+        .returning({ id: schema.organizations.id });
+      orgId = org.id;
+      result = "created";
+    }
+    const [m] = await tx
+      .select({ id: schema.memberships.id, role: schema.memberships.role, active: schema.memberships.active })
+      .from(schema.memberships)
+      .where(and(eq(schema.memberships.organizationId, orgId), eq(schema.memberships.userId, admin.id)));
+    if (!m) await tx.insert(schema.memberships).values({ organizationId: orgId, userId: admin.id, role: "owner" });
+    else if (!m.active || m.role !== "owner") await tx.update(schema.memberships).set({ active: true, role: "owner" }).where(eq(schema.memberships.id, m.id));
+    if (result === "created") {
+      await seedDemoPracticeData(tx, orgId, admin.id);
+      await tx.insert(schema.auditLog).values({ organizationId: orgId, userId: admin.id, action: "bootstrap.demo_practice", entity: "organization", entityId: orgId, meta: { created: true } });
+    } else if (!m || !m.active || m.role !== "owner") {
+      await tx.insert(schema.auditLog).values({ organizationId: orgId, userId: admin.id, action: "bootstrap.demo_membership", entity: "organization", entityId: orgId, meta: {} });
+    }
+    return result;
+  });
+}
+
+/** Führt alle Schritte aus. Wirft BootstrapError bei ungültiger Konfiguration. */
 export async function runBootstrap(db: Db, env: Env = process.env): Promise<BootstrapResult> {
   const warnings: string[] = [];
   const admin = await bootstrapAdmin(db, env, warnings);
   const practice = await bootstrapPractice(db, env, warnings);
-  return { admin, ...practice, warnings };
+  const demo = await bootstrapDemo(db, env, warnings);
+  return { admin, ...practice, demo, warnings };
 }
