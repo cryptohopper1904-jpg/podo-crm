@@ -60,7 +60,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   }
   const auth = await requireAuth();
   const allowed: NavKey[] = ["heute"];
-  if (auth.can("appointments.read")) allowed.push("kalender");
+  if (auth.can("appointments.read")) allowed.push("kalender", "touren");
   if (auth.can("patients.read")) allowed.push("kunden", "verordnungen", "pflegeheime");
   if (auth.can("medical.write")) allowed.push("doku");
   if (auth.can("messages.read")) allowed.push("posteingang", "telefon", "bewertungen");

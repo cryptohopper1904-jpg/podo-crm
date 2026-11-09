@@ -70,6 +70,12 @@ services:
       TRANSCRIPTION_BASE_URL:
       TRANSCRIPTION_API_KEY:
       TRANSCRIPTION_MODEL:
+      # Touren/Fahrtenbuch: Routing (osrm|ors|off) und Geokodierung (Photon)
+      ROUTING_PROVIDER:
+      OSRM_URL:
+      ORS_API_KEY:
+      ORS_URL:
+      PHOTON_URL:
       TSE_PROVIDER:
       FISKALY_API_KEY:
       FISKALY_API_SECRET:
