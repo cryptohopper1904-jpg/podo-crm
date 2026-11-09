@@ -7,7 +7,9 @@ import { integrationConnections } from "@/db/schema";
 import { STATUS_LABEL } from "@/integrations/catalog";
 import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
 import { isMockMode } from "@/integrations/registry";
+import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { dateTimeDe } from "@/lib/format";
 import { TI_ITEM_STATES, TI_ITEMS, TI_STATE_LABEL, tiProgress } from "@/lib/ti-checklist";
 import { loadConnection } from "@/server/integrations";
@@ -21,6 +23,24 @@ const tone = { done: "primary", requested: "info", open: "neutral" } as const;
 export default async function TiSettingsPage() {
   const auth = await requireAuth("settings.manage");
   const org = auth.organization.id;
+  if (!feature(auth.organization, "ti")) {
+    // nur Privat-/Selbstzahler: TI wird nicht gebraucht; ist KIM schon eingerichtet, bleibt ein kurzer Hinweis
+    const kimConn = await loadConnection(org, KIM_CONNECTION_PROVIDER);
+    return (
+      <div className="flex flex-col gap-4">
+        <HiddenAreaNotice area="ti" />
+        {kimConn && kimConn.status !== "disconnected" ? (
+          <Card>
+            <CardTitle action={<Badge tone={kimConn.status === "connected" ? "primary" : "neutral"}>{STATUS_LABEL[kimConn.status]}</Badge>}>KIM ist eingerichtet</CardTitle>
+            <p className="text-sm text-muted">
+              Die KIM-Verbindung bleibt bestehen und wird weiter im Posteingang abgerufen. Zugangsdaten ändern oder trennen unter{" "}
+              <Link className="underline" href="/einstellungen/schnittstellen">Einstellungen → Schnittstellen → KIM</Link>.
+            </p>
+          </Card>
+        ) : null}
+      </div>
+    );
+  }
   const ti = await loadTiSettings(auth);
   const progress = tiProgress(ti);
   const kim = await loadConnection(org, KIM_CONNECTION_PROVIDER);

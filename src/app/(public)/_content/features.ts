@@ -49,8 +49,9 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Eigene Buchungsseite für Selbstzahler-Termine und eigene Praxis-Website" },
       { text: "Kundenportal: Patient:innen buchen selbst und verschieben bis 24 h vorher" },
       { text: "Warteliste: Bei einer Absage bekommen passende Personen einen Link – wer zuerst annimmt, rückt nach (nur mit Einwilligung)" },
-      { text: "Kalender-Abo (iCal) ohne Patientennamen" },
+      { text: "Kalender-Feed (iCal) ohne Patientennamen" },
       { text: "Doctolib: CSV-Import und Auswertung von Bestätigungsmails", status: "test" },
+      { text: "Kalender-Abo: Doctolib-Termine über Google Kalender (Docal.io/CalMedi) alle 5 Minuten übernehmen – nur lesend, nie automatisch zugeordnet", status: "test" },
     ],
   },
   {

@@ -5,6 +5,7 @@ import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui
 import { RiskBadges } from "@/components/risk-badges";
 import { PortalLinkButton } from "@/components/portal-link-button";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { ageYears, dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { STATUS_LABEL } from "@/lib/patient-status";
 import { CONSENT_LABELS } from "@/lib/consents";
@@ -58,7 +59,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <LinkButton href={`/kunden/${p.id}/doku/neu`}><Stethoscope size={18} aria-hidden /> Behandlung dokumentieren</LinkButton>
           ) : null}
           <LinkButton href={`/kunden/${p.id}/anamnese`} variant="secondary"><ClipboardCheck size={18} aria-hidden /> Anamnese</LinkButton>
-          {auth.can("medical.read") ? (
+          {auth.can("medical.read") && feature(auth.organization, "verordnungen") ? (
             <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
           ) : null}
           {auth.can("appointments.write") ? (

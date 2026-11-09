@@ -8,6 +8,7 @@ import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
 import { testConnection } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { gkvGuard } from "@/lib/features";
 import { TI_ITEM_STATES, TI_ITEMS, type TiItemState } from "@/lib/ti-checklist";
 import { loadConnection, logSync } from "@/server/integrations";
 import { loadKimConnection } from "@/server/kim";
@@ -17,6 +18,8 @@ type State = { error?: string; ok?: string } | undefined;
 
 export async function saveTiChecklistAction(_: State, form: FormData): Promise<State> {
   const auth = await requireAuth("settings.manage");
+  const blocked = gkvGuard(auth.organization, "ti");
+  if (blocked) return blocked;
   const items: Record<string, { state: TiItemState; note: string }> = {};
   for (const i of TI_ITEMS) {
     const st = String(form.get(`state_${i.key}`) ?? "open");

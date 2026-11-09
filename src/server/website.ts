@@ -3,6 +3,7 @@ import { cache } from "react";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
+import { isPrivateOnly } from "@/lib/features";
 import { defaultServiceDescription, homeVisitAreas, openingHours, safeUrl, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
 /**
@@ -29,6 +30,8 @@ export type PublicSite = {
   privacy: string;
   showPrices: boolean;
   onlineBooking: boolean;
+  /** Praxis nur für Privatpatient:innen & Selbstzahler (src/lib/features.ts): Badge, keine Kassen-Hinweise */
+  privateOnly: boolean;
   openingHours: OpeningHour[];
   homeVisitAreas: string[];
   services: { name: string; description: string; durationMin: number; priceCents: number | null; category: string }[];
@@ -71,6 +74,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     privacy: w.privacy,
     showPrices: w.showPrices,
     onlineBooking: booking?.enabled !== false,
+    privateOnly: isPrivateOnly(o),
     openingHours: openingHours(settings),
     homeVisitAreas: homeVisitAreas(settings),
     services: svc.map((s) => ({

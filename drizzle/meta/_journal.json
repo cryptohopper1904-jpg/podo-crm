@@ -145,15 +145,36 @@
     {
       "idx": 20,
       "version": "7",
-      "when": 1794231211089,
-      "tag": "0020_routen",
+      "when": 1794231137070,
+      "tag": "0020_changelog",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "7",
-      "when": 1794231215555,
-      "tag": "0021_routen_security",
+      "when": 1794232064737,
+      "tag": "0021_kalender_abo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794232066122,
+      "tag": "0022_kalender_abo_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794232297111,
+      "tag": "0023_routen",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794232298359,
+      "tag": "0024_routen_security",
       "breakpoints": true
     }
   ]

@@ -10,6 +10,8 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { isOnboardingKey, nextStep, type OnboardingKey } from "@/lib/onboarding";
 import { isTemplateId, SERVICE_TEMPLATES } from "@/lib/service-templates";
+import { isBillingMode } from "@/lib/features";
+import { setBillingMode } from "@/server/features";
 
 export type WelcomeState = { error?: string; ok?: string } | undefined;
 
@@ -41,11 +43,14 @@ export async function savePracticeStepAction(_: WelcomeState, form: FormData): P
       street: opt, zip: opt, city: opt, phone: opt, email: opt, taxNumber: opt,
       state: z.string().length(2),
       smallBusiness: z.string().optional(),
+      billingMode: z.string().optional(),
     })
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben prüfen." };
-  const { smallBusiness, ...rest } = d.data;
+  const { smallBusiness, billingMode, ...rest } = d.data;
   await db.update(organizations).set({ ...rest, smallBusiness: smallBusiness === "on" }).where(eq(organizations.id, auth.organization.id));
+  // Praxis-Modus (src/lib/features.ts): nur Privat-/Selbstzahler oder mit Kassenzulassung
+  if (isBillingMode(billingMode)) await setBillingMode(auth, billingMode, "onboarding");
   await markDone(auth.organization.id, "practice");
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "onboarding.practice" });
   return goNext("practice");
@@ -64,6 +69,8 @@ export async function applyServiceTemplateAction(_: WelcomeState, form: FormData
       .values(rows.map((s) => ({ ...s, organizationId: org })))
       .onConflictDoNothing({ target: [services.organizationId, services.code] }),
   );
+  // Vorlage „Nur Selbstzahler“ → Praxis-Modus „nur Privat-/Selbstzahler“
+  if (tpl === "selfpay") await setBillingMode(auth, "private_only", "onboarding");
   await markDone(org, "services");
   await audit({ organizationId: org, userId: auth.user.id, action: "onboarding.services", meta: { template: tpl } });
   return goNext("services");

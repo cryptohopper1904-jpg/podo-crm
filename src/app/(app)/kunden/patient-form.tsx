@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import type { patients } from "@/db/schema";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { savePatientAction } from "./actions";
 
 type P = typeof patients.$inferSelect;
@@ -15,9 +16,16 @@ function toDe(iso?: string | null) {
   return `${d}.${m}.${y}`;
 }
 
-export function PatientForm({ patient }: { patient?: P }) {
+/** privateOnly: Praxis nur für Privat-/Selbstzahler (src/lib/features.ts) → Kassendaten eingeklappt und optional */
+export function PatientForm({ patient, privateOnly = false }: { patient?: P; privateOnly?: boolean }) {
   const [state, action, pending] = useActionState(savePatientAction, undefined);
   const r = patient?.riskFlags ?? {};
+  const kassenFields = (
+    <>
+      <Field label={privateOnly ? "Krankenkasse (optional)" : "Krankenkasse"}><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
+      <Field label={privateOnly ? "Versichertennummer (optional)" : "Versichertennummer"}><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} /></Field>
+    </>
+  );
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       {patient ? <input type="hidden" name="id" value={patient.id} /> : null}
@@ -51,8 +59,8 @@ export function PatientForm({ patient }: { patient?: P }) {
           <Field label="Vorname"><Input name="firstName" defaultValue={patient?.firstName ?? ""} autoComplete="off" /></Field>
           <Field label="Nachname *"><Input name="lastName" required defaultValue={patient?.lastName ?? ""} autoComplete="off" /></Field>
           <Field label="Geburtsdatum" hint="TT.MM.JJJJ"><Input name="birthDate" defaultValue={toDe(patient?.birthDate)} placeholder="01.02.1950" inputMode="numeric" /></Field>
-          <Field label="Straße" className="sm:col-span-2"><Input name="street" defaultValue={patient?.street ?? ""} /></Field>
-          <Field label="PLZ"><Input name="zip" defaultValue={patient?.zip ?? ""} inputMode="numeric" /></Field>
+          <Field label="Straße" className="sm:col-span-2"><AddressAutocomplete name="street" defaultValue={patient?.street ?? ""} placeholder="z. B. Friedrich-Herder-Str. 12" /></Field>
+          <Field label="PLZ"><ZipInput name="zip" defaultValue={patient?.zip ?? ""} /></Field>
           <Field label="Ort"><Input name="city" defaultValue={patient?.city ?? ""} /></Field>
           <Field label="Mobil"><Input name="phoneMobile" type="tel" defaultValue={patient?.phoneMobile ?? ""} /></Field>
           <Field label="Festnetz"><Input name="phoneLandline" type="tel" defaultValue={patient?.phoneLandline ?? ""} /></Field>
@@ -83,8 +91,12 @@ export function PatientForm({ patient }: { patient?: P }) {
               <option value="beihilfe">Beihilfe</option>
             </Select>
           </Field>
-          <Field label="Krankenkasse"><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
-          <Field label="Versichertennummer"><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} /></Field>
+          {privateOnly ? (
+            <details className="sm:col-span-2" open={!!(patient?.insurerName || patient?.insuranceNumber)}>
+              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-muted">Kassendaten (optional)</summary>
+              <div className="grid gap-4 sm:grid-cols-2">{kassenFields}</div>
+            </details>
+          ) : kassenFields}
           <Field label="Hausarzt"><Input name="gpName" defaultValue={patient?.gpName ?? ""} /></Field>
         </div>
       </Card>

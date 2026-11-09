@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
@@ -138,8 +139,9 @@ export default async function IntegrationsSettings() {
       })}
 
       <Card>
-        <CardTitle>Kalender-Abo (iCal)</CardTitle>
+        <CardTitle>Kalender-Feed (iCal, ausgehend)</CardTitle>
         <p className="mb-2 text-sm">Ihre Termine in Apple-, Google- oder Outlook-Kalender abonnieren. Der Feed enthält keine Namen – nur Initialen und Leistung.</p>
+        <p className="mb-2 text-sm text-muted">Doctolib- oder Google-Termine <em>in</em> PodoHero übernehmen: <Link href="/einstellungen/kalender-abo" className="font-semibold underline">Einstellungen → Kalender-Abo</Link>.</p>
         {feedUrl ? <code className="block break-all rounded-xl bg-surface-2 p-3 text-xs">{feedUrl}</code> : <p className="text-sm text-danger">APP_ENCRYPTION_KEY fehlt – Feed nicht verfügbar.</p>}
         <p className="mt-2 text-xs text-muted">Den Link wie ein Passwort behandeln und nicht weitergeben.</p>
       </Card>

@@ -7,6 +7,7 @@ import { media, patients, recordAddenda, treatmentRecords, users } from "@/db/sc
 import { Badge, Button, Card, FormSuccess, Textarea } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { dateTimeDe, fullName } from "@/lib/format";
 import { BRACE_ACTION_LABEL, MEDIA_PURPOSE_LABEL } from "@/lib/labels";
 import { addAddendumAction } from "../actions";
@@ -37,7 +38,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   const rows: [string, string | null][] = [
     ["Nagelspange", st.braceAction && st.braceAction !== "none" ? `${BRACE_ACTION_LABEL[st.braceAction] ?? st.braceAction}${st.braceChange ? ` – Wechsel: ${st.braceChange}` : ""}` : null],
     ["Durchgeführte Behandlung", r.servicesText],
-    ["Verordnung", r.prescriptionId ? "Einheit auf GKV-Verordnung gebucht" : null],
+    ["Verordnung", r.prescriptionId && feature(auth.organization, "verordnungen") ? "Einheit auf GKV-Verordnung gebucht" : null],
     ["Befund", r.findings],
     ["Reaktion / Besonderheiten", r.reaction],
     ["Material", r.material],

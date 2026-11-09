@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
+import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { Button, Card, Checkbox, Field, Input, LinkButton, Select } from "@/components/ui";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
@@ -8,6 +9,7 @@ import { denyAccess, requireAuth } from "@/lib/auth/session";
 import { STATES } from "@/lib/holidays";
 import { currentStep, ONBOARDING_STEPS, stepBySlug, type OnboardingProgress } from "@/lib/onboarding";
 import { SERVICE_TEMPLATES } from "@/lib/service-templates";
+import { isPrivateOnly, privateOnlyNote } from "@/lib/features";
 import { inviteMemberAction } from "../einstellungen/actions";
 import { applyServiceTemplateAction, completeStepAction, savePracticeStepAction } from "./actions";
 
@@ -29,6 +31,7 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
   const [org] = await db.select().from(organizations).where(eq(organizations.id, auth.organization.id));
   const progress = (org.onboarding ?? {}) as OnboardingProgress;
   const step = stepBySlug(schritt) ?? currentStep(progress);
+  const privateOnly = isPrivateOnly(org);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -56,8 +59,8 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
             <ActionForm action={savePracticeStepAction} submit="Speichern und weiter">
               <Field label="Name der Praxis"><Input name="name" required defaultValue={org.name} /></Field>
               <div className="grid gap-4 sm:grid-cols-3">
-                <Field label="Straße" className="sm:col-span-3"><Input name="street" defaultValue={org.street ?? ""} /></Field>
-                <Field label="PLZ"><Input name="zip" defaultValue={org.zip ?? ""} inputMode="numeric" /></Field>
+                <Field label="Straße" className="sm:col-span-3"><AddressAutocomplete name="street" defaultValue={org.street ?? ""} /></Field>
+                <Field label="PLZ"><ZipInput name="zip" defaultValue={org.zip ?? ""} /></Field>
                 <Field label="Ort" className="sm:col-span-2"><Input name="city" defaultValue={org.city ?? ""} /></Field>
                 <Field label="Telefon"><Input name="phone" defaultValue={org.phone ?? ""} /></Field>
                 <Field label="E-Mail"><Input name="email" type="email" defaultValue={org.email ?? ""} /></Field>
@@ -69,6 +72,18 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
                 </Select>
               </Field>
               <Checkbox name="smallBusiness" defaultChecked={org.smallBusiness} label="Kleinunternehmerregelung (§ 19 UStG)" />
+              <fieldset className="flex flex-col gap-1">
+                <legend className="mb-1 text-sm font-semibold">Abrechnung</legend>
+                <label className="flex min-h-11 items-center gap-3 text-[15px]">
+                  <input type="radio" name="billingMode" value="private_only" defaultChecked={privateOnly} className="size-5 accent-[var(--primary)]" />
+                  Privat &amp; Selbstzahler (ohne Kassenzulassung)
+                </label>
+                <label className="flex min-h-11 items-center gap-3 text-[15px]">
+                  <input type="radio" name="billingMode" value="with_gkv" defaultChecked={!privateOnly} className="size-5 accent-[var(--primary)]" />
+                  mit Kassenzulassung (GKV-Verordnungen)
+                </label>
+                <p className="text-sm text-muted">{privateOnlyNote()}</p>
+              </fieldset>
             </ActionForm>
           </>
         ) : step.key === "services" ? (
@@ -76,9 +91,9 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
             <h2 className="mb-4 font-display text-xl font-semibold">Leistungen</h2>
             <p className="mb-4 text-sm text-muted">Wähle eine Vorlage. Bereits vorhandene Leistungen und eigene Preise bleiben unverändert; alles lässt sich später unter Einstellungen → Leistungen anpassen.</p>
             <ActionForm action={applyServiceTemplateAction} submit="Vorlage übernehmen und weiter">
-              {Object.entries(SERVICE_TEMPLATES).map(([id, t]) => (
+              {Object.entries(SERVICE_TEMPLATES).filter(([id]) => !privateOnly || id !== "gkv").map(([id, t]) => (
                 <label key={id} className="flex cursor-pointer gap-3 rounded-xl border border-border p-4 has-[:checked]:border-primary has-[:checked]:bg-primary-soft">
-                  <input type="radio" name="template" value={id} defaultChecked={id === "standard"} className="mt-1 size-5 accent-[var(--primary)]" />
+                  <input type="radio" name="template" value={id} defaultChecked={id === (privateOnly ? "selfpay" : "standard")} className="mt-1 size-5 accent-[var(--primary)]" />
                   <span><span className="block font-semibold">{t.label}</span><span className="text-sm text-muted">{t.description}</span></span>
                 </label>
               ))}

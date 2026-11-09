@@ -28,6 +28,7 @@ import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-p
 
 export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
 import { seedIntegrationDefaults } from "./org-defaults";
+import { BILLING_MODES, type BillingMode } from "./features";
 import { PLANS, TRIAL_DAYS } from "./plans";
 import { LIMITS } from "./website";
 
@@ -49,6 +50,8 @@ export const practiceSpecSchema = z
     email: z.string().trim().toLowerCase().email(),
     website: z.string().url().optional(),
     openingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    /** Praxis-Modus (src/lib/features.ts): „private_only“ blendet alle Kassen-Themen aus */
+    billingMode: z.enum(BILLING_MODES).optional(),
     owner: z
       .object({
         email: z.string().trim().toLowerCase().email(),
@@ -86,6 +89,8 @@ export type BootstrapResult = {
   admin: "created" | "exists" | "promoted" | "skipped";
   practice: "created" | "exists" | "skipped";
   practiceSlug?: string;
+  /** billingMode aus der Datei auf eine vorhandene Praxis angewendet (nur, wenn dort noch keiner gesetzt war) */
+  billingMode?: "set" | "kept";
   /** Demo-Praxis des Plattform-Admins: angelegt / vorhanden (Mitgliedschaft sichergestellt) / übersprungen */
   demo: "created" | "exists" | "skipped";
   warnings: string[];
@@ -172,7 +177,7 @@ async function bootstrapAdmin(db: Db, env: Env, warnings: string[]): Promise<Boo
   return "created";
 }
 
-async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<Pick<BootstrapResult, "practice" | "practiceSlug">> {
+async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<Pick<BootstrapResult, "practice" | "practiceSlug" | "billingMode">> {
   const value = env.BOOTSTRAP_PRACTICE_JSON;
   if (!value?.trim()) return { practice: "skipped" };
   const spec = loadPracticeSpec(value, env.BOOTSTRAP_CWD ?? process.cwd());
@@ -180,7 +185,10 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
   const slug = spec.slug ?? slugify(spec.name);
 
   const [existingOrg] = await db.select({ id: schema.organizations.id }).from(schema.organizations).where(eq(schema.organizations.slug, slug));
-  if (existingOrg) return { practice: "exists", practiceSlug: slug };
+  if (existingOrg) {
+    const billingMode = spec.billingMode ? await ensureBillingMode(db, existingOrg.id, spec.billingMode) : undefined;
+    return { practice: "exists", practiceSlug: slug, ...(billingMode ? { billingMode } : {}) };
+  }
 
   const [existingUser] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, spec.owner.email));
   let passwordHash: string | null = null;
@@ -224,6 +232,7 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
           ...(spec.website ? { websiteUrl: spec.website } : {}),
           ...(spec.openingDate ? { openingDate: spec.openingDate } : {}),
           ...(spec.practitioner ? { practitioner: spec.practitioner } : {}),
+          ...(spec.billingMode ? { billingMode: spec.billingMode } : {}),
           website: {
             enabled: false,
             claim: spec.websiteContent?.claim ?? "",
@@ -274,6 +283,21 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
   if (placeholders.length) warnings.push(`Platzhalter-Preise (0 €) – bitte unter Einstellungen → Leistungen prüfen: ${placeholders.join(", ")}`);
   if (!existingUser) warnings.push("Praxis-Inhaber:in angelegt – BOOTSTRAP_PRACTICE_OWNER_PASSWORD danach aus deploy/.env entfernen; 2FA unter Einstellungen → Sicherheit einrichten.");
   return { practice: "created", practiceSlug: slug };
+}
+
+/**
+ * billingMode idempotent auf eine vorhandene Praxis anwenden: nur setzen, wenn settings.billingMode noch FEHLT –
+ * eine spätere Änderung der Praxis in den Einstellungen wird nie überschrieben.
+ */
+async function ensureBillingMode(db: Db, orgId: string, mode: BillingMode): Promise<"set" | "kept"> {
+  const updated = await db
+    .update(schema.organizations)
+    .set({ settings: sql`coalesce(${schema.organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingMode', ${mode}::text)` })
+    .where(and(eq(schema.organizations.id, orgId), sql`not (coalesce(${schema.organizations.settings}, '{}'::jsonb) ? 'billingMode')`))
+    .returning({ id: schema.organizations.id });
+  if (!updated.length) return "kept";
+  await db.insert(schema.auditLog).values({ organizationId: orgId, action: "bootstrap.billing_mode", entity: "organization", entityId: orgId, meta: { to: mode } });
+  return "set";
 }
 
 async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<BootstrapResult["demo"]> {

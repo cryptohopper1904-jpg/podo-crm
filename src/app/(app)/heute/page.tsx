@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
+import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { OnboardingCard } from "@/components/onboarding-card";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
+import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
+import { feature, isGkvArea } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, money, timeDe, weekdayLong } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { listAppointments } from "@/server/appointments";
+import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
 
@@ -24,8 +28,11 @@ function greeting() {
   return h < 11 ? "Guten Morgen" : h < 18 ? "Guten Tag" : "Guten Abend";
 }
 
-export default async function TodayPage() {
+export default async function TodayPage(props: PageProps<"/heute">) {
   const auth = await requireAuth();
+  // Direktaufruf eines ausgeblendeten Kassen-Bereichs (Weiterleitung aus src/server/features.ts)
+  const hiddenArea = (await props.searchParams).ausgeblendet;
+  const gkv = feature(auth.organization, "gkvBilling");
   const org = auth.organization.id;
   const today = berlinDateIso();
   const dayStart = berlinToUtc(today, "00:00");
@@ -51,6 +58,8 @@ export default async function TodayPage() {
     return { open, paidToday, newMsgs, openTasks, countersign: countersign[0]?.n ?? 0, integ, recent };
   });
   const active = appts.filter((r) => r.a.status !== "cancelled");
+  const overlaps = feedOverlapIds(appts);
+  const feedErrors = auth.can("integrations.manage") ? await failingCalendarFeeds(org) : [];
   const homeVisits = active.filter((r) => r.a.homeVisit).length;
   const holiday = holidayOn(today, auth.organization.state as StateCode);
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
@@ -67,6 +76,7 @@ export default async function TodayPage() {
         {auth.can("appointments.write") ? <LinkButton href="/kalender/neu">+ Termin</LinkButton> : null}
       </header>
 
+      {isGkvArea(hiddenArea) && !feature(auth.organization, hiddenArea) ? <HiddenAreaNotice area={hiddenArea} settingsLink={auth.can("settings.manage")} /> : null}
       <OnboardingCard auth={auth} />
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
 
@@ -80,7 +90,18 @@ export default async function TodayPage() {
       <div className="flex flex-wrap items-start gap-6">
         <Card className="min-w-0 flex-[3_1_480px]">
           <CardTitle action={<Link href="/kalender" className="text-sm font-semibold text-primary">Kalender</Link>}>Heute</CardTitle>
-          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} />)}
+          {overlaps.size ? (
+            <p className="mb-3 rounded-xl bg-accent-soft p-3 text-sm text-accent-soft-text">
+              <strong>Überschneidung:</strong> {overlaps.size} Termine heute überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in).
+            </p>
+          ) : null}
+          {feedErrors.length ? (
+            <p className="mb-3 rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
+              Kalender-Abo {feedErrors.map((f) => `„${f.label}“`).join(", ")}: letzter Abruf fehlgeschlagen –{" "}
+              <Link href="/einstellungen/kalender-abo" className="font-semibold underline">prüfen</Link>
+            </p>
+          ) : null}
+          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)}
         </Card>
 
         <div className="flex min-w-0 flex-[2_1_320px] flex-col gap-6">
@@ -112,7 +133,7 @@ export default async function TodayPage() {
           <Card>
             <CardTitle action={auth.can("integrations.manage") ? <Link href="/einstellungen/schnittstellen" className="text-sm font-semibold text-primary">Verwalten</Link> : null}>Schnittstellen</CardTitle>
             <div className="grid grid-cols-2 gap-2">
-              {stats.integ.map((i) => (
+              {stats.integ.filter((i) => gkv || i.provider !== "gkv_billing").map((i) => (
                 <div key={i.id} className="flex items-center gap-2 rounded-xl bg-bg px-3 py-2.5">
                   <span className={`size-2.5 rounded-full ${i.status === "connected" ? "bg-primary" : i.status === "error" ? "bg-danger" : i.status === "mock" ? "bg-[#e9b931]" : "bg-border-strong"}`} aria-hidden />
                   <span className="flex-1 text-sm font-medium">{PROVIDER_LABEL[i.provider] ?? i.provider}</span>

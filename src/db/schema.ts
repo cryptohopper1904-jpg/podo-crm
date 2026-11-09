@@ -14,7 +14,6 @@ import {
   bigserial,
   boolean,
   date,
-  doublePrecision,
   index,
   integer,
   jsonb,
@@ -26,6 +25,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  doublePrecision,
 } from "drizzle-orm/pg-core";
 
 const id = () => uuid("id").primaryKey().default(sql`gen_random_uuid()`);
@@ -57,6 +57,8 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
   "voice_agent",
   /** Kundenportal (Buchung/Verschieben per persönlichem Link, Nachrücker von der Warteliste) */
   "portal",
+  /** Kalender-Abo (iCal-Import) aus einem externen Kalender, der nicht Doctolib ist */
+  "extern",
 ]);
 export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", [
@@ -228,8 +230,15 @@ export const users = pgTable("users", {
   failedLogins: integer("failed_logins").notNull().default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** persönliche Einstellungen, z. B. zuletzt gesehene Neuigkeit (src/lib/changelog.ts) */
+  prefs: jsonb("prefs").$type<UserPrefs>().notNull().default({}),
   createdAt: createdAt(),
 });
+
+export type UserPrefs = {
+  /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
+  changelog?: { seenId?: string; mutedId?: string };
+};
 
 export const memberships = pgTable(
   "memberships",
@@ -259,6 +268,8 @@ export const sessions = pgTable(
     /** false bis 2FA bestätigt ist */
     verified: boolean("verified").notNull().default(true),
     totpFailures: integer("totp_failures").notNull().default(0),
+    /** Neuigkeiten-Popup in dieser Sitzung bereits gezeigt (einmal je Anmeldung) */
+    changelogShownAt: timestamp("changelog_shown_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     userAgent: text("user_agent"),
     ip: text("ip"),
@@ -1193,6 +1204,68 @@ export const voiceCalls = pgTable(
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("voice_calls_ext").on(t.organizationId, t.provider, t.externalId)],
+);
+
+// ───────────────────────── Kalender-Abo (iCal-Import) ─────────────────────────
+/**
+ * Abonnierte externe Kalender (z. B. Google-Kalender, in den Docal.io/CalMedi Doctolib-Termine spiegeln).
+ * Die private iCal-Adresse ist ein Zugangsgeheimnis: AES-256-GCM verschlüsselt (AAD = Praxis + Feed-ID).
+ */
+export const calendarFeeds = pgTable(
+  "calendar_feeds",
+  {
+    id: id(),
+    organizationId: orgId(),
+    label: text("label").notNull(),
+    /** verschlüsselte URL (src/lib/crypto.ts) */
+    urlEnc: text("url_enc").notNull(),
+    /** nicht geheimer Anzeigehinweis, z. B. „calendar.google.com/…/basic.ics“ */
+    urlHint: text("url_hint").notNull(),
+    therapistId: uuid("therapist_id").references(() => users.id, { onDelete: "set null" }),
+    /** „doctolib“ oder „extern“ */
+    source: appointmentSourceEnum("source").notNull().default("doctolib"),
+    active: boolean("active").notNull().default(true),
+    etag: text("etag"),
+    lastModified: text("last_modified"),
+    /** letzter ERFOLGREICHER Abruf */
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    /** Zähler des letzten Laufs (keine Personendaten) */
+    lastResult: jsonb("last_result").$type<Record<string, number>>(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("calendar_feeds_org").on(t.organizationId)],
+);
+
+/** Zuordnung Kalender-Ereignis (UID + Vorkommen) → Termin; Grundlage für idempotente Abgleiche. */
+export const calendarFeedEvents = pgTable(
+  "calendar_feed_events",
+  {
+    id: id(),
+    organizationId: orgId(),
+    feedId: uuid("feed_id")
+      .notNull()
+      .references(() => calendarFeeds.id, { onDelete: "cascade" }),
+    /** UID bzw. UID#Vorkommen (Serien) */
+    eventKey: text("event_key").notNull(),
+    /** null = Termin wurde in PodoHero gelöscht (wird nicht neu angelegt) */
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+    /** sha256 der Kalenderdaten des Ereignisses beim letzten Abruf */
+    hash: text("hash").notNull(),
+    /** sha256 der vom Abgleich gesetzten Terminfelder – weicht der Termin ab, wurde er in PodoHero geändert */
+    appliedHash: text("applied_hash").notNull(),
+    /** null | local_change (in PodoHero geändert, Kalender-Änderung nicht übernommen) | overlap (Überschneidung) | deleted_locally */
+    conflict: text("conflict"),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("calendar_feed_events_key").on(t.feedId, t.eventKey),
+    index("calendar_feed_events_appointment").on(t.organizationId, t.appointmentId),
+  ],
 );
 
 // ───────────────────────── Fahrten & Hausbesuchs-Touren ─────────────────────────

@@ -43,3 +43,16 @@ export function overallStatus(checks: Record<string, CheckResult>): "ok" | "warn
   if (s.includes("warn")) return "warn";
   return "ok";
 }
+
+/**
+ * Kalender-Abo (iCal-Import, Cron alle 5 min): Alter des letzten ERFOLGREICHEN Abrufs über alle aktiven Abos.
+ * Keine Abos → ok. Einzelne veraltete Abos (z. B. Adresse zurückgesetzt) → warn; alle veraltet → fail (Cron läuft nicht).
+ */
+export function evaluateCalendarFeeds(h: { active: number; stale: number; failing: number; oldestSuccess: Date | null }, nowMs = Date.now()): CheckResult {
+  if (h.active === 0) return { status: "ok", active: 0 };
+  const oldestAgeMinutes = h.oldestSuccess ? Math.round((nowMs - h.oldestSuccess.getTime()) / 60000) : null;
+  const base = { active: h.active, stale: h.stale, failing: h.failing, oldestAgeMinutes };
+  if (h.stale >= h.active) return { status: "fail", hint: "kein Kalender-Abo in den letzten 30 min erfolgreich abgerufen", ...base };
+  if (h.stale > 0 || h.failing > 0) return { status: "warn", hint: "einzelne Kalender-Abos veraltet oder fehlerhaft", ...base };
+  return { status: "ok", ...base };
+}
