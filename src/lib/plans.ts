@@ -50,10 +50,11 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     label: "Testphase",
     priceCents: 0,
     includedSeats: 2,
-    maxSeats: 2,
+    // Standard 2 Plätze; der Betreiber kann in der Plattform-Konsole für Testpraxen bis 10 freigeben
+    maxSeats: 10,
     features: FEATURES,
     voiceMinutesIncluded: 30,
-    description: `${TRIAL_DAYS} Tage alle Funktionen, bis zu 2 Personen`,
+    description: `${TRIAL_DAYS} Tage alle Funktionen, 2 Personen (auf Anfrage mehr)`,
   },
   starter: {
     label: "Starter",
@@ -156,7 +157,8 @@ export type Entitlements = {
 export function seatLimit(org: Pick<OrgBilling, "plan" | "seats">): number {
   const plan = isPlanId(org.plan) ? org.plan : "starter";
   const p = PLANS[plan];
-  if (plan === "trial") return p.includedSeats;
+  // Testphase: Standard 2 Plätze, vom Betreiber in der Plattform-Konsole bis maxSeats erweiterbar
+  if (plan === "trial") return Math.min(Math.max(org.seats, p.includedSeats), p.maxSeats ?? p.includedSeats);
   if (plan === "internal") return Infinity;
   const paid = Math.max(org.seats, p.includedSeats);
   return p.maxSeats === null ? paid : Math.min(paid, p.maxSeats);
