@@ -13,6 +13,7 @@ import { encryptJson } from "@/lib/crypto";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { readDecrypted, sniffMime } from "@/lib/storage";
 import { assertCan } from "./authz";
+import { gkvGuard } from "@/lib/features";
 import { logSync } from "./integrations";
 
 /** Je Praxis: Grenze pro Minute (Doppelklicks, Skripte) zusätzlich zur Stundenquote aus den Einstellungen. */
@@ -74,6 +75,8 @@ export type OcrSettingsInput = {
 export async function saveOcrSettings(auth: AuthContext, input: OcrSettingsInput): Promise<{ ok: string } | { error: string }> {
   assertCan(auth, "settings.manage");
   if (auth.role !== "owner" || auth.support) return { error: "Nur die Inhaber:in der Praxis kann die Verordnungs-OCR einrichten." };
+  const blocked = gkvGuard(auth.organization, "ocr");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const old = await loadOcrSettings(org);
   const next: OcrSettings = { ...old, enabled: input.enabled, mode: input.mode, imageStyle: input.imageStyle, perHour: input.perHour };
@@ -124,6 +127,8 @@ export async function extractPrescriptionFromMedia(
   input: { patientId: string; mediaId: string },
 ): Promise<{ suggestion: OcrSuggestion; mock: boolean } | { error: string }> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "ocr");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const settings = await loadOcrSettings(org);
   const blocker = ocrBlocker(settings);

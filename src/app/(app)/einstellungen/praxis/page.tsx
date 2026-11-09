@@ -6,7 +6,8 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { STATES } from "@/lib/holidays";
-import { savePracticeAction } from "../actions";
+import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
+import { saveBillingModeAction, savePracticeAction } from "../actions";
 
 export const metadata = { title: "Praxis" };
 
@@ -16,6 +17,15 @@ export default async function PracticeSettings() {
   const s = o.settings as { materialCostCents?: number; opening?: { from: string; to: string } };
   return (
     <div className="flex flex-col gap-6">
+    <Card>
+      <h2 className="mb-2 font-display text-lg font-semibold">Abrechnung</h2>
+      <ActionForm action={saveBillingModeAction}>
+        <div>
+          <Checkbox name="privateOnly" defaultChecked={isPrivateOnly(o)} label={PRIVATE_ONLY_LABEL} aria-describedby="private-only-note" />
+          <p id="private-only-note" className="ml-8 text-sm text-muted">{privateOnlyNote()}</p>
+        </div>
+      </ActionForm>
+    </Card>
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>

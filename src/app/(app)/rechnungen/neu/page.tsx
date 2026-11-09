@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Building2 } from "lucide-react";
 import { Button, Card, Field, Input, PageHeader, Select } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
+import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso } from "@/lib/format";
 import { careHomes, collectiveSuggestion } from "@/server/invoice-delivery";
 import { invoiceFormData } from "@/server/invoices";
@@ -67,7 +68,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           </form>
         </Card>
       ) : null}
-      <InvoiceForm key={suggestion ? `${suggestion.contact.id}-${month}` : "plain"} {...data} preselectPatientId={patient} preset={preset} />
+      <InvoiceForm key={suggestion ? `${suggestion.contact.id}-${month}` : "plain"} {...data} preselectPatientId={patient} preset={preset} privateOnly={isPrivateOnly(auth.organization)} />
     </div>
   );
 }

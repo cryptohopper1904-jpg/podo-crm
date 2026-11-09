@@ -16,9 +16,16 @@ function toDe(iso?: string | null) {
   return `${d}.${m}.${y}`;
 }
 
-export function PatientForm({ patient }: { patient?: P }) {
+/** privateOnly: Praxis nur für Privat-/Selbstzahler (src/lib/features.ts) → Kassendaten eingeklappt und optional */
+export function PatientForm({ patient, privateOnly = false }: { patient?: P; privateOnly?: boolean }) {
   const [state, action, pending] = useActionState(savePatientAction, undefined);
   const r = patient?.riskFlags ?? {};
+  const kassenFields = (
+    <>
+      <Field label={privateOnly ? "Krankenkasse (optional)" : "Krankenkasse"}><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
+      <Field label={privateOnly ? "Versichertennummer (optional)" : "Versichertennummer"}><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} /></Field>
+    </>
+  );
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       {patient ? <input type="hidden" name="id" value={patient.id} /> : null}
@@ -84,8 +91,12 @@ export function PatientForm({ patient }: { patient?: P }) {
               <option value="beihilfe">Beihilfe</option>
             </Select>
           </Field>
-          <Field label="Krankenkasse"><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
-          <Field label="Versichertennummer"><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} /></Field>
+          {privateOnly ? (
+            <details className="sm:col-span-2" open={!!(patient?.insurerName || patient?.insuranceNumber)}>
+              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-muted">Kassendaten (optional)</summary>
+              <div className="grid gap-4 sm:grid-cols-2">{kassenFields}</div>
+            </details>
+          ) : kassenFields}
           <Field label="Hausarzt"><Input name="gpName" defaultValue={patient?.gpName ?? ""} /></Field>
         </div>
       </Card>

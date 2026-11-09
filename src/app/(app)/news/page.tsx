@@ -5,6 +5,7 @@ import { Badge, Card, Empty, PageHeader, cx } from "@/components/ui";
 import { db } from "@/db";
 import { newsItems } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
+import { filterNewsForOrg } from "@/lib/features";
 import { dateDe } from "@/lib/format";
 import { isRelevantNews } from "@/lib/news-relevance";
 import { isPodiatrySourceName, NEWS_CATEGORIES } from "@/lib/news-sources";
@@ -13,7 +14,7 @@ import { refreshNewsAction } from "./actions";
 export const metadata = { title: "News für Podolog:innen" };
 
 export default async function NewsPage(props: PageProps<"/news">) {
-  await requireAuth();
+  const auth = await requireAuth();
   const sp = await props.searchParams;
   const category = typeof sp.kategorie === "string" && (NEWS_CATEGORIES as readonly string[]).includes(sp.kategorie) ? sp.kategorie : "";
   const all = await db
@@ -23,7 +24,8 @@ export default async function NewsPage(props: PageProps<"/news">) {
     .orderBy(desc(sql`coalesce(${newsItems.publishedAt}, ${newsItems.fetchedAt})`))
     .limit(200);
   // Sicherheitsnetz: Altbestände ohne Podologie-Bezug ausblenden, bis der nächste Abruf sie entfernt.
-  const rows = all.filter((n) => isRelevantNews(`${n.title} ${n.summary ?? ""}`, isPodiatrySourceName(n.source))).slice(0, 100);
+  const relevant = all.filter((n) => isRelevantNews(`${n.title} ${n.summary ?? ""}`, isPodiatrySourceName(n.source)));
+  const rows = filterNewsForOrg(auth.organization, relevant).slice(0, 100); // GKV-/Heilmittel-Meldungen bei „nur Privat“ ausblenden
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader

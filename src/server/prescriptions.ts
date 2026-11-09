@@ -5,6 +5,7 @@ import { withOrg, type Tx } from "@/db";
 import { billingBatches, media, patients, prescriptions, services, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { assertCan } from "./authz";
+import { gkvGuard } from "@/lib/features";
 import { neutralizeCsvRows } from "@/lib/csv-safe";
 import { parseImportData } from "@/integrations/ocr/schema";
 import type { AuthContext } from "@/lib/auth/session";
@@ -165,6 +166,8 @@ export async function savePrescription(
   opts: { origin?: PrescriptionOrigin; tx?: Tx } = {},
 ): Promise<{ id: string; warnings: string[]; afterCommit?: () => Promise<void> } | { error: string }> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "verordnungen");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const today = berlinDateIso();
   const positions = d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })).filter((p) => p.label || p.position);
@@ -240,6 +243,8 @@ export async function changePrescriptionStatus(
   input: { id: string; patientId: string; to: PrescriptionStatus; interruptionNote?: string | null },
 ): Promise<{ ok: true } | { error: string }> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "verordnungen");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const result = await withOrg(org, async (tx) => {
     const [vo] = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))).for("update");
@@ -257,8 +262,10 @@ export async function changePrescriptionStatus(
   return { ok: true };
 }
 
-export async function setCopaymentPaid(auth: AuthContext, input: { id: string; patientId: string; paid: boolean }) {
+export async function setCopaymentPaid(auth: AuthContext, input: { id: string; patientId: string; paid: boolean }): Promise<{ error: string } | undefined> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "copayment");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   await withOrg(org, (tx) =>
     tx.update(prescriptions).set({ copaymentPaidAt: input.paid ? new Date() : null }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))),
@@ -277,6 +284,8 @@ export async function listBillingBatches(auth: AuthContext) {
 /** Erstellt einen Abrechnungslauf aus abrechnungsreifen Verordnungen und markiert sie als abgerechnet. */
 export async function createBillingBatch(auth: AuthContext, ids: string[], opts: { partner: string; note?: string | null }): Promise<{ id: string; count: number } | { error: string }> {
   assertCan(auth, "invoices.write", "medical.read");
+  const blocked = gkvGuard(auth.organization, "gkvBilling");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   if (!ids.length) return { error: "Bitte mindestens eine Verordnung auswählen." };
   const result = await withOrg(org, async (tx) => {

@@ -7,6 +7,7 @@ import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { auditLog, memberships, organizations, sessions, supportGrants, users } from "@/db/schema";
 import { accessMode, type AccessInfo, type OrgBilling } from "@/lib/plans";
+import { billingModeOf, type BillingMode } from "@/lib/features";
 import { effectiveCan, isReadPermission, mutationAllowedWithoutPermission, pickActiveGrant, type SupportContext } from "./access";
 import { can, type Permission, type Role } from "./permissions";
 import { clientIpFrom } from "./client-ip";
@@ -134,7 +135,8 @@ export const getSession = cache(async () => {
 export type AuthContext = {
   sessionId: string;
   user: { id: string; email: string; name: string; totpEnabled: boolean; isPlatformAdmin: boolean };
-  organization: { id: string; name: string; slug: string; smallBusiness: boolean; state: string };
+  /** billingMode: Praxis-Modus aus settings.billingMode (src/lib/features.ts); fehlt → mit Kassenzulassung */
+  organization: { id: string; name: string; slug: string; smallBusiness: boolean; state: string; billingMode?: BillingMode };
   /** Tarif/Abo-Felder der Praxis */
   billing: OrgBilling;
   access: AccessInfo;
@@ -275,7 +277,7 @@ function build(row: SessionRow, org: typeof organizations.$inferSelect, role: Ro
   return {
     sessionId: row.session.id,
     user: { id: row.user.id, email: row.user.email, name: row.user.name, totpEnabled: row.user.totpEnabled, isPlatformAdmin: row.user.isPlatformAdmin },
-    organization: { id: org.id, name: org.name, slug: org.slug, smallBusiness: org.smallBusiness, state: org.state },
+    organization: { id: org.id, name: org.name, slug: org.slug, smallBusiness: org.smallBusiness, state: org.state, billingMode: billingModeOf(org.settings) },
     billing,
     access,
     readOnly,

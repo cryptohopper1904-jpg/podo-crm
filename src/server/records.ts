@@ -8,6 +8,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import type { Role } from "@/lib/auth/permissions";
 import { chainHash, treatmentContent } from "@/lib/records";
 import { assertCan } from "./authz";
+import { gkvGuard } from "@/lib/features";
 import { acceptsUnit, statusAfterUnit, type PrescriptionStatus } from "@/lib/rules/prescription";
 
 /**
@@ -158,6 +159,10 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
 /** Komfortfunktion: eigener Mandanten-Kontext + Audit. Gibt Fehlertext statt Exception zurück. */
 export async function createTreatmentRecord(auth: AuthContext, input: NewTreatment, auditMeta: Record<string, unknown> = {}): Promise<{ id: string } | { error: string }> {
   assertCan(auth, "medical.write");
+  if (input.prescriptionId) {
+    const blocked = gkvGuard(auth.organization, "verordnungen");
+    if (blocked) return blocked;
+  }
   const org = auth.organization.id;
   try {
     const rec = await withOrg(org, (tx) => insertTreatmentRecord(tx, { org, userId: auth.user.id, role: auth.role }, input));

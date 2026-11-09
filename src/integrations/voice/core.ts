@@ -133,7 +133,8 @@ export interface VoiceToolDeps {
   >;
   /** Nachricht in den Posteingang (keine Aktenzuordnung) */
   inbox(input: { subject: string; body: string; from: string | null }): Promise<void>;
-  practiceInfo(): Promise<{ name: string; address: string | null; phone: string | null; openingText: string }>;
+  /** billingNote: z. B. Hinweis „nur Privatpatient:innen & Selbstzahler“ (src/lib/features.ts) */
+  practiceInfo(): Promise<{ name: string; address: string | null; phone: string | null; openingText: string; billingNote?: string | null }>;
   /** Ausgang des Anrufs vormerken (voice_calls) */
   noteOutcome(outcome: VoiceOutcome, appointmentId?: string | null): Promise<void>;
   /**
@@ -269,6 +270,7 @@ async function run(tool: VoiceTool, rawArgs: Record<string, unknown>, deps: Voic
         p.address ? `Adresse: ${p.address}` : null,
         p.phone ? `Telefon: ${p.phone}` : null,
         `Öffnungszeiten: ${p.openingText}`,
+        p.billingNote ? `Abrechnung: ${p.billingNote}` : null,
         svc.length ? `Telefonisch buchbare Leistungen: ${serviceList(svc)}` : "Telefonisch können derzeit keine Termine gebucht werden.",
       ].filter(Boolean).join("\n");
     }

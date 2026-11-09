@@ -25,6 +25,24 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-09-e",
+    date: "2026-11-09",
+    title: "Nur Privat & Selbstzahler",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Neuer Modus „nur Privat & Selbstzahler“: Behandeln Sie keine Kassenpatient:innen, blendet PodoHero Verordnungen und Kassenabrechnung einfach aus – alles wird übersichtlicher.", href: "/einstellungen/praxis" },
+    ],
+  },
+  {
+    id: "2026-11-09-d",
+    date: "2026-11-09",
+    title: "Schneller eintippen, gezieltere News",
+    items: [
+      { tag: "neu", text: "Adressen vervollständigen sich beim Tippen: Straße eingeben, Vorschlag antippen – Postleitzahl und Ort stehen sofort richtig da.", href: "/kunden/neu" },
+      { tag: "verbessert", text: "Die News zeigen jetzt nur noch Meldungen, die für Podologie und Fußpflege wirklich wichtig sind – ohne allgemeine Gesundheitsthemen.", href: "/news" },
+    ],
+  },
+  {
     id: "2026-11-09-c",
     date: "2026-11-09",
     title: "Für Betreiber: Plattform-Konsole",
@@ -67,34 +85,9 @@ export const CHANGELOG: ChangelogEntry[] = [
 // {
 //   id: "JJJJ-MM-TT",
 //   date: "JJJJ-MM-TT",
-//   title: "Schneller eintippen, weniger Fehler",
-//   items: [
-//     { tag: "neu", text: "Adressen vervollständigen sich beim Tippen: Straße eingeben, Vorschlag antippen – Postleitzahl und Ort stehen sofort richtig da.", href: "/kunden/neu" },
-//   ],
-// },
-// {
-//   id: "JJJJ-MM-TT",
-//   date: "JJJJ-MM-TT",
 //   title: "Doctolib-Termine im Kalender",
 //   items: [
 //     { tag: "neu", text: "Kalender-Abo: Termine aus Doctolib erscheinen automatisch in Ihrem PodoHero-Kalender – über Ihren Google-Kalender, ohne doppeltes Eintragen.", href: "/einstellungen/schnittstellen" },
-//   ],
-// },
-// {
-//   id: "JJJJ-MM-TT",
-//   date: "JJJJ-MM-TT",
-//   title: "News nur aus der Podologie",
-//   items: [
-//     { tag: "verbessert", text: "Die News zeigen jetzt nur noch Meldungen, die für Podologie und Fußpflege wirklich wichtig sind – ohne allgemeine Gesundheitsthemen.", href: "/news" },
-//   ],
-// },
-// {
-//   id: "JJJJ-MM-TT",
-//   date: "JJJJ-MM-TT",
-//   title: "Nur Privat & Selbstzahler",
-//   audience: "owner",
-//   items: [
-//     { tag: "neu", text: "Neuer Modus „nur Privat & Selbstzahler“: Behandeln Sie keine Kassenpatient:innen, blendet PodoHero Verordnungen und Kassenabrechnung einfach aus – alles wird übersichtlicher.", href: "/einstellungen/praxis" },
 //   ],
 // },
 // {
