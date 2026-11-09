@@ -1,8 +1,8 @@
 import { asc, eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, Select } from "@/components/ui";
-import { withOrg } from "@/db";
-import { services } from "@/db/schema";
+import { db, withOrg } from "@/db";
+import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { money } from "@/lib/format";
 import { saveServiceAction } from "../actions";
@@ -30,6 +30,9 @@ export default async function ServicesSettings() {
   const auth = await requireAuth("settings.manage");
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) => tx.select().from(services).where(eq(services.organizationId, org)).orderBy(asc(services.code)));
+  // Hinweise aus dem Bootstrap (z. B. „Preis bitte prüfen“ bei Platzhalter-Preisen)
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+  const priceNotes = (o?.settings?.servicePriceNotes ?? {}) as Record<string, unknown>;
   return (
     <div className="flex flex-col gap-4">
       <p className="rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
@@ -41,7 +44,7 @@ export default async function ServicesSettings() {
       </Card>
       {rows.map((s) => (
         <Card key={s.id}>
-          <p className="mb-3 flex items-center gap-2 font-semibold">{s.code} · {s.name} <Badge tone={s.vatRate ? "warn" : "primary"}>{s.vatRate} %</Badge> <span className="text-muted">{money(s.priceCents)}</span></p>
+          <p className="mb-3 flex items-center gap-2 font-semibold">{s.code} · {s.name} <Badge tone={s.vatRate ? "warn" : "primary"}>{s.vatRate} %</Badge> <span className="text-muted">{money(s.priceCents)}</span>{typeof priceNotes[s.code] === "string" ? <Badge tone="warn">{String(priceNotes[s.code])}</Badge> : null}</p>
           <ActionForm action={saveServiceAction}><ServiceFields s={s} /></ActionForm>
         </Card>
       ))}

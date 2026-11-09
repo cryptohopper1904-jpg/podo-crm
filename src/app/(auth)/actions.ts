@@ -12,6 +12,8 @@ import { legalAcceptance } from "@/lib/legal";
 import { PLANS, TRIAL_DAYS } from "@/lib/plans";
 import { clientKey, createRateLimiter } from "@/lib/rate-limit";
 import { generateTotpSecret, matchTotpStep } from "@/lib/auth/totp";
+import { TWO_FACTOR_SETUP_PATH, twoFactorRequired } from "@/lib/auth/two-factor";
+import type { Role } from "@/lib/auth/permissions";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
 
@@ -63,7 +65,12 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   await createSession(user.id, m?.organizationId ?? null, !user.totpEnabled);
   await audit({ organizationId: m?.organizationId ?? null, userId: user.id, action: "login.success", meta: m ? undefined : { platformOnly: true } });
   if (user.totpEnabled) redirect("/login/2fa");
-  redirect(m ? "/heute" : "/login/2fa-einrichten");
+  // Pflicht-2FA (Inhaber:in, Plattform-Admin, ggf. alle Rollen der Praxis): Anmeldung erlaubt, aber erst nach
+  // Einrichtung Zugriff auf die Praxis (Gesamt-Review H1, src/lib/auth/two-factor.ts)
+  const [org] = m ? await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, m.organizationId)).limit(1) : [];
+  const required = twoFactorRequired({ role: (m?.role as Role | undefined) ?? null, isPlatformAdmin: user.isPlatformAdmin, orgSettings: org?.settings });
+  if (required) await audit({ organizationId: m?.organizationId ?? null, userId: user.id, action: "2fa.setup_required" });
+  redirect(required ? TWO_FACTOR_SETUP_PATH : "/heute");
 }
 
 /** Startseite nach der Anmeldung: Praxis-Sitzung → /heute, Plattform-Sitzung ohne Praxis → /plattform. */

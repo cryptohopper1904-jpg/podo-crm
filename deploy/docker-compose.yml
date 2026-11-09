@@ -25,6 +25,10 @@ services:
       DATABASE_SEED_URL: postgres://podo_app:${DB_APP_PASSWORD}@db:5432/podo
       DB_APP_ROLE: podo_app
       SEED_DEMO: ${SEED_DEMO:-false}
+      # Demo-Passwort (scripts/seed-demo.ts, Gesamt-Review K1): ohne SEED_DEMO_PASSWORD erzeugt der Seed auf einer
+      # echten Domain (PUBLIC_URL) ein Zufallspasswort und gibt es einmal im migrate-Log aus.
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-}
+      PUBLIC_URL: ${PUBLIC_URL:-}
       # Bootstrap für frische Server ohne Shell (scripts/bootstrap.ts, idempotent). Passwörter nach dem
       # ersten Start aus deploy/.env entfernen – vorhandene Konten werden nie überschrieben.
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
@@ -39,12 +43,55 @@ services:
   app:
     build: { context: .., dockerfile: Dockerfile }
     restart: unless-stopped
-    env_file: .env
+    # KEIN env_file: Die App bekommt nur, was sie braucht (Gesamt-Review H2). DB_OWNER_PASSWORD (Tabelleneigentümer,
+    # könnte RLS und Append-only-Trigger abschalten), BACKUP_PASSPHRASE und BOOTSTRAP_* bleiben bei db/migrate/backup.
+    # Einträge ohne Wert übernimmt Compose aus deploy/.env; fehlt die Variable dort, ist sie im Container nicht gesetzt.
+    # Neue App-Variablen hier ergänzen (Prüfung: src/lib/deploy-env.test.ts).
     environment:
       DATABASE_URL: postgres://podo_app:${DB_APP_PASSWORD}@db:5432/podo
       STORAGE_DIR: /data/storage
       # Zeitstempel der letzten Backup-/Cron-Läufe (für /api/health/deep), nur lesend eingebunden
       STATUS_DIR: /data/status
+      APP_ENCRYPTION_KEY:
+      PUBLIC_URL:
+      PUBLIC_SITE_INDEX:
+      ALLOW_SIGNUP:
+      SETUP_TOKEN:
+      TRUSTED_PROXY_HOPS:
+      CRON_SECRET:
+      HEALTH_TOKEN:
+      INTEGRATIONS_MODE:
+      LLM_DATA_PROCESSING_APPROVED:
+      LLM_BASE_URL:
+      LLM_API_KEY:
+      LLM_MODEL:
+      TRANSCRIPTION_DATA_PROCESSING_APPROVED:
+      TRANSCRIPTION_BASE_URL:
+      TRANSCRIPTION_API_KEY:
+      TRANSCRIPTION_MODEL:
+      TSE_PROVIDER:
+      FISKALY_API_KEY:
+      FISKALY_API_SECRET:
+      FISKALY_TSS_ID:
+      FISKALY_CLIENT_ID:
+      ALLOW_TEST_PAYMENTS:
+      BILLING_MODE:
+      STRIPE_SECRET_KEY:
+      STRIPE_WEBHOOK_SECRET:
+      STRIPE_PRICE_STARTER:
+      STRIPE_PRICE_PRAXIS:
+      STRIPE_PRICE_PLUS:
+      STRIPE_PRICE_SEAT:
+      SMTP_URL:
+      SMTP_FROM:
+      MAIL_RATE_PER_HOUR:
+      SENTRY_DSN:
+      ERROR_WEBHOOK_URL:
+      ERROR_WEBHOOK_TOKEN:
+      LOG_LEVEL:
+      DB_POOL_MAX:
+      APP_VERSION:
+      APP_RELEASE:
     volumes:
       - storage:/data/storage
       - ops_status:/data/status:ro

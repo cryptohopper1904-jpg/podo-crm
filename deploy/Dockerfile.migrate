@@ -6,7 +6,7 @@ RUN pnpm install --frozen-lockfile
 COPY drizzle ./drizzle
 COPY scripts ./scripts
 COPY src/db ./src/db
-COPY src/lib/org-defaults.ts src/lib/records.ts src/lib/bootstrap.ts src/lib/plans.ts src/lib/website.ts ./src/lib/
+COPY src/lib/org-defaults.ts src/lib/records.ts src/lib/bootstrap.ts src/lib/plans.ts src/lib/website.ts src/lib/demo-seed.ts ./src/lib/
 COPY src/lib/auth/password.ts ./src/lib/auth/
 # Bootstrap-Vorlagen (nur öffentliche Geschäftsangaben, keine Passwörter): BOOTSTRAP_PRACTICE_JSON=deploy/bootstrap/<datei>.json
 COPY deploy/bootstrap ./deploy/bootstrap

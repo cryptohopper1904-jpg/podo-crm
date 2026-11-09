@@ -188,3 +188,19 @@ export async function changePasswordAction(_: SettingsState, form: FormData): Pr
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "password.changed", meta: { revokedSessions } });
   return { ok: "Passwort geändert." };
 }
+
+/**
+ * 2FA-Pflicht für alle Rollen der Praxis (Gesamt-Review H1). Inhaber:innen haben immer Pflicht-2FA;
+ * hier legt die Inhaber:in fest, ob auch Team-Mitglieder sie brauchen (src/lib/auth/two-factor.ts).
+ */
+export async function saveSecurityPolicyAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("users.manage");
+  const require2faAllRoles = form.get("require2faAllRoles") === "on";
+  await db
+    .update(organizations)
+    .set({ settings: sql`${organizations.settings} || jsonb_build_object('security', coalesce(${organizations.settings}->'security', '{}'::jsonb) || jsonb_build_object('require2faAllRoles', ${require2faAllRoles}::boolean))` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "security.2fa_policy", meta: { require2faAllRoles } });
+  revalidatePath("/einstellungen/sicherheit");
+  return { ok: require2faAllRoles ? "Zwei-Faktor-Anmeldung ist jetzt für das ganze Team Pflicht." : "Zwei-Faktor-Anmeldung ist nur für Inhaber:innen Pflicht." };
+}

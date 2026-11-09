@@ -3,13 +3,17 @@ import { count } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { getAuth, getSession } from "@/lib/auth/session";
+import { getAuthState, getSession } from "@/lib/auth/session";
+import { TWO_FACTOR_SETUP_PATH } from "@/lib/auth/two-factor";
 import { LoginForm } from "./login-form";
 
 export const metadata = { title: "Anmelden" };
 
 export default async function LoginPage() {
-  if (await getAuth()) redirect("/heute");
+  const state = await getAuthState();
+  if (state.auth) redirect("/heute");
+  // Pflicht-2FA noch nicht eingerichtet (Inhaber:in, Plattform-Admin, ggf. alle Rollen): zur Einrichtung
+  if (state.twoFactorSetupRequired) redirect(TWO_FACTOR_SETUP_PATH);
   // Plattform-Admin ohne Praxis: bestätigte Sitzung ohne Praxis-Kontext → Konsole bzw. 2FA-Einrichtung
   const row = await getSession();
   if (row?.session.verified && !row.session.organizationId && row.user.isPlatformAdmin) redirect(row.user.totpEnabled ? "/plattform" : "/login/2fa-einrichten");

@@ -240,6 +240,8 @@ const redirectOf = async (p: Promise<unknown>) => {
       const owner = await f.user();
       const staff = await f.user();
       await member(org, owner);
+      // Inhaber:innen brauchen Pflicht-2FA (Gesamt-Review H1)
+      await f.pool.query("update users set totp_enabled = true where id = $1", [owner]);
       const mId = await member(org, staff, "therapist");
       await member(other, staff, "therapist");
       const staffHere = await newSession(staff, org);
@@ -350,6 +352,64 @@ const redirectOf = async (p: Promise<unknown>) => {
       await expect(support.listSupportGrants(supportAuth)).rejects.toThrow(/Praxisinhaber/);
       const manager = { role: "admin", support: null, organization: { id: org }, user: { id: owner }, can: (p: string) => p === "settings.manage" } as unknown as import("@/lib/auth/session").AuthContext;
       await expect(support.listSupportGrants(manager)).resolves.toEqual([]);
+    });
+  });
+
+  describe("Pflicht-2FA (Gesamt-Review H1)", () => {
+    const withTotp = (u: string) => f.pool.query("update users set totp_enabled = true, totp_secret_enc = $2 where id = $1", [u, secrets.encryptSecret(totp.generateTotpSecret())]);
+
+    it("Inhaber:in ohne 2FA: kein Praxis-Zugriff, Weiterleitung zur Einrichtung; mit 2FA normal", async () => {
+      hdrs.method = "GET";
+      const org = await activeOrg();
+      const u = await f.user();
+      await member(org, u, "owner");
+      useToken(await newSession(u, org));
+      expect(await session.getAuthState()).toEqual({ auth: null, twoFactorSetupRequired: true });
+      expect(await redirectOf(session.requireAuth())).toBe("/login/2fa-einrichten");
+      // nach der Einrichtung (neue Anfrage → neuer Cache) Zugriff
+      await withTotp(u);
+      vi.resetModules();
+      const fresh = await import("@/lib/auth/session");
+      expect((await fresh.getAuth())?.organization.id).toBe(org);
+    });
+
+    it("Team-Mitglied ohne 2FA: Zugriff, solange die Praxis keine Pflicht für alle festlegt", async () => {
+      hdrs.method = "GET";
+      const org = await activeOrg();
+      const u = await f.user();
+      await member(org, u, "therapist");
+      useToken(await newSession(u, org));
+      vi.resetModules();
+      let s = await import("@/lib/auth/session");
+      expect((await s.getAuth())?.role).toBe("therapist");
+      await f.pool.query(`update organizations set settings = settings || '{"security":{"require2faAllRoles":true}}' where id = $1`, [org]);
+      vi.resetModules();
+      s = await import("@/lib/auth/session");
+      expect(await s.getAuthState()).toEqual({ auth: null, twoFactorSetupRequired: true });
+    });
+
+    it("Plattform-Admin mit Praxis-Mitgliedschaft ohne 2FA: Pflicht", async () => {
+      hdrs.method = "GET";
+      const org = await activeOrg();
+      const admin = await platformAdmin({ totp: false });
+      await member(org, admin, "reception");
+      useToken(await newSession(admin, org));
+      vi.resetModules();
+      const s = await import("@/lib/auth/session");
+      expect((await s.getAuthState()).twoFactorSetupRequired).toBe(true);
+    });
+
+    it("Login einer Inhaber:in ohne 2FA leitet zur Einrichtung", async () => {
+      const org = await activeOrg();
+      const u = await f.user();
+      await member(org, u, "owner");
+      const pw = "ein-sehr-langes-passwort-1";
+      await f.pool.query("update users set password_hash = $2 where id = $1", [u, await password.hashPassword(pw)]);
+      const { rows } = await f.pool.query("select email from users where id = $1", [u]);
+      const form = new FormData();
+      form.set("email", rows[0].email);
+      form.set("password", pw);
+      expect(await redirectOf(authActions.loginAction(undefined, form))).toBe("/login/2fa-einrichten");
     });
   });
 });

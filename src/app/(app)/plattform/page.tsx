@@ -5,7 +5,8 @@ import { audit } from "@/lib/audit";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
 import { platformUsage } from "@/server/platform-stats";
 import { UsageDashboard } from "./usage-dashboard";
-import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction } from "./actions";
+import { WEBSITE_ADDON_PLANS } from "@/lib/website";
+import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction, setWebsiteAddonAction } from "./actions";
 
 export const metadata = { title: "Plattform" };
 
@@ -70,6 +71,14 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
                         <input type="hidden" name="on" value={p.voiceAddon ? "0" : "1"} />
                         <span className="text-xs">KI-Telefon-Zusatzmodul: {p.voiceAddon ? "aktiv" : "aus"}</span>
                         <button className="text-sm font-semibold text-primary">{p.voiceAddon ? "abschalten" : "aktivieren"}</button>
+                      </form>
+                    ) : null}
+                    {isPlanId(p.plan) && WEBSITE_ADDON_PLANS.includes(p.plan) ? (
+                      <form action={setWebsiteAddonAction} className="flex items-center gap-2">
+                        <input type="hidden" name="organizationId" value={p.id} />
+                        <input type="hidden" name="on" value={p.websiteAddon ? "0" : "1"} />
+                        <span className="text-xs">Website-Zusatzmodul: {p.websiteAddon ? "aktiv" : "aus"}</span>
+                        <button className="text-sm font-semibold text-primary">{p.websiteAddon ? "abschalten" : "aktivieren"}</button>
                       </form>
                     ) : null}
                     {p.activeGrantForMe ? (
