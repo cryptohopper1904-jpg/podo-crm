@@ -40,7 +40,8 @@ export const SETTINGS_GROUPS = [
   },
 ] as const;
 
-export function SettingsNav() {
+/** `hidden`: ausgeblendete Tabs (z. B. „ti“/„ocr“ bei Praxen nur für Privat-/Selbstzahler, src/lib/features.ts) */
+export function SettingsNav({ hidden = [] }: { hidden?: readonly string[] } = {}) {
   const pathname = usePathname();
   return (
     <nav aria-label="Einstellungen" className="mb-6 grid gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -48,7 +49,7 @@ export function SettingsNav() {
         <div key={g.label} className="min-w-0">
           <div className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</div>
           <ul className="flex flex-wrap gap-1">
-            {g.tabs.map(([href, label]) => {
+            {g.tabs.filter(([href]) => !hidden.includes(href)).map(([href, label]) => {
               const url = `/einstellungen/${href}`;
               const active = pathname === url || pathname.startsWith(url + "/");
               return (

@@ -14,6 +14,7 @@ Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbe
 | [BACKUP-SPEICHERORT] | zweite Kopie der verschlüsselten Datensicherung | Deutschland | verschlüsselte Sicherungen | **einzurichten** |
 | [ZAHLUNGSDIENSTLEISTER, z. B. STRIPE] | Abrechnung des Abonnements der Praxis | [STANDORT] | Rechnungs- und Zahlungsdaten der Praxis, **keine Patientendaten** | vorgesehen |
 | [E-MAIL-VERSAND] | Versand von System-E-Mails (z. B. Rechnungen, Erinnerungen) | [STANDORT] | Empfängeradresse, Inhalt der Nachricht | vorgesehen, AVV **abzuschließen** |
+| Photon (Komoot GmbH, OpenStreetMap-Daten) – **optional** | Adress-Vorschläge beim Erfassen von Adressen (Straße → PLZ/Ort) | EU (öffentlicher Dienst `photon.komoot.io`) | **nur der eingetippte Adresstext bzw. die PLZ**, keine Namen, keine Gesundheitsdaten, keine Client-IP | öffentlicher Dienst ohne AVV; abschaltbar (`ADDRESS_PROVIDER=off`); Datenschutz-Maximum: selbst gehostete Photon-Instanz (`PHOTON_URL`), dann kein Dritter |
 
 ## 2. Dienste, die die Praxis selbst verbindet
 

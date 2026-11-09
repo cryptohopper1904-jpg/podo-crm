@@ -14,6 +14,7 @@ import { parseMoney } from "@/lib/format";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seatCounts, seatProblem } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
+import { setBillingMode } from "@/server/features";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -203,4 +204,13 @@ export async function saveSecurityPolicyAction(_: SettingsState, form: FormData)
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "security.2fa_policy", meta: { require2faAllRoles } });
   revalidatePath("/einstellungen/sicherheit");
   return { ok: require2faAllRoles ? "Zwei-Faktor-Anmeldung ist jetzt für das ganze Team Pflicht." : "Zwei-Faktor-Anmeldung ist nur für Inhaber:innen Pflicht." };
+}
+
+/** Praxis-Modus „nur Privat-/Selbstzahler“ (src/lib/features.ts) – nur settings.manage, protokolliert. */
+export async function saveBillingModeAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const mode = form.get("privateOnly") === "on" ? "private_only" : "with_gkv";
+  await setBillingMode(auth, mode, "settings");
+  revalidatePath("/", "layout");
+  return { ok: mode === "private_only" ? "Gespeichert – Kassen-Themen sind jetzt ausgeblendet." : "Gespeichert – Kassen-Themen sind wieder sichtbar." };
 }

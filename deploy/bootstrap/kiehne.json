@@ -9,6 +9,7 @@
   "email": "termin@podologie-kiehne.de",
   "website": "https://www.podologie-kiehne.de",
   "openingDate": "2026-11-01",
+  "billingMode": "private_only",
   "owner": { "email": "sven@podologie-kiehne.de", "name": "Sven Kiehne" },
   "practitioner": { "name": "Victoria Kiehne", "qualification": "staatlich anerkannte Podologin & Heilpraktikerin" },
   "services": [

@@ -8,6 +8,7 @@ import { condensedImportData, parseEverordnungText, positionsFrom, type Everordn
 import { berlinDateIso } from "@/lib/format";
 import { DIAGNOSIS_GROUP_CODES, validatePrescription } from "@/lib/rules/prescription";
 import { assertCan } from "./authz";
+import { gkvGuard } from "@/lib/features";
 import { prescriptionInput, savePrescription } from "./prescriptions";
 
 export type PatientCandidate = { id: string; number: number; firstName: string | null; lastName: string; birthDate: string | null; reason: string };
@@ -60,6 +61,8 @@ async function findCandidates(org: string, s: EverordnungSummary): Promise<Patie
 
 export async function previewEverordnung(auth: AuthContext, text: string): Promise<EverordnungPreview | { error: string }> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "everordnung");
+  if (blocked) return blocked;
   const parsed = parseEverordnungText(text);
   if (!parsed.ok) return { error: parsed.error };
   const org = auth.organization.id;
@@ -90,6 +93,8 @@ class ImportAbort extends Error {}
 /** Legt aus der eVerordnung einen Verordnungsentwurf (Status „offen“, Herkunft „everordnung“) an. */
 export async function importEverordnung(auth: AuthContext, text: string, choice: ImportChoice): Promise<{ id: string; patientId: string; warnings: string[] } | { error: string }> {
   assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "everordnung");
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const parsed = parseEverordnungText(text);
   if (!parsed.ok) return { error: parsed.error };

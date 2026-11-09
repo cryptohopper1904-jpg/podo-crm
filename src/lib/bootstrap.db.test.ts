@@ -20,6 +20,8 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     expect(spec.homeVisitAreas).toContain("Berlin-Frohnau");
     expect(spec.services.map((s) => s.name)).toEqual(["Podologische Komplexbehandlung", "Nagelkorrekturspange", "Nagelprothetik", "Orthosen (individuell)", "Kaltplasma-Therapie", "Hausbesuch"]);
     expect(JSON.stringify(spec)).not.toMatch(/password|passwort/i);
+    // Podologie Kiehne behandelt Privatpatient:innen & Selbstzahler
+    expect(spec.billingMode).toBe("private_only");
   });
   it("lehnt unbekannte Felder ab (z. B. Patientenlisten)", () => {
     expect(() => loadPracticeSpec(JSON.stringify({ ...loadPracticeSpec("deploy/bootstrap/kiehne.json", ROOT), patients: [] }))).toThrow(BootstrapError);
@@ -80,6 +82,7 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     expect(org.settings.homeVisitAreas).toHaveLength(6);
     expect(org.settings.servicePriceNotes.NP).toMatch(/Preis bitte prüfen/);
     expect(org.settings.website.enabled).toBe(false);
+    expect(org.settings.billingMode).toBe("private_only");
 
     const owner = await pool.query("select u.password_hash, m.role from users u join memberships m on m.user_id = u.id where u.email = $1 and m.organization_id = $2", [ownerEmail, org.id]);
     expect(owner.rowCount).toBe(1);
@@ -97,6 +100,36 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
       expect(svc.rows.find((r) => r.code === "NP").price_cents).toBe(0);
       const loc = await c.query("select count(*)::int n from locations where organization_id = $1", [org.id]);
       expect(loc.rows[0].n).toBe(1);
+      await c.query("commit");
+    } finally {
+      c.release();
+    }
+  });
+
+  it("billingMode: auf vorhandene Praxis nur gesetzt, wenn noch keiner gesetzt ist (idempotent)", async () => {
+    const slug = `kiehne-bm-${sfx()}`;
+    const ownerEmail = `owner-${sfx()}@example.org`;
+    const spec = { ...loadPracticeSpec("deploy/bootstrap/kiehne.json", ROOT), slug, owner: { email: ownerEmail, name: "Sven Test" } };
+    const env = { BOOTSTRAP_PRACTICE_JSON: JSON.stringify(spec), BOOTSTRAP_PRACTICE_OWNER_PASSWORD: "inhaber-passwort-123" };
+    expect((await runBootstrap(db, env)).practice).toBe("created");
+    // Bestandspraxis aus einer älteren Bootstrap-Version: ohne billingMode
+    await pool.query("update organizations set settings = settings - 'billingMode' where slug = $1", [slug]);
+    const second = await runBootstrap(db, env);
+    expect(second).toMatchObject({ practice: "exists", billingMode: "set" });
+    const mode = async () => (await pool.query("select settings->>'billingMode' m from organizations where slug = $1", [slug])).rows[0].m;
+    expect(await mode()).toBe("private_only");
+    expect((await runBootstrap(db, env)).billingMode).toBe("kept");
+    // Praxis stellt in den Einstellungen um → Bootstrap überschreibt das nie
+    await pool.query("update organizations set settings = settings || '{\"billingMode\":\"with_gkv\"}'::jsonb where slug = $1", [slug]);
+    expect((await runBootstrap(db, env)).billingMode).toBe("kept");
+    expect(await mode()).toBe("with_gkv");
+    const orgId = (await pool.query("select id from organizations where slug = $1", [slug])).rows[0].id;
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await c.query("select set_config('app.org_id', $1, true)", [orgId]);
+      const audits = await c.query("select count(*)::int n from audit_log where organization_id = $1 and action = 'bootstrap.billing_mode'", [orgId]);
+      expect(audits.rows[0].n).toBe(1);
       await c.query("commit");
     } finally {
       c.release();
@@ -127,6 +160,7 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     const org = orgs.rows[0];
     expect(org).toMatchObject({ name: DEMO_PRACTICE_NAME, plan: "internal", subscription_status: "active", trial_ends_at: null });
     expect(org.settings.demo).toBe(true);
+    expect(org.settings.billingMode ?? "with_gkv").toBe("with_gkv"); // Demo-Praxis bleibt mit Kassenzulassung
     expect((await pool.query("select count(*)::int n from organizations")).rows[0].n).toBe(orgsBefore + (first.demo === "created" ? 1 : 0));
 
     const admin = (await pool.query("select id from users where email = $1", [email])).rows[0];

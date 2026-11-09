@@ -7,6 +7,8 @@ export interface FeedItem {
   url: string;
   publishedAt: string | null;
   text: string;
+  /** Herausgeber bei Aggregatoren (RSS <source>, z. B. Google News). */
+  publisher?: string;
 }
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", auml: "ä", ouml: "ö", uuml: "ü", Auml: "Ä", Ouml: "Ö", Uuml: "Ü", szlig: "ß" };
@@ -50,11 +52,14 @@ export function parseFeed(xml: string): FeedItem[] {
     const url = tag(block, "link") ?? tag(block, "guid");
     const title = tag(block, "title");
     if (!url || !title) continue;
+    const publisher = tag(block, "source");
     items.push({
       title: stripHtml(title),
       url: url.trim(),
       publishedAt: toIso(tag(block, "pubDate") ?? tag(block, "dc:date")),
-      text: stripHtml(tag(block, "content:encoded") ?? tag(block, "description") ?? ""),
+      // Anrisstext bevorzugt (keine Volltextübernahme); content:encoded nur als Rückfall.
+      text: stripHtml(tag(block, "description") || tag(block, "content:encoded") || ""),
+      ...(publisher ? { publisher: stripHtml(publisher) } : {}),
     });
   }
   if (items.length) return items;

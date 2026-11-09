@@ -31,6 +31,7 @@ import { assertCan } from "./authz";
 import { freeSlots } from "./appointments";
 import { loadConnection, logSync } from "./integrations";
 import { availability, staffMembers } from "./staff";
+import { isPrivateOnly, PRIVATE_ONLY_VOICE_NOTE } from "@/lib/features";
 
 /**
  * KI-Telefonagent – Datenbankseite der Werkzeuge (anbieterneutral, siehe integrations/voice/core.ts).
@@ -326,7 +327,13 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
     async practiceInfo() {
       const op = openingOf(o.settings);
       const address = [o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null;
-      return { name: o.name, address, phone: o.phone, openingText: `Montag bis Freitag ${op.start} bis ${op.end} Uhr, an Feiertagen geschlossen` };
+      return {
+        name: o.name,
+        address,
+        phone: o.phone,
+        openingText: `Montag bis Freitag ${op.start} bis ${op.end} Uhr, an Feiertagen geschlossen`,
+        billingNote: isPrivateOnly(o) ? PRIVATE_ONLY_VOICE_NOTE : null,
+      };
     },
     noteOutcome: (outcome, appointmentId) => upsertCall(org, ctx.vendor, ctx.callId, { outcome, appointmentId: appointmentId ?? null, callerMasked }),
   };

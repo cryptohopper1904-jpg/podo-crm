@@ -84,6 +84,7 @@ Auf einer öffentlichen Domain wird das bekannte Passwort nie verwendet (auch ni
 | `BACKUP_RETENTION_DAYS` | Aufbewahrung lokaler Backups (Standard 14) |
 | `SENTRY_DSN`, `ERROR_WEBHOOK_URL` | optionales Fehler-Reporting (Abschnitt 4.3) |
 | `TRUSTED_PROXY_HOPS` | Anzahl Proxys vor der App (Abschnitt 6) |
+| `ADDRESS_PROVIDER`, `PHOTON_URL` | Adress-Vorschläge (`photon` Standard, `off` = aus; eigene Photon-Instanz), Abschnitt 8 |
 
 Nach Änderungen an `deploy/.env`: `bash /opt/podo-crm/deploy/update.sh` (gleicher Stand → Container werden nur neu abgeglichen).
 
@@ -297,6 +298,16 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 - Kundenportal: `/portal/<token>` (30 Tage gültig, neuer Link widerruft den alten). Der Token wird gegen eine signierte Sitzung (Cookie `podo_portal`, HttpOnly, SameSite=Strict, 2 h) getauscht. Rate-Limits liegen im Prozessspeicher – bei mehreren App-Instanzen Redis o. Ä. nötig.
 - Webhooks (SumUp, WhatsApp, SMS, lexoffice) werden erst gespeichert (`webhook_events`, Status `pending`), dann verarbeitet. Fehler oder ein Neustart mitten in der Verarbeitung → der Cron-Lauf `/api/cron/reminders` wiederholt mit Backoff (5, 10, 20, 40, 80 min), nach 6 Versuchen `dead` + Hinweis im Posteingang. Status: *Einstellungen → Schnittstellen → Eingehende Ereignisse* und `/api/health/deep` (`webhooks`). Kann ein Ereignis nicht gespeichert werden, antwortet die App 503 (Anbieter stellt erneut zu).
 - Nicht zuordenbare SumUp-Zahlungen landen im Posteingang („bitte prüfen“). „Testzahlung simulieren“ ist in Produktion gesperrt, außer `ALLOW_TEST_PAYMENTS=true` (nur reine Testpraxis).
+
+### Adress-Vorschläge (Kundenanlage, Praxisdaten, Pflegeheime)
+Beim Tippen in „Straße“ (z. B. `Friedrich-Herder-Str.`) schlägt die App vollständige Adressen vor und füllt PLZ und Ort; eine 5-stellige PLZ ergänzt den Ort, wenn er eindeutig ist. Freie Eingabe bleibt immer möglich.
+
+- **Dienst:** [Photon](https://github.com/komoot/photon) (OpenStreetMap-Geocoder von Komoot, ohne API-Schlüssel, öffentliche Instanz `https://photon.komoot.io` in der EU). Der Browser spricht nur mit der App (`GET /api/adresse/vorschlaege`, nur mit Anmeldung, 60 Anfragen/min je Benutzer:in, 3–120 Zeichen); die App fragt Photon serverseitig an.
+- **Übertragen wird nur der eingetippte Adresstext** bzw. die PLZ – nie Namen, Kundennummern oder Gesundheitsdaten, keine Client-IP, keine Cookies; User-Agent `PodoHero/1.0 (+https://podo.algoverdict.com)`. Zielprüfung über `src/integrations/net-guard.ts` (nur https, öffentliche Adresse, keine Weiterleitungen), Zeitlimit 3 s, gleiche Anfragen 10 min im Speicher.
+- **Ortsgewichtung:** Die Praxisadresse wird einmal geokodiert und in `organizations.settings.geo` gespeichert (bei Adressänderung neu; Fehlschlag → erneuter Versuch nach 24 h). Suche ist auf Deutschland (bbox) begrenzt.
+- **Ausfall:** Ist Photon nicht erreichbar, gibt es einfach keine Vorschläge (Log `address.photon_error`/`address.photon_status`, ohne Suchtext).
+- **Abschalten:** `ADDRESS_PROVIDER=off` in `deploy/.env`.
+- **Datenschutz-Maximum:** eigene Photon-Instanz (Docker-Image mit Deutschland-Extrakt, ca. 10–20 GB) hinter Caddy mit HTTPS betreiben und `PHOTON_URL=https://photon.example.de` setzen; private/lokale Adressen lehnt net-guard bewusst ab. Die öffentliche Komoot-Instanz ist ein frei zugänglicher Dienst ohne AVV (siehe `docs/legal/UNTERAUFTRAGNEHMER.md`) und hat eine Fair-Use-Grenze.
 
 ### Kasse / TSE (KassenSichV)
 - **Vor dem ersten echten Bargeld-Einsatz ist ein Vertrag mit einer zertifizierten TSE Pflicht** (z. B. fiskaly SIGN DE), dazu die Meldung der Kasse ans Finanzamt (§ 146a Abs. 4 AO) und die Verfahrensdokumentation.

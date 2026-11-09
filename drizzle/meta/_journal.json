@@ -145,15 +145,22 @@
     {
       "idx": 20,
       "version": "7",
-      "when": 1794231164734,
-      "tag": "0020_kalender_abo",
+      "when": 1794231137070,
+      "tag": "0020_changelog",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "7",
-      "when": 1794231171221,
-      "tag": "0021_kalender_abo_security",
+      "when": 1794232064737,
+      "tag": "0021_kalender_abo",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794232066122,
+      "tag": "0022_kalender_abo_security",
       "breakpoints": true
     }
   ]

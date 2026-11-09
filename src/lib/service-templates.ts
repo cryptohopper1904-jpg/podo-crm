@@ -51,7 +51,7 @@ export const SERVICE_TEMPLATES: Record<ServiceTemplateId, { label: string; descr
   },
   selfpay: {
     label: "Nur Selbstzahler",
-    description: "Standard-Katalog plus Wellness-/Kosmetikleistungen (19 % USt). Keine Kassenpositionen.",
+    description: "Standard-Katalog plus Wellness-/Kosmetikleistungen (19 % USt). Keine Kassenpositionen – Kassen-Themen werden ausgeblendet (änderbar unter Einstellungen → Praxisdaten).",
     services: () => [...fromDefaults(), ...SELFPAY_EXTRA],
   },
   gkv: {
