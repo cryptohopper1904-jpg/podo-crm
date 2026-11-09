@@ -227,8 +227,15 @@ export const users = pgTable("users", {
   failedLogins: integer("failed_logins").notNull().default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** persönliche Einstellungen, z. B. zuletzt gesehene Neuigkeit (src/lib/changelog.ts) */
+  prefs: jsonb("prefs").$type<UserPrefs>().notNull().default({}),
   createdAt: createdAt(),
 });
+
+export type UserPrefs = {
+  /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
+  changelog?: { seenId?: string; mutedId?: string };
+};
 
 export const memberships = pgTable(
   "memberships",
@@ -258,6 +265,8 @@ export const sessions = pgTable(
     /** false bis 2FA bestätigt ist */
     verified: boolean("verified").notNull().default(true),
     totpFailures: integer("totp_failures").notNull().default(0),
+    /** Neuigkeiten-Popup in dieser Sitzung bereits gezeigt (einmal je Anmeldung) */
+    changelogShownAt: timestamp("changelog_shown_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     userAgent: text("user_agent"),
     ip: text("ip"),
