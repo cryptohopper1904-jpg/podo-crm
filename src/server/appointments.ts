@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, gte, isNull, lt, ne, or } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, appointments, memberships, patients, users } from "@/db/schema";
+import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, memberships, patients, users } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
@@ -10,19 +10,25 @@ export async function listAppointments(auth: AuthContext, fromIso: string, days:
   const org = auth.organization.id;
   const from = berlinToUtc(fromIso, "00:00");
   const to = new Date(from.getTime() + days * 86400_000 + 2 * 3600_000);
-  return withOrg(org, (tx) =>
+  const rows = await withOrg(org, (tx) =>
     tx
       .select({
         a: appointments,
         patient: { id: patients.id, firstName: patients.firstName, lastName: patients.lastName, riskFlags: patients.riskFlags, homeVisit: patients.homeVisit, city: patients.city },
         therapist: users.name,
+        feedLabel: calendarFeeds.label,
+        feedConflict: calendarFeedEvents.conflict,
       })
       .from(appointments)
       .leftJoin(patients, eq(patients.id, appointments.patientId))
       .leftJoin(users, eq(users.id, appointments.therapistId))
+      // Kalender-Abo: Herkunft und Konfliktkennzeichen (importierte Termine sind nur lesend)
+      .leftJoin(calendarFeedEvents, and(eq(calendarFeedEvents.organizationId, org), eq(calendarFeedEvents.appointmentId, appointments.id)))
+      .leftJoin(calendarFeeds, eq(calendarFeeds.id, calendarFeedEvents.feedId))
       .where(and(eq(appointments.organizationId, org), gte(appointments.startsAt, from), lt(appointments.startsAt, to)))
       .orderBy(asc(appointments.startsAt)),
   );
+  return rows.map(({ feedLabel, feedConflict, ...r }) => ({ ...r, feed: feedLabel !== null ? { label: feedLabel, conflict: feedConflict } : null }));
 }
 
 export async function therapists(auth: AuthContext) {

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { AppointmentRow } from "@/components/appointment-row";
+import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { Badge, Card, Empty, LinkButton, PageHeader } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, weekdayLong } from "@/lib/format";
@@ -27,6 +28,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const start = view === "woche" ? mondayOf(day) : day;
   const days = view === "woche" ? 6 : 1;
   const rows = await listAppointments(auth, start, days);
+  const overlaps = feedOverlapIds(rows);
   const step = view === "woche" ? 7 : 1;
   const state = auth.organization.state as StateCode;
   const dates = Array.from({ length: days }, (_, i) => addDays(start, i));
@@ -51,6 +53,11 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
         }
       />
       <div className="flex flex-col gap-4">
+        {overlaps.size ? (
+          <p className="rounded-xl bg-accent-soft p-4 text-sm text-accent-soft-text">
+            <strong>Überschneidung:</strong> {overlaps.size} Termine überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in). Bitte in PodoHero oder in der Quelle (z. B. Doctolib) verlegen.
+          </p>
+        ) : null}
         {dates.map((iso) => {
           const list = byDay(iso);
           const holiday = holidayOn(iso, state);
@@ -66,7 +73,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
               {list.length === 0 ? (
                 <Empty title="Keine Termine" />
               ) : (
-                list.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} />)
+                list.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)
               )}
             </Card>
           );

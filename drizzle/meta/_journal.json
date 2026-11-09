@@ -141,6 +141,20 @@
       "when": 1794216602554,
       "tag": "0019_gesamt_review_security",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794231164734,
+      "tag": "0020_kalender_abo",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794231171221,
+      "tag": "0021_kalender_abo_security",
+      "breakpoints": true
     }
   ]
 }

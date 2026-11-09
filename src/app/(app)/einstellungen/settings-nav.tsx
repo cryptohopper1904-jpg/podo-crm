@@ -19,6 +19,7 @@ export const SETTINGS_GROUPS = [
     label: "Verbindungen",
     tabs: [
       ["schnittstellen", "Schnittstellen"],
+      ["kalender-abo", "Kalender-Abo"],
       ["ti", "TI & KIM"],
       ["ocr", "Verordnungs-OCR"],
       ["import", "Import"],

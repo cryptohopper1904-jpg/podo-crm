@@ -284,6 +284,13 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 - Versand nur mit Einwilligung des Kanals (`email_reminders`/`sms_reminders`/`whatsapp`), Texte ohne medizinische Angaben. Jede Erinnerung wird über `reminder_log` höchstens einmal versendet; Fehler werden protokolliert und nicht automatisch wiederholt.
 - Alternative auf Vercel – `vercel.json`: `{ "crons": [{ "path": "/api/cron/reminders", "schedule": "*/15 * * * *" }] }`. Vercel ruft per **GET** mit `Authorization: Bearer <CRON_SECRET>` auf (die Routen akzeptieren GET und POST). Viertelstündliche Crons brauchen einen kostenpflichtigen Plan; für Gesundheitsdaten EU-Region + AVV.
 
+### Kalender-Abo (iCal-Import, z. B. Doctolib über Docal.io/CalMedi → Google Kalender)
+- Endpunkt: `POST /api/cron/kalender-abo` mit `Authorization: Bearer $CRON_SECRET` (wie oben). Der Container `cron` ruft ihn alle 5 Minuten auf (Zeitstempel `cron-kalender-abo.last`).
+- Je Lauf alle aktiven Abos aller Praxen, höchstens 5 parallel, je Abo 30 s; Abruf nur per https über den SSRF-Schutz (`net-guard`), 10 s Zeitlimit, max. 5 MB, ETag/If-Modified-Since. Fenster: heute − 7 bis + 90 Tage.
+- Die private iCal-Adresse ist ein Zugangsgeheimnis: verschlüsselt in `calendar_feeds.url_enc` (AAD = Praxis + Abo), nie in Logs oder Fehlermeldungen.
+- Termine werden nie automatisch einer Kund:in zugeordnet und nie gelöscht; in PodoHero geänderte Termine werden nicht überschrieben (Kennzeichen `local_change`), Überschneidungen mit Terminen derselben Behandler:in werden markiert.
+- `/api/health/deep` → `kalender_abo`: `warn`, wenn einzelne Abos seit 30 min nicht erfolgreich abgerufen wurden oder einen Fehler melden; `fail`, wenn keines aktuell ist (Cron läuft nicht).
+
 ### Rechnungen: PDF, E-Mail, SumUp, Kundenportal
 - PDF: `GET /api/invoices/<id>/pdf` (Recht „Rechnungen lesen“, protokolliert, nicht gecacht). Versand per E-Mail über Praxis-SMTP oder Plattform-SMTP (`SMTP_URL`, `SMTP_FROM`), nur mit TLS.
 - SumUp: Webhook-URL im SumUp-Konto `https://DOMAIN/api/webhooks/sumup?org=<Praxis-ID>`; Reader-ID unter Einstellungen → Schnittstellen → SumUp. `PUBLIC_URL` muss gesetzt sein.

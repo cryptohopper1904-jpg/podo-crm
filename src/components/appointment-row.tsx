@@ -5,7 +5,7 @@ import { timeDe } from "@/lib/format";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 
-const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal" };
+const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal", extern: "Extern" };
 const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },
@@ -15,13 +15,15 @@ const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" 
 };
 
 export type ApptRow = {
-  a: { id: string; startsAt: Date; endsAt: Date; status: string; source: string; title: string | null; homeVisit: boolean; notes: string | null };
+  a: { id: string; startsAt: Date; endsAt: Date; status: string; source: string; title: string | null; homeVisit: boolean; notes: string | null; therapistId?: string | null };
   patient: { id: string; firstName: string | null; lastName: string; riskFlags: RiskFlags; homeVisit: boolean; city: string | null } | null;
   therapist: string | null;
+  /** Termin aus einem Kalender-Abo (nur lesend; Änderungen in der Quelle, z. B. Doctolib) */
+  feed?: { label: string; conflict: string | null } | null;
 };
 
-export function AppointmentRow({ row, canDoc, canEdit }: { row: ApptRow; canDoc: boolean; canEdit: boolean }) {
-  const { a, patient } = row;
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row: ApptRow; canDoc: boolean; canEdit: boolean; overlap?: boolean }) {
+  const { a, patient, feed } = row;
   const st = STATUS[a.status];
   const cancelled = a.status === "cancelled";
   return (
@@ -36,8 +38,18 @@ export function AppointmentRow({ row, canDoc, canEdit }: { row: ApptRow; canDoc:
         {patient ? <div className="mt-1"><RiskBadges flags={patient.riskFlags} compact /></div> : null}
       </div>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+      {feed ? (
+        <Badge tone="info" className="max-w-56 truncate">
+          <span title={`Importiert aus dem Kalender-Abo „${feed.label}“ – Änderungen bitte in der Quelle (z. B. Doctolib) vornehmen`}>aus Kalender-Abo · {feed.label}</span>
+        </Badge>
+      ) : null}
+      {overlap && !cancelled ? <Badge tone="accent">Überschneidung</Badge> : null}
+      {feed?.conflict === "local_change" ? <Badge tone="warn">in PodoHero geändert – Kalender-Änderung nicht übernommen</Badge> : null}
       <Badge tone="neutral">{SOURCE[a.source] ?? a.source}</Badge>
       <Badge tone={st.tone}>{st.label}</Badge>
+        {canEdit && feed && !patient && !cancelled ? (
+          <Link href={`/kalender/zuordnen/${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Kund:in zuordnen</Link>
+        ) : null}
         {canDoc && patient && a.status !== "done" && !cancelled ? (
           <Link href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl bg-primary px-3 text-sm font-semibold text-on-primary hover:bg-primary-hover">Doku</Link>
         ) : null}
@@ -48,11 +60,13 @@ export function AppointmentRow({ row, canDoc, canEdit }: { row: ApptRow; canDoc:
               <input type="hidden" name="status" value="no_show" />
               <button className="h-10 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2" title="Nicht erschienen (Ausfallhonorar möglich)">Nicht da</button>
             </form>
-            <form action={setAppointmentStatusAction}>
-              <input type="hidden" name="id" value={a.id} />
-              <input type="hidden" name="status" value="cancelled" />
-              <button className="h-10 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Absagen</button>
-            </form>
+            {feed ? null : (
+              <form action={setAppointmentStatusAction}>
+                <input type="hidden" name="id" value={a.id} />
+                <input type="hidden" name="status" value="cancelled" />
+                <button className="h-10 rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Absagen</button>
+              </form>
+            )}
           </>
         ) : null}
       </div>

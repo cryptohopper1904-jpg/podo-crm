@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
+import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { OnboardingCard } from "@/components/onboarding-card";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { withOrg } from "@/db";
@@ -9,6 +10,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, money, timeDe, weekdayLong } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { listAppointments } from "@/server/appointments";
+import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
 
@@ -51,6 +53,8 @@ export default async function TodayPage() {
     return { open, paidToday, newMsgs, openTasks, countersign: countersign[0]?.n ?? 0, integ, recent };
   });
   const active = appts.filter((r) => r.a.status !== "cancelled");
+  const overlaps = feedOverlapIds(appts);
+  const feedErrors = auth.can("integrations.manage") ? await failingCalendarFeeds(org) : [];
   const homeVisits = active.filter((r) => r.a.homeVisit).length;
   const holiday = holidayOn(today, auth.organization.state as StateCode);
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
@@ -80,7 +84,18 @@ export default async function TodayPage() {
       <div className="flex flex-wrap items-start gap-6">
         <Card className="min-w-0 flex-[3_1_480px]">
           <CardTitle action={<Link href="/kalender" className="text-sm font-semibold text-primary">Kalender</Link>}>Heute</CardTitle>
-          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} />)}
+          {overlaps.size ? (
+            <p className="mb-3 rounded-xl bg-accent-soft p-3 text-sm text-accent-soft-text">
+              <strong>Überschneidung:</strong> {overlaps.size} Termine heute überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in).
+            </p>
+          ) : null}
+          {feedErrors.length ? (
+            <p className="mb-3 rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
+              Kalender-Abo {feedErrors.map((f) => `„${f.label}“`).join(", ")}: letzter Abruf fehlgeschlagen –{" "}
+              <Link href="/einstellungen/kalender-abo" className="font-semibold underline">prüfen</Link>
+            </p>
+          ) : null}
+          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)}
         </Card>
 
         <div className="flex min-w-0 flex-[2_1_320px] flex-col gap-6">
