@@ -281,6 +281,10 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 | N8 | Login wählt bei mehreren Praxen eine beliebige Mitgliedschaft (ohne `orderBy`) | `src/app/(auth)/actions.ts:55-59` | zuletzt genutzte Praxis merken |
 | N9 | Medien-Upload liest `formData()` ohne vorherige Prüfung der Content-Length (Speicher) | `src/app/api/media/route.ts:23` | Content-Length prüfen wie bei `voice-report` |
 | N10 | UX/Barrierefreiheit (siehe unten) | – | – |
+| N11 | Ende einer Support-Freigabe: `getAuth` hängt die Sitzung per `UPDATE` ohne Token-Rotation auf eine beliebige eigene Mitgliedschaft um (`limit(1)` ohne Reihenfolge). `enterSupport`/`exitSupport` rotieren dagegen (Grok) | `src/lib/auth/session.ts:209-217` | `rotateSession` verwenden bzw. Sitzung beenden |
+| N12 | `assertPaymentsEditable` ist definiert, wird aber nirgends aufgerufen. Phase 5 #6 nennt es als Absicherung. Der DB-Trigger `payments_closing_guard` schützt trotzdem; verspätete Webhook-Zahlungen fallen bewusst in den nächsten Abschluss (Phase-5-Entscheidung) | `src/server/kasse.ts:637` | aufrufen oder entfernen, Z-Bon-Kennzeichnung „Nachbuchung“ prüfen |
+| N13 | `invoices.checkout_ref` nicht eindeutig; `recordProviderPayment` nimmt `limit(1)` ohne Reihenfolge (Grok) | `src/server/webhooks.ts:101-104` | Unique-Index (partiell, nicht NULL) |
+| N14 | `exitSupport` übernimmt `fromOrganizationId` vom Aufrufer für das Audit (Grok) | `src/server/support.ts:149-156` | Praxis aus der Sitzungszeile lesen |
 
 **Details zu N10 (UX/Barrierefreiheit, iPad und iPhone):**
 - **Touch-Ziele unter 44 px:**
@@ -299,6 +303,9 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 
 | Quelle | Behauptung | Ergebnis |
 |---|---|---|
+| Grok (hoch) | Token-Webhooks nicht fail-closed bei fehlendem Geheimnis | **falsch** – `safeEqual` gibt bei leerem Wert `false` zurück (`src/lib/safe-equal.ts:5`) |
+| Grok (hoch) | `voice_agent` im generischen Webhook ohne `await` und ohne Mandant | zutreffend, aber wirkungslos (der Parser verwirft das Ergebnis) → unter M6: Pfad entfernen |
+| Grok (kritisch) | TSE-USt bei Teilzahlung falsch | **falsch**, wie bei GPT (siehe nächste Zeile) |
 | GPT (hoch) | TSE-USt-Gruppen bei Teilzahlung falsch | **falsch** – `src/server/fiscal.ts:34` verteilt mit `allocateByVat(amountCents, vatGroups)` anteilig |
 | GPT, Mistral | Alte Support-Freigaben ohne Person | **bereits entschieden** (Phase 3/4: laufen bis zum Ablauf, max. 72 h; neue Freigaben brauchen eine Person, `support.ts:26`) – inzwischen gegenstandslos |
 | GPT (kritisch), Gemini/Mistral (hoch) | Praxis-Export ohne Autorisierung | Route prüft `owner` und `!support` → nur Defense-in-Depth, siehe N2 |

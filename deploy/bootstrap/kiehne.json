@@ -1,0 +1,31 @@
+{
+  "name": "Podologie Kiehne",
+  "slug": "podologie-kiehne",
+  "street": "Goethestraße 68",
+  "zip": "16540",
+  "city": "Hohen Neuendorf",
+  "state": "BB",
+  "phone": "0160 96210972",
+  "email": "termin@podologie-kiehne.de",
+  "website": "https://www.podologie-kiehne.de",
+  "openingDate": "2026-11-01",
+  "owner": { "email": "sven@podologie-kiehne.de", "name": "Sven Kiehne" },
+  "practitioner": { "name": "Victoria Kiehne", "qualification": "staatlich anerkannte Podologin & Heilpraktikerin" },
+  "services": [
+    { "code": "PK", "name": "Podologische Komplexbehandlung", "durationMin": 40, "priceCents": 6500, "vatRate": 0, "category": "treatment", "note": "Beispielpreis aus dem Standardkatalog – Preis bitte prüfen" },
+    { "code": "NS", "name": "Nagelkorrekturspange", "durationMin": 30, "priceCents": 6000, "vatRate": 0, "category": "brace", "note": "Beispielpreis aus dem Standardkatalog – Preis bitte prüfen" },
+    { "code": "NP", "name": "Nagelprothetik", "durationMin": 45, "priceCents": null, "vatRate": 0, "category": "treatment", "note": "Preis bitte prüfen (USt.: 0 % nur mit therapeutischem Ziel)" },
+    { "code": "OI", "name": "Orthosen (individuell)", "durationMin": 30, "priceCents": null, "vatRate": 0, "category": "treatment", "note": "Preis bitte prüfen" },
+    { "code": "KP", "name": "Kaltplasma-Therapie", "durationMin": 20, "priceCents": null, "vatRate": 0, "category": "treatment", "note": "Preis bitte prüfen" },
+    { "code": "HB", "name": "Hausbesuch", "durationMin": 0, "priceCents": 1500, "vatRate": 0, "category": "travel", "note": "Beispielpreis aus dem Standardkatalog (Pauschale) – Preis bitte prüfen" }
+  ],
+  "openingHours": [
+    { "weekday": 2, "from": "08:00", "to": "17:00" },
+    { "weekday": 3, "from": "08:00", "to": "17:00" }
+  ],
+  "homeVisitAreas": ["Hohen Neuendorf", "Stolpe", "Borgsdorf", "Birkenwerder", "Glienicke/Nordbahn", "Berlin-Frohnau"],
+  "websiteContent": {
+    "claim": "Podologie in Hohen Neuendorf – in der Praxis und bei Ihnen zu Hause",
+    "about": "Victoria Kiehne, staatlich anerkannte Podologin & Heilpraktikerin. Neue Praxis ab 01.11.2026 in der Goethestraße 68, Hohen Neuendorf. Hausbesuche in Hohen Neuendorf und Umgebung."
+  }
+}
