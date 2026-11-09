@@ -11,6 +11,8 @@ import { requireAuth } from "@/lib/auth/session";
 import { feature, isGkvArea } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, money, timeDe, weekdayLong } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { collectiveReminderYear } from "@/lib/year-end";
+import { collectiveOverview } from "@/server/appointment-billing";
 import { listAppointments } from "@/server/appointments";
 import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
@@ -65,6 +67,9 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
   const voiceQuota =
     auth.role === "owner" && stats.integ.some((i) => i.provider === "voice_agent" && i.status === "connected") ? await voiceQuotaFor(auth) : null;
+  // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
+  const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
+  const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -114,6 +119,26 @@ export default async function TodayPage(props: PageProps<"/heute">) {
                     <p className="text-xs text-muted">{m.channel} · {timeDe(m.receivedAt)}</p>
                     <p className="mt-1 line-clamp-2 text-sm">{m.body}</p>
                     {m.aiSuggestion ? <p className="mt-2 text-xs font-semibold text-primary">KI-Vorschlag bereit</p> : null}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          ) : null}
+
+          {reminderYear && openCollective.length ? (
+            <Card className="border-accent/40">
+              <CardTitle action={<Link href={`/rechnungen/sammelrechnungen?jahr=${reminderYear}`} className="text-sm font-semibold text-primary">Alle</Link>}>
+                Sammelrechnungen {reminderYear}
+              </CardTitle>
+              <p className="mb-3 text-sm text-muted">
+                {openCollective.length === 1 ? "1 Kund:in hat" : `${openCollective.length} Kund:innen haben`} noch Behandlungen oder Quittungen aus {reminderYear} ohne Rechnung.
+              </p>
+              <ul className="flex flex-col gap-2 text-sm">
+                {openCollective.slice(0, 5).map((r) => (
+                  <li key={r.patientId} className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                    <span className="text-muted tabular-nums">{r.items} Beh.{r.depositCount ? ` · ${r.depositCount} Quittung${r.depositCount > 1 ? "en" : ""}` : ""}</span>
+                    <Link href={`/rechnungen/neu?sammel=${r.patientId}&jahr=${reminderYear}`} className="font-semibold text-primary">Erstellen</Link>
                   </li>
                 ))}
               </ul>

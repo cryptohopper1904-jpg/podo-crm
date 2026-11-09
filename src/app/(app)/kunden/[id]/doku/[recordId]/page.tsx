@@ -4,12 +4,14 @@ import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { media, patients, recordAddenda, treatmentRecords, users } from "@/db/schema";
-import { Badge, Button, Card, FormSuccess, Textarea } from "@/components/ui";
+import { Badge, Button, Card, FormSuccess, LinkButton, Textarea } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { feature } from "@/lib/features";
-import { dateTimeDe, fullName } from "@/lib/format";
+import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { BRACE_ACTION_LABEL, MEDIA_PURPOSE_LABEL } from "@/lib/labels";
+import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE } from "@/lib/invoice-labels";
+import { billingFromSource } from "@/server/appointment-billing";
 import { addAddendumAction } from "../actions";
 
 export const metadata = { title: "Behandlungseintrag" };
@@ -47,6 +49,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
     ["Begründung fehlendes Pflichtfoto", r.missingPhotoReason],
   ];
   const needsCountersign = r.countersignRequired && !data.add.some((a) => a.a.kind === "countersign");
+  const billing = auth.can("invoices.write") ? await billingFromSource(auth, { recordId }) : null;
   return (
     <div className="mx-auto max-w-4xl">
       <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.p)}</Link></p>
@@ -88,6 +91,33 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
               </figure>
             ))}
           </div>
+        </Card>
+      ) : null}
+      {billing?.patient ? (
+        <Card className="mt-6">
+          <h2 className="mb-3 font-display text-lg font-semibold">Abrechnung</h2>
+          {billing.prescription ? (
+            <p className="mb-3 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">Behandlung auf Verordnung – Abrechnung über die Krankenkasse. Eine Rechnung an die Kund:in nur für Zusatzleistungen.</p>
+          ) : null}
+          {billing.documents.length ? (
+            <ul className="mb-3 flex flex-col gap-1 text-sm">
+              {billing.documents.map((d) => (
+                <li key={d.id} className="flex flex-wrap items-center gap-2">
+                  <Link href={`/rechnungen/${d.id}`} className="font-semibold text-primary hover:underline">{INVOICE_KIND_LABEL[d.kind]} {d.number}</Link>
+                  <span className="text-muted">vom {dateDe(d.issuedAt)} · {money(d.totalCents)}</span>
+                  <Badge tone={INVOICE_STATUS_TONE[d.status]}>{INVOICE_STATUS_LABEL[d.status]}</Badge>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {billing.billedBy.length ? (
+            <p className="text-sm text-muted">Die Behandlung ist bereits abgerechnet.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen</LinkButton>
+              <LinkButton href={`/rechnungen/anzahlung?behandlung=${recordId}`} variant="secondary">Quittung für Sammelrechnung</LinkButton>
+            </div>
+          )}
         </Card>
       ) : null}
       <Card className="mt-6">

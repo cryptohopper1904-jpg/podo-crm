@@ -5,6 +5,7 @@ export const INVOICE_KIND_LABEL: Record<string, string> = {
   collective: "Sammelrechnung",
   no_show_fee: "Ausfallhonorar",
   credit_note: "Stornorechnung",
+  deposit: "Quittung (Anzahlung)",
 };
 
 export const INVOICE_STATUS_LABEL: Record<string, string> = {
@@ -35,6 +36,10 @@ export const PAYMENT_METHODS = ["cash", "card", "transfer", "voucher", "payment_
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 export const CREATABLE_KINDS = ["invoice", "receipt", "collective", "no_show_fee"] as const;
+/** Zahlarten für eine Anzahlungs-Quittung (sofort erhalten – kein Zahlungslink) */
+export const DEPOSIT_METHODS = ["cash", "card", "transfer"] as const;
+export type DepositMethod = (typeof DEPOSIT_METHODS)[number];
+export const NOTE_DEPOSIT = "Anzahlung – dieser Betrag wird auf Ihre Sammelrechnung angerechnet. Bitte bewahren Sie die Quittung auf.";
 export type CreatableKind = (typeof CREATABLE_KINDS)[number];
 
 export const THERAPEUTIC_LABEL = "Heilbehandlung mit therapeutischem Ziel (Befund/Verordnung dokumentiert)";

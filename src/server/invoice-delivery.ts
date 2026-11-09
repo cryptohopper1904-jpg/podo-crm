@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lt, notInArray } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, ne, notInArray } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
@@ -167,14 +167,14 @@ export async function collectiveSuggestion(auth: AuthContext, billingContactId: 
           .select({ recordId: invoiceLines.treatmentRecordId })
           .from(invoiceLines)
           .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recIds), notInArray(invoices.status, ["cancelled", "draft"])))
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recIds), notInArray(invoices.status, ["cancelled", "draft"]), ne(invoices.kind, "deposit")))
       : [];
     const billed = new Set(billedRows.map((b) => b.recordId));
     // Zusatz-Heuristik für Altbestand ohne Behandlungsbezug: eigene Rechnung der Person am Behandlungstag
     const own = await tx
       .select({ patientId: invoices.patientId, issuedAt: invoices.issuedAt })
       .from(invoices)
-      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), notInArray(invoices.status, ["cancelled", "draft"]), notInArray(invoices.kind, ["credit_note", "collective"])));
+      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), notInArray(invoices.status, ["cancelled", "draft"]), notInArray(invoices.kind, ["credit_note", "collective", "deposit"])));
     const ownKeys = new Set(own.filter((o) => o.issuedAt).map((o) => `${o.patientId}|${isoDay(o.issuedAt!)}`));
 
     const lines: CollectiveSuggestionLine[] = [];

@@ -126,3 +126,32 @@ describe("Kasse: Hash-Kette", () => {
     expect(verifyClosingRows([row1, { ...z2, prevHash: h, hash: chainHash(h, closingHashContent(z2)) }])).toBe(1);
   });
 });
+
+describe("Kasse: Anzahlung (Quittung für die Sammelrechnung)", () => {
+  it("bucht die Zahlung als AnzahlungEinstellung (nicht als Umsatz), zählt sie aber bei Bar und USt-Summe", () => {
+    const dep: KassePayment = { ...p("d", "cash", 6500, 5), invoiceNumber: "AZ2026-0001", vatGroups: [{ rate: 0, grossCents: 6500 }], deposit: true };
+    const c = computeClosing({
+      zNumber: 1,
+      firstBonNr: 1,
+      closedAt: new Date(Date.UTC(2026, 10, 6, 17)),
+      openingCents: 0,
+      openingIsNew: false,
+      denominations: { "5000": 1, "1000": 1, "500": 1 },
+      payments: [dep],
+      movements: [],
+    });
+    expect(c.bons).toHaveLength(1);
+    expect(c.bons[0].lines).toEqual([expect.objectContaining({ gvTyp: "AnzahlungEinstellung", ustKey: 6, grossCents: 6500, text: "Anzahlung AZ2026-0001 (0 % USt)" })]);
+    expect(c.bons[0].payments).toEqual([{ typ: "Bar", name: "Bar", amountCents: 6500 }]);
+    expect(c.cashPaymentsCents).toBe(6500);
+    expect(c.differenceCents).toBe(0);
+    expect(c.totals.businessCases).toEqual([expect.objectContaining({ gvTyp: "AnzahlungEinstellung", ustKey: 6, grossCents: 6500 })]);
+    expect(c.totals.byVat).toEqual([expect.objectContaining({ rate: 0, grossCents: 6500 })]);
+  });
+
+  it("Erstattung einer stornierten Anzahlung bleibt eine (negative) Anzahlungsbuchung", () => {
+    const refund: KassePayment = { ...p("r", "cash", -6500, 6), invoiceNumber: "GS2026-0001", vatGroups: [{ rate: 0, grossCents: -6500 }], deposit: true };
+    const [bon] = buildBons({ zNumber: 1, firstBonNr: 1, closedAt: new Date(), openingCents: 0, openingIsNew: false, differenceCents: 0, payments: [refund], movements: [] });
+    expect(bon.lines).toEqual([expect.objectContaining({ gvTyp: "AnzahlungEinstellung", grossCents: -6500 })]);
+  });
+});

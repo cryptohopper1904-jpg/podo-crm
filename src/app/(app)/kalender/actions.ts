@@ -10,7 +10,7 @@ import { appointments, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
-import { createInternalAppointments } from "@/server/appointments";
+import { createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
@@ -99,4 +99,29 @@ export async function assignFeedPatientAction(_: AssignState, form: FormData): P
   revalidatePath("/kalender");
   revalidatePath("/heute");
   return { ok: "Termin zugeordnet." };
+}
+
+export type RescheduleState = { error?: string; conflict?: boolean; ok?: string } | undefined;
+
+const rescheduleSchema = z.object({
+  id: z.string().uuid(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum fehlt"),
+  time: z.string().regex(/^\d{2}:\d{2}$/, "Uhrzeit fehlt"),
+  durationMin: z.coerce.number().int().min(5, "Dauer mindestens 5 Minuten").max(480, "Dauer höchstens 480 Minuten"),
+  therapistId: z.string().uuid("Bitte Behandler:in wählen"),
+  allowConflict: z.literal("1").optional(),
+});
+
+/** Termin verschieben (nur in PodoHero geführte Termine – Doctolib/Kalender-Abo werden in der Quelle geändert). */
+export async function rescheduleAppointmentAction(_: RescheduleState, form: FormData): Promise<RescheduleState> {
+  const auth = await requireAuth("appointments.write");
+  const parsed = rescheduleSchema.safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const d = parsed.data;
+  const res = await rescheduleAppointment(auth, d.id, { startsAt: berlinToUtc(d.date, d.time), durationMin: d.durationMin, therapistId: d.therapistId, allowConflict: !!d.allowConflict });
+  if (!res.ok) return { error: res.error, conflict: res.conflict };
+  revalidatePath("/kalender");
+  revalidatePath("/heute");
+  revalidatePath(`/kalender/termin/${d.id}`);
+  redirect(`/kalender?datum=${d.date}`);
 }

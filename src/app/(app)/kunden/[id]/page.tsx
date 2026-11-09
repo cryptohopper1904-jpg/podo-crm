@@ -34,7 +34,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
 
   type Item = { at: Date; kind: string; title: string; detail?: string; href?: string };
   const timeline: Item[] = [
-    ...data.appointments.map((a) => ({ at: a.startsAt, kind: "Termin", title: `${a.title ?? "Termin"} · ${APPT_STATUS[a.status]}`, detail: a.notes ?? undefined })),
+    ...data.appointments.map((a) => ({ at: a.startsAt, kind: "Termin", title: `${a.title ?? "Termin"} · ${APPT_STATUS[a.status]}`, detail: a.notes ?? undefined, href: `/kalender/termin/${a.id}` })),
     ...data.records.map((r) => ({ at: r.treatedAt, kind: "Doku", title: r.servicesText ?? "Behandlung dokumentiert", detail: r.findings ?? undefined, href: `/kunden/${p.id}/doku/${r.id}` })),
     ...data.invoices.map((i) => ({ at: i.createdAt, kind: "Rechnung", title: `${i.number ?? "Entwurf"} · ${money(i.totalCents)} · ${INVOICE_STATUS[i.status]}`, href: `/rechnungen/${i.id}` })),
     ...data.consents.map((c) => ({ at: c.recordedAt, kind: "Einwilligung", title: `${CONSENT_LABELS[c.type] ?? c.type}: ${c.granted ? "erteilt" : "widerrufen"}` })),
@@ -66,7 +66,10 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <LinkButton href={`/kalender/neu?patient=${p.id}`} variant="secondary"><CalendarPlus size={18} aria-hidden /> Termin</LinkButton>
           ) : null}
           {auth.can("invoices.write") ? (
-            <LinkButton href={`/rechnungen/neu?patient=${p.id}`} variant="secondary"><FileText size={18} aria-hidden /> Rechnung</LinkButton>
+            <>
+              <LinkButton href={`/rechnungen/neu?patient=${p.id}`} variant="secondary"><FileText size={18} aria-hidden /> Rechnung</LinkButton>
+              <LinkButton href={`/rechnungen/neu?sammel=${p.id}`} variant="secondary"><FileText size={18} aria-hidden /> Sammelrechnung</LinkButton>
+            </>
           ) : null}
           {auth.can("patients.write") ? (
             <LinkButton href={`/kunden/${p.id}/bearbeiten`} variant="ghost" aria-label="Bearbeiten"><Pencil size={18} aria-hidden /></LinkButton>

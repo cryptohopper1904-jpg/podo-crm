@@ -1,7 +1,11 @@
 import "server-only";
 import { and, asc, eq, gte, isNull, lt, ne, or } from "drizzle-orm";
+import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, memberships, patients, users } from "@/db/schema";
+import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, memberships, patients, services, users } from "@/db/schema";
+import { appointmentEditLock } from "@/lib/appointment-edit";
+import { audit } from "@/lib/audit";
+import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
@@ -130,4 +134,104 @@ export async function createInternalAppointments(org: string, input: InternalApp
     }
     return { ok: true as const, ids };
   });
+}
+
+// ───────────── Termin ansehen und verschieben (Kalender → Termin) ─────────────
+
+/** Termin mit Person, Behandler:in, Leistungen und Herkunft (Kalender-Abo). null = nicht gefunden. */
+export async function getAppointment(auth: AuthContext, id: string) {
+  assertCan(auth, "appointments.read");
+  const org = auth.organization.id;
+  if (!z.uuid().safeParse(id).success) return null;
+  return withOrg(org, async (tx) => {
+    const [row] = await tx
+      .select({
+        a: appointments,
+        patient: { id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName, insuranceType: patients.insuranceType },
+        therapist: users.name,
+        feedLabel: calendarFeeds.label,
+        feedEventId: calendarFeedEvents.id,
+      })
+      .from(appointments)
+      .leftJoin(patients, eq(patients.id, appointments.patientId))
+      .leftJoin(users, eq(users.id, appointments.therapistId))
+      .leftJoin(calendarFeedEvents, and(eq(calendarFeedEvents.organizationId, org), eq(calendarFeedEvents.appointmentId, appointments.id)))
+      .leftJoin(calendarFeeds, eq(calendarFeeds.id, calendarFeedEvents.feedId))
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, id)))
+      .limit(1);
+    if (!row) return null;
+    const svc = await tx
+      .select({ id: services.id, code: services.code, name: services.name, priceCents: services.priceCents, vatRate: services.vatRate, quantity: appointmentServices.quantity })
+      .from(appointmentServices)
+      .innerJoin(services, eq(services.id, appointmentServices.serviceId))
+      .where(and(eq(appointmentServices.organizationId, org), eq(appointmentServices.appointmentId, id)));
+    const fromFeed = row.feedEventId !== null;
+    return {
+      appointment: row.a,
+      patient: row.patient?.id ? row.patient : null,
+      therapist: row.therapist,
+      services: svc.map((s) => ({ ...s, quantity: Number(s.quantity) || 1 })),
+      feed: fromFeed ? { label: row.feedLabel ?? "Kalender-Abo" } : null,
+      lock: appointmentEditLock(row.a, fromFeed),
+    };
+  });
+}
+
+export type RescheduleInput = { startsAt: Date; durationMin: number; therapistId: string; allowConflict: boolean };
+export type RescheduleResult = { ok: true } | { ok: false; conflict?: true; error: string };
+
+/**
+ * Termin verschieben (Datum, Uhrzeit, Dauer, Behandler:in) – nur für Termine, die in PodoHero geführt werden
+ * (nicht Doctolib/Kalender-Abo, siehe appointmentEditLock). Unter derselben Buchungssperre wie die Terminanlage;
+ * Überschneidungen nur nach ausdrücklicher Bestätigung (allowConflict).
+ */
+export async function rescheduleAppointment(auth: AuthContext, id: string, input: RescheduleInput): Promise<RescheduleResult> {
+  assertCan(auth, "appointments.write");
+  const org = auth.organization.id;
+  if (!z.uuid().safeParse(id).success) return { ok: false, error: "Termin nicht gefunden." };
+  if (Number.isNaN(input.startsAt.getTime())) return { ok: false, error: "Datum/Uhrzeit ungültig." };
+  if (!Number.isInteger(input.durationMin) || input.durationMin < 5 || input.durationMin > 480) return { ok: false, error: "Dauer muss zwischen 5 und 480 Minuten liegen." };
+  const end = new Date(input.startsAt.getTime() + input.durationMin * 60_000);
+  const result = await withOrg(org, async (tx): Promise<RescheduleResult & { before?: { startsAt: Date; endsAt: Date; therapistId: string | null } }> => {
+    await lockBooking(tx, org);
+    const [a] = await tx.select().from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
+    if (!a) return { ok: false, error: "Termin nicht gefunden." };
+    const [feed] = await tx
+      .select({ id: calendarFeedEvents.id })
+      .from(calendarFeedEvents)
+      .where(and(eq(calendarFeedEvents.organizationId, org), eq(calendarFeedEvents.appointmentId, id)))
+      .limit(1);
+    const lock = appointmentEditLock(a, !!feed);
+    if (lock) return { ok: false, error: lock.message };
+    const [member] = await tx
+      .select({ id: memberships.userId })
+      .from(memberships)
+      .where(and(eq(memberships.organizationId, org), eq(memberships.userId, input.therapistId), eq(memberships.active, true)));
+    if (!member) return { ok: false, error: "Behandler:in nicht gefunden." };
+    if (!input.allowConflict) {
+      const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
+      if (clash.length) return { ok: false, conflict: true, error: "Zu dieser Zeit ist bereits ein Termin eingetragen." };
+    }
+    await tx
+      .update(appointments)
+      .set({ startsAt: input.startsAt, endsAt: end, therapistId: input.therapistId, updatedAt: new Date() })
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
+    return { ok: true, before: { startsAt: a.startsAt, endsAt: a.endsAt, therapistId: a.therapistId } };
+  });
+  if (!result.ok) return result;
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "appointment.reschedule",
+    entity: "appointment",
+    entityId: id,
+    meta: {
+      from: result.before?.startsAt.toISOString(),
+      to: input.startsAt.toISOString(),
+      durationMin: input.durationMin,
+      therapistChanged: result.before?.therapistId !== input.therapistId,
+      allowConflict: input.allowConflict,
+    },
+  });
+  return { ok: true };
 }

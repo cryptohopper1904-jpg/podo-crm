@@ -80,7 +80,7 @@ export async function financeOverview(auth: AuthContext, year: number) {
         join invoices i on i.id = l.invoice_id
         left join services s on s.id = l.service_id
         where l.organization_id = ${org} and i.organization_id = ${org}
-          and i.status not in ('draft', 'cancelled') and i.kind <> 'credit_note'
+          and i.status not in ('draft', 'cancelled') and i.kind not in ('credit_note', 'deposit')
           and i.issued_at >= ${`${year}-01-01`} and i.issued_at < ${`${year + 1}-01-01`}
         group by 1
         order by 3 desc`)

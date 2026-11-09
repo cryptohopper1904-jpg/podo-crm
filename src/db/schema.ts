@@ -60,7 +60,11 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
   /** Kalender-Abo (iCal-Import) aus einem externen Kalender, der nicht Doctolib ist */
   "extern",
 ]);
-export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee"]);
+/**
+ * deposit = Quittung über eine Anzahlung (z. B. bar beim Termin), die später auf die Sammelrechnung der Person
+ * angerechnet wird (invoices.collective_invoice_id). Kein eigener Umsatz neben der Sammelrechnung.
+ */
+export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee", "deposit"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", [
   "draft",
   "issued",
@@ -810,6 +814,7 @@ export const invoices = pgTable(
     totalCents: integer("total_cents").notNull().default(0),
     paidCents: integer("paid_cents").notNull().default(0),
     cancelsInvoiceId: uuid("cancels_invoice_id"),
+    /** Anzahlung (kind = deposit): Sammelrechnung/Rechnung, auf die sie angerechnet wurde (null = noch offen) */
     collectiveInvoiceId: uuid("collective_invoice_id"),
     /** crm | excel-import | … */
     source: text("source").notNull().default("crm"),
@@ -826,26 +831,33 @@ export const invoices = pgTable(
   (t) => [
     uniqueIndex("invoices_org_number").on(t.organizationId, t.number),
     index("invoices_org_status").on(t.organizationId, t.status),
+    index("invoices_org_collective").on(t.organizationId, t.collectiveInvoiceId),
   ],
 );
 
-export const invoiceLines = pgTable("invoice_lines", {
-  id: id(),
-  organizationId: orgId(),
-  invoiceId: uuid("invoice_id")
-    .notNull()
-    .references(() => invoices.id, { onDelete: "cascade" }),
-  serviceId: uuid("service_id").references(() => services.id),
-  description: text("description").notNull(),
-  quantity: numeric("quantity", { precision: 8, scale: 2 }).notNull().default("1"),
-  factor: numeric("factor", { precision: 5, scale: 2 }).notNull().default("1"),
-  unitPriceCents: integer("unit_price_cents").notNull(),
-  vatRate: integer("vat_rate").notNull().default(0),
-  totalCents: integer("total_cents").notNull(),
-  /** Bezug zur Behandlung (Sammelrechnung Pflegeheim: verhindert Doppelabrechnung) */
-  treatmentRecordId: uuid("treatment_record_id").references(() => treatmentRecords.id),
-  position: integer("position").notNull().default(0),
-});
+export const invoiceLines = pgTable(
+  "invoice_lines",
+  {
+    id: id(),
+    organizationId: orgId(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    serviceId: uuid("service_id").references(() => services.id),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 8, scale: 2 }).notNull().default("1"),
+    factor: numeric("factor", { precision: 5, scale: 2 }).notNull().default("1"),
+    unitPriceCents: integer("unit_price_cents").notNull(),
+    vatRate: integer("vat_rate").notNull().default(0),
+    totalCents: integer("total_cents").notNull(),
+    /** Bezug zur Behandlung (Sammelrechnung Pflegeheim: verhindert Doppelabrechnung) */
+    treatmentRecordId: uuid("treatment_record_id").references(() => treatmentRecords.id),
+    /** Bezug zum Termin (Rechnung aus dem Termin ohne Doku-Eintrag): verhindert Doppelabrechnung, Jahresend-Erinnerung */
+    appointmentId: uuid("appointment_id").references(() => appointments.id),
+    position: integer("position").notNull().default(0),
+  },
+  (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],
+);
 
 export const vouchers = pgTable(
   "vouchers",

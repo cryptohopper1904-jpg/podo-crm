@@ -7,6 +7,8 @@ const PREFIX: Record<string, string> = {
   receipt: "Q",
   collective: "SR",
   credit_note: "GS",
+  /** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) */
+  deposit: "AZ",
   no_show_fee: "R",
   voucher: "G",
 };

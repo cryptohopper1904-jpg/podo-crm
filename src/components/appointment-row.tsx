@@ -1,12 +1,13 @@
 import Link from "next/link";
 import type { RiskFlags } from "@/db/schema";
 import { setAppointmentStatusAction } from "@/app/(app)/kalender/actions";
+import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 
-const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal", extern: "Extern" };
-const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
+export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal", extern: "Extern" };
+export const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },
   done: { label: "erledigt", tone: "primary" },
@@ -28,7 +29,9 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row:
   const cancelled = a.status === "cancelled";
   return (
     <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>
-      <span className="w-28 shrink-0 whitespace-nowrap font-semibold tabular-nums">{timeDe(a.startsAt)}–{timeDe(a.endsAt)}</span>
+      <Link href={`/kalender/termin/${a.id}`} className="w-28 shrink-0 whitespace-nowrap font-semibold tabular-nums hover:text-primary" title="Termin öffnen (verschieben, abrechnen)">
+        {timeDe(a.startsAt)}–{timeDe(a.endsAt)}
+      </Link>
       <span className={`w-1 self-stretch rounded ${a.homeVisit ? "bg-[#e9b931]" : a.status === "done" ? "bg-primary" : "bg-accent"}`} aria-hidden />
       <div className="min-w-0 flex-[1_1_14rem]">
         <p className="font-semibold">
@@ -56,6 +59,9 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row:
         {canEdit && patient && (a.homeVisit || patient.homeVisit) && !cancelled && a.status !== "done" ? (
           <Link href={`/touren/losfahren?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Losfahren</Link>
         ) : null}
+        <Link href={`/kalender/termin/${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">
+          {canEdit && !appointmentEditLock(a, !!feed) ? "Ändern" : "Details"}
+        </Link>
         {canEdit && !cancelled && a.status !== "done" ? (
           <>
             <form action={setAppointmentStatusAction}>

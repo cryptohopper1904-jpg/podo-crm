@@ -1,6 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import {
@@ -97,6 +98,9 @@ function dbMessage(e: unknown): string | null {
 // ───────────────────────── Laden ─────────────────────────
 type ItemsFilter = { closingIds: string[] } | { openUntil: Date };
 
+/** Stornierte Original-Rechnung (Erstattung einer Anzahlung bleibt eine Anzahlungs-Buchung) */
+const cancelled = alias(invoices, "cancelled_invoice");
+
 async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
   const payCond =
     "closingIds" in filter
@@ -112,9 +116,18 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
       : and(isNull(cashMovements.cashClosingId), lte(cashMovements.occurredAt, filter.openUntil));
 
   const payRows = await tx
-    .select({ p: payments, invoiceNumber: invoices.number, voucherCode: vouchers.code, voucherPurpose: vouchers.purpose, ft: fiscalTransactions })
+    .select({
+      p: payments,
+      invoiceNumber: invoices.number,
+      invoiceKind: invoices.kind,
+      cancelsKind: cancelled.kind,
+      voucherCode: vouchers.code,
+      voucherPurpose: vouchers.purpose,
+      ft: fiscalTransactions,
+    })
     .from(payments)
     .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+    .leftJoin(cancelled, and(eq(cancelled.id, invoices.cancelsInvoiceId), eq(cancelled.organizationId, org)))
     .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
     .leftJoin(fiscalTransactions, and(eq(fiscalTransactions.paymentId, payments.id), eq(fiscalTransactions.organizationId, org)))
     .where(and(eq(payments.organizationId, org), payCond))
@@ -160,6 +173,7 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
     vatGroups: vatRows.filter((v) => v.invoiceId === r.p.invoiceId).map((v) => ({ rate: v.rate, grossCents: Number(v.gross) })),
     voucher: r.voucherCode ? { code: r.voucherCode, purpose: r.voucherPurpose ?? "multi" } : null,
     soldVoucher: soldFor(r.p.invoiceId),
+    deposit: r.invoiceKind === "deposit" || r.cancelsKind === "deposit",
     externalRef: r.p.externalRef,
     // TSE-Daten nur aus fiscal_transactions (vom Server geschrieben); Altbestand: Kurzreferenz nur bei Bar (external_ref
     // wurde dort immer vom Server gesetzt – bei anderen Zahlarten ist external_ref frei eingebbar und nicht vertrauenswürdig)

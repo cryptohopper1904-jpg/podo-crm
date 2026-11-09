@@ -34,6 +34,8 @@ export type KassePayment = {
   voucher: { code: string; purpose: string } | null;
   /** die Rechnung ist ein Gutscheinverkauf */
   soldVoucher: { code: string; purpose: string } | null;
+  /** Zahlung auf eine Anzahlungs-Quittung (bzw. deren Storno): DSFinV-K „AnzahlungEinstellung“ statt „Umsatz“ */
+  deposit?: boolean;
   externalRef: string | null;
   /** TSE-Signatur des Vorgangs (fiscal_transactions; Altbestand: Kurzreferenz aus external_ref bei Bar) */
   tse: BonTse | null;
@@ -57,6 +59,7 @@ export type GvTyp =
   | "MehrzweckgutscheinEinloesung"
   | "EinzweckgutscheinKauf"
   | "EinzweckgutscheinEinloesung"
+  | "AnzahlungEinstellung"
   | "Anfangsbestand"
   | "Privateinlage"
   | "Privatentnahme"
@@ -166,6 +169,13 @@ function paymentLines(p: KassePayment): BonLine[] {
     } else {
       out.push(line(1, `Mehrzweckgutschein ${p.soldVoucher.code}`, "MehrzweckgutscheinKauf", 5, p.amountCents, p.soldVoucher.code));
     }
+    return out;
+  }
+  if (p.deposit) {
+    // Anzahlung: Umsatzsteuer entsteht mit Zahlungseingang (§ 13 Abs. 1 Nr. 1 a S. 4 UStG); die spätere Sammelrechnung
+    // rechnet sie an und ist kein weiterer Kassenvorgang.
+    // TODO DSFinV-K prüfen: „AnzahlungAufloesung“, falls die Schlussrechnung an der Kasse bezahlt wird
+    for (const a of split) out.push(line(out.length + 1, `Anzahlung${ref} (${a.vatRate} % USt)`, "AnzahlungEinstellung", ustKey(a.vatRate), a.grossCents));
     return out;
   }
   for (const a of split) out.push(line(out.length + 1, `Zahlung zu Rechnung${ref} (${a.vatRate} % USt)`, "Umsatz", ustKey(a.vatRate), a.grossCents));
@@ -331,7 +341,7 @@ export function computeClosing(input: {
       e.netCents += l.netCents;
       e.vatCents += l.vatCents;
       bc.set(k, e);
-      if (l.gvTyp === "Umsatz") {
+      if (l.gvTyp === "Umsatz" || l.gvTyp === "AnzahlungEinstellung") {
         const v = vat.get(l.rate) ?? { rate: l.rate, grossCents: 0, netCents: 0, vatCents: 0 };
         v.grossCents += l.grossCents;
         v.netCents += l.netCents;
