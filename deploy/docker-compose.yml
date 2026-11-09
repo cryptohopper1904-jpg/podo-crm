@@ -42,7 +42,7 @@ services:
     restart: "no"
 
   app:
-    build: { context: .., dockerfile: Dockerfile }
+    build: { context: .., dockerfile: Dockerfile, args: { GIT_SHA: "${GIT_SHA:-unknown}" } }
     restart: unless-stopped
     # KEIN env_file: Die App bekommt nur, was sie braucht (Gesamt-Review H2). DB_OWNER_PASSWORD (Tabelleneigentümer,
     # könnte RLS und Append-only-Trigger abschalten), BACKUP_PASSPHRASE und BOOTSTRAP_* bleiben bei db/migrate/backup.

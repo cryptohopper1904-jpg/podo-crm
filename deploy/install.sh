@@ -57,7 +57,7 @@ if ! grep -q '^HEALTH_TOKEN=.\{16,\}' "$ENV"; then
   echo "HEALTH_TOKEN=$(openssl rand -base64 32 | tr -d '\n/+=' | cut -c1-40)" >> "$ENV"
 fi
 
-docker compose -f deploy/docker-compose.yml --env-file "$ENV" up -d --build
+GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) docker compose -f deploy/docker-compose.yml --env-file "$ENV" up -d --build
 echo
 echo "PodoCRM läuft: https://$TARGET"
 if grep -q "^SEED_DEMO=true" "$ENV"; then echo "Demo-Login: demo@podocrm.local / demo-passwort-123"; fi
