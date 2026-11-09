@@ -23,6 +23,9 @@ BOOTSTRAP_ADMIN_PASSWORD="${BOOTSTRAP_ADMIN_PASSWORD:-}"
 # Pfad im Repository (z. B. deploy/bootstrap/kiehne.json) oder JSON-Text in einer Zeile
 BOOTSTRAP_PRACTICE_JSON="${BOOTSTRAP_PRACTICE_JSON:-}"
 BOOTSTRAP_PRACTICE_OWNER_PASSWORD="${BOOTSTRAP_PRACTICE_OWNER_PASSWORD:-}"
+# E-Mail-Versand (z. B. Resend: smtps://resend:<API-KEY>@smtp.resend.com:465) und Absender
+SMTP_URL="${SMTP_URL:-}"
+SMTP_FROM="${SMTP_FROM:-}"
 # ─────────────────────────────────────────
 
 APP_DIR=/opt/podo-crm
@@ -78,6 +81,8 @@ set_env BOOTSTRAP_ADMIN_NAME "$BOOTSTRAP_ADMIN_NAME"
 set_env BOOTSTRAP_ADMIN_PASSWORD "$BOOTSTRAP_ADMIN_PASSWORD"
 set_env BOOTSTRAP_PRACTICE_JSON "$BOOTSTRAP_PRACTICE_JSON"
 set_env BOOTSTRAP_PRACTICE_OWNER_PASSWORD "$BOOTSTRAP_PRACTICE_OWNER_PASSWORD"
+set_env SMTP_URL "$SMTP_URL"
+set_env SMTP_FROM "$SMTP_FROM"
 
 bash deploy/install.sh "$DOMAIN"
 
