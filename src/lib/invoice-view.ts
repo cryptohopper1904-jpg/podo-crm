@@ -57,9 +57,26 @@ export function hasExemptNote(o: Org, inv: { kind: string }, lines: { vatRate: n
   return !o.smallBusiness && inv.kind !== "no_show_fee" && lines.some((l) => l.vatRate === 0);
 }
 
-/** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Storno). */
+/** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Anzahlung/Storno). */
 export function showsDueDate(inv: { kind: string; status: string }) {
-  return inv.kind !== "receipt" && inv.kind !== "credit_note" && inv.status !== "paid";
+  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid";
+}
+
+/** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
+export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit";
+
+export type CreditedDeposit = { number: string | null; issuedAt: string | null; totalCents: number };
+
+/**
+ * Summenzeilen nach dem Gesamtbetrag: angerechnete Anzahlungen (Quittungen) einzeln, danach die übrigen Zahlungen.
+ * paidCents enthält die Anzahlungen (siehe createInvoice).
+ */
+export function paymentSummary(inv: { kind: string; paidCents: number }, deposits: CreditedDeposit[], dateDe: (d: string | null) => string) {
+  const rows: { label: string; cents: number }[] = deposits.map((d) => ({ label: `abzgl. Anzahlung ${d.number ?? ""} vom ${dateDe(d.issuedAt)}`, cents: -d.totalCents }));
+  const depositCents = deposits.reduce((s, d) => s + d.totalCents, 0);
+  const rest = inv.paidCents - depositCents;
+  if (rest !== 0) rows.push({ label: inv.kind === "credit_note" ? "erstattet/verrechnet" : deposits.length ? "weitere Zahlungen" : "bezahlt", cents: rest });
+  return rows;
 }
 
 export const formatIban = (iban: string) => iban.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();

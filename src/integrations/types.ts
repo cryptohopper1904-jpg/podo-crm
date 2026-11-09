@@ -69,7 +69,7 @@ export interface AccountingVoucherInput {
   invoiceId: string;
   /** Rechnungsnummer aus dem CRM */
   number: string;
-  kind: "invoice" | "receipt" | "collective" | "credit_note" | "no_show_fee";
+  kind: "invoice" | "receipt" | "collective" | "credit_note" | "no_show_fee" | "deposit";
   /** YYYY-MM-DD */
   date: string;
   dueDate?: string | null;

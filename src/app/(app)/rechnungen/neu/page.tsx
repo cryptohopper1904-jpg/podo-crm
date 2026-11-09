@@ -1,9 +1,12 @@
 import Link from "next/link";
-import { Building2 } from "lucide-react";
+import { Building2, CalendarCheck, Info } from "lucide-react";
 import { Button, Card, Field, Input, PageHeader, Select } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
-import { berlinDateIso } from "@/lib/format";
+import { berlinDateIso, dateDe, money } from "@/lib/format";
+import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
+import { parseYear } from "@/lib/year-end";
+import { billingFromSource, patientYearSuggestion } from "@/server/appointment-billing";
 import { careHomes, collectiveSuggestion } from "@/server/invoice-delivery";
 import { invoiceFormData } from "@/server/invoices";
 import { travelSuggestions } from "@/server/trips";
@@ -15,30 +18,117 @@ const prevMonth = () => {
   const [y, m] = berlinDateIso().split("-").map(Number);
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
 };
+const str = (v: string | string[] | undefined) => (typeof v === "string" && v ? v : null);
 
+/**
+ * Neue Rechnung. Vorlagen über Suchparameter:
+ *  - ?termin=<id> bzw. ?behandlung=<id>: Rechnung aus Termin/Doku-Eintrag (Leistungen vorausgefüllt)
+ *  - ?sammel=<kunde>&jahr=2026: Sammelrechnung einer Kund:in über das Jahr (Anzahlungen werden angerechnet)
+ *  - ?pflegeheim=<id>&monat=2026-10: Sammelrechnung Pflegeheim
+ */
 export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">) {
   const auth = await requireAuth("invoices.write");
   const sp = await props.searchParams;
-  const patient = typeof sp.patient === "string" ? sp.patient : null;
-  const careHomeId = typeof sp.pflegeheim === "string" ? sp.pflegeheim : null;
+  const termin = str(sp.termin);
+  const behandlung = str(sp.behandlung);
+  const sammel = str(sp.sammel);
+  const year = parseYear(sp.jahr, Number(berlinDateIso().slice(0, 4)));
+  const careHomeId = str(sp.pflegeheim);
   const month = typeof sp.monat === "string" && /^\d{4}-\d{2}$/.test(sp.monat) ? sp.monat : prevMonth();
-  const data = await invoiceFormData(auth, patient);
-  const homes = await careHomes(auth);
-  const travel = patient ? await travelSuggestions(auth, patient) : null;
-  const suggestion = careHomeId ? await collectiveSuggestion(auth, careHomeId, month) : null;
 
-  const preset: InvoicePreset | undefined = suggestion
-    ? {
-        kind: "collective",
-        billingContactId: suggestion.contact.id,
-        notes: `Sammelrechnung ${suggestion.contact.name}, Behandlungszeitraum ${month.slice(5)}/${month.slice(0, 4)}`,
-        lines: suggestion.lines,
-      }
-    : undefined;
+  const source = termin || behandlung ? await billingFromSource(auth, { appointmentId: termin, recordId: behandlung }) : null;
+  const yearSug = !source && sammel ? await patientYearSuggestion(auth, sammel, year) : null;
+  const suggestion = !source && !yearSug && careHomeId ? await collectiveSuggestion(auth, careHomeId, month) : null;
+  const presetPatient = source?.patient?.id ?? yearSug?.patient.id ?? null;
+  const patient = presetPatient ?? str(sp.patient);
+
+  const data = await invoiceFormData(auth, patient);
+  const homes = source || yearSug ? [] : await careHomes(auth);
+  const travel = patient ? await travelSuggestions(auth, patient) : null;
+
+  let preset: InvoicePreset | undefined;
+  let presetKey = "plain";
+  if (source?.patient) {
+    preset = { kind: "invoice", patientId: source.patient.id, notes: `Leistungsdatum: ${dateDe(source.at)}`, lines: source.lines };
+    presetKey = `src-${source.appointmentId ?? source.recordId}`;
+  } else if (yearSug) {
+    const first = yearSug.lines.length ? yearSug.lines[0].description.slice(0, 10) : null;
+    const last = yearSug.lines.length ? yearSug.lines.at(-1)!.description.slice(0, 10) : null;
+    preset = {
+      kind: "collective",
+      patientId: yearSug.patient.id,
+      billingContactId: yearSug.patient.billingContactId,
+      notes: `Sammelrechnung ${year}${first && last ? ` – Behandlungen vom ${first} bis ${last}` : ""}`,
+      lines: yearSug.lines,
+    };
+    presetKey = `year-${yearSug.patient.id}-${year}`;
+  } else if (suggestion) {
+    preset = {
+      kind: "collective",
+      billingContactId: suggestion.contact.id,
+      notes: `Sammelrechnung ${suggestion.contact.name}, Behandlungszeitraum ${month.slice(5)}/${month.slice(0, 4)}`,
+      lines: suggestion.lines,
+    };
+    presetKey = `${suggestion.contact.id}-${month}`;
+  }
 
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader title="Neue Rechnung" subtitle="Rechnung, Quittung, Sammelrechnung oder Ausfallhonorar" />
+
+      {termin || behandlung ? (
+        <Card className="mb-6">
+          {!source ? (
+            <p className="text-sm text-danger">Termin bzw. Behandlung nicht gefunden.</p>
+          ) : !source.patient ? (
+            <p className="text-sm text-danger">{source.error}</p>
+          ) : (
+            <div className="flex flex-col gap-2 text-sm">
+              <p className="flex items-center gap-2 font-display text-lg font-semibold">
+                <CalendarCheck size={20} aria-hidden /> Rechnung zur Behandlung am {dateDe(source.at)} – {source.patient.name}
+              </p>
+              <p className="text-muted">
+                Mit den Leistungen des Termins vorausgefüllt. Weitere Positionen (z. B. Pflegeprodukte, Wegegeld) ergänzen Sie unten mit „+ Position“ – erst „ausstellen“ macht die Rechnung endgültig.
+              </p>
+              {source.billedBy.length ? (
+                <p className="font-semibold text-danger">
+                  Bereits abgerechnet in {source.billedBy.map((d) => `${INVOICE_KIND_LABEL[d.kind]} ${d.number}`).join(", ")} – eine zweite Rechnung zu dieser Behandlung ist nicht möglich.
+                </p>
+              ) : null}
+              {source.prescription ? (
+                <p className="flex gap-2 rounded-xl bg-info-soft p-3 text-info-soft-text">
+                  <Info size={18} className="mt-0.5 shrink-0" aria-hidden /> Behandlung auf Verordnung – die Leistung selbst rechnen Sie mit der Krankenkasse ab. Hier nur Zusatzleistungen berechnen.
+                </p>
+              ) : null}
+            </div>
+          )}
+        </Card>
+      ) : null}
+
+      {sammel ? (
+        <Card className="mb-6">
+          {!yearSug ? (
+            <p className="text-sm text-danger">Kund:in nicht gefunden.</p>
+          ) : (
+            <div className="flex flex-col gap-2 text-sm">
+              <p className="flex items-center gap-2 font-display text-lg font-semibold">
+                <CalendarCheck size={20} aria-hidden /> Sammelrechnung {year} – {yearSug.patient.name}
+              </p>
+              <p className="text-muted">
+                {yearSug.items} noch nicht abgerechnete Behandlung(en) als Positionen vorgeschlagen
+                {yearSug.skipped ? `, ${yearSug.skipped} bereits abgerechnet (übersprungen)` : ""}.
+                {yearSug.deposits.length
+                  ? ` ${yearSug.deposits.length} Anzahlung(en) über ${money(yearSug.deposits.reduce((s, d) => s + d.totalCents, 0))} werden angerechnet.`
+                  : ""}{" "}
+                Bitte prüfen – Positionen ohne Preis ergänzen.
+              </p>
+              {!yearSug.lines.length ? <p className="font-semibold">Keine offenen Behandlungen gefunden – bitte die Positionen selbst eintragen.</p> : null}
+              <Link href={`/rechnungen/sammelrechnungen?jahr=${year}`} className="self-start font-semibold text-primary">← Übersicht Sammelrechnungen {year}</Link>
+            </div>
+          )}
+        </Card>
+      ) : null}
+
       {homes.length ? (
         <Card className="mb-6">
           <form method="get" className="flex flex-wrap items-end gap-3">
@@ -70,7 +160,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           </form>
         </Card>
       ) : null}
-      <InvoiceForm key={suggestion ? `${suggestion.contact.id}-${month}` : "plain"} {...data} preselectPatientId={patient} preset={preset} travel={travel} privateOnly={isPrivateOnly(auth.organization)} />
+      <InvoiceForm key={presetKey} {...data} preselectPatientId={patient} preset={preset} travel={travel} privateOnly={isPrivateOnly(auth.organization)} />
     </div>
   );
 }

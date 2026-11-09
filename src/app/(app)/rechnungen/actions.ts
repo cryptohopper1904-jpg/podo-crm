@@ -4,10 +4,13 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth/session";
+import { parseMoney } from "@/lib/format";
 import {
   addPayments,
   cancelInvoice,
+  createDeposit,
   createInvoice,
+  depositInput,
   InvoiceError,
   invoiceInput,
   paymentInput,
@@ -45,6 +48,7 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     notes: form.get("notes"),
     lines: parseJson(form.get("lines")),
     payments: parseJson(form.get("payments")),
+    depositIds: parseJson(form.get("depositIds")),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;
@@ -55,6 +59,32 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
   }
   revalidatePath("/rechnungen");
   if (parsed.data.patientId) revalidatePath(`/kunden/${parsed.data.patientId}`);
+  redirect(`/rechnungen/${id}`);
+}
+
+/** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) – aus Termin oder Behandlung. */
+export async function createDepositAction(_: InvoiceFormState, form: FormData): Promise<InvoiceFormState> {
+  const auth = await requireAuth("invoices.write");
+  const parsed = depositInput.safeParse({
+    patientId: form.get("patientId"),
+    appointmentId: form.get("appointmentId"),
+    treatmentRecordId: form.get("treatmentRecordId"),
+    description: form.get("description"),
+    amountCents: parseMoney(String(form.get("amount") ?? "")) ?? 0,
+    vatRate: form.get("vatRate") ?? 0,
+    method: form.get("method"),
+    notes: form.get("notes"),
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  let id: string;
+  try {
+    id = (await createDeposit(auth, parsed.data)).id;
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+  revalidatePath("/rechnungen");
+  revalidatePath(`/kunden/${parsed.data.patientId}`);
+  if (parsed.data.appointmentId) revalidatePath(`/kalender/termin/${parsed.data.appointmentId}`);
   redirect(`/rechnungen/${id}`);
 }
 

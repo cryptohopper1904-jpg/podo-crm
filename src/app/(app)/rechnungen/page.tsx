@@ -27,7 +27,10 @@ export default async function InvoicesPage(props: PageProps<"/rechnungen">) {
         subtitle={`${totals.count} ${totals.count === 1 ? "Beleg" : "Belege"}`}
         actions={
           auth.can("invoices.write") ? (
-            <LinkButton href="/rechnungen/neu"><Plus size={18} aria-hidden /> Neue Rechnung</LinkButton>
+            <>
+              <LinkButton href="/rechnungen/sammelrechnungen" variant="secondary">Sammelrechnungen zum Jahresende</LinkButton>
+              <LinkButton href="/rechnungen/neu"><Plus size={18} aria-hidden /> Neue Rechnung</LinkButton>
+            </>
           ) : null
         }
       />

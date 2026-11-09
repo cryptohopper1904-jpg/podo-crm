@@ -133,7 +133,7 @@ async function monthlyFor(tx: Tx, org: string): Promise<MonthlyUsage[]> {
     union all
     select 'revenueCents', to_char(issued_at, 'YYYY-MM'), coalesce(sum(total_cents), 0)::float8 from invoices
       where organization_id = ${org} and issued_at >= ${startLocal}::date and status not in ('draft', 'cancelled')
-        and kind <> 'credit_note' and cancels_invoice_id is null group by 2
+        and kind not in ('credit_note', 'deposit') and cancels_invoice_id is null group by 2
     union all
     select 'onlineBookings', ${month(sql.raw("created_at"))}, count(*)::float8 from appointments
       where organization_id = ${org} and created_at >= ${since} and source = 'online' group by 2

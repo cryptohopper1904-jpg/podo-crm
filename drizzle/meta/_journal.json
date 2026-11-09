@@ -176,6 +176,20 @@
       "when": 1794232298359,
       "tag": "0024_routen_security",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794244114646,
+      "tag": "0025_termin_rechnung",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794244128159,
+      "tag": "0026_termin_rechnung_security",
+      "breakpoints": true
     }
   ]
 }

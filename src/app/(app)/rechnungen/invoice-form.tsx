@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useActionState, useMemo, useState } from "react";
 import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
-import { money, parseMoney } from "@/lib/format";
+import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { createInvoiceAction } from "./actions";
@@ -17,10 +17,15 @@ type ContactOpt = { id: string; name: string; kind: string };
 
 export type InvoicePreset = {
   kind: CreatableKind;
+  /** vorausgewählte Kund:in (Rechnung aus Termin/Behandlung, Sammelrechnung je Kund:in) */
+  patientId?: string | null;
   billingContactId?: string | null;
   notes?: string | null;
-  lines: { treatmentRecordId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
+  lines: { treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
+
+/** Noch nicht angerechnete Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet. */
+export type OpenDeposit = { id: string; patientId: string; number: string | null; issuedAt: string | null; totalCents: number };
 
 /** Wegegeld für Hausbesuche (nur vor dem Ausstellen, nur Privat/Selbstzahler) – siehe src/server/trips.ts */
 export type TravelOptions = {
@@ -32,7 +37,7 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; treatmentRecordId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
+type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
 
 let seq = 0;
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -61,6 +66,7 @@ export function InvoiceForm({
   preset,
   travel,
   privateOnly = false,
+  openDeposits = [],
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -72,20 +78,24 @@ export function InvoiceForm({
   travel?: TravelOptions;
   /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
   privateOnly?: boolean;
+  openDeposits?: OpenDeposit[];
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
-  const initialPatient = patients.find((p) => p.id === preselectPatientId);
+  const initialPatient = patients.find((p) => p.id === (preset ? preset.patientId : preselectPatientId));
 
   const [kind, setKind] = useState<CreatableKind>(preset?.kind ?? "invoice");
-  const [patientId, setPatientId] = useState(preset ? "" : (initialPatient?.id ?? ""));
+  const [patientId, setPatientId] = useState(initialPatient?.id ?? "");
   const [billingContactId, setBillingContactId] = useState(preset?.billingContactId ?? initialPatient?.billingContactId ?? "");
+  /** Auswahl der anzurechnenden Anzahlungen (Standard: bei Sammelrechnung alle offenen der Person, sonst keine) */
+  const [depositSel, setDepositSel] = useState<Record<string, boolean>>({});
   const [patientFilter, setPatientFilter] = useState("");
   const [lines, setLines] = useState<Line[]>(() =>
     preset?.lines.length
       ? preset.lines.map((l) =>
           newLine({
             treatmentRecordId: l.treatmentRecordId ?? null,
+            appointmentId: l.appointmentId ?? null,
             // inaktive/unbekannte Leistung → Freitext mit Katalogpreis
             serviceId: l.serviceId && svcById.has(l.serviceId) ? l.serviceId : "",
             description: l.description,
@@ -120,6 +130,12 @@ export function InvoiceForm({
   const totals = computeTotals(computed);
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
+  const depositsAllowed = kind === "invoice" || kind === "collective";
+  const patientDeposits = depositsAllowed && patientId ? openDeposits.filter((d) => d.patientId === patientId) : [];
+  const depositOn = (id: string) => depositSel[id] ?? kind === "collective";
+  const credited = patientDeposits.filter((d) => depositOn(d.id));
+  const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0);
+  const openAfterDeposits = totals.totalCents - creditedCents;
 
   const update = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
@@ -144,7 +160,7 @@ export function InvoiceForm({
   }
 
   const [addedTrips, setAddedTrips] = useState<string[]>([]);
-  const showTravel = !!travel && travel.patientId === patientId && (kind === "invoice" || kind === "receipt");
+  const showTravel = !!travel && travel.patientId === patientId && (kind === "invoice" || kind === "receipt" || kind === "collective");
   /** Position anhängen (leere Startzeile ersetzen) */
   const appendLine = (l: Line) => setLines((ls) => [...ls.filter((x) => x.serviceId || x.description || x.price), l]);
   function addTravel(s: NonNullable<TravelOptions>["suggestions"][number]) {
@@ -167,6 +183,7 @@ export function InvoiceForm({
     computed.map((l) => ({
       serviceId: l.serviceId || null,
       treatmentRecordId: l.treatmentRecordId || null,
+      appointmentId: l.appointmentId || null,
       description: l.description,
       quantity: num(l.quantity),
       factor: num(l.factor),
@@ -180,6 +197,7 @@ export function InvoiceForm({
       <input type="hidden" name="lines" value={linesJson} />
       <input type="hidden" name="payments" value={paymentsToJson(payments)} />
       <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name="depositIds" value={JSON.stringify(credited.map((d) => d.id))} />
       <FormError message={state?.error} />
 
       <Card>
@@ -203,8 +221,8 @@ export function InvoiceForm({
           <Field label="Kunde suchen">
             <Input value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)} placeholder="Name oder Nummer" autoComplete="off" />
           </Field>
-          <Field label={kind === "collective" ? "Kunde (optional)" : "Kunde *"}>
-            <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective"}>
+          <Field label={kind === "collective" ? "Kunde (für die Jahres-Sammelrechnung)" : "Kunde *"}>
+            <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective" || !billingContactId}>
               <option value="">– bitte wählen –</option>
               {filteredPatients.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -213,8 +231,8 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <Field label={kind === "collective" ? "Rechnungsempfänger *" : "Abweichender Rechnungsempfänger"} hint="z. B. Pflegeheim, Betreuer:in, Angehörige">
-            <Select name="billingContactId" value={billingContactId} onChange={(e) => setBillingContactId(e.target.value)} required={kind === "collective"}>
+          <Field label={kind === "collective" ? "Rechnungsempfänger (z. B. Pflegeheim)" : "Abweichender Rechnungsempfänger"} hint={kind === "collective" ? "Kunde oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}>
+            <Select name="billingContactId" value={billingContactId} onChange={(e) => setBillingContactId(e.target.value)} required={kind === "collective" && !patientId}>
               <option value="">– keiner –</option>
               {billingContacts.map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -359,6 +377,28 @@ export function InvoiceForm({
         </Card>
       ) : null}
 
+      {patientDeposits.length ? (
+        <Card>
+          <h2 className="mb-1 font-display text-lg font-semibold">Anzahlungen anrechnen</h2>
+          <p className="mb-3 text-sm text-muted">Bereits per Quittung erhaltene Beträge werden vom Rechnungsbetrag abgezogen und auf der Rechnung aufgeführt.</p>
+          <div className="flex flex-col gap-1">
+            {patientDeposits.map((d) => (
+              <Checkbox
+                key={d.id}
+                checked={depositOn(d.id)}
+                onChange={(e) => setDepositSel((x) => ({ ...x, [d.id]: e.target.checked }))}
+                label={`Quittung ${d.number ?? ""} vom ${dateDe(d.issuedAt)} · ${money(d.totalCents)}`}
+              />
+            ))}
+          </div>
+          <p className="mt-3 text-sm">
+            Angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
+            <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
+            {openAfterDeposits < 0 ? " – die Anzahlungen übersteigen den Rechnungsbetrag." : ""}
+          </p>
+        </Card>
+      ) : null}
+
       <Card>
         <h2 className="mb-1 font-display text-lg font-semibold">Zahlung</h2>
         <p className="mb-4 text-sm text-muted">
@@ -366,7 +406,7 @@ export function InvoiceForm({
             ? "Quittung: Der Betrag wird sofort vollständig bezahlt."
             : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
         </p>
-        <PaymentsEditor rows={payments} onChange={setPayments} openCents={totals.totalCents} />
+        <PaymentsEditor rows={payments} onChange={setPayments} openCents={Math.max(0, openAfterDeposits)} />
         {kind === "receipt" && paid !== totals.totalCents ? (
           <p className="mt-3 text-sm font-medium text-danger">Für eine Quittung muss die Zahlung genau {money(totals.totalCents)} betragen.</p>
         ) : null}
@@ -379,7 +419,7 @@ export function InvoiceForm({
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={pending || totals.totalCents <= 0 || (needsConfirm && !confirmed)}>
+        <Button type="submit" disabled={pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed)}>
           {pending ? "Wird ausgestellt …" : `${INVOICE_KIND_LABEL[kind]} ausstellen`}
         </Button>
         <Link href="/rechnungen" className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>

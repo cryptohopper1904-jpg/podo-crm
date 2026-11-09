@@ -1,8 +1,9 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import {
+  appointments,
   billingContacts,
   integrationConnections,
   invoiceLines,
@@ -36,7 +37,7 @@ import {
   validatePayments,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 
 export class InvoiceError extends Error {}
 
@@ -48,6 +49,8 @@ export const lineInput = z.object({
   serviceId: optUuid,
   /** Sammelrechnung: abgerechnete Behandlung (Doku-Eintrag) – verhindert Doppelabrechnung */
   treatmentRecordId: optUuid,
+  /** Rechnung aus dem Termin: abgerechneter Termin – verhindert Doppelabrechnung */
+  appointmentId: optUuid,
   description: z.string().trim().max(300).default(""),
   quantity: z.coerce.number().positive("Menge muss größer 0 sein").max(9999),
   factor: z.coerce.number().positive("Faktor muss größer 0 sein").max(99),
@@ -74,8 +77,15 @@ export const invoiceInput = z.object({
   notes: z.preprocess(emptyToNull, z.string().trim().max(2000).nullable().optional()),
   lines: z.array(lineInput).min(1, "Mindestens eine Position anlegen").max(100),
   payments: z.array(paymentInput).max(10).default([]),
+  /** Anzahlungen (Quittungen, kind = deposit) der Person, die auf diese Rechnung angerechnet werden */
+  depositIds: z.array(z.uuid()).max(100).default([]),
 });
-export type InvoiceInput = z.infer<typeof invoiceInput>;
+type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
+/** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "lines"> & {
+  depositIds?: string[];
+  lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
+};
 
 type OrgRow = typeof organizations.$inferSelect;
 
@@ -169,32 +179,100 @@ async function applyPayments(
 }
 
 /**
- * Doppelabrechnung verhindern: Jede Behandlung (treatment_record) darf nur in einer nicht stornierten
- * Rechnung stehen. Pro Praxis serialisiert (Advisory-Lock), damit zwei gleichzeitige Sammelrechnungen
- * dieselbe Behandlung nicht beide abrechnen. Die Behandlung muss zur Person bzw. zum Pflegeheim gehören.
+ * Doppelabrechnung verhindern: Jede Behandlung (treatment_record) und jeder Termin darf nur in einer nicht
+ * stornierten Rechnung stehen (Anzahlungs-Quittungen zählen nicht – sie werden auf die Rechnung angerechnet).
+ * Termin und zugehöriger Doku-Eintrag gelten als dieselbe Leistung. Pro Praxis serialisiert (Advisory-Lock), damit
+ * zwei gleichzeitige Rechnungen dieselbe Behandlung nicht beide abrechnen. Behandlung/Termin müssen zur Person bzw.
+ * zum Pflegeheim gehören.
  */
-async function assertRecordsNotInvoiced(tx: Tx, org: string, recordIds: string[], patientId: string | null, billingContactId: string | null) {
+async function assertNotInvoiced(tx: Tx, org: string, recordIds: string[], appointmentIds: string[], patientId: string | null, billingContactId: string | null) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
-  const recs = await tx
-    .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, careHomeId: patients.careHomeId })
-    .from(treatmentRecords)
-    .innerJoin(patients, eq(patients.id, treatmentRecords.patientId))
-    .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recordIds)));
+  const belongs = (p: string | null, careHomeId: string | null) => (patientId && p === patientId) || (billingContactId && careHomeId === billingContactId);
+  const recs = recordIds.length
+    ? await tx
+        .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, appointmentId: treatmentRecords.appointmentId, careHomeId: patients.careHomeId })
+        .from(treatmentRecords)
+        .innerJoin(patients, eq(patients.id, treatmentRecords.patientId))
+        .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recordIds)))
+    : [];
   if (recs.length !== recordIds.length) throw new InvoiceError("Behandlung zur Position nicht gefunden.");
   for (const r of recs) {
-    const ok = (patientId && r.patientId === patientId) || (billingContactId && r.careHomeId === billingContactId);
-    if (!ok) throw new InvoiceError(`Die Behandlung vom ${dateDe(r.treatedAt)} gehört nicht zu diesem Rechnungsempfänger.`);
+    if (!belongs(r.patientId, r.careHomeId)) throw new InvoiceError(`Die Behandlung vom ${dateDe(r.treatedAt)} gehört nicht zu diesem Rechnungsempfänger.`);
   }
+  const appts = appointmentIds.length
+    ? await tx
+        .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, careHomeId: patients.careHomeId })
+        .from(appointments)
+        .leftJoin(patients, eq(patients.id, appointments.patientId))
+        .where(and(eq(appointments.organizationId, org), inArray(appointments.id, appointmentIds)))
+    : [];
+  if (appts.length !== appointmentIds.length) throw new InvoiceError("Termin zur Position nicht gefunden.");
+  for (const a of appts) {
+    if (!belongs(a.patientId, a.careHomeId)) throw new InvoiceError(`Der Termin vom ${dateDe(a.startsAt)} gehört nicht zu diesem Rechnungsempfänger.`);
+  }
+  // Termin ↔ Doku-Eintrag: beide Richtungen einbeziehen
+  const allAppts = [...new Set([...appointmentIds, ...recs.map((r) => r.appointmentId).filter((x): x is string => !!x)])];
+  const linkedRecs = allAppts.length
+    ? await tx
+        .select({ id: treatmentRecords.id, appointmentId: treatmentRecords.appointmentId })
+        .from(treatmentRecords)
+        .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.appointmentId, allAppts)))
+    : [];
+  const allRecs = [...new Set([...recordIds, ...linkedRecs.map((r) => r.id)])];
+  const conds: SQL[] = [];
+  if (allRecs.length) conds.push(inArray(invoiceLines.treatmentRecordId, allRecs));
+  if (allAppts.length) conds.push(inArray(invoiceLines.appointmentId, allAppts));
+  if (!conds.length) return;
   const billed = await tx
-    .select({ recordId: invoiceLines.treatmentRecordId, number: invoices.number })
+    .select({ recordId: invoiceLines.treatmentRecordId, appointmentId: invoiceLines.appointmentId, number: invoices.number })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.treatmentRecordId, recordIds), notInArray(invoices.status, ["cancelled", "draft"])))
+    .where(and(eq(invoiceLines.organizationId, org), or(...conds), notInArray(invoices.status, ["cancelled", "draft"]), ne(invoices.kind, "deposit")))
     .limit(1);
   if (billed[0]) {
-    const r = recs.find((x) => x.id === billed[0].recordId);
-    throw new InvoiceError(`Die Behandlung vom ${r ? dateDe(r.treatedAt) : "?"} ist bereits in Rechnung ${billed[0].number} abgerechnet.`);
+    const b = billed[0];
+    const recId = b.recordId && allRecs.includes(b.recordId) ? b.recordId : null;
+    const r = recs.find((x) => x.id === recId || (b.appointmentId && x.appointmentId === b.appointmentId));
+    const a = appts.find((x) => x.id === b.appointmentId || linkedRecs.some((l) => l.id === recId && l.appointmentId === x.id));
+    const when = r ? `Die Behandlung vom ${dateDe(r.treatedAt)}` : a ? `Der Termin vom ${dateDe(a.startsAt)}` : "Die Behandlung";
+    throw new InvoiceError(`${when} ist bereits in Rechnung ${b.number} abgerechnet.`);
   }
+}
+
+/** Anzahlungen der Person, die noch auf keine (gültige) Rechnung angerechnet sind. */
+export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
+  return tx
+    .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents })
+    .from(invoices)
+    .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, patientId), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
+    .orderBy(asc(invoices.issuedAt), asc(invoices.number));
+}
+
+/** Anzahlungen anrechnen (gesperrt, nur offene der Person); liefert die Summe. */
+async function creditDeposits(tx: Tx, org: string, invoiceId: string, patientId: string | null, ids: string[], totalCents: number) {
+  if (!ids.length) return 0;
+  if (!patientId) throw new InvoiceError("Anzahlungen können nur auf die Rechnung einer Person angerechnet werden.");
+  const unique = [...new Set(ids)];
+  const deps = await tx
+    .select()
+    .from(invoices)
+    .where(and(eq(invoices.organizationId, org), inArray(invoices.id, unique)))
+    .orderBy(asc(invoices.issuedAt))
+    .for("update");
+  if (deps.length !== unique.length) throw new InvoiceError("Anzahlung nicht gefunden.");
+  for (const d of deps) {
+    if (d.kind !== "deposit" || d.patientId !== patientId) throw new InvoiceError(`${d.number ?? "Beleg"} ist keine Anzahlung dieser Person.`);
+    if (d.status !== "paid") throw new InvoiceError(`Die Anzahlung ${d.number} ist storniert oder nicht bezahlt.`);
+    if (d.collectiveInvoiceId) throw new InvoiceError(`Die Anzahlung ${d.number} ist bereits auf eine andere Rechnung angerechnet.`);
+  }
+  const sum = deps.reduce((s, d) => s + d.totalCents, 0);
+  if (sum > totalCents) throw new InvoiceError("Die angerechneten Anzahlungen übersteigen den Rechnungsbetrag.");
+  await tx.update(invoices).set({ collectiveInvoiceId: invoiceId }).where(and(eq(invoices.organizationId, org), inArray(invoices.id, unique)));
+  await tx
+    .update(invoices)
+    .set({ paidCents: sum, status: statusFromPayments(totalCents, sum) })
+    .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
+  return sum;
 }
 
 /**
@@ -206,10 +284,14 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (input.issuedAt > today) throw new InvoiceError("Das Rechnungsdatum darf nicht in der Zukunft liegen.");
-  if (input.kind === "collective" && !input.billingContactId) {
-    throw new InvoiceError("Für eine Sammelrechnung bitte einen Rechnungsempfänger (z. B. Pflegeheim) wählen.");
+  if (input.kind === "collective" && !input.billingContactId && !input.patientId) {
+    throw new InvoiceError("Für eine Sammelrechnung bitte eine Kund:in oder einen Rechnungsempfänger (z. B. Pflegeheim) wählen.");
   }
   if (input.kind !== "collective" && !input.patientId) throw new InvoiceError("Bitte einen Kunden wählen.");
+  const depositIds = input.depositIds ?? [];
+  if (depositIds.length && input.kind !== "invoice" && input.kind !== "collective") {
+    throw new InvoiceError("Anzahlungen können nur auf eine Rechnung oder Sammelrechnung angerechnet werden.");
+  }
 
   const result = await withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
@@ -248,6 +330,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       return {
         serviceId: s?.id ?? null,
         treatmentRecordId: l.treatmentRecordId ?? null,
+        appointmentId: l.appointmentId ?? null,
         description,
         quantity: l.quantity,
         factor: l.factor,
@@ -260,7 +343,8 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     });
 
     const recordIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
-    if (recordIds.length) await assertRecordsNotInvoiced(tx, org, recordIds, input.patientId ?? null, input.billingContactId ?? null);
+    const appointmentIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
+    if (recordIds.length || appointmentIds.length) await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null);
 
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
     if (needsConfirm && !input.therapeuticConfirmed) {
@@ -303,6 +387,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         invoiceId: draft.id,
         serviceId: l.serviceId,
         treatmentRecordId: l.treatmentRecordId,
+        appointmentId: l.appointmentId,
         description: l.description,
         quantity: String(l.quantity),
         factor: String(l.factor),
@@ -329,9 +414,12 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
-    // 4) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: 0 }, input.payments, today, totals.groups);
-    return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
+    // 4) Anzahlungen (Quittungen) anrechnen – kein neuer Zahlungseingang, das Geld kam schon mit der Quittung
+    const depositCents = await creditDeposits(tx, org, draft.id, input.patientId ?? null, depositIds, totals.totalCents);
+
+    // 5) Zahlungen (Mischzahlung möglich)
+    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: depositCents }, input.payments, today, totals.groups);
+    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid };
   });
 
   await audit({
@@ -340,7 +428,89 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length },
+    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents },
+  });
+  return result;
+}
+
+export const depositInput = z.object({
+  patientId: z.uuid({ error: "Bitte eine Kund:in wählen." }),
+  appointmentId: optUuid,
+  treatmentRecordId: optUuid,
+  description: z.string().trim().min(3, "Bitte einen Text für die Quittung angeben.").max(300),
+  amountCents: z.number().int().min(1, "Betrag fehlt").max(10_000_000, "Betrag zu hoch"),
+  vatRate: z.coerce.number().int(),
+  method: z.enum(DEPOSIT_METHODS),
+  notes: z.preprocess(emptyToNull, z.string().trim().max(1000).nullable().optional()),
+});
+export type DepositInput = z.infer<typeof depositInput>;
+
+/**
+ * Quittung über eine Anzahlung (z. B. bar beim Termin), die später auf die Sammelrechnung der Person angerechnet
+ * wird. Wie jede Rechnung sofort ausgestellt (eigener Nummernkreis „AZ“), unveränderbar und voll bezahlt; Bar/Karte
+ * laufen über denselben Kassen-/TSE-Weg wie jede andere Zahlung (applyPayments). Termin-/Doku-Bezug steht an der
+ * Position (nur zur Nachvollziehbarkeit – die Leistung selbst wird erst mit der Sammelrechnung abgerechnet).
+ */
+export async function createDeposit(auth: AuthContext, input: DepositInput) {
+  assertCan(auth, "invoices.write");
+  const org = auth.organization.id;
+  const today = berlinDateIso();
+  if (!isVatRate(input.vatRate)) throw new InvoiceError("Steuersatz muss 0, 7 oder 19 % sein.");
+  const result = await withOrg(org, async (tx) => {
+    const o = await loadOrg(tx, org);
+    const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
+    if (!p) throw new InvoiceError("Kunde nicht gefunden.");
+    if (input.appointmentId) {
+      const [a] = await tx.select({ patientId: appointments.patientId }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
+      if (!a || a.patientId !== input.patientId) throw new InvoiceError("Termin nicht gefunden.");
+    }
+    if (input.treatmentRecordId) {
+      const [r] = await tx.select({ patientId: treatmentRecords.patientId }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, input.treatmentRecordId)));
+      if (!r || r.patientId !== input.patientId) throw new InvoiceError("Behandlung nicht gefunden.");
+    }
+    const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
+    const line = { totalCents: input.amountCents, vatRate };
+    const totals = computeTotals([line]);
+    const [draft] = await tx
+      .insert(invoices)
+      .values({ organizationId: org, patientId: input.patientId, kind: "deposit", status: "draft", notes: input.notes ?? null, createdBy: auth.user.id })
+      .returning({ id: invoices.id });
+    await tx.insert(invoiceLines).values({
+      organizationId: org,
+      invoiceId: draft.id,
+      appointmentId: input.appointmentId ?? null,
+      treatmentRecordId: input.treatmentRecordId ?? null,
+      description: input.description,
+      quantity: "1",
+      factor: "1",
+      unitPriceCents: input.amountCents,
+      vatRate,
+      totalCents: input.amountCents,
+      position: 1,
+    });
+    const number = await nextNumber(tx, org, "deposit", Number(today.slice(0, 4)));
+    await tx
+      .update(invoices)
+      .set({ number, status: "issued", issuedAt: today, dueAt: today, netCents: totals.netCents, vatCents: totals.vatCents, totalCents: totals.totalCents })
+      .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
+    const paid = await applyPayments(
+      tx,
+      org,
+      auth.user.id,
+      { id: draft.id, number, totalCents: totals.totalCents, paidCents: 0 },
+      [{ method: input.method, amountCents: totals.totalCents, voucherCode: null, externalRef: null }],
+      today,
+      totals.groups,
+    );
+    return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
+  });
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "invoice.deposit_create",
+    entity: "invoice",
+    entityId: result.id,
+    meta: { number: result.number, totalCents: result.totalCents, method: input.method, appointmentId: input.appointmentId ?? null, treatmentRecordId: input.treatmentRecordId ?? null },
   });
   return result;
 }
@@ -412,6 +582,23 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     if (!orig) throw new InvoiceError("Rechnung nicht gefunden.");
     if (orig.kind === "credit_note") throw new InvoiceError("Eine Stornorechnung kann nicht storniert werden.");
     if (orig.status === "draft" || orig.status === "cancelled") throw new InvoiceError("Diese Rechnung kann nicht storniert werden.");
+    if (orig.kind === "deposit" && orig.collectiveInvoiceId) {
+      const [target] = await tx
+        .select({ number: invoices.number, status: invoices.status })
+        .from(invoices)
+        .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.collectiveInvoiceId)));
+      if (target && target.status !== "cancelled") {
+        throw new InvoiceError(`Die Anzahlung ist auf ${target.number} angerechnet. Bitte zuerst diese Rechnung stornieren.`);
+      }
+    }
+    // angerechnete Anzahlungen: werden wieder frei (für eine neue Sammelrechnung) – nur echte Zahlungen sind zu erstatten
+    const credited = orig.kind === "deposit"
+      ? []
+      : await tx
+          .select({ id: invoices.id, number: invoices.number, totalCents: invoices.totalCents })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, orig.id), eq(invoices.kind, "deposit")));
+    const creditedCents = credited.reduce((sum, d) => sum + d.totalCents, 0);
     const origLines = await tx
       .select()
       .from(invoiceLines)
@@ -427,7 +614,9 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
         kind: "credit_note",
         status: "draft",
         cancelsInvoiceId: orig.id,
-        notes: `Storno zu ${orig.number} vom ${dateDe(orig.issuedAt)}.${reason ? ` Grund: ${reason}` : ""}`,
+        notes: `Storno zu ${orig.number} vom ${dateDe(orig.issuedAt)}.${reason ? ` Grund: ${reason}` : ""}${
+          credited.length ? `\nAngerechnete Anzahlungen (${credited.map((d) => d.number).join(", ")}) bleiben gültig und werden auf die neue Rechnung angerechnet.` : ""
+        }`,
         createdBy: auth.user.id,
       })
       .returning({ id: invoices.id });
@@ -451,7 +640,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     }
     const totals = computeTotals(neg);
     const number = await nextNumber(tx, org, "credit_note", Number(today.slice(0, 4)));
-    const paidCents = creditNoteSettlement(orig.totalCents, orig.paidCents);
+    const paidCents = creditNoteSettlement(orig.totalCents, orig.paidCents - creditedCents);
     await tx
       .update(invoices)
       .set({
@@ -470,7 +659,13 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .update(invoices)
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
-    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents, checkoutRef: orig.checkoutRef };
+    if (credited.length) {
+      await tx
+        .update(invoices)
+        .set({ collectiveInvoiceId: null })
+        .where(and(eq(invoices.organizationId, org), inArray(invoices.id, credited.map((d) => d.id))));
+    }
+    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents - creditedCents, checkoutRef: orig.checkoutRef, releasedDeposits: credited.length };
   });
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
@@ -479,7 +674,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents },
+    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits },
   });
   return result;
 }
@@ -528,7 +723,8 @@ export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFi
         ? `${r.billingName}${r.patientLast ? ` (${[r.patientFirst, r.patientLast].filter(Boolean).join(" ")})` : ""}`
         : [r.patientFirst, r.patientLast].filter(Boolean).join(" ") || "–",
     }));
-    const active = list.filter((i) => i.status !== "cancelled" && i.kind !== "credit_note");
+    // Anzahlungen sind in der späteren Sammelrechnung enthalten – nicht doppelt als Rechnungsbetrag zählen
+    const active = list.filter((i) => i.status !== "cancelled" && i.kind !== "credit_note" && i.kind !== "deposit");
     return {
       rows: list,
       totals: {
@@ -576,9 +772,28 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
         or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
       ),
     );
+  // Anzahlungen: auf diese Rechnung angerechnete Quittungen bzw. (bei einer Anzahlung) die Rechnung, auf die sie angerechnet ist
+  const deposits =
+    inv.kind === "invoice" || inv.kind === "collective"
+      ? await tx
+          .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, id), eq(invoices.kind, "deposit")))
+          .orderBy(asc(invoices.issuedAt), asc(invoices.number))
+      : [];
+  const creditedTo =
+    inv.kind === "deposit" && inv.collectiveInvoiceId
+      ? await tx
+          .select({ id: invoices.id, number: invoices.number, status: invoices.status })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.collectiveInvoiceId)))
+          .then((r) => r[0] ?? null)
+      : null;
   return {
     invoice: inv,
     lines,
+    deposits,
+    creditedTo,
     payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
     organization: o,
     patient,
@@ -624,6 +839,12 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         .orderBy(asc(services.category), asc(services.name)));
     const contacts = await (tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)));
     const o = await (loadOrg(tx, org));
+    // offene Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet
+    const deposits = await tx
+      .select({ id: invoices.id, patientId: invoices.patientId, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents })
+      .from(invoices)
+      .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
+      .orderBy(asc(invoices.issuedAt));
     let list = recent;
     if (preselectPatientId && z.uuid().safeParse(preselectPatientId).success && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));
@@ -643,6 +864,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
       today: berlinDateIso(),
+      openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
     };
   });
 }
@@ -658,6 +880,7 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
   const prep = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
     if (!inv || inv.status === "draft" || !inv.number || !inv.issuedAt) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
+    if (inv.kind === "deposit") throw new InvoiceError("Anzahlungen werden nicht einzeln übertragen – sie sind in der Sammelrechnung enthalten.");
     const lines = await tx
       .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
       .from(invoiceLines)

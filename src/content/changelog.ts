@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-09-h",
+    date: "2026-11-09",
+    title: "Termine verschieben, Rechnung und Quittung direkt aus dem Termin",
+    items: [
+      { tag: "neu", text: "Termin verschieben: Uhrzeit im Kalender antippen, neues Datum und neue Uhrzeit wählen – fertig. Termine aus Doctolib oder dem Kalender-Abo ändern Sie weiter dort, sie kommen automatisch zurück.", href: "/kalender" },
+      { tag: "neu", text: "Rechnung direkt aus dem Termin oder der Behandlung: Die Leistungen sind schon eingetragen, weitere Positionen ergänzen Sie vor dem Ausstellen.", href: "/kalender" },
+      { tag: "neu", text: "Quittung für die Sammelrechnung: Zahlt jemand gleich bar oder mit Karte, bekommt er sofort eine Quittung. Der Betrag wird auf der Sammelrechnung zum Jahresende automatisch abgezogen." },
+      { tag: "neu", text: "Erinnerung zum Jahresende: Ab Dezember zeigt „Heute“, wer noch eine Sammelrechnung braucht – mit einem Klick ist sie vorbereitet.", href: "/rechnungen/sammelrechnungen" },
+    ],
+  },
+  {
     id: "2026-11-09-g",
     date: "2026-11-09",
     title: "Touren & Fahrtenbuch",

@@ -9,8 +9,20 @@
 import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from "pdf-lib";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
-import { formatIban, hasExemptNote, invoiceRecipient, invoiceTitle, publicNotes, qtyDe, senderLine, showsDueDate } from "./invoice-view";
+import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
+import {
+  formatIban,
+  hasExemptNote,
+  invoiceRecipient,
+  invoiceTitle,
+  isReceiptLike,
+  paymentSummary,
+  publicNotes,
+  qtyDe,
+  senderLine,
+  showsDueDate,
+  type CreditedDeposit,
+} from "./invoice-view";
 
 export type InvoicePdfData = {
   invoice: {
@@ -26,6 +38,8 @@ export type InvoicePdfData = {
   };
   lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number }[];
   payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
+  /** auf diese Rechnung angerechnete Anzahlungen (Quittungen) */
+  deposits?: CreditedDeposit[];
   organization: {
     name: string;
     legalName: string | null;
@@ -168,7 +182,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
   // ── Kopfdaten ──
   const meta: [string, string, boolean][] = [
-    [inv.kind === "receipt" ? "Quittungsnummer" : "Rechnungsnummer", inv.number ?? "", true],
+    [isReceiptLike(inv.kind) ? "Quittungsnummer" : "Rechnungsnummer", inv.number ?? "", true],
     ["Datum", dateDe(inv.issuedAt), false],
   ];
   if (p) meta.push(["Kundennummer", String(p.number), false]);
@@ -232,7 +246,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     if (g.rate) sumRows.push({ l: `USt ${g.rate} %`, v: money(g.vatCents) });
   }
   sumRows.push({ l: "Gesamtbetrag", v: money(inv.totalCents), strong: true, big: true, rule: true });
-  if (inv.paidCents !== 0) sumRows.push({ l: inv.kind === "credit_note" ? "erstattet/verrechnet" : "bezahlt", v: money(inv.paidCents) });
+  for (const r of paymentSummary(inv, data.deposits ?? [], dateDe)) sumRows.push({ l: r.label, v: money(r.cents) });
   if (inv.status !== "cancelled" && open !== 0) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
   ensure(sumRows.length * 14 + 10);
   y -= 4;
@@ -259,7 +273,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
       text(money(pay.amountCents), ML + width, y, { size: 9.5, align: "right" });
       y -= 13;
     }
-    if (inv.kind === "receipt" && inv.status === "paid") {
+    if (isReceiptLike(inv.kind) && inv.status === "paid") {
       text("Betrag dankend erhalten.", ML, y - 2, { size: 10, font: bold });
       y -= 15;
     }
@@ -270,6 +284,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   if (o.smallBusiness) notes.push(NOTE_SMALL_BUSINESS);
   if (hasExemptNote(o, inv, lines)) notes.push(NOTE_VAT_EXEMPT);
   if (inv.kind === "no_show_fee") notes.push(NOTE_NO_SHOW);
+  if (inv.kind === "deposit") notes.push(NOTE_DEPOSIT);
   const pub = publicNotes(inv.notes);
   if (pub) notes.push(pub);
   if (showsDueDate(inv) && o.iban) {

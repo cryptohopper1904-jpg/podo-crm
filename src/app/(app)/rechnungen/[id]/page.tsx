@@ -13,12 +13,25 @@ import {
   INVOICE_KIND_LABEL,
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_TONE,
+  NOTE_DEPOSIT,
   NOTE_NO_SHOW,
   NOTE_SMALL_BUSINESS,
   NOTE_VAT_EXEMPT,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
-import { formatIban, hasExemptNote, internalNotes as internalNoteLines, invoiceRecipient, invoiceTitle, publicNotes as publicNoteText, qtyDe, senderLine as senderLineOf, showsDueDate } from "@/lib/invoice-view";
+import {
+  formatIban,
+  hasExemptNote,
+  internalNotes as internalNoteLines,
+  invoiceRecipient,
+  invoiceTitle,
+  isReceiptLike,
+  paymentSummary,
+  publicNotes as publicNoteText,
+  qtyDe,
+  senderLine as senderLineOf,
+  showsDueDate,
+} from "@/lib/invoice-view";
 import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
 import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
@@ -82,6 +95,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               Storno zu {data.cancels.number}
             </Link>
           ) : null}
+          {inv.kind === "deposit" ? (
+            data.creditedTo && data.creditedTo.status !== "cancelled" ? (
+              <Link href={`/rechnungen/${data.creditedTo.id}`} className="text-sm font-semibold text-primary underline">
+                angerechnet auf {data.creditedTo.number}
+              </Link>
+            ) : inv.status === "paid" ? (
+              <Badge tone="warn">noch nicht auf eine Sammelrechnung angerechnet</Badge>
+            ) : null
+          ) : null}
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <PrintButton />
@@ -98,7 +120,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {canWrite && inv.status !== "draft" ? (
             <EmailInvoiceButton invoiceId={inv.id} sentTo={inv.sentTo} sentAt={inv.sentAt ? dateTimeDe(inv.sentAt) : null} recipientEmail={recipientEmail} />
           ) : null}
-          {canWrite && inv.status !== "draft" ? <LexofficeButton invoiceId={inv.id} /> : null}
+          {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
           {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
@@ -143,7 +165,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
         <dl className="mt-8 grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
           <div>
-            <dt className="text-xs text-muted">{inv.kind === "receipt" ? "Quittungsnummer" : "Rechnungsnummer"}</dt>
+            <dt className="text-xs text-muted">{isReceiptLike(inv.kind) ? "Quittungsnummer" : "Rechnungsnummer"}</dt>
             <dd className="font-semibold tabular-nums">{inv.number}</dd>
           </div>
           <div>
@@ -212,12 +234,12 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ))}
           <dt className="border-t border-border-strong pt-1 font-semibold">Gesamtbetrag</dt>
           <dd className="border-t border-border-strong pt-1 text-right font-display text-lg font-bold tabular-nums">{money(inv.totalCents)}</dd>
-          {inv.paidCents !== 0 ? (
-            <>
-              <dt>{inv.kind === "credit_note" ? "erstattet/verrechnet" : "bezahlt"}</dt>
-              <dd className="text-right tabular-nums">{money(inv.paidCents)}</dd>
-            </>
-          ) : null}
+          {paymentSummary(inv, data.deposits, dateDe).map((r) => (
+            <div key={r.label} className="contents">
+              <dt>{r.label}</dt>
+              <dd className="text-right tabular-nums">{money(r.cents)}</dd>
+            </div>
+          ))}
           {inv.status !== "cancelled" && open !== 0 ? (
             <>
               <dt className="font-semibold">{open < 0 ? "zu erstatten" : "offen"}</dt>
@@ -240,7 +262,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                 </li>
               ))}
             </ul>
-            {inv.kind === "receipt" && inv.status === "paid" ? <p className="mt-2 font-semibold">Betrag dankend erhalten.</p> : null}
+            {isReceiptLike(inv.kind) && inv.status === "paid" ? <p className="mt-2 font-semibold">Betrag dankend erhalten.</p> : null}
           </section>
         ) : null}
 
@@ -248,6 +270,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
           {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
+          {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
           {showsDueDate(inv) && o.iban ? (
             <p>
