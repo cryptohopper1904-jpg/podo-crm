@@ -1,6 +1,6 @@
 /** MailPort: Auswahl des Adapters, SMTP-Adapter mit gemocktem nodemailer-Transport, sichere Fehlermeldungen. */
 import { describe, expect, it, vi } from "vitest";
-import { mailAdapterFor, MailNotConfiguredError, MailSendError, MockMailAdapter, parseSmtpUrl, resolveMailSettings, SmtpMailAdapter, smtpTransportOptions, toMailError, type TransportFactory } from "./mail";
+import { parseFrom, mailAdapterFor, MailNotConfiguredError, MailSendError, MockMailAdapter, parseSmtpUrl, resolveMailSettings, SmtpMailAdapter, smtpTransportOptions, toMailError, type TransportFactory } from "./mail";
 
 const practice = { name: "Testpraxis Fuß", email: "info@praxis.example" };
 const PASSWORD = "geheim-Passwort-123";
@@ -129,3 +129,16 @@ describe("MockMailAdapter", () => {
     expect(m.isMock).toBe(true);
   });
 });
+
+describe("Plattform-Konto-E-Mails", () => {
+  it("SMTP_FROM als „Name <adresse>“ und Plattform-Mails trotz Testmodus der Schnittstellen", () => {
+    const env = { INTEGRATIONS_MODE: "mock", SMTP_URL: "smtps://resend:k@smtp.resend.com:465", SMTP_FROM: "PodoHero <noreply@algoverdict.com>" };
+    const s = resolveMailSettings({ connection: null, env, practice: { name: "PodoHero", email: null }, platform: true });
+    expect(s).toMatchObject({ kind: "smtp", source: "platform", from: '"PodoHero" <noreply@algoverdict.com>' });
+    // Praxis-Mails bleiben im Testmodus
+    expect(resolveMailSettings({ connection: null, env, practice: { name: "Praxis", email: null } }).kind).toBe("mock");
+    expect(parseFrom("kaputt <keine-adresse>")).toBeNull();
+    expect(parseFrom("a@b.de")).toEqual({ name: null, address: "a@b.de" });
+  });
+});
+
