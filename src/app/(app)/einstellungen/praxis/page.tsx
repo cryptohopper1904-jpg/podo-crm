@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
+import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { Card, Checkbox, Field, Input, Select } from "@/components/ui";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
@@ -28,8 +29,8 @@ export default async function PracticeSettings() {
           <Field label="Bundesland">
             <Select name="state" defaultValue={o.state}>{Object.entries(STATES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>
           </Field>
-          <Field label="Straße"><Input name="street" defaultValue={o.street ?? ""} /></Field>
-          <Field label="PLZ"><Input name="zip" defaultValue={o.zip ?? ""} /></Field>
+          <Field label="Straße"><AddressAutocomplete name="street" defaultValue={o.street ?? ""} /></Field>
+          <Field label="PLZ"><ZipInput name="zip" defaultValue={o.zip ?? ""} /></Field>
           <Field label="Ort"><Input name="city" defaultValue={o.city ?? ""} /></Field>
           <Field label="Telefon"><Input name="phone" defaultValue={o.phone ?? ""} /></Field>
           <Field label="E-Mail"><Input name="email" type="email" defaultValue={o.email ?? ""} /></Field>
