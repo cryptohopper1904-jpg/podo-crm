@@ -49,6 +49,7 @@ export function InvoiceForm({
   today,
   preselectPatientId,
   preset,
+  privateOnly = false,
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -57,6 +58,8 @@ export function InvoiceForm({
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
+  /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
+  privateOnly?: boolean;
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
@@ -317,7 +320,7 @@ export function InvoiceForm({
 
       <Card>
         <Field label="Hinweis auf der Rechnung (keine Diagnosen)">
-          <Textarea name="notes" defaultValue={preset?.notes ?? ""} placeholder="z. B. Behandlungszeitraum, Bezug auf Verordnung" />
+          <Textarea name="notes" defaultValue={preset?.notes ?? ""} placeholder={privateOnly ? "z. B. Behandlungszeitraum" : "z. B. Behandlungszeitraum, Bezug auf Verordnung"} />
         </Field>
       </Card>
 

@@ -72,6 +72,9 @@ export default async function PracticeSitePage(props: PageProps<"/p/[slug]">) {
               {upcoming ? `Eröffnung am ${dateDe(site.openingDate)}` : `Geöffnet seit ${dateDe(site.openingDate)}`}
             </p>
           ) : null}
+          {site.privateOnly ? (
+            <p className={`mb-4 inline-flex rounded-full bg-surface px-3 py-1 text-sm font-semibold text-primary-soft-text ${site.openingDate ? "ml-2" : ""}`}>Privatpatienten &amp; Selbstzahler</p>
+          ) : null}
           <h1 className="font-display text-4xl font-bold tracking-tight text-primary-soft-text sm:text-5xl">{site.name}</h1>
           {site.claim ? <p className="mt-4 max-w-2xl text-lg text-primary-soft-text sm:text-xl">{site.claim}</p> : null}
           <div className="mt-8 flex flex-wrap gap-3">
@@ -118,7 +121,13 @@ export default async function PracticeSitePage(props: PageProps<"/p/[slug]">) {
                 </li>
               ))}
             </ul>
-            {site.showPrices ? <p className="mt-4 text-xs text-muted">Preise für Selbstzahler. Behandlungen auf ärztliche Verordnung rechnen wir mit Ihrer Krankenkasse ab (ggf. zzgl. gesetzlicher Zuzahlung).</p> : null}
+            {site.showPrices ? (
+              <p className="mt-4 text-xs text-muted">
+                {site.privateOnly
+                  ? "Preise für Privatpatienten und Selbstzahler. Sie erhalten eine Rechnung nach der Behandlung."
+                  : "Preise für Selbstzahler. Behandlungen auf ärztliche Verordnung rechnen wir mit Ihrer Krankenkasse ab (ggf. zzgl. gesetzlicher Zuzahlung)."}
+              </p>
+            ) : null}
           </div>
         </section>
       ) : null}

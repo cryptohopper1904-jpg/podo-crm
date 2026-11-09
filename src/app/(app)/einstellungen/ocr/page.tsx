@@ -1,7 +1,9 @@
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, Checkbox, Field, Input, Select } from "@/components/ui";
 import { OCR_DEFAULT_PROVIDER } from "@/integrations/ocr/ocr";
+import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { dateTimeDe } from "@/lib/format";
 import { ocrSettingsView } from "@/server/ocr";
 import { saveOcrSettingsAction } from "./actions";
@@ -10,6 +12,7 @@ export const metadata = { title: "Verordnungs-OCR" };
 
 export default async function OcrSettingsPage() {
   const auth = await requireAuth("settings.manage");
+  if (!feature(auth.organization, "ocr")) return <HiddenAreaNotice area="ocr" />;
   const s = await ocrSettingsView(auth);
   const isOwner = auth.role === "owner" && !auth.support;
 

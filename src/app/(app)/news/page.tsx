@@ -5,6 +5,7 @@ import { Badge, Card, Empty, PageHeader, cx } from "@/components/ui";
 import { db } from "@/db";
 import { newsItems } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
+import { filterNewsForOrg } from "@/lib/features";
 import { dateDe } from "@/lib/format";
 import { NEWS_CATEGORIES } from "@/lib/news-sources";
 import { refreshNewsAction } from "./actions";
@@ -12,7 +13,7 @@ import { refreshNewsAction } from "./actions";
 export const metadata = { title: "News" };
 
 export default async function NewsPage(props: PageProps<"/news">) {
-  await requireAuth();
+  const auth = await requireAuth();
   const sp = await props.searchParams;
   const category = typeof sp.kategorie === "string" && (NEWS_CATEGORIES as readonly string[]).includes(sp.kategorie) ? sp.kategorie : "";
   const rows = await db
@@ -20,7 +21,8 @@ export default async function NewsPage(props: PageProps<"/news">) {
     .from(newsItems)
     .where(category ? eq(newsItems.category, category) : undefined)
     .orderBy(desc(sql`coalesce(${newsItems.publishedAt}, ${newsItems.fetchedAt})`))
-    .limit(100);
+    .limit(100)
+    .then((r) => filterNewsForOrg(auth.organization, r)); // GKV-/Heilmittel-Meldungen bei „nur Privat“ ausblenden
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader

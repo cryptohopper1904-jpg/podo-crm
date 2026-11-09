@@ -8,6 +8,7 @@ import { withOrg } from "@/db";
 import { braceEpisodes, media, recordAddenda, treatmentRecords, type FootPoint } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { gkvGuard } from "@/lib/features";
 import { parseFootPoints } from "@/lib/foot3d-schema";
 import { chainHash } from "@/lib/records";
 import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/rules/brace";
@@ -45,6 +46,10 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
   const parsed = schema.safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
+  if (d.prescriptionId) {
+    const blocked = gkvGuard(auth.organization, "verordnungen");
+    if (blocked) return blocked;
+  }
   let footPoints: FootPoint[] = [];
   let mediaIds: string[] = [];
   try {

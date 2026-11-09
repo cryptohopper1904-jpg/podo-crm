@@ -4,12 +4,14 @@ import { Badge, Card, CardTitle, Checkbox, Field, Input, Select } from "@/compon
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { money } from "@/lib/format";
 import { saveServiceAction } from "../actions";
 
 export const metadata = { title: "Leistungen" };
 
-function ServiceFields({ s }: { s?: typeof services.$inferSelect }) {
+/** gkv=false (Praxis nur Privat-/Selbstzahler): GKV-Position ausgeblendet, vorhandener Wert bleibt erhalten */
+function ServiceFields({ s, gkv = true }: { s?: typeof services.$inferSelect; gkv?: boolean }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7">
       {s ? <input type="hidden" name="id" value={s.id} /> : null}
@@ -20,7 +22,7 @@ function ServiceFields({ s }: { s?: typeof services.$inferSelect }) {
         <Select name="vatRate" defaultValue={String(s?.vatRate ?? 0)}><option value="0">0 % (Heilbehandlung)</option><option value="7">7 %</option><option value="19">19 %</option></Select>
       </Field>
       <Field label="Dauer (Min)"><Input name="durationMin" type="number" defaultValue={s?.durationMin ?? 30} min={0} /></Field>
-      <Field label="GKV-Pos."><Input name="gkvPosition" defaultValue={s?.gkvPosition ?? ""} /></Field>
+      {gkv ? <Field label="GKV-Pos."><Input name="gkvPosition" defaultValue={s?.gkvPosition ?? ""} /></Field> : <input type="hidden" name="gkvPosition" value={s?.gkvPosition ?? ""} />}
       {s ? <Checkbox name="active" defaultChecked={s.active} label="aktiv" /> : null}
     </div>
   );
@@ -29,6 +31,7 @@ function ServiceFields({ s }: { s?: typeof services.$inferSelect }) {
 export default async function ServicesSettings() {
   const auth = await requireAuth("settings.manage");
   const org = auth.organization.id;
+  const gkv = feature(auth.organization, "gkvServices");
   const rows = await withOrg(org, (tx) => tx.select().from(services).where(eq(services.organizationId, org)).orderBy(asc(services.code)));
   // Hinweise aus dem Bootstrap (z. B. „Preis bitte prüfen“ bei Platzhalter-Preisen)
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
@@ -40,12 +43,12 @@ export default async function ServicesSettings() {
       </p>
       <Card>
         <CardTitle>Neue Leistung</CardTitle>
-        <ActionForm action={saveServiceAction} submit="Anlegen"><ServiceFields /></ActionForm>
+        <ActionForm action={saveServiceAction} submit="Anlegen"><ServiceFields gkv={gkv} /></ActionForm>
       </Card>
       {rows.map((s) => (
         <Card key={s.id}>
           <p className="mb-3 flex items-center gap-2 font-semibold">{s.code} · {s.name} <Badge tone={s.vatRate ? "warn" : "primary"}>{s.vatRate} %</Badge> <span className="text-muted">{money(s.priceCents)}</span>{typeof priceNotes[s.code] === "string" ? <Badge tone="warn">{String(priceNotes[s.code])}</Badge> : null}</p>
-          <ActionForm action={saveServiceAction}><ServiceFields s={s} /></ActionForm>
+          <ActionForm action={saveServiceAction}><ServiceFields s={s} gkv={gkv} /></ActionForm>
         </Card>
       ))}
     </div>

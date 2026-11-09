@@ -9,6 +9,7 @@ import { withOrg } from "@/db";
 import { messages } from "@/db/schema";
 import { getAuth, getSession, requireAuth } from "@/lib/auth/session";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
+import { removeHiddenNav } from "@/lib/features";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
@@ -72,6 +73,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (auth.can("finance.read")) allowed.push("auswertung");
   if (auth.can("settings.manage")) allowed.push("einstellungen");
   if (auth.user.isPlatformAdmin && auth.user.totpEnabled && !auth.support) allowed.push("plattform");
+  removeHiddenNav(auth.organization, allowed); // Kassen-Themen bei „nur Privat-/Selbstzahler“ (src/lib/features.ts)
 
   const switcher = await loadSwitcherModel({
     userId: auth.user.id,

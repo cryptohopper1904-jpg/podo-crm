@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
+import { isPrivateOnly } from "@/lib/features";
 import { fullName } from "@/lib/format";
 import { deletionStatus } from "@/server/patient-deletion";
 import { getPatient } from "@/server/patients";
@@ -18,7 +19,7 @@ export default async function EditPatientPage(props: PageProps<"/kunden/[id]/bea
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader title={fullName(data.patient)} subtitle={`Kunde #${data.patient.number} bearbeiten`} />
-      <PatientForm patient={data.patient} />
+      <PatientForm patient={data.patient} privateOnly={isPrivateOnly(auth.organization)} />
       {status ? <DeletePatientCard id={id} number={data.patient.number} status={status} /> : null}
     </div>
   );

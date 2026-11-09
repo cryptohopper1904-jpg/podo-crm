@@ -5,6 +5,7 @@ import { withOrg } from "@/db";
 import { appointments, braceEpisodes, integrationConnections, patients, services } from "@/db/schema";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
 import { fullName } from "@/lib/format";
 import { bookablePrescriptions } from "@/server/prescriptions";
 import { DokuForm } from "../doku-form";
@@ -23,7 +24,7 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
     const svc = await tx.select({ id: services.id, code: services.code, name: services.name }).from(services).where(and(eq(services.organizationId, org), eq(services.active, true))).orderBy(asc(services.code));
     const [brace] = await tx.select().from(braceEpisodes).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.patientId, id), eq(braceEpisodes.status, "active"))).limit(1);
     const [voice] = await tx.select().from(integrationConnections).where(and(eq(integrationConnections.organizationId, org), eq(integrationConnections.provider, "transcription")));
-    const vos = await bookablePrescriptions(tx, org, id);
+    const vos = feature(auth.organization, "verordnungen") ? await bookablePrescriptions(tx, org, id) : [];
     const [appt] = appointmentId && /^[0-9a-f-]{36}$/.test(appointmentId)
       ? await tx.select({ prescriptionId: appointments.prescriptionId }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId), eq(appointments.patientId, id)))
       : [];
