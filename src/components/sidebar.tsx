@@ -6,13 +6,13 @@ import { ChevronsLeft, ChevronsRight, Sparkles } from "lucide-react";
 import { SideNav, type NavKey } from "./app-nav";
 import { Logo, LogoMark } from "./logo";
 import { cx } from "./ui";
+import { NAV_COOKIE } from "@/lib/nav";
 
-/** Cookie statt localStorage: der Server rendert die Leiste gleich in der richtigen Breite (kein Springen). */
-export const NAV_COOKIE = "podo_nav";
 
 /**
  * Linke Navigation (Desktop), einklappbar auf eine schmale Icon-Leiste. Eingeklappt zeigen die Einträge
- * ihren Namen als Tooltip; der Zustand bleibt pro Browser gespeichert (1 Jahr).
+ * ihren Namen als Tooltip; der Zustand bleibt pro Browser gespeichert (1 Jahr) – als Cookie statt localStorage,
+ * damit der Server die Leiste gleich in der richtigen Breite rendert (kein Springen).
  */
 export function Sidebar({
   initialCollapsed,
