@@ -2,7 +2,7 @@ import "server-only";
 import { notFound } from "next/navigation";
 import { and, count, desc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { appointments, auditLog, memberships, organizations, patients, supportGrants } from "@/db/schema";
+import { appointments, auditLog, memberships, organizations, patients, supportGrants, users } from "@/db/schema";
 import { getSession, requestMeta } from "@/lib/auth/session";
 import { isPlanId, PLANS, voiceAddonActive, type PlanId } from "@/lib/plans";
 import { websiteAddonActive } from "@/lib/website";
@@ -34,6 +34,8 @@ export type PracticeOverview = {
   voiceAddon: boolean;
   /** Praxis-Website als Zusatzmodul gebucht (organizations.settings.websiteAddon) */
   websiteAddon: boolean;
+  /** Praxis-Inhaber:innen (Konto, kein Kundendatum) – für „Passwort-Reset senden“ */
+  owners: { id: string; name: string; email: string }[];
 };
 
 /**
@@ -47,6 +49,11 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
     .from(memberships)
     .where(eq(memberships.active, true))
     .groupBy(memberships.organizationId, memberships.role);
+  const ownerRows = await db
+    .select({ org: memberships.organizationId, id: users.id, name: users.name, email: users.email })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.active, true), eq(memberships.role, "owner")));
   const since = new Date(Date.now() - 30 * 86_400_000);
   const now = new Date();
   const out: PracticeOverview[] = [];
@@ -75,6 +82,7 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       activeGrantForMe: c.grant,
       voiceAddon: voiceAddonActive(o.settings),
       websiteAddon: websiteAddonActive(o.settings),
+      owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),
     });
   }
   return out;

@@ -1,6 +1,6 @@
 # PodoHero – Gesamt-Review (Stand 09.11.2026, Branch `feature/podohero`, Commit `1c97019`)
 
-Umfang: ganzes System statt Einzelphasen, Schwerpunkt Querschnittsprobleme. Kein Code geändert.
+Umfang: ganzes System statt Einzelphasen, Schwerpunkt Querschnittsprobleme. Kein Code geändert. **Umsetzung der Befunde: Spalte „Status“ in Abschnitt 1 und Abschnitt 8.**
 
 **Methode**
 - Eigene Code-Prüfung in fünf Bereichen: Sicherheit, Datenschutz & Recht, Korrektheit, Betrieb, UX.
@@ -17,26 +17,26 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 
 ## 1. Überblick
 
-| # | Befund | Schwere | früher |
-|---|---|---|---|
-| K1 | Cloud-init legt auf einer öffentlichen Domain die Demo-Praxis mit bekanntem Inhaber-Passwort an | kritisch | neu |
-| H1 | 2FA ist für alle Rollen optional (Art. 32, ASVS L2) | hoch | neu |
-| H2 | App-Container erhält die komplette `deploy/.env` inkl. DB-Eigentümer-Passwort und Backup-Passphrase. Damit lassen sich RLS und Append-only-Trigger aushebeln | hoch | neu |
-| H3 | Keine Lösch- bzw. Aufbewahrungsfunktion je Patient:in. Die AVV sagt Löschfunktionen zu | hoch | neu |
-| H4 | `webhook_events` speichert rohe WhatsApp-/SMS-Inhalte unbegrenzt lange, ohne RLS | hoch | neu |
-| H5 | Support-Modus kann Patientendaten massenhaft exportieren (Doctolib-CSV, Art.-15-Export, Medien) | hoch | teilw. (Phase 3: nur Praxis-Export gesperrt) |
-| H6 | Support-Audit lässt sich mit dem Header `Purpose: prefetch` umgehen | hoch | teilw. (Phase 4: Prefetch-Ausnahme bewusst eingeführt) |
-| H7 | Webhook-Ereignisse (SumUp-Zahlungen, Nachrichten) gehen bei Fehler oder Absturz still verloren | hoch | neu |
-| H8 | Website, AVV und Betriebsdoku machen Zusagen, die technisch nicht gedeckt sind | hoch | neu |
-| M1 | Öffentliche Buchung `/buchen` prüft serverseitig weder Freigabe noch Leistungsliste, Arbeitszeiten oder Abwesenheiten | mittel | neu |
-| M2 | Interne Terminanlage ohne Buchungs-Lock: Doppelbelegung möglich | mittel | neu |
-| M3 | TSE-Signatur von Kartenzahlungen innerhalb der DB-Transaktion | mittel | teilw. (Phase 5 #1 nur für Abschlüsse) |
-| M4 | CSP ohne `script-src`/`default-src` | mittel | neu |
-| M5 | iCal-Feed-Token nicht widerrufbar, abgeleitet vom Hauptschlüssel | mittel | neu (TODO im Code) |
-| M6 | Webhook-Token in der URL; veralteter `voice_agent`-Pfad | mittel | neu |
-| M7 | Betrieb: Images nicht gepinnt, keine Limits, keine Log-Rotation, Offsite-Backup nicht eingerichtet, Cloud-init ungepinnt | mittel | neu |
-| M8 | Layout bricht auf dem iPad im Rechnungsformular und auf dem iPhone in der Website-Kopfzeile | mittel | neu |
-| N1–N14 | siehe Abschnitt 5 | niedrig | gemischt |
+| # | Befund | Schwere | früher | Status (Umsetzung 09.11.2026) |
+|---|---|---|---|---|
+| K1 | Cloud-init legt auf einer öffentlichen Domain die Demo-Praxis mit bekanntem Inhaber-Passwort an | kritisch | neu | **behoben** – `scripts/seed-demo.ts`/`src/lib/demo-seed.ts`: echte Domain ohne `SEED_DEMO_PASSWORD` → Zufallspasswort (einmal im migrate-Log), bekanntes Passwort nur bei IP/localhost; 2FA-Pflicht beim ersten Login (H1). cloud-init selbst bewusst nicht geändert (anderer Arbeitsstrang) |
+| H1 | 2FA ist für alle Rollen optional (Art. 32, ASVS L2) | hoch | neu | **behoben** – Pflicht für Inhaber:innen und Plattform-Admins, je Praxis für alle Rollen einstellbar; Login erlaubt, bis zur Einrichtung nur `/login/2fa-einrichten` + Abmelden. Wiederherstellungscodes/Reset: bewusst offen (N5) |
+| H2 | App-Container erhält die komplette `deploy/.env` inkl. DB-Eigentümer-Passwort und Backup-Passphrase. Damit lassen sich RLS und Append-only-Trigger aushebeln | hoch | neu | **behoben** – App ohne `env_file`, nur explizite Variablen; Eigentümer-Passwort nur db/migrate/backup, Passphrase nur backup (`docker compose config` geprüft, Test `deploy-env.test.ts`) |
+| H3 | Keine Lösch- bzw. Aufbewahrungsfunktion je Patient:in. Die AVV sagt Löschfunktionen zu | hoch | neu | **behoben** – „Kund:in löschen“ (Inhaber:in): vollständig ohne aufbewahrungspflichtige Daten, sonst Kontaktdaten löschen + Marketing widerrufen; Audit. Offen: endgültige Löschung nach Fristablauf, Monatsreport „löschreif“, Vier-Augen |
+| H4 | `webhook_events` speichert rohe WhatsApp-/SMS-Inhalte unbegrenzt lange, ohne RLS | hoch | neu | **behoben** – RLS, Rohdaten nur bis zur Verarbeitung, Löschung nach 30 Tagen per Cron, `voice_agent`-Altpfad entfernt |
+| H5 | Support-Modus kann Patientendaten massenhaft exportieren (Doctolib-CSV, Art.-15-Export, Medien) | hoch | teilw. (Phase 3: nur Praxis-Export gesperrt) | **behoben** – `downloadAllowed()` in allen Export-/Medien-Routen; Support nur Rechnungs-PDF/Z-Bon |
+| H6 | Support-Audit lässt sich mit dem Header `Purpose: prefetch` umgehen | hoch | teilw. (Phase 4: Prefetch-Ausnahme bewusst eingeführt) | **behoben** – keine Ausnahme mehr nach Client-Headern, jede Ansicht wird protokolliert (entprellt) |
+| H7 | Webhook-Ereignisse (SumUp-Zahlungen, Nachrichten) gehen bei Fehler oder Absturz still verloren | hoch | neu | **behoben** – Outbox (`status`, `attempts`, `lease_until`, `next_attempt_at`), Cron-Wiederholung mit Backoff, `dead` + Posteingang, Status in Schnittstellen und `/api/health/deep` |
+| H8 | Website, AVV und Betriebsdoku machen Zusagen, die technisch nicht gedeckt sind | hoch | neu | **behoben** – Texte: „bei Hetzner in Deutschland“, keine pauschale „keine US-Cloud“-Zusage, Offsite als „in Vorbereitung“, BETRIEB.md zur Fotoverschlüsselung korrigiert, AVV-Löschfunktion jetzt gedeckt. Offen: Offsite-Pflicht in `install.sh` (M7) |
+| M1 | Öffentliche Buchung `/buchen` prüft serverseitig weder Freigabe noch Leistungsliste, Arbeitszeiten oder Abwesenheiten | mittel | neu | **behoben** – gleiche Verfügbarkeit wie Portal/Telefon, Slot serverseitig gegen angebotene Zeiten geprüft, Freigabe/Leistungsliste/Tageslimit |
+| M2 | Interne Terminanlage ohne Buchungs-Lock: Doppelbelegung möglich | mittel | neu | **behoben** – Prüfung + Anlage in einer Transaktion unter `book:<org>`-Lock, Konflikt auch mit Buchungen ohne Behandler:in. Exclusion-Constraint: bewusst offen |
+| M3 | TSE-Signatur von Kartenzahlungen innerhalb der DB-Transaktion | mittel | teilw. (Phase 5 #1 nur für Abschlüsse) | bewusst offen – Umbau der Fiskal-Signatur (Outbox wie Tagesabschluss) braucht fiskaly-Testzugang; H7 verhindert jetzt zumindest den stillen Verlust |
+| M4 | CSP ohne `script-src`/`default-src` | mittel | neu | bewusst offen – Nonce-CSP betrifft alle Seiten (statische Seiten würden dynamisch); eigener Schritt mit Browser-Tests |
+| M5 | iCal-Feed-Token nicht widerrufbar, abgeleitet vom Hauptschlüssel | mittel | neu (TODO im Code) | bewusst offen – iCal-Token-Rotation braucht Migration + UI, kein Bezug zu den übrigen Fixes |
+| M6 | Webhook-Token in der URL; veralteter `voice_agent`-Pfad | mittel | neu | **teilweise** – `voice_agent`-Altpfad entfernt; Token als Header/HMAC offen (Anbieter-Umstellung mit Übergangsfrist) |
+| M7 | Betrieb: Images nicht gepinnt, keine Limits, keine Log-Rotation, Offsite-Backup nicht eingerichtet, Cloud-init ungepinnt | mittel | neu | bewusst offen – Betrieb/cloud-init wird parallel in einem anderen Strang bearbeitet |
+| M8 | Layout bricht auf dem iPad im Rechnungsformular und auf dem iPhone in der Website-Kopfzeile | mittel | neu | **teilweise** – Rechnungsformular auf dem iPad ohne horizontales Scrollen (E2E-Test); Website-Kopfzeile (iPhone) und `/kasse`-Tabelle offen (Website-Dateien gesperrt bzw. nicht beauftragt) |
+| N1–N14 | siehe Abschnitt 5 | niedrig | gemischt | offen (niedrig), außer N5 teilweise: Pflicht-2FA; Recovery-Codes offen |
 
 **Positiv bestätigt**
 - **RLS:** Alle 40 Tabellen mit Mandantendaten haben `ENABLE` + `FORCE ROW LEVEL SECURITY` und die Policy `tenant_isolation`. Bei `audit_log` gilt eine eigene Regel, siehe N3.
@@ -270,7 +270,7 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 ## 5. Niedrig
 
 | # | Befund | Fundstelle | Fix |
-|---|---|---|---|
+|---|---|---|---|---|
 | N1 | 13 Advisory-Locks noch mit 32-Bit-`hashtext`. Folge: nur falsche Serialisierung, aber inkonsistent zur Entscheidung aus Phase 3/5 (#26) | `src/server/records.ts:41`, `portal-core.ts:62`, `invoices.ts:177`, `anamnesis.ts:74`, `kunden/actions.ts:50` u. a. | einheitlich `hashtextextended(…, 0)` |
 | N2 | `buildPracticeExport`, `zBonPdfForOrg`, `listSupportAdmins` ohne `AuthContext`. Die Routen prüfen, es fehlt nur die zweite Sicherung. GPT, Gemini und Mistral stuften das als kritisch/hoch ein; herabgestuft, weil kein erreichbarer Pfad existiert | `src/server/practice-export.ts:49`, `src/server/kasse.ts:539`, `src/server/support.ts:43` | `auth` übergeben, `assertCan` bzw. `ownerOnly` |
 | N3 | Policy `audit_insert` mit `WITH CHECK (true)`: Einträge für fremde `organization_id` möglich, damit Audit-Log fälschbar | Policy auf `audit_log` (Katalog) | `WITH CHECK (organization_id IS NULL OR organization_id = current_setting('app.org_id')::uuid)` mit Ausnahme für Login-Ereignisse |
@@ -324,3 +324,27 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 2. **Vor erster echter Praxis:** H1, H7, H8 (Texte, Standort, Offsite-Backup), M1–M3, M7.
 3. **Vor Ablauf der ersten Aufbewahrungsfristen bzw. erstem Löschantrag:** H3 und H4 (Löschkonzept).
 4. **Laufend:** M4–M6, M8, N1–N14.
+
+---
+
+## 8. Umsetzung (09.11.2026)
+
+Alle Befunde „kritisch“ und „hoch“ sowie M1, M2 und M8 (iPad-Rechnungsformular) sind umgesetzt, jeweils mit Regressionstest. Migrationen: `0018_gesamt_review` (Spalten, `password_resets`), `0019_gesamt_review_security` (RLS `webhook_events`, `podo_delete_patient`, Trigger-Ausnahme nur als Eigentümer innerhalb der Funktion).
+
+| # | Umsetzung | Test |
+|---|---|---|
+| K1 | `src/lib/demo-seed.ts`, `scripts/seed-demo.ts`; migrate erhält `PUBLIC_URL`, `SEED_DEMO_PASSWORD`; Doku `docs/BETRIEB.md` Abschnitt 1 | `src/lib/demo-seed.test.ts` |
+| H1 | `src/lib/auth/two-factor.ts`, `getAuthState()`/`requireAuth()` in `session.ts`, Login → `/login/2fa-einrichten` (mit Abmelden), Einstellung *Sicherheit → 2FA-Pflicht im Team* | `two-factor.test.ts`, `auth-sessions.db.test.ts` (Pflicht-2FA), E2E-Login |
+| H2 | `deploy/docker-compose.yml`: `app.environment` statt `env_file` | `src/lib/deploy-env.test.ts`, `docker compose config` mit Dummy-`.env` |
+| H3 | `src/server/patient-deletion.ts`, `src/lib/patient-retention.ts`, Karte in *Kunde bearbeiten*; DB-Funktion prüft die Fristen-Daten erneut | `patient-deletion.db.test.ts`, `patient-retention.test.ts` |
+| H4/H7 | `src/server/webhooks.ts` (store → lease → done/failed/dead, Backoff 5–80 min, 6 Versuche, Aufbewahrung 30 Tage), Cron in `/api/cron/reminders`, Health-Check `webhooks` | `webhook-outbox.db.test.ts` |
+| H5 | `downloadAllowed()` (`src/lib/auth/access.ts`) in allen Export-/Medien-Routen | `access.test.ts` (inkl. Prüfung aller Download-Routen) |
+| H6 | `support-view.ts`: keine Header-Ausnahme | `hardening.test.ts` |
+| H8 | Website, Login-Hinweis, AVV, Unterauftragnehmer, BETRIEB.md | – (Textänderung) |
+| M1 | `publicBookingOptions()`/`checkPublicSlot()` in `src/server/portal-booking.ts`, `/buchen` nutzt sie | `public-booking.db.test.ts`, E2E-Buchung |
+| M2 | `createInternalAppointments()` in `src/server/appointments.ts` | `appointments-lock.db.test.ts` |
+| M8 | `rechnungen/invoice-form.tsx`: zweizeilige Positionen bis 2xl, Kopf zweispaltig bis xl | E2E „Rechnungsformular auf dem iPad“ |
+
+Zusätzlich (Nutzerauftrag): **Passwort vergessen** – `/login/passwort-vergessen`, `/login/passwort-neu`, `src/server/password-reset.ts` (sha256-Token, 30 min, einmalig, alle offenen Tokens entwertet, alle Sitzungen beendet, Sperre aufgehoben, 2FA bleibt), Drosselung je IP und E-Mail, Mindestlaufzeit, Plattform-SMTP. Für die Plattform-Konsole steht `platformSendPasswordResetAction` (`src/app/(auth)/password-actions.ts`) bereit; die Schaltfläche in `/plattform` wird im Plattform-Strang eingebaut (Dateien dort gesperrt). Test: `password-reset.db.test.ts`.
+
+**Bewusst offen** (Begründung in der Status-Spalte): M3–M7, Teile von M6/M8, H3 (endgültige Löschung nach Fristablauf, Report „löschreif“, Vier-Augen), H1/N5 (Wiederherstellungscodes, 2FA-Reset durch Inhaber:in), N1–N14.

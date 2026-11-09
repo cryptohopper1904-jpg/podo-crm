@@ -14,7 +14,7 @@ const INCLUDED = [
   "Erinnerungen, Kundenportal, Online-Buchung",
   "Hygiene, Gerätebuch, Pflegeheime, Team",
   "Vollständiger Datenexport jederzeit",
-  "Hosting in Deutschland, verschlüsselte Datensicherung",
+  "Hosting bei Hetzner in Deutschland, tägliche verschlüsselte Datensicherung",
 ];
 
 const FAQ = [

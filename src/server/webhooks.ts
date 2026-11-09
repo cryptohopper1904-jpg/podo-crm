@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { invoiceLines, invoices, messages, organizations, payments, webhookEvents } from "@/db/schema";
 import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWhatsAppWebhook } from "@/integrations/webhooks";
-import type { InboundMessage, NormalizedWebhookEvent, PaymentPort, ProviderId } from "@/integrations/types";
+import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { adapterFor, logSync } from "./integrations";

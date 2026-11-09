@@ -31,7 +31,7 @@ const HIGHLIGHTS = [
 ] as const;
 
 const SECURITY = [
-  { icon: ServerCog, title: "Hosting in Deutschland", text: "Betrieb auf Servern in Deutschland, ohne US-Cloud." },
+  { icon: ServerCog, title: "Hosting in Deutschland", text: "Die PodoHero-Cloud läuft bei Hetzner in Deutschland." },
   { icon: Lock, title: "Verschlüsselt", text: "Fotos und Dokumente mit eigenem Schlüssel je Praxis." },
   { icon: ShieldCheck, title: "Doppelte Mandantentrennung", text: "In der Anwendung und per Row-Level-Security der Datenbank." },
   { icon: Sparkles, title: "Kein KI-Training", text: "Ihre Daten trainieren keine Modelle. KI nur mit AVV." },

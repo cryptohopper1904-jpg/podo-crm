@@ -10,7 +10,7 @@ Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbe
 
 | Dienst | Zweck | Standort | Daten | Status |
 |---|---|---|---|---|
-| [HOSTER] | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt) | AVV und § 203-Verpflichtung **abzuschließen** |
+| Hetzner Online GmbH (PodoHero-Cloud) | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt) | AVV und § 203-Verpflichtung **abzuschließen** |
 | [BACKUP-SPEICHERORT] | zweite Kopie der verschlüsselten Datensicherung | Deutschland | verschlüsselte Sicherungen | **einzurichten** |
 | [ZAHLUNGSDIENSTLEISTER, z. B. STRIPE] | Abrechnung des Abonnements der Praxis | [STANDORT] | Rechnungs- und Zahlungsdaten der Praxis, **keine Patientendaten** | vorgesehen |
 | [E-MAIL-VERSAND] | Versand von System-E-Mails (z. B. Rechnungen, Erinnerungen) | [STANDORT] | Empfängeradresse, Inhalt der Nachricht | vorgesehen, AVV **abzuschließen** |

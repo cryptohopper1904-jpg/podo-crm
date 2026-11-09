@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
 import { platformUsage } from "@/server/platform-stats";
 import { UsageDashboard } from "./usage-dashboard";
+import { ResetButton } from "./reset-button";
 import { WEBSITE_ADDON_PLANS } from "@/lib/website";
 import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction, setWebsiteAddonAction } from "./actions";
 
@@ -87,6 +88,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
                         <button className="text-sm font-semibold text-danger">Support-Zugriff starten</button>
                       </form>
                     ) : <span className="text-xs text-muted">keine Support-Freigabe</span>}
+                    {p.owners.map((o) => <ResetButton key={o.id} userId={o.id} label={o.email} />)}
                   </div>
                 </td>
               </tr>

@@ -77,7 +77,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
           <div>
             <Logo />
             <p className="mt-3 max-w-sm text-sm text-muted">
-              Praxissoftware für Podologie. Entwickelt in Deutschland, betrieben auf Servern in Deutschland.
+              Praxissoftware für Podologie. Entwickelt in Deutschland, die Cloud läuft bei Hetzner in Deutschland.
             </p>
           </div>
           <nav aria-label="Produkt" className="flex flex-col gap-2 text-sm">
