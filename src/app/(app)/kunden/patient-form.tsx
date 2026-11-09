@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import type { patients } from "@/db/schema";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { savePatientAction } from "./actions";
 
 type P = typeof patients.$inferSelect;
@@ -51,8 +52,8 @@ export function PatientForm({ patient }: { patient?: P }) {
           <Field label="Vorname"><Input name="firstName" defaultValue={patient?.firstName ?? ""} autoComplete="off" /></Field>
           <Field label="Nachname *"><Input name="lastName" required defaultValue={patient?.lastName ?? ""} autoComplete="off" /></Field>
           <Field label="Geburtsdatum" hint="TT.MM.JJJJ"><Input name="birthDate" defaultValue={toDe(patient?.birthDate)} placeholder="01.02.1950" inputMode="numeric" /></Field>
-          <Field label="Straße" className="sm:col-span-2"><Input name="street" defaultValue={patient?.street ?? ""} /></Field>
-          <Field label="PLZ"><Input name="zip" defaultValue={patient?.zip ?? ""} inputMode="numeric" /></Field>
+          <Field label="Straße" className="sm:col-span-2"><AddressAutocomplete name="street" defaultValue={patient?.street ?? ""} placeholder="z. B. Friedrich-Herder-Str. 12" /></Field>
+          <Field label="PLZ"><ZipInput name="zip" defaultValue={patient?.zip ?? ""} /></Field>
           <Field label="Ort"><Input name="city" defaultValue={patient?.city ?? ""} /></Field>
           <Field label="Mobil"><Input name="phoneMobile" type="tel" defaultValue={patient?.phoneMobile ?? ""} /></Field>
           <Field label="Festnetz"><Input name="phoneLandline" type="tel" defaultValue={patient?.phoneLandline ?? ""} /></Field>

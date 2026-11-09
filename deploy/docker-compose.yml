@@ -89,6 +89,8 @@ services:
       SENTRY_DSN:
       ERROR_WEBHOOK_URL:
       ERROR_WEBHOOK_TOKEN:
+      ADDRESS_PROVIDER:
+      PHOTON_URL:
       LOG_LEVEL:
       DB_POOL_MAX:
       APP_VERSION:
