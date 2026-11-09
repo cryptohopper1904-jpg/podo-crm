@@ -32,7 +32,8 @@ function envKeys(block: string): string[] {
 
 const SECRETS_NOT_FOR_APP = ["DB_OWNER_PASSWORD", "BACKUP_PASSPHRASE", "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_PRACTICE_OWNER_PASSWORD", "SEED_DEMO_PASSWORD"];
 /** Nur Entwicklung/Tests bzw. vom Image gesetzt */
-const NOT_NEEDED_IN_CONTAINER = new Set(["NODE_ENV", "VITEST", "TEST_DATABASE_URL", "TEST_OWNER_DATABASE_URL"]);
+// APP_COMMIT: im Image gesetzt (Dockerfile, Build-Argument GIT_SHA), nicht über die Compose-Umgebung
+const NOT_NEEDED_IN_CONTAINER = new Set(["NODE_ENV", "VITEST", "TEST_DATABASE_URL", "TEST_OWNER_DATABASE_URL", "APP_COMMIT"]);
 /** Laufen nur im migrate-Container (deploy/Dockerfile.migrate), nicht in der App */
 const MIGRATE_ONLY = new Set(["src/lib/bootstrap.ts", "src/lib/demo-seed.ts"]);
 

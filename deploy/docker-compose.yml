@@ -70,7 +70,7 @@ services:
       TRANSCRIPTION_BASE_URL:
       TRANSCRIPTION_API_KEY:
       TRANSCRIPTION_MODEL:
-      # Touren/Fahrtenbuch: Routing (osrm|ors|off) und Geokodierung (Photon)
+      # Touren/Fahrtenbuch: Routing (osrm|ors|off); Geokodierung (Photon) – auch für die Adress-Vervollständigung
       ROUTING_PROVIDER:
       OSRM_URL:
       ORS_API_KEY:
@@ -96,7 +96,6 @@ services:
       ERROR_WEBHOOK_URL:
       ERROR_WEBHOOK_TOKEN:
       ADDRESS_PROVIDER:
-      PHOTON_URL:
       LOG_LEVEL:
       DB_POOL_MAX:
       APP_VERSION:
