@@ -266,6 +266,26 @@ export const sessions = pgTable(
   (t) => [index("sessions_user").on(t.userId)],
 );
 
+/**
+ * „Passwort vergessen“: nur der sha256 des Tokens steht hier (Token selbst nur im Link der E-Mail),
+ * 30 Minuten gültig, einmalig. Keine RLS (plattformweit wie sessions), nur die App-Rolle hat Rechte.
+ */
+export const passwordResets = pgTable(
+  "password_resets",
+  {
+    id: id(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdIp: text("created_ip"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("password_resets_token").on(t.tokenHash), index("password_resets_user").on(t.userId)],
+);
+
 // ───────────────────────── Kunden / Patienten ─────────────────────────
 export type RiskFlags = {
   diabetes?: boolean;
@@ -329,6 +349,8 @@ export const patients = pgTable(
     externalIds: jsonb("external_ids").$type<Record<string, string | number | undefined>>().notNull().default({}),
     source: text("source"),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /** Kontaktdaten/Marketing gelöscht (Art. 17 DSGVO), Akte bleibt bis Fristende (§ 630f BGB, § 147 AO) – Gesamt-Review H3 */
+    contactErasedAt: timestamp("contact_erased_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1062,13 +1084,21 @@ export const webhookEvents = pgTable(
     provider: integrationProviderEnum("provider").notNull(),
     organizationId: uuid("organization_id").references(() => organizations.id, { onDelete: "cascade" }),
     externalId: text("external_id").notNull(),
-    payload: jsonb("payload").notNull(),
+    /** Rohdaten nur bis zur erfolgreichen Verarbeitung (danach NULL), höchstens 30 Tage – Gesamt-Review H4 */
+    payload: jsonb("payload"),
+    /** sha256 des Roh-Bodys (Nachweis/Duplikaterkennung ohne Inhalt) */
+    payloadHash: text("payload_hash"),
+    /** pending → processing → done | failed (Wiederholung mit Backoff) → dead (nach max. Versuchen) – Gesamt-Review H7 */
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
     error: text("error"),
   },
   // je Praxis eindeutig (gleiche Provider-Event-ID bei zwei Praxen darf nicht kollidieren)
-  (t) => [uniqueIndex("webhook_events_idem_org").on(t.provider, t.organizationId, t.externalId)],
+  (t) => [uniqueIndex("webhook_events_idem_org").on(t.provider, t.organizationId, t.externalId), index("webhook_events_due").on(t.status, t.nextAttemptAt)],
 );
 
 export const syncLog = pgTable("sync_log", {
