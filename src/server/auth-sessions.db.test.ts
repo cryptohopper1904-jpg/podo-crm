@@ -259,7 +259,7 @@ const redirectOf = async (p: Promise<unknown>) => {
     it("Passwortwechsel beendet alle anderen Sitzungen, die aktuelle bleibt", async () => {
       const org = await activeOrg();
       const u = await f.user();
-      await member(org, u);
+      await member(org, u, "therapist");
       await f.pool.query("update users set password_hash = $2 where id = $1", [u, await password.hashPassword("Altes-Passwort-sehr-lang-1")]);
       const other = await newSession(u, org);
       const current = await newSession(u, org);
