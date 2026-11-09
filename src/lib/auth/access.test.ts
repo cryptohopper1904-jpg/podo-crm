@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { effectiveCan, isGrantActive, mutationAllowedWithoutPermission, pickActiveGrant, type AccessState } from "./access";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { DOWNLOAD_KINDS, downloadAllowed, effectiveCan, isGrantActive, mutationAllowedWithoutPermission, pickActiveGrant, type AccessState } from "./access";
 
 const base: AccessState = { role: "owner", readOnly: false, mutating: true, support: null };
 const now = new Date("2026-11-08T12:00:00Z");
@@ -65,5 +67,27 @@ describe("Support-Modus (Break-Glass)", () => {
     ];
     expect(pickActiveGrant(grants, "u", now)).toEqual({ grantId: "b", scope: "read", expiresAt: grants[1].expiresAt });
     expect(pickActiveGrant(grants, "u", new Date(now.getTime() + 6 * h))).toBeNull();
+  });
+});
+
+describe("Downloads/Exporte im Support-Modus (Gesamt-Review H5)", () => {
+  const support = { grantId: "g", scope: "write" as const, expiresAt: new Date(now.getTime() + h) };
+  it("Support: keine Exporte, keine Fotos – nur einzelne Belege (Rechnung, Z-Bon)", () => {
+    for (const kind of DOWNLOAD_KINDS) {
+      expect(downloadAllowed({ support }, kind)).toBe(kind === "invoice_pdf" || kind === "z_bon_pdf");
+    }
+  });
+  it("Praxis-Mitglieder: Download-Art schränkt nicht ein (Rechte prüft die Route)", () => {
+    for (const kind of DOWNLOAD_KINDS) expect(downloadAllowed({ support: null }, kind)).toBe(true);
+  });
+  it("jede Download-/Export-Route unter /api prüft downloadAllowed", () => {
+    const root = path.join(process.cwd(), "src/app/api");
+    const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith("route.ts"));
+    const downloads = files.filter((f) => {
+      const src = readFileSync(path.join(root, f), "utf8");
+      return /getAuth\(/.test(src) && /Content-Disposition|pdfResponseHeaders|readDecrypted|buildPracticeExport/.test(src);
+    });
+    expect(downloads.length).toBeGreaterThanOrEqual(8);
+    for (const f of downloads) expect(readFileSync(path.join(root, f), "utf8"), f).toMatch(/downloadAllowed\(auth, "/);
   });
 });

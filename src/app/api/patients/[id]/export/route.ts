@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { anamneses, appointments, consents, invoiceLines, invoices, media, patients, payments, recordAddenda, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { mapSequential } from "@/lib/seq";
 
@@ -11,6 +12,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/patients/[i
   const { id } = await ctx.params;
   const auth = await getAuth();
   if (!auth || !auth.can("medical.read") || !auth.can("patients.read")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+  if (!downloadAllowed(auth, "patient_export")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   const org = auth.organization.id;
   const data = await withOrg(org, async (tx) => {
     const w = <T extends { organizationId: unknown; patientId: unknown }>(t: T) => and(eq(t.organizationId as never, org), eq(t.patientId as never, id));

@@ -36,7 +36,7 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 | M6 | Webhook-Token in der URL; veralteter `voice_agent`-Pfad | mittel | neu |
 | M7 | Betrieb: Images nicht gepinnt, keine Limits, keine Log-Rotation, Offsite-Backup nicht eingerichtet, Cloud-init ungepinnt | mittel | neu |
 | M8 | Layout bricht auf dem iPad im Rechnungsformular und auf dem iPhone in der Website-Kopfzeile | mittel | neu |
-| N1–N10 | siehe Abschnitt 4 | niedrig | gemischt |
+| N1–N14 | siehe Abschnitt 5 | niedrig | gemischt |
 
 **Positiv bestätigt**
 - **RLS:** Alle 40 Tabellen mit Mandantendaten haben `ENABLE` + `FORCE ROW LEVEL SECURITY` und die Policy `tenant_isolation`. Bei `audit_log` gilt eine eigene Regel, siehe N3.
@@ -323,4 +323,4 @@ Legende für die Spalte „früher“: **neu** = bisher nicht erfasst; **teilw.*
 1. **Sofort:** K1 – Demo auf der öffentlichen Instanz abschalten. Dann H2 (Env-Trennung) und H5/H6 (Support-Export und Audit).
 2. **Vor erster echter Praxis:** H1, H7, H8 (Texte, Standort, Offsite-Backup), M1–M3, M7.
 3. **Vor Ablauf der ersten Aufbewahrungsfristen bzw. erstem Löschantrag:** H3 und H4 (Löschkonzept).
-4. **Laufend:** M4–M6, M8, N1–N10.
+4. **Laufend:** M4–M6, M8, N1–N14.

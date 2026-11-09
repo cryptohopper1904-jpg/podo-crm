@@ -1,0 +1,13 @@
+# Täglich 03:30 Uhr (Europe/Berlin) und 10 Minuten nach dem Start des Servers.
+[Unit]
+Description=PodoHero automatisches Update (täglich 03:30 Europe/Berlin)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Europe/Berlin
+OnBootSec=10min
+RandomizedDelaySec=5min
+Persistent=true
+Unit=podo-update.service
+
+[Install]
+WantedBy=timers.target

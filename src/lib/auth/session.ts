@@ -11,7 +11,7 @@ import { effectiveCan, isReadPermission, mutationAllowedWithoutPermission, pickA
 import { can, type Permission, type Role } from "./permissions";
 import { clientIpFrom } from "./client-ip";
 import { acceptedSessionCookieNames, readSessionToken, sessionCookieName, sessionCookieOptions } from "./cookie";
-import { createSupportViewLog, isPrefetch } from "./support-view";
+import { createSupportViewLog } from "./support-view";
 
 /** Name des Sitzungs-Cookies in dieser Umgebung (Produktion: __Host-podo_session), siehe ./cookie.ts */
 export const SESSION_COOKIE = sessionCookieName();
@@ -153,9 +153,9 @@ async function requestInfo() {
   try {
     const h = await headers();
     const method = h.get("x-podo-method")?.toUpperCase() ?? null;
-    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null, prefetch: isPrefetch(h) };
+    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null };
   } catch {
-    return { mutating: true, path: null, prefetch: false };
+    return { mutating: true, path: null };
   }
 }
 
@@ -220,7 +220,7 @@ export const getAuth = cache(async (): Promise<AuthContext | null> => {
     role = "owner"; // nur für Anzeige; die Rechte begrenzt effectiveCan()
     support = grant;
     // Seitenansichten, Downloads und jede schreibende Anfrage im Support-Modus → Audit-Log der Praxis
-    // (ohne Router-Prefetch; derselbe Pfad je Freigabe höchstens einmal pro Minute)
+    // (ohne Ausnahme nach Client-Headern; derselbe Pfad je Freigabe höchstens einmal pro Minute)
     if (supportViews.shouldLog(grant.grantId, req)) {
       const meta = await requestMeta().catch(() => ({ ip: null }));
       await db.insert(auditLog).values({

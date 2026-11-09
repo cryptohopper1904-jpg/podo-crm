@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { audit } from "@/lib/audit";
+import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { berlinDateIso } from "@/lib/format";
 import { createRateLimiter } from "@/lib/rate-limit";
@@ -13,6 +14,7 @@ export async function GET() {
   const auth = await getAuth();
   // Support-Zugriff (Break-Glass) ist ausdrücklich ausgeschlossen – auch mit Freigabe kein Vollexport.
   if (!auth || auth.support || auth.role !== "owner") return NextResponse.json({ error: "Nur Inhaber:innen können die Praxis exportieren." }, { status: 403 });
+  if (!downloadAllowed(auth, "practice_export")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   const org = auth.organization.id;
   if (limiter.limited(`org:${org}`)) {
     return NextResponse.json({ error: "Ein Export wurde gerade erstellt. Bitte in 10 Minuten erneut versuchen." }, { status: 429, headers: { "Retry-After": "600" } });

@@ -5,12 +5,14 @@ import { patients } from "@/db/schema";
 import { writeDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
 import type { Gender } from "@/integrations/types";
 import { audit } from "@/lib/audit";
+import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 
 /** Patienten im Doctolib-Importformat (22 Spalten). */
 export async function GET() {
   const auth = await getAuth();
   if (!auth || !auth.can("patients.read")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+  if (!downloadAllowed(auth, "patient_list_export")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) =>
     tx.select().from(patients).where(and(eq(patients.organizationId, org), isNull(patients.archivedAt))).orderBy(asc(patients.number)),

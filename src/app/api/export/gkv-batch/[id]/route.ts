@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { writeCsv } from "@/integrations/csv";
+import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { billingBatchExport } from "@/server/prescriptions";
 
@@ -11,6 +12,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/export/gkv-
   const { id } = await ctx.params;
   const auth = await getAuth();
   if (!auth || !auth.can("invoices.write") || !auth.can("medical.read")) return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+  if (!downloadAllowed(auth, "billing_batch_export")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   if (!/^[0-9a-f-]{36}$/.test(id)) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
   const data = await billingBatchExport(auth, id);
   if (!data) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });

@@ -1,0 +1,17 @@
+# PodoHero – automatisches Update (ohne Shell-Zugang). Installiert von deploy/install-autoupdate.sh.
+# Läuft nicht-interaktiv gegen origin/main; Protokoll: /var/log/podo-update.log
+[Unit]
+Description=PodoHero automatisches Update (deploy/update.sh --auto)
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+Environment=PODO_NONINTERACTIVE=1
+Environment=GIT_TERMINAL_PROMPT=0
+Environment=BUILDKIT_PROGRESS=plain
+ExecStart=/bin/bash @APP_DIR@/deploy/update.sh --auto --ref main
+StandardOutput=append:/var/log/podo-update.log
+StandardError=append:/var/log/podo-update.log
+TimeoutStartSec=3600
+Nice=5
