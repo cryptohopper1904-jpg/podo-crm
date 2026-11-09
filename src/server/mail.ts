@@ -98,7 +98,7 @@ export async function mailPortFor(org: string): Promise<MailPort> {
  * Wirft MailNotConfiguredError, wenn in Produktion kein Plattform-SMTP gesetzt ist (Entwicklung: Testmodus).
  */
 export function platformMailPort(env: Record<string, string | undefined> = process.env): MailPort {
-  const settings = resolveMailSettings({ connection: null, env, practice: { name: "PodoHero", email: null } });
+  const settings = resolveMailSettings({ connection: null, env, practice: { name: "PodoHero", email: null }, platform: true });
   return mailAdapterFor(settings, factoryOverride);
 }
 

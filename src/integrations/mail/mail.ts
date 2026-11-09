@@ -77,13 +77,24 @@ export type MailEnv = { SMTP_URL?: string; SMTP_FROM?: string; INTEGRATIONS_MODE
 
 const quoteName = (name: string) => `"${name.replace(/["\\\r\n<>]/g, "").trim().slice(0, 80)}"`;
 
+/** SMTP_FROM darf eine reine Adresse oder „Name <adresse>“ sein → { name, address }. */
+export function parseFrom(raw: string | undefined): { name: string | null; address: string } | null {
+  const v = (raw ?? "").trim();
+  if (isEmail(v)) return { name: null, address: v };
+  const m = /^(.*?)\s*<([^<>\s]+)>$/.exec(v);
+  if (m && isEmail(m[2])) return { name: m[1].replace(/["\r\n]/g, "").trim() || null, address: m[2] };
+  return null;
+}
+
 export function resolveMailSettings(input: {
   connection: { status: string; config: Record<string, unknown>; secret: Record<string, string> } | null;
   env: MailEnv;
   practice: { name: string; email?: string | null };
+  /** Konto-E-Mails der Plattform (z. B. „Passwort vergessen“): nicht vom Testmodus der Praxis-Schnittstellen betroffen */
+  platform?: boolean;
 }): MailSettings {
   const { connection: c, env, practice } = input;
-  if (env.INTEGRATIONS_MODE === "mock") return { kind: "mock", reason: "env_mock" };
+  if (env.INTEGRATIONS_MODE === "mock" && !(input.platform && env.SMTP_URL)) return { kind: "mock", reason: "env_mock" };
   if (c?.status === "mock") return { kind: "mock", reason: "connection_mock" };
   const replyTo = isEmail(practice.email) ? practice.email : null;
   if (c && (c.status === "connected" || c.status === "error")) {
@@ -98,8 +109,9 @@ export function resolveMailSettings(input: {
     return { kind: "smtp", source: "org", target: { host, port, secure: port === 465, user, password }, from: `${quoteName(practice.name)} <${fromAddr}>`, replyTo };
   }
   if (env.SMTP_URL) {
-    if (!isEmail(env.SMTP_FROM)) return { kind: "unconfigured", reason: "SMTP_FROM fehlt oder ist ungültig (Plattform-Einstellung)." };
-    return { kind: "smtp", source: "platform", url: env.SMTP_URL, from: `${quoteName(practice.name)} <${env.SMTP_FROM}>`, replyTo };
+    const from = parseFrom(env.SMTP_FROM);
+    if (!from) return { kind: "unconfigured", reason: "SMTP_FROM fehlt oder ist ungültig (Plattform-Einstellung)." };
+    return { kind: "smtp", source: "platform", url: env.SMTP_URL, from: `${quoteName(input.platform ? (from.name ?? practice.name) : practice.name)} <${from.address}>`, replyTo };
   }
   if (env.NODE_ENV === "production") return { kind: "unconfigured", reason: "Kein SMTP-Zugang hinterlegt und kein Plattform-Standard (SMTP_URL) gesetzt." };
   return { kind: "mock", reason: "dev_unconfigured" };
