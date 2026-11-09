@@ -31,6 +31,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
     lead: "Für den Behandlungsstuhl gebaut: große Touch-Ziele, wenige Schritte.",
     items: [
       { text: "Leistungen antippen, Fußschema mit Markierungen, Sterilgut-Charge per Barcode" },
+      { text: "Befunde wahlweise im 2D-Schema oder am interaktiven 3D-Fußmodell markieren" },
       { text: "Fotos direkt aus der Kamera – verschlüsselt gespeichert, nie in der Mediathek" },
       { text: "Nagelspangen-Episoden mit Pflichtfoto-Assistent (fehlendes Foto nur mit Begründung)" },
       { text: "Unveränderbare Einträge (§ 630f BGB), Korrekturen als Nachtrag, Gegenzeichnung für Azubis" },
@@ -45,7 +46,9 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
     items: [
       { text: "Tages- und Wochenansicht, Serientermine, Hausbesuche, Doppelbuchungsprüfung" },
       { text: "Feiertage je Bundesland, Warnung bei Terminen in Urlaub oder Krankheit" },
-      { text: "Eigene Buchungsseite für Selbstzahler-Termine" },
+      { text: "Eigene Buchungsseite für Selbstzahler-Termine und eigene Praxis-Website" },
+      { text: "Kundenportal: Patient:innen buchen selbst und verschieben bis 24 h vorher" },
+      { text: "Warteliste: Bei einer Absage bekommen passende Personen einen Link – wer zuerst annimmt, rückt nach (nur mit Einwilligung)" },
       { text: "Kalender-Abo (iCal) ohne Patientennamen" },
       { text: "Doctolib: CSV-Import und Auswertung von Bestätigungsmails", status: "test" },
     ],
@@ -58,8 +61,8 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Erfassung mit Positionen und Foto der Papierverordnung" },
       { text: "Ampeln für Behandlungsbeginn und Fristen, verbrauchte Einheiten, Zuzahlung" },
       { text: "Abrechnungslauf mit Export für ein Abrechnungszentrum (die Übermittlung nach § 302 SGB V übernimmt der Partner)" },
-      { text: "Verordnung per Foto auslesen (OCR)", status: "planned" },
-      { text: "Telematikinfrastruktur (TI/KIM)", status: "planned" },
+      { text: "Verordnung per Foto auslesen: jedes Feld wird angezeigt und erst nach Bestätigung übernommen", status: "test" },
+      { text: "KIM-Postfach und Import der eVerordnung vorbereitet – Echtbetrieb braucht die TI-Komponenten (SMC-B, Konnektor, KIM-Anbieter)", status: "test" },
     ],
   },
   {
@@ -71,6 +74,8 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "USt-Logik inkl. § 4 Nr. 14 UStG (mit Bestätigung) und Kleinunternehmerregelung" },
       { text: "Mischzahlung, Gutscheine mit Restwert, PDF-Rechnungen" },
       { text: "SumUp-Kartenterminal und Zahlungslink direkt aus der Rechnung", status: "test" },
+      { text: "Kasse: Kassenbuch, Zählprotokoll, lückenlos nummerierter Tagesabschluss (Z-Bon), DSFinV-K-Export" },
+      { text: "TSE-Signatur für jeden Kassenvorgang über fiskaly", status: "test" },
       { text: "Belege an lexoffice übertragen", status: "test" },
     ],
   },
@@ -80,11 +85,11 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
     lead: "Weniger Ausfälle, mehr wiederkehrende Kundschaft – nur mit Einwilligung.",
     items: [
       { text: "Automatische Erinnerung 24 h vorher, Rückholung bei Überfälligkeit, Spangen-Kontrolle – ohne Doppelversand", status: "test" },
-      { text: "Kundenportal: Termine, offene Rechnungen als PDF, Gutscheine, Absage bis 24 h vorher" },
-      { text: "Posteingang mit Antwortvorschlägen", status: "test" },
+      { text: "Kundenportal: Termine, offene Rechnungen als PDF, Gutscheine, Buchen und Verschieben" },
+      { text: "Posteingang für E-Mail, WhatsApp und SMS mit KI-Antwortvorschlägen", status: "test" },
       { text: "SMS, E-Mail-Versand und WhatsApp (nur Organisatorisches)", status: "test" },
       { text: "Google-Bewertungen lesen und beantworten (ohne Gesundheitsdetails)", status: "test" },
-      { text: "KI-Telefonassistent", status: "planned" },
+      { text: "KI-Telefonassistent: nimmt Anrufe an, nennt freie Termine, legt Terminwünsche zur Bestätigung an und notiert Rückrufwünsche", status: "test" },
     ],
   },
   {
