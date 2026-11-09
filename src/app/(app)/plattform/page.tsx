@@ -5,6 +5,8 @@ import { audit } from "@/lib/audit";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
 import { platformUsage } from "@/server/platform-stats";
 import { UsageDashboard } from "./usage-dashboard";
+import { OpenDemoButton } from "@/components/org-switcher";
+import { loadSwitcherModel } from "@/server/org-switcher";
 import { ResetButton } from "./reset-button";
 import { WEBSITE_ADDON_PLANS } from "@/lib/website";
 import { enterSupportAction, extendTrialAction, setPlanAction, setVoiceAddonAction, setWebsiteAddonAction } from "./actions";
@@ -21,11 +23,15 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
   const { fehler } = await searchParams;
   const practices = await listPractices(row.user.id);
   const usage = await platformUsage();
+  const { demoOrgId } = await loadSwitcherModel({ userId: row.user.id, currentOrgId: row.session.organizationId, isPlatformAdmin: true, totpEnabled: true, support: false });
   // Plattform-weiter Eintrag (ohne Praxisbezug): wer hat wann die Nutzungsdaten angesehen
   await audit({ userId: row.user.id, action: "platform.view", entity: "platform", meta: { practices: usage.summary.practices } });
   return (
     <div className="mx-auto max-w-7xl">
-      <h1 className="font-display text-3xl font-semibold">Plattform</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-3xl font-semibold">Plattform</h1>
+        {demoOrgId ? <OpenDemoButton organizationId={demoOrgId} /> : null}
+      </div>
       <p className="mt-1 text-sm text-muted">
         Betreiber-Konsole. Keine Patientendaten – nur Abo-Daten und Anzahlen. Änderungen werden im Protokoll der jeweiligen Praxis vermerkt.
         Support-Zugriff ist nur mit Freigabe der Praxis möglich.
@@ -41,7 +47,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
           <tbody>
             {practices.map((p) => (
               <tr key={p.id}>
-                <td className="font-semibold">{p.name}</td>
+                <td className="font-semibold">{p.name}{p.demo ? <> <Badge tone="info">Demo</Badge></> : null}</td>
                 <td><p>{isPlanId(p.plan) ? PLANS[p.plan].label : p.plan}</p><Badge tone={p.subscriptionStatus === "active" ? "primary" : p.subscriptionStatus === "trialing" ? "info" : "accent"}>{p.subscriptionStatus}</Badge></td>
                 <td>{dateDe(p.trialEndsAt)}</td>
                 <td className="tabular-nums">{p.usedSeats} / {p.seats}</td>

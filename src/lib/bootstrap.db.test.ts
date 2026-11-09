@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "../db/schema";
 import { verifyPassword } from "./auth/password";
-import { BootstrapError, loadPracticeSpec, runBootstrap, slugify } from "./bootstrap";
+import { BootstrapError, DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, loadPracticeSpec, runBootstrap, slugify } from "./bootstrap";
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const ROOT = path.resolve(__dirname, "../..");
@@ -34,8 +34,9 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
 
   it("Plattform-Admin: einmal angelegt, ohne Mitgliedschaft; zweiter Lauf ändert das Passwort nicht", async () => {
     const email = `admin-${sfx()}@example.org`;
-    const env = { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_NAME: "Admin Test", BOOTSTRAP_ADMIN_PASSWORD: "erstes-passwort-123" };
-    expect((await runBootstrap(db, env)).admin).toBe("created");
+    const env = { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_NAME: "Admin Test", BOOTSTRAP_ADMIN_PASSWORD: "erstes-passwort-123", BOOTSTRAP_ADMIN_DEMO: "false" };
+    const first = await runBootstrap(db, env);
+    expect(first).toMatchObject({ admin: "created", demo: "skipped" });
     expect((await runBootstrap(db, { ...env, BOOTSTRAP_ADMIN_PASSWORD: "anderes-passwort-456" })).admin).toBe("exists");
     const rows = await pool.query("select id, is_platform_admin, totp_enabled, password_hash from users where email = $1", [email]);
     expect(rows.rowCount).toBe(1);
@@ -100,5 +101,69 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     } finally {
       c.release();
     }
+  });
+
+  it("Demo-Praxis: einmal mit erfundenen Daten angelegt, Admin als aktive:r Inhaber:in; weitere Läufe sichern nur die Mitgliedschaft", async () => {
+    const asDemoOrg = async <T,>(orgId: string, fn: (c: import("pg").PoolClient) => Promise<T>) => {
+      const c = await pool.connect();
+      try {
+        await c.query("begin");
+        await c.query("select set_config('app.org_id', $1, true)", [orgId]);
+        const r = await fn(c);
+        await c.query("commit");
+        return r;
+      } finally {
+        c.release();
+      }
+    };
+    const email = `admin-${sfx()}@example.org`;
+    const env = { BOOTSTRAP_ADMIN_EMAIL: email, BOOTSTRAP_ADMIN_NAME: "Admin Demo", BOOTSTRAP_ADMIN_PASSWORD: "erstes-passwort-123" };
+    const orgsBefore = (await pool.query("select count(*)::int n from organizations")).rows[0].n;
+    const first = await runBootstrap(db, env);
+    expect(first.admin).toBe("created");
+    expect(["created", "exists"]).toContain(first.demo); // die Demo-Praxis kann aus früheren Testläufen stammen
+    const orgs = await pool.query("select id, name, plan, subscription_status, trial_ends_at, settings from organizations where slug = $1", [DEMO_PRACTICE_SLUG]);
+    expect(orgs.rowCount).toBe(1);
+    const org = orgs.rows[0];
+    expect(org).toMatchObject({ name: DEMO_PRACTICE_NAME, plan: "internal", subscription_status: "active", trial_ends_at: null });
+    expect(org.settings.demo).toBe(true);
+    expect((await pool.query("select count(*)::int n from organizations")).rows[0].n).toBe(orgsBefore + (first.demo === "created" ? 1 : 0));
+
+    const admin = (await pool.query("select id from users where email = $1", [email])).rows[0];
+    const m = await pool.query("select organization_id, role, active from memberships where user_id = $1", [admin.id]);
+    expect(m.rows).toEqual([{ organization_id: org.id, role: "owner", active: true }]);
+
+    const counts = async () =>
+      asDemoOrg(org.id, async (c) => {
+        const q = async (t: string) => (await c.query(`select count(*)::int n from ${t} where organization_id = $1`, [org.id])).rows[0].n as number;
+        const fake = await c.query("select count(*)::int n from patients where organization_id = $1 and (source <> 'demo' or email not like '%@example.org')", [org.id]);
+        return { patients: await q("patients"), appointments: await q("appointments"), records: await q("treatment_records"), invoices: await q("invoices"), services: await q("services"), notDemo: fake.rows[0].n as number };
+      });
+    const c1 = await counts();
+    expect(c1.patients).toBe(8);
+    expect(c1.appointments).toBeGreaterThanOrEqual(16);
+    expect(c1.records).toBeGreaterThanOrEqual(10);
+    expect(c1.invoices).toBeGreaterThanOrEqual(10);
+    expect(c1.services).toBeGreaterThan(0);
+    expect(c1.notDemo).toBe(0);
+
+    // zweiter Lauf: nichts doppelt; deaktivierte Mitgliedschaft wird wieder aktiv
+    await pool.query("update memberships set active = false, role = 'therapist' where user_id = $1", [admin.id]);
+    expect((await runBootstrap(db, env)).demo).toBe("exists");
+    expect((await pool.query("select role, active from memberships where user_id = $1", [admin.id])).rows).toEqual([{ role: "owner", active: true }]);
+    expect(await counts()).toEqual(c1);
+    expect((await pool.query("select count(*)::int n from organizations where slug = $1", [DEMO_PRACTICE_SLUG])).rows[0].n).toBe(1);
+
+    // ein zweiter Plattform-Admin wird Inhaber:in derselben Demo-Praxis – Daten bleiben unverändert
+    const email2 = `admin-${sfx()}@example.org`;
+    expect((await runBootstrap(db, { ...env, BOOTSTRAP_ADMIN_EMAIL: email2 })).demo).toBe("exists");
+    const m2 = await pool.query("select m.role from memberships m join users u on u.id = m.user_id where u.email = $1 and m.organization_id = $2", [email2, org.id]);
+    expect(m2.rows).toEqual([{ role: "owner" }]);
+    expect(await counts()).toEqual(c1);
+
+    // BOOTSTRAP_ADMIN_DEMO=false → keine Mitgliedschaft
+    const email3 = `admin-${sfx()}@example.org`;
+    expect((await runBootstrap(db, { ...env, BOOTSTRAP_ADMIN_EMAIL: email3, BOOTSTRAP_ADMIN_DEMO: "false" })).demo).toBe("skipped");
+    expect((await pool.query("select 1 from memberships m join users u on u.id = m.user_id where u.email = $1", [email3])).rowCount).toBe(0);
   });
 });

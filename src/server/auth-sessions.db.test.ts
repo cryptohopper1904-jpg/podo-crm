@@ -191,6 +191,61 @@ const redirectOf = async (p: Promise<unknown>) => {
     });
   });
 
+  describe("Plattform ↔ Demo-Praxis (Plattform-Admin)", () => {
+    const demoOrg = async () => {
+      const org = await activeOrg();
+      await f.pool.query(`update organizations set settings = settings || '{"demo": true}'::jsonb where id = $1`, [org]);
+      return org;
+    };
+
+    it("Admin mit 2FA wechselt aus der Demo-Praxis in die Plattform-Sitzung und zurück (jeweils neues Token)", async () => {
+      const demo = await demoOrg();
+      const admin = await platformAdmin();
+      await member(demo, admin);
+      const t = await newSession(admin, demo);
+      useToken(t);
+      const toPlatform = new FormData();
+      toPlatform.set("organizationId", "plattform");
+      expect(await redirectOf(authActions.switchOrganizationAction(toPlatform))).toBe("/plattform");
+      const p = jar.get(session.SESSION_COOKIE)!;
+      expect(p).not.toBe(t);
+      expect(await row(t)).toBeNull();
+      expect((await row(p)).organization_id).toBeNull();
+      const back = new FormData();
+      back.set("organizationId", demo);
+      expect(await redirectOf(authActions.switchOrganizationAction(back))).toBe("/heute");
+      expect((await row(jar.get(session.SESSION_COOKIE)!)).organization_id).toBe(demo);
+    });
+
+    it("ohne Plattform-Admin bzw. ohne 2FA kein Wechsel in die Plattform-Sitzung", async () => {
+      const org = await activeOrg();
+      for (const u of [await f.user(), await platformAdmin({ totp: false })]) {
+        await member(org, u);
+        const t = await newSession(u, org);
+        jar.set(session.SESSION_COOKIE, t);
+        const form = new FormData();
+        form.set("organizationId", "plattform");
+        expect(await redirectOf(authActions.switchOrganizationAction(form))).toBe("/heute");
+        expect(jar.get(session.SESSION_COOKIE)).toBe(t);
+        expect((await row(t)).organization_id).toBe(org);
+      }
+    });
+
+    it("Login: Plattform-Admin mit nur einer Demo-Mitgliedschaft startet ohne Praxis (Plattform-Konsole)", async () => {
+      const demo = await demoOrg();
+      const admin = await platformAdmin();
+      await member(demo, admin);
+      const pw = "ein-sehr-langes-passwort-1";
+      await f.pool.query("update users set password_hash = $2 where id = $1", [admin, await password.hashPassword(pw)]);
+      const { rows } = await f.pool.query("select email from users where id = $1", [admin]);
+      const form = new FormData();
+      form.set("email", rows[0].email);
+      form.set("password", pw);
+      expect(await redirectOf(authActions.loginAction(undefined, form))).toBe("/login/2fa");
+      expect((await row(jar.get(session.SESSION_COOKIE)!)).organization_id).toBeNull();
+    });
+  });
+
   describe("Entzug", () => {
     it("2FA-Sperre (Passwort war bekannt) beendet ALLE Sitzungen der Person", async () => {
       const org = await activeOrg();
