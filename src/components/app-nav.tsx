@@ -69,7 +69,7 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "plattform", href: "/plattform", label: "Plattform", icon: ShieldAlert },
 ];
 
-export function SideNav({ allowed, badges }: { allowed: NavKey[]; badges?: Partial<Record<NavKey, number>> }) {
+export function SideNav({ allowed, badges, collapsed = false }: { allowed: NavKey[]; badges?: Partial<Record<NavKey, number>>; collapsed?: boolean }) {
   const path = usePathname();
   return (
     <nav aria-label="Hauptnavigation" className="flex flex-col gap-1">
@@ -81,15 +81,21 @@ export function SideNav({ allowed, badges }: { allowed: NavKey[]; badges?: Parti
             key={i.key}
             href={i.href}
             aria-current={active ? "page" : undefined}
+            title={collapsed ? i.label : undefined}
             className={cx(
-              "flex h-11 items-center gap-3 rounded-xl px-3 text-[15px] font-medium",
+              "relative flex h-11 items-center rounded-xl text-[15px] font-medium",
+              collapsed ? "justify-center px-0" : "gap-3 px-3",
               active ? "bg-primary-soft text-primary-soft-text" : "text-text hover:bg-surface-2",
             )}
           >
             <Icon size={19} aria-hidden />
-            <span className="flex-1">{i.label}</span>
+            <span className={collapsed ? "sr-only" : "flex-1 truncate"}>{i.label}</span>
             {badges?.[i.key] ? (
-              <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">{badges[i.key]}</span>
+              collapsed ? (
+                <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{badges[i.key]}</span>
+              ) : (
+                <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">{badges[i.key]}</span>
+              )
             ) : null}
           </Link>
         );

@@ -2,7 +2,9 @@ import Link from "next/link";
 import { LogOut, Sparkles } from "lucide-react";
 import { and, count, eq } from "drizzle-orm";
 import { AccessBanner } from "@/components/access-banner";
-import { BottomNav, SideNav, type NavKey } from "@/components/app-nav";
+import { cookies } from "next/headers";
+import { BottomNav, type NavKey } from "@/components/app-nav";
+import { NAV_COOKIE, Sidebar } from "@/components/sidebar";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LoginChangelog } from "@/components/login-changelog";
@@ -106,21 +108,17 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     unread = r?.n ?? 0;
   }
 
+  const navCollapsed = (await cookies()).get(NAV_COOKIE)?.value === "collapsed";
+
   return (
     <div className="flex min-h-screen">
-      <aside className="no-print sticky top-0 hidden h-screen w-64 shrink-0 flex-col gap-6 overflow-y-auto border-r border-border bg-surface px-4 py-6 lg:flex">
-        <Link href="/heute" className="px-2">
-          <Logo />
-        </Link>
-        <SideNav allowed={allowed} badges={{ posteingang: unread }} />
-        <div className="mt-auto rounded-xl bg-surface-2 p-3 text-sm">
-          <p className="font-semibold">{auth.user.name}</p>
-          <p className="text-muted">{ROLE_LABELS[auth.role]} · {auth.organization.name}</p>
-          <Link href="/neuigkeiten" className="mt-2 inline-flex min-h-8 items-center gap-1.5 font-semibold text-primary hover:underline">
-            <Sparkles size={15} aria-hidden /> Neuigkeiten
-          </Link>
-        </div>
-      </aside>
+      <Sidebar
+        initialCollapsed={navCollapsed}
+        allowed={allowed}
+        badges={{ posteingang: unread }}
+        userName={auth.user.name}
+        userMeta={`${ROLE_LABELS[auth.role]} · ${auth.organization.name}`}
+      />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
           <Link href="/heute" className="lg:hidden">
