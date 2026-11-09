@@ -49,7 +49,8 @@ describe("Entitlements", () => {
 
 describe("Plätze", () => {
   it("Limits je Tarif", () => {
-    expect(seatLimit({ plan: "trial", seats: 9 })).toBe(2);
+    expect(seatLimit({ plan: "trial", seats: 9 })).toBe(9);
+    expect(seatLimit({ plan: "trial", seats: 40 })).toBe(10);
     expect(seatLimit({ plan: "starter", seats: 3 })).toBe(1);
     expect(seatLimit({ plan: "praxis", seats: 9 })).toBe(5);
     expect(seatLimit({ plan: "praxis", seats: 1 })).toBe(2);
