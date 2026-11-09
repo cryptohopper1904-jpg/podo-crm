@@ -7,6 +7,7 @@ import { withOrg } from "@/db";
 import { consents, patients } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { deletePatient, erasePatientContact, PatientDeletionError } from "@/server/patient-deletion";
 import { findDuplicates, patientInput, toPatientValues } from "@/server/patients";
 
 export type PatientFormState = { error?: string; duplicates?: { id: string; number: number; name: string }[] } | undefined;
@@ -79,4 +80,40 @@ export async function archivePatientAction(form: FormData) {
   await withOrg(org, (tx) => tx.update(patients).set({ archivedAt: new Date() }).where(and(eq(patients.organizationId, org), eq(patients.id, id))));
   await audit({ organizationId: org, userId: auth.user.id, action: "patient.archive", entity: "patient", entityId: id });
   redirect("/kunden");
+}
+
+export type DeletionState = { error?: string; ok?: string } | undefined;
+
+/** Kund:in vollständig löschen (Gesamt-Review H3) – nur ohne aufbewahrungspflichtige Daten, Bestätigung per Kundennummer. */
+export async function deletePatientAction(_: DeletionState, form: FormData): Promise<DeletionState> {
+  const auth = await requireAuth("users.manage");
+  const id = String(form.get("id") ?? "");
+  const [p] = await withOrg(auth.organization.id, (tx) =>
+    tx.select({ number: patients.number }).from(patients).where(and(eq(patients.organizationId, auth.organization.id), eq(patients.id, id))),
+  );
+  if (!p) return { error: "Kund:in nicht gefunden." };
+  if (String(form.get("confirm") ?? "").trim().replace(/^#/, "") !== String(p.number)) return { error: `Zur Bestätigung bitte die Kundennummer ${p.number} eintragen.` };
+  try {
+    await deletePatient(auth, id);
+  } catch (e) {
+    if (e instanceof PatientDeletionError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/kunden");
+  redirect("/kunden");
+}
+
+/** Kontaktdaten löschen und Marketing widerrufen, wenn die Akte aufbewahrt werden muss (Gesamt-Review H3). */
+export async function erasePatientContactAction(_: DeletionState, form: FormData): Promise<DeletionState> {
+  const auth = await requireAuth("users.manage");
+  const id = String(form.get("id") ?? "");
+  if (form.get("confirm") !== "on") return { error: "Bitte bestätigen." };
+  try {
+    const r = await erasePatientContact(auth, id);
+    revalidatePath(`/kunden/${id}`);
+    return { ok: `Kontaktdaten gelöscht, ${r.revoked} Einwilligung(en) widerrufen, ${r.photos} Marketing-Foto(s) gelöscht. Die Akte bleibt bis zum Fristende archiviert.` };
+  } catch (e) {
+    if (e instanceof PatientDeletionError) return { error: e.message };
+    throw e;
+  }
 }
