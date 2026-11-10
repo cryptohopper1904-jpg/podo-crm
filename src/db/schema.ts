@@ -1399,3 +1399,77 @@ export const geocodeCache = pgTable(
   },
   (t) => [uniqueIndex("geocode_cache_org_address").on(t.organizationId, t.addressHash)],
 );
+
+// ───────────────────────── Vertrieb (Plattform-Betreiber, keine Praxisdaten) ─────────────────────────
+/**
+ * Vertrieb: Praxen, die der Plattform-Betreiber anschreibt (B2B-Kontakte, keine Mandantendaten).
+ * Kein organization_id, keine RLS (plattformweit wie sessions/password_resets); Zugriff nur serverseitig über
+ * src/server/vertrieb.ts mit Prüfung Plattform-Admin + 2FA. Status/Schritt per CHECK abgesichert (0028).
+ * `step` = Anzahl erfolgreich versendeter Mails der Sequenz (0–3).
+ */
+export const salesLeads = pgTable(
+  "sales_leads",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    contactPerson: text("contact_person"),
+    email: text("email"),
+    phone: text("phone"),
+    website: text("website"),
+    street: text("street"),
+    zip: text("zip"),
+    city: text("city"),
+    distanceKm: doublePrecision("distance_km"),
+    source: text("source"),
+    notes: text("notes"),
+    status: text("status").notNull().default("neu"),
+    step: smallint("step").notNull().default(0),
+    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("sales_leads_email").on(sql`lower(${t.email})`).where(sql`${t.email} is not null`),
+    index("sales_leads_status").on(t.status),
+  ],
+);
+
+/** Versandprotokoll der Sequenz (je Mail eine Zeile). Lead gelöscht → lead_id NULL (Tageslimit bleibt korrekt). */
+export const salesSends = pgTable(
+  "sales_sends",
+  {
+    id: id(),
+    leadId: uuid("lead_id").references(() => salesLeads.id, { onDelete: "set null" }),
+    step: smallint("step").notNull(),
+    ok: boolean("ok").notNull(),
+    mock: boolean("mock").notNull().default(false),
+    messageId: text("message_id"),
+    error: text("error"),
+    sentBy: uuid("sent_by").references(() => users.id, { onDelete: "set null" }),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("sales_sends_lead").on(t.leadId), index("sales_sends_sent_at").on(t.sentAt)],
+);
+
+/** Sperrliste: an diese Adressen (kleingeschrieben) geht nie wieder eine Vertriebsmail – auch nach Löschen/Neu-Import. */
+export const salesSuppressions = pgTable("sales_suppressions", {
+  email: text("email").primaryKey(),
+  reason: text("reason").notNull(),
+  createdAt: createdAt(),
+});
+
+export type SalesTemplate = { subject: string; body: string };
+
+/** Einstellungen des Vertriebs (genau eine Zeile, id = 1): Absender, Impressum, Vorlagen, Abstände. */
+export const salesSettings = pgTable("sales_settings", {
+  id: smallint("id").primaryKey().default(1),
+  senderName: text("sender_name").notNull().default(""),
+  senderEmail: text("sender_email").notNull().default(""),
+  replyTo: text("reply_to").notNull().default(""),
+  impressum: text("impressum").notNull().default(""),
+  delay2Days: smallint("delay2_days").notNull().default(5),
+  delay3Days: smallint("delay3_days").notNull().default(10),
+  templates: jsonb("templates").$type<SalesTemplate[]>(),
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: updatedAt(),
+});

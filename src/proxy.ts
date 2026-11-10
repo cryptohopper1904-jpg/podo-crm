@@ -8,6 +8,8 @@ import { readSessionToken } from "@/lib/auth/cookie";
 const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/einrichtung", "/api/webhooks", "/api/calendar", "/api/health", "/api/cron", "/buchen", "/anamnese", "/portal", "/kein-zugriff", "/api/billing/webhook", "/api/voice",
   // Zusatzmodul Praxis-Website (/p/[slug]) – nur veröffentlichte Geschäftsangaben, keine Sitzung
   "/p",
+  // Abmeldung von Vertriebsmails (HMAC-signiertes Token, keine Daten in der Antwort)
+  "/abmelden",
   // öffentliche Website/Rechtstexte (src/app/(public)) – u. a. aus der Registrierung verlinkt
   "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer"];
 

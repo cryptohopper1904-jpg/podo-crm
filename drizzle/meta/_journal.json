@@ -190,6 +190,20 @@
       "when": 1794244128159,
       "tag": "0026_termin_rechnung_security",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794298962893,
+      "tag": "0027_vertrieb",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794298977840,
+      "tag": "0028_vertrieb_security",
+      "breakpoints": true
     }
   ]
 }

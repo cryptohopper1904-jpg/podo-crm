@@ -1,6 +1,6 @@
 /** MailPort: Auswahl des Adapters, SMTP-Adapter mit gemocktem nodemailer-Transport, sichere Fehlermeldungen. */
 import { describe, expect, it, vi } from "vitest";
-import { parseFrom, mailAdapterFor, MailNotConfiguredError, MailSendError, MockMailAdapter, parseSmtpUrl, resolveMailSettings, SmtpMailAdapter, smtpTransportOptions, toMailError, type TransportFactory } from "./mail";
+import { formatFrom, parseFrom, mailAdapterFor, safeExtraHeaders, MailNotConfiguredError, MailSendError, MockMailAdapter, parseSmtpUrl, resolveMailSettings, SmtpMailAdapter, smtpTransportOptions, toMailError, type TransportFactory } from "./mail";
 
 const practice = { name: "Testpraxis Fuß", email: "info@praxis.example" };
 const PASSWORD = "geheim-Passwort-123";
@@ -142,3 +142,26 @@ describe("Plattform-Konto-E-Mails", () => {
   });
 });
 
+
+describe("Absender-Überschreibung und Zusatz-Kopfzeilen (Vertrieb)", () => {
+  it("nimmt msg.from und nur erlaubte Kopfzeilen ohne Zeilenumbrüche", async () => {
+    const t = fakeTransport();
+    const port = mailAdapterFor(orgSettings, t.factory);
+    await port.send({
+      to: "praxis@example.org",
+      subject: "Hallo",
+      text: "x",
+      from: formatFrom('Max "Boss" Muster\r\nBcc: a@b.de', "max@podo.example"),
+      headers: { "List-Unsubscribe": "<https://x.example/abmelden/t>\r\nBcc: evil@x.de", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click", Bcc: "evil@x.de", From: "evil@x.de" },
+    });
+    expect(t.sent[0].from).toBe('"Max Boss MusterBcc: a@b.de" <max@podo.example>');
+    expect(t.sent[0].headers).toEqual({ "List-Unsubscribe": "<https://x.example/abmelden/t> Bcc: evil@x.de", "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" });
+  });
+
+  it("formatFrom lehnt ungültige Adressen ab, safeExtraHeaders ohne Werte → undefined", () => {
+    expect(() => formatFrom("X", "keine-adresse")).toThrow(MailSendError);
+    expect(formatFrom("", "a@b.de")).toBe("a@b.de");
+    expect(safeExtraHeaders({ Bcc: "x@y.de" })).toBeUndefined();
+    expect(safeExtraHeaders(undefined)).toBeUndefined();
+  });
+});

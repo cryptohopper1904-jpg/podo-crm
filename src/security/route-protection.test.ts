@@ -27,6 +27,7 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/api/calendar": "iCal-Feed (signiertes Token)",
   "/api/health": "Health-Check ohne Daten",
   "/api/cron": "Cron (Bearer CRON_SECRET)",
+  "/abmelden": "Abmeldung von Vertriebsmails (HMAC-signierte Lead-ID, Antwort ohne Daten des Eintrags)",
   "/p": "Praxis-Website (Zusatzmodul): nur veröffentlichte Geschäftsangaben der Praxis, ohne Cookies/Tracking",
   // öffentliche Website und Rechtstexte (src/app/(public)) – statisch, ohne Praxisdaten
   "/agb": "Website",
@@ -76,7 +77,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/plattform/vertrieb"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
