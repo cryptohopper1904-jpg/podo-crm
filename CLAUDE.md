@@ -1,5 +1,6 @@
 @AGENTS.md
 
+<!-- fach-agenten:start (wird von claude-config/scripts/sync-agents.sh gepflegt; hier nicht von Hand ändern) -->
 ## Fach-Agenten
 
 In `.claude/agents/` liegen 12 Fach-Agenten (Übersicht: `.claude/agents/README.txt`). Die Quelle ist das Repo `claude-config` (`agents/`); dort ändern und hierher kopieren, nicht hier einzeln anpassen.
@@ -21,3 +22,4 @@ In `.claude/agents/` liegen 12 Fach-Agenten (Übersicht: `.claude/agents/README.
 Auf Wunsch oder wenn es klar passt: `seo-specialist`, `aeo-foundations`, `ai-citation-strategist` (Websites), `brand-guardian` (Markentexte), `executive-summary` (Entscheidungsvorlagen).
 
 Keine Pflicht bei reinen Fragen, Recherche, Tippfehlern und Einzeilern. Ergebnisse der Agenten nicht ungeprüft übernehmen: Kernaussagen kurz gegen Code oder Quelle prüfen. Kritische Befunde vor dem Abschluss beheben oder dem Nutzer ausdrücklich nennen.
+<!-- fach-agenten:end -->
