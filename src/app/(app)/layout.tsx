@@ -39,6 +39,7 @@ function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: st
       <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
         <Link href="/plattform"><Logo /></Link>
         <span className="hidden text-sm text-muted sm:inline">Plattform-Konsole · {name}</span>
+        {totpEnabled ? <Link href="/plattform/vertrieb" className="text-sm font-semibold text-primary">Vertrieb</Link> : null}
         <div className="ml-auto flex items-center gap-2">
           {switcher?.show ? <OrgSwitcher model={{ ...switcher, platformLink: false }} /> : null}
           <NewsLink />

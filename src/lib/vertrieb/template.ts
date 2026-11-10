@@ -1,0 +1,107 @@
+/**
+ * Vorlagen der Vertriebs-Sequenz: reiner Text mit Platzhaltern {{praxis}}, {{ansprechpartner}}, {{anrede}}, {{ort}}, {{absender}}.
+ * - Ersetzung in EINEM Durchgang: Werte, die selbst „{{…}}“ enthalten, werden nicht erneut ersetzt.
+ * - Werte sind einzeilig (Steuerzeichen/Zeilenumbrüche entfernt) und gekürzt; der Betreff nie mit Zeilenumbruch
+ *   (keine Kopfzeilen-Injektion). HTML gibt es nicht – die Mail ist text/plain, die Vorschau rendert React (escaped).
+ * - Leerer Wert vor Satzzeichen: das Leerzeichen davor entfällt („Guten Tag {{ansprechpartner}},“ → „Guten Tag,“).
+ * - Jede Mail bekommt automatisch Absender-Impressum und Abmeldelink (nicht aus der Vorlage entfernbar).
+ */
+import { PLACEHOLDERS, type Placeholder, type Template } from "./constants";
+
+export type TemplateValues = Record<Placeholder, string>;
+
+const TOKEN_RE = /( ?)\{\{\s*([a-zA-Z_]+)\s*\}\}(?=([,.;:!?])?)/g;
+
+/** Einzeiliger, harmloser Wert: keine Steuerzeichen/Zeilenumbrüche, Mehrfach-Leerzeichen zusammengefasst. */
+export function cleanValue(v: string | null | undefined, max = 120): string {
+  return (v ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+export function placeholderValues(lead: { name: string; contactPerson?: string | null; city?: string | null }, senderName: string): TemplateValues {
+  const contact = cleanValue(lead.contactPerson);
+  return {
+    praxis: cleanValue(lead.name),
+    ansprechpartner: contact,
+    anrede: contact ? `Guten Tag ${contact}` : "Guten Tag",
+    ort: cleanValue(lead.city) || "Ihrer Region",
+    absender: cleanValue(senderName),
+  };
+}
+
+const isPlaceholder = (k: string): k is Placeholder => (PLACEHOLDERS as readonly string[]).includes(k);
+
+/** Ersetzt bekannte Platzhalter in einem Durchgang; unbekannte bleiben sichtbar stehen (Vorschau zeigt den Fehler). */
+export function renderText(text: string, values: TemplateValues): string {
+  return text.replace(TOKEN_RE, (whole, space: string, key: string, punct: string | undefined) => {
+    const k = key.toLowerCase();
+    if (!isPlaceholder(k)) return whole;
+    const v = values[k];
+    if (!v) return punct ? "" : space;
+    return space + v;
+  });
+}
+
+/** Unbekannte Platzhalter in einer Vorlage (für die Prüfung beim Speichern). */
+export function unknownPlaceholders(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/\{\{\s*([^}]*?)\s*\}\}/g)) if (!isPlaceholder(m[1].toLowerCase())) out.add(m[1]);
+  return [...out];
+}
+
+export function validateTemplate(t: Template): string | null {
+  if (!t.subject.trim()) return "Betreff fehlt.";
+  if (t.subject.length > 200) return "Betreff ist zu lang (max. 200 Zeichen).";
+  if (/[\r\n]/.test(t.subject)) return "Der Betreff darf keinen Zeilenumbruch enthalten.";
+  if (!t.body.trim()) return "Text fehlt.";
+  if (t.body.length > 5000) return "Text ist zu lang (max. 5000 Zeichen).";
+  const unknown = [...unknownPlaceholders(t.subject), ...unknownPlaceholders(t.body)];
+  if (unknown.length) return `Unbekannte Platzhalter: ${unknown.map((u) => `{{${u}}}`).join(", ")}`;
+  return null;
+}
+
+export type ComposeInput = {
+  template: Template;
+  lead: { name: string; contactPerson?: string | null; city?: string | null };
+  senderName: string;
+  impressum: string;
+  unsubscribeUrl: string;
+  /** mailto-Abmeldung (Antwortadresse), zusätzlich zum Link */
+  unsubscribeMailto?: string | null;
+};
+
+/** Fußzeile mit Absenderangaben und Abmeldung – wird an jede Mail angehängt. */
+export function footer(impressum: string, unsubscribeUrl: string): string {
+  const imp = impressum
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .join("\n")
+    .trim();
+  return [
+    "-- ",
+    imp,
+    "",
+    "Sie möchten keine weiteren E-Mails von uns erhalten? Mit einem Klick abmelden:",
+    unsubscribeUrl,
+    "Oder antworten Sie einfach mit „Abmelden“.",
+  ].join("\n");
+}
+
+export function composeMail(input: ComposeInput): { subject: string; text: string; headers: Record<string, string> } {
+  const values = placeholderValues(input.lead, input.senderName);
+  const subject = cleanValue(renderText(input.template.subject, values), 200);
+  const body = renderText(input.template.body.replace(/\r\n?/g, "\n"), values).trim();
+  const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl)}\n`;
+  const unsub = [`<${input.unsubscribeUrl}>`];
+  if (input.unsubscribeMailto) unsub.push(`<mailto:${input.unsubscribeMailto}?subject=Abmelden>`);
+  return {
+    subject,
+    text,
+    headers: { "List-Unsubscribe": unsub.join(", "), "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+  };
+}

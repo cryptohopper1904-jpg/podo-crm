@@ -1,4 +1,4 @@
-import { Badge, Card, Table } from "@/components/ui";
+import { Badge, Card, LinkButton, Table } from "@/components/ui";
 import { dateDe } from "@/lib/format";
 import { PLAN_IDS, PLANS, isPlanId, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { audit } from "@/lib/audit";
@@ -30,7 +30,10 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
     <div className="mx-auto max-w-7xl">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-3xl font-semibold">Plattform</h1>
-        {demoOrgId ? <OpenDemoButton organizationId={demoOrgId} /> : null}
+        <div className="flex flex-wrap items-center gap-2">
+          <LinkButton href="/plattform/vertrieb" variant="secondary">Vertrieb</LinkButton>
+          {demoOrgId ? <OpenDemoButton organizationId={demoOrgId} /> : null}
+        </div>
       </div>
       <p className="mt-1 text-sm text-muted">
         Betreiber-Konsole. Keine Patientendaten – nur Abo-Daten und Anzahlen. Änderungen werden im Protokoll der jeweiligen Praxis vermerkt.

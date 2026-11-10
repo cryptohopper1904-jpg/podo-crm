@@ -25,6 +25,9 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   "src/app/api/health/deep/route.ts": ["Health-Deep: Bearer HEALTH_TOKEN", /safeEqual\([^)]*secret/],
   "src/app/api/calendar/[token]/route.ts": ["iCal-Feed: signiertes Token", /verifyCalendarToken\(/],
   "src/app/portal/[token]/route.ts": ["Portal-Einstieg: Token + Rate-Limit", /resolvePortalLink\(/],
+  // Abmeldung von Vertriebsmails: Token = HMAC-signierte Lead-ID (verifyUnsubscribeToken in unsubscribeByToken),
+  // Antwort ohne Daten des Eintrags; Wirkung nur „nicht mehr anschreiben“.
+  "src/app/abmelden/[token]/route.ts": ["Abmeldung Vertriebsmails: HMAC-signiertes Token", /unsubscribeByToken\(/],
   "src/app/portal/rechnung/[id]/route.ts": ["Portal-Rechnung: Portal-Sitzung (Cookie)", /currentPortalLink\(/],
 };
 

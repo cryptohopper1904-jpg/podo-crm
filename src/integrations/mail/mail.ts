@@ -32,6 +32,24 @@ export interface MailMessage {
   text: string;
   replyTo?: string | null;
   attachments?: MailAttachment[];
+  /** Abweichender Absender („Name <adresse>“, mit formatFrom gebaut) – z. B. Vertriebsmails des Betreibers */
+  from?: string;
+  /** Zusätzliche Kopfzeilen – nur die in EXTRA_HEADERS erlaubten (z. B. List-Unsubscribe), ohne Zeilenumbrüche */
+  headers?: Record<string, string>;
+}
+
+/** Erlaubte Zusatz-Kopfzeilen (alles andere wird verworfen, kein Überschreiben von From/To/Subject …). */
+export const EXTRA_HEADERS = ["List-Unsubscribe", "List-Unsubscribe-Post"] as const;
+
+/** Zusatz-Kopfzeilen filtern: nur erlaubte Namen, Werte ohne CR/LF und gekürzt. */
+export function safeExtraHeaders(h: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!h) return undefined;
+  const out: Record<string, string> = {};
+  for (const name of EXTRA_HEADERS) {
+    const v = h[name];
+    if (typeof v === "string" && v.trim()) out[name] = v.replace(/[\r\n]+/g, " ").trim().slice(0, 900);
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 export interface MailPort {
@@ -78,6 +96,13 @@ export type MailEnv = { SMTP_URL?: string; SMTP_FROM?: string; INTEGRATIONS_MODE
 const quoteName = (name: string) => `"${name.replace(/["\\\r\n<>]/g, "").trim().slice(0, 80)}"`;
 
 /** SMTP_FROM darf eine reine Adresse oder „Name <adresse>“ sein → { name, address }. */
+/** Absender „Name <adresse>“ sicher zusammensetzen (Name ohne Anführungszeichen/Zeilenumbrüche). */
+export function formatFrom(name: string | null | undefined, address: string): string {
+  if (!isEmail(address)) throw new MailSendError("Die Absenderadresse ist ungültig.", "EENVELOPE");
+  const n = (name ?? "").trim();
+  return n ? `${quoteName(n)} <${address}>` : address;
+}
+
 export function parseFrom(raw: string | undefined): { name: string | null; address: string } | null {
   const v = (raw ?? "").trim();
   if (isEmail(v)) return { name: null, address: v };
@@ -240,12 +265,13 @@ export class SmtpMailAdapter implements MailPort {
     if (!isEmail(msg.to)) throw new MailSendError("Die Empfängeradresse ist ungültig.", "EENVELOPE");
     try {
       const info = await this.transporter.sendMail({
-        from: this.from,
+        from: msg.from ?? this.from,
         to: msg.to,
         replyTo: msg.replyTo ?? this.replyTo ?? undefined,
         subject: msg.subject.replace(/[\r\n]+/g, " ").slice(0, 300),
         text: msg.text,
         attachments: (msg.attachments ?? []).map((a) => ({ filename: a.filename, contentType: a.contentType, content: Buffer.from(a.data) })),
+        headers: safeExtraHeaders(msg.headers),
       });
       return { messageId: typeof info?.messageId === "string" && info.messageId ? info.messageId.slice(0, 250) : mockId("smtp", `${msg.to}|${msg.subject}`) };
     } catch (e) {
