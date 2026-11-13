@@ -4,7 +4,7 @@ import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
-import { Button, Card, Checkbox, Field, FieldSlot, fieldLabelCls, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, cx, Field, fieldCls, FieldSlot, fieldLabelCls, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
@@ -23,6 +23,8 @@ export type InvoicePreset = {
   patientId?: string | null;
   billingContactId?: string | null;
   notes?: string | null;
+  /** Leistungsdatum für Positionen ohne Termin-Bezug (z. B. Tag des Termins, aus dem die Rechnung entsteht) */
+  serviceDate?: string | null;
   lines: { treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
 
@@ -175,7 +177,9 @@ export function InvoiceForm({
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [issuedAt, setIssuedAt] = useState(today);
   /** Leistungsdatum ohne Termin-/Doku-Bezug; null = folgt dem Rechnungsdatum, bis es geändert wird */
-  const [serviceDate, setServiceDate] = useState<string | null>(null);
+  const [serviceDate, setServiceDate] = useState<string | null>(preset?.serviceDate ?? null);
+  /** Sammelrechnung ohne Termin-Bezug: Ende des Leistungszeitraums (optional) */
+  const [serviceDateTo, setServiceDateTo] = useState("");
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
@@ -202,6 +206,11 @@ export function InvoiceForm({
   const totals = computeTotals(computed.filter((l) => !l.blank));
   /** Positionen mit Termin/Doku-Eintrag: das Leistungsdatum kommt von dort (Überschrift „… zur Behandlung am …“) */
   const linkedService = computed.some((l) => !l.blank && (!!l.appointmentId || !!l.treatmentRecordId));
+  /** Positionen ohne Bezug (z. B. Pflegeprodukt): brauchen ein eigenes Leistungsdatum – auch neben verknüpften */
+  const freeLines = computed.some((l) => !l.blank && !l.appointmentId && !l.treatmentRecordId);
+  // Ausfallhonorar: Termin-Datum bewusst eintragen (nicht das Rechnungsdatum unterstellen)
+  const serviceValue = serviceDate ?? (kind === "no_show_fee" ? "" : issuedAt);
+  const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" && !linkedService ? "Leistung von" : "Leistungsdatum";
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -390,16 +399,25 @@ export function InvoiceForm({
           <Field label="Datum">
             <Input type="date" name="issuedAt" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} max={today} required />
           </Field>
-          {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Mit Termin-/Doku-Bezug steht er in der Überschrift. */}
-          {linkedService ? (
+          {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Verknüpfte Termine liefern ihn selbst; Positionen ohne Bezug
+              brauchen ein Datum – der Beleg nennt beim Ausstellen den Zeitraum aus beidem (festgeschrieben). */}
+          {linkedService && !freeLines ? (
             <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint="aus dem verknüpften Termin bzw. der Behandlung">
               <Input value="laut Termin/Behandlung" disabled readOnly />
             </Field>
           ) : (
-            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : "Tag der Behandlung bzw. Lieferung"}>
-              <Input type="date" name="serviceDate" value={serviceDate ?? issuedAt} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
+            <Field
+              label={serviceLabel}
+              hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : linkedService ? "für Positionen ohne Termin (z. B. Produkte)" : "Tag der Behandlung bzw. Lieferung"}
+            >
+              <Input type="date" name="serviceDate" value={serviceValue} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
             </Field>
           )}
+          {kind === "collective" && !linkedService ? (
+            <Field label="Leistung bis" hint="optional – Leistungszeitraum (§ 31 Abs. 4 UStDV)">
+              <Input type="date" name="serviceDateTo" value={serviceDateTo} onChange={(e) => setServiceDateTo(e.target.value)} min={serviceValue || undefined} max={today} />
+            </Field>
+          ) : null}
           <Field label="Zahlungsziel" hint={kind === "receipt" ? "Quittung: sofort bezahlt" : "in Tagen, 0 = sofort"}>
             <Input type="number" name="dueDays" min={0} max={120} suffix="Tage" defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
           </Field>
@@ -465,43 +483,45 @@ export function InvoiceForm({
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
               <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-start 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
-                <div role="group" aria-labelledby={`pos-${i}-label`} className="flex flex-col gap-1.5 md:col-span-3 2xl:col-span-1">
+                <div role="group" aria-labelledby={`pos-${i}-label`} className={cx(fieldCls, "md:col-span-3 2xl:col-span-1")}>
                   <span id={`pos-${i}-label`} className={fieldLabelCls}>{`Pos. ${i + 1}: Leistung`}</span>
-                  <div className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
-                    <Input
-                      ref={(el) => {
-                        if (!el) return void codeRefs.current.delete(l.key);
-                        codeRefs.current.set(l.key, el);
-                        if (pendingFocus.current === l.key) {
-                          pendingFocus.current = null;
-                          el.focus();
-                        }
-                      }}
-                      aria-label={`Pos. ${i + 1}: Leistung – Kürzel`}
-                      aria-invalid={codeUnknown(l) || undefined}
-                      aria-describedby={codeUnknown(l) ? `pos-${i}-hint` : undefined}
-                      title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
-                      placeholder="Kürzel"
-                      autoComplete="off"
-                      autoCapitalize="characters"
-                      spellCheck={false}
-                      maxLength={10}
-                      className="uppercase placeholder:normal-case"
-                      value={l.codeInput ?? s?.code ?? ""}
-                      onChange={(e) => typeCode(l.key, e.target.value)}
-                      onKeyDown={(e) => codeKeyDown(e, l.key)}
-                      onBlur={() => codeBlur(l.key)}
-                    />
-                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
-                      <option value="">Freitext</option>
-                      {services.map((sv) => (
-                        <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
-                      ))}
-                    </Select>
+                  <div className="flex min-w-0 flex-col gap-1.5">
+                    <div className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
+                      <Input
+                        ref={(el) => {
+                          if (!el) return void codeRefs.current.delete(l.key);
+                          codeRefs.current.set(l.key, el);
+                          if (pendingFocus.current === l.key) {
+                            pendingFocus.current = null;
+                            el.focus();
+                          }
+                        }}
+                        aria-label={`Pos. ${i + 1}: Leistung – Kürzel`}
+                        aria-invalid={codeUnknown(l) || undefined}
+                        aria-describedby={codeUnknown(l) ? `pos-${i}-hint` : undefined}
+                        title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
+                        placeholder="Kürzel"
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        maxLength={10}
+                        className="uppercase placeholder:normal-case"
+                        value={l.codeInput ?? s?.code ?? ""}
+                        onChange={(e) => typeCode(l.key, e.target.value)}
+                        onKeyDown={(e) => codeKeyDown(e, l.key)}
+                        onBlur={() => codeBlur(l.key)}
+                      />
+                      <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                        <option value="">Freitext</option>
+                        {services.map((sv) => (
+                          <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                        ))}
+                      </Select>
+                    </div>
+                    {codeUnknown(l) ? (
+                      <span id={`pos-${i}-hint`} aria-live="polite" className="text-xs text-danger">Kürzel „{normalizeServiceCode(l.codeInput ?? "")}“ unbekannt</span>
+                    ) : null}
                   </div>
-                  {codeUnknown(l) ? (
-                    <span id={`pos-${i}-hint`} aria-live="polite" className="text-xs text-danger">Kürzel „{normalizeServiceCode(l.codeInput ?? "")}“ unbekannt</span>
-                  ) : null}
                 </div>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
                   <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />

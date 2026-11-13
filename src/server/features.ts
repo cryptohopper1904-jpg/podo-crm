@@ -1,5 +1,6 @@
 import "server-only";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
@@ -31,13 +32,13 @@ export async function hiddenSettingsTabs(auth: AuthContext): Promise<string[]> {
   return (await kimConnected(auth.organization.id)) ? ["ocr"] : ["ocr", "ti"];
 }
 
-/** Einstellungs-Navigation dieser Person: nur Bereiche, die requireAuth auf der Seite auch zulässt. */
-export async function settingsGroupsFor(auth: AuthContext): Promise<SettingsGroup[]> {
-  return visibleSettingsGroups(
+/** Einstellungs-Navigation dieser Person: nur Bereiche, die requireAuth auf der Seite auch zulässt (je Anfrage einmal: cache). */
+export const settingsGroupsFor = cache(async (auth: AuthContext): Promise<SettingsGroup[]> =>
+  visibleSettingsGroups(
     (t) => !t.perm || auth.can(t.perm) || (!!t.allowReadOnly && auth.readOnly && !auth.support && can(auth.role, t.perm)),
     await hiddenSettingsTabs(auth),
-  );
-}
+  ),
+);
 
 /**
  * Praxis-Modus setzen (organizations.settings.billingMode) – nur über requireAuth("settings.manage") aufrufen.

@@ -2814,6 +2814,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "service_date_to": {
+          "name": "service_date_to",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "service_date_fixed": {
+          "name": "service_date_fixed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "net_cents": {
           "name": "net_cents",
           "type": "integer",

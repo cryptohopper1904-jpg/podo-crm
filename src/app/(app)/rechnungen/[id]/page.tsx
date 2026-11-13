@@ -27,6 +27,7 @@ import {
   hasExemptNote,
   internalNotes as internalNoteLines,
   invoiceHeading,
+  invoiceService,
   paymentNoteLines,
   invoiceRecipient,
   isReceiptLike,
@@ -72,7 +73,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const internalNotes = internalNoteLines(inv.notes);
   const recipient = invoiceRecipient(p, b);
   const senderLine = senderLineOf(o);
-  const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates, dateDe, data.cancels?.number);
+  const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
   const settings = (o.settings ?? {}) as Record<string, unknown>;
   const docSettings = readDocumentSettings(settings);
   const website = practiceWebsite(settings);

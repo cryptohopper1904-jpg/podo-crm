@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { can, ROLES, type Role } from "./auth/permissions";
 import { firstSettingsHref, SETTINGS_GROUPS, visibleSettingsGroups } from "./settings-tabs";
@@ -23,5 +25,18 @@ describe("Einstellungs-Navigation nach Rolle", () => {
     expect(none.map((g) => g.label)).toEqual(["Sicherheit & Daten", "Persönlich"]);
     expect(firstSettingsHref(none)).toBe("/einstellungen/sicherheit");
     expect(firstSettingsHref([])).toBe("/einstellungen/ansicht");
+  });
+});
+
+describe("Rechte der Navigation = Rechte der Seiten", () => {
+  it("perm/allowReadOnly je Bereich entsprechen dem requireAuth-Aufruf in einstellungen/<href>/page.tsx", () => {
+    for (const t of SETTINGS_GROUPS.flatMap((g) => g.tabs)) {
+      const src = readFileSync(path.join(__dirname, `../app/(app)/einstellungen/${t.href}/page.tsx`), "utf8");
+      const m = src.match(/requireAuth\(([^)]*)\)/);
+      expect(m, `${t.href}: requireAuth fehlt`).toBeTruthy();
+      const perm = m![1].match(/^"([^"]+)"/)?.[1] ?? null;
+      expect(perm, `${t.href}: Recht`).toBe(t.perm);
+      expect(/allowReadOnly:\s*true/.test(m![1]), `${t.href}: allowReadOnly`).toBe(!!t.allowReadOnly);
+    }
   });
 });

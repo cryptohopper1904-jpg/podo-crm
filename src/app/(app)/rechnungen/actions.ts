@@ -44,6 +44,7 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     billingContactId: form.get("billingContactId"),
     issuedAt: form.get("issuedAt"),
     serviceDate: form.get("serviceDate"),
+    serviceDateTo: form.get("serviceDateTo"),
     dueDays: form.get("dueDays") || undefined,
     therapeuticConfirmed: form.get("therapeuticConfirmed") === "on",
     therapeuticSource: form.get("therapeuticSource") === "setting" ? "setting" : "manual",

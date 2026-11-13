@@ -850,10 +850,18 @@ export const invoices = pgTable(
     issuedAt: date("issued_at"),
     dueAt: date("due_at"),
     /**
-     * Ausdrückliches Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG) für Belege ohne verknüpften Termin/Doku-Eintrag –
-     * im Formular gesetzt (Standard: Rechnungsdatum). Verknüpfte Termine/Behandlungen haben Vorrang (src/lib/invoice-view.ts).
+     * Leistungsdatum bzw. erster Tag des Leistungszeitraums (§ 14 Abs. 4 Nr. 6 UStG, § 31 Abs. 4 UStDV) – beim Ausstellen
+     * aus verknüpften Terminen/Doku-Einträgen und dem Formular-Datum festgeschrieben (danach per Trigger unveränderbar,
+     * spätere Terminverschiebungen ändern den Beleg nicht). Anzahlung: Tag der verknüpften Behandlung. NULL = Altbeleg.
      */
     serviceDate: date("service_date"),
+    /** letzter Tag des Leistungszeitraums; NULL = ein einzelner Tag */
+    serviceDateTo: date("service_date_to"),
+    /**
+     * Leistungsangabe beim Ausstellen festgeschrieben (true für alle Belege ab Einführung, auch ohne Datum wie eine
+     * Anzahlung ohne Terminbezug). false = Altbeleg → wird beim Neudruck exakt wie früher dargestellt.
+     */
+    serviceDateFixed: boolean("service_date_fixed").notNull().default(false),
     netCents: integer("net_cents").notNull().default(0),
     vatCents: integer("vat_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),

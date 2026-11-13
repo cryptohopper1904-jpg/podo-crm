@@ -50,7 +50,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   let presetKey = "plain";
   if (source?.patient) {
     // Leistungsdatum steht über den Termin-/Doku-Bezug in der Überschrift („Rechnung zur Behandlung am …“)
-    preset = { kind: "invoice", patientId: source.patient.id, lines: source.lines };
+    preset = { kind: "invoice", patientId: source.patient.id, serviceDate: berlinDateIso(source.at), lines: source.lines };
     presetKey = `src-${source.appointmentId ?? source.recordId}`;
   } else if (yearSug) {
     const first = yearSug.lines.length ? yearSug.lines[0].description.slice(0, 10) : null;

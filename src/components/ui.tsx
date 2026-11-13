@@ -83,48 +83,54 @@ const inputCls =
   "w-full rounded-xl border border-border bg-surface px-3.5 h-11 text-[15px] text-text placeholder:text-muted focus:border-primary focus:outline-none";
 
 /**
- * Beschriftung über Eingabefeldern: immer genau eine Zeile (lange Texte werden mit „…“ gekürzt, voller Text als Tooltip).
- * So beginnen Eingaben in einer Formularzeile auf derselben Höhe – auch wenn die Spalten schmal werden (iPad).
- * Für eigene Beschriftungen außerhalb von <Field> dieselbe Klasse verwenden.
+ * Beschriftung über Eingabefeldern: darf umbrechen (nichts wird abgeschnitten), sitzt unten an der Eingabe.
+ * Für eigene Beschriftungen außerhalb von <Field> dieselbe Klasse verwenden (Gruppen mit `fieldCls`).
  */
-export const fieldLabelCls = "block h-5 truncate text-sm font-medium leading-5";
+export const fieldLabelCls = "block min-h-5 self-end text-sm font-medium leading-5";
 
 /**
- * Feld = Beschriftung (eine Zeile) · Eingabe · optionaler Hinweis darunter. Der Hinweis steht unter der Eingabe und
- * verschiebt daher keine Nachbarfelder, solange die Zeile oben ausgerichtet ist (Grid/Flex mit items-start, nicht items-end).
- * min-w-0: die einzeilige Beschriftung darf eine Grid-Spalte nicht aufweiten.
+ * Formularfeld-Rahmen: im Eltern-Grid ein Subgrid über zwei Zeilen (1. Beschriftung, 2. Eingabe + Hinweis). Alle Felder
+ * einer Reihe teilen sich so die Höhe der Beschriftungszeile – bricht eine Beschriftung um, rutschen die Eingaben aller
+ * Felder gemeinsam, bleiben also auf einer Linie; Hinweise stehen unter der Eingabe und verschieben nichts.
+ * Außerhalb eines Grids (Flex, Block) ist es ein einfacher Stapel. Siehe globals.css (.podo-field).
  */
+export const fieldCls = "podo-field grid min-w-0 row-span-2 grid-rows-subgrid content-start gap-y-1.5";
+
+/** Feld = Beschriftung · Eingabe · optionaler Hinweis darunter */
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <label className={cx("flex min-w-0 flex-col gap-1.5", className)}>
-      <span className={fieldLabelCls} title={label}>
-        {label}
+    <label className={cx(fieldCls, className)}>
+      <span className={fieldLabelCls}>{label}</span>
+      <span className="flex min-w-0 flex-col gap-1.5">
+        {children}
+        {hint ? <span className="text-xs text-muted">{hint}</span> : null}
       </span>
-      {children}
-      {hint ? <span className="text-xs text-muted">{hint}</span> : null}
     </label>
   );
 }
 
 /**
- * Platz neben Feldern für Buttons oder Werte (z. B. Zeilensumme, Löschen): oben ein Leerraum in Höhe der Beschriftung,
- * darunter eine Zeile in Eingabehöhe – steht damit auf derselben Linie wie die Eingaben der Nachbarfelder.
+ * Platz neben Feldern für Buttons oder Werte (z. B. Zeilensumme, Löschen, Checkbox): belegt die Beschriftungszeile leer
+ * und steht darunter in Eingabehöhe – auf derselben Linie wie die Eingaben der Nachbarfelder.
  * `spacer`: Leerraum nur ab dieser Breite (einspaltig auf dem Handy nicht nötig), z. B. "hidden md:block".
  */
 export function FieldSlot({ children, className, spacer = "block" }: { children: ReactNode; className?: string; spacer?: string }) {
   return (
-    <div className={cx("flex min-w-0 flex-col gap-1.5", className)}>
-      <span aria-hidden className={cx("h-5", spacer)} />
-      <div className="flex min-h-11 flex-wrap items-center gap-2">{children}</div>
+    <div className={cx(fieldCls, className)}>
+      <span aria-hidden className={cx("min-h-5", spacer)} />
+      <div className="flex min-h-11 flex-wrap items-center gap-2 self-start">{children}</div>
     </div>
   );
 }
 
+/** Gesprochene Form gängiger Einheiten (für Screenreader) */
+const UNIT_SPOKEN: Record<string, string> = { "€": "Euro", Min: "Minuten", Tage: "Tagen", km: "Kilometer", "%": "Prozent" };
+
 /**
- * Eingabe; `suffix` zeigt eine Einheit im Feld rechts (z. B. „Tage“, „€“) – so bleibt die Beschriftung kurz und einzeilig.
- * Die Einheit ist aria-hidden; die Beschriftung bzw. der Hinweis nennt sie für Screenreader.
+ * Eingabe; `suffix` zeigt eine Einheit im Feld rechts (z. B. „Tage“, „€“) – so bleibt die Beschriftung kurz.
+ * Screenreader lesen die Einheit ausgeschrieben mit (`suffixSpoken`, Standard aus UNIT_SPOKEN bzw. der Einheit selbst).
  */
-export function Input({ className, suffix, ...props }: ComponentProps<"input"> & { suffix?: ReactNode }) {
+export function Input({ className, suffix, suffixSpoken, ...props }: ComponentProps<"input"> & { suffix?: string; suffixSpoken?: string }) {
   if (suffix == null) return <input className={cx(inputCls, className)} {...props} />;
   return (
     <span className="relative block w-full">
@@ -132,6 +138,7 @@ export function Input({ className, suffix, ...props }: ComponentProps<"input"> &
       <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-sm text-muted">
         {suffix}
       </span>
+      <span className="sr-only">{` in ${suffixSpoken ?? UNIT_SPOKEN[suffix] ?? suffix}`}</span>
     </span>
   );
 }
