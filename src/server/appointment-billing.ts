@@ -218,6 +218,8 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
     return {
       patient: { ...p, name: fullName(p) },
       appointmentId: item.appointmentId,
+      /** Status des Termins (abgesagt/versäumt → keine Anzahlung) */
+      appointmentStatus: appt?.status ?? null,
       recordId: item.recordId,
       at,
       lines,

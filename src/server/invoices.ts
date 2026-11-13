@@ -380,7 +380,10 @@ export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
     .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, patientId), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
     .orderBy(asc(invoices.issuedAt), asc(invoices.number));
   const days = await depositServiceDays(tx, org, list.map((d) => d.id));
-  return list.map((d) => ({ ...d, serviceDay: days.get(d.id)?.serviceDay ?? null, appointmentMissed: days.get(d.id)?.appointmentMissed ?? false }));
+  return list.map((d) => {
+    const x = days.get(d.id);
+    return { ...d, appointmentId: x?.appointmentId ?? null, treatmentRecordId: x?.treatmentRecordId ?? null, serviceDay: x?.serviceDay ?? null, appointmentMissed: x?.appointmentMissed ?? false };
+  });
 }
 
 /**
@@ -570,6 +573,16 @@ async function lockPartials(
     if (d.kind !== "deposit" || d.patientId !== patientId) throw new InvoiceError(`${d.number ?? "Beleg"} ist keine Anzahlung dieser Person.`);
     if (d.status !== "paid") throw new InvoiceError(`Die Anzahlung ${d.number} ist storniert oder nicht bezahlt.`);
     if (d.collectiveInvoiceId) throw new InvoiceError(`Die Anzahlung ${d.number} ist bereits auf eine andere Rechnung angerechnet.`);
+  }
+  // Anzahlung zu einem künftigen Termin: Leistung noch nicht erbracht → erst nach dem Termin anrechenbar.
+  // Abgesagte/versäumte Termine dürfen angerechnet werden (z. B. Gegenrechnung mit Ausfallhonorar).
+  if (deposits.length) {
+    const today = berlinDateIso();
+    const days = await depositServiceDays(tx, org, deposits.map((d) => d.id));
+    for (const d of deposits) {
+      const day = days.get(d.id)?.serviceDay;
+      if (day && day > today) throw new InvoiceError(`Die Anzahlung ${d.number} gehört zu einem künftigen Termin (${dateDe(day)}) – erst nach dem Termin anrechenbar.`);
+    }
   }
   for (const r of receipts) {
     if (r.kind !== "receipt" || r.patientId !== patientId) throw new InvoiceError(`${r.number ?? "Beleg"} ist keine Quittung dieser Person.`);

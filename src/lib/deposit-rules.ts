@@ -7,8 +7,10 @@
  * Berlin), und nie für eine schon dokumentierte Behandlung. Für erbrachte Behandlungen gibt es die Quittung. Gilt im
  * Server (createDeposit) und für die Buttons (Terminseite, Anzahlungsseite).
  */
-export function depositAllowed(p: { appointmentDay: string | null; today: string; hasRecord: boolean }): boolean {
+export function depositAllowed(p: { appointmentDay: string | null; today: string; hasRecord: boolean; appointmentStatus?: string | null }): boolean {
   if (p.hasRecord) return false;
+  // abgesagt bzw. versäumt: keine Vorauszahlung
+  if (p.appointmentStatus === "cancelled" || p.appointmentStatus === "no_show") return false;
   return !p.appointmentDay || p.appointmentDay > p.today;
 }
 
@@ -24,8 +26,8 @@ type DepositRef = {
 export const depositServiceDone = (d: Pick<DepositRef, "serviceDay">, today: string): boolean => !!d.serviceDay && d.serviceDay <= today;
 
 /**
- * Anzahlung zu einem künftigen Termin: erst nach dem Termin anrechenbar (der Server lehnt Positionen mit künftigem
- * Termin ab) – in der Auswahl deaktiviert.
+ * Anzahlung zu einem künftigen Termin: erst nach dem Termin anrechenbar – in der Auswahl deaktiviert; der Server lehnt
+ * die Anrechnung ebenfalls ab (lockPartials in src/server/invoices.ts). Abgesagte/versäumte Termine sind anrechenbar.
  */
 export const depositNotYetCreditable = (d: Pick<DepositRef, "serviceDay">, today: string): boolean => !!d.serviceDay && d.serviceDay > today;
 

@@ -50,6 +50,8 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   ];
   const needsCountersign = r.countersignRequired && !data.add.some((a) => a.a.kind === "countersign");
   const billing = auth.can("invoices.write") ? await billingFromSource(auth, { recordId }) : null;
+  // offene Anzahlung zur Behandlung (bezahlt, noch nicht angerechnet): keine Quittung, bei der Rechnung anrechnen (wie Terminseite)
+  const openDeposit = billing?.patient ? (billing.documents.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ?? null) : null;
   return (
     <div className="mx-auto max-w-4xl">
       <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.p)}</Link></p>
@@ -112,6 +114,13 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
           ) : null}
           {billing.billedBy.length ? (
             <p className="text-sm text-muted">Die Behandlung ist bereits abgerechnet.</p>
+          ) : openDeposit ? (
+            <div className="flex flex-wrap gap-2">
+              <p className="w-full text-sm text-muted">
+                Bezahlt mit Anzahlung {openDeposit.number} – wird auf die Rechnung bzw. Sammelrechnung angerechnet (keine zweite Quittung).
+              </p>
+              <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen (Anzahlung anrechnen)</LinkButton>
+            </div>
           ) : (
             <div className="flex flex-wrap gap-2">
               <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen</LinkButton>

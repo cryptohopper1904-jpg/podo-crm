@@ -92,7 +92,19 @@ import { depositCheckHint, depositPreselected } from "@/lib/deposit-rules";
     }
     await f.asOrg(org, (c) => c.query("update appointments set status = 'done' where id = $1", [done]));
 
-    // bewusst angewählt bleibt die künftige Anzahlung anrechenbar
+    // Server: Anzahlung zu einem künftigen Termin ist nicht anrechenbar – auch nicht auf eine Rechnung mit freier Position
+    const base = { patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
+    const free = [{ serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Nagelspange (Material)", quantity: 1, factor: 1, unitPriceCents: 5000, vatRate: 0 }];
+    for (const kind of ["invoice", "collective"] as const) {
+      await expect(invoices.createInvoice(auth, { ...base, kind, lines: free, depositIds: [depFuture.id] } as never)).rejects.toThrow(
+        new RegExp(`Die Anzahlung ${depFuture.number} gehört zu einem künftigen Termin \\(\\d{2}\\.\\d{2}\\.\\d{4}\\) – erst nach dem Termin anrechenbar\\.`),
+      );
+    }
+    // Anzahlung ohne Termin: anrechenbar (nach Prüfung)
+    const inv = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: free, depositIds: [depFree.id] } as never);
+    expect(inv).toMatchObject({ depositCents: 3000, status: "partially_paid" });
+
+    // Anzahlung zum inzwischen stattgefundenen Termin: auf die Sammelrechnung anrechenbar
     const sr = await invoices.createInvoice(auth, {
       kind: "collective",
       patientId: patient,

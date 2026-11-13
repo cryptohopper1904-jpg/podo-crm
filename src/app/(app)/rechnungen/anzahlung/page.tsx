@@ -38,7 +38,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
       <PageHeader title="Anzahlung (Vorauszahlung)" subtitle="Zahlung vor der Behandlung annehmen – wird später auf die Rechnung bzw. Sammelrechnung angerechnet" />
       <p className="mb-6 flex gap-2 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
         <Info size={18} className="mt-0.5 shrink-0" aria-hidden />
-        <span>{DEPOSIT_PURPOSE_HINT} Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.</span>
+        <span>{DEPOSIT_PURPOSE_HINT}</span>
       </p>
       {termin || behandlung ? (
         !src ? (
@@ -47,7 +47,9 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
           <Card><p className="text-sm text-danger">{src.error}</p></Card>
         ) : !srcPatientActive ? (
           <Card><p className="text-sm text-danger">{src.patient.name} ist archiviert – keine Anzahlung möglich.</p></Card>
-        ) : !depositAllowed({ appointmentDay: berlinDateIso(src.at), today, hasRecord: !!src.recordId }) ? (
+        ) : src.appointmentStatus === "cancelled" || src.appointmentStatus === "no_show" ? (
+          <Card><p className="text-sm text-danger">Der Termin am {dateDe(src.at)} ist abgesagt bzw. versäumt – keine Anzahlung möglich.</p></Card>
+        ) : !depositAllowed({ appointmentDay: berlinDateIso(src.at), today, hasRecord: !!src.recordId, appointmentStatus: src.appointmentStatus }) ? (
           <Card>
             <p className="text-sm font-semibold">
               {src.patient.name} · Behandlung am {dateDe(src.at)}: {DEPOSIT_PAST_ERROR}

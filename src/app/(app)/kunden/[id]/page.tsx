@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CalendarPlus, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
+import { CalendarPlus, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Receipt, Stethoscope } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { PortalLinkButton } from "@/components/portal-link-button";
@@ -81,6 +81,9 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <>
               <LinkButton href={`/rechnungen/neu?patient=${p.id}`} variant="secondary"><FileText size={18} aria-hidden /> Rechnung</LinkButton>
               <LinkButton href={`/rechnungen/neu?sammel=${p.id}`} variant="secondary"><FileText size={18} aria-hidden /> Sammelrechnung</LinkButton>
+              {!deceased && !p.archivedAt ? (
+                <LinkButton href={`/rechnungen/anzahlung?patient=${p.id}`} variant="secondary"><Receipt size={18} aria-hidden /> Anzahlung (Vorauszahlung)</LinkButton>
+              ) : null}
             </>
           ) : null}
           {auth.can("patients.write") ? (

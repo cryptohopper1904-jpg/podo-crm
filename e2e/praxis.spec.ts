@@ -133,6 +133,11 @@ test("Terminseite: Rechnung/Quittung für erbrachte Behandlungen, nur Anzahlung 
   await expect(page.getByText(/Für erbrachte Behandlungen bitte eine Quittung erstellen\./).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Anzahlung quittieren" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Quittung erstellen" })).toBeVisible();
+  // Einstieg „Anzahlung ohne Termin“: Rechnungsliste und Patientenakte (mit Person)
+  await page.goto("/rechnungen");
+  await expect(page.getByRole("link", { name: "Anzahlung ohne Termin" })).toHaveAttribute("href", "/rechnungen/anzahlung");
+  await page.goto(patientUrl);
+  await expect(page.getByRole("link", { name: "Anzahlung (Vorauszahlung)" })).toHaveAttribute("href", `/rechnungen/anzahlung?patient=${pid}`);
 });
 
 test("öffentliche Online-Buchung", async ({ browser }) => {

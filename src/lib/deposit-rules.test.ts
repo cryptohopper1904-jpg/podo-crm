@@ -16,6 +16,11 @@ describe("Anzahlung nur als Vorauszahlung", () => {
     expect(depositAllowed({ appointmentDay: "2026-11-20", today, hasRecord: true })).toBe(false);
     expect(depositAllowed({ appointmentDay: null, today, hasRecord: true })).toBe(false);
   });
+  it("abgesagter oder versäumter künftiger Termin: keine Anzahlung", () => {
+    expect(depositAllowed({ appointmentDay: "2026-11-20", today, hasRecord: false, appointmentStatus: "cancelled" })).toBe(false);
+    expect(depositAllowed({ appointmentDay: "2026-11-20", today, hasRecord: false, appointmentStatus: "no_show" })).toBe(false);
+    expect(depositAllowed({ appointmentDay: "2026-11-20", today, hasRecord: false, appointmentStatus: "planned" })).toBe(true);
+  });
   it("ohne Termin (z. B. Nagelspange): erlaubt", () => {
     expect(depositAllowed({ appointmentDay: null, today, hasRecord: false })).toBe(true);
   });

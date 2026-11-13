@@ -29,8 +29,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   const date = berlinDateIso(a.startsAt);
   // Künftiger Termin (ab morgen, nicht abgesagt, ohne Doku): nur Anzahlung (Vorauszahlung). Erbrachte Behandlungen
   // (heute/früher bzw. dokumentiert) bekommen Rechnung oder Quittung.
-  const depositOk =
-    a.status !== "cancelled" && depositAllowed({ appointmentDay: date, today: berlinDateIso(), hasRecord: !!(billing?.patient && billing.recordId) });
+  const depositOk = depositAllowed({ appointmentDay: date, today: berlinDateIso(), hasRecord: !!(billing?.patient && billing.recordId), appointmentStatus: a.status });
 
   return (
     <div className="mx-auto max-w-4xl">
