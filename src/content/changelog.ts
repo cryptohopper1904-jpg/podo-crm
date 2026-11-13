@@ -25,7 +25,7 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    id: "2026-11-13-i",
+    id: "2026-11-13-k",
     date: "2026-11-13",
     title: "Ansicht: Einfach, Kompakt oder Komplex",
     items: [
