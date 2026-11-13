@@ -16,7 +16,7 @@ export function RescheduleForm({ id, team, defaults }: { id: string; team: T[]; 
     <form onSubmit={keepValues(action)} onChange={(e) => setSlot(slotQueryFromForm(e.currentTarget, defaults.durationMin, id))} className="flex flex-col gap-4">
       <input type="hidden" name="id" value={id} />
       <FormError message={state?.error} />
-      {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem verschieben (Doppelbelegung bzw. trotz Abwesenheit)" /> : null}
+      {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem verschieben (Doppelbelegung, Abwesenheit bzw. Sperrzeit)" /> : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
         <Field label="Neues Datum"><Input type="date" name="date" defaultValue={defaults.date} required /></Field>
         <Field label="Uhrzeit"><Input type="time" name="time" step={300} defaultValue={defaults.time} required /></Field>

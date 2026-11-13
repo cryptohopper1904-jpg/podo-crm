@@ -34,7 +34,7 @@ const SECRETS_NOT_FOR_APP = ["DB_OWNER_PASSWORD", "BACKUP_PASSPHRASE", "BOOTSTRA
 /** Nur Entwicklung/Tests bzw. vom Image gesetzt */
 // APP_COMMIT: im Image gesetzt (Dockerfile, Build-Argument GIT_SHA), nicht über die Compose-Umgebung
 // PODO_APP_VERSION: Build-Version des Service Workers, beim Build von next.config.ts fest eingesetzt (env)
-const NOT_NEEDED_IN_CONTAINER = new Set(["NODE_ENV", "VITEST", "TEST_DATABASE_URL", "TEST_OWNER_DATABASE_URL", "APP_COMMIT", "PODO_APP_VERSION"]);
+const NOT_NEEDED_IN_CONTAINER = new Set(["NODE_ENV", "VITEST", "TEST_DATABASE_URL", "TEST_OWNER_DATABASE_URL", "TEST_NOW", "APP_COMMIT", "PODO_APP_VERSION"]);
 /** Laufen nur im migrate-Container (deploy/Dockerfile.migrate), nicht in der App */
 const MIGRATE_ONLY = new Set(["src/lib/bootstrap.ts", "src/lib/demo-seed.ts"]);
 

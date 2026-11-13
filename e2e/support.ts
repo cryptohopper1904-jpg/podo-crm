@@ -53,3 +53,26 @@ export async function demoSlug(): Promise<string> {
     await pool.end();
   }
 }
+
+/** Termin für eine Person der Demo-Praxis direkt anlegen (RLS über app.org_id), z. B. in der Vergangenheit/Zukunft. */
+export async function insertAppointment(patientId: string, startsAt: Date): Promise<string> {
+  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const c = await pool.connect();
+  try {
+    const org = await c.query(
+      "select o.id from organizations o join memberships m on m.organization_id = o.id join users u on u.id = m.user_id where u.email = $1 order by o.created_at limit 1",
+      [DEMO_EMAIL],
+    );
+    await c.query("begin");
+    await c.query("select set_config('app.org_id', $1, true)", [org.rows[0].id]);
+    const r = await c.query(
+      "insert into appointments (organization_id, patient_id, starts_at, ends_at, status, title) values ($1, $2, $3, $3::timestamptz + interval '45 minutes', 'planned', 'E2E-Termin') returning id",
+      [org.rows[0].id, patientId, startsAt.toISOString()],
+    );
+    await c.query("commit");
+    return r.rows[0].id as string;
+  } finally {
+    c.release();
+    await pool.end();
+  }
+}

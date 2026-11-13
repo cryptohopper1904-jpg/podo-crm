@@ -26,7 +26,7 @@ vi.mock("./mail", async () => {
   };
 });
 import { Pool } from "pg";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { berlinDay, fixtures, TEST_DB, useTestClock } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("Mahnung per E-Mail (DB, Versand gestubbt)", () => {
   const f = fixtures(TEST_DB!);
@@ -38,12 +38,13 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     return f.asOrg(org, async (c) => {
       const id = (await c.query("insert into invoices (organization_id, patient_id, status, kind) values ($1,$2,'draft','invoice') returning id", [org, patient])).rows[0].id as string;
       await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Behandlung',6500,6500,0,1)", [org, id]);
-      await c.query("update invoices set status='issued', number=$2, issued_at=current_date-40, due_at=current_date-20, total_cents=6500, net_cents=6500 where id=$1", [id, `S${Math.random().toString(36).slice(2, 10)}`]);
+      await c.query("update invoices set status='issued', number=$2, issued_at=$3::date-40, due_at=$3::date-20, total_cents=6500, net_cents=6500 where id=$1", [id, `S${Math.random().toString(36).slice(2, 10)}`, berlinDay()]);
       return id;
     });
   }
 
   beforeAll(async () => {
+    useTestClock();
     process.env.DATABASE_URL = TEST_DB;
     // Pool mit EINER Verbindung: holt der Versand innerhalb der Transaktion eine zweite, läuft er in den Pool-Timeout
     process.env.DB_POOL_MAX = "1";
@@ -66,7 +67,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(both.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(both.find((r) => r.status === "rejected")!.reason.message).toMatch(/bereits als versendet/);
     expect(mail.calls).toBe(1);
-    const row = await f.asOrg(org, async (c) => (await c.query("select sent_via, sent_to, sent_at, pay_by::text, (current_date + 12)::text as expected from invoice_dunnings where id = $1", [id])).rows[0]);
+    const row = await f.asOrg(org, async (c) => (await c.query("select sent_via, sent_to, sent_at, pay_by::text, ($2::date + 12)::text as expected from invoice_dunnings where id = $1", [id, berlinDay()])).rows[0]);
     expect(row).toMatchObject({ sent_via: "email", sent_to: "erika@example.org" });
     expect(row.pay_by).toBe(row.expected);
     const msgs = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from messages where organization_id = $1", [org])).rows[0].n);

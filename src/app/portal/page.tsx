@@ -3,7 +3,7 @@ import { Card, Empty, LinkButton } from "@/components/ui";
 import { requestMeta } from "@/lib/auth/session";
 import { dateDe, money, timeDe, weekdayLong } from "@/lib/format";
 import { dueLabel } from "@/lib/invoice-view";
-import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
+import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { clientKey } from "@/lib/rate-limit";
 import { currentPortalLink, loadPortalView, portalFailLimiter, portalLimiter } from "@/server/portal-core";
 import { CancelAppointmentButton } from "./cancel-button";
@@ -89,7 +89,7 @@ export default async function PortalPage() {
             {view.invoices.map((i) => (
               <li key={i.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
-                  <p className="font-semibold">{INVOICE_KIND_LABEL[i.kind] ?? "Rechnung"} {i.number}</p>
+                  <p className="font-semibold">{INVOICE_DOC_LABEL[i.kind] ?? "Rechnung"} {i.number}</p>
                   <p className="text-sm text-muted">
                     vom {dateDe(i.issuedAt)} · offen {money(i.totalCents - i.paidCents)}{i.dueAt ? ` · fällig ${dueLabel(i, dateDe)}` : ""}
                   </p>

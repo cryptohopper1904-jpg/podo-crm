@@ -330,6 +330,13 @@
       "when": 1794606899014,
       "tag": "0046_oeffnungszeiten_tage",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794608947106,
+      "tag": "0047_kalender_sperrzeiten",
+      "breakpoints": true
     }
   ]
 }

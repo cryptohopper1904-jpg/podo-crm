@@ -11,12 +11,13 @@ import { audit } from "@/lib/audit";
 import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
-import { conflictMessage, createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
+import { conflictMessage, createInternalAppointments, moveAppointment, rescheduleAppointment, type MoveInput } from "@/server/appointments";
 import { saveCalendarMode, saveCalendarOptions } from "@/server/calendar-board";
 import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
+import { seriesStarts } from "@/lib/appointment-series";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
@@ -48,8 +49,8 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
     : [];
   const duration = d.durationMin ?? (svc.reduce((s, x) => s + x.durationMin, 0) || 30);
-  const firstStart = berlinToUtc(d.date, d.time);
-  const occurrences = Array.from({ length: d.repeatWeeks ? d.repeatCount : 1 }, (_, i) => new Date(firstStart.getTime() + i * d.repeatWeeks * 7 * 86400_000));
+  // Wanduhrzeit in Berlin bleibt über Zeitumstellungen gleich (Datum weiterzählen, dann in UTC umrechnen)
+  const occurrences = seriesStarts(d.date, d.time, d.repeatWeeks, d.repeatCount);
 
   // Ohne Auswahl: eigene Spalte – nur wer selbst einen Kalender hat (Empfang/Azubis müssen eine Behandler:in wählen)
   const therapistId = d.therapistId ?? (hasOwnCalendar(auth.role) ? auth.user.id : null);
@@ -133,6 +134,22 @@ export async function rescheduleAppointmentAction(_: RescheduleState, form: Form
   revalidatePath("/heute");
   revalidatePath(`/kalender/termin/${d.id}`);
   redirect(`/kalender?datum=${d.date}`);
+}
+
+export type MoveResult = { ok: true } | { ok: false; error: string; conflict?: true };
+
+/**
+ * Kalender: Termin per Ziehen verschieben bzw. „Rückgängig“ (alte Zeit wiederherstellen). Gleiche Logik wie das
+ * Formular „Datum und Uhrzeit ändern“ (rescheduleAppointment) – bei Überschneidung/Abwesenheit erst nach Bestätigung.
+ */
+export async function moveAppointmentAction(input: MoveInput): Promise<MoveResult> {
+  const auth = await requireAuth("appointments.write");
+  const res = await moveAppointment(auth, input);
+  if (!res.ok) return res.conflict ? { ok: false, error: res.error, conflict: true } : { ok: false, error: res.error };
+  revalidatePath("/kalender");
+  revalidatePath("/heute");
+  if (typeof input?.id === "string") revalidatePath(`/kalender/termin/${input.id}`);
+  return { ok: true };
 }
 
 const modeSchema = z.object({

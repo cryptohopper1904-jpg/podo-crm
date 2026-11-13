@@ -63,7 +63,7 @@ export const ARTICLES: Article[] = [
         heading: "Sammelrechnung: worauf es ankommt",
         list: [
           "Leistungszeitraum angeben: Bei mehreren Leistungen genügt der Kalendermonat als Leistungszeitraum (§ 31 Abs. 4 UStDV).",
-          "Jede Behandlung nur einmal abrechnen: Leistungen, die schon per Quittung bezahlt wurden, nicht nochmals aufnehmen – oder als Anzahlung anrechnen.",
+          "Jede Behandlung nur einmal abrechnen: Leistungen, die schon per Quittung bezahlt wurden, nicht nochmals berechnen – sondern als bereits bezahlt anrechnen.",
           "Rechnungsempfänger klären: Pflegeheim, Angehörige oder Betreuer:in – mit vollständiger Anschrift.",
           "Positionen nachvollziehbar beschreiben: Datum, Leistung, ggf. Person – aber keine Diagnosen auf die Rechnung schreiben, die nicht nötig sind.",
         ],
@@ -85,7 +85,7 @@ export const ARTICLES: Article[] = [
       {
         heading: "So unterstützt PodoHero",
         paragraphs: [
-          "PodoHero vergibt lückenlose Nummernkreise je Belegart, sperrt ausgestellte Belege gegen Änderungen und erstellt Sammelrechnungen für Pflegeheime aus den Behandlungen des Besuchstags. Bereits per Quittung bezahlte Anzahlungen werden angerechnet.",
+          "PodoHero vergibt lückenlose Nummernkreise je Belegart, sperrt ausgestellte Belege gegen Änderungen und erstellt Sammelrechnungen für Pflegeheime aus den Behandlungen des Besuchstags. Bereits bezahlte Quittungen lassen sich mit ihren Leistungen in die Sammelrechnung übernehmen und werden als „bereits bezahlt“ angerechnet; Anzahlungen vor der Behandlung (z. B. Nagelspange) ebenso.",
         ],
       },
     ],

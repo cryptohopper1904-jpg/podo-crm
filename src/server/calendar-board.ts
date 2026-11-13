@@ -10,8 +10,11 @@ import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, ty
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { assignTherapistColors, byJoined } from "@/lib/therapist-colors";
 import { practiceHours } from "@/lib/opening-hours";
 import { therapists } from "./appointments";
+import { blocksFor, describeBlock, overlappingBlocks } from "@/lib/calendar-blocks";
+import { loadBlockOccurrences } from "./calendar-blocks";
 
 async function orgCalendarInfo(org: string) {
   const [o] = await db.select({ state: organizations.state, settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
@@ -19,8 +22,9 @@ async function orgCalendarInfo(org: string) {
 }
 
 /**
- * Team, Arbeitszeiten und Abwesenheiten für die vollständige Kalenderansicht. Die Art der Abwesenheit
+ * Team, Arbeitszeiten, Abwesenheiten und Sperrzeiten für die vollständige Kalenderansicht. Die Art der Abwesenheit
  * (z. B. Krankheit) wird bewusst NICHT geliefert – im Kalender steht nur „abwesend – nicht verfügbar“.
+ * `blocks`: expandierte Sperrzeiten (Pause, Schulung …) der Behandler:innen und der ganzen Praxis im Zeitraum.
  */
 export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: string) {
   assertCan(auth, "appointments.read");
@@ -28,7 +32,7 @@ export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: s
   const [team, info] = await Promise.all([therapists(auth), orgCalendarInfo(org)]);
   team.sort((a, b) => a.name.localeCompare(b.name, "de"));
   const ids = team.map((t) => t.id);
-  const { hours, abs } = await withOrg(org, async (tx) => ({
+  const { hours, abs, blocks } = await withOrg(org, async (tx) => ({
     hours: ids.length
       ? await tx
           .select({ userId: workingHours.userId, weekday: workingHours.weekday, startTime: workingHours.startTime, endTime: workingHours.endTime })
@@ -39,8 +43,9 @@ export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: s
       .select({ userId: absences.userId, startsOn: absences.startsOn, endsOn: absences.endsOn })
       .from(absences)
       .where(and(eq(absences.organizationId, org), gte(absences.endsOn, fromIso), lte(absences.startsOn, toIso))),
+    blocks: await loadBlockOccurrences(tx, org, ids, fromIso, toIso),
   }));
-  /** Verfügbarkeit einer Person an einem Tag (Arbeitszeiten, Abwesenheit, Feiertag) */
+  /** Verfügbarkeit einer Person an einem Tag (Arbeitszeiten, Abwesenheit, Sperrzeiten, Feiertag) */
   const availabilityOf = (userId: string, dateIso: string) =>
     computeAvailability({
       dateIso,
@@ -48,8 +53,11 @@ export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: s
       absences: abs.filter((a) => a.userId === userId).map((a) => ({ ...a, kind: "other" })),
       holiday: holidayOn(dateIso, info.state),
       opening: info.opening,
+      blocks: blocksFor(blocks, userId, dateIso),
     });
-  return { team: team.map((t) => ({ id: t.id, name: t.name, color: t.color })), absences: abs, availabilityOf, state: info.state };
+  // Kalenderfarbe je Behandler:in (gewählt oder automatisch nach Eintritt)
+  const colors = assignTherapistColors(byJoined(team));
+  return { team: team.map((t) => ({ id: t.id, name: t.name, color: colors.get(t.id)! })), absences: abs, blocks, availabilityOf, state: info.state };
 }
 
 export type SlotStatus = {
@@ -58,6 +66,8 @@ export type SlotStatus = {
   absent: boolean;
   /** Termin liegt (teilweise) außerhalb der Arbeitszeit/Öffnungszeit – nur Hinweis */
   outsideHours: boolean;
+  /** überschneidende Sperrzeiten (eigene und ganze Praxis), z. B. „Pause 12:00–12:30“ */
+  blocks: string[];
   hours: TimeRange[];
   holiday: string | null;
 };
@@ -91,14 +101,18 @@ export async function slotStatus(
   );
   const clashes = findClashes(rows, input.therapistId, start, end, input.excludeId).sort((a, b) => +a.startsAt - +b.startsAt);
   const av = board.availabilityOf(input.therapistId, input.dateIso);
+  // Arbeitszeit ohne Abzug der Sperrzeiten: eine Pause ist „Sperrzeit“, nicht „außerhalb der Arbeitszeit“
+  const hoursRanges = av.hoursRanges ?? av.ranges;
   const s = berlinParts(start).min;
   const e = s + input.durationMin;
-  const inside = av.ranges.some((r) => toMin(r.start) <= s && e <= toMin(r.end));
+  const inside = hoursRanges.some((r) => toMin(r.start) <= s && e <= toMin(r.end));
+  const blockHits = overlappingBlocks(board.blocks, input.therapistId, start, end);
   return {
     clashes: clashes.map((c) => ({ start: toHhmm(berlinParts(c.startsAt).min), end: toHhmm(berlinParts(c.endsAt).min), unassigned: c.therapistId === null })),
     absent: av.reason === "absence",
     outsideHours: !inside,
-    hours: av.ranges,
+    blocks: [...new Set(blockHits.map((b) => describeBlock(b)))],
+    hours: hoursRanges,
     holiday: av.holiday ?? null,
   };
 }

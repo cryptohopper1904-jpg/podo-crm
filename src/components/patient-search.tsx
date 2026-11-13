@@ -31,7 +31,23 @@ type Option = { kind: "patient"; p: Suggestion; fuzzy: boolean } | { kind: "quer
 const birth = (iso: string | null) => (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : null);
 const resultsUrl = (q: string) => `/kunden?q=${encodeURIComponent(q.trim())}`;
 
-function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?: boolean; onDone?: () => void }) {
+/**
+ * `pickHref`: Auswahl-Modus (z. B. Patient:in für einen Beleg wählen) – ein Treffer führt zu `pickHref + id` statt zur
+ * Akte; ohne Auswahl öffnet Enter keine Ergebnisliste, und „Alle Treffer“ entfällt.
+ */
+function SearchBox({
+  inputId,
+  autoFocus,
+  onDone,
+  pickHref,
+  label = "Patient suchen",
+}: {
+  inputId: string;
+  autoFocus?: boolean;
+  onDone?: () => void;
+  pickHref?: string;
+  label?: string;
+}) {
   const router = useRouter();
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -107,7 +123,7 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
       options.push({ kind: "query", q: result.didYouMean.query });
       for (const p of result.didYouMean.patients) options.push({ kind: "patient", p, fuzzy: true });
     }
-    if (result.hits.length) options.push({ kind: "all" });
+    if (result.hits.length && !pickHref) options.push({ kind: "all" });
   }
 
   function reset() {
@@ -124,7 +140,7 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
       inputRef.current?.focus();
       return;
     }
-    const href = o.kind === "patient" ? `/kunden/${o.p.id}` : resultsUrl(value);
+    const href = o.kind === "patient" ? (pickHref ? `${pickHref}${encodeURIComponent(o.p.id)}` : `/kunden/${o.p.id}`) : resultsUrl(value);
     reset();
     if (o.kind === "patient") {
       setValue("");
@@ -180,18 +196,18 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
 
   return (
     <form
-      action="/kunden"
+      action={pickHref ? undefined : "/kunden"}
       role="search"
       className="relative w-full"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!q) return;
+        if (!q || pickHref) return;
         reset();
         onDone?.();
         router.push(resultsUrl(q));
       }}
     >
-      <label className="sr-only" htmlFor={inputId}>Patient suchen</label>
+      <label className="sr-only" htmlFor={inputId}>{label}</label>
       <Search size={18} aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
       <input
         ref={inputRef}
@@ -235,7 +251,7 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
         className="absolute left-0 right-0 z-40 mt-1 max-h-[min(28rem,70vh)] overflow-auto overscroll-contain rounded-xl border border-border bg-surface p-1 text-text shadow-lg"
       >
         {empty || failed ? (
-          <p className="px-3 py-2.5 text-sm text-muted">{failed ? "Suche gerade nicht möglich – Enter öffnet die Patientenliste." : "Keine Treffer – andere Schreibweise versuchen."}</p>
+          <p className="px-3 py-2.5 text-sm text-muted">{failed ? (pickHref ? "Suche gerade nicht möglich – bitte später erneut versuchen." : "Suche gerade nicht möglich – Enter öffnet die Patientenliste.") : "Keine Treffer – andere Schreibweise versuchen."}</p>
         ) : null}
         <ul id={listId} role="listbox" aria-label="Patientenvorschläge">
           {options.map((o, i) => {
@@ -318,4 +334,9 @@ export function PatientSearch() {
       ) : null}
     </>
   );
+}
+
+/** Patient:in für einen Vorgang wählen (gleiche Live-Suche wie in der Kopfzeile); Auswahl öffnet `hrefPrefix + id`. */
+export function PatientPicker({ hrefPrefix, label = "Patient:in suchen", inputId = "patient-pick" }: { hrefPrefix: string; label?: string; inputId?: string }) {
+  return <SearchBox inputId={inputId} pickHref={hrefPrefix} label={label} />;
 }

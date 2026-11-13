@@ -5,8 +5,12 @@ import { absentOn, addDaysIso, berlinParts, dayInterval, gridRange, isBusy, layo
 import { isoWeek, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
+import { dotStyle, colorVar, type TherapistColor } from "@/lib/therapist-colors";
+import { dragLock } from "@/lib/calendar-dnd";
 import type { listAppointments } from "@/server/appointments";
 import type { calendarBoard } from "@/server/calendar-board";
+import { BLOCK_HATCH, BlockOverlays, MonthBlockHints } from "./calendar-blocks-view";
+import { DndSurface } from "./calendar-dnd";
 
 type Row = Awaited<ReturnType<typeof listAppointments>>[number];
 type Board = Awaited<ReturnType<typeof calendarBoard>>;
@@ -31,7 +35,6 @@ const HATCH: CSSProperties = {
   backgroundImage: "repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 22%, transparent) 0 4px, transparent 4px 9px)",
 };
 
-const validColor = (c: string | null | undefined) => (c && /^#[0-9a-f]{6}$/i.test(c) ? c : undefined);
 const personName = (r: Row) => (r.patient ? [r.patient.firstName, r.patient.lastName].filter(Boolean).join(" ") : r.a.title ?? "Termin");
 
 export type FullCalendarProps = {
@@ -50,7 +53,35 @@ export type FullCalendarProps = {
   options: CalendarOptions;
   /** Link „Wochenende einblenden“ (aktuelle Ansicht mit we=alle) */
   showWeekendHref: string;
+  /** Termine per Ziehen verschieben (Schreibrecht, kein Support-/Nur-Lesen-Modus) */
+  canMove: boolean;
+  /** abgerechnete Termine (kein Griff zum Verschieben) */
+  billed: Set<string>;
 };
+
+/**
+ * data-Attribute für das Ziehen (calendar-dnd.tsx) und der Hinweis, warum ein Termin nicht verschiebbar ist.
+ * Ohne Verschiebe-Recht: keine Attribute, kein Hinweis.
+ */
+function moveAttrs(r: Row, canMove: boolean, billed: Set<string>): { attrs: Record<string, string>; lock: string | null; movable: boolean } {
+  if (!canMove) return { attrs: {}, lock: null, movable: false };
+  const lock = dragLock({ ...r.a, fromCalendarFeed: !!r.feed, billed: billed.has(r.a.id) });
+  return {
+    attrs: {
+      "data-appt": r.a.id,
+      "data-start": r.a.startsAt.toISOString(),
+      "data-end": r.a.endsAt.toISOString(),
+      "data-therapist": r.a.therapistId ?? "",
+      "data-name": personName(r),
+      ...(lock ? { "data-lock": "1" } : { "data-movable": "1" }),
+    },
+    lock,
+    movable: !lock,
+  };
+}
+
+/** Farbe der Behandler:in eines Termins (null = ohne Zuordnung/unbekannt) */
+const colorOf = (board: Board, therapistId: string | null): TherapistColor | null => board.team.find((t) => t.id === therapistId)?.color ?? null;
 
 /** Feiertag/Schulferien eines Tages laut Anzeige-Optionen */
 const dayLabels = (iso: string, state: StateCode, o: CalendarOptions) => ({
@@ -105,9 +136,22 @@ export function FullCalendar(props: FullCalendarProps) {
       ) : null}
       {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} />}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin</span> : null}
+        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin oder Sperrzeit</span> : null}
+        {props.canMove && props.view !== "monat" ? <span>Termin ziehen = verschieben (Touch: lange drücken), unteren Rand ziehen = Dauer ändern</span> : null}
+        {props.canMove && props.view === "monat" ? <span>Termin auf einen anderen Tag ziehen = verschieben (Uhrzeit bleibt; Touch: lange drücken)</span> : null}
+        {props.board.team.length > 1 ? (
+          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Farben der Behandler:innen">
+            {props.board.team.map((t) => (
+              <span key={t.id} className="inline-flex items-center gap-1.5">
+                <span className="inline-block size-2.5 rounded-full" style={dotStyle(t.color)} aria-hidden />
+                {t.name}
+              </span>
+            ))}
+          </span>
+        ) : null}
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border" style={HATCH} aria-hidden /> belegt/abwesend – nicht verfügbar</span>
         {props.options.workHours ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border bg-surface-2" aria-hidden /> außerhalb der Arbeitszeit</span> : null}
+        {props.options.blocks ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-dashed border-border-strong bg-surface-2" style={BLOCK_HATCH} aria-hidden /> Sperrzeit (Pause, Schulung …) – nicht verfügbar</span> : null}
         {props.options.schoolHolidays ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-sm bg-info-soft-text/60" aria-hidden /> Schulferien</span> : null}
         {props.options.cancelled ? <span className="inline-flex items-center gap-1.5"><span className="line-through">abgesagt</span> = abgesagter Termin</span> : null}
         {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</span> : null}
@@ -119,7 +163,7 @@ export function FullCalendar(props: FullCalendarProps) {
 
 // ───────────── Tag und Woche: Zeitachse mit Spalten ─────────────
 
-function TimeGridView({ view, day, today, now, rows, board, state, overlaps, canWrite, calHref, options }: FullCalendarProps) {
+function TimeGridView({ view, day, today, now, rows, board, state, overlaps, canWrite, calHref, options, canMove, billed }: FullCalendarProps) {
   const team = board.team;
   const teamIds = new Set(team.map((t) => t.id));
   const busyFor = (therapistId: string, dateIso: string): Interval[] =>
@@ -133,8 +177,9 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
   let columns: Column[];
   const { holiday: dayHoliday, school: daySchool } = view === "tag" ? dayLabels(day, state, options) : { holiday: null, school: null };
   // Schattierung: Arbeitszeiten laut Option; Feiertag (Praxis geschlossen) immer ganztägig – das ist Verfügbarkeit, keine Anzeige-Option
-  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0] }) =>
-    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.ranges, 0, 24 * 60) : [];
+  // Arbeitszeit ohne Abzug der Sperrzeiten (hoursRanges): Pausen sind keine „außerhalb der Arbeitszeit“, sie zeichnet BlockOverlays
+  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0]; hoursRanges?: Parameters<typeof outsideRanges>[0] }) =>
+    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.hoursRanges ?? av.ranges, 0, 24 * 60) : [];
   const holidayNote = (iso: string) => {
     const h = holidayOn(iso, state);
     return h ? `Feiertag (${h}) – Praxis geschlossen` : null;
@@ -149,7 +194,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         header: (
           <span className="flex min-w-0 flex-col items-center">
             <span className="flex max-w-full items-center gap-1.5 truncate font-semibold">
-              {validColor(t.color) ? <span className="inline-block size-2.5 shrink-0 rounded-full" style={{ background: validColor(t.color) }} aria-hidden /> : null}
+              <span className="inline-block size-2.5 shrink-0 rounded-full" style={dotStyle(t.color)} aria-hidden />
               <span className="truncate">{t.name}</span>
             </span>
             {av.reason === "absence" && options.absences ? <span className="text-[11px] font-semibold text-accent-soft-text">abwesend</span> : null}
@@ -246,7 +291,13 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
           {daySchool ? <Badge tone="info">Schulferien: {daySchool}</Badge> : null}
         </p>
       ) : null}
-      <div className="max-h-[calc(100dvh-13rem)] min-h-[26rem] overflow-auto rounded-[var(--radius-card)] border border-border bg-surface" role="region" aria-label={view === "tag" ? "Tagesplan" : "Wochenplan"}>
+      <DndSurface
+        view={view === "tag" ? "tag" : "woche"}
+        enabled={canMove}
+        pxPerMin={PX_PER_MIN}
+        className="max-h-[calc(100dvh-13rem)] min-h-[26rem] overflow-auto rounded-[var(--radius-card)] border border-border bg-surface"
+        ariaLabel={view === "tag" ? "Tagesplan" : "Wochenplan"}
+      >
         <div className="grid min-w-fit" style={{ gridTemplateColumns: template }}>
           {/* Kopfzeile */}
           <div className="sticky left-0 top-0 z-30 border-b border-border bg-surface" />
@@ -280,7 +331,17 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
             const blocks = [...cancelledBlocks, ...layoutLanes(placed.filter((p) => p.row.a.status !== "cancelled"))];
             const nowMin = c.today && nowP.dateIso === c.dateIso && nowP.min >= range.startMin && nowP.min <= range.endMin ? nowP.min : null;
             return (
-              <div key={c.key} className={`relative border-l border-border ${c.today ? "bg-primary-soft/25" : ""}`} style={{ height: px(height), ...GRID_BG }}>
+              <div
+                key={c.key}
+                className={`relative border-l border-border ${c.today ? "bg-primary-soft/25" : ""}`}
+                style={{ height: px(height), ...GRID_BG }}
+                data-dnd-col=""
+                data-date={c.dateIso}
+                data-therapist={c.therapistId ?? ""}
+                data-range-start={range.startMin}
+                data-range-end={range.endMin}
+                {...(view === "tag" && !c.therapistId ? { "data-drop": "0" } : {})}
+              >
                 {/* außerhalb der Arbeitszeit */}
                 {c.outside.map((o, i) => {
                   const s = Math.max(o.startMin, range.startMin), e = Math.min(o.endMin, range.endMin);
@@ -311,9 +372,11 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
                     );
                   })
                 )}
+                {/* Sperrzeiten (Pause, Schulung …) */}
+                {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
-                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={validColor(board.team.find((t) => t.id === b.row.a.therapistId)?.color)} />
+                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} />
                 ))}
                 {nowMin !== null ? (
                   <div className="pointer-events-none absolute inset-x-0 z-[3] h-0.5 bg-accent" style={{ top: px(nowMin - range.startMin) }} aria-hidden>
@@ -324,58 +387,95 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
             );
           })}
         </div>
-      </div>
+      </DndSurface>
     </div>
   );
 }
 
-function Block({ b, rangeStart, overlap, showTherapist, color }: { b: Interval & { row: Row; lane: number; lanes: number }; rangeStart: number; overlap: boolean; showTherapist: boolean; color?: string }) {
+function Block({
+  b,
+  rangeStart,
+  overlap,
+  showTherapist,
+  color,
+  move,
+}: {
+  b: Interval & { row: Row; lane: number; lanes: number };
+  rangeStart: number;
+  overlap: boolean;
+  showTherapist: boolean;
+  color: TherapistColor | null;
+  move: ReturnType<typeof moveAttrs>;
+}) {
   const { a, therapist } = b.row;
   const h = (b.endMin - b.startMin) * PX_PER_MIN;
   const name = personName(b.row);
   const sub = b.row.patient ? a.title : null;
   const time = `${toHhmm(b.startMin)}–${toHhmm(b.endMin)}`;
+  // Behandler:in-Farbe: getönte Fläche + kräftiger linker Rand; Status bleibt erkennbar (abgesagt blass/durchgestrichen,
+  // erledigt blasser mit ✓, nicht erschienen in Koralle) – der Name steht immer dabei (Farbe nie alleiniger Hinweis)
   const tone =
     a.status === "cancelled"
       ? "bg-surface-2 text-muted line-through opacity-70"
-      : a.status === "done"
-        ? "bg-surface-2 text-muted"
-        : a.status === "no_show"
-          ? "bg-accent-soft text-accent-soft-text"
-          : "bg-primary-soft text-primary-soft-text";
-  const title = [`${time} Uhr`, name, sub, a.homeVisit ? "Hausbesuch" : null, therapist, a.status === "done" ? "erledigt" : a.status === "no_show" ? "nicht erschienen" : a.status === "cancelled" ? "abgesagt" : null, b.row.feed ? `aus Kalender-Abo „${b.row.feed.label}“` : null]
+      : a.status === "no_show"
+        ? "bg-accent-soft text-accent-soft-text"
+        : color
+          ? a.status === "done" ? "opacity-75" : ""
+          : a.status === "done"
+            ? "bg-surface-2 text-muted"
+            : "bg-primary-soft text-primary-soft-text";
+  const tint = color && a.status !== "cancelled" && a.status !== "no_show" ? { background: colorVar(color, "soft"), color: colorVar(color, "text") } : {};
+  const done = a.status === "done" ? "✓ " : "";
+  const title = [
+    `${time} Uhr`,
+    name,
+    sub,
+    a.homeVisit ? "Hausbesuch" : null,
+    therapist,
+    a.status === "done" ? "erledigt" : a.status === "no_show" ? "nicht erschienen" : a.status === "cancelled" ? "abgesagt" : a.status === "confirmed" ? "bestätigt" : null,
+    b.row.feed ? `aus Kalender-Abo „${b.row.feed.label}“` : null,
+    move.movable ? "Ziehen zum Verschieben (Touch: lange drücken)" : move.lock ? `Nicht verschiebbar: ${move.lock}` : null,
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
     <Link
       href={`/kalender/termin/${a.id}`}
       title={title}
-      className={`absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary px-1.5 py-0.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""}`}
+      draggable={false}
+      {...move.attrs}
+      className={`group absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary px-1.5 py-0.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
       style={{
         top: px(b.startMin - rangeStart),
         height: `${Math.max(14, Math.round(h) - 1)}px`,
         left: `calc(${(b.lane / b.lanes) * 100}% + 2px)`,
         width: `calc(${100 / b.lanes}% - 4px)`,
-        borderLeftColor: color,
+        borderLeftColor: color ? colorVar(color) : undefined,
+        ...tint,
       }}
     >
       {h < 30 ? (
-        <span className="truncate"><span className="tabular-nums">{toHhmm(b.startMin)}</span> <strong>{name}</strong></span>
+        <span className="truncate"><span className="tabular-nums">{done}{toHhmm(b.startMin)}</span> <strong>{name}</strong></span>
       ) : (
         <>
-          <span className="truncate text-[11px] tabular-nums opacity-80">{time}{a.homeVisit ? " · HB" : ""}</span>
+          <span className="truncate text-[11px] tabular-nums opacity-80">{done}{time}{a.homeVisit ? " · HB" : ""}</span>
           <strong className="truncate">{name}</strong>
           {sub && h >= 46 ? <span className="truncate opacity-80">{sub}</span> : null}
           {showTherapist && therapist && h >= 62 ? <span className="truncate opacity-70">{therapist}</span> : null}
         </>
       )}
+      {move.movable && h >= 22 ? (
+        <span data-resize="" className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" title="Ziehen = Dauer ändern" aria-hidden>
+          <span className="mx-auto mt-[3px] block h-0.5 w-6 rounded-full bg-current opacity-0 group-hover:opacity-40" />
+        </span>
+      ) : null}
     </Link>
   );
 }
 
 // ───────────── Monat ─────────────
 
-function MonthView({ day, today, rows, board, state, canWrite, calHref, options }: FullCalendarProps) {
+function MonthView({ day, today, rows, board, state, canWrite, calHref, options, canMove, billed }: FullCalendarProps) {
   const weeks = monthWeeks(day);
   const month = day.slice(0, 7);
   // einmal nach Tag gruppieren (statt je Zelle alle Termine zu formatieren)
@@ -393,7 +493,7 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options 
   const kw = options.weekNumbers;
   const template = `${kw ? "2.25rem " : ""}repeat(${shownCols.length}, minmax(0, 1fr))`;
   return (
-    <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" role="region" aria-label="Monatsübersicht">
+    <DndSurface view="monat" enabled={canMove} pxPerMin={PX_PER_MIN} className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" ariaLabel="Monatsübersicht">
       <div className={`grid ${shownCols.length > 5 ? "min-w-[40rem]" : "min-w-[32rem]"}`} style={{ gridTemplateColumns: template }}>
         {kw ? <div className="border-b border-border px-1 py-2 text-center text-xs font-semibold text-muted" title="Kalenderwoche">KW</div> : null}
         {shownCols.map((i) => (
@@ -415,6 +515,7 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options 
             return (
               <div
                 key={iso}
+                data-dnd-day={iso}
                 className={`relative min-h-[6.5rem] border-b border-border p-1 ${kw || ci !== shownCols[0] ? "border-l" : ""} ${inMonth ? "" : "bg-surface-2/60"} ${isToday ? "bg-primary-soft/40" : ""}`}
               >
                 {school ? <span className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-info-soft-text/50" title={`Schulferien: ${school}`} aria-hidden /> : null}
@@ -436,16 +537,32 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options 
                   </div>
                   {holiday ? <span className="truncate text-[10px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
                   {school ? <span className="truncate text-[10px] text-info-soft-text" title={`Schulferien: ${school}`}>{school}</span> : null}
-                  {list.slice(0, 3).map((r) => (
-                    <Link
-                      key={r.a.id}
-                      href={`/kalender/termin/${r.a.id}`}
-                      className={`pointer-events-auto truncate rounded px-1 text-[11px] leading-5 hover:brightness-95 ${r.a.status === "cancelled" ? "bg-surface-2 text-muted line-through" : "bg-primary-soft text-primary-soft-text"}`}
-                      title={`${toHhmm(berlinParts(r.a.startsAt).min)}–${toHhmm(berlinParts(r.a.endsAt).min)} Uhr · ${personName(r)}${r.therapist ? ` · ${r.therapist}` : ""}${r.a.status === "cancelled" ? " · abgesagt" : ""}`}
-                    >
-                      <span className="tabular-nums">{toHhmm(berlinParts(r.a.startsAt).min)}</span> {personName(r)}
-                    </Link>
-                  ))}
+                  {options.blocks ? <MonthBlockHints board={board} dateIso={iso} dayHref={calHref({ ansicht: "tag", datum: iso })} /> : null}
+                  {list.slice(0, 3).map((r) => {
+                    const mv = moveAttrs(r, canMove, billed);
+                    const c = colorOf(board, r.a.therapistId);
+                    const plain = r.a.status === "cancelled" || r.a.status === "no_show" || !c;
+                    return (
+                      <Link
+                        key={r.a.id}
+                        href={`/kalender/termin/${r.a.id}`}
+                        draggable={false}
+                        {...mv.attrs}
+                        className={`pointer-events-auto truncate rounded border-l-[3px] border-transparent px-1 text-[11px] leading-5 hover:brightness-95 ${
+                          r.a.status === "cancelled" ? "bg-surface-2 text-muted line-through" : r.a.status === "no_show" ? "bg-accent-soft text-accent-soft-text" : plain ? "bg-primary-soft text-primary-soft-text" : ""
+                        } ${r.a.status === "done" ? "opacity-75" : ""} ${mv.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
+                        style={{ ...(c ? { borderLeftColor: colorVar(c) } : {}), ...(plain ? {} : { background: colorVar(c!, "soft"), color: colorVar(c!, "text") }) }}
+                        title={[
+                          `${toHhmm(berlinParts(r.a.startsAt).min)}–${toHhmm(berlinParts(r.a.endsAt).min)} Uhr · ${personName(r)}${r.therapist ? ` · ${r.therapist}` : ""}${r.a.status === "cancelled" ? " · abgesagt" : r.a.status === "done" ? " · erledigt" : r.a.status === "no_show" ? " · nicht erschienen" : ""}`,
+                          mv.movable ? "Auf anderen Tag ziehen zum Verschieben" : mv.lock ? `Nicht verschiebbar: ${mv.lock}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      >
+                        <span className="tabular-nums">{r.a.status === "done" ? "✓ " : ""}{toHhmm(berlinParts(r.a.startsAt).min)}</span> {personName(r)}
+                      </Link>
+                    );
+                  })}
                   {list.length > 3 ? (
                     <Link href={calHref({ ansicht: "tag", datum: iso })} className="pointer-events-auto text-[11px] font-semibold text-primary hover:underline">
                       +{list.length - 3} weitere
@@ -457,6 +574,6 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options 
           }),
         ])}
       </div>
-    </div>
+    </DndSurface>
   );
 }

@@ -45,7 +45,7 @@ export function AppointmentForm({ patients, services, team, defaults }: { patien
         setSlot(q);
       }} className="flex flex-col gap-6">
       <FormError message={state?.error} />
-      {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem eintragen (Doppelbelegung bzw. trotz Abwesenheit)" /> : null}
+      {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem eintragen (Doppelbelegung, Abwesenheit bzw. Sperrzeit)" /> : null}
       <Card>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Patient suchen">

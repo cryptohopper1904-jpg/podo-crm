@@ -37,6 +37,37 @@
   /* 3D-Fuß (src/components/foot3d) */
   --foot-skin: #f4dccb;
   --foot-nail: #fff7f1;
+  /* Kalenderfarben je Behandler:in (src/lib/therapist-colors.ts): kräftig / getönte Fläche / Text darauf */
+  --tc-teal: #0d9488;
+  --tc-teal-soft: #ccfbf1;
+  --tc-teal-text: #134e4a;
+  --tc-blue: #2563eb;
+  --tc-blue-soft: #dbeafe;
+  --tc-blue-text: #1e3a8a;
+  --tc-violet: #7c3aed;
+  --tc-violet-soft: #ede9fe;
+  --tc-violet-text: #4c1d95;
+  --tc-rose: #e11d48;
+  --tc-rose-soft: #ffe4e6;
+  --tc-rose-text: #881337;
+  --tc-orange: #ea580c;
+  --tc-orange-soft: #ffedd5;
+  --tc-orange-text: #7c2d12;
+  --tc-amber: #b45309;
+  --tc-amber-soft: #fef3c7;
+  --tc-amber-text: #713f12;
+  --tc-green: #16a34a;
+  --tc-green-soft: #dcfce7;
+  --tc-green-text: #14532d;
+  --tc-cyan: #0891b2;
+  --tc-cyan-soft: #cffafe;
+  --tc-cyan-text: #164e63;
+  --tc-fuchsia: #c026d3;
+  --tc-fuchsia-soft: #fae8ff;
+  --tc-fuchsia-text: #701a75;
+  --tc-stone: #57534e;
+  --tc-stone-soft: #e7e5e4;
+  --tc-stone-text: #292524;
   color-scheme: light;
 }
 
@@ -66,6 +97,37 @@
   --ring: #5ee0cd;
   --foot-skin: #d9b7a3;
   --foot-nail: #f6e9e0;
+  /* Kalenderfarben je Behandler:in – dunkel */
+  --tc-teal: #2dd4bf;
+  --tc-teal-soft: #12332f;
+  --tc-teal-text: #ccfbf1;
+  --tc-blue: #60a5fa;
+  --tc-blue-soft: #172a46;
+  --tc-blue-text: #dbeafe;
+  --tc-violet: #a78bfa;
+  --tc-violet-soft: #2a2147;
+  --tc-violet-text: #ede9fe;
+  --tc-rose: #fb7185;
+  --tc-rose-soft: #3f1d26;
+  --tc-rose-text: #ffe4e6;
+  --tc-orange: #fb923c;
+  --tc-orange-soft: #3d2414;
+  --tc-orange-text: #ffedd5;
+  --tc-amber: #fbbf24;
+  --tc-amber-soft: #3a2e12;
+  --tc-amber-text: #fef3c7;
+  --tc-green: #4ade80;
+  --tc-green-soft: #15301e;
+  --tc-green-text: #dcfce7;
+  --tc-cyan: #22d3ee;
+  --tc-cyan-soft: #10303a;
+  --tc-cyan-text: #cffafe;
+  --tc-fuchsia: #e879f9;
+  --tc-fuchsia-soft: #3a1a3e;
+  --tc-fuchsia-text: #fae8ff;
+  --tc-stone: #a8a29e;
+  --tc-stone-soft: #2c2826;
+  --tc-stone-text: #e7e5e4;
   color-scheme: dark;
 }
 
@@ -204,4 +266,12 @@ body {
   :where(:has(> .podo-field)) > :where(:not(.podo-field)) {
     grid-row: span 2;
   }
+}
+
+/* Kalender: Termin wird gezogen (src/app/(app)/kalender/calendar-dnd.tsx) */
+html.podo-dragging,
+html.podo-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+  -webkit-user-select: none;
 }

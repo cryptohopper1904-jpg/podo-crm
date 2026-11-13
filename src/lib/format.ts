@@ -31,9 +31,9 @@ export const weekdayLong = (d: Date | string) =>
   new Intl.DateTimeFormat("de-DE", { timeZone: TZ, weekday: "long", day: "numeric", month: "long" }).format(new Date(d));
 
 /** YYYY-MM-DD des Tages in Berlin */
+const YMD_FMT = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
 export function berlinDateIso(d: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-  return parts;
+  return YMD_FMT.format(d);
 }
 
 /** Wandelt "YYYY-MM-DD" + "HH:MM" (Berliner Ortszeit) in ein Date (UTC) um – inkl. Sommerzeit. */
@@ -48,16 +48,19 @@ export function berlinToUtc(dateIso: string, time: string): Date {
   return offset2 === offset ? result : new Date(guess - offset2 * 60_000);
 }
 
+/** einmal angelegt und wiederverwendet (Intl.DateTimeFormat anzulegen ist teuer – berlinToUtc läuft oft in Schleifen) */
+const OFFSET_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ,
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function tzOffsetMinutes(d: Date): number {
-  const p = new Intl.DateTimeFormat("en-US", {
-    timeZone: TZ,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(d);
+  const p = OFFSET_FMT.formatToParts(d);
   const get = (t: string) => Number(p.find((x) => x.type === t)?.value);
   const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
   return Math.round((asUtc - d.getTime()) / 60_000);

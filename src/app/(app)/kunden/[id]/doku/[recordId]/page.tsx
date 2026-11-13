@@ -10,7 +10,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { feature } from "@/lib/features";
 import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { BRACE_ACTION_LABEL, MEDIA_PURPOSE_LABEL } from "@/lib/labels";
-import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE } from "@/lib/invoice-labels";
+import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE, RECEIPT_COLLECTIVE_HINT } from "@/lib/invoice-labels";
 import { billingFromSource } from "@/server/appointment-billing";
 import { addAddendumAction } from "../actions";
 
@@ -50,6 +50,8 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   ];
   const needsCountersign = r.countersignRequired && !data.add.some((a) => a.a.kind === "countersign");
   const billing = auth.can("invoices.write") ? await billingFromSource(auth, { recordId }) : null;
+  // offene Anzahlung zur Behandlung (bezahlt, noch nicht angerechnet): keine Quittung, bei der Rechnung anrechnen (wie Terminseite)
+  const openDeposit = billing?.patient ? (billing.documents.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ?? null) : null;
   return (
     <div className="mx-auto max-w-4xl">
       <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.p)}`} />
@@ -112,10 +114,18 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
           ) : null}
           {billing.billedBy.length ? (
             <p className="text-sm text-muted">Die Behandlung ist bereits abgerechnet.</p>
+          ) : openDeposit ? (
+            <div className="flex flex-wrap gap-2">
+              <p className="w-full text-sm text-muted">
+                Bezahlt mit Anzahlung {openDeposit.number} – wird auf die Rechnung bzw. Sammelrechnung angerechnet (keine zweite Quittung).
+              </p>
+              <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen (Anzahlung anrechnen)</LinkButton>
+            </div>
           ) : (
             <div className="flex flex-wrap gap-2">
               <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen</LinkButton>
-              <LinkButton href={`/rechnungen/anzahlung?behandlung=${recordId}`} variant="secondary">Quittung für Sammelrechnung</LinkButton>
+              <LinkButton href={`/rechnungen/neu?behandlung=${recordId}&art=quittung`} variant="secondary">Quittung</LinkButton>
+              <p className="w-full text-xs text-muted">{RECEIPT_COLLECTIVE_HINT}</p>
             </div>
           )}
         </Card>

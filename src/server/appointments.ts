@@ -1,9 +1,9 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
-import { appointmentEditLock } from "@/lib/appointment-edit";
+import { appointmentEditLock, durationMinutes } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import { CALENDAR_ROLES } from "@/lib/auth/permissions";
@@ -11,6 +11,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
+import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
+import { blockClashesInTx } from "./calendar-blocks";
 import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
 
 export async function listAppointments(auth: AuthContext, fromIso: string, days: number) {
@@ -47,7 +49,15 @@ export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
   const { db } = await import("@/db");
   return db
-    .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
+    .select({
+      id: users.id,
+      name: users.name,
+      role: memberships.role,
+      color: memberships.color,
+      joinedAt: memberships.createdAt,
+      // Eintritt mit Mikrosekunden (Date kennt nur Millisekunden) – für die stabile Farbvergabe (byJoined)
+      joinedKey: sql<string>`to_char(${memberships.createdAt} at time zone 'UTC', 'YYYYMMDDHH24MISSUS')`,
+    })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
     .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
@@ -116,15 +126,19 @@ async function absentDaysInTx(tx: Tx, org: string, therapistId: string, days: st
 }
 
 export type SlotClash = { startsAt: Date; endsAt: Date };
-export type SlotConflict = { ok: false; conflict: true; clashes: SlotClash[]; absentDays: string[] };
+export type SlotConflict = { ok: false; conflict: true; clashes: SlotClash[]; absentDays: string[]; blocks: BlockOccurrence[] };
 
-/** Fehlertext für belegte Zeiten / Abwesenheit (Terminanlage und Verschieben). */
-export function conflictMessage(c: Pick<SlotConflict, "clashes" | "absentDays">): string {
+/** Fehlertext für belegte Zeiten / Abwesenheit / Sperrzeiten (Terminanlage und Verschieben). */
+export function conflictMessage(c: Pick<SlotConflict, "clashes" | "absentDays"> & { blocks?: readonly BlockOccurrence[] }): string {
   const parts: string[] = [];
   if (c.clashes.length) parts.push(`Zu dieser Zeit ist bereits ein Termin eingetragen – belegt, nicht verfügbar (${describeClashes(c.clashes.slice(0, 5))}${c.clashes.length > 5 ? " …" : ""}).`);
   if (c.absentDays.length) {
     const days = c.absentDays.map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`).join(", ");
     parts.push(`Die Behandler:in ist laut Team-Planung abwesend – nicht verfügbar (${days}).`);
+  }
+  if (c.blocks?.length) {
+    const list = describeBlockConflicts(c.blocks.slice(0, 5), new Set(c.blocks.map((b) => b.dateIso)).size > 1);
+    parts.push(`Sperrzeit im Kalender – nicht verfügbar: ${list}${c.blocks.length > 5 ? " …" : ""}.`);
   }
   return parts.join(" ") || "Zu dieser Zeit ist bereits ein Termin eingetragen.";
 }
@@ -166,7 +180,8 @@ export async function createInternalAppointments(
         clashes.push(...found.map((c) => ({ startsAt: c.startsAt, endsAt: c.endsAt })));
       }
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, input.occurrences.map((s) => berlinParts(s).dateIso));
-      if (clashes.length || absentDays.length) return { ok: false as const, conflict: true as const, clashes, absentDays };
+      const blocks = await blockClashesInTx(tx, org, input.therapistId, input.occurrences.map((s) => ({ start: s, end: new Date(s.getTime() + input.durationMin * 60_000) })));
+      if (clashes.length || absentDays.length || blocks.length) return { ok: false as const, conflict: true as const, clashes, absentDays, blocks };
     }
     const ids: string[] = [];
     for (const s of input.occurrences) {
@@ -235,24 +250,51 @@ export async function getAppointment(auth: AuthContext, id: string) {
 
 /** Steht der Termin auf einer ausgestellten (nicht stornierten, nicht Entwurf) Rechnung, Quittung o. Ä.? */
 async function isAppointmentBilled(tx: Tx, org: string, appointmentId: string): Promise<boolean> {
-  const [hit] = await tx
-    .select({ id: invoiceLines.id })
+  return (await billedIdsInTx(tx, org, [appointmentId])).size > 0;
+}
+
+/** Welche der Termine stehen auf einem ausgestellten Beleg (gleiche Regel wie isAppointmentBilled)? */
+async function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
+  if (!appointmentIds.length) return new Set();
+  const rows = await tx
+    .selectDistinct({ id: invoiceLines.appointmentId })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
     .where(
       and(
         eq(invoiceLines.organizationId, org),
-        eq(invoiceLines.appointmentId, appointmentId),
+        inArray(invoiceLines.appointmentId, appointmentIds),
         ne(invoices.status, "cancelled"),
         ne(invoices.status, "draft"),
         ne(invoices.kind, "credit_note"),
       ),
-    )
-    .limit(1);
-  return !!hit;
+    );
+  return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
 }
 
-export type RescheduleInput = { startsAt: Date; durationMin: number; therapistId: string; allowConflict: boolean };
+/** Kalender (vollständige Ansicht): abgerechnete Termine – dort gibt es keinen Griff zum Verschieben. */
+export async function billedAppointmentIds(auth: AuthContext, appointmentIds: string[]): Promise<Set<string>> {
+  assertCan(auth, "appointments.read");
+  const org = auth.organization.id;
+  const ids = appointmentIds.filter((id) => z.uuid().safeParse(id).success);
+  if (!ids.length) return new Set();
+  return withOrg(org, (tx) => billedIdsInTx(tx, org, ids));
+}
+
+export type RescheduleInput = {
+  startsAt: Date;
+  durationMin: number;
+  therapistId: string;
+  allowConflict: boolean;
+  /** Kalender (Ziehen/Rückgängig): erledigte, nicht erschienene und Termine ohne Behandler:in sperren */
+  forDrag?: boolean;
+  /** Optimistische Versionsprüfung: so sah der Termin beim Ziehen aus – sonst „zwischenzeitlich geändert“ */
+  expected?: { startsAt: Date; durationMin: number; therapistId: string | null };
+};
+
+/** Zulässiger Zeitraum für Termine beim Verschieben (heute ±5 Jahre) – fängt Tippfehler wie 2052 statt 2025 ab */
+export const RESCHEDULE_YEARS = 5;
+export const STALE_APPOINTMENT_MSG = "Termin wurde zwischenzeitlich geändert – bitte neu laden.";
 export type RescheduleResult = { ok: true } | { ok: false; conflict?: true; error: string };
 
 /**
@@ -266,11 +308,24 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
   if (!z.uuid().safeParse(id).success) return { ok: false, error: "Termin nicht gefunden." };
   if (Number.isNaN(input.startsAt.getTime())) return { ok: false, error: "Datum/Uhrzeit ungültig." };
   if (!Number.isInteger(input.durationMin) || input.durationMin < 5 || input.durationMin > 480) return { ok: false, error: "Dauer muss zwischen 5 und 480 Minuten liegen." };
+  const now = new Date();
+  const lo = new Date(now), hi = new Date(now);
+  lo.setUTCFullYear(lo.getUTCFullYear() - RESCHEDULE_YEARS);
+  hi.setUTCFullYear(hi.getUTCFullYear() + RESCHEDULE_YEARS);
+  if (input.startsAt < lo || input.startsAt > hi) return { ok: false, error: `Datum muss innerhalb von ${RESCHEDULE_YEARS} Jahren vor oder nach heute liegen.` };
   const end = new Date(input.startsAt.getTime() + input.durationMin * 60_000);
   const result = await withOrg(org, async (tx): Promise<RescheduleResult & { before?: { startsAt: Date; endsAt: Date; therapistId: string | null } }> => {
     await lockBooking(tx, org);
     const [a] = await tx.select().from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
     if (!a) return { ok: false, error: "Termin nicht gefunden." };
+    const ex = input.expected;
+    if (ex && (a.startsAt.getTime() !== ex.startsAt.getTime() || durationMinutes(a.startsAt, a.endsAt) !== ex.durationMin || a.therapistId !== ex.therapistId)) {
+      return { ok: false, error: STALE_APPOINTMENT_MSG };
+    }
+    if (input.forDrag) {
+      if (a.status === "done" || a.status === "no_show") return { ok: false, error: "Erledigte bzw. nicht erschienene Termine werden nicht per Ziehen verschoben." };
+      if (!a.therapistId) return { ok: false, error: "Termin ohne Behandler:in – bitte über „Datum und Uhrzeit ändern“ zuordnen." };
+    }
     const [feed] = await tx
       .select({ id: calendarFeedEvents.id })
       .from(calendarFeedEvents)
@@ -284,7 +339,8 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, [berlinParts(input.startsAt).dateIso]);
-      if (clash.length || absentDays.length) return { ok: false, conflict: true, error: conflictMessage({ clashes: clash, absentDays }) };
+      const blocks = await blockClashesInTx(tx, org, input.therapistId, [{ start: input.startsAt, end }]);
+      if (clash.length || absentDays.length || blocks.length) return { ok: false, conflict: true, error: conflictMessage({ clashes: clash, absentDays, blocks }) };
     }
     await tx
       .update(appointments)
@@ -302,10 +358,47 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     meta: {
       from: result.before?.startsAt.toISOString(),
       to: input.startsAt.toISOString(),
+      fromDurationMin: result.before ? durationMinutes(result.before.startsAt, result.before.endsAt) : undefined,
       durationMin: input.durationMin,
+      fromTherapistId: result.before?.therapistId ?? null,
+      toTherapistId: input.therapistId,
       therapistChanged: result.before?.therapistId !== input.therapistId,
       allowConflict: input.allowConflict,
+      ...(input.forDrag ? { via: "kalender-ziehen" } : {}),
     },
   });
   return { ok: true };
+}
+
+const moveSchema = z.object({
+  id: z.uuid(),
+  startsAt: z.iso.datetime(),
+  durationMin: z.number().int(),
+  therapistId: z.uuid(),
+  allowConflict: z.boolean().default(false),
+  /** Stand beim Ziehen (Versionsprüfung) */
+  expectedStartsAt: z.iso.datetime(),
+  expectedDurationMin: z.number().int(),
+  expectedTherapistId: z.uuid(),
+});
+export type MoveInput = z.input<typeof moveSchema>;
+
+/**
+ * Kalender: Termin per Ziehen verschieben (und „Rückgängig“). Nur Eingabeprüfung – die eigentliche Logik
+ * (Buchungssperre, Überschneidung/Abwesenheit mit allowConflict, Sperren für Doctolib/Kalender-Abo/abgerechnet/abgesagt,
+ * verstorben, Protokoll) ist dieselbe wie beim Formular: rescheduleAppointment.
+ */
+export async function moveAppointment(auth: AuthContext, raw: unknown): Promise<RescheduleResult> {
+  assertCan(auth, "appointments.write");
+  const p = moveSchema.safeParse(raw);
+  if (!p.success) return { ok: false, error: "Termin konnte nicht verschoben werden (ungültige Angaben)." };
+  const d = p.data;
+  return rescheduleAppointment(auth, d.id, {
+    startsAt: new Date(d.startsAt),
+    durationMin: d.durationMin,
+    therapistId: d.therapistId,
+    allowConflict: d.allowConflict,
+    forDrag: true,
+    expected: { startsAt: new Date(d.expectedStartsAt), durationMin: d.expectedDurationMin, therapistId: d.expectedTherapistId },
+  });
 }

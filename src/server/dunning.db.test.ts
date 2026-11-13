@@ -1,7 +1,7 @@
 /** Mahnwesen gegen eine echte DB (RLS aktiv, App-Rolle, erfundene Daten). */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { berlinDay, fixtures, TEST_DB, useTestClock } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("Mahnwesen (DB)", () => {
   const f = fixtures(TEST_DB!);
@@ -16,9 +16,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     return f.asOrg(org, async (c) => {
       const id = (await c.query("insert into invoices (organization_id, patient_id, status, kind) values ($1,$2,'draft',$3) returning id", [org, pid, patch.kind ?? "invoice"])).rows[0].id as string;
       await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Podologische Behandlung',6500,6500,0,1)", [org, id]);
+      // Stichtag ist der Berliner Kalendertag wie im Code – nicht SQL current_date (Zeitzone der DB-Sitzung)
       await c.query(
-        "update invoices set status = $2, number = $3, issued_at = current_date - $4::int - 14, due_at = current_date - $4::int, total_cents = 6500, net_cents = 6500, paid_cents = $5 where id = $1",
-        [id, patch.status ?? "issued", `M${Math.random().toString(36).slice(2, 10)}`, overdueDays, patch.paidCents ?? 0],
+        "update invoices set status = $2, number = $3, issued_at = $6::date - $4::int - 14, due_at = $6::date - $4::int, total_cents = 6500, net_cents = 6500, paid_cents = $5 where id = $1",
+        [id, patch.status ?? "issued", `M${Math.random().toString(36).slice(2, 10)}`, overdueDays, patch.paidCents ?? 0, berlinDay()],
       );
       return id;
     });
@@ -27,6 +28,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     f.asOrg(org, async (c) => (await c.query("select * from invoice_dunnings where invoice_id = $1 order by created_at", [invoiceId])).rows);
 
   beforeAll(async () => {
+    useTestClock();
     process.env.DATABASE_URL = TEST_DB;
     dunning = await import("./dunning");
     orgA = await f.org({ settings: { dunning: { payDays: 10, stages: { dunning1: { days: 14, feeCents: 250 } } } } });
@@ -63,7 +65,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // DB-Schutz zusätzlich zur App-Prüfung: keine Mahnung zu Quittung oder bezahlter Rechnung
     for (const inv of [receipt, paid]) {
       await expect(
-        f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+        f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',$3::date,$3::date+10,6500,'x','{}')", [orgA, inv, berlinDay()])),
       ).rejects.toThrow(/nicht gemahnt|Nur offene Rechnungen/);
     }
   });
@@ -120,22 +122,22 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // Vorstufe ohne Versandvermerk → DB lehnt die nächste Stufe ab
     const unsentInv = await overdue(orgA, 40);
     await f.asOrg(orgA, (c) =>
-      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date-20,current_date-10,6500,'alt','{}')", [orgA, unsentInv]),
+      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',$3::date-20,$3::date-10,6500,'alt','{}')", [orgA, unsentInv, berlinDay()]),
     );
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, unsentInv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',$3::date,$3::date+10,6500,'x','{}')", [orgA, unsentInv, berlinDay()])),
     ).rejects.toThrow(/noch nicht versendet/);
     // Mahnstufe überspringen geht auch direkt in der DB nicht
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',$3::date,$3::date+10,6500,'x','{}')", [orgA, inv, berlinDay()])),
     ).rejects.toThrow(/der Reihe nach/);
     // Gebühr für die Zahlungserinnerung ist ausgeschlossen
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, fee_cents, fees_total_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,100,100,'x','{}')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, fee_cents, fees_total_cents, body, letterhead) values ($1,$2,'reminder',$3::date,$3::date+10,6500,100,100,'x','{}')", [orgA, inv, berlinDay()])),
     ).rejects.toThrow(/amounts_check/);
     // Zahlungserinnerung vor 20 Tagen (Altbestand)
     await f.asOrg(orgA, (c) =>
-      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead, sent_via, sent_at) values ($1,$2,'reminder',current_date-20,current_date-10,6500,'alt','{}','post',now() - interval '20 days')", [orgA, inv]),
+      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead, sent_via, sent_at) values ($1,$2,'reminder',$3::date-20,$3::date-10,6500,'alt','{}','post',now() - interval '20 days')", [orgA, inv, berlinDay()]),
     );
     const before = await f.asOrg(orgA, async (c) => (await c.query("select total_cents, net_cents, vat_cents, paid_cents, status from invoices where id = $1", [inv])).rows[0]);
     const r = await dunning.createDunnings(authFor(orgA), [inv]);
@@ -148,20 +150,20 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(after).toEqual(before);
     // eindeutig je Stufe
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',$3::date,$3::date+10,6500,'x','{}')", [orgA, inv, berlinDay()])),
     ).rejects.toThrow(/invoice_dunnings_invoice_stage/);
   });
 
   it("nächste Stufe erst nach Ablauf der Frist des vorigen Schreibens (App und DB)", async () => {
     const inv = await overdue(orgA, 60);
     await f.asOrg(orgA, (c) =>
-      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead, sent_via, sent_at) values ($1,$2,'reminder',current_date-20,current_date,6500,'alt','{}','post',now() - interval '20 days')", [orgA, inv]),
+      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead, sent_via, sent_at) values ($1,$2,'reminder',$3::date-20,$3::date,6500,'alt','{}','post',now() - interval '20 days')", [orgA, inv, berlinDay()]),
     );
     const r = await dunning.createDunnings(authFor(orgA), [inv]);
     expect(r.created).toHaveLength(0);
     expect(r.skipped[0].reason).toMatch(/1\. Mahnung ist erst ab/);
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',$3::date,$3::date+10,6500,'x','{}')", [orgA, inv, berlinDay()])),
     ).rejects.toThrow(/Zahlungsfrist des vorigen Schreibens läuft noch/);
   });
 
@@ -209,10 +211,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(viaApp.created).toHaveLength(0);
     expect(viaApp.skipped[0].reason).toMatch(/nicht gefunden/);
     await expect(
-      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgB, inv])),
+      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',$3::date,$3::date+10,6500,'x','{}')", [orgB, inv, berlinDay()])),
     ).rejects.toThrow(/nicht gefunden/);
     await expect(
-      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',$3::date,$3::date+10,6500,'x','{}')", [orgA, inv, berlinDay()])),
     ).rejects.toThrow();
     await expect(dunning.markDunningPosted(authFor(orgB), id)).rejects.toThrow(/nicht gefunden/);
     expect(await dunning.invoiceDunningList(authFor(orgB), inv)).toEqual([]);
