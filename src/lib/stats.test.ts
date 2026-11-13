@@ -22,11 +22,12 @@ import {
 describe("resolvePeriod", () => {
   const today = "2026-11-13";
   it("feste Zeiträume", () => {
-    expect(resolvePeriod({ zeitraum: "monat" }, today)).toMatchObject({ from: "2026-11-01", to: "2026-11-30", label: "November 2026", days: 30 });
+    expect(resolvePeriod({ zeitraum: "monat" }, today)).toMatchObject({ from: "2026-11-01", to: "2026-11-30", until: "2026-11-13", label: "November 2026", days: 13 });
     expect(resolvePeriod({ zeitraum: "vormonat" }, today)).toMatchObject({ from: "2026-10-01", to: "2026-10-31", label: "Oktober 2026" });
     expect(resolvePeriod({ zeitraum: "quartal" }, today)).toMatchObject({ from: "2026-10-01", to: "2026-12-31", label: "4. Quartal 2026" });
     expect(resolvePeriod({ zeitraum: "vorquartal" }, today)).toMatchObject({ from: "2026-07-01", to: "2026-09-30", label: "3. Quartal 2026" });
-    expect(resolvePeriod({ zeitraum: "jahr" }, today)).toMatchObject({ from: "2026-01-01", to: "2026-12-31", days: 365 });
+    expect(resolvePeriod({ zeitraum: "jahr" }, today)).toMatchObject({ from: "2026-01-01", to: "2026-12-31", until: today, days: 317 });
+    expect(resolvePeriod({ zeitraum: "vorjahr" }, today)).toMatchObject({ until: "2025-12-31", days: 365 });
     expect(resolvePeriod({ zeitraum: "vorjahr" }, today)).toMatchObject({ from: "2025-01-01", to: "2025-12-31" });
     expect(resolvePeriod({ zeitraum: "12monate" }, today)).toMatchObject({ from: "2025-12-01", to: "2026-11-30" });
   });
@@ -40,11 +41,27 @@ describe("resolvePeriod", () => {
     expect(resolvePeriod({ zeitraum: "frei", von: "2026-03-31", bis: "2026-03-01" }, today)).toMatchObject({ from: "2026-03-01", to: "2026-03-31" });
     const long = resolvePeriod({ zeitraum: "frei", von: "2000-01-01", bis: "2026-01-01" }, today);
     expect(long.days).toBe(MAX_PERIOD_DAYS);
+    expect(long.until).toBe("2026-01-01");
     expect(long.to).toBe("2026-01-01");
     expect(resolvePeriod({ zeitraum: "frei", von: "2026-02-30", bis: "2026-03-01" }, today).preset).toBe("12monate");
     expect(resolvePeriod({ zeitraum: "frei", von: ["x"], bis: "2026-03-01" }, today).preset).toBe("12monate");
     expect(resolvePeriod({ zeitraum: "__proto__" }, today).preset).toBe("12monate");
     expect(resolvePeriod({}, today).preset).toBe("12monate");
+  });
+  it("laufende Zeiträume: Nenner nur bis heute (Monat/Quartal/Jahr/12 Monate), künftige Zeiträume 0 Tage", () => {
+    for (const z of ["monat", "quartal", "jahr", "12monate"]) {
+      const p = resolvePeriod({ zeitraum: z }, today);
+      expect(p.until).toBe(today);
+      expect(p.days).toBe(daysInclusive(p.from, today));
+      // Ø je Wochentag: Freitag 13.11. zählt mit, Sa 14.11.–So 30.11. nicht
+      expect(weekdayOccurrences(p.from, p.until).reduce((a, b) => a + b, 0)).toBe(p.days);
+    }
+    expect(weekdayOccurrences("2026-11-01", resolvePeriod({ zeitraum: "monat" }, today).until)).toEqual([2, 2, 2, 2, 2, 1, 2]);
+    const future = resolvePeriod({ zeitraum: "frei", von: "2027-01-01", bis: "2027-01-31" }, today);
+    expect(future.days).toBe(0);
+    expect(stockCoverage(10, 5, future.days)).toEqual({ coverageDays: null, turnoverPerYear: null });
+    // Reichweite: 13 Tage Abgang im laufenden Monat statt 30
+    expect(stockCoverage(26, 13, resolvePeriod({ zeitraum: "monat" }, today).days)).toEqual({ coverageDays: 26, turnoverPerYear: 14 });
   });
   it("Suchparameter für Links", () => {
     expect(periodQuery(resolvePeriod({ zeitraum: "jahr" }, today))).toEqual({ zeitraum: "jahr" });

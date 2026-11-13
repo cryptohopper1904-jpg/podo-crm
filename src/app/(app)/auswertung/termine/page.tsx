@@ -220,13 +220,15 @@ export default async function StatsAppointmentsPage(props: PageProps<"/auswertun
                 <dd className="text-right tabular-nums">{num(s.booked - s.done - s.noShow)}</dd>
                 <dt className="mt-2 border-t border-border pt-2">Patient:innen mit Termin</dt>
                 <dd className="mt-2 border-t border-border pt-2 text-right tabular-nums">{num(s.patients.total)}</dd>
-                <dt>davon neu (erster Termin/erste Behandlung im Zeitraum)</dt>
+                <dt>davon neu (erster Termin/erste Behandlung der ganzen Praxis im Zeitraum)</dt>
                 <dd className="text-right tabular-nums">{num(s.patients.new)}</dd>
                 <dt>wiederkehrend</dt>
                 <dd className="text-right tabular-nums">{num(s.patients.returning)}</dd>
               </dl>
               <p className="mt-3 text-sm text-muted">
-                Absagequote = abgesagt ÷ alle gebuchten Termine. No-Show-Quote = nicht erschienen ÷ (erledigt + nicht erschienen). Nur Anzahlen – keine Namen.
+                Absagequote = abgesagt ÷ alle gebuchten Termine. No-Show-Quote = nicht erschienen ÷ (erledigt + nicht erschienen). „Neu“ bezieht sich
+                auf die ganze Praxis (auch beim Filter nach Behandler:in): erster nicht abgesagter Termin – auch ein nicht wahrgenommener – oder erste
+                Behandlung liegt im Zeitraum. Nur Anzahlen – keine Namen.
               </p>
             </Card>
           </div>

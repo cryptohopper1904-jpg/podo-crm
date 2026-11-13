@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { dateDe } from "@/lib/format";
 import { PERIOD_LABELS, PERIOD_PRESETS, type Period } from "@/lib/stats";
 import { PeriodSelect } from "./period-select";
 
@@ -76,8 +77,12 @@ export function StatsFilter({
       <button type="submit" className="inline-flex h-11 items-center rounded-xl bg-primary px-4 text-[15px] font-semibold text-on-primary hover:bg-primary-hover">
         Anzeigen
       </button>
+      <p id="period-free-hint" className="basis-full text-xs text-muted">
+        Von und Bis gelten bei „Frei wählen“ – eine Datumsänderung wählt das automatisch.
+      </p>
       <p className="basis-full text-sm text-muted" aria-live="polite">
         Zeitraum: <strong className="text-text">{period.label}</strong>
+        {period.until < period.to ? ` · ausgewertet bis heute (${dateDe(`${period.until}T12:00:00Z`)}), Durchschnitte und Reichweite auf die bisherigen Tage bezogen` : null}
       </p>
     </form>
   );

@@ -26,8 +26,13 @@ export const DEFAULT_PRESET: PeriodPreset = "12monate";
 /** Längster frei wählbarer Zeitraum (Performance, sinnvolle Aussagen) */
 export const MAX_PERIOD_DAYS = 5 * 366;
 
-/** Zeitraum mit Datumsgrenzen in Berliner Ortszeit; `to` ist einschließlich. */
-export type Period = { preset: PeriodPreset; from: string; to: string; label: string; days: number };
+/**
+ * Zeitraum mit Datumsgrenzen in Berliner Ortszeit; `to` ist einschließlich.
+ * Laufende Zeiträume (dieser Monat/dieses Quartal/…) werden nur bis heute ausgewertet: `until` = min(to, heute),
+ * `days` = Kalendertage von `from` bis `until` (0, wenn der Zeitraum noch nicht begonnen hat). Alle Nenner
+ * (Ø je Wochentag, Reichweite) und alle Abfragen nutzen `until` – künftige Termine verzerren sonst Vorlauf und Durchschnitte.
+ */
+export type Period = { preset: PeriodPreset; from: string; to: string; until: string; label: string; days: number };
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const isoOf = (y: number, m: number, d: number) => {
@@ -63,7 +68,10 @@ export function resolvePeriod(sp: { zeitraum?: unknown; von?: unknown; bis?: unk
   const preset: PeriodPreset = (PERIOD_PRESETS as readonly string[]).includes(raw) ? (raw as PeriodPreset) : DEFAULT_PRESET;
   const [y, m] = partsOf(today);
   const q = Math.floor((m - 1) / 3); // 0..3
-  const make = (p: PeriodPreset, from: string, to: string, label: string): Period => ({ preset: p, from, to, label, days: daysInclusive(from, to) });
+  const make = (p: PeriodPreset, from: string, to: string, label: string): Period => {
+    const until = to < today ? to : today;
+    return { preset: p, from, to, until, label, days: daysInclusive(from, until) };
+  };
   switch (preset) {
     case "monat":
       return make(preset, isoOf(y, m, 1), isoOf(y, m + 1, 0), `${monthName(m)} ${y}`);

@@ -27,9 +27,9 @@ const nn = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 const ONLINE = sql.raw(ONLINE_SOURCES.map((s) => `'${s}'`).join(", "));
 const LEAD_EXCLUDED = sql.raw(LEAD_EXCLUDED_SOURCES.map((s) => `'${s}'`).join(", "));
 
-/** UTC-Grenzen eines Zeitraums: [from 00:00 Berlin, Tag nach to 00:00 Berlin) */
-export function periodBounds(p: Pick<Period, "from" | "to">) {
-  return { fromTs: berlinToUtc(p.from, "00:00"), toTs: berlinToUtc(addDaysIso(p.to, 1), "00:00") };
+/** UTC-Grenzen eines Zeitraums bis heute: [from 00:00 Berlin, Tag nach `until` 00:00 Berlin) */
+export function periodBounds(p: Pick<Period, "from" | "until">) {
+  return { fromTs: berlinToUtc(p.from, "00:00"), toTs: berlinToUtc(addDaysIso(p.until, 1), "00:00") };
 }
 
 /** Wählbare Behandler:innen für den Filter: aktive Kalender-Mitglieder und alle, denen je ein Termin zugeordnet war */
@@ -153,7 +153,7 @@ export async function appointmentStats(auth: AuthContext, period: Period, therap
       slots,
       weekdayCounts,
       weekdayLead,
-      weekdayOccurrences: weekdayOccurrences(period.from, period.to),
+      weekdayOccurrences: weekdayOccurrences(period.from, period.until),
       leadMedian,
       leadCount,
       topDates,
@@ -174,7 +174,7 @@ export type SalesStats = Awaited<ReturnType<typeof salesStats>>;
 export async function salesStats(auth: AuthContext, period: Period) {
   const org = auth.organization.id;
   const { fromTs, toTs } = periodBounds(period);
-  const issued = sql`i.issued_at >= ${period.from} and i.issued_at <= ${period.to}`;
+  const issued = sql`i.issued_at >= ${period.from} and i.issued_at <= ${period.until}`;
 
   return withOrg(org, async (tx) => {
     const billed = (
@@ -212,7 +212,7 @@ export async function salesStats(auth: AuthContext, period: Period) {
 
     const products = (
       await tx.execute<{ name: string; sold_qty: number; sold_total: number; used_qty: number; used_total: number }>(sql`
-        select coalesce(pr.name, min(l.description)) as name,
+        select coalesce(pr.name, 'Freitext / sonstige') as name,
                coalesce(sum(l.quantity) filter (where not l.in_treatment), 0)::float as sold_qty,
                coalesce(sum(l.total_cents) filter (where not l.in_treatment), 0)::bigint as sold_total,
                coalesce(sum(l.quantity) filter (where l.in_treatment), 0)::float as used_qty,
@@ -235,7 +235,7 @@ export async function salesStats(auth: AuthContext, period: Period) {
                coalesce((select -sum(m.quantity) from stock_movements m
                           where m.organization_id = ${org} and m.product_id = pr.id
                             and m.kind in ('sale', 'storno', 'own_use', 'breakage')
-                            and m.occurred_on >= ${period.from} and m.occurred_on <= ${period.to}), 0)::int as outflow
+                            and m.occurred_on >= ${period.from} and m.occurred_on <= ${period.until}), 0)::int as outflow
         from products pr
         where pr.organization_id = ${org} and pr.track_stock and pr.active
         order by pr.name`)
@@ -255,7 +255,7 @@ export async function salesStats(auth: AuthContext, period: Period) {
         group by 1, 2`)
     ).rows;
     const revenueWeekdays = [0, 0, 0, 0, 0, 0, 0];
-    const months = monthsOf(period);
+    const months = monthsOf({ from: period.from, to: period.until });
     const revenueMonths = months.map(() => 0);
     for (const r of revRows) {
       revenueWeekdays[n(r.isodow) - 1] += n(r.v);
@@ -271,7 +271,7 @@ export async function salesStats(auth: AuthContext, period: Period) {
       revenueWeekdays,
       months,
       revenueMonths,
-      weekdayOccurrences: weekdayOccurrences(period.from, period.to),
+      weekdayOccurrences: weekdayOccurrences(period.from, period.until),
     };
   });
 }

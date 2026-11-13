@@ -169,7 +169,10 @@ export function parseMarkdown(src: string): Block[] {
     }
     const h = /^(#{1,4})\s+(.*?)\s*#*\s*$/.exec(line);
     if (h) {
-      blocks.push({ type: "heading", level: h[1].length as 1 | 2 | 3 | 4, id: uniqueId(h[2]), children: parseInline(h[2]) });
+      // Fester Anker per „## Titel {#anker}“ (z. B. /datenschutz#vertrieb aus Vertriebsmails)
+      const fixed = /^(.*?)\s*\{#([a-z][a-z0-9-]{0,40})\}$/.exec(h[2]);
+      const text = fixed ? fixed[1] : h[2];
+      blocks.push({ type: "heading", level: h[1].length as 1 | 2 | 3 | 4, id: fixed ? uniqueId(fixed[2]) : uniqueId(text), children: parseInline(text) });
       i++;
       continue;
     }

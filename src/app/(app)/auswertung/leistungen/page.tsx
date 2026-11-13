@@ -44,7 +44,7 @@ export default async function StatsSalesPage(props: PageProps<"/auswertung/leist
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Umsatz (Zahlungseingang)" value={money(s.revenueTotal)} tone="primary" sub="wie unter „Finanzen“ (Zuflussprinzip)" />
-        <Stat label="Leistungen abgerechnet" value={money(serviceCents)} tone="info" sub={`${num(s.services.reduce((sum, x) => sum + x.quantity, 0), 1)} Positionen`} />
+        <Stat label="Leistungen abgerechnet" value={money(serviceCents)} tone="info" sub={`${num(s.services.reduce((sum, x) => sum + x.quantity, 0), 1)} Stück`} />
         <Stat label="Produkte abgerechnet" value={money(productCents)} tone="neutral" sub={`${num(sold.length)} verkauft · ${num(used.length)} angewendet (Artikel)`} />
         <Stat
           label="Nachbestellen"

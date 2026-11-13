@@ -278,8 +278,43 @@
     {
       "idx": 39,
       "version": "7",
-      "when": 1794605320509,
-      "tag": "0039_auswertung_indizes",
+      "when": 1794604944900,
+      "tag": "0039_aktionscodes",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794604952533,
+      "tag": "0040_aktionscodes_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794604953899,
+      "tag": "0041_aktionscodes_einwilligung",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794604955440,
+      "tag": "0042_sperrliste_pruefwert",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794605475781,
+      "tag": "0043_sperrliste_schluessel_fix",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794606461822,
+      "tag": "0045_auswertung_indizes",
       "breakpoints": true
     }
   ]

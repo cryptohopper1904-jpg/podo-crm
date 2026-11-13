@@ -7,7 +7,7 @@ import { STATES } from "@/lib/holidays";
 import { LEGAL_VERSIONS } from "@/lib/legal";
 import { setupAction } from "../actions";
 
-export function SetupForm({ needsToken = false, saas = false }: { needsToken?: boolean; saas?: boolean }) {
+export function SetupForm({ needsToken = false, saas = false, code = "", trialText = null }: { needsToken?: boolean; saas?: boolean; code?: string; trialText?: string | null }) {
   const [state, action, pending] = useActionState(setupAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
@@ -27,7 +27,7 @@ export function SetupForm({ needsToken = false, saas = false }: { needsToken?: b
           ))}
         </Select>
       </Field>
-      <Field label="Dein Name">
+      <Field label="Ihr Name">
         <Input name="name" required autoComplete="name" />
       </Field>
       <Field label="E-Mail">
@@ -43,6 +43,9 @@ export function SetupForm({ needsToken = false, saas = false }: { needsToken?: b
       />
       {saas ? (
         <>
+          <Field label="Aktionscode (optional)" hint="Falls Sie einen Code für eine längere Testphase erhalten haben.">
+            <Input name="code" defaultValue={code} maxLength={32} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
+          </Field>
           <Checkbox
             name="agb"
             required
@@ -53,7 +56,7 @@ export function SetupForm({ needsToken = false, saas = false }: { needsToken?: b
             required
             label={<>Ich schließe den <a href="/avv" target="_blank" rel="noreferrer" className="font-semibold text-primary underline">Auftragsverarbeitungsvertrag (AVV)</a> nach Art. 28 DSGVO (Version {LEGAL_VERSIONS.avv}) ab.</>}
           />
-          <p className="text-xs text-muted">30 Tage kostenlos testen, alle Funktionen, keine Zahlungsdaten nötig. Danach Tarif wählen – sonst bleibt die Praxis nur lesbar (Daten bleiben exportierbar).</p>
+          <p className="text-xs text-muted">{trialText ?? "30 Tage kostenlos testen, alle Funktionen"}, keine Zahlungsdaten nötig. Danach einen Tarif buchen oder in den kostenlosen Tarif wechseln (höchstens 20 Patient:innen einschließlich archivierter, 1 Person) – ohne Wahl bleibt die Praxis nur lesbar (Daten bleiben exportierbar).</p>
         </>
       ) : null}
       <Button type="submit" disabled={pending} className="mt-2">

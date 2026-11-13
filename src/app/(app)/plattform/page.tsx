@@ -49,7 +49,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
           </thead>
           <tbody>
             {practices.map((p) => (
-              <tr key={p.id}>
+              <tr key={p.id} id={`praxis-${p.id}`} className="scroll-mt-24 target:bg-primary-soft">
                 <td className="font-semibold">{p.name}{p.demo ? <> <Badge tone="info">Demo</Badge></> : null}</td>
                 <td><p>{isPlanId(p.plan) ? PLANS[p.plan].label : p.plan}</p><Badge tone={p.subscriptionStatus === "active" ? "primary" : p.subscriptionStatus === "trialing" ? "info" : "accent"}>{p.subscriptionStatus}</Badge></td>
                 <td>{dateDe(p.trialEndsAt)}</td>

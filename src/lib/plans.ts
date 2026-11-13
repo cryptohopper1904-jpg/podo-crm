@@ -320,7 +320,9 @@ export function freeSwitchProblem(org: OrgBilling & { stripeSubscriptionId?: str
   if (org.plan === "free") return "Die Praxis nutzt bereits den kostenlosen Tarif.";
   if (org.plan === "internal") return "Interne Praxen brauchen keinen Tarifwechsel.";
   const subscriptionEnded = org.subscriptionStatus === "canceled" || org.subscriptionStatus === "none";
-  if (!subscriptionEnded && (org.stripeSubscriptionId || org.plan !== "trial")) {
+  // Testphase ohne Stripe-Abo (auch mit Aktionscode, der einen Tarif-Umfang gewährt: plan = starter|praxis|plus, „trialing“) zählt nicht als Abo
+  const codeTrial = org.subscriptionStatus === "trialing" && !org.stripeSubscriptionId;
+  if (!subscriptionEnded && !codeTrial && (org.stripeSubscriptionId || org.plan !== "trial")) {
     return "Bitte zuerst das bezahlte Abo unter „Rechnungen & Zahlungsart“ kündigen. Danach kann die Praxis kostenlos weitergeführt werden.";
   }
   if (patientCount > FREE_MAX_PATIENTS) {

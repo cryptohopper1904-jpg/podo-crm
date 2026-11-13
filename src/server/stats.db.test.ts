@@ -191,7 +191,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(s.products).toEqual([{ name: "Fußcreme Urea 10 %", soldQty: 2, soldCents: 3000, usedQty: 1, usedCents: 1500 }]);
     const cream = s.stock.find((x) => x.name === "Fußcreme Urea 10 %")!;
     expect(cream).toMatchObject({ stock: 8, outflow: 2, reorder: false });
-    expect(cream.coverageDays).toBe(Math.floor(8 / (2 / 365)));
+    expect(year.days).toBe(317); // laufendes Jahr: nur bis „heute“ (13.11.)
+    expect(cream.coverageDays).toBe(Math.floor(8 / (2 / year.days)));
     expect(s.stock[0]).toMatchObject({ name: "Hornhautsalbe", stock: 3, reorder: true });
 
     // Umsatz = Zahlungseingänge (keine Doppelzählung durch Anrechnung): 50 + 50 + 20 + 40 + 45 €

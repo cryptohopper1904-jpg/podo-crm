@@ -118,7 +118,12 @@ export function Columns({ items, label, height = "h-44" }: { items: { label: str
   );
 }
 
-const HEAT_CLS = ["bg-surface-2/60 text-muted", "bg-primary/15 text-text", "bg-primary/35 text-text", "bg-primary/70 text-on-primary", "bg-primary text-on-primary"];
+/**
+ * Farbstufen (eine Farbe, hell → dunkel). Kontrast der Zellenschrift (12 px) nach WCAG AA ≥ 4,5:1 in Hell und Dunkel:
+ * Stufe 1–3 Primärfarbe mit 15/30/45 % Deckkraft + Textfarbe (hell ≥ 7,9:1, dunkel ≥ 4,9:1), Stufe 4 volle Primärfarbe
+ * + on-primary (hell 4,9:1, dunkel 7,5:1). Mehr Deckkraft mit Textfarbe fällt im Dunkelmodus unter 4,5:1.
+ */
+const HEAT_CLS = ["bg-surface-2/60 text-muted", "bg-primary/15 text-text", "bg-primary/30 text-text", "bg-primary/45 text-text", "bg-primary text-on-primary"];
 
 /**
  * Heatmap Wochentag × Stunde als echte Tabelle: jede Zelle trägt ihren Wert als Text (barrierearm, druckbar),
