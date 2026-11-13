@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-n",
+    date: "2026-11-13",
+    title: "Empfang belegt keinen bezahlten Platz mehr",
+    audience: "owner",
+    items: [
+      { tag: "verbessert", text: "Personen mit der Rolle Empfang sind in jedem Tarif kostenlos. Einen Platz belegen nur Behandlungsrollen (Inhaber:in, Podolog:innen, Azubis). Empfang kann nicht als Behandler:in eingetragen werden.", href: "/einstellungen/team" },
+      { tag: "verbessert", text: "Preise werden zusätzlich brutto (inkl. 19 % USt.) angezeigt.", href: "/einstellungen/abo" },
+    ],
+  },
+  {
     id: "2026-11-13-m",
     date: "2026-11-13",
     title: "Patient:in als verstorben markieren",

@@ -1,5 +1,5 @@
 {
-  "id": "f6cb8b6b-3c5d-4eaa-9d0b-5f040399a318",
+  "id": "7d51ef92-9ac3-4608-a77a-4f28dab923e5",
   "prevId": "314df696-f47b-4dcb-929c-f285803f4790",
   "version": "7",
   "dialect": "postgresql",
@@ -2552,202 +2552,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.invoice_dunnings": {
-      "name": "invoice_dunnings",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "invoice_id": {
-          "name": "invoice_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "stage": {
-          "name": "stage",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "letter_date": {
-          "name": "letter_date",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "pay_by": {
-          "name": "pay_by",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "open_cents": {
-          "name": "open_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "fee_cents": {
-          "name": "fee_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "fees_total_cents": {
-          "name": "fees_total_cents",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "body": {
-          "name": "body",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "letterhead": {
-          "name": "letterhead",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sent_via": {
-          "name": "sent_via",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "sent_to": {
-          "name": "sent_to",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_by": {
-          "name": "created_by",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "invoice_dunnings_invoice_stage": {
-          "name": "invoice_dunnings_invoice_stage",
-          "columns": [
-            {
-              "expression": "invoice_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "stage",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "invoice_dunnings_org_invoice": {
-          "name": "invoice_dunnings_org_invoice",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "invoice_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "invoice_dunnings_organization_id_organizations_id_fk": {
-          "name": "invoice_dunnings_organization_id_organizations_id_fk",
-          "tableFrom": "invoice_dunnings",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "invoice_dunnings_invoice_id_invoices_id_fk": {
-          "name": "invoice_dunnings_invoice_id_invoices_id_fk",
-          "tableFrom": "invoice_dunnings",
-          "tableTo": "invoices",
-          "columnsFrom": [
-            "invoice_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "invoice_dunnings_created_by_users_id_fk": {
-          "name": "invoice_dunnings_created_by_users_id_fk",
-          "tableFrom": "invoice_dunnings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "created_by"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -6179,6 +5983,12 @@
         },
         "templates": {
           "name": "templates",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lead_search": {
+          "name": "lead_search",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false

@@ -901,7 +901,7 @@ export const invoiceLines = pgTable(
 
 /**
  * Mahnwesen: Zahlungserinnerung / 1. Mahnung / 2. Mahnung zu einer Rechnung (src/lib/dunning.ts).
- * Unveränderbar (Trigger, drizzle/0033): nur der Versandvermerk (sent_*) darf genau einmal gesetzt werden.
+ * Unveränderbar (Trigger, drizzle/0034): nur der Versandvermerk (sent_*) darf genau einmal gesetzt werden.
  * Die Mahngebühr gehört NICHT zur Rechnung (GoBD) – sie steht nur hier und im Schreiben.
  * Das PDF wird bei Bedarf aus den gespeicherten Werten erzeugt (Text, Beträge, Fristen, Briefkopf sind eingefroren;
  * nur die Logos werden aktuell geladen).
@@ -1543,6 +1543,12 @@ export const salesSuppressions = pgTable("sales_suppressions", {
 
 export type SalesTemplate = { subject: string; body: string };
 
+/**
+ * Nächtliche Praxissuche (OpenStreetMap, Ring um den Startort): Einstellungen + Fortschritt in einer jsonb-Spalte.
+ * Struktur und Prüfung in src/lib/vertrieb/lead-search.ts (normalizeLeadSearch). Enthält nur Einstellungen, Zähler und Lead-IDs (Anreicherung), keine Lead-Inhalte.
+ */
+export type SalesLeadSearch = Record<string, unknown>;
+
 /** Einstellungen des Vertriebs (genau eine Zeile, id = 1): Absender, Impressum, Vorlagen, Abstände. */
 export const salesSettings = pgTable("sales_settings", {
   id: smallint("id").primaryKey().default(1),
@@ -1553,6 +1559,7 @@ export const salesSettings = pgTable("sales_settings", {
   delay2Days: smallint("delay2_days").notNull().default(5),
   delay3Days: smallint("delay3_days").notNull().default(10),
   templates: jsonb("templates").$type<SalesTemplate[]>(),
+  leadSearch: jsonb("lead_search").$type<SalesLeadSearch>(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: updatedAt(),
 });

@@ -1,8 +1,13 @@
+import { ActionForm } from "@/components/action-form";
 import { Card, LinkButton } from "@/components/ui";
+import { dateTimeDe } from "@/lib/format";
 import { describeMailSettings, resolveMailSettings } from "@/integrations/mail/mail";
 import { LEAD_STATUSES, MAX_PER_CLICK, MAX_PER_DAY, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
 import { requirePlatformAdmin } from "@/server/platform";
+import { isRunning } from "@/lib/vertrieb/lead-search";
+import { getLeadSearch, NAMED_NOTE } from "@/server/lead-search";
 import { getSalesSettings, listLeads, sendStats, settingsProblems, statusCounts } from "@/server/vertrieb";
+import { runLeadSearchAction } from "./actions";
 import { LeadTable } from "./lead-table";
 
 export const metadata = { title: "Vertrieb" };
@@ -12,7 +17,17 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
   const sp = await searchParams;
   const status = typeof sp.status === "string" && isLeadStatus(sp.status) ? sp.status : null;
   const q = typeof sp.q === "string" ? sp.q.slice(0, 100) : "";
-  const [leads, counts, stats, settings] = await Promise.all([listLeads({ status, q }), statusCounts(), sendStats(), getSalesSettings()]);
+  const [leads, counts, stats, settings, ls] = await Promise.all([listLeads({ status, q }), statusCounts(), sendStats(), getSalesSettings(), getLeadSearch()]);
+  const run = ls.lastRun;
+  const searchLine = !ls.center
+    ? "Praxissuche: kein Startort hinterlegt (Einstellungen)."
+    : [
+        `Praxissuche nachts: ${ls.enabled ? "an" : "aus"}`,
+        run
+          ? `Letzter Suchlauf: ${dateTimeDe(run.at)}${run.manual ? " (manuell)" : ""}, Ring bis ${run.outerKm} km, ${run.added} neue Praxen (${run.withEmail} mit E-Mail${run.enriched ? `, ${run.enriched} nachträglich ergänzt` : ""})${run.error ? ` – Fehler: ${run.error}` : ""}`
+          : "noch kein Suchlauf",
+        isRunning(ls) ? "Suche läuft gerade …" : ls.doneKm >= ls.maxKm ? `Höchstradius ${ls.maxKm} km erreicht` : `nächster Ring: ${ls.doneKm}–${Math.min(ls.doneKm + ls.ringKm, ls.maxKm)} km`,
+      ].join(" · ");
   const problems = settingsProblems(settings);
   const mail = describeMailSettings(resolveMailSettings({ connection: null, env: process.env, practice: { name: "PodoHero", email: null }, platform: true }));
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -46,6 +61,10 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           Versand: {mail} · In den letzten 24 Stunden gesendet: <strong className="tabular-nums">{stats.sentLast24h}</strong> von {MAX_PER_DAY} · höchstens {MAX_PER_CLICK} je Klick.
           Abstände: Mail 2 nach {settings.delays.delay2Days} Tagen, Mail 3 nach weiteren {settings.delays.delay3Days} Tagen. Es wird nie automatisch gesendet.
         </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
+          <p className="flex-1">{searchLine}</p>
+          <ActionForm action={runLeadSearchAction} submit="Jetzt suchen" className="flex items-center gap-2">{null}</ActionForm>
+        </div>
         {problems.length ? (
           <div role="alert" className="mt-3 rounded-xl bg-accent-soft px-4 py-3 text-accent-soft-text">
             <p className="font-semibold">Vor dem ersten Versand ergänzen (Einstellungen):</p>
@@ -66,6 +85,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           step: l.step,
           lastSentAt: l.lastSentAt?.toISOString() ?? null,
           suppressed: l.suppressed,
+          named: !!l.notes?.startsWith(NAMED_NOTE),
         }))}
       />
     </div>
