@@ -63,6 +63,7 @@ export function InvoiceForm({
   billingContacts,
   smallBusiness,
   defaultDueDays = 14,
+  therapeuticDefault = false,
   today,
   preselectPatientId,
   preset,
@@ -76,6 +77,8 @@ export function InvoiceForm({
   smallBusiness: boolean;
   /** Standard-Zahlungsziel der Praxis (Einstellungen → Praxisdaten → Belege), 0 = sofort */
   defaultDueDays?: number;
+  /** Praxis hat den USt-Wächter dauerhaft bestätigt (Einstellungen → Belege) – Haken vorbelegt, abwählbar */
+  therapeuticDefault?: boolean;
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
@@ -111,7 +114,8 @@ export function InvoiceForm({
       : [newLine()],
   );
   const [payments, setPayments] = useState<PaymentRow[]>([]);
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmed, setConfirmed] = useState(therapeuticDefault);
+  const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
   const filteredPatients = useMemo(() => {
     const f = patientFilter.trim().toLowerCase();
@@ -447,7 +451,15 @@ export function InvoiceForm({
         {smallBusiness ? <p className="mt-3 text-sm text-muted">{NOTE_SMALL_BUSINESS}</p> : null}
       </Card>
 
-      {needsConfirm ? (
+      {needsConfirm && therapeuticDefault && confirmed && !showGuard ? (
+        <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted">
+          <input type="hidden" name="therapeuticConfirmed" value="on" />
+          Heilbehandlung (0 % USt, § 4 Nr. 14 UStG) – laut Praxis-Einstellung bestätigt.
+          <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setShowGuard(true)}>
+            Ändern
+          </button>
+        </p>
+      ) : needsConfirm ? (
         <Card className="border-warn-soft-text/40 bg-warn-soft text-warn-soft-text">
           <div className="flex gap-3">
             <AlertTriangle size={22} className="mt-0.5 shrink-0" aria-hidden />

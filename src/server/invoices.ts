@@ -877,6 +877,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
       defaultDueDays: readDocumentSettings(o.settings as Record<string, unknown> | null).dueDays,
+      therapeuticDefault: readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault,
       today: berlinDateIso(),
       openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
     };

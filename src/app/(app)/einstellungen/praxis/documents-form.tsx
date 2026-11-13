@@ -22,6 +22,16 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
       <Field label="Standard-Zahlungsziel für neue Rechnungen (Tage)" hint="0 = sofort fällig („Zahlbar sofort“). Lässt sich auf jeder Rechnung noch ändern." className="sm:max-w-xs">
         <Input name="dueDays" type="number" inputMode="numeric" min={0} max={120} defaultValue={doc.dueDays} required />
       </Field>
+      <div className="flex flex-col gap-1">
+        <Checkbox
+          name="therapeuticDefault"
+          defaultChecked={doc.therapeuticDefault}
+          label="USt-Wächter dauerhaft bestätigen: Unsere 0-%-Leistungen sind Heilbehandlungen mit therapeutischem Ziel (Befund/Verordnung dokumentiert)"
+        />
+        <p className="ml-8 text-xs text-muted">
+          Dann ist der Haken auf neuen Rechnungen schon gesetzt; bei kosmetischen Leistungen (z. B. Fußpflege ohne Befund) auf der Rechnung abwählen bzw. 19 % wählen. Steuerliche Einordnung bitte mit der Steuerberatung abstimmen.
+        </p>
+      </div>
       <Checkbox name="whatsapp" defaultChecked={doc.whatsapp} label="Telefonnummer ist auch per WhatsApp erreichbar („auch WhatsApp“ im Block Terminvereinbarung)" />
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-sm font-medium">Hinweis + QR-Code „Nächsten Termin online buchen“ auf Rechnungen</legend>
