@@ -47,7 +47,7 @@ export type PlanInfo = {
   description: string;
 };
 
-/** Kostenloser Tarif: dauerhaft gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
+/** Kostenloser Tarif: ohne Zeitlimit gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
 export const FREE_MAX_PATIENTS = 20;
 
 export const PLANS: Record<PlanId, PlanInfo> = {
@@ -70,7 +70,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: [],
     voiceMinutesIncluded: 0,
     maxPatients: FREE_MAX_PATIENTS,
-    description: `Dauerhaft kostenlos: bis zu ${FREE_MAX_PATIENTS} Patient:innen, 1 Person; ohne Patientenportal, KI-Telefon und Website`,
+    description: `Kostenlos ohne Zeitlimit: bis zu ${FREE_MAX_PATIENTS} Patient:innen, 1 Person; ohne Patientenportal, KI-Telefon und Website`,
   },
   starter: {
     label: "Starter",

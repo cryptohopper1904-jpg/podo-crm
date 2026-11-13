@@ -23,6 +23,13 @@
 2. Ein kostenpflichtiger Vertrag kommt zustande, wenn der Kunde einen Tarif bucht und der Anbieter die Buchung bestätigt.
 3. Der Kunde versichert, dass seine Angaben bei der Registrierung richtig und vollständig sind.
 
+## § 3a Kostenloser Tarif
+
+1. Der Anbieter bietet einen unentgeltlichen Tarif „Kostenlos“ an. Umfang und Grenzen (derzeit höchstens 20 Patient:innen einschließlich archivierter, ein Nutzerzugang, ohne Patientenportal, KI-Telefon und Praxis-Website) ergeben sich aus der Leistungsbeschreibung auf der Website.
+2. Der Nutzungsvertrag im kostenlosen Tarif läuft auf unbestimmte Zeit. Beide Parteien können ihn mit einer Frist von drei Monaten zum Monatsende in Textform kündigen. Der Anbieter kann Umfang und Grenzen des kostenlosen Tarifs mit derselben Ankündigungsfrist ändern; der Kunde kann dann in einen kostenpflichtigen Tarif wechseln oder den Vertrag beenden.
+3. Ist die Grenze an Patient:innen erreicht, können keine weiteren Patient:innen angelegt werden. Bestehende Daten bleiben lesbar und exportierbar. Der Wechsel in den kostenlosen Tarif deaktiviert weitere Nutzerzugänge.
+4. Die §§ 5, 7 (einschließlich Auftragsverarbeitung) und 9 gelten auch im kostenlosen Tarif.
+
 ## § 4 Preise und Zahlung
 
 1. Es gelten die bei Vertragsschluss auf der Website angegebenen Preise. Alle Preise verstehen sich **zuzüglich der gesetzlichen Umsatzsteuer**.
@@ -50,7 +57,7 @@
 ## § 8 Laufzeit, Kündigung
 
 1. Kostenpflichtige Verträge laufen auf unbestimmte Zeit und sind monatlich zum Ende des Abrechnungszeitraums kündbar, sofern im Tarif nichts anderes angegeben ist.
-2. Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt.
+2. Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt. Für den kostenlosen Tarif gilt § 3a.
 3. Die Kündigung kann in der Software (Einstellungen → Daten & Kündigung) oder in Textform erfolgen.
 
 ## § 9 Datenexport und Löschung bei Vertragsende

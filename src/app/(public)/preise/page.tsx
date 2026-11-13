@@ -4,21 +4,21 @@ import { ADDONS, PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
 
 export const metadata = {
   title: "Preise",
-  description: "PodoHero-Tarife: 30 Tage kostenlos testen, dauerhaft kostenlos bis 20 Patient:innen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
+  description: "PodoHero-Tarife: 30 Tage kostenlos testen, kostenloser Tarif bis 20 Patient:innen ohne Zeitlimit, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
 };
 
 const INCLUDED = [
   "Patientenakte, Kalender, Behandlungsdoku mit Fotos",
   "Rechnungen, Quittungen, Gutscheine, Auswertungen",
   "Verordnungen mit Export für das Abrechnungszentrum",
-  "Erinnerungen, Patientenportal, Online-Buchung",
-  "Hygiene, Gerätebuch, Pflegeheime, Team",
+  "Erinnerungen per E-Mail/SMS",
+  "Hygiene, Gerätebuch, Pflegeheime",
   "Vollständiger Datenexport jederzeit",
   "Hosting bei Hetzner in Deutschland, tägliche verschlüsselte Datensicherung",
 ];
 
 const FAQ = [
-  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ ist dauerhaft 0 € – für bis zu 20 Patient:innen und eine Person, mit Terminen, Behandlungsdoku, Rechnungen und Kasse. Archivierte Patient:innen zählen mit. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen."],
+  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und hat kein Zeitlimit. Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
   ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 Patient:innen, 1 Person."],
   ["Kann ich monatlich kündigen?", "Ja. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten – Ihre Aufbewahrungspflichten bleiben bestehen."],
   ["Sind Drittanbieter enthalten?", "Nein. Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI-Anbieter rechnen ihre Leistungen selbst mit Ihnen ab."],
@@ -48,7 +48,7 @@ export default function PricingPage() {
               <span className="font-display text-4xl font-bold">{p.price}</span>
               <span className="ml-1 text-muted">{p.period}</span>
             </p>
-            {p.id !== "trial" ? <p className="text-xs text-muted">zzgl. USt.</p> : null}
+            {p.id !== "trial" && p.id !== "free" ? <p className="text-xs text-muted">zzgl. USt.</p> : null}
             <p className="mt-4 font-medium">{p.therapists}</p>
             {p.note ? <p className="mt-1 text-sm text-muted">{p.note}</p> : null}
             <div className="mt-auto pt-6">
@@ -77,7 +77,7 @@ export default function PricingPage() {
       </section>
 
       <section aria-labelledby="inklusive" className="mt-12 rounded-[var(--radius-card)] border border-border bg-surface p-6">
-        <h2 id="inklusive" className="font-display text-2xl font-semibold">In jedem Tarif enthalten</h2>
+        <h2 id="inklusive" className="font-display text-2xl font-semibold">In allen Tarifen enthalten</h2>
         <ul className="mt-4 grid gap-3 sm:grid-cols-2">
           {INCLUDED.map((t) => (
             <li key={t} className="flex gap-2.5 text-[15px]">

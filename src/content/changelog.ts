@@ -30,7 +30,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Neuer Tarif „Kostenlos“: bis 20 Patient:innen",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Dauerhaft kostenlos für kleine Praxen: bis zu 20 Patient:innen, 1 Person, mit Terminen, Doku, Rechnungen und Kasse. Unter Einstellungen → Abo & Tarif „Kostenlos weiter nutzen“ – auch nach Ende der Testphase. Archivierte Patient:innen zählen mit; weitere Teammitglieder werden beim Wechsel deaktiviert.", href: "/einstellungen/abo" },
+      { tag: "neu", text: "Ohne Zeitlimit kostenlos für kleine Praxen: bis zu 20 Patient:innen, 1 Person, mit Terminen, Doku, Rechnungen und Kasse. Unter Einstellungen → Abo & Tarif „Kostenlos weiter nutzen“ – auch nach Ende der Testphase. Archivierte Patient:innen zählen mit; weitere Teammitglieder werden beim Wechsel deaktiviert.", href: "/einstellungen/abo" },
     ],
   },
   {
