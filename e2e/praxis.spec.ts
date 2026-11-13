@@ -91,9 +91,11 @@ test("Behandlung dokumentieren mit 2D-Fußpunkt", async () => {
 
 test("Rechnung erstellen und ausstellen", async () => {
   await page.goto(`/rechnungen/neu?patient=${patientUrl.split("/").pop()}`);
-  const pos = page.getByLabel("Pos. 1: Leistung");
+  const pos = page.getByLabel("Pos. 1: Leistung auswählen");
   const value = await pos.locator("option", { hasText: /^PK · / }).first().getAttribute("value");
-  await pos.selectOption(value!);
+  // Schnelleingabe per Kürzel wählt dieselbe Leistung wie die Auswahlliste
+  await page.getByLabel("Pos. 1: Leistung – Kürzel").fill("pk");
+  await expect(pos).toHaveValue(value!);
   const confirm = page.locator('input[name="therapeuticConfirmed"]');
   if (await confirm.isVisible()) await confirm.check();
   await page.getByRole("button", { name: "Rechnung ausstellen" }).click();
@@ -105,7 +107,7 @@ test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", a
   await page.setViewportSize({ width: 1024, height: 1366 });
   try {
     await page.goto(`/rechnungen/neu?patient=${patientUrl.split("/").pop()}`);
-    await expect(page.getByLabel("Pos. 1: Leistung")).toBeVisible();
+    await expect(page.getByLabel("Pos. 1: Leistung auswählen")).toBeVisible();
     const { scroll, client } = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
     expect(scroll).toBeLessThanOrEqual(client);
   } finally {

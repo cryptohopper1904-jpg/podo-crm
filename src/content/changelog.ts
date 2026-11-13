@@ -34,6 +34,11 @@ export const CHANGELOG: ChangelogEntry[] = [
       { tag: "neu", text: "Nächsten Termin buchen: Auf Wunsch zeigt jede Rechnung einen QR-Code zu Ihrer Online-Buchung – PodoHero, Doctolib oder ein eigener Link.", href: "/einstellungen/praxis" },
       { tag: "verbessert", text: "Neues Rechnungsdesign: Logo oben, Kasten mit Rechnungsnummer und Terminvereinbarung (auch WhatsApp), „Rechnung zur Behandlung am …“, Zahlungshinweis passend zur Zahlart und eine Fußzeile mit Bankverbindung, Steuernummer und Berufsbezeichnung." },
       { tag: "neu", text: "Anamnesebogen am iPad: Datum, Name und Patientennummer sind schon ausgefüllt – direkt aus der Kundenakte oder über „Anamnese“ beim heutigen Termin. Große Felder zum Antippen, dazu eine Druckfassung mit gleichem Kopf.", href: "/heute" },
+    id: "2026-11-13",
+    date: "2026-11-13",
+    title: "Rechnungen schneller schreiben",
+    items: [
+      { tag: "neu", text: "Kürzel-Eingabe: In jeder Rechnungsposition einfach das Kürzel der Leistung tippen (z. B. „PK“) – Leistung und Preis stehen sofort drin. Mit Enter geht es direkt zur nächsten Position. Das Auswahlmenü daneben bleibt wie gewohnt.", href: "/rechnungen/neu" },
     ],
   },
   {
