@@ -41,6 +41,13 @@ describe("Rechnung: angerechnete Anzahlungen in den Summen", () => {
   });
 
   it("ohne Anzahlungen wie bisher: „bezahlt“ bzw. bei Storno „erstattet/verrechnet“", () => {
+    // § 14 Abs. 5 S. 2 UStG: Steuer der Anzahlung absetzen, verbleibende USt nennen
+    expect(
+      paymentSummary({ kind: "collective", paidCents: 11900, vatCents: 3800 }, [{ number: "AZ2026-0003", issuedAt: "2026-05-04", totalCents: 11900, netCents: 10000, vatCents: 1900 }], dateDe),
+    ).toEqual([
+      { label: "abzgl. Anzahlung AZ2026-0003 vom 04.05.2026 (netto 100,00 € zzgl. 19 % USt 19,00 €)", cents: -11900 },
+      { label: "darin verbleibende USt", cents: 1900 },
+    ]);
     expect(paymentSummary({ kind: "invoice", paidCents: 5000 }, [], dateDe)).toEqual([{ label: "bezahlt", cents: 5000 }]);
     expect(paymentSummary({ kind: "credit_note", paidCents: -5000 }, [], dateDe)).toEqual([{ label: "erstattet/verrechnet", cents: -5000 }]);
     expect(paymentSummary({ kind: "invoice", paidCents: 0 }, [], dateDe)).toEqual([]);
