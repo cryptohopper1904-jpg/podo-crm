@@ -4,7 +4,7 @@
  */
 import ExcelJS from "exceljs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clampDurationMin } from "./appointment-duration";
+import { durationFromServices, isValidDurationMin } from "./appointment-duration";
 import { parseWorkbook } from "./import/excel/parse";
 import { mediaPath } from "./practice-export";
 import { mockSuggestionJson } from "@/integrations/ocr/ocr";
@@ -43,10 +43,17 @@ describe("Berliner „heute“ nach Mitternacht", () => {
   });
 });
 
-describe("clampDurationMin", () => {
-  it("begrenzt auf 5–480 Minuten, ganzzahlig, ungültig → 30", () => {
-    expect([600, 480, 479.6, 45, 5, 4, 0, -10].map(clampDurationMin)).toEqual([480, 480, 480, 45, 5, 5, 5, 5]);
-    expect(clampDurationMin(Number.NaN)).toBe(30);
-    expect(clampDurationMin(Number.POSITIVE_INFINITY)).toBe(30);
+describe("Termindauer 5–480 Minuten", () => {
+  it("isValidDurationMin: nur ganze Minuten im Bereich", () => {
+    expect([5, 45, 480].map(isValidDurationMin)).toEqual([true, true, true]);
+    expect([4, 481, 600, 0, -10, 45.5, Number.NaN, Number.POSITIVE_INFINITY].map(isValidDurationMin)).toEqual(Array(8).fill(false));
+  });
+
+  it("durationFromServices: über 480 Minuten Fehlermeldung statt stiller Kürzung, unter 5 → 5, ohne Dauer → 30", () => {
+    expect(durationFromServices(600)).toEqual({ ok: false, error: "Die gewählten Leistungen ergeben 600 Minuten (höchstens 480). Bitte Dauer eintragen oder auf zwei Termine aufteilen." });
+    expect(durationFromServices(480)).toEqual({ ok: true, durationMin: 480 });
+    expect(durationFromServices(3)).toEqual({ ok: true, durationMin: 5 });
+    expect(durationFromServices(0)).toEqual({ ok: true, durationMin: 30 });
+    expect(durationFromServices(70)).toEqual({ ok: true, durationMin: 70 });
   });
 });

@@ -18,6 +18,7 @@ import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOp
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 import { seriesStarts } from "@/lib/appointment-series";
+import { durationFromServices } from "@/lib/appointment-duration";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
@@ -48,7 +49,13 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   const svc = serviceIds.length
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
     : [];
-  const duration = d.durationMin ?? (svc.reduce((s, x) => s + x.durationMin, 0) || 30);
+  // Ohne eigene Dauer: Summe der Leistungen – über 480 Minuten nicht still kürzen, sondern melden
+  let duration = d.durationMin;
+  if (duration === undefined) {
+    const fromSvc = durationFromServices(svc.reduce((s, x) => s + x.durationMin, 0));
+    if (!fromSvc.ok) return { error: fromSvc.error };
+    duration = fromSvc.durationMin;
+  }
   // Wanduhrzeit in Berlin bleibt über Zeitumstellungen gleich (Datum weiterzählen, dann in UTC umrechnen)
   const occurrences = seriesStarts(d.date, d.time, d.repeatWeeks, d.repeatCount);
 

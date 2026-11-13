@@ -63,17 +63,40 @@ const fd = (o: Record<string, string>) => {
     expect(done).toMatchObject({ status: "completed", e: today });
   });
 
-  it("interne Terminanlage begrenzt die Dauer serverseitig auf 5–480 Minuten", async () => {
+  it("interne Terminanlage: Dauer außerhalb 5–480 Minuten wird abgelehnt (keine stille Kürzung)", async () => {
     const org = await f.org();
     const u = await f.user();
     await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, u]);
     const input = (start: Date, durationMin: number) => ({
       patientId: null, therapistId: u, occurrences: [start], durationMin, source: "phone" as const, title: "Behandlung", notes: null, homeVisit: false, serviceIds: [], allowConflict: false,
     });
-    expect((await ap.createInternalAppointments(org, input(new Date("2031-06-02T06:00:00Z"), 600))).ok).toBe(true); // z. B. Summe mehrerer Leistungen
-    expect((await ap.createInternalAppointments(org, input(new Date("2031-06-03T06:00:00Z"), 1))).ok).toBe(true);
-    expect((await ap.createInternalAppointments(org, input(new Date("2031-06-04T06:00:00Z"), 45))).ok).toBe(true);
+    const err = { ok: false, error: "Dauer muss zwischen 5 und 480 Minuten liegen." };
+    expect(await ap.createInternalAppointments(org, input(new Date("2031-06-02T06:00:00Z"), 600))).toEqual(err); // z. B. Summe mehrerer Leistungen
+    expect(await ap.createInternalAppointments(org, input(new Date("2031-06-03T06:00:00Z"), 1))).toEqual(err);
+    expect(await ap.createInternalAppointments(org, input(new Date("2031-06-03T06:00:00Z"), Number.NaN))).toEqual(err);
+    expect((await ap.createInternalAppointments(org, input(new Date("2031-06-04T06:00:00Z"), 480))).ok).toBe(true);
+    expect((await ap.createInternalAppointments(org, input(new Date("2031-06-05T06:00:00Z"), 5))).ok).toBe(true);
     const mins = (await f.asOrg(org, (c) => c.query("select extract(epoch from ends_at - starts_at)::int / 60 m from appointments where organization_id = $1 order by starts_at", [org]))).rows.map((r) => r.m);
-    expect(mins).toEqual([480, 5, 45]);
+    expect(mins).toEqual([480, 5]);
+  });
+
+  it("Sperrzeit: Prüfung nutzt dieselbe Dauer wie Konfliktprüfung und Terminende", async () => {
+    const org = await f.org();
+    const u = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, u]);
+    // Sperrzeit Mo 02.06.2031, 12:00–12:30 Berlin (MESZ)
+    await f.asOrg(org, (c) => c.query("insert into calendar_blocks (organization_id, user_id, starts_on, start_time, end_time, created_by) values ($1,$2,'2031-06-02','12:00','12:30',$2)", [org, u]));
+    const at11 = new Date("2031-06-02T09:00:00Z"); // 11:00 Berlin
+    const input = (durationMin: number, allowConflict = false) => ({
+      patientId: null, therapistId: u, occurrences: [at11], durationMin, source: "phone" as const, title: "Behandlung", notes: null, homeVisit: false, serviceIds: [], allowConflict,
+    });
+    // 90 Minuten → endet 12:30 → Sperrzeit getroffen
+    const clash = await ap.createInternalAppointments(org, input(90));
+    expect(clash).toMatchObject({ ok: false, conflict: true });
+    expect(clash.ok || !("blocks" in clash) ? [] : clash.blocks).toHaveLength(1);
+    // 60 Minuten → endet 12:00 → frei; gespeichertes Ende passt zur geprüften Dauer
+    expect((await ap.createInternalAppointments(org, input(60))).ok).toBe(true);
+    const [row] = (await f.asOrg(org, (c) => c.query("select to_char(ends_at at time zone 'Europe/Berlin', 'HH24:MI') e from appointments where organization_id = $1", [org]))).rows;
+    expect(row.e).toBe("12:00");
   });
 });
