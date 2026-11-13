@@ -1,5 +1,5 @@
 import { requireAuth } from "@/lib/auth/session";
-import { hiddenSettingsTabs } from "@/server/features";
+import { settingsGroupsFor } from "@/server/features";
 import { SettingsNav } from "./settings-nav";
 
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
@@ -7,8 +7,11 @@ export default async function SettingsLayout({ children }: { children: React.Rea
   return (
     <div className="mx-auto max-w-6xl">
       <h1 className="mb-4 font-display text-3xl font-semibold">Einstellungen</h1>
-      <SettingsNav hidden={await hiddenSettingsTabs(auth)} />
-      {children}
+      {/* ab xl: Navigation links, Inhalt rechts; darunter Auswahlliste über dem Inhalt */}
+      <div className="xl:grid xl:grid-cols-[13rem_minmax(0,1fr)] xl:gap-8">
+        <SettingsNav groups={await settingsGroupsFor(auth)} />
+        <div className="min-w-0">{children}</div>
+      </div>
     </div>
   );
 }

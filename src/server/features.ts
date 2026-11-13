@@ -6,7 +6,9 @@ import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
 import type { AuthContext } from "@/lib/auth/session";
+import { can } from "@/lib/auth/permissions";
 import { billingModeOf, feature, hiddenAreaRedirect, type BillingMode, type GkvArea } from "@/lib/features";
+import { visibleSettingsGroups, type SettingsGroup } from "@/lib/settings-tabs";
 import { loadConnection } from "./integrations";
 
 /**
@@ -27,6 +29,14 @@ export async function kimConnected(organizationId: string): Promise<boolean> {
 export async function hiddenSettingsTabs(auth: AuthContext): Promise<string[]> {
   if (feature(auth.organization, "gkv")) return [];
   return (await kimConnected(auth.organization.id)) ? ["ocr"] : ["ocr", "ti"];
+}
+
+/** Einstellungs-Navigation dieser Person: nur Bereiche, die requireAuth auf der Seite auch zulässt. */
+export async function settingsGroupsFor(auth: AuthContext): Promise<SettingsGroup[]> {
+  return visibleSettingsGroups(
+    (t) => !t.perm || auth.can(t.perm) || (!!t.allowReadOnly && auth.readOnly && !auth.support && can(auth.role, t.perm)),
+    await hiddenSettingsTabs(auth),
+  );
 }
 
 /**
