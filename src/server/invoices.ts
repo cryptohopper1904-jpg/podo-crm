@@ -23,6 +23,7 @@ import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
 import { fiscalRef } from "@/integrations/tse";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
+import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { nextNumber } from "@/lib/numbering";
 import {
@@ -44,19 +45,7 @@ import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS
 
 export class InvoiceError extends Error {}
 
-/** interne Notiz der Stornorechnung einer Sammelrechnung: Nummern der darin angerechneten Quittungen (für lexoffice) */
-const STORNO_RECEIPTS_NOTE = "Angerechnete Quittungen: ";
-
-/** Nummern der in der stornierten Sammelrechnung angerechneten Quittungen (aus der internen Notiz der Stornorechnung) */
-export function stornoReceiptNumbers(notes: string | null): string[] {
-  const line = (notes ?? "").split("\n").find((l) => l.startsWith(`${INTERNAL_NOTE_PREFIX}${STORNO_RECEIPTS_NOTE}`));
-  if (!line) return [];
-  return line
-    .slice(INTERNAL_NOTE_PREFIX.length + STORNO_RECEIPTS_NOTE.length)
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
+export { stornoReceiptNumbers } from "./partial-vat";
 
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
 const optUuid = z.preprocess(emptyToNull, z.uuid().nullable().optional());
@@ -101,10 +90,13 @@ export const invoiceInput = z.object({
   depositIds: z.array(z.uuid()).max(100).default([]),
   /** bezahlte normale Quittungen (kind = receipt) der Person, die als Teilrechnungen auf die Sammelrechnung angerechnet werden */
   receiptIds: z.array(z.uuid()).max(400).default([]),
+  /** Leistungsjahr der Sammelrechnung: nur Quittungen aus diesem Jahr sind anrechenbar (Standard: Jahr des Rechnungsdatums) */
+  collectiveYear: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(2000).max(2100).optional()),
 });
 type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
-export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "lines"> & {
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "lines"> & {
+  collectiveYear?: number;
   depositIds?: string[];
   receiptIds?: string[];
   lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
@@ -380,6 +372,7 @@ async function lockPartials(
   issuedAt: string,
   depositIds: string[],
   receiptIds: string[],
+  year: number,
 ): Promise<{ deposits: PartialRow[]; receipts: PartialRow[] }> {
   if (!depositIds.length && !receiptIds.length) return { deposits: [], receipts: [] };
   if (receiptIds.length && kind !== "collective") throw new InvoiceError("Quittungen können nur auf eine Sammelrechnung angerechnet werden.");
@@ -407,6 +400,7 @@ async function lockPartials(
     if (r.status !== "paid") throw new InvoiceError(`Die Quittung ${r.number} ist storniert oder nicht vollständig bezahlt.`);
     if (r.collectiveInvoiceId) throw new InvoiceError(`Die Quittung ${r.number} ist bereits auf eine andere Sammelrechnung angerechnet.`);
     if (r.issuedAt && r.issuedAt > issuedAt) throw new InvoiceError(`Die Quittung ${r.number} ist jünger als die Sammelrechnung.`);
+    if (!r.issuedAt || Number(r.issuedAt.slice(0, 4)) !== year) throw new InvoiceError(`Die Quittung ${r.number} stammt nicht aus dem Leistungsjahr ${year} der Sammelrechnung.`);
   }
   return { deposits, receipts };
 }
@@ -449,6 +443,10 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   }
   const receiptIds = input.receiptIds ?? [];
   if (receiptIds.length && input.kind !== "collective") throw new InvoiceError("Quittungen können nur auf eine Sammelrechnung angerechnet werden.");
+  // Leistungsjahr: Rechnungsjahr oder (Sammelrechnung im Januar) das Vorjahr
+  const issuedYear = Number(input.issuedAt.slice(0, 4));
+  const collectiveYear = input.collectiveYear ?? issuedYear;
+  if (receiptIds.length && (collectiveYear > issuedYear || collectiveYear < issuedYear - 1)) throw new InvoiceError(`Das Leistungsjahr ${collectiveYear} passt nicht zum Rechnungsdatum.`);
 
   const result = await withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
@@ -467,7 +465,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     }
 
     // anzurechnende Anzahlungen/Quittungen zuerst sperren und prüfen (gibt deren Behandlungen für diese Sammelrechnung frei)
-    const partials = await lockPartials(tx, org, input.kind, input.patientId ?? null, input.issuedAt, depositIds, receiptIds);
+    const partials = await lockPartials(tx, org, input.kind, input.patientId ?? null, input.issuedAt, depositIds, receiptIds, collectiveYear);
 
     const serviceIds = [...new Set(input.lines.map((l) => l.serviceId).filter((x): x is string => !!x))];
     const svcRows = serviceIds.length
@@ -520,6 +518,25 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     if (input.kind === "receipt") {
       const sum = input.payments.reduce((s, p) => s + p.amountCents, 0);
       if (sum !== totals.totalCents) throw new InvoiceError("Eine Quittung muss sofort vollständig bezahlt werden.");
+    }
+    // Angerechnete Teilrechnungen je Steuersatz: die Rechnung muss je Satz mindestens so viel enthalten (sonst würde
+    // USt abgesetzt, die hier gar nicht entsteht). Der Rest je Satz ist die Grundlage für Restzahlungen (Kasse/TSE).
+    const partialIds = [...partials.deposits, ...partials.receipts].map((d) => d.id);
+    const partialLines = partialIds.length
+      ? await tx
+          .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, partialIds)))
+      : [];
+    const creditedGroups = computeTotals(partialLines).groups;
+    const payGroups = partialIds.length ? remainingVatGroups(totals.groups, creditedGroups) : totals.groups;
+    const short = payGroups.find((g) => g.grossCents < 0);
+    if (short) {
+      const has = totals.groups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      const want = creditedGroups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      throw new InvoiceError(
+        `Die angerechneten Quittungen enthalten ${(want / 100).toFixed(2).replace(".", ",")} € mit ${short.rate} % USt, die ${input.kind === "collective" ? "Sammelrechnung" : "Rechnung"} nur ${(has / 100).toFixed(2).replace(".", ",")} €. Bitte Positionen bzw. Steuersätze prüfen.`,
+      );
     }
 
     // „Aus Einstellung“ nur gelten lassen, wenn die Praxis-Einstellung gerade wirklich aktiv ist – sonst als manuell werten
@@ -589,7 +606,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     const receiptCents = partials.receipts.reduce((s, d) => s + d.totalCents, 0);
 
     // 5) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, totals.groups);
+    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
     return { id: draft.id, number, totalCents: totals.totalCents, depositCents, receiptCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
   });
 
@@ -698,11 +715,9 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
       .for("update");
     if (!inv) throw new InvoiceError("Rechnung nicht gefunden.");
     if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Für diese Rechnung kann keine Zahlung erfasst werden.");
-    const vatLines = await tx
-      .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
-      .from(invoiceLines)
-      .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, inv.id)));
-    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), computeTotals(vatLines).groups);
+    // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
+    const groups = (await payableVatGroups(tx, org, [inv.id])).get(inv.id) ?? [];
+    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
   });
   await audit({
     organizationId: org,
@@ -796,6 +811,8 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
           creditedReceipts.length ? `Angerechnete Quittungen (${creditedReceipts.map((d) => d.number).join(", ")}) bleiben gültig und bezahlt.` : null,
           // für die Buchhaltungs-Übergabe: welche (schon einzeln gebuchten) Quittungen in der stornierten Sammelrechnung steckten
           creditedReceipts.length ? `${INTERNAL_NOTE_PREFIX}${STORNO_RECEIPTS_NOTE}${creditedReceipts.map((d) => d.number).join(", ")}` : null,
+          // für Kasse/TSE: Erstattungen auf die Stornorechnung nur auf den Rest je Steuersatz (siehe payableVatGroups)
+          creditedDeposits.length ? `${INTERNAL_NOTE_PREFIX}${STORNO_DEPOSITS_NOTE}${creditedDeposits.map((d) => d.number).join(", ")}` : null,
         ]
           .filter(Boolean)
           .join("\n"),

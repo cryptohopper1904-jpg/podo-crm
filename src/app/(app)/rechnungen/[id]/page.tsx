@@ -24,6 +24,8 @@ import {
 } from "@/lib/invoice-labels";
 import {
   creditedReceiptsBlock,
+  creditedReceiptsNote,
+  serviceYear,
   formatIban,
   hasExemptNote,
   internalNotes as internalNoteLines,
@@ -263,7 +265,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ))}
           <dt className="border-t border-border-strong pt-1 font-semibold">Gesamtbetrag</dt>
           <dd className="border-t border-border-strong pt-1 text-right font-display text-lg font-bold tabular-nums">{money(inv.totalCents)}</dd>
-          {paymentSummary(inv, data.credited, dateDe).map((r) => (
+          {paymentSummary(inv, data.credited, dateDe, totals.groups).map((r) => (
             <div key={r.label} className="contents">
               <dt>{r.label}</dt>
               <dd className="text-right tabular-nums">{money(r.cents)}</dd>
@@ -335,6 +337,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
+          {receiptBlock.rows.length ? <p>{creditedReceiptsNote(serviceYear(data.serviceDates, inv.issuedAt))}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
           {payNotes.map((n) => <p key={n}>{n}</p>)}
           {inv.kind !== "credit_note" && inv.status !== "cancelled" ? <p className="mt-2">Vielen Dank für Ihr Vertrauen</p> : null}

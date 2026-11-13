@@ -115,15 +115,39 @@ export function creditedLabel(d: CreditedPartial, dateDe: (d: string | null) => 
  * § 14 Abs. 5 S. 2 UStG: In der Endrechnung werden bei Anzahlungen bzw. Teilrechnungen mit USt auch deren Steuerbeträge
  * abgesetzt – deshalb je Beleg „netto … zzgl. USt …“ und danach die verbleibende USt.
  */
-export function paymentSummary(inv: { kind: string; paidCents: number; vatCents?: number | null }, credited: CreditedPartial[], dateDe: (d: string | null) => string) {
+export function paymentSummary(
+  inv: { kind: string; paidCents: number; vatCents?: number | null },
+  credited: CreditedPartial[],
+  dateDe: (d: string | null) => string,
+  /** USt je Satz der Rechnung (computeTotals(lines).groups) – dann „verbleibende USt“ je Steuersatz */
+  groups?: { rate: number; vatCents: number }[],
+) {
   const rows: { label: string; cents: number }[] = credited.map((d) => ({ label: creditedLabel(d, dateDe), cents: -d.totalCents }));
   const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0);
   const creditedVat = credited.reduce((s, d) => s + (d.vatCents ?? 0), 0);
-  if (creditedVat && inv.vatCents != null) rows.push({ label: "darin verbleibende USt", cents: inv.vatCents - creditedVat });
+  const perRate = groups && credited.every((d) => !d.vatCents || d.vatGroups);
+  if (creditedVat && perRate) {
+    const rates = [...new Set([...groups.map((g) => g.rate), ...credited.flatMap((d) => (d.vatGroups ?? []).map((g) => g.rate))])].filter((r) => r > 0).sort((a, b) => a - b);
+    for (const rate of rates) {
+      const own = groups.find((g) => g.rate === rate)?.vatCents ?? 0;
+      const off = credited.reduce((s, d) => s + (d.vatGroups ?? []).filter((g) => g.rate === rate).reduce((x, g) => x + g.vatCents, 0), 0);
+      rows.push({ label: `darin verbleibende USt ${rate} %`, cents: own - off });
+    }
+  } else if (creditedVat && inv.vatCents != null) rows.push({ label: "darin verbleibende USt", cents: inv.vatCents - creditedVat });
   const rest = inv.paidCents - creditedCents;
   if (rest !== 0) rows.push({ label: inv.kind === "credit_note" ? "erstattet/verrechnet" : credited.length ? "weitere Zahlungen" : "bezahlt", cents: rest });
   return rows;
 }
+
+/**
+ * Hinweis auf der Sammelrechnung mit angerechneten normalen Quittungen (Teilrechnungen → Schlussrechnung).
+ * `year`: Leistungsjahr (aus den Leistungsdaten, sonst Rechnungsdatum).
+ */
+export const creditedReceiptsNote = (year: string | number) =>
+  `Diese Rechnung fasst die Leistungen ${year} zusammen. Leistungen, die bereits mit den unten genannten Quittungen abgerechnet und bezahlt wurden, sind nachrichtlich enthalten. Die dort ausgewiesene Umsatzsteuer wird hier abgesetzt und nicht erneut geschuldet. Die Quittungen bleiben gültige Rechnungen.`;
+
+/** Leistungsjahr für den Hinweis: frühestes Leistungsdatum, sonst Rechnungsdatum */
+export const serviceYear = (serviceDates: string[], issuedAt: string | null) => ([...serviceDates].sort()[0] ?? issuedAt ?? "").slice(0, 4);
 
 /**
  * Block „Bereits bezahlt (Quittungen)“ auf Sammelrechnung (Druckansicht und PDF): alle angerechneten normalen

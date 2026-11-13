@@ -19,12 +19,12 @@ BEGIN
   IF OLD.collective_invoice_id IS NOT NULL THEN
     SELECT status::text INTO old_status FROM invoices WHERE id = OLD.collective_invoice_id;
     IF old_status IS DISTINCT FROM 'cancelled' THEN
-      RAISE EXCEPTION 'Die Anzahlung ist bereits auf eine Rechnung angerechnet.' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Der Beleg ist bereits auf eine Rechnung angerechnet.' USING ERRCODE = 'P0001';
     END IF;
   END IF;
   IF NEW.collective_invoice_id IS NOT NULL THEN
     IF NEW.status::text = 'cancelled' THEN
-      RAISE EXCEPTION 'Eine stornierte Anzahlung kann nicht angerechnet werden.' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Ein stornierter Beleg kann nicht angerechnet werden.' USING ERRCODE = 'P0001';
     END IF;
     IF NEW.kind::text = 'receipt' AND NEW.status::text <> 'paid' THEN
       RAISE EXCEPTION 'Nur vollständig bezahlte Quittungen können angerechnet werden.' USING ERRCODE = 'P0001';
@@ -35,13 +35,13 @@ BEGIN
       RAISE EXCEPTION 'Rechnung für die Anrechnung nicht gefunden.' USING ERRCODE = 'P0001';
     END IF;
     IF t_kind NOT IN ('invoice', 'collective') OR t_status IN ('draft', 'cancelled') THEN
-      RAISE EXCEPTION 'Anzahlungen können nur auf eine ausgestellte Rechnung oder Sammelrechnung angerechnet werden.' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Belege können nur auf eine ausgestellte Rechnung oder Sammelrechnung angerechnet werden.' USING ERRCODE = 'P0001';
     END IF;
     IF NEW.kind::text = 'receipt' AND t_kind <> 'collective' THEN
       RAISE EXCEPTION 'Quittungen können nur auf eine Sammelrechnung angerechnet werden.' USING ERRCODE = 'P0001';
     END IF;
     IF t_patient IS DISTINCT FROM NEW.patient_id THEN
-      RAISE EXCEPTION 'Die Anzahlung gehört zu einer anderen Person.' USING ERRCODE = 'P0001';
+      RAISE EXCEPTION 'Der Beleg gehört zu einer anderen Person.' USING ERRCODE = 'P0001';
     END IF;
   END IF;
   RETURN NEW;

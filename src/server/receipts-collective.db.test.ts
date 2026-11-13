@@ -129,13 +129,22 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
     const open = await invoices.openReceiptsForPatient(auth, patient, year);
     const lines = linesOf(open);
-    const base = { kind: "collective" as const, patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
+    const base = { kind: "collective" as const, patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [], collectiveYear: year };
     // ohne Anrechnung bleibt die Doppelabrechnung gesperrt
     await expect(invoices.createInvoice(auth, { ...base, lines })).rejects.toThrow(/bereits in Rechnung/);
     // Quittung nur auf eine Sammelrechnung
     await expect(invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [lines[1]], receiptIds: [r1.id] })).rejects.toThrow(/nur auf eine Sammelrechnung/);
     // nur eine Quittung angerechnet: die Behandlung der anderen bleibt gesperrt
     await expect(invoices.createInvoice(auth, { ...base, lines, receiptIds: [r1.id] })).rejects.toThrow(/06\.05\.\d{4} ist bereits in Rechnung/);
+    // Steuersätze: die Sammelrechnung muss je Satz mindestens die angerechneten Beträge enthalten
+    await expect(
+      invoices.createInvoice(auth, { ...base, lines: lines.map((l) => ({ ...l, vatRate: 0 })), receiptIds: [r1.id, r2.id] }),
+    ).rejects.toThrow(/enthalten 11,90 € mit 19 % USt, die Sammelrechnung nur 0,00 €/);
+    // Jahresgrenze: Quittung aus einem anderen Jahr bzw. unpassendes Leistungsjahr
+    await expect(
+      invoices.createInvoice(auth, { ...base, lines: [...lines, { serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 3000, vatRate: 0 }], receiptIds: [r1.id, r2.id, old.id] }),
+    ).rejects.toThrow(/stammt nicht aus dem Leistungsjahr/);
+    await expect(invoices.createInvoice(auth, { ...base, lines, receiptIds: [r1.id, r2.id], collectiveYear: year - 1 })).rejects.toThrow(/Leistungsjahr \d{4} passt nicht/);
 
     const sr = await invoices.createInvoice(auth, { ...base, lines, receiptIds: [r1.id, r2.id] });
     expect(sr).toMatchObject({ totalCents: 10190, paidCents: 10190, status: "paid", receiptCents: 10190, depositCents: 0 });
@@ -148,10 +157,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     ]);
     expect(bundle!.lines.map((l) => l.appointmentId)).toEqual([a1, null, a2]);
     // § 14 Abs. 5 UStG: USt der Quittungen wird abgesetzt, es bleibt keine USt und nichts offen
-    expect(view.paymentSummary(bundle!.invoice, bundle!.credited, dateDe)).toEqual([
+    const { computeTotals } = await import("@/lib/invoice-math");
+    expect(view.paymentSummary(bundle!.invoice, bundle!.credited, dateDe, computeTotals(bundle!.lines).groups)).toEqual([
       { label: `abzgl. bereits bezahlt mit Quittung ${r1.number} vom 03.02.${year} (netto 55,00 € zzgl. 19 % USt 1,90 €)`, cents: -5690 },
       { label: `abzgl. bereits bezahlt mit Quittung ${r2.number} vom 06.05.${year}`, cents: -4500 },
-      { label: "darin verbleibende USt", cents: 0 },
+      { label: "darin verbleibende USt 19 %", cents: 0 },
     ]);
     expect(view.creditedReceiptsBlock(bundle!.credited)).toMatchObject({ totalCents: 10190, vatCents: 190 });
     const r1b = await invoices.getInvoice(auth, r1.id);
@@ -183,16 +193,22 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await umsatz()).toEqual(before);
     expect((await invoices.listInvoices(auth)).totals.totalCents).toBe(5690 + 4500 + 3000);
 
-    // neue Sammelrechnung mit weiterer Leistung: nur der Rest ist neuer Umsatz (Kasse +20 €)
-    const extra = { serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Orthose", quantity: 1, factor: 1, unitPriceCents: 2000, vatRate: 0 };
-    const sr2 = await invoices.createInvoice(auth, { ...base, lines: [...lines, extra], receiptIds: [r1.id, r2.id], payments: [{ method: "cash", amountCents: 2000 }] });
-    expect(sr2).toMatchObject({ totalCents: 12190, paidCents: 12190, status: "paid", receiptCents: 10190 });
+    // neue Sammelrechnung mit weiterer 19-%-Leistung: nur der Rest ist neuer Umsatz (Kasse +23,80 €). Die Restzahlung
+    // verteilt sich nur auf den Rest je Steuersatz (hier ganz 19 %), nicht anteilig auf die 0-%-Positionen der Quittungen.
+    const extra = { serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Orthose", quantity: 1, factor: 1, unitPriceCents: 2380, vatRate: 19 };
+    const sr2 = await invoices.createInvoice(auth, { ...base, lines: [...lines, extra], receiptIds: [r1.id, r2.id] });
+    expect(sr2).toMatchObject({ totalCents: 12570, paidCents: 10190, status: "partially_paid", receiptCents: 10190 });
+    expect(await invoices.addPayments(auth, sr2.id, [{ method: "cash", amountCents: 2380 }])).toMatchObject({ status: "paid", paidCents: 12570 });
     const after = await umsatz();
-    expect(after.cash - before.cash).toBe(2000);
-    expect(after.umsatz - before.umsatz).toBe(2000);
-    expect((await invoices.listInvoices(auth)).totals.totalCents).toBe(5690 + 4500 + 3000 + 2000);
+    expect(after.cash - before.cash).toBe(2380);
+    expect(after.umsatz - before.umsatz).toBe(2380);
+    expect(after.vat - before.vat).toBe(380);
+    const k = await kasse.kasseOverview(auth);
+    const bon = k.calc.bons.find((b) => b.invoiceNumber === sr2.number)!;
+    expect(bon.lines.map((l) => [l.gvTyp, l.rate, l.grossCents, l.vatCents])).toEqual([["Umsatz", 19, 2380, 380]]);
+    expect((await invoices.listInvoices(auth)).totals.totalCents).toBe(5690 + 4500 + 3000 + 2380);
     const b2 = await invoices.getInvoice(auth, sr2.id);
-    expect(view.paymentSummary(b2!.invoice, b2!.credited, dateDe).at(-1)).toEqual({ label: "weitere Zahlungen", cents: 2000 });
+    expect(view.paymentSummary(b2!.invoice, b2!.credited, dateDe).at(-1)).toEqual({ label: "weitere Zahlungen", cents: 2380 });
   });
 
   it("fremde, stornierte, jüngere und doppelt gewählte Quittungen werden abgewiesen; DB-Sicherung", async () => {
@@ -203,12 +219,18 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const mine = await receipt(patient, `${year}-03-03`, [{ appointmentId: a1, description: "Behandlung", unitPriceCents: 4500, vatRate: 0 }]);
     const foreign = await receipt(other, `${year}-03-04`, [{ description: "Behandlung", unitPriceCents: 4500, vatRate: 0 }]);
     const line = { serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 4500, vatRate: 0 };
-    const base = { kind: "collective" as const, patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [], lines: [line] };
+    const base = { kind: "collective" as const, patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [], collectiveYear: year, lines: [line] };
 
     await expect(invoices.createInvoice(auth, { ...base, receiptIds: [foreign.id] })).rejects.toThrow(/keine Quittung dieser Person/);
+    // Quittung einer anderen Praxis: nicht sichtbar (Mandantentrennung) → nicht gefunden
+    const other2 = await setup();
+    const p2 = await f.patient(other2.org, { lastName: "Mandant" });
+    const alien = await other2.receipt(p2, `${year}-03-03`, [{ description: "Behandlung", unitPriceCents: 4500, vatRate: 0 }]);
+    await expect(invoices.createInvoice(auth, { ...base, receiptIds: [alien.id] })).rejects.toThrow(/Quittung nicht gefunden/);
+    expect(await invoices.openReceiptsForPatient(auth, p2, year)).toEqual([]);
     await expect(invoices.createInvoice(auth, { ...base, depositIds: [mine.id] })).rejects.toThrow(/keine Anzahlung dieser Person/);
     await expect(invoices.createInvoice(auth, { ...base, issuedAt: `${year}-03-01`, receiptIds: [mine.id] })).rejects.toThrow(/jünger als die Sammelrechnung/);
-    await expect(invoices.createInvoice(auth, { ...base, lines: [{ ...line, unitPriceCents: 4000 }], receiptIds: [mine.id] })).rejects.toThrow(/übersteigen den Rechnungsbetrag/);
+    await expect(invoices.createInvoice(auth, { ...base, lines: [{ ...line, unitPriceCents: 4000 }], receiptIds: [mine.id] })).rejects.toThrow(/enthalten 45,00 € mit 0 % USt, die Sammelrechnung nur 40,00 €/);
     // Rechnung einer anderen Person an die Anrechnung hängen: auch der Termin gehört nicht zu ihr
     await expect(invoices.createInvoice(auth, { ...base, patientId: other, lines: [{ ...line, appointmentId: a1 }], receiptIds: [foreign.id] })).rejects.toThrow(/gehört nicht/);
 

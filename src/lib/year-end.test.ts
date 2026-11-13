@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe } from "./format";
-import { creditedReceiptsBlock, paymentSummary } from "./invoice-view";
+import { creditedReceiptsBlock, creditedReceiptsNote, paymentSummary, serviceYear } from "./invoice-view";
 import { collectiveReminderYear, estimateCents, parseYear } from "./year-end";
 
 describe("Jahresend-Erinnerung Sammelrechnung", () => {
@@ -90,5 +90,23 @@ describe("Sammelrechnung: angerechnete Quittungen (Teilrechnungen)", () => {
       vatCents: 190,
     });
     expect(creditedReceiptsBlock([deposit]).rows).toEqual([]);
+  });
+});
+
+describe("Sammelrechnung mit Quittungen: verbleibende USt je Steuersatz und Hinweis", () => {
+  it("weist die verbleibende USt je Satz aus, wenn die Steuersätze der Rechnung bekannt sind", () => {
+    const q = { kind: "receipt", number: "Q2026-0004", issuedAt: "2026-02-03", totalCents: 5690, netCents: 5500, vatCents: 190, vatGroups: [{ rate: 0, netCents: 4500, vatCents: 0 }, { rate: 19, netCents: 1000, vatCents: 190 }] };
+    // Sammelrechnung: 45 € + 11,90 € (aus der Quittung) + 23,80 € neu mit 19 % und 10,70 € mit 7 %
+    const groups = [{ rate: 0, vatCents: 0 }, { rate: 7, vatCents: 70 }, { rate: 19, vatCents: 570 }];
+    expect(paymentSummary({ kind: "collective", paidCents: 5690, vatCents: 640 }, [q], dateDe, groups).slice(1)).toEqual([
+      { label: "darin verbleibende USt 7 %", cents: 70 },
+      { label: "darin verbleibende USt 19 %", cents: 380 },
+    ]);
+  });
+
+  it("Hinweistext mit Leistungsjahr", () => {
+    expect(serviceYear(["2026-03-01", "2026-01-12"], "2027-01-10")).toBe("2026");
+    expect(serviceYear([], "2027-01-10")).toBe("2027");
+    expect(creditedReceiptsNote("2026")).toMatch(/^Diese Rechnung fasst die Leistungen 2026 zusammen\..*nicht erneut geschuldet\. Die Quittungen bleiben gültige Rechnungen\.$/);
   });
 });

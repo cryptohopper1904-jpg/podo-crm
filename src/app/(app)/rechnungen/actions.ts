@@ -52,6 +52,7 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     payments: parseJson(form.get("payments")),
     depositIds: parseJson(form.get("depositIds")),
     receiptIds: parseJson(form.get("receiptIds")),
+    collectiveYear: form.get("collectiveYear") ?? undefined,
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;

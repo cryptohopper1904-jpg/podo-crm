@@ -10,6 +10,7 @@ import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
+import { euro, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
 import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
 
@@ -26,44 +27,7 @@ export type InvoicePreset = {
   lines: { treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
 
-/** Noch nicht angerechnete Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet. */
-export type OpenDeposit = {
-  id: string;
-  patientId: string;
-  number: string | null;
-  issuedAt: string | null;
-  totalCents: number;
-  /** Leistung laut Quittung (wird bei Auswahl als Position der Sammelrechnung übernommen) */
-  description: string;
-  vatRate: number;
-  appointmentId: string | null;
-  treatmentRecordId: string | null;
-};
-
-/**
- * Bezahlte normale Quittung (Teilrechnung) der Person, noch auf keiner Sammelrechnung – wird mit allen Positionen in die
- * Sammelrechnung übernommen und als „bereits bezahlt“ angerechnet (siehe openReceiptsFor in src/server/invoices.ts).
- */
-export type OpenReceipt = {
-  id: string;
-  patientId: string;
-  number: string | null;
-  issuedAt: string | null;
-  totalCents: number;
-  vatCents: number;
-  lines: {
-    description: string;
-    quantity: number;
-    factor: number;
-    unitPriceCents: number;
-    vatRate: number;
-    totalCents: number;
-    appointmentId: string | null;
-    treatmentRecordId: string | null;
-    /** Leistungsdatum (Termin/Doku-Eintrag, sonst Quittungsdatum) */
-    serviceDate: string | null;
-  }[];
-};
+export type { OpenDeposit, OpenReceipt } from "@/lib/partial-lines";
 
 /** Wegegeld für Hausbesuche (nur vor dem Ausstellen, nur Privat/Selbstzahler) – siehe src/server/trips.ts */
 export type TravelOptions = {
@@ -75,93 +39,10 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; /** aus diesen Anzahlungen bzw. dieser Quittung übernommen (fällt beim Abwählen wieder weg) */ depositIds?: string[]; /** Position einer normalen Quittung (eine Quittung kann mehrere haben) */ fromReceipt?: boolean; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string; /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */ codeStart?: { serviceId: string; description: string; price: string; vatRate: number } };
-
-let seq = 0;
-const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
 const num = (s: string) => {
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 };
-const isEmptyLine = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
-
-/** Text einer übernommenen Quittungs-Position: Leistungsdatum voran, sofern der Text noch kein Datum nennt */
-const receiptLineText = (l: OpenReceipt["lines"][number]) => (/\d{2}\.\d{2}\.\d{4}/.test(l.description) ? l.description : `${dateDe(l.serviceDate)}: ${l.description}`).slice(0, 300);
-
-/**
- * Positionen passend zu den gewählten Quittungen.
- * - Normale Quittungen (Teilrechnungen): alle ihre Positionen mit Preis, Menge, Faktor, USt und Termin-/Doku-Bezug
- *   (als Freitext, damit der bezahlte Preis bleibt – auch wenn sich der Katalogpreis inzwischen geändert hat).
- * - Anzahlungen: eine Position je Behandlung – mehrere Anzahlungen zum selben Termin ergeben eine Position mit der Summe.
- * Steht eine Behandlung schon als Position drin (Termin/Doku aus dem Jahresvorschlag oder einer anderen Quittung), wird
- * sie nicht noch einmal übernommen (nie doppelt), nur angerechnet. Unveränderte Auswahl behält vorhandene (ggf.
- * bearbeitete) Zeilen.
- */
-function syncDepositLines(ls: Line[], chosen: OpenDeposit[], chosenReceipts: OpenReceipt[] = []): Line[] {
-  const others = ls.filter((l) => !l.depositIds?.length);
-  const existing = ls.filter((l) => l.depositIds?.length);
-  const covers = (list: { appointmentId?: string | null; treatmentRecordId?: string | null }[], x: { appointmentId: string | null; treatmentRecordId: string | null }) =>
-    list.some((l) => (!!x.appointmentId && l.appointmentId === x.appointmentId) || (!!x.treatmentRecordId && l.treatmentRecordId === x.treatmentRecordId));
-  const receiptLines: Line[] = [];
-  for (const r of chosenReceipts) {
-    const prev = existing.filter((l) => l.fromReceipt && l.depositIds![0] === r.id);
-    if (prev.length) {
-      receiptLines.push(...prev);
-      continue;
-    }
-    for (const rl of r.lines) {
-      if (covers([...others, ...receiptLines], rl)) continue;
-      receiptLines.push(
-        newLine({
-          depositIds: [r.id],
-          fromReceipt: true,
-          appointmentId: rl.appointmentId,
-          treatmentRecordId: rl.treatmentRecordId,
-          description: receiptLineText(rl),
-          quantity: String(rl.quantity).replace(".", ","),
-          factor: String(rl.factor).replace(".", ","),
-          price: euro(rl.unitPriceCents),
-          vatRate: rl.vatRate,
-        }),
-      );
-    }
-  }
-  const groups = new Map<string, OpenDeposit[]>();
-  for (const d of chosen) {
-    if (covers([...others, ...receiptLines], d)) continue;
-    const key = `${d.appointmentId ?? d.treatmentRecordId ?? d.id}|${d.vatRate}`;
-    groups.set(key, [...(groups.get(key) ?? []), d]);
-  }
-  const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-  const depLines = [...groups.values()].map((g) => {
-    const ids = g.map((d) => d.id);
-    const prev = existing.find((l) => !l.fromReceipt && sameIds(l.depositIds!, ids));
-    if (prev) return prev;
-    const d = g[0];
-    return newLine({
-      depositIds: ids,
-      appointmentId: d.appointmentId,
-      treatmentRecordId: d.treatmentRecordId,
-      description: depositLineText(d),
-      price: euro(g.reduce((s, x) => s + x.totalCents, 0)),
-      vatRate: d.vatRate,
-    });
-  });
-  const added = [...receiptLines, ...depLines];
-  const result = [...(added.length ? others.filter((l) => !isEmptyLine(l)) : others), ...added];
-  return result.length ? result : [newLine()];
-}
-
-const newLine = (patch: Partial<Line> = {}): Line => ({
-  key: `l${++seq}`,
-  serviceId: "",
-  description: "",
-  quantity: "1",
-  factor: "1",
-  price: "",
-  vatRate: 0,
-  ...patch,
-});
 
 export function InvoiceForm({
   patients,
@@ -471,6 +352,7 @@ export function InvoiceForm({
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="depositIds" value={JSON.stringify(credited.map((d) => d.id))} />
       <input type="hidden" name="receiptIds" value={JSON.stringify(creditedReceipts.map((r) => r.id))} />
+      {kind === "collective" && receiptsYear ? <input type="hidden" name="collectiveYear" value={receiptsYear} /> : null}
       <FormError message={state?.error} />
 
       <Card>

@@ -21,6 +21,8 @@ import { computeTotals } from "./invoice-math";
 import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
+  creditedReceiptsNote,
+  serviceYear,
   formatIban,
   hasExemptNote,
   invoiceHeading,
@@ -357,7 +359,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
   }
   sumRows.push({ l: "Gesamt", v: money(inv.totalCents), strong: true });
-  for (const r of paymentSummary(inv, data.credited ?? [], dateDe)) sumRows.push({ l: r.label, v: money(r.cents) });
+  for (const r of paymentSummary(inv, data.credited ?? [], dateDe, totals.groups)) sumRows.push({ l: r.label, v: money(r.cents) });
   if (inv.status !== "cancelled" && open !== 0 && (inv.paidCents !== 0 || open < 0)) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
   ensure(sumRows.length * 14 + 4);
   const sumLabelX = cx.unit;
@@ -427,6 +429,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   if (hasExemptNote(o, inv, lines)) notes.push({ t: NOTE_VAT_EXEMPT });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });
+  if (rb.rows.length) notes.push({ t: creditedReceiptsNote(serviceYear(data.serviceDates ?? [], inv.issuedAt)) });
   const pub = publicNotes(inv.notes);
   if (pub) notes.push({ t: pub });
   for (const n of paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro })) notes.push({ t: n });
