@@ -1,4 +1,4 @@
--- Produkte & Warenwirtschaft: Mandantentrennung (RLS + FORCE), unveränderbare Lagerbewegungen und
+-- Produkte & Warenwirtschaft (idempotent): Mandantentrennung (RLS + FORCE), unveränderbare Lagerbewegungen und
 -- zweite Sicherung neben der App-Prüfung (gültige Werte, Bezüge nur innerhalb derselben Praxis).
 DO $$
 DECLARE t text;
@@ -6,27 +6,53 @@ BEGIN
   FOREACH t IN ARRAY ARRAY['suppliers','products','stock_movements'] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', t);
     EXECUTE format(
       'CREATE POLICY tenant_isolation ON %I USING (organization_id = NULLIF(current_setting(''app.org_id'', true), '''')::uuid) WITH CHECK (organization_id = NULLIF(current_setting(''app.org_id'', true), '''')::uuid)',
       t);
   END LOOP;
 END $$;
 --> statement-breakpoint
-ALTER TABLE products ADD CONSTRAINT products_category_check CHECK (category IN ('salbe', 'creme', 'pflege', 'hilfsmittel', 'sonstiges'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_category_check') THEN
+    ALTER TABLE products ADD CONSTRAINT products_category_check CHECK (category IN ('salbe', 'creme', 'pflege', 'hilfsmittel', 'sonstiges'));
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE products ADD CONSTRAINT products_vat_rate_check CHECK (vat_rate IN (7, 19));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_vat_rate_check') THEN
+    ALTER TABLE products ADD CONSTRAINT products_vat_rate_check CHECK (vat_rate IN (7, 19));
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE products ADD CONSTRAINT products_price_check CHECK (price_cents >= 0 AND (purchase_price_cents IS NULL OR purchase_price_cents >= 0) AND min_stock >= 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_price_check') THEN
+    ALTER TABLE products ADD CONSTRAINT products_price_check CHECK (price_cents >= 0 AND (purchase_price_cents IS NULL OR purchase_price_cents >= 0) AND min_stock >= 0);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE products ADD CONSTRAINT products_name_check CHECK (length(btrim(name)) > 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'products_name_check') THEN
+    ALTER TABLE products ADD CONSTRAINT products_name_check CHECK (length(btrim(name)) > 0);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE suppliers ADD CONSTRAINT suppliers_name_check CHECK (length(btrim(name)) > 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'suppliers_name_check') THEN
+    ALTER TABLE suppliers ADD CONSTRAINT suppliers_name_check CHECK (length(btrim(name)) > 0);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_kind_check
-  CHECK (kind IN ('receipt', 'sale', 'storno', 'inventory', 'breakage', 'own_use'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_movements_kind_check') THEN
+    ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_kind_check CHECK (kind IN ('receipt', 'sale', 'storno', 'inventory', 'breakage', 'own_use'));
+  END IF;
+END $$;
 --> statement-breakpoint
 -- Vorzeichen passend zur Art: Zugang positiv, Verkauf/Bruch/Eigenverbrauch negativ, Inventur beides (nie 0)
-ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_quantity_check CHECK (
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_movements_quantity_check') THEN
+    ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_quantity_check CHECK (
   quantity <> 0
   AND abs(quantity) <= 1000000
   AND (kind NOT IN ('receipt', 'storno') OR quantity > 0)
@@ -34,15 +60,21 @@ ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_quantity_check CHECK 
   AND (kind NOT IN ('sale', 'storno') OR invoice_id IS NOT NULL)
   AND (unit_cost_cents IS NULL OR unit_cost_cents >= 0)
 );
+  END IF;
+END $$;
 --> statement-breakpoint
 -- Rechnungsposition: Produktposition ↔ product_id; „in der Behandlung angewendet“ nur bei Produkt mit 0 % und mit
 -- Bezug auf die Behandlungsposition desselben Belegs (treatment_position)
-ALTER TABLE invoice_lines ADD CONSTRAINT invoice_lines_kind_check CHECK (
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'invoice_lines_kind_check') THEN
+    ALTER TABLE invoice_lines ADD CONSTRAINT invoice_lines_kind_check CHECK (
   line_kind IN ('service', 'product')
   AND ((line_kind = 'product') = (product_id IS NOT NULL))
   AND (NOT in_treatment OR (line_kind = 'product' AND vat_rate = 0 AND treatment_position IS NOT NULL))
   AND (treatment_position IS NULL OR (in_treatment AND treatment_position > 0))
 );
+  END IF;
+END $$;
 --> statement-breakpoint
 -- Lagerbewegungen sind unveränderbar (Bestand = Summe der Bewegungen); Korrektur nur als neue Bewegung
 CREATE OR REPLACE FUNCTION podo_forbid_stock_change() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -51,8 +83,12 @@ BEGIN
     USING ERRCODE = 'P0001';
 END $$;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS stock_movements_no_update ON stock_movements;
+--> statement-breakpoint
 CREATE TRIGGER stock_movements_no_update BEFORE UPDATE OR DELETE ON stock_movements
   FOR EACH ROW EXECUTE FUNCTION podo_forbid_stock_change();
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS stock_movements_no_truncate ON stock_movements;
 --> statement-breakpoint
 CREATE TRIGGER stock_movements_no_truncate BEFORE TRUNCATE ON stock_movements
   FOR EACH STATEMENT EXECUTE FUNCTION podo_forbid_truncate();
@@ -86,11 +122,17 @@ BEGIN
   RETURN NEW;
 END $$;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS products_refs_org ON products;
+--> statement-breakpoint
 CREATE TRIGGER products_refs_org BEFORE INSERT OR UPDATE OF supplier_id, organization_id ON products
   FOR EACH ROW EXECUTE FUNCTION podo_product_refs_org();
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS stock_movements_refs_org ON stock_movements;
+--> statement-breakpoint
 CREATE TRIGGER stock_movements_refs_org BEFORE INSERT ON stock_movements
   FOR EACH ROW EXECUTE FUNCTION podo_product_refs_org();
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS invoice_lines_product_org ON invoice_lines;
 --> statement-breakpoint
 CREATE TRIGGER invoice_lines_product_org BEFORE INSERT OR UPDATE OF product_id, organization_id ON invoice_lines
   FOR EACH ROW EXECUTE FUNCTION podo_product_refs_org();

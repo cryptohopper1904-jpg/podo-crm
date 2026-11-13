@@ -88,4 +88,21 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await cb.saveCalendarMode(u, "simple");
     expect(cb.calendarModeOf((await f.pool.query("select prefs from users where id = $1", [u])).rows[0].prefs)).toBe("simple");
   });
+
+  it("Anzeige-Optionen werden je Person gemerkt (nur Abweichungen), Ansicht und andere Einstellungen bleiben; Zurücksetzen entfernt sie", async () => {
+    const u = await f.user();
+    await f.pool.query(`update users set prefs = '{"changelog":{"seenId":"x"},"calendar":{"mode":"full"}}' where id = $1`, [u]);
+    await cb.saveCalendarOptions(u, () => ({ schoolHolidays: true, cancelledFull: true, startHour: 6 }));
+    const read = async () => (await f.pool.query("select prefs from users where id = $1", [u])).rows[0].prefs;
+    const prefs = await read();
+    expect(prefs).toEqual({ changelog: { seenId: "x" }, calendar: { mode: "full", options: { schoolHolidays: true, cancelledFull: true, startHour: 6 } } });
+    expect(cb.calendarOptionsOf(prefs, "full")).toMatchObject({ schoolHolidays: true, cancelled: true, startHour: 6, endHour: 20, holidays: true });
+    // URL überschreibt die gemerkte Einstellung
+    expect(cb.calendarOptionsOf(prefs, "full", { schoolHolidays: false }).schoolHolidays).toBe(false);
+    // Aktualisierung bekommt die bisherigen Werte
+    await cb.saveCalendarOptions(u, (prev) => ({ ...prev, weekend: "alle" }));
+    expect((await read()).calendar.options).toEqual({ schoolHolidays: true, cancelledFull: true, startHour: 6, weekend: "alle" });
+    await cb.saveCalendarOptions(u, () => null);
+    expect(await read()).toEqual({ changelog: { seenId: "x" }, calendar: { mode: "full" } });
+  });
 });

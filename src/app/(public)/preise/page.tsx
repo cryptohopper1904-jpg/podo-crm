@@ -1,10 +1,12 @@
 import { Check } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
-import { ADDONS, PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
+import { ADDONS, PRICE_NOTE, PRICE_PRELIMINARY_TEXT, PUBLIC_PLANS, SEATS_FAQ } from "../_content/plans";
+
+const paid = PUBLIC_PLANS.filter((p) => p.priceCents > 0).map((p) => `${p.name} ${p.price} (${p.therapists})`).join(", ");
 
 export const metadata = {
   title: "Preise",
-  description: "PodoHero-Tarife: 30 Tage kostenlos testen, kostenloser Tarif bis 20 Patient:innen ohne Zeitlimit, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
+  description: `PodoHero-Tarife: 30 Tage kostenlos testen, kostenloser Tarif bis 20 Patient:innen ohne Zeitlimit, ${paid} pro Monat, netto zzgl. USt., vorläufig. Empfang kostenlos. Nur für Unternehmer.`,
 };
 
 const INCLUDED = [
@@ -20,6 +22,8 @@ const INCLUDED = [
 const FAQ = [
   ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und hat kein Zeitlimit. Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
   ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 Patient:innen, 1 Person."],
+  ["Kostet der Empfang extra?", SEATS_FAQ],
+  ["Gelten die Preise netto oder brutto?", "PodoHero richtet sich ausschließlich an Unternehmer, also Praxen. Maßgeblich sind die Nettopreise zuzüglich der gesetzlichen Umsatzsteuer (derzeit 19 %). Den Bruttobetrag zeigen wir zur Orientierung daneben."],
   ["Kann ich monatlich kündigen?", "Ja. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten – Ihre Aufbewahrungspflichten bleiben bestehen."],
   ["Sind Drittanbieter enthalten?", "Nein. Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI-Anbieter rechnen ihre Leistungen selbst mit Ihnen ab."],
 ] as const;
@@ -48,7 +52,7 @@ export default function PricingPage() {
               <span className="font-display text-4xl font-bold">{p.price}</span>
               <span className="ml-1 text-muted">{p.period}</span>
             </p>
-            {p.id !== "trial" && p.id !== "free" ? <p className="text-xs text-muted">zzgl. USt.</p> : null}
+            {p.gross ? <p className="text-sm text-muted">netto · {p.gross}</p> : null}
             <p className="mt-4 font-medium">{p.therapists}</p>
             {p.note ? <p className="mt-1 text-sm text-muted">{p.note}</p> : null}
             <div className="mt-auto pt-6">
@@ -85,7 +89,7 @@ export default function PricingPage() {
             </li>
           ))}
         </ul>
-        <p className="mt-4 text-sm text-muted">Tarifinhalte und Preise sind vorläufig und können sich bis zum offiziellen Start ändern.</p>
+        <p id="vorlaeufig" className="mt-4 text-sm text-muted">{PRICE_PRELIMINARY_TEXT}</p>
       </section>
 
       <section aria-labelledby="faq" className="mt-12">

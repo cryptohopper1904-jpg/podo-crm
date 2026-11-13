@@ -18,6 +18,8 @@ import {
 } from "@/server/invoices";
 import { createPaymentLink, sendPaymentLink, simulateTestPayment, startTerminalPayment } from "@/server/card-payments";
 import { sendInvoiceEmail } from "@/server/invoice-delivery";
+import { createDunnings, markDunningPosted, sendDunningEmail } from "@/server/dunning";
+import { DUNNING_STAGE_LABEL, type DunningStage } from "@/lib/dunning";
 
 export type InvoiceFormState = { error?: string } | undefined;
 export type SimpleState = { error?: string; success?: string } | undefined;
@@ -204,6 +206,60 @@ export async function simulatePaymentAction(_: SimpleState, form: FormData): Pro
     const r = await simulateTestPayment(auth, id.data);
     refresh(id.data);
     return r === "gebucht" ? { success: "Testzahlung gebucht." } : { error: `Testzahlung nicht gebucht: ${r}` };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// ───────────── Mahnwesen ─────────────
+
+export type DunningActionState = { error?: string; success?: string; skipped?: string[] } | undefined;
+
+/** Für die ausgewählten Rechnungen die jeweils fällige nächste Mahnstufe erstellen. */
+export async function createDunningsAction(_: DunningActionState, form: FormData): Promise<DunningActionState> {
+  const auth = await requireAuth("invoices.write");
+  const ids = z.array(z.uuid()).max(200).safeParse(form.getAll("invoiceId"));
+  if (!ids.success || !ids.data.length) return { error: "Bitte mindestens eine Rechnung auswählen." };
+  try {
+    const r = await createDunnings(auth, ids.data);
+    revalidatePath("/rechnungen/mahnungen");
+    for (const c of r.created) revalidatePath(`/rechnungen/${c.invoiceId}`);
+    const skipped = r.skipped.map((s) => `${s.number ?? "Rechnung"}: ${s.reason}`);
+    if (!r.created.length) return { error: "Keine Mahnung erstellt.", skipped };
+    const counts = new Map<DunningStage, number>();
+    for (const c of r.created) counts.set(c.stage, (counts.get(c.stage) ?? 0) + 1);
+    const text = [...counts].map(([stage, n]) => `${n}× ${DUNNING_STAGE_LABEL[stage]}`).join(", ");
+    return { success: `Erstellt: ${text}. Jetzt als PDF drucken oder per E-Mail senden.`, skipped };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+const dunningIdOf = (form: FormData) => z.uuid().safeParse(form.get("dunningId"));
+
+export async function sendDunningEmailAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = dunningIdOf(form);
+  if (!id.success) return { error: "Mahnung nicht gefunden." };
+  try {
+    const r = await sendDunningEmail(auth, id.data);
+    refresh(r.invoiceId);
+    revalidatePath("/rechnungen/mahnungen");
+    return { success: r.mock ? `Testmodus: nicht versendet (E-Mail an ${r.to} nur simuliert, kein Versandvermerk gesetzt).` : `An ${r.to} gesendet.` };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function markDunningPostedAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = dunningIdOf(form);
+  if (!id.success) return { error: "Mahnung nicht gefunden." };
+  try {
+    const r = await markDunningPosted(auth, id.data);
+    refresh(r.invoiceId);
+    revalidatePath("/rechnungen/mahnungen");
+    return { success: "Als per Post versendet vermerkt." };
   } catch (e) {
     return { error: errorMessage(e) };
   }

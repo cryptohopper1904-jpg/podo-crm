@@ -1,0 +1,1 @@
+ALTER TABLE "sales_settings" ADD COLUMN IF NOT EXISTS "lead_search" jsonb;

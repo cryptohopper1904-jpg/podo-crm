@@ -274,7 +274,22 @@ export type UserPrefs = {
   /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
   changelog?: { seenId?: string; mutedId?: string };
   /** Kalender: gewählte Ansicht („simple“ = einfache Liste, Standard; „full“ = Tag/Woche/Monat mit Zeitachse) */
-  calendar?: { mode?: "simple" | "full" };
+  calendar?: {
+    mode?: "simple" | "full";
+    /** Anzeige-Optionen (nur Abweichungen vom Standard; Prüfung/Auflösung in src/lib/calendar-options.ts) */
+    options?: {
+      holidays?: boolean;
+      schoolHolidays?: boolean;
+      absences?: boolean;
+      cancelledSimple?: boolean;
+      cancelledFull?: boolean;
+      weekend?: "auto" | "alle" | "keine";
+      workHours?: boolean;
+      weekNumbers?: boolean;
+      startHour?: number;
+      endHour?: number;
+    };
+  };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";
   /** Darstellung der Kataloge (Einstellungen → Leistungen, Produkte): Kacheln, Liste oder Kompakt (src/lib/catalog.ts) */
@@ -992,6 +1007,49 @@ export const stockMovements = pgTable(
   (t) => [index("stock_movements_product").on(t.organizationId, t.productId), index("stock_movements_invoice").on(t.organizationId, t.invoiceId)],
 );
 
+/**
+ * Mahnwesen: Zahlungserinnerung / 1. Mahnung / 2. Mahnung zu einer Rechnung (src/lib/dunning.ts).
+ * Unveränderbar (Trigger, drizzle/0034): nur der Versandvermerk (sent_*) darf genau einmal gesetzt werden.
+ * Die Mahngebühr gehört NICHT zur Rechnung (GoBD) – sie steht nur hier und im Schreiben.
+ * Das PDF wird bei Bedarf aus den gespeicherten Werten erzeugt (Text, Beträge, Fristen, Briefkopf sind eingefroren;
+ * nur die Logos werden aktuell geladen).
+ */
+export const invoiceDunnings = pgTable(
+  "invoice_dunnings",
+  {
+    id: id(),
+    organizationId: orgId(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    /** reminder | dunning1 | dunning2 */
+    stage: text("stage").notNull(),
+    letterDate: date("letter_date").notNull(),
+    /** neue Zahlungsfrist laut Schreiben */
+    payBy: date("pay_by").notNull(),
+    /** offener Rechnungsbetrag beim Erstellen (Gesamt − Zahlungen) */
+    openCents: integer("open_cents").notNull(),
+    /** Gebühr dieser Stufe (konkrete Kosten) */
+    feeCents: integer("fee_cents").notNull().default(0),
+    /** Summe aller Mahngebühren zu dieser Rechnung einschließlich dieser */
+    feesTotalCents: integer("fees_total_cents").notNull().default(0),
+    /** fertiger Brieftext (Platzhalter ersetzt) */
+    body: text("body").notNull(),
+    /** Briefkopf/Anschrift beim Erstellen (Praxis, Bankverbindung, Empfänger) – Nachdrucke entsprechen dem versendeten Schreiben (§ 147 AO) */
+    letterhead: jsonb("letterhead").$type<Record<string, unknown>>().notNull(),
+    /** email | post */
+    sentVia: text("sent_via"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentTo: text("sent_to"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("invoice_dunnings_invoice_stage").on(t.invoiceId, t.stage),
+    index("invoice_dunnings_org_invoice").on(t.organizationId, t.invoiceId),
+  ],
+);
+
 export const vouchers = pgTable(
   "vouchers",
   {
@@ -1593,6 +1651,12 @@ export const salesSuppressions = pgTable("sales_suppressions", {
 
 export type SalesTemplate = { subject: string; body: string };
 
+/**
+ * Nächtliche Praxissuche (OpenStreetMap, Ring um den Startort): Einstellungen + Fortschritt in einer jsonb-Spalte.
+ * Struktur und Prüfung in src/lib/vertrieb/lead-search.ts (normalizeLeadSearch). Enthält nur Einstellungen, Zähler und Lead-IDs (Anreicherung), keine Lead-Inhalte.
+ */
+export type SalesLeadSearch = Record<string, unknown>;
+
 /** Einstellungen des Vertriebs (genau eine Zeile, id = 1): Absender, Impressum, Vorlagen, Abstände. */
 export const salesSettings = pgTable("sales_settings", {
   id: smallint("id").primaryKey().default(1),
@@ -1603,6 +1667,7 @@ export const salesSettings = pgTable("sales_settings", {
   delay2Days: smallint("delay2_days").notNull().default(5),
   delay3Days: smallint("delay3_days").notNull().default(10),
   templates: jsonb("templates").$type<SalesTemplate[]>(),
+  leadSearch: jsonb("lead_search").$type<SalesLeadSearch>(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: updatedAt(),
 });

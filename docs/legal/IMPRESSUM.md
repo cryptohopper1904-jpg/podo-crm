@@ -1,33 +1,39 @@
 # Impressum
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Die Angaben des Betreibers sind noch nicht eingetragen. Platzhalter in eckigen Klammern sind vor der Veröffentlichung zu ersetzen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.**
 >
-> Version 0.1 · Stand 08.11.2026
+> Version 0.2 · Stand 13.11.2026
 
 ## Angaben gemäß § 5 DDG
 
-[FIRMENNAME] [RECHTSFORM]
-[ANSCHRIFT]
-
-**Vertreten durch:** [VERTRETUNGSBERECHTIGTE PERSON]
+Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“
+Veltener Straße 33
+16540 Hohen Neuendorf
+Deutschland
 
 ## Kontakt
 
-Telefon: [TELEFON]
-E-Mail: [E-MAIL]
+E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com)
 
-## Registereintrag
+<!--
+TODO (Betreiber): Telefonnummer ergänzen. § 5 Abs. 1 Nr. 2 DDG verlangt neben der E-Mail-Adresse einen weiteren
+schnellen, unmittelbaren Kommunikationsweg (Telefon empfohlen; nach EuGH C-298/07 alternativ z. B. Kontaktformular).
+Keine Nummer erfinden.
+-->
 
-Registergericht: [REGISTERGERICHT]
-Registernummer: [HANDELSREGISTERNUMMER]
+<!--
+TODO (Betreiber): Registereintrag (Registergericht, Registernummer) nur angeben, falls eine Eintragung im
+Handelsregister besteht – derzeit nicht bekannt, daher weggelassen.
+-->
 
-## Umsatzsteuer
-
-Umsatzsteuer-Identifikationsnummer gemäß § 27a UStG: [UST-ID]
+<!--
+TODO (Betreiber): Umsatzsteuer-Identifikationsnummer nach § 27a UStG nur angeben, falls vorhanden –
+derzeit nicht bekannt, daher weggelassen. Keine Steuernummer im Impressum nötig.
+-->
 
 ## Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV
 
-[NAME], [ANSCHRIFT]
+Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf
 
 ## Verbraucherstreitbeilegung
 

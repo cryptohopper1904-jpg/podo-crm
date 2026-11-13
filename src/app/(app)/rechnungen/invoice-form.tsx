@@ -381,6 +381,9 @@ export function InvoiceForm({
     }),
   );
 
+  // Texte unten passend zur oben gewählten Belegart (Rechnung, Quittung, Sammelrechnung, Ausfallhonorar)
+  const docLabel = INVOICE_KIND_LABEL[kind];
+  const onDoc = kind === "no_show_fee" ? "auf dem Beleg" : `auf der ${docLabel}`;
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
       <input type="hidden" name="lines" value={linesJson} />
@@ -720,7 +723,7 @@ export function InvoiceForm({
         <p className="text-sm">
           Quittungen angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
           <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
-          {openAfterDeposits < 0 ? " – die Quittungen übersteigen den Rechnungsbetrag." : ""}
+          {openAfterDeposits < 0 ? ` – die Quittungen übersteigen den Betrag der ${docLabel}.` : ""}
         </p>
       ) : null}
 
@@ -729,7 +732,9 @@ export function InvoiceForm({
         <p className="mb-4 text-sm text-muted">
           {kind === "receipt"
             ? "Quittung: Der Betrag wird sofort vollständig bezahlt."
-            : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
+            : kind === "collective"
+              ? "Optional – nur den noch offenen Betrag der Sammelrechnung erfassen (Quittungen sind oben bereits angerechnet). Mischzahlung möglich."
+              : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
         </p>
         <PaymentsEditor rows={payments} onChange={setPayments} openCents={Math.max(0, openAfterDeposits)} />
         {kind === "receipt" && paid !== totals.totalCents ? (
@@ -738,7 +743,7 @@ export function InvoiceForm({
       </Card>
 
       <Card>
-        <Field label="Hinweis auf der Rechnung (keine Diagnosen)">
+        <Field label={`Hinweis ${onDoc} (keine Diagnosen)`}>
           <Textarea name="notes" defaultValue={preset?.notes ?? ""} placeholder={privateOnly ? "z. B. Behandlungszeitraum" : "z. B. Behandlungszeitraum, Bezug auf Verordnung"} />
         </Field>
       </Card>
@@ -748,7 +753,7 @@ export function InvoiceForm({
           {pending ? "Wird ausgestellt …" : `${INVOICE_KIND_LABEL[kind]} ausstellen`}
         </Button>
         <Link href="/rechnungen" className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>
-        <p className="w-full text-xs text-muted">Nach dem Ausstellen sind Nummer und Beträge unveränderbar (GoBD). Korrekturen nur per Storno.</p>
+        <p className="w-full text-xs text-muted">Nach dem Ausstellen sind Nummer und Beträge {kind === "no_show_fee" ? "des Belegs" : `der ${docLabel}`} unveränderbar (GoBD). Korrekturen nur per Storno.</p>
       </div>
     </form>
   );
