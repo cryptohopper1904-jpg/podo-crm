@@ -4,6 +4,7 @@ import { db, withOrg } from "@/db";
 import { anamneses, appointments, auditLog, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
+import { isDeceased } from "@/lib/patient-deceased";
 import { mergeRiskFlagsAdditive, riskFlagsFromAnamnesis, type AnamnesisData } from "@/lib/anamnesis";
 import { assertCan } from "./authz";
 import { generateLinkToken, hashLinkToken, isWellFormedToken, linkExpiry, linkState } from "@/lib/patient-link";
@@ -105,11 +106,13 @@ export async function createAnamnesisLink(auth: AuthContext, patientId: string) 
   const org = auth.organization.id;
   const { token, tokenHash } = generateLinkToken();
   const expiresAt = linkExpiry();
-  let ok = false;
+  let ok: boolean | "deceased" = false;
   try {
-    ok = await withOrg(org, async (tx) => {
-    const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+    ok = await withOrg(org, async (tx): Promise<boolean | "deceased"> => {
+    const [p] = await tx.select({ id: patients.id, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
     if (!p) return false;
+    // verstorben: keine neuen Patienten-Links
+    if (isDeceased(p.extra)) return "deceased" as const;
     // Parallele Erzeugung serialisieren; zusätzlich sichert der partielle Unique-Index patient_links_one_active ab
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`plink:${org}:${patientId}:anamnesis`}))`);
     // ältere, noch offene Links desselben Zwecks werden widerrufen (nur ein gültiger Link je Patient)
@@ -125,6 +128,7 @@ export async function createAnamnesisLink(auth: AuthContext, patientId: string) 
     if (isUniqueViolation(e)) return { error: "Gerade wurde parallel ein Link erzeugt. Bitte erneut versuchen." } as const;
     throw e;
   }
+  if (ok === "deceased") return { error: "Die Patient:in ist als verstorben markiert – kein neuer Link möglich." } as const;
   if (!ok) return { error: "Patient nicht gefunden." } as const;
   await audit({ organizationId: org, userId: auth.user.id, action: "patient_link.create", entity: "patient", entityId: patientId, meta: { purpose: "anamnesis" } });
   return { token, expiresAt };
@@ -153,10 +157,10 @@ export async function publicLinkInfo(token: string) {
   return withOrg(link.organizationId, async (tx) => {
     const [org] = await tx.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, link.organizationId));
     const [p] = await tx
-      .select({ firstName: patients.firstName })
+      .select({ firstName: patients.firstName, extra: patients.extra })
       .from(patients)
       .where(and(eq(patients.organizationId, link.organizationId), eq(patients.id, link.patientId), isNull(patients.archivedAt)));
-    if (!org || !p) return null;
+    if (!org || !p || isDeceased(p.extra)) return null;
     return { practiceName: org.name, practicePhone: org.phone, firstName: p.firstName };
   });
 }
@@ -188,11 +192,11 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
     await tx.execute(sql`select set_config('app.org_id', ${link.organizationId}, true)`);
     const org = link.organizationId;
     const [p] = await tx
-      .select({ number: patients.number, archivedAt: patients.archivedAt, riskFlags: patients.riskFlags })
+      .select({ number: patients.number, archivedAt: patients.archivedAt, riskFlags: patients.riskFlags, extra: patients.extra })
       .from(patients)
       .where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
     // archivierte Akte: nichts speichern, Link NICHT verbrauchen (Rollback)
-    if (!p || p.archivedAt) throw new LinkRejected();
+    if (!p || p.archivedAt || isDeceased(p.extra)) throw new LinkRejected();
     const [a] = await tx.insert(anamneses).values({ organizationId: org, patientId: link.patientId, data: { ...data, source: "online" }, authorId: null }).returning({ id: anamneses.id });
     // Jede Online-Einwilligung mit dem tatsächlichen Wert speichern (nicht angehakt = Widerruf/keine Einwilligung)
     const consentRows = [

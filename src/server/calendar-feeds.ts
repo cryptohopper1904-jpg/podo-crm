@@ -9,6 +9,7 @@ import { describeError } from "@/integrations/test-connection";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { patientIsDeceased } from "./patient-deceased";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
 import { eventKey, parseIcs, type IcsWarnings, type ParsedIcsEvent } from "@/lib/ics-parse";
 import { mapPool, withTimeout } from "@/lib/pool";
@@ -461,6 +462,9 @@ export async function assignFeedAppointmentPatient(auth: AuthContext, appointmen
     if (patientId) {
       const p = await tx.execute(sql`select 1 from patients where organization_id = ${org} and id = ${patientId} and archived_at is null`);
       if (!p.rows.length) return false;
+      // verstorben: keinen künftigen Termin mehr zuordnen (vergangene schon – z. B. für die Abrechnung)
+      const future = await tx.execute(sql`select 1 from appointments where organization_id = ${org} and id = ${appointmentId} and starts_at > now()`);
+      if (future.rows.length && (await patientIsDeceased(tx, org, patientId))) return false;
     }
     // patient_id ist nicht Teil des Abgleich-Hashes: die Zuordnung bleibt bei späteren Kalender-Änderungen erhalten
     await tx.update(appointments).set({ patientId, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId)));

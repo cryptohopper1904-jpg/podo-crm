@@ -23,6 +23,7 @@ import {
 import { PORTAL_COOKIE, verifyPortalSession } from "@/lib/portal-session";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { invoicePdfForOrg } from "./invoice-delivery";
+import { isDeceased } from "@/lib/patient-deceased";
 
 /** Drosselung je IP: Seitenaufrufe/Downloads und (strenger) ungültige Tokens. */
 export const portalLimiter = createRateLimiter({ windowMs: 10 * 60_000, max: 60 });
@@ -33,8 +34,10 @@ export async function createPortalLink(auth: AuthContext, patientId: string) {
   assertCan(auth, "patients.write");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(patientId).success) throw new Error("Person nicht gefunden.");
-  const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt))));
+  const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt))));
   if (!p) throw new Error("Person nicht gefunden.");
+  // verstorben: kein Portal-Zugang mehr (Links wurden beim Markieren widerrufen)
+  if (isDeceased(p.extra)) throw new Error("Patient:in ist als verstorben markiert.");
   const token = newPortalToken();
   const expiresAt = new Date(Date.now() + PORTAL_DAYS * 86400_000);
   await insertPortalLinkLocked(org, patientId, hashPortalToken(token), expiresAt, auth.user.id);
@@ -116,8 +119,8 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
   const [o] = await db.select({ name: organizations.name, phone: organizations.phone, email: organizations.email }).from(organizations).where(eq(organizations.id, org));
   if (!o) return null;
   const data = await withOrg(org, async (tx) => {
-    const [p] = await tx.select({ firstName: patients.firstName, archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
-    if (!p || p.archivedAt) return null;
+    const [p] = await tx.select({ firstName: patients.firstName, archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
+    if (!p || p.archivedAt || isDeceased(p.extra)) return null;
     const appts = await tx
       .select({ id: appointments.id, startsAt: appointments.startsAt, endsAt: appointments.endsAt, status: appointments.status })
       .from(appointments)

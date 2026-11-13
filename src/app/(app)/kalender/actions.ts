@@ -11,6 +11,7 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
+import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
@@ -59,6 +60,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     serviceIds: svc.map((x) => x.id),
     allowConflict: !!d.allowConflict,
   });
+  if (!res.ok && "deceased" in res) return { error: DECEASED_BLOCKED_MSG };
   if (!res.ok) return { error: "Zu dieser Zeit ist bereits ein Termin eingetragen.", conflict: true };
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length } });
   revalidatePath("/kalender");

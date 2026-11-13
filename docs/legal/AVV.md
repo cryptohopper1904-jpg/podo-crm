@@ -1,12 +1,14 @@
 # Vertrag zur Auftragsverarbeitung (AVV) nach Art. 28 DSGVO
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Platzhalter in eckigen Klammern (z. B. [FIRMENNAME]) sind vom Betreiber auszufüllen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Verbleibende Platzhalter in eckigen Klammern sind vom Betreiber auszufüllen.
 >
-> Version 0.1 · Stand 08.11.2026
+> Version 0.2 · Stand 13.11.2026
 
 zwischen der Praxis des Kunden (nachfolgend **„Verantwortlicher“**)
 
-und [FIRMENNAME], [ANSCHRIFT], vertreten durch [VERTRETUNGSBERECHTIGTE PERSON] (nachfolgend **„Auftragsverarbeiter“**).
+und Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend **„Auftragsverarbeiter“**).
+
+<!-- TODO (Betreiber): „vertreten durch …“ ergänzen, falls PodoHero über eine Gesellschaft betrieben wird; bei einer natürlichen Person entfällt die Angabe. -->
 
 ## § 1 Gegenstand und Dauer
 
@@ -26,7 +28,7 @@ und [FIRMENNAME], [ANSCHRIFT], vertreten durch [VERTRETUNGSBERECHTIGTE PERSON] (
 ## § 3 Weisungen
 
 1. Der Auftragsverarbeiter verarbeitet die Daten nur auf **dokumentierte Weisung** des Verantwortlichen, auch in Bezug auf Übermittlungen in Drittländer, sofern er nicht gesetzlich zu einer anderen Verarbeitung verpflichtet ist (Art. 28 Abs. 3 lit. a DSGVO). In diesem Fall teilt er dem Verantwortlichen die rechtlichen Anforderungen vor der Verarbeitung mit, sofern das Recht dies nicht verbietet.
-2. Weisungen erteilt der Verantwortliche grundsätzlich durch die Nutzung und Konfiguration der Software (z. B. Aktivieren einer Schnittstelle, Datenexport, Löschantrag) sowie in Textform an [E-MAIL].
+2. Weisungen erteilt der Verantwortliche grundsätzlich durch die Nutzung und Konfiguration der Software (z. B. Aktivieren einer Schnittstelle, Datenexport, Löschantrag) sowie in Textform an [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com).
 3. Hält der Auftragsverarbeiter eine Weisung für rechtswidrig, informiert er den Verantwortlichen unverzüglich (Art. 28 Abs. 3 UAbs. 2 DSGVO) und darf die Ausführung bis zur Bestätigung aussetzen.
 
 ## § 4 Vertraulichkeit und Berufsgeheimnis (§ 203 StGB)
@@ -79,5 +81,5 @@ Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn d
 
 ## Anlagen
 
-1. Technische und organisatorische Maßnahmen (TOM) – [FASSUNG UND DATUM DER TOM]
+1. Technische und organisatorische Maßnahmen (TOM) – Fassung: Entwurf, Stand 13.11.2026
 2. [Liste der Unterauftragnehmer](/unterauftragnehmer)

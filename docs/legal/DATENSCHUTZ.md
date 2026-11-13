@@ -1,17 +1,20 @@
 # Datenschutzerklärung
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Platzhalter in eckigen Klammern (z. B. [FIRMENNAME]) sind vom Betreiber auszufüllen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Verbleibende Platzhalter in eckigen Klammern sind vom Betreiber auszufüllen.
 >
-> Version 0.1 · Stand 08.11.2026
+> Version 0.2 · Stand 13.11.2026
 
 Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
 ## 1. Verantwortlicher
 
-[FIRMENNAME]
-[ANSCHRIFT]
-E-Mail: [E-MAIL]
-Telefon: [TELEFON]
+Pitt Petruschke
+Veltener Straße 33
+16540 Hohen Neuendorf
+Deutschland
+E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com)
+
+<!-- TODO (Betreiber): Telefonnummer ergänzen, sobald vorhanden – keine Nummer erfinden. -->
 
 Datenschutzbeauftragte/r: [DATENSCHUTZBEAUFTRAGTE/R ODER HINWEIS, DASS KEINE BENENNUNGSPFLICHT BESTEHT]
 
@@ -58,7 +61,9 @@ Wir setzen sorgfältig ausgewählte Dienstleister ein, die Daten nur nach unsere
 
 Sie haben das Recht auf Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerspruch (Art. 21 DSGVO). Erteilte Einwilligungen können Sie jederzeit mit Wirkung für die Zukunft widerrufen.
 
-Sie haben außerdem das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu beschweren, z. B. bei der für uns zuständigen Behörde: [ZUSTÄNDIGE AUFSICHTSBEHÖRDE].
+Sie haben außerdem das Recht, sich bei einer Datenschutz-Aufsichtsbehörde zu beschweren, z. B. bei der für uns zuständigen Behörde: Die Landesbeauftragte für den Datenschutz und für das Recht auf Akteneinsicht Brandenburg, Stahnsdorfer Damm 77, 14532 Kleinmachnow.
+
+<!-- TODO (Betreiber): Zuständigkeit (Sitz Hohen Neuendorf, Land Brandenburg) und Anschrift der Aufsichtsbehörde vor Veröffentlichung prüfen. -->
 
 ## 9. Sicherheit
 

@@ -1,5 +1,9 @@
 # Technische und organisatorische Maßnahmen (Art. 32 DSGVO) – Entwurf
 
+Anlage zum Auftragsverarbeitungsvertrag (`docs/legal/AVV.md`). Fassung: Entwurf, Stand 13.11.2026.
+
+**Auftragsverarbeiter / Betreiber von PodoHero:** Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland · E-Mail: cryptohopper1904@gmail.com
+
 ## Vertraulichkeit
 | Maßnahme | Umsetzung | Nachweis im Code |
 |---|---|---|

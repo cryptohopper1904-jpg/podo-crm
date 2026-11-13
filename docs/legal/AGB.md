@@ -1,12 +1,12 @@
 # Allgemeine Geschäftsbedingungen (AGB) für PodoHero
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Platzhalter in eckigen Klammern (z. B. [FIRMENNAME]) sind vom Betreiber auszufüllen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Verbleibende Platzhalter in eckigen Klammern sind vom Betreiber auszufüllen.
 >
-> Version 0.1 · Stand 08.11.2026
+> Version 0.2 · Stand 13.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
-1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoHero“ (nachfolgend „Dienst“) zwischen [FIRMENNAME], [ANSCHRIFT] (nachfolgend „Anbieter“) und dem Kunden.
+1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoHero“ (nachfolgend „Dienst“) zwischen Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend „Anbieter“) und dem Kunden.
 2. Der Dienst richtet sich ausschließlich an **Unternehmer** im Sinne des § 14 BGB, insbesondere podologische Praxen, Praxen für medizinische Fußpflege und vergleichbare Heilmittelerbringer. Verbraucher sind von der Nutzung ausgeschlossen.
 3. Abweichende Bedingungen des Kunden gelten nur, wenn der Anbieter ihnen ausdrücklich in Textform zustimmt.
 
@@ -79,5 +79,7 @@ Der Anbieter kann diese AGB mit Wirkung für die Zukunft ändern, soweit dies f�
 ## § 12 Schlussbestimmungen
 
 1. Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts.
-2. Gerichtsstand ist, soweit zulässig, [GERICHTSSTAND].
+2. Ist der Kunde Kaufmann, juristische Person des öffentlichen Rechts oder öffentlich-rechtliches Sondervermögen, ist Gerichtsstand für alle Streitigkeiten aus diesem Vertrag der Sitz des Anbieters in Hohen Neuendorf (Amtsgericht Oranienburg bzw. Landgericht Neuruppin), soweit gesetzlich zulässig (§ 38 ZPO).
+
+<!-- TODO (Betreiber/Anwalt): Gerichtsstand bitte prüfen – Gerichtsstandsvereinbarungen sind nach § 38 Abs. 1 ZPO nur mit Kaufleuten u. Ä. wirksam; viele Praxen (Freiberufler) sind keine Kaufleute, dann gilt der gesetzliche Gerichtsstand. -->
 3. Sollte eine Bestimmung unwirksam sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.

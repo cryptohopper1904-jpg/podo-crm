@@ -9,6 +9,7 @@ import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
+import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
 
 export async function listAppointments(auth: AuthContext, fromIso: string, days: number) {
   const org = auth.organization.id;
@@ -105,9 +106,17 @@ export type InternalAppointmentInput = {
  * derselben Buchungssperre wie /buchen, Portal, Telefon und Warteliste (pg_advisory_xact_lock „book:<org>“).
  * `allowConflict` (bewusste Doppelbuchung nach Rückfrage) überspringt nur die Prüfung, nicht die Sperre.
  */
-export async function createInternalAppointments(org: string, input: InternalAppointmentInput): Promise<{ ok: true; ids: string[] } | { ok: false; conflict: true }> {
+export async function createInternalAppointments(
+  org: string,
+  input: InternalAppointmentInput,
+  now = new Date(),
+): Promise<{ ok: true; ids: string[] } | { ok: false; conflict: true } | { ok: false; deceased: true }> {
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
+    // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
+    if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId))) {
+      return { ok: false as const, deceased: true as const };
+    }
     if (!input.allowConflict) {
       for (const s of input.occurrences) {
         if ((await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000))).length) return { ok: false as const, conflict: true as const };
@@ -223,6 +232,7 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
       .limit(1);
     const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
+    if (a.patientId && input.startsAt > new Date() && (await patientIsDeceased(tx, org, a.patientId))) return { ok: false, error: DECEASED_BLOCKED_MSG };
     const [member] = await tx
       .select({ id: memberships.userId })
       .from(memberships)

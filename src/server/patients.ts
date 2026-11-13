@@ -14,6 +14,7 @@ import {
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { patientStatus } from "@/lib/patient-status";
+import { deceasedInfo, isDeceased } from "@/lib/patient-deceased";
 import { sequential } from "@/lib/seq";
 
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
@@ -113,8 +114,10 @@ export async function listPatients(auth: AuthContext, opts: { q?: string; status
         lastVisit: r.last ? new Date(r.last) : null,
         openCents: Number(r.openCents ?? 0),
         status: patientStatus(r.last ? new Date(r.last) : null, r.p.visitIntervalWeeks),
+        deceased: isDeceased(r.p.extra),
       }))
-      .filter((r) => !opts.status || r.status === opts.status);
+      // Filter „verstorben“ zeigt nur Verstorbene; die übrigen Status-Filter (z. B. „Überfällig“ für Rückholung) blenden sie aus
+      .filter((r) => !opts.status || (opts.status === "deceased" ? r.deceased : !r.deceased && r.status === opts.status));
   });
 }
 
@@ -150,6 +153,7 @@ export async function getPatient(auth: AuthContext, id: string) {
       consents: cons,
       billingContact: billing[0] ?? null,
       status: patientStatus(lastDone ? lastDone.startsAt : null, p.visitIntervalWeeks),
+      deceased: deceasedInfo(p.extra),
       openCents: invs.filter((i) => i.status === "issued" || i.status === "partially_paid").reduce((s, i) => s + i.totalCents - i.paidCents, 0),
       revenueCents: invs.filter((i) => i.status !== "cancelled" && i.status !== "draft").reduce((s, i) => s + i.paidCents, 0),
     };
