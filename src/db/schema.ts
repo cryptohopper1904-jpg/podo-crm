@@ -1033,7 +1033,7 @@ export const invoiceDunnings = pgTable(
     feeCents: integer("fee_cents").notNull().default(0),
     /** Summe aller Mahngebühren zu dieser Rechnung einschließlich dieser */
     feesTotalCents: integer("fees_total_cents").notNull().default(0),
-    /** fertiger Brieftext (Platzhalter ersetzt) */
+    /** Brieftext mit ersetzten Platzhaltern – außer {frist}: die wird erst beim Erzeugen von PDF/E-Mail aus pay_by eingesetzt */
     body: text("body").notNull(),
     /** Briefkopf/Anschrift beim Erstellen (Praxis, Bankverbindung, Empfänger) – Nachdrucke entsprechen dem versendeten Schreiben (§ 147 AO) */
     letterhead: jsonb("letterhead").$type<Record<string, unknown>>().notNull(),
