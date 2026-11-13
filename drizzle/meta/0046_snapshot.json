@@ -1,6 +1,6 @@
 {
-  "id": "ecd7356f-d55f-4277-9ced-a1d49cd6ed3f",
-  "prevId": "dd0cfd20-af0f-44d9-849d-ac0977bf3e81",
+  "id": "83629cfe-f3ae-4427-9c60-186e6d937442",
+  "prevId": "850cb832-1315-4f6f-8738-9760e3abcf88",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -223,7 +223,29 @@
           "default": "'1'"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "appointment_services_appointment": {
+          "name": "appointment_services_appointment",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "appointment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
       "foreignKeys": {
         "appointment_services_organization_id_organizations_id_fk": {
           "name": "appointment_services_organization_id_organizations_id_fk",
@@ -386,6 +408,33 @@
           "columns": [
             {
               "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "appointments_org_patient": {
+          "name": "appointments_org_patient",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "patient_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2892,6 +2941,21 @@
           "with": {},
           "method": "btree",
           "concurrently": false
+        },
+        "invoice_lines_invoice": {
+          "name": "invoice_lines_invoice",
+          "columns": [
+            {
+              "expression": "invoice_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -3219,6 +3283,27 @@
             },
             {
               "expression": "collective_invoice_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "invoices_org_issued": {
+          "name": "invoices_org_issued",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "issued_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -5128,6 +5213,27 @@
             },
             {
               "expression": "cash_closing_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "paid_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "payments_org_paid": {
+          "name": "payments_org_paid",
+          "columns": [
+            {
+              "expression": "organization_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

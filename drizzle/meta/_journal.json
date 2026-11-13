@@ -320,7 +320,14 @@
     {
       "idx": 45,
       "version": "7",
-      "when": 1794606490840,
+      "when": 1794606487820,
+      "tag": "0045_auswertung_indizes",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794606899014,
       "tag": "0046_oeffnungszeiten_tage",
       "breakpoints": true
     }

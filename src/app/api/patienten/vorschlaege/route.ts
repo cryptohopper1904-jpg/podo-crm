@@ -4,8 +4,33 @@ import { cleanQuery } from "@/lib/patient-search";
 import { suggestLimiter, suggestPatients } from "@/server/patient-search";
 
 const headers = { "Cache-Control": "private, no-store" };
-/** Anfragekörper höchstens so groß (Suchtext ≤ 80 Zeichen) */
-const MAX_BODY = 1_024;
+/** Anfragekörper höchstens so viele Bytes (Suchtext ≤ 80 Zeichen) */
+const MAX_BODY_BYTES = 1_024;
+
+/** Körper lesen, aber nie mehr als `max` Bytes puffern (auch ohne/mit falscher Content-Length); null = zu groß */
+async function readCapped(req: NextRequest, max: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    buf.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(buf);
+}
 
 /**
  * POST /api/patienten/vorschlaege  { q: <Suchtext> }  → { hits, more, didYouMean }
@@ -25,8 +50,12 @@ export async function POST(req: NextRequest) {
   if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) {
     return NextResponse.json({ error: "JSON erwartet" }, { status: 415, headers });
   }
-  const raw = await req.text();
-  if (raw.length > MAX_BODY) return NextResponse.json({ error: "Anfrage zu groß" }, { status: 413, headers });
+  const tooLarge = () => NextResponse.json({ error: "Anfrage zu groß" }, { status: 413, headers });
+  // erst die angekündigte Länge, dann beim Lesen hart begrenzen (Content-Length kann fehlen oder falsch sein)
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (!Number.isFinite(declared) || declared > MAX_BODY_BYTES) return tooLarge();
+  const raw = await readCapped(req, MAX_BODY_BYTES);
+  if (raw === null) return tooLarge();
   let body: unknown = null;
   try {
     body = JSON.parse(raw);

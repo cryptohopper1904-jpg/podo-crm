@@ -92,7 +92,7 @@ describe("Patientensuche: „Meinten Sie“", () => {
     expect(suggestedQuery("Schmitt", people[0])).toBe("Schmidt");
     expect(suggestedQuery("Paulla", people[2])).toBe("Paula");
   });
-  it("Rechenzeit begrenzt: 20.000 Namen, 80-Zeichen-Suchtext, lange Namen (< 150 ms)", () => {
+  it("Rechenzeit begrenzt: 20.000 übergebene Namen (davon ≤ 2000 bewertet), 80-Zeichen-Suchtext (< 150 ms)", () => {
     const many = Array.from({ length: 20_000 }, (_, i) => ({
       id: String(i),
       lastName: `Nachname${i.toString(36)}-Doppelname-${"x".repeat(i % 60)}`,
@@ -111,6 +111,20 @@ describe("Patientensuche: „Meinten Sie“", () => {
     expect(r[0].id).toBe("hit");
     expect(long).toBeLessThan(150);
     expect(short).toBeLessThan(150);
+  });
+  it("Worst Case: 2000 ähnliche 40-Zeichen-Namen, 40-Zeichen-Suchtext (< 300 ms)", () => {
+    // alle Namen teilen Trigramme und Länge mit dem Suchtext → keine Schranke greift früh, volle Levenshtein-Läufe
+    const base = "abcdefghijklmnopqrst";
+    const vary = (i: number) => base.slice(0, 19) + String.fromCharCode(97 + (i % 26));
+    const many = Array.from({ length: FUZZY_MAX_CANDIDATES }, (_, i) => ({ id: String(i), lastName: vary(i), firstName: vary(i + 7) }));
+    expect(`${many[0].firstName} ${many[0].lastName}`.length).toBe(FUZZY_MAX_CHARS + 1);
+    const query = `${base} ${base}`.slice(0, FUZZY_MAX_CHARS);
+    closestNames(query, many.slice(0, 200)); // Aufwärmen (JIT)
+    const t = performance.now();
+    const r = closestNames(query, many);
+    const ms = performance.now() - t;
+    expect(r.length).toBeGreaterThan(0);
+    expect(ms).toBeLessThan(300);
   });
   it("bewertet höchstens FUZZY_MAX_CANDIDATES Kandidaten", () => {
     const many = Array.from({ length: FUZZY_MAX_CANDIDATES + 10 }, (_, i) => ({ id: String(i), lastName: "Becker", firstName: null }));
