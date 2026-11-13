@@ -19,6 +19,7 @@ import {
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingPort, MessagingProvider } from "@/integrations/types";
 import { adapterFor, logSync } from "./integrations";
+import { isDeceased, notDeceased } from "./patient-deceased";
 import { mailMessagingPort } from "./mail";
 
 export * from "@/lib/reminders";
@@ -90,6 +91,7 @@ export async function loadReminderCandidates(tx: Tx, org: string, settings: Remi
           eq(appointments.organizationId, org),
           eq(appointments.status, "done"),
           isNull(patients.archivedAt),
+          notDeceased(),
           inArray(appointments.patientId, consenting),
         ),
       )
@@ -139,6 +141,8 @@ export async function loadReminderCandidates(tx: Tx, org: string, settings: Remi
         phoneMobile: p.phoneMobile,
         preferredChannel: p.preferredChannel,
         noReminders: extra.no_reminders === true || extra.no_reminders === "true",
+        // verstorben → keine Erinnerung, keine Rückholung, keine Spangen-Kontrolle (chooseChannel liefert null)
+        deceased: isDeceased(p.extra),
       };
       c.patients.set(p.id, rp);
     }

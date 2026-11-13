@@ -3,6 +3,7 @@ import { and, asc, eq, gte, inArray, lte, ne, notInArray, sql } from "drizzle-or
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { absences, appointments, memberships, organizations, patients, users, workingHours } from "@/db/schema";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { ABSENCE_KINDS, computeAvailability, type Availability, type TimeRange } from "@/lib/availability";
@@ -26,13 +27,29 @@ const need = (ok: boolean, what: string) => {
   if (!ok) throw new StaffForbiddenError(what);
 };
 
-/** Aktive Personen der Praxis, die behandeln/arbeiten (ohne Steuerberatung). */
+/**
+ * Aktive Personen der Praxis, die arbeiten (ohne Steuerberatung) – für Team-Planung (Arbeitszeiten, Abwesenheiten).
+ * Für buchbare Zeiten (Online-Buchung, KI-Telefon) bookableStaff verwenden.
+ */
 export async function staffMembers(org: string) {
   return db
     .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
     .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), ne(memberships.role, "accountant")))
+    .orderBy(asc(users.name));
+}
+
+/**
+ * Personen mit eigener Kalenderspalte (Inhaber:in, Podolog:in – CALENDAR_ROLES): nur ihre Arbeitszeiten ergeben
+ * buchbare Zeiten. Arbeitszeiten von Empfang oder Azubis erzeugen keine Online-/Telefon-Slots.
+ */
+export async function bookableStaff(org: string) {
+  return db
+    .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
+    .from(memberships)
+    .innerJoin(users, eq(users.id, memberships.userId))
+    .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])))
     .orderBy(asc(users.name));
 }
 

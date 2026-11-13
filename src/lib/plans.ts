@@ -9,12 +9,24 @@
  * auf ihre Aufbewahrungspflichten. Durchgesetzt in requireAuth()/getAuth() (src/lib/auth/session.ts).
  */
 
+import { moneyShort } from "./format";
+
 export const PRICES_PRELIMINARY = true;
-export const PRICES_NOTE = "Preise vorläufig – Platzhalter, Änderungen vorbehalten. Alle Preise netto zzgl. USt.";
+export const PRICES_NOTE =
+  "Alle Preise netto zzgl. 19 % USt. Preise vorläufig: Bis zum offiziellen Start können sich Tarife und Preise für neue Verträge ändern. Für bereits gebuchte Tarife gilt der Preis bei Vertragsschluss; spätere Änderungen kündigen wir mindestens sechs Wochen vorher an, du kannst dann zum Wirksamwerden kündigen (AGB § 4).";
 
 export const TRIAL_DAYS = 30;
 export const GRACE_DAYS = 14;
 export const EXTRA_SEAT_CENTS = 1500;
+/** Regelsteuersatz für die Brutto-Anzeige (B2B: Nettopreise bleiben maßgeblich, AGB schließt Verbraucher aus) */
+export const VAT_RATE_PERCENT = 19;
+
+/** Bruttobetrag in Cent (kaufmännisch gerundet) */
+export const grossCents = (netCents: number) => Math.round((netCents * (100 + VAT_RATE_PERCENT)) / 100);
+/** Bruttopreis als Text, z. B. „70,21 € inkl. USt.“ (0 € ohne USt-Angabe → null) */
+export const grossLabel = (netCents: number) => (netCents > 0 ? `${moneyShort(grossCents(netCents))} inkl. USt.` : null);
+/** Netto- und Bruttopreis, z. B. „59 € netto · 70,21 € inkl. USt.“; 0 € bleibt „0 €“ */
+export const netGrossLabel = (netCents: number) => (netCents > 0 ? `${moneyShort(netCents)} netto · ${grossLabel(netCents)}` : moneyShort(0));
 
 export const FEATURES = ["portal", "voice_agent", "website"] as const;
 export type Feature = (typeof FEATURES)[number];
@@ -35,7 +47,7 @@ export type PlanInfo = {
   label: string;
   /** Netto-Grundpreis pro Monat in Cent (vorläufig) */
   priceCents: number;
-  /** im Grundpreis enthaltene Behandler-/Team-Plätze */
+  /** im Grundpreis enthaltene Plätze (Inhaber:in, Podolog:innen, Azubis; Empfang und Steuerberatung kostenlos) */
   includedSeats: number;
   /** Obergrenze (null = unbegrenzt) */
   maxSeats: number | null;
@@ -50,7 +62,10 @@ export type PlanInfo = {
 /** Kostenloser Tarif: ohne Zeitlimit gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
 export const FREE_MAX_PATIENTS = 20;
 
-export const PLANS: Record<PlanId, PlanInfo> = {
+/** Platzhalter in den Beschreibungen unten, wird durch seatSummary ersetzt (eine Quelle für die Zahlen) */
+const SEATS = "{seats}";
+
+const PLAN_DEFS: Record<PlanId, PlanInfo> = {
   trial: {
     label: "Testphase",
     priceCents: 0,
@@ -60,7 +75,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: FEATURES,
     voiceMinutesIncluded: 30,
     maxPatients: null,
-    description: `${TRIAL_DAYS} Tage alle Funktionen, 2 Personen (auf Anfrage mehr)`,
+    description: `${TRIAL_DAYS} Tage alle Funktionen, ${SEATS}; Empfang kostenlos`,
   },
   free: {
     label: "Kostenlos",
@@ -80,7 +95,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: [],
     voiceMinutesIncluded: 0,
     maxPatients: null,
-    description: "Für Einzelpraxen: 1 Person, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
+    description: `Für Einzelpraxen: ${SEATS}, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul; Empfang kostenlos`,
   },
   praxis: {
     label: "Praxis",
@@ -90,7 +105,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: ["portal", "website"],
     voiceMinutesIncluded: 0,
     maxPatients: null,
-    description: "Bis zu 5 Personen, alle Funktionen; KI-Telefon als Zusatzmodul",
+    description: `${SEATS}; Patientenportal und Praxis-Website, KI-Telefon als Zusatzmodul; Empfang kostenlos`,
   },
   plus: {
     label: "Plus",
@@ -100,7 +115,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: ["portal", "voice_agent", "website"],
     voiceMinutesIncluded: 300,
     maxPatients: null,
-    description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (300 Minuten/Monat)",
+    description: `${SEATS}; inkl. KI-Telefonagent (300 Minuten/Monat); Empfang kostenlos`,
   },
   internal: {
     label: "Intern",
@@ -113,6 +128,32 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     description: "Betreiber-/Pilotpraxis ohne Abrechnung",
   },
 };
+
+const behandler = (n: number) => `${n} Behandler:${n === 1 ? "in" : "innen"}`;
+
+/**
+ * Enthaltene Plätze als Text (UWG: Umfang des Grundpreises klar angeben), z. B. „2 Behandler:innen inklusive,
+ * bis 5 möglich“. Ein Platz = Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi), siehe seatCounts.
+ */
+export function seatSummary(plan: PlanId): string {
+  const p = PLAN_DEFS[plan];
+  if (plan === "free") return "1 Person";
+  if (plan === "trial") return `${behandler(p.includedSeats)} (auf Anfrage bis ${p.maxSeats})`;
+  if (p.maxSeats === p.includedSeats) return `${behandler(p.includedSeats)} inklusive`;
+  if (p.maxSeats === null) return `${behandler(p.includedSeats)} inklusive, beliebig erweiterbar`;
+  return `${behandler(p.includedSeats)} inklusive, bis ${p.maxSeats} möglich`;
+}
+
+/** Welche Plätze kosten extra, z. B. „3.–5.“ (Praxis), „ab 4.“ (Plus), null = keine Zusatzplätze buchbar */
+export function extraSeatRange(plan: PlanId): string | null {
+  const p = PLAN_DEFS[plan];
+  if (p.maxSeats === p.includedSeats) return null;
+  return p.maxSeats === null ? `ab ${p.includedSeats + 1}.` : `${p.includedSeats + 1}.–${p.maxSeats}.`;
+}
+
+export const PLANS: Record<PlanId, PlanInfo> = Object.fromEntries(
+  Object.entries(PLAN_DEFS).map(([id, p]) => [id, { ...p, description: p.description.replace(SEATS, seatSummary(id as PlanId)) }]),
+) as Record<PlanId, PlanInfo>;
 
 export const isPlanId = (v: unknown): v is PlanId => typeof v === "string" && (PLAN_IDS as readonly string[]).includes(v);
 export const isPaidPlan = (v: unknown): v is PaidPlan => typeof v === "string" && (PAID_PLANS as readonly string[]).includes(v);
@@ -169,7 +210,7 @@ export type Entitlements = {
   plan: PlanId;
   planLabel: string;
   features: ReadonlySet<Feature>;
-  /** Anzahl erlaubter Team-Plätze (Steuerberatung zählt nicht), Infinity = unbegrenzt */
+  /** Anzahl erlaubter Plätze (nur Personen mit eigenem Kalender, siehe seatCounts), Infinity = unbegrenzt */
   seatLimit: number;
   access: AccessInfo;
   readOnly: boolean;
@@ -220,19 +261,35 @@ export function assertEntitled(org: OrgBilling, feature: Feature, now: Date = ne
   }
 }
 
-/** Rollen, die einen Platz belegen (die Steuerberatung ist kostenlos) */
-export const seatCounts = (role: string) => role !== "accountant";
+/** Hinweistext, wer keinen Platz belegt (Oberfläche, Fehlermeldungen) */
+export const SEAT_FREE_NOTE = "Empfang und Steuerberatung belegen keinen Platz.";
 
 /**
- * Prüft, ob eine weitere Person mit `role` hinzukommen darf. `usedSeats` = aktive Mitgliedschaften
- * ohne Steuerberatung. Gibt eine Fehlermeldung zurück oder null.
+ * Rollen, die in bezahlten Tarifen und der Testphase keinen Platz belegen. Azubis zählen bewusst als Platz:
+ * Sie dürfen Behandlungsdoku lesen und schreiben (medical.read/write) – sonst ließe sich die Platzgrenze über
+ * die Azubi-Rolle umgehen. Unabhängig davon haben nur Inhaber:in und Podolog:in eine Kalenderspalte
+ * (CALENDAR_ROLES in src/lib/auth/permissions.ts).
+ */
+export const SEAT_FREE_ROLES = ["reception", "accountant"] as const;
+
+/**
+ * Belegt eine Person mit `role` einen Platz? Alle außer Empfang und Steuerberatung (SEAT_FREE_ROLES).
+ * Ausnahme Kostenlos-Tarif: Er ist auf „1 Person“ begrenzt – dort zählt jede Person außer der Steuerberatung.
+ */
+export const seatCounts = (role: string, plan?: string) =>
+  plan === "free" ? role !== "accountant" : !(SEAT_FREE_ROLES as readonly string[]).includes(role);
+
+/**
+ * Prüft, ob eine weitere Person mit `role` hinzukommen darf. `usedSeats` = aktive Mitgliedschaften, die laut
+ * seatCounts einen Platz belegen (src/server/billing.ts usedSeats). Gibt eine Fehlermeldung zurück oder null.
  */
 export function seatProblem(org: Pick<OrgBilling, "plan" | "seats">, usedSeats: number, role: string): string | null {
-  if (!seatCounts(role)) return null;
+  if (!seatCounts(role, org.plan)) return null;
   const limit = seatLimit(org);
   if (usedSeats + 1 <= limit) return null;
   const plan = isPlanId(org.plan) ? PLANS[org.plan].label : org.plan;
-  return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. (Die Steuerberatung belegt keinen Platz.)`;
+  const free = org.plan === "free" ? "Der kostenlose Tarif ist auf 1 Person begrenzt (die Steuerberatung zählt nicht)." : `(${SEAT_FREE_NOTE})`;
+  return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. ${free}`;
 }
 
 // ───────────── Patienten-Grenze (Kostenlos-Tarif) ─────────────

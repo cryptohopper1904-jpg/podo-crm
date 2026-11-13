@@ -8,10 +8,12 @@ import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointments, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { conflictMessage, createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
 import { saveCalendarMode } from "@/server/calendar-board";
+import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
@@ -48,9 +50,12 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   const firstStart = berlinToUtc(d.date, d.time);
   const occurrences = Array.from({ length: d.repeatWeeks ? d.repeatCount : 1 }, (_, i) => new Date(firstStart.getTime() + i * d.repeatWeeks * 7 * 86400_000));
 
+  // Ohne Auswahl: eigene Spalte – nur wer selbst einen Kalender hat (Empfang/Azubis müssen eine Behandler:in wählen)
+  const therapistId = d.therapistId ?? (hasOwnCalendar(auth.role) ? auth.user.id : null);
+  if (!therapistId) return { error: "Bitte eine Behandler:in wählen." };
   const res = await createInternalAppointments(org, {
     patientId: d.patientId ?? null,
-    therapistId: d.therapistId ?? auth.user.id,
+    therapistId,
     occurrences,
     durationMin: duration,
     source: d.source,
@@ -60,7 +65,8 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     serviceIds: svc.map((x) => x.id),
     allowConflict: !!d.allowConflict,
   });
-  if (!res.ok) return { error: conflictMessage(res), conflict: true };
+  if (!res.ok && "deceased" in res) return { error: DECEASED_BLOCKED_MSG };
+  if (!res.ok) return res.conflict ? { error: conflictMessage(res), conflict: true } : { error: res.error };
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length, allowConflict: !!d.allowConflict } });
   revalidatePath("/kalender");
   revalidatePath("/heute");
@@ -96,6 +102,7 @@ export async function assignFeedPatientAction(_: AssignState, form: FormData): P
   if (!id.success) return { error: "Termin fehlt." };
   if (!patient.success) return { error: "Bitte eine Patient:in wählen." };
   const ok = await assignFeedAppointmentPatient(auth, id.data, patient.data);
+  if (ok === "deceased") return { error: "Patient:in ist als verstorben markiert – ein künftiger Termin kann nicht zugeordnet werden." };
   if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Patient:in nicht gefunden)." };
   revalidatePath("/kalender");
   revalidatePath("/heute");

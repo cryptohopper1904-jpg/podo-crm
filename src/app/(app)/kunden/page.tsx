@@ -5,6 +5,7 @@ import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, money } from "@/lib/format";
 import { STATUS_LABEL, type PatientStatus } from "@/lib/patient-status";
+import { DECEASED_LABEL } from "@/lib/patient-deceased";
 import { withOrg } from "@/db";
 import { listPatients } from "@/server/patients";
 import { patientQuota } from "@/server/patient-limit";
@@ -32,6 +33,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
     { key: "overdue", label: "Überfällig" },
     { key: "new", label: "Neu" },
     { key: "inactive", label: "Inaktiv" },
+    { key: "deceased", label: "Verstorben" },
   ];
   return (
     <div className="mx-auto max-w-7xl">
@@ -108,7 +110,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                 <td className="text-sm">{[p.zip, p.city].filter(Boolean).join(" ") || "–"}{p.homeVisit ? " · Hausbesuch" : ""}</td>
                 <td className="text-sm tabular-nums">{dateDe(p.lastVisit)}</td>
                 <td className="tabular-nums">{p.openCents > 0 ? <span className="font-semibold text-danger">{money(p.openCents)}</span> : "–"}</td>
-                <td><Badge tone={statusTone[p.status]}>{STATUS_LABEL[p.status]}</Badge></td>
+                <td>{p.deceased ? <Badge>{DECEASED_LABEL}</Badge> : <Badge tone={statusTone[p.status]}>{STATUS_LABEL[p.status]}</Badge>}</td>
               </tr>
             ))}
           </tbody>
