@@ -2,7 +2,9 @@ import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { Badge } from "@/components/ui";
 import { absentOn, berlinParts, dayInterval, gridRange, isBusy, layoutLanes, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView } from "@/lib/calendar-grid";
+import { isoWeek, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { schoolHolidayOn } from "@/lib/school-holidays";
 import type { listAppointments } from "@/server/appointments";
 import type { calendarBoard } from "@/server/calendar-board";
 
@@ -43,7 +45,15 @@ export type FullCalendarProps = {
   canWrite: boolean;
   /** Link innerhalb des Kalenders (Ansicht/Datum) */
   calHref: (p: { ansicht?: FullView; datum?: string }) => string;
+  /** Anzeige-Optionen (nur Darstellung – Verfügbarkeit/Buchung bleiben unberührt) */
+  options: CalendarOptions;
 };
+
+/** Feiertag/Schulferien eines Tages laut Anzeige-Optionen */
+const dayLabels = (iso: string, state: StateCode, o: CalendarOptions) => ({
+  holiday: o.holidays ? holidayOn(iso, state) : null,
+  school: o.schoolHolidays ? schoolHolidayOn(iso, state) : null,
+});
 
 type Column = {
   key: string;
@@ -68,7 +78,7 @@ function newHref(dateIso: string, min: number | null, therapistId: string | null
 }
 
 export function FullCalendar(props: FullCalendarProps) {
-  const live = props.rows.filter((r) => r.a.status !== "cancelled");
+  const live = props.options.cancelled ? props.rows : props.rows.filter((r) => r.a.status !== "cancelled");
   const cancelled = props.rows.length - live.length;
   return (
     <div className="flex flex-col gap-3">
@@ -81,8 +91,10 @@ export function FullCalendar(props: FullCalendarProps) {
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin</span> : null}
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border" style={HATCH} aria-hidden /> belegt/abwesend – nicht verfügbar</span>
-        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border bg-surface-2" aria-hidden /> außerhalb der Arbeitszeit</span>
-        {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin wird" : " Termine werden"} hier nicht angezeigt (siehe Ansicht „Einfach“).</span> : null}
+        {props.options.workHours ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border bg-surface-2" aria-hidden /> außerhalb der Arbeitszeit</span> : null}
+        {props.options.schoolHolidays ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-sm bg-info-soft-text/60" aria-hidden /> Schulferien</span> : null}
+        {props.options.cancelled ? <span className="inline-flex items-center gap-1.5"><span className="line-through">abgesagt</span> = abgesagter Termin</span> : null}
+        {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</span> : null}
       </p>
     </div>
   );
@@ -90,24 +102,23 @@ export function FullCalendar(props: FullCalendarProps) {
 
 // ───────────── Tag und Woche: Zeitachse mit Spalten ─────────────
 
-function TimeGridView({ view, day, today, now, rows, board, state, overlaps, canWrite, calHref }: FullCalendarProps) {
+function TimeGridView({ view, day, today, now, rows, board, state, overlaps, canWrite, calHref, options }: FullCalendarProps) {
   const team = board.team;
   const teamIds = new Set(team.map((t) => t.id));
   const busyFor = (therapistId: string, dateIso: string): Interval[] =>
     rows
-      .filter((r) => r.a.therapistId === therapistId || r.a.therapistId === null)
+      .filter((r) => r.a.status !== "cancelled" && (r.a.therapistId === therapistId || r.a.therapistId === null))
       .map((r) => dayInterval(r.a.startsAt, r.a.endsAt, dateIso))
       .filter((x): x is Interval => !!x);
   const onDay = (dateIso: string) => rows.filter((r) => dayInterval(r.a.startsAt, r.a.endsAt, dateIso));
   const absentIds = (dateIso: string) => team.filter((t) => absentOn(board.absences.filter((a) => a.userId === t.id), dateIso));
 
   let columns: Column[];
-  const holidays: string[] = [];
+  const { holiday: dayHoliday, school: daySchool } = view === "tag" ? dayLabels(day, state, options) : { holiday: null, school: null };
+  const outsideOf = (ranges: Parameters<typeof outsideRanges>[0]) => (options.workHours ? outsideRanges(ranges, 0, 24 * 60) : []);
 
   if (view === "tag") {
     const dayRows = onDay(day);
-    const holiday = holidayOn(day, state);
-    if (holiday) holidays.push(holiday);
     columns = team.map((t) => {
       const av = board.availabilityOf(t.id, day);
       return {
@@ -118,7 +129,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
               {validColor(t.color) ? <span className="inline-block size-2.5 shrink-0 rounded-full" style={{ background: validColor(t.color) }} aria-hidden /> : null}
               <span className="truncate">{t.name}</span>
             </span>
-            {av.reason === "absence" ? <span className="text-[11px] font-semibold text-accent-soft-text">abwesend</span> : null}
+            {av.reason === "absence" && options.absences ? <span className="text-[11px] font-semibold text-accent-soft-text">abwesend</span> : null}
           </span>
         ),
         dateIso: day,
@@ -126,7 +137,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         rows: dayRows.filter((r) => r.a.therapistId === t.id),
         busy: busyFor(t.id, day),
         absent: av.reason === "absence",
-        outside: av.reason === "absence" ? [] : outsideRanges(av.ranges, 0, 24 * 60),
+        outside: av.reason === "absence" ? [] : outsideOf(av.ranges),
         today: day === today,
         withTherapist: t.id,
       };
@@ -153,13 +164,12 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
       d.setUTCDate(d.getUTCDate() + i);
       return d.toISOString().slice(0, 10);
     });
-    const sunday = dates[6];
-    const shown = onDay(sunday).length || sunday === today ? dates : dates.slice(0, 6);
+    const shown = visibleWeekDays(dates, options.weekend, (iso) => onDay(iso).length > 0, today);
     // Nur eine Behandler:in in der Praxis → Belegung und Abwesenheit direkt in der Woche markieren
     const single = team.length === 1 ? team[0] : null;
     columns = shown.map((iso) => {
-      const holiday = holidayOn(iso, state);
-      const absent = absentIds(iso);
+      const { holiday, school } = dayLabels(iso, state, options);
+      const absent = options.absences ? absentIds(iso) : [];
       const av = single ? board.availabilityOf(single.id, iso) : null;
       return {
         key: iso,
@@ -170,6 +180,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
               <span className={`inline-flex min-w-7 justify-center rounded-full px-1.5 font-semibold tabular-nums ${iso === today ? "bg-primary text-on-primary" : ""}`}>{dm(iso)}</span>
             </span>
             {holiday ? <span className="max-w-full truncate text-[11px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
+            {school ? <span className="max-w-full truncate rounded bg-info-soft px-1 text-[10px] text-info-soft-text" title={`Schulferien: ${school}`}>{school}</span> : null}
             {absent.length ? (
               <span className="max-w-full truncate text-[11px] text-muted" title={`Abwesend – nicht verfügbar: ${absent.map((a) => a.name).join(", ")}`}>
                 abwesend: {absent.map((a) => a.name.split(" ")[0]).join(", ")}
@@ -182,14 +193,18 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         rows: onDay(iso),
         busy: single ? busyFor(single.id, iso) : null,
         absent: av?.reason === "absence",
-        outside: av && av.reason !== "absence" ? outsideRanges(av.ranges, 0, 24 * 60) : [],
+        outside: av && av.reason !== "absence" ? outsideOf(av.ranges) : [],
         today: iso === today,
         withTherapist: single?.id ?? null,
       };
     });
   }
 
-  const range: Interval = gridRange(columns.flatMap((c) => c.rows.map((r) => dayInterval(r.a.startsAt, r.a.endsAt, c.dateIso)).filter((x): x is Interval => !!x)));
+  // Zeitachse laut Optionen; Termine außerhalb erweitern sie (nie ausblenden)
+  const range: Interval = gridRange(
+    columns.flatMap((c) => c.rows.map((r) => dayInterval(r.a.startsAt, r.a.endsAt, c.dateIso)).filter((x): x is Interval => !!x)),
+    { startMin: options.startHour * 60, endMin: options.endHour * 60 },
+  );
   const height = range.endMin - range.startMin;
   const slots = Array.from({ length: height / SLOT_MIN }, (_, i) => range.startMin + i * SLOT_MIN);
   const hours = slots.filter((m) => m % 60 === 0);
@@ -199,7 +214,12 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
 
   return (
     <div className="flex flex-col gap-2">
-      {holidays.length ? <p><Badge tone="warn">Feiertag: {holidays.join(", ")}</Badge></p> : null}
+      {dayHoliday || daySchool ? (
+        <p className="flex flex-wrap gap-2">
+          {dayHoliday ? <Badge tone="warn">Feiertag: {dayHoliday}</Badge> : null}
+          {daySchool ? <Badge tone="info">Schulferien: {daySchool}</Badge> : null}
+        </p>
+      ) : null}
       <div className="max-h-[calc(100dvh-13rem)] min-h-[26rem] overflow-auto rounded-[var(--radius-card)] border border-border bg-surface" role="region" aria-label={view === "tag" ? "Tagesplan" : "Wochenplan"}>
         <div className="grid min-w-fit" style={{ gridTemplateColumns: template }}>
           {/* Kopfzeile */}
@@ -289,8 +309,14 @@ function Block({ b, rangeStart, overlap, showTherapist, color }: { b: Interval &
   const sub = b.row.patient ? a.title : null;
   const time = `${toHhmm(b.startMin)}–${toHhmm(b.endMin)}`;
   const tone =
-    a.status === "done" ? "bg-surface-2 text-muted" : a.status === "no_show" ? "bg-accent-soft text-accent-soft-text" : "bg-primary-soft text-primary-soft-text";
-  const title = [`${time} Uhr`, name, sub, a.homeVisit ? "Hausbesuch" : null, therapist, a.status === "done" ? "erledigt" : a.status === "no_show" ? "nicht erschienen" : null, b.row.feed ? `aus Kalender-Abo „${b.row.feed.label}“` : null]
+    a.status === "cancelled"
+      ? "bg-surface-2 text-muted line-through opacity-70"
+      : a.status === "done"
+        ? "bg-surface-2 text-muted"
+        : a.status === "no_show"
+          ? "bg-accent-soft text-accent-soft-text"
+          : "bg-primary-soft text-primary-soft-text";
+  const title = [`${time} Uhr`, name, sub, a.homeVisit ? "Hausbesuch" : null, therapist, a.status === "done" ? "erledigt" : a.status === "no_show" ? "nicht erschienen" : a.status === "cancelled" ? "abgesagt" : null, b.row.feed ? `aus Kalender-Abo „${b.row.feed.label}“` : null]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -322,7 +348,7 @@ function Block({ b, rangeStart, overlap, showTherapist, color }: { b: Interval &
 
 // ───────────── Monat ─────────────
 
-function MonthView({ day, today, rows, board, state, canWrite, calHref }: FullCalendarProps) {
+function MonthView({ day, today, rows, board, state, canWrite, calHref, options }: FullCalendarProps) {
   const weeks = monthWeeks(day);
   const month = day.slice(0, 7);
   // einmal nach Tag gruppieren (statt je Zelle alle Termine zu formatieren)
@@ -331,56 +357,78 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref }: FullCa
     const iso = berlinParts(r.a.startsAt).dateIso;
     byDay.set(iso, [...(byDay.get(iso) ?? []), r]);
   }
+  // Wochenend-Spalten laut Optionen (bei „auto“: Sa immer, So nur, wenn in den angezeigten Wochen ein Sonntag Termine hat)
+  const shownCols = WD_SHORT.map((_, i) => i).filter((i) => {
+    if (i < 5 || options.weekend === "alle") return true;
+    if (options.weekend === "keine") return false;
+    return i === 5 || weeks.some((w) => (byDay.get(w[i])?.length ?? 0) > 0 || w[i] === today);
+  });
+  const kw = options.weekNumbers;
+  const template = `${kw ? "2.25rem " : ""}repeat(${shownCols.length}, minmax(0, 1fr))`;
   return (
     <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" role="region" aria-label="Monatsübersicht">
-      <div className="grid min-w-[40rem] grid-cols-7">
-        {WD_SHORT.map((w) => (
-          <div key={w} className="border-b border-border px-2 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted">{w}</div>
+      <div className={`grid ${shownCols.length > 5 ? "min-w-[40rem]" : "min-w-[32rem]"}`} style={{ gridTemplateColumns: template }}>
+        {kw ? <div className="border-b border-border px-1 py-2 text-center text-xs font-semibold text-muted" title="Kalenderwoche">KW</div> : null}
+        {shownCols.map((i) => (
+          <div key={i} className={`border-b border-border px-2 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted ${kw || i !== shownCols[0] ? "border-l" : ""}`}>{WD_SHORT[i]}</div>
         ))}
-        {weeks.flat().map((iso) => {
-          const list = byDay.get(iso) ?? [];
-          const holiday = holidayOn(iso, state);
-          const absent = board.team.filter((t) => absentOn(board.absences.filter((a) => a.userId === t.id), iso));
-          const inMonth = iso.slice(0, 7) === month;
-          const isToday = iso === today;
-          return (
-            <div key={iso} className={`relative min-h-[6.5rem] border-b border-l border-border p-1 [&:nth-child(7n+1)]:border-l-0 ${inMonth ? "" : "bg-surface-2/60"} ${isToday ? "bg-primary-soft/40" : ""}`}>
-              {canWrite ? (
-                <Link href={newHref(iso, null, null)} tabIndex={-1} aria-label={`Neuer Termin am ${dm(iso)}`} title="Neuer Termin an diesem Tag" className="absolute inset-0 hover:bg-primary-soft/50" />
-              ) : null}
-              <div className="pointer-events-none relative flex flex-col gap-0.5">
-                <div className="flex items-center justify-between gap-1">
-                  <Link
-                    href={calHref({ ansicht: "tag", datum: iso })}
-                    className={`pointer-events-auto inline-flex size-7 items-center justify-center rounded-full text-sm font-semibold tabular-nums hover:ring-2 hover:ring-primary ${isToday ? "bg-primary text-on-primary" : inMonth ? "" : "text-muted"}`}
-                    title="Tagesansicht öffnen"
-                  >
-                    {Number(iso.slice(8, 10))}
-                  </Link>
-                  {absent.length ? (
-                    <span className="truncate text-[10px] text-muted" title={`Abwesend – nicht verfügbar: ${absent.map((a) => a.name).join(", ")}`}>{absent.length} abw.</span>
+        {weeks.map((week) => [
+          kw ? (
+            <div key={`kw-${week[0]}`} className="border-b border-border px-1 pt-2 text-center text-[11px] font-semibold tabular-nums text-muted" title={`Kalenderwoche ${isoWeek(week[0])}`}>
+              {isoWeek(week[0])}
+            </div>
+          ) : null,
+          ...shownCols.map((ci) => {
+            const iso = week[ci];
+            const list = byDay.get(iso) ?? [];
+            const { holiday, school } = dayLabels(iso, state, options);
+            const absent = options.absences ? board.team.filter((t) => absentOn(board.absences.filter((a) => a.userId === t.id), iso)) : [];
+            const inMonth = iso.slice(0, 7) === month;
+            const isToday = iso === today;
+            return (
+              <div
+                key={iso}
+                className={`relative min-h-[6.5rem] border-b border-border p-1 ${kw || ci !== shownCols[0] ? "border-l" : ""} ${inMonth ? "" : "bg-surface-2/60"} ${isToday ? "bg-primary-soft/40" : ""}`}
+              >
+                {school ? <span className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-info-soft-text/50" title={`Schulferien: ${school}`} aria-hidden /> : null}
+                {canWrite ? (
+                  <Link href={newHref(iso, null, null)} tabIndex={-1} aria-label={`Neuer Termin am ${dm(iso)}`} title="Neuer Termin an diesem Tag" className="absolute inset-0 hover:bg-primary-soft/50" />
+                ) : null}
+                <div className="pointer-events-none relative flex flex-col gap-0.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <Link
+                      href={calHref({ ansicht: "tag", datum: iso })}
+                      className={`pointer-events-auto inline-flex size-7 items-center justify-center rounded-full text-sm font-semibold tabular-nums hover:ring-2 hover:ring-primary ${isToday ? "bg-primary text-on-primary" : inMonth ? "" : "text-muted"}`}
+                      title="Tagesansicht öffnen"
+                    >
+                      {Number(iso.slice(8, 10))}
+                    </Link>
+                    {absent.length ? (
+                      <span className="truncate text-[10px] text-muted" title={`Abwesend – nicht verfügbar: ${absent.map((a) => a.name).join(", ")}`}>{absent.length} abw.</span>
+                    ) : null}
+                  </div>
+                  {holiday ? <span className="truncate text-[10px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
+                  {school ? <span className="truncate text-[10px] text-info-soft-text" title={`Schulferien: ${school}`}>{school}</span> : null}
+                  {list.slice(0, 3).map((r) => (
+                    <Link
+                      key={r.a.id}
+                      href={`/kalender/termin/${r.a.id}`}
+                      className={`pointer-events-auto truncate rounded px-1 text-[11px] leading-5 hover:brightness-95 ${r.a.status === "cancelled" ? "bg-surface-2 text-muted line-through" : "bg-primary-soft text-primary-soft-text"}`}
+                      title={`${toHhmm(berlinParts(r.a.startsAt).min)}–${toHhmm(berlinParts(r.a.endsAt).min)} Uhr · ${personName(r)}${r.therapist ? ` · ${r.therapist}` : ""}${r.a.status === "cancelled" ? " · abgesagt" : ""}`}
+                    >
+                      <span className="tabular-nums">{toHhmm(berlinParts(r.a.startsAt).min)}</span> {personName(r)}
+                    </Link>
+                  ))}
+                  {list.length > 3 ? (
+                    <Link href={calHref({ ansicht: "tag", datum: iso })} className="pointer-events-auto text-[11px] font-semibold text-primary hover:underline">
+                      +{list.length - 3} weitere
+                    </Link>
                   ) : null}
                 </div>
-                {holiday ? <span className="truncate text-[10px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
-                {list.slice(0, 3).map((r) => (
-                  <Link
-                    key={r.a.id}
-                    href={`/kalender/termin/${r.a.id}`}
-                    className="pointer-events-auto truncate rounded bg-primary-soft px-1 text-[11px] leading-5 text-primary-soft-text hover:brightness-95"
-                    title={`${toHhmm(berlinParts(r.a.startsAt).min)}–${toHhmm(berlinParts(r.a.endsAt).min)} Uhr · ${personName(r)}${r.therapist ? ` · ${r.therapist}` : ""}`}
-                  >
-                    <span className="tabular-nums">{toHhmm(berlinParts(r.a.startsAt).min)}</span> {personName(r)}
-                  </Link>
-                ))}
-                {list.length > 3 ? (
-                  <Link href={calHref({ ansicht: "tag", datum: iso })} className="pointer-events-auto text-[11px] font-semibold text-primary hover:underline">
-                    +{list.length - 3} weitere
-                  </Link>
-                ) : null}
               </div>
-            </div>
-          );
-        })}
+            );
+          }),
+        ])}
       </div>
     </div>
   );
