@@ -185,6 +185,70 @@ describe("Rechnung: DIN A4 und Seitenumbruch", () => {
   });
 });
 
+describe("Rechnung: Belegtext weiterer Belegarten", () => {
+  it("Stornorechnung (credit_note): Belegtext unverändert", async () => {
+    const base = invoice(3);
+    const n = await pages(
+      await renderInvoicePdf({
+        ...base,
+        invoice: { ...base.invoice, number: "S2026-0003", kind: "credit_note", status: "issued", totalCents: -base.invoice.totalCents },
+        lines: base.lines.map((l) => ({ ...l, unitPriceCents: -l.unitPriceCents, totalCents: -l.totalCents })),
+        cancels: { number: "R2026-0042", kind: "invoice", issuedAt: "2026-11-02" },
+      }),
+    );
+    expect(bodyTexts(drawn)).toMatchSnapshot("Belegtext");
+    expect(n).toBe(1);
+  });
+
+  it("Kleinunternehmer (§ 19 UStG): Belegtext unverändert", async () => {
+    const base = invoice(3);
+    const n = await pages(await renderInvoicePdf({ ...base, organization: { ...ORG, smallBusiness: true }, lines: base.lines.map((l) => ({ ...l, vatRate: 0 })) }));
+    expect(bodyTexts(drawn)).toMatchSnapshot("Belegtext");
+    expect(n).toBe(1);
+  });
+});
+
+describe("Übergroße Blöcke: kein Textverlust", () => {
+  const words = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
+  const allDrawnWords = () => new Set(drawn.flatMap((t) => t.text.split(/\s+/)));
+
+  it("Position mit 400 Wörtern und Hinweis mit 90 Zeilen: alle Wörter im PDF, nichts in der Fußzeile", async () => {
+    const posWords = words("Pw", 400);
+    const noteLines = words("Hz", 90).map((w) => `Hinweiszeile ${w}`);
+    const base = invoice(2);
+    const n = await pages(
+      await renderInvoicePdf({
+        ...base,
+        lines: [{ ...base.lines[0], description: posWords.join(" ") }, base.lines[1]],
+        invoice: { ...base.invoice, notes: noteLines.join("\n") },
+      }),
+    );
+    expect(n).toBeGreaterThan(1);
+    const seen = allDrawnWords();
+    for (const w of [...posWords, ...noteLines.map((l) => l.split(" ")[1])]) expect(seen.has(w), w).toBe(true);
+    expectPageNumbers(n, "Rechnung Nr. R2026-0042");
+    expectInsideBody(n);
+    // Positionswerte nur einmal, Tabellenkopf auf jeder Seite mit Beschreibungsteilen
+    for (const pg of pagesOf(drawn, /^Pw\d+/)) expect(pagesOf(drawn, "Leistung / Heilmittel")).toContain(pg);
+  });
+
+  it("Entwurf ohne Nummer: Kopfzeile „Rechnung (Entwurf)“", async () => {
+    const base = invoice(40);
+    const n = await pages(await renderInvoicePdf({ ...base, invoice: { ...base.invoice, number: null, status: "draft" } }));
+    expect(n).toBeGreaterThan(1);
+    expectPageNumbers(n, "Rechnung (Entwurf)");
+  });
+
+  it("Mahnung: Text über mehrere Seiten vollständig, nichts in der Fußzeile", async () => {
+    const body = words("Mw", 1500).join(" ");
+    const n = await pages(await renderDunningPdf(dunning(body)));
+    expect(n).toBeGreaterThan(1);
+    const seen = allDrawnWords();
+    for (const w of words("Mw", 1500)) expect(seen.has(w), w).toBe(true);
+    expectInsideBody(n);
+  });
+});
+
 describe("Mahnung: DIN A4 und Seitenumbruch", () => {
   it("kurzer Text → 1 Seite ohne Seitenangabe", async () => {
     const n = await pages(await renderDunningPdf(dunning("Sehr geehrte Frau Muster,\n\nbitte zahlen Sie den offenen Betrag.")));

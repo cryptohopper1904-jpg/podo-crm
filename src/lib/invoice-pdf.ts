@@ -148,8 +148,11 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
     return false;
   };
-  /** Block der Höhe h zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt */
-  const keep = (h: number) => ensure(Math.min(h, PAGE_BODY));
+  /**
+   * Block der Höhe h zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt.
+   * Höhere Blöcke beginnen sofort und werden zeilenweise umbrochen (jede Zeile prüft selbst mit ensure).
+   */
+  const keep = (h: number) => (h <= PAGE_BODY ? ensure(h) : false);
 
   // ── Kopf: Logo bzw. Praxisname ──
   y = drawLogoHead(writer, fonts, y, { full: fullLogo, compact: compactLogo, receiptLike, orgName: o.name });
@@ -210,26 +213,49 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     text("Summe", cx.total + colW.total / 2, ty, { ...s, align: "center" });
     y -= h;
   };
-  const rowHeight = (l: { description: string }) => wrap(l.description, descW - 8, 8.5).length * 10.5 + 3.5;
-  // Tabellenkopf nicht allein am Seitenende: Kopf und erste Zeile zusammen
-  ensure(14 + (lines[0] ? rowHeight(lines[0]) : 0));
+  const ROW_LINE = 10.5;
+  const ROW_PAD = 3.5;
+  const HEAD_H = 14;
+  const rowHeight = (n: number) => n * ROW_LINE + ROW_PAD;
+  const rowLinesOf = (l: { description: string }) => wrap(l.description, descW - 8, 8.5);
+  // Tabellenkopf nicht allein am Seitenende: Kopf und erste Zeile (höchstens 3 Textzeilen davon) zusammen
+  ensure(HEAD_H + (lines[0] ? rowHeight(Math.min(rowLinesOf(lines[0]).length, 3)) : 0));
   tableHeader();
   lines.forEach((l, i) => {
-    const d = wrap(l.description, descW - 8, 8.5);
-    const h = d.length * 10.5 + 3.5;
-    // Zeilen werden nie getrennt; auf jeder Folgeseite wiederholter Tabellenkopf
-    if (ensure(h)) tableHeader();
-    box(ML, y, width, h);
-    rowLines(y, h);
-    const ty = y - 9.5;
-    text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
-    text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
-    d.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * 10.5, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
-    text(Number(l.factor).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), cx.factor + colW.factor - 4, ty, { size: 8.5, align: "right" });
-    text(money(l.unitPriceCents), cx.unit + colW.unit - 4, ty, { size: 8.5, align: "right" });
-    if (showVat) text(`${l.vatRate} %`, cx.vat + colW.vat - 4, ty, { size: 8.5, align: "right" });
-    text(money(l.totalCents), RIGHT - 4, ty, { size: 8.5, align: "right" });
-    y -= h;
+    const d = rowLinesOf(l);
+    // Zeilen werden nicht getrennt, sofern sie auf eine Seite passen; auf jeder Folgeseite wiederholter Tabellenkopf.
+    // Höhere Positionen beginnen sofort und brechen innerhalb der Beschreibung um (kein Text geht verloren).
+    if (rowHeight(d.length) <= PAGE_BODY - HEAD_H) {
+      if (ensure(rowHeight(d.length))) tableHeader();
+    } else if (ensure(rowHeight(1))) tableHeader();
+    let rest = d;
+    let first = true;
+    while (rest.length) {
+      const fit = Math.max(1, Math.floor((y - FOOTER_TOP - ROW_PAD) / ROW_LINE));
+      const part = rest.slice(0, fit);
+      rest = rest.slice(fit);
+      const h = rowHeight(part.length);
+      box(ML, y, width, h);
+      rowLines(y, h);
+      const ty = y - 9.5;
+      if (first) {
+        text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
+        text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
+      }
+      part.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * ROW_LINE, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
+      if (first) {
+        text(Number(l.factor).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), cx.factor + colW.factor - 4, ty, { size: 8.5, align: "right" });
+        text(money(l.unitPriceCents), cx.unit + colW.unit - 4, ty, { size: 8.5, align: "right" });
+        if (showVat) text(`${l.vatRate} %`, cx.vat + colW.vat - 4, ty, { size: 8.5, align: "right" });
+        text(money(l.totalCents), RIGHT - 4, ty, { size: 8.5, align: "right" });
+      }
+      y -= h;
+      first = false;
+      if (rest.length) {
+        newPage();
+        tableHeader();
+      }
+    }
   });
 
   // ── Summen ──
@@ -250,6 +276,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   const sumLabelX = cx.unit;
   for (const r of sumRows) {
     const h = 14;
+    ensure(h);
     if (r.strong) {
       box(sumLabelX, y, RIGHT - sumLabelX, h);
       line(cx.total, y, cx.total, y - h);
@@ -333,6 +360,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     if (thanks(i)) y -= 10;
     keep(wl.length * 13 + 2);
     for (const l of wl) {
+      // nur bei Absätzen über eine Seite wirksam: zeilenweise umbrechen statt in die Fußzeile zu schreiben
+      ensure(13);
       text(l, ML, y, { size: 10, font: n.strong ? bold : regular });
       y -= 13;
     }
@@ -354,7 +383,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   }
 
   // ── Fußzeile (jede Seite) ──
-  drawFooters(doc, fonts, safe, o, `${inv.kind === "credit_note" ? "Stornorechnung" : (INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung")} Nr. ${inv.number ?? ""}`.trim());
+  const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} (Entwurf)`);
 
   return doc.save();
 }

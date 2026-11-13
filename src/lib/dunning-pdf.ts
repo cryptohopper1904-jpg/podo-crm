@@ -73,8 +73,8 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
       y = CONT_TOP;
     }
   };
-  /** Block zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt */
-  const keep = (h: number) => ensure(Math.min(h, PAGE_BODY));
+  /** Block zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt; höhere Blöcke zeilenweise */
+  const keep = (h: number) => (h <= PAGE_BODY ? ensure(h) : undefined);
 
   y = drawLogoHead(w, fonts, y, { full: await embedImage(doc, data.logos?.full), compact: await embedImage(doc, data.logos?.compact), orgName: o.name });
 
@@ -117,6 +117,7 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
   keep(rows.length * 14 + 10);
   const labelX = ML + CONTENT_WIDTH * 0.45;
   for (const row of rows) {
+    ensure(14);
     if (row.strong) w.box(labelX, y, RIGHT - labelX, 14);
     w.text(row.l, RIGHT - 80, y - 10, { size: 9, font: row.strong ? bold : fonts.regular, align: "right" });
     w.text(money(row.v), RIGHT - 4, y - 10, { size: 9, font: row.strong ? bold : fonts.regular, align: "right" });
@@ -138,6 +139,7 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
     const wl = w.wrap(n, CONTENT_WIDTH, 9.5);
     keep(wl.length * 12.5 + 2);
     for (const l of wl) {
+      ensure(12.5);
       w.text(l, ML, y, { size: 9.5 });
       y -= 12.5;
     }
