@@ -17,6 +17,11 @@ export type OpenDeposit = {
   vatRate: number;
   appointmentId: string | null;
   treatmentRecordId: string | null;
+  /**
+   * Tag der verknüpften Leistung (Berlin, YYYY-MM-DD): Doku-Eintrag bzw. aktueller Termin; null ohne Bezug oder bei
+   * abgesagtem Termin. Nur Anzahlungen mit erbrachter Leistung (Tag ≤ heute) werden vorausgewählt (deposit-rules.ts).
+   */
+  serviceDay?: string | null;
 };
 
 /**

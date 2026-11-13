@@ -17,7 +17,18 @@ export type DepositDefaults = {
 };
 
 /** Anzahlung (Vorauszahlung): Betrag jetzt annehmen und quittieren, Anrechnung auf die spätere Rechnung bzw. Sammelrechnung. */
-export function DepositForm({ defaults, smallBusiness, tseTestMode }: { defaults: DepositDefaults; smallBusiness: boolean; tseTestMode: boolean }) {
+export function DepositForm({
+  defaults,
+  smallBusiness,
+  tseTestMode,
+  descriptionPlaceholder,
+}: {
+  defaults: DepositDefaults;
+  smallBusiness: boolean;
+  tseTestMode: boolean;
+  /** Anzahlung ohne Termin: Leistung selbst beschreiben (Pflichtfeld ohne Vorgabe) */
+  descriptionPlaceholder?: string;
+}) {
   const [state, action, pending] = useActionState(createDepositAction, undefined);
   const [method, setMethod] = useState<DepositMethod>("cash");
   return (
@@ -29,7 +40,7 @@ export function DepositForm({ defaults, smallBusiness, tseTestMode }: { defaults
       <Card>
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
           <Field label="Text auf der Quittung" className="sm:col-span-2" hint="keine Diagnosen">
-            <Input name="description" defaultValue={defaults.description} required minLength={3} maxLength={300} />
+            <Input name="description" defaultValue={defaults.description} placeholder={descriptionPlaceholder} required minLength={3} maxLength={300} />
           </Field>
           <Field label="Erhaltener Betrag (€)">
             <Input name="amount" inputMode="decimal" defaultValue={defaults.amount} placeholder="0,00" required />

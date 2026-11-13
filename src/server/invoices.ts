@@ -372,13 +372,53 @@ async function lockInvoiceRecords(tx: Tx, org: string) {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
 }
 
-/** Anzahlungen der Person, die noch auf keine (gültige) Rechnung angerechnet sind. */
+/** Anzahlungen der Person, die noch auf keine (gültige) Rechnung angerechnet sind (mit Tag der verknüpften Leistung). */
 export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
-  return tx
+  const list = await tx
     .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents })
     .from(invoices)
     .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, patientId), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
     .orderBy(asc(invoices.issuedAt), asc(invoices.number));
+  const days = await depositServiceDays(tx, org, list.map((d) => d.id));
+  return list.map((d) => ({ ...d, serviceDay: days.get(d.id)?.serviceDay ?? null }));
+}
+
+/**
+ * Je Anzahlung die (erste) Position mit Termin-/Doku-Bezug und der Tag der verknüpften Leistung (Berlin): Doku-Eintrag
+ * → Behandlungstag; Termin → aktueller Termintag (abgesagt → null). Grundlage der Vorauswahl in der Sammelrechnung:
+ * nur Anzahlungen mit erbrachter Leistung (src/lib/deposit-rules.ts).
+ */
+export async function depositServiceDays(tx: Tx, org: string, depositIds: string[]) {
+  const out = new Map<string, { description: string; vatRate: number; appointmentId: string | null; treatmentRecordId: string | null; serviceDay: string | null }>();
+  if (!depositIds.length) return out;
+  const lines = await tx
+    .select({ invoiceId: invoiceLines.invoiceId, description: invoiceLines.description, vatRate: invoiceLines.vatRate, appointmentId: invoiceLines.appointmentId, treatmentRecordId: invoiceLines.treatmentRecordId })
+    .from(invoiceLines)
+    .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, depositIds)))
+    .orderBy(asc(invoiceLines.position));
+  const first = new Map<string, (typeof lines)[number]>();
+  for (const l of lines) if (!first.has(l.invoiceId)) first.set(l.invoiceId, l);
+  const apptIds = [...new Set([...first.values()].map((l) => l.appointmentId).filter((x): x is string => !!x))];
+  const recIds = [...new Set([...first.values()].map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
+  const appts = apptIds.length
+    ? await tx
+        .select({ id: appointments.id, startsAt: appointments.startsAt, status: appointments.status })
+        .from(appointments)
+        .where(and(eq(appointments.organizationId, org), inArray(appointments.id, apptIds)))
+    : [];
+  const recs = recIds.length
+    ? await tx
+        .select({ id: treatmentRecords.id, treatedAt: treatmentRecords.treatedAt })
+        .from(treatmentRecords)
+        .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
+    : [];
+  const apptDay = new Map(appts.map((a) => [a.id, a.status === "cancelled" ? null : berlinDateIso(a.startsAt)]));
+  const recDay = new Map(recs.map((r) => [r.id, berlinDateIso(r.treatedAt)]));
+  for (const [id, l] of first) {
+    const day = (l.treatmentRecordId ? recDay.get(l.treatmentRecordId) : undefined) ?? (l.appointmentId ? apptDay.get(l.appointmentId) : undefined) ?? null;
+    out.set(id, { description: l.description, vatRate: l.vatRate, appointmentId: l.appointmentId, treatmentRecordId: l.treatmentRecordId, serviceDay: day });
+  }
+  return out;
 }
 
 /**
@@ -1019,30 +1059,44 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
   if (!isVatRate(input.vatRate)) throw new InvoiceError("Steuersatz muss 0, 7 oder 19 % sein.");
   const result = await withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
-    const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
+    const [p] = await tx
+      .select({ id: patients.id, archivedAt: patients.archivedAt, contactErasedAt: patients.contactErasedAt })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
     if (!p) throw new InvoiceError("Patient nicht gefunden.");
+    if (p.archivedAt || p.contactErasedAt) throw new InvoiceError("Für archivierte Patient:innen ist keine Anzahlung möglich.");
     let apptDay: string | null = null;
+    let apptHasRecord = false;
     if (input.appointmentId) {
       const [a] = await tx
-        .select({ patientId: appointments.patientId, startsAt: appointments.startsAt })
+        .select({ patientId: appointments.patientId, startsAt: appointments.startsAt, status: appointments.status })
         .from(appointments)
         .where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
       if (!a || a.patientId !== input.patientId) throw new InvoiceError("Termin nicht gefunden.");
+      if (a.status === "cancelled") throw new InvoiceError("Der Termin ist abgesagt – keine Anzahlung möglich.");
       apptDay = berlinDateIso(a.startsAt);
+      // Doku-Eintrag zum Termin = Behandlung erbracht
+      const [rec] = await tx
+        .select({ id: treatmentRecords.id })
+        .from(treatmentRecords)
+        .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.appointmentId, input.appointmentId)))
+        .limit(1);
+      apptHasRecord = !!rec;
     }
     if (input.treatmentRecordId) {
       const [r] = await tx.select({ patientId: treatmentRecords.patientId }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, input.treatmentRecordId)));
       if (!r || r.patientId !== input.patientId) throw new InvoiceError("Behandlung nicht gefunden.");
     }
+    // Anzahlung nur als Vorauszahlung vor der Behandlung: nicht für dokumentierte Behandlungen und nicht für Termine
+    // von heute oder früher (dafür gibt es die Quittung). Günstige Prüfung vor der Abrechnungs-Sperre.
+    // Bestehende offene Anzahlungen bleiben anrechenbar.
+    if (!depositAllowed({ appointmentDay: apptDay, today, hasRecord: !!input.treatmentRecordId || apptHasRecord })) throw new InvoiceError(DEPOSIT_PAST_ERROR);
     // nie doppelt kassieren: Behandlung schon abgerechnet bzw. schon eine offene Anzahlung dazu → ablehnen
     if (input.appointmentId || input.treatmentRecordId) {
       await assertNotInvoiced(tx, org, input.treatmentRecordId ? [input.treatmentRecordId] : [], input.appointmentId ? [input.appointmentId] : [], input.patientId, null, {
         canCreditDeposits: true,
       });
     }
-    // Anzahlung nur als Vorauszahlung vor der Behandlung: nicht für dokumentierte Behandlungen und nicht für Termine
-    // von heute oder früher (dafür gibt es die Quittung). Bestehende offene Anzahlungen bleiben anrechenbar.
-    if (!depositAllowed({ appointmentDay: apptDay, today, hasRecord: !!input.treatmentRecordId })) throw new InvoiceError(DEPOSIT_PAST_ERROR);
     const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
     const line = { totalCents: input.amountCents, vatRate };
     // Tag der verknüpften Behandlung festschreiben („Anzahlung … für die Behandlung am …“)
@@ -1520,16 +1574,8 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
     const receiptsYear = year ?? Number(berlinDateIso().slice(0, 4));
     const validPreselect = !!preselectPatientId && z.uuid().safeParse(preselectPatientId).success;
     const openReceipts = validPreselect ? await openReceiptsFor(tx, org, preselectPatientId!, receiptsYear) : [];
-    // Leistung laut Quittung (eine Position je Quittung) – für die Übernahme in die Sammelrechnung
-    const depLines = deposits.length
-      ? await tx
-          .select({ invoiceId: invoiceLines.invoiceId, description: invoiceLines.description, vatRate: invoiceLines.vatRate, appointmentId: invoiceLines.appointmentId, treatmentRecordId: invoiceLines.treatmentRecordId })
-          .from(invoiceLines)
-          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, deposits.map((d) => d.id))))
-          .orderBy(asc(invoiceLines.position))
-      : [];
-    const depLine = new Map<string, (typeof depLines)[number]>();
-    for (const l of depLines) if (!depLine.has(l.invoiceId)) depLine.set(l.invoiceId, l);
+    // Leistung laut Quittung (eine Position je Quittung) – für die Übernahme in die Sammelrechnung – und Tag der Leistung
+    const depLine = await depositServiceDays(tx, org, deposits.map((d) => d.id));
     let list = recent;
     if (validPreselect && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));
@@ -1559,7 +1605,14 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         .filter((d): d is typeof d & { patientId: string } => !!d.patientId)
         .map((d) => {
           const l = depLine.get(d.id);
-          return { ...d, description: l?.description ?? "Anzahlung", vatRate: l?.vatRate ?? 0, appointmentId: l?.appointmentId ?? null, treatmentRecordId: l?.treatmentRecordId ?? null };
+          return {
+            ...d,
+            description: l?.description ?? "Anzahlung",
+            vatRate: l?.vatRate ?? 0,
+            appointmentId: l?.appointmentId ?? null,
+            treatmentRecordId: l?.treatmentRecordId ?? null,
+            serviceDay: l?.serviceDay ?? null,
+          };
         }),
     };
   });

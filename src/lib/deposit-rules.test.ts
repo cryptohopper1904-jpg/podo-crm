@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { depositAllowed } from "./deposit-rules";
+import { depositAllowed, depositCheckHint, depositPreselected } from "./deposit-rules";
 
 describe("Anzahlung nur als Vorauszahlung", () => {
   const today = "2026-11-13";
@@ -18,5 +18,35 @@ describe("Anzahlung nur als Vorauszahlung", () => {
   });
   it("ohne Termin (z. B. Nagelspange): erlaubt", () => {
     expect(depositAllowed({ appointmentDay: null, today, hasRecord: false })).toBe(true);
+  });
+});
+
+describe("Vorauswahl von Anzahlungen in Rechnung/Sammelrechnung", () => {
+  const today = "2026-11-13";
+  const ctx = { today, receiptsYear: 2026, presetRefs: new Set<string>() };
+  const dep = (p: { serviceDay?: string | null; appointmentId?: string | null; issuedAt?: string }) => ({
+    appointmentId: p.appointmentId === undefined ? "a1" : p.appointmentId,
+    treatmentRecordId: null,
+    issuedAt: p.issuedAt ?? "2026-05-01",
+    serviceDay: p.serviceDay,
+  });
+  it("Sammelrechnung: nur Anzahlungen mit erbrachter Leistung (Termin bis heute)", () => {
+    expect(depositPreselected("collective", dep({ serviceDay: "2026-05-02" }), ctx)).toBe(true);
+    expect(depositPreselected("collective", dep({ serviceDay: today }), ctx)).toBe(true);
+    expect(depositPreselected("collective", dep({ serviceDay: "2026-11-20" }), ctx)).toBe(false);
+    expect(depositPreselected("collective", dep({ appointmentId: null, serviceDay: null }), ctx)).toBe(false);
+    // anderes Jahr
+    expect(depositPreselected("collective", dep({ serviceDay: "2025-12-02", issuedAt: "2025-11-01" }), ctx)).toBe(false);
+  });
+  it("Rechnung aus genau diesem Termin: immer; sonst bei Rechnung nie; andere Belegarten nie", () => {
+    const refs = { ...ctx, presetRefs: new Set(["a1"]) };
+    expect(depositPreselected("invoice", dep({ serviceDay: "2026-11-20" }), refs)).toBe(true);
+    expect(depositPreselected("invoice", dep({ serviceDay: "2026-05-02" }), ctx)).toBe(false);
+    expect(depositPreselected("receipt", dep({ serviceDay: "2026-05-02" }), refs)).toBe(false);
+  });
+  it("Hinweis nur, wenn die Leistung nicht belegt erbracht ist", () => {
+    expect(depositCheckHint(dep({ serviceDay: "2026-05-02" }), today)).toBeNull();
+    expect(depositCheckHint(dep({ serviceDay: "2026-11-20" }), today)).toMatch(/Zukunft – Leistung erbracht\? Bitte prüfen/);
+    expect(depositCheckHint(dep({ appointmentId: null, serviceDay: null }), today)).toMatch(/ohne Termin – Leistung erbracht\? Bitte prüfen/);
   });
 });

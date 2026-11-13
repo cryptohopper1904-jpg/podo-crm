@@ -115,7 +115,7 @@ test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", a
   }
 });
 
-test("Terminseite: Quittung für erbrachte Behandlungen, Anzahlung nur für künftige Termine", async () => {
+test("Terminseite: Rechnung/Quittung für erbrachte Behandlungen, nur Anzahlung für künftige Termine", async () => {
   const pid = patientUrl.split("/").pop()!;
   const past = await insertAppointment(pid, new Date(Date.now() - 3 * 86_400_000));
   const future = await insertAppointment(pid, new Date(Date.now() + 5 * 86_400_000));
@@ -123,9 +123,11 @@ test("Terminseite: Quittung für erbrachte Behandlungen, Anzahlung nur für kün
   await expect(page.getByRole("link", { name: "Quittung", exact: true })).toBeVisible();
   await expect(page.getByText("Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.")).toBeVisible();
   await expect(page.getByRole("link", { name: /Anzahlung|Sammelrechnung/ })).toHaveCount(0);
+  // künftiger Termin: nur die Anzahlung (Vorauszahlung) – Rechnung/Quittung erst nach der Behandlung
   await page.goto(`/kalender/termin/${future}`);
-  await expect(page.getByRole("link", { name: "Quittung", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Anzahlung (Vorauszahlung)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Quittung", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Rechnung erstellen" })).toHaveCount(0);
   // direkt aufgerufen: für den vergangenen Termin keine Anzahlung, sondern der Weg zur Quittung
   await page.goto(`/rechnungen/anzahlung?termin=${past}`);
   await expect(page.getByText(/Für erbrachte Behandlungen bitte eine Quittung erstellen\./).first()).toBeVisible();

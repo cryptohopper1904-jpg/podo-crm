@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { Info, Receipt } from "lucide-react";
-import { Button, Card, Field, LinkButton, PageHeader, Select } from "@/components/ui";
+import { PatientPicker } from "@/components/patient-search";
+import { Card, LinkButton, PageHeader } from "@/components/ui";
 import { fiscalIsTestMode } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
 import { depositAllowed } from "@/lib/deposit-rules";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { DEPOSIT_PAST_ERROR, DEPOSIT_PURPOSE_HINT, INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
-import { billingFromSource, depositPatients } from "@/server/appointment-billing";
+import { billingFromSource, depositPatient } from "@/server/appointment-billing";
 import { DepositForm } from "./deposit-form";
 
 export const metadata = { title: "Anzahlung (Vorauszahlung)" };
@@ -28,8 +29,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
   const smallBusiness = auth.organization.smallBusiness;
   const today = berlinDateIso();
   const patientParam = str(sp.patient);
-  const people = termin || behandlung ? [] : await depositPatients(auth, patientParam);
-  const chosen = patientParam ? (people[0] ?? null) : null;
+  const chosen = termin || behandlung ? null : await depositPatient(auth, patientParam);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -124,26 +124,17 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
           <DepositForm
             smallBusiness={smallBusiness}
             tseTestMode={fiscalIsTestMode()}
-            defaults={{ patientId: chosen.id, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amount: "", vatRate: 0 }}
+            descriptionPlaceholder="z. B. Nagelspange"
+            defaults={{ patientId: chosen.id, appointmentId: null, treatmentRecordId: null, description: "", amount: "", vatRate: 0 }}
           />
         </>
       ) : (
         <Card>
           {patientParam ? <p className="mb-3 text-sm text-danger">Patient:in nicht gefunden.</p> : null}
           <p className="mb-4 text-sm text-muted">
-            Am einfachsten aus einem künftigen Termin heraus (Kalender → Termin → „Anzahlung (Vorauszahlung)“). Ohne Termin hier die Patient:in wählen:
+            Am einfachsten aus einem künftigen Termin heraus (Kalender → Termin → „Anzahlung (Vorauszahlung)“). Ohne Termin hier die Patient:in suchen und auswählen:
           </p>
-          <form className="flex flex-wrap items-end gap-3">
-            <Field label="Patient:in" className="min-w-0 flex-1">
-              <Select name="patient" required defaultValue="">
-                <option value="" disabled>Bitte wählen …</option>
-                {people.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name} (Nr. {p.number})</option>
-                ))}
-              </Select>
-            </Field>
-            <Button type="submit" variant="secondary">Weiter</Button>
-          </form>
+          <PatientPicker hrefPrefix="/rechnungen/anzahlung?patient=" label="Patient:in für die Anzahlung suchen" />
         </Card>
       )}
     </div>

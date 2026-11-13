@@ -27,8 +27,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   const openDeposit = billing?.patient ? (billing.documents.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ?? null) : null;
   const st = STATUS[a.status];
   const date = berlinDateIso(a.startsAt);
-  // Anzahlung (Vorauszahlung) nur für Termine ab morgen ohne Doku – erbrachte Behandlungen bekommen eine Quittung
-  const depositOk = depositAllowed({ appointmentDay: date, today: berlinDateIso(), hasRecord: !!(billing?.patient && billing.recordId) });
+  // Künftiger Termin (ab morgen, nicht abgesagt, ohne Doku): nur Anzahlung (Vorauszahlung). Erbrachte Behandlungen
+  // (heute/früher bzw. dokumentiert) bekommen Rechnung oder Quittung.
+  const depositOk =
+    a.status !== "cancelled" && depositAllowed({ appointmentDay: date, today: berlinDateIso(), hasRecord: !!(billing?.patient && billing.recordId) });
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -129,6 +131,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                   </span>
                 ))}
               </p>
+            ) : openDeposit && depositOk ? (
+              <p className="w-full text-sm text-muted">
+                Anzahlung {openDeposit.number} erhalten – nach der Behandlung bei der Rechnung bzw. Sammelrechnung anrechnen.
+              </p>
             ) : openDeposit ? (
               <>
                 <p className="w-full text-sm text-muted">
@@ -138,6 +144,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                   <FileText size={18} aria-hidden /> Rechnung erstellen (Anzahlung anrechnen)
                 </LinkButton>
               </>
+            ) : depositOk ? (
+              <LinkButton href={`/rechnungen/anzahlung?termin=${a.id}`} variant="secondary">
+                <Receipt size={18} aria-hidden /> Anzahlung (Vorauszahlung)
+              </LinkButton>
             ) : (
               <>
                 <LinkButton href={`/rechnungen/neu?termin=${a.id}`}>
@@ -146,19 +156,14 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                 <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} variant="secondary">
                   <Receipt size={18} aria-hidden /> Quittung
                 </LinkButton>
-                {depositOk ? (
-                  <LinkButton href={`/rechnungen/anzahlung?termin=${a.id}`} variant="secondary">
-                    <Receipt size={18} aria-hidden /> Anzahlung (Vorauszahlung)
-                  </LinkButton>
-                ) : null}
               </>
             )}
           </div>
           {!billing.billedBy.length && !openDeposit ? (
             <p className="mt-3 text-xs text-muted">
-              Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen.{" "}
-              {RECEIPT_COLLECTIVE_HINT}
-              {depositOk ? ` Anzahlung (Vorauszahlung): für Zahlungen vor der Behandlung, z. B. Nagelspange – wird später auf die Rechnung bzw. Sammelrechnung angerechnet.` : ""}
+              {depositOk
+                ? "Der Termin liegt in der Zukunft – Rechnung oder Quittung gibt es nach der Behandlung. Anzahlung (Vorauszahlung): für Zahlungen vor der Behandlung, z. B. Nagelspange – wird später auf die Rechnung bzw. Sammelrechnung angerechnet."
+                : `Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen. ${RECEIPT_COLLECTIVE_HINT}`}
             </p>
           ) : null}
         </Card>
