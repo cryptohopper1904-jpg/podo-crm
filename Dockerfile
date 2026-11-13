@@ -25,6 +25,8 @@ COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 # Migrationen laufen über einen separaten Container (siehe docker-compose: migrate)
 COPY --from=build /app/drizzle ./drizzle
+# Bildoptimierung (next/image) schreibt nach .next/cache/images – muss für den Laufzeit-Benutzer beschreibbar sein
+RUN mkdir -p .next/cache && chown -R podo:podo .next/cache
 USER podo
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

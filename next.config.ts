@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   serverExternalPackages: ["@node-rs/argon2", "exceljs"],
+  // Rechtstexte der Website (src/app/(public)/_content/legal-doc.tsx) werden zur Laufzeit gelesen
+  outputFileTracingIncludes: { "/*": ["docs/legal/*.md"] },
   experimental: { serverActions: { bodySizeLimit: "25mb" } },
   // Tailwind CSS v4 über den Turbopack-Loader
   turbopack: { rules: { "*.css": { loaders: ["@tailwindcss/turbopack"] } } },

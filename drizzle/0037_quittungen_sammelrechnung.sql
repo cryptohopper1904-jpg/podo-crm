@@ -1,3 +1,4 @@
+-- Idempotent (nur CREATE OR REPLACE FUNCTION) – darf bei Umnummerierung erneut laufen.
 -- Quittungen als Teilrechnungen → Sammelrechnung als Schlussrechnung.
 -- Anrechnung (invoices.collective_invoice_id) jetzt auch für normale Quittungen (kind = receipt) – aber nur bezahlte und
 -- nur auf eine ausgestellte Sammelrechnung derselben Praxis und derselben Person, und nur einmal (wie bei Anzahlungen).

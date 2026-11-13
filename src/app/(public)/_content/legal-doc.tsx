@@ -11,8 +11,8 @@ export const LEGAL_FILES = {
 } as const;
 
 /**
- * Rechtstext aus docs/legal/*.md. Die Seiten sind statisch (force-static) – die Dateien werden
- * beim Build gelesen und müssen daher nicht im Produktions-Image liegen.
+ * Rechtstext aus docs/legal/*.md. Die Seiten werden zur Laufzeit gerendert (Metadaten aus PUBLIC_URL im Layout);
+ * die Markdown-Dateien kommen über outputFileTracingIncludes (next.config.ts) in den Standalone-Output.
  */
 export async function LegalDoc({ doc }: { doc: keyof typeof LEGAL_FILES }) {
   const source = await readFile(path.join(process.cwd(), "docs", "legal", LEGAL_FILES[doc]), "utf8");

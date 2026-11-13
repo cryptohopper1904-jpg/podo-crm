@@ -26,10 +26,41 @@ import {
 } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
 import { getAuth } from "@/lib/auth/session";
-import { HeroCollage } from "./_content/hero-collage";
+import { HeroShots } from "./_content/hero-shots";
+import { JsonLd, softwareApplicationLd } from "./_content/json-ld";
 import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
+import { DemoDataNote, ScreenshotFrame, ShotImage } from "./_content/screenshot-frame";
+import { SHOTS, type Screenshot } from "./_content/screenshots";
+import { OG_IMAGE } from "./_content/site";
 
-export const metadata = { title: { absolute: "PodoHero – Praxissoftware für Podologie" } };
+const HOME_DESCRIPTION =
+  "Praxissoftware, gebaut nur für Podologie: Doku mit Fußschema und Fotos am iPad, Termine, Online-Buchung, Rechnungen, Sammelrechnung, Kasse, Verordnungen, Hygiene, Pflegeheime – gehostet in Deutschland. 30 Tage kostenlos testen.";
+
+export const metadata = {
+  title: { absolute: "PodoHero – Praxissoftware für Podologie" },
+  description: HOME_DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: { title: "PodoHero – Praxissoftware für Podologie", description: HOME_DESCRIPTION, url: "/", type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
+};
+
+/** Live-Beispiele: echte Screens mit Demodaten, verlinkt auf die passende Funktion */
+const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: string }[] = [
+  { shot: SHOTS.fussschema, tag: "iPad", title: "Doku am Behandlungsstuhl", text: "Befunde im Fußschema antippen, je Stelle notieren, Sterilgut-Charge erfassen.", href: "/funktionen#doku" },
+  { shot: SHOTS.besuchstag, tag: "iPad", title: "Besuchstag im Pflegeheim", text: "Je Bewohner:in Leistungen antippen und Kurzbefund speichern – Liste statt Einzelakten.", href: "/funktionen#praxis" },
+  { shot: SHOTS.sammelrechnung, tag: "Desktop", title: "Sammelrechnung ans Pflegeheim", text: "Positionen kommen aus dem Besuchstag, Steuerbefreiung wird geprüft und vermerkt.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss; TSE-Signatur über fiskaly im Testmodus.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.hygiene, tag: "Desktop", title: "Hygiene & Gerätebuch", text: "Chargen freigeben, Fristen für Wartung und Validierung, Tages-Checkliste.", href: "/funktionen#praxis" },
+  { shot: SHOTS.website, tag: "Website", title: "Ihre Praxis-Website", text: "Aus Ihren Praxisdaten erzeugt – mit „Termin online buchen“, ohne Cookies.", href: "/funktionen#termine" },
+];
+
+const ONLY_PODO = [
+  "Fußschema in 2D und am 3D-Fußmodell",
+  "Nagelspangen-Episoden mit Pflichtfoto-Assistent",
+  "Risiko-Ampel für Diabetes, Blutverdünner, pAVK, Neuropathie",
+  "Verordnungen DF, NF, QF und UI mit Fristen-Ampel",
+  "Sterilgut-Chargen bis zur einzelnen Behandlung rückverfolgbar",
+  "Pflegeheim-Modus, Touren und Sammelrechnung",
+] as const;
 
 type Capability = { icon: LucideIcon; title: string; text: string; href: string; test?: boolean };
 
@@ -46,7 +77,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Termine & Kommunikation",
     items: [
-      { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website.", href: "/funktionen#termine" },
+      { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website (Patientenportal ab Tarif Praxis).", href: "/funktionen#termine" },
       { icon: PhoneCall, title: "KI-Telefonassistent", text: "Nimmt Anrufe an, nennt freie Zeiten, notiert Termin- und Rückrufwünsche.", href: "/funktionen#kommunikation", test: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
       { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
@@ -55,8 +86,8 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Abrechnung & Kasse",
     items: [
-      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "GoBD-feste Nummernkreise, Gutscheine, SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen" },
-      { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export, TSE-Signatur über fiskaly.", href: "/funktionen#rechnungen" },
+      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine; Kartenzahlung über SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen", test: true },
+      { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export; TSE-Signatur über fiskaly (Testmodus)", href: "/funktionen#rechnungen", test: true },
       { icon: ClipboardList, title: "GKV-Verordnungen", text: "Fristen-Ampel, Einheiten, Export ans Abrechnungszentrum, KIM vorbereitet.", href: "/funktionen#verordnungen" },
     ],
   },
@@ -73,7 +104,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
 const DAY: { time: string; title: string; text: string }[] = [
   { time: "7:45", title: "Praxis öffnen", text: "Hygiene-Checkliste abhaken, Sterilgut-Charge freigeben. Der Tagesüberblick zeigt Termine und neue Nachrichten." },
   { time: "9:00", title: "Am Behandlungsstuhl", text: "Risiken sind sofort sichtbar. Leistungen antippen, Befund am Fuß markieren, Fotos aufnehmen – fertig dokumentiert." },
-  { time: "11:30", title: "Während Sie behandeln", text: "Der Telefonassistent nimmt Anrufe an und legt Terminwünsche zur Bestätigung ab. Eine Absage? Die Warteliste bietet den Termin automatisch an." },
+  { time: "11:30", title: "Während Sie behandeln", text: "Der Telefonassistent (Testmodus) nimmt Anrufe an und legt Terminwünsche zur Bestätigung ab. Eine Absage? Die Warteliste bietet den Termin automatisch an." },
   { time: "14:00", title: "Hausbesuch im Pflegeheim", text: "Bewohnerliste öffnen, Schnell-Doku je Person. Die Sammelrechnung entsteht am Monatsende von selbst." },
   { time: "17:30", title: "Abrechnen", text: "Rechnung mit Karte über SumUp bezahlen lassen, Verordnungen abrechnungsreif setzen und für das Abrechnungszentrum exportieren." },
   { time: "18:30", title: "Feierabend", text: "Tagesabschluss mit Z-Bon. Die Erinnerungen für morgen gehen automatisch raus – nur an Personen mit Einwilligung." },
@@ -89,17 +120,17 @@ const SECURITY = [
 ] as const;
 
 type Cell = true | false | string;
-const COMPARISON: { topic: string; podo: Cell; typical: Cell }[] = [
-  { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true, typical: "je nach Anbieter, oft per Upload" },
-  { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true, typical: "selten" },
-  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: true, typical: "teilweise" },
-  { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)", typical: "selten" },
-  { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true, typical: "teilweise" },
-  { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true, typical: "teilweise" },
-  { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true, typical: "selten" },
-  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export)", typical: "oft direkt integriert" },
-  { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten", typical: "oft vorhanden" },
-  { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)", typical: "teilweise vorhanden" },
+const COMPARISON: { topic: string; podo: Cell }[] = [
+  { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true },
+  { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true },
+  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: "ja (Patientenportal ab Tarif Praxis)" },
+  { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)" },
+  { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true },
+  { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true },
+  { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true },
+  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export)" },
+  { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten" },
+  { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)" },
 ];
 
 function CellView({ value }: { value: Cell }) {
@@ -129,16 +160,17 @@ export default async function Landing() {
 
   return (
     <>
+      <JsonLd data={softwareApplicationLd()} />
       {/* Hero */}
       <section aria-labelledby="hero-title" className="relative overflow-hidden">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-12 pt-12 sm:px-6 md:pt-16 lg:grid-cols-[1fr_1.05fr] lg:gap-8 lg:pb-16">
           <div>
-            <Badge tone="primary">Praxissoftware für Podologie in Deutschland</Badge>
+            <Badge tone="primary">Gebaut nur für Podologie</Badge>
             <h1 id="hero-title" className="mt-5 font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3.6rem]">
               Ihre Praxis läuft.{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoHero dokumentiert am Behandlungsstuhl, nimmt Anrufe an, füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
+              PodoHero dokumentiert am Behandlungsstuhl, nimmt auf Wunsch Anrufe an (KI-Telefonassistent, Testmodus), füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
               die Kasse. Eine Software für die ganze Praxis – vom ersten Anruf bis zum Z-Bon.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -155,8 +187,8 @@ export default async function Landing() {
             </ul>
           </div>
 
-          {/* Stilisierte Vorschau mehrerer Funktionen (keine echten Daten) */}
-          <HeroCollage />
+          {/* Echte Screenshots mit erfundenen Demodaten */}
+          <HeroShots />
         </div>
       </section>
 
@@ -211,6 +243,66 @@ export default async function Landing() {
         </div>
       </section>
 
+      {/* Live-Beispiele */}
+      <section aria-labelledby="live" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 id="live" className="font-display text-3xl font-semibold tracking-tight">Live-Beispiele aus PodoHero</h2>
+            <p className="mt-2 max-w-2xl text-muted">Keine Illustrationen: So sieht die Software im Praxisalltag aus – aufgenommen mit erfundenen Demodaten.</p>
+          </div>
+          <Link href="/funktionen" className="inline-flex items-center gap-1 rounded-lg font-semibold text-primary hover:underline">
+            Alle Screenshots <ArrowRight size={16} aria-hidden />
+          </Link>
+        </div>
+        <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {LIVE.map(({ shot, title, text, href, tag }) => (
+            <li key={title}>
+              <Link
+                href={href}
+                className="group flex h-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[0_18px_40px_-24px_rgb(15_42_46/0.5)] motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+              >
+                <div className="relative aspect-[16/10] overflow-hidden border-b border-border bg-surface-2">
+                  <ShotImage shot={shot} decorative sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw" className="transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none" />
+                  <span className="absolute left-3 top-3 rounded-full bg-bg/90 px-2.5 py-0.5 text-xs font-semibold backdrop-blur">{tag}</span>
+                </div>
+                <div className="flex flex-1 flex-col p-5">
+                  <p className="font-semibold group-hover:text-primary">{title}</p>
+                  <p className="mt-1 flex-1 text-sm text-muted">{text}</p>
+                  <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-primary">
+                    Mehr dazu <ArrowRight size={14} aria-hidden className="transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <DemoDataNote className="mt-4" />
+      </section>
+
+      {/* Gebaut nur für Podologie */}
+      <section aria-labelledby="nur-podologie" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
+        <div className="grid items-center gap-10 rounded-[24px] border border-border bg-surface p-6 sm:p-10 lg:grid-cols-[1fr_1fr]">
+          <div>
+            <Badge tone="primary"><Footprints size={14} aria-hidden className="mr-1" /> Gebaut nur für Podologie</Badge>
+            <h2 id="nur-podologie" className="mt-4 font-display text-3xl font-semibold tracking-tight">Von Grund auf für die Podologie entwickelt</h2>
+            <p className="mt-3 text-muted">
+              PodoHero kennt nur ein Fach: Ihres. Deshalb sind Fußschema, Nagelspange, Sterilgut-Charge und Pflegeheim-Besuchstag genau dort, wo
+              Sie sie im Behandlungsalltag brauchen.
+            </p>
+            <ul className="mt-5 grid gap-2.5">
+              {ONLY_PODO.map((t) => (
+                <li key={t} className="flex gap-2.5 text-[15px]"><Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> {t}</li>
+              ))}
+            </ul>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <LinkButton href="/vergleich" variant="secondary">Mit anderer Software vergleichen</LinkButton>
+              <LinkButton href="/wechseln" variant="ghost">Wechsel planen <ArrowRight size={16} aria-hidden /></LinkButton>
+            </div>
+          </div>
+          <ScreenshotFrame shot={SHOTS.fuss3d} sizes="(min-width: 1024px) 520px, 100vw" />
+        </div>
+      </section>
+
       {/* Ein Tag mit PodoHero */}
       <section aria-labelledby="tag" className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 id="tag" className="font-display text-3xl font-semibold tracking-tight">Ein Tag mit PodoHero</h2>
@@ -236,19 +328,19 @@ export default async function Landing() {
       {/* Vergleich */}
       <section aria-labelledby="vergleich" className="border-t border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-          <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Anders als typische Podologie-Software</h2>
+          <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Wo PodoHero den Schwerpunkt setzt</h2>
           <p className="mt-2 max-w-3xl text-muted">
-            Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung
-            und Selbstzahler – und sagt offen, was noch fehlt. Allgemeine Einordnung, kein Vergleich mit einem bestimmten Produkt.
+            PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung und Selbstzahler. Bei GKV-Abrechnung und Telematik gehen wir bewusst
+            einen anderen Weg: Abrechnung über ein Abrechnungszentrum per Export, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
+            Sie unter <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
           <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
             <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">
-              <caption className="sr-only">Funktionsvergleich PodoHero und typische Podologie-Software</caption>
+              <caption className="sr-only">Schwerpunkte und Funktionsumfang von PodoHero</caption>
               <thead>
                 <tr className="bg-surface-2 text-sm">
                   <th scope="col" className="px-4 py-3 font-semibold">Thema</th>
                   <th scope="col" className="px-4 py-3 font-semibold">PodoHero</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">Typische Podologie-Software</th>
                 </tr>
               </thead>
               <tbody>
@@ -256,7 +348,6 @@ export default async function Landing() {
                   <tr key={row.topic} className="border-t border-border">
                     <th scope="row" className="px-4 py-3 font-medium">{row.topic}</th>
                     <td className="px-4 py-3"><CellView value={row.podo} /></td>
-                    <td className="px-4 py-3"><CellView value={row.typical} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -292,7 +383,7 @@ export default async function Landing() {
             <h2 id="preise-kurz" className="font-display text-3xl font-semibold tracking-tight">Einfache Preise</h2>
             <p className="mt-2 text-muted">
               {PRICE_NOTE.replace(" (siehe unten).", ".")}{" "}
-              <Link href="/preise#vorlaeufig" className="font-semibold text-primary underline-offset-2 hover:underline">Was „vorläufig“ bedeutet</Link>. Monatlich kündbar.
+              <Link href="/preise#vorlaeufig" className="font-semibold text-primary underline-offset-2 hover:underline">Was „vorläufig“ bedeutet</Link>. Kostenpflichtige Tarife monatlich kündbar.
             </p>
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>

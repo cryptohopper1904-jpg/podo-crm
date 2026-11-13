@@ -13,8 +13,7 @@
  *
  * Schrift: Helvetica (Standardschrift, WinAnsi). Nicht darstellbare Zeichen werden ersetzt.
  */
-import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
-import QRCode from "qrcode";
+import { PDFDocument, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
@@ -23,7 +22,6 @@ import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
   serviceYear,
-  formatIban,
   hasExemptNote,
   invoiceHeading,
   invoiceRecipient,
@@ -38,9 +36,28 @@ import {
   showsDueDate,
   type CreditedPartial,
 } from "./invoice-view";
-import { shortUrl, type InvoiceBookingLink } from "./practice-documents";
+import { type InvoiceBookingLink } from "./practice-documents";
+import {
+  A4,
+  CONTENT_WIDTH,
+  drawAddressBlock,
+  drawLogoHead,
+  drawFooters,
+  drawQrBlocks,
+  embedFonts,
+  embedImage,
+  FOOTER_TOP,
+  GRAY,
+  HEAD_FILL,
+  makeSafe,
+  makeWriter,
+  ML,
+  RIGHT,
+  TOP,
+  type PdfImage,
+} from "./pdf-letter";
 
-export type PdfImage = { bytes: Uint8Array; mime: string };
+export type { PdfImage } from "./pdf-letter";
 
 export type InvoicePdfData = {
   invoice: {
@@ -91,44 +108,12 @@ export type InvoicePdfData = {
   booking?: InvoiceBookingLink | null;
 };
 
-const A4: [number, number] = [595.28, 841.89];
-const ML = 50;
-const MR = 50;
-const TOP = 805;
-const FOOTER_TOP = 125;
-const BLACK = rgb(0, 0, 0);
-const GRAY = rgb(0.35, 0.35, 0.35);
-const LIGHT = rgb(0.5, 0.5, 0.5);
-const RULE = rgb(0.6, 0.6, 0.6);
-const HEAD_FILL = rgb(0.9, 0.9, 0.9);
-
-async function embedImage(doc: PDFDocument, img: PdfImage | null | undefined): Promise<PDFImage | null> {
-  if (!img?.bytes?.length) return null;
-  try {
-    return img.mime === "image/jpeg" ? await doc.embedJpg(img.bytes) : await doc.embedPng(img.bytes);
-  } catch {
-    // defekte Datei: Beleg trotzdem erzeugen (ohne Logo)
-    return null;
-  }
-}
-
 export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array> {
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
   const doc = await PDFDocument.create();
-  const regular = await doc.embedFont(StandardFonts.Helvetica);
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const italic = await doc.embedFont(StandardFonts.HelveticaOblique);
-  const charset = new Set(regular.getCharacterSet());
-  const safe = (s: string) =>
-    [...s.normalize("NFC")]
-      .map((c) => {
-        if (c === "\t") return " ";
-        const cp = c.codePointAt(0)!;
-        if (charset.has(cp)) return c;
-        if (c === " " || c === " ") return " ";
-        return "?";
-      })
-      .join("");
+  const fonts = await embedFonts(doc);
+  const { regular, bold } = fonts;
+  const safe = makeSafe(regular);
 
   doc.setTitle(safe(invoiceTitle(inv)));
   doc.setAuthor(safe(o.legalName ?? o.name));
@@ -139,58 +124,11 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   const fullLogo = await embedImage(doc, data.logos?.full);
   const compactLogo = await embedImage(doc, data.logos?.compact);
 
-  const width = A4[0] - ML - MR;
-  const RIGHT = ML + width;
+  const width = CONTENT_WIDTH;
   let page: PDFPage = doc.addPage(A4);
   let y = TOP;
-
-  type TextOpts = { size?: number; font?: PDFFont; color?: ReturnType<typeof rgb>; align?: "left" | "right" | "center" };
-  const text = (t: string, x: number, yy: number, opts: TextOpts = {}) => {
-    const size = opts.size ?? 10;
-    const font = opts.font ?? regular;
-    const s = safe(t);
-    const w = font.widthOfTextAtSize(s, size);
-    const xx = opts.align === "right" ? x - w : opts.align === "center" ? x - w / 2 : x;
-    page.drawText(s, { x: xx, y: yy, size, font, color: opts.color ?? BLACK });
-    return w;
-  };
-  /** Einzeilig auf maxW kürzen (mit „…“) */
-  const clip = (t: string, maxW: number, size = 10, font = regular): string => {
-    const s = safe(t);
-    if (font.widthOfTextAtSize(s, size) <= maxW) return s;
-    let out = s;
-    while (out.length > 1 && font.widthOfTextAtSize(out + "…", size) > maxW) out = out.slice(0, -1);
-    return out.trimEnd() + "…";
-  };
-  const wrap = (t: string, maxW: number, size = 10, font = regular): string[] => {
-    const out: string[] = [];
-    for (const para of safe(t).split("\n")) {
-      let line = "";
-      for (const word of para.split(/\s+/).filter(Boolean)) {
-        const cand = line ? `${line} ${word}` : word;
-        if (font.widthOfTextAtSize(cand, size) <= maxW) {
-          line = cand;
-          continue;
-        }
-        if (line) out.push(line);
-        // sehr lange Wörter hart umbrechen
-        let rest = word;
-        while (font.widthOfTextAtSize(rest, size) > maxW && rest.length > 1) {
-          let n = rest.length - 1;
-          while (n > 1 && font.widthOfTextAtSize(rest.slice(0, n), size) > maxW) n--;
-          out.push(rest.slice(0, n));
-          rest = rest.slice(n);
-        }
-        line = rest;
-      }
-      out.push(line);
-    }
-    return out;
-  };
-  const line = (x1: number, y1: number, x2: number, y2: number, thickness = 0.6, color = RULE) =>
-    page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness, color });
-  const box = (x: number, yTop: number, w: number, h: number, fill?: ReturnType<typeof rgb>) =>
-    page.drawRectangle({ x, y: yTop - h, width: w, height: h, borderColor: RULE, borderWidth: 0.6, ...(fill ? { color: fill } : {}) });
+  const writer = makeWriter(() => page, fonts, safe);
+  const { text, wrap, line, box } = writer;
   const newPage = () => {
     page = doc.addPage(A4);
     y = TOP;
@@ -202,91 +140,23 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
     return false;
   };
-  const drawLogo = (img: PDFImage, maxW: number, maxH: number, at: "center" | "right") => {
-    const scale = Math.min(maxW / img.width, maxH / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    const x = at === "center" ? (A4[0] - w) / 2 : RIGHT - w;
-    page.drawImage(img, { x, y: y - h, width: w, height: h });
-    return h;
-  };
-  /** QR-Code als Vektorgrafik (scharf in jeder Druckgröße), Fehlerkorrektur M (EPC-Vorgabe) */
-  const drawQr = (payload: string, x: number, yTop: number, size: number) => {
-    const qr = QRCode.create(payload, { errorCorrectionLevel: "M" });
-    const n = qr.modules.size;
-    const quiet = 2;
-    const cell = size / (n + quiet * 2);
-    for (let r = 0; r < n; r++) {
-      for (let c = 0; c < n; c++) {
-        if (qr.modules.get(r, c)) page.drawRectangle({ x: x + (c + quiet) * cell, y: yTop - (r + quiet + 1) * cell, width: cell + 0.05, height: cell + 0.05, color: BLACK });
-      }
-    }
-  };
 
   // ── Kopf: Logo bzw. Praxisname ──
-  if (receiptLike && (compactLogo || fullLogo)) {
-    // Quittung: dezentes Zeichen oben rechts, Praxisname links
-    const img = (compactLogo ?? fullLogo)!;
-    const h = drawLogo(img, compactLogo ? 60 : 140, compactLogo ? 44 : 40, "right");
-    text(o.name, ML, y - 16, { size: 14, font: bold });
-    y -= Math.max(h, 24) + 22;
-  } else if (fullLogo || compactLogo) {
-    const h = fullLogo ? drawLogo(fullLogo, 230, 78, "center") : drawLogo(compactLogo!, 70, 56, "center");
-    y -= h + 26;
-  } else {
-    text(o.name, A4[0] / 2, y - 14, { size: 16, font: bold, align: "center" });
-    y -= 42;
-  }
+  y = drawLogoHead(writer, fonts, y, { full: fullLogo, compact: compactLogo, receiptLike, orgName: o.name });
 
   // ── Empfänger (links) und Kasten mit Belegdaten (rechts) ──
   const recipient = invoiceRecipient(p, b);
-  const boxX = ML + width * 0.58;
-  const boxW = RIGHT - boxX;
-  const sl = senderLine(o).replaceAll(" · ", " - ");
-  const slSize = 6.5;
-  const slMax = boxX - ML - 16;
-  let slText = safe(sl);
-  while (regular.widthOfTextAtSize(slText, slSize) > slMax && slText.length > 10) slText = slText.slice(0, -2);
-  const slW = text(slText, ML, y - 8, { size: slSize, color: GRAY });
-  line(ML, y - 9.5, ML + slW, y - 9.5, 0.3, GRAY);
-  let ly = y - 24;
   const recLines = [recipient.name, recipient.care ? `für ${recipient.care}` : null, recipient.street, recipient.city || null].filter((v): v is string => !!v);
-  for (const l of recLines) {
-    for (const wl of wrap(l, slMax, 11)) {
-      text(wl, ML, ly, { size: 11 });
-      ly -= 14;
-    }
-  }
-
   const meta: [string, string][] = [[receiptLike ? "Quittungsnummer:" : "Rechnungsnummer:", inv.number ?? ""], [receiptLike ? "Datum:" : "Rechnungsdatum:", dateDe(inv.issuedAt)]];
   if (p) meta.push(["Patientennummer:", String(p.number)]);
   if (showsDueDate(inv)) meta.push(dueImmediately(inv) ? ["Zahlbar:", "sofort"] : ["Zahlbar bis:", dateDe(inv.dueAt)]);
-  const contact: string[] = [];
-  if (o.phone) contact.push(`Tel. ${o.phone}${o.whatsapp ? " (auch WhatsApp)" : ""}`);
-  if (o.email) contact.push(o.email);
-  const rowH = 13;
-  const boxH = 8 + meta.length * rowH + (contact.length ? 10 + rowH + contact.length * rowH : 0) + 2;
-  box(boxX, y, boxW, boxH);
-  let by = y - 13;
-  const labelW = 82;
-  for (const [l, v] of meta) {
-    text(l, boxX + 6, by, { size: 8.5 });
-    text(v, boxX + 6 + labelW, by, { size: 9.5, font: l.startsWith("Rechnungsnummer") || l.startsWith("Quittungsnummer") ? bold : regular });
-    by -= rowH;
-  }
-  if (contact.length) {
-    by -= 10;
-    const tw = text("Terminvereinbarung", boxX + 6, by, { size: 8.5 });
-    line(boxX + 6, by - 1.5, boxX + 6 + tw, by - 1.5, 0.4, BLACK);
-    by -= rowH;
-    for (const c of contact) {
-      for (const wlLine of wrap(c, boxW - 12, 8.5).slice(0, 2)) {
-        text(wlLine, boxX + 6, by, { size: 8.5 });
-        by -= rowH;
-      }
-    }
-  }
-  y = Math.min(ly, y - boxH) - 26;
+  y = drawAddressBlock(writer, fonts, safe, y, {
+    senderLine: senderLine(o),
+    recipientLines: recLines,
+    meta,
+    boldMeta: (l) => l.startsWith("Rechnungsnummer") || l.startsWith("Quittungsnummer"),
+    org: o,
+  });
 
   // ── Überschrift ──
   const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates ?? [], dateDe, data.cancels?.number);
@@ -454,61 +324,13 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   }
   if (booking) blocks.push({ title: booking.label, sub: [], payload: booking.url });
   if (blocks.length) {
-    const qrSize = 78;
-    const blockH = qrSize + 6;
     y -= 10;
-    ensure(blockH + 4);
-    const colWidth = width / 2;
-    blocks.forEach((bl, i) => {
-      const x = ML + i * colWidth;
-      drawQr(bl.payload, x, y, qrSize);
-      const tx = x + qrSize + 8;
-      const maxW = colWidth - qrSize - 14;
-      let ty = y - 18;
-      for (const tl of wrap(bl.title, maxW, 9, bold)) {
-        text(tl, tx, ty, { size: 9, font: bold });
-        ty -= 11.5;
-      }
-      for (const s of bl.sub) {
-        for (const sl2 of wrap(s, maxW, 8.5)) {
-          text(sl2, tx, ty, { size: 8.5, color: GRAY });
-          ty -= 11;
-        }
-      }
-    });
-    y -= blockH;
+    ensure(78 + 6 + 4);
+    y = drawQrBlocks(writer, fonts, y, blocks);
   }
 
   // ── Fußzeile (jede Seite) ──
-  const pages = doc.getPages();
-  const left = [o.name, o.legalName && o.legalName !== o.name ? o.legalName : null, o.street, [o.zip, o.city].filter(Boolean).join(" ") || null].filter((v): v is string => !!v);
-  const right: [string, string][] = [];
-  if (o.iban) right.push(["IBAN:", formatIban(o.iban)]);
-  if (o.bic) right.push(["BIC:", o.bic.replace(/\s/g, "").toUpperCase()]);
-  if (o.bankName) right.push(["Bank:", o.bankName]);
-  if (o.iban && (o.accountHolder || o.legalName)) right.push(["Kontoinhaber:", (o.accountHolder || o.legalName)!]);
-  if (o.taxNumber) right.push(["Steuernummer:", o.taxNumber]);
-  if (o.vatId) right.push(["USt-IdNr.:", o.vatId]);
-  const center = [o.phone, o.website ? shortUrl(o.website) : o.email].filter((v): v is string => !!v);
-  pages.forEach((pg, i) => {
-    page = pg;
-    const top = FOOTER_TOP - 14;
-    const rx = ML + width * 0.6;
-    // Spaltenbreiten begrenzen: lange Namen/Banken werden gekürzt statt über den Rand zu laufen
-    left.slice(0, 5).forEach((l, li) => text(clip(l, rx - ML - 12, 7), ML, top - li * 9, { size: 7, color: LIGHT }));
-    right.slice(0, 6).forEach(([k, v], li) => {
-      text(k, rx, top - li * 9, { size: 7, color: LIGHT });
-      text(clip(v, RIGHT - rx - 52, 7), rx + 52, top - li * 9, { size: 7, color: LIGHT });
-    });
-    const cy = top - Math.max(Math.min(left.length, 5), Math.min(right.length, 6), 3) * 9 - 6;
-    center.forEach((c, ci) => text(c, A4[0] / 2, cy - ci * 11, { size: 9, color: GRAY, align: "center" }));
-    if (o.qualification) {
-      wrap(o.qualification, width, 7, italic)
-        .slice(0, 2)
-        .forEach((q, qi) => text(q, A4[0] / 2, cy - center.length * 11 - 3 - qi * 9, { size: 7, font: italic, color: LIGHT, align: "center" }));
-    }
-    if (pages.length > 1) text(`Seite ${i + 1} von ${pages.length}`, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
-  });
+  drawFooters(doc, fonts, safe, o);
 
   return doc.save();
 }

@@ -1,10 +1,12 @@
 import { Database, FileLock2, KeyRound, ListChecks, Lock, ScrollText, ServerCog, Sparkles, UserCog } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
+import { pageMeta } from "../_content/site";
 
-export const metadata = {
+export const metadata = pageMeta({
   title: "Sicherheit",
   description: "Wie PodoHero Gesundheitsdaten schützt: Hosting bei Hetzner in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
-};
+  path: "/sicherheit",
+});
 
 const MEASURES = [
   {
