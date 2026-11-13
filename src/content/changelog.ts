@@ -25,6 +25,25 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-v",
+    date: "2026-11-13",
+    title: "Vertrieb: Aktionscodes, Pipeline und Kampagnen",
+    audience: "platform",
+    items: [
+      { tag: "neu", text: "Aktionscodes anlegen (z. B. 90 Tage kostenlos testen) mit Höchstzahl, Ablaufdatum und optionalem Tarif; Einlösung bei der Registrierung oder auf der Abo-Seite, Aktionsseite /aktion/<Code>.", href: "/plattform/vertrieb/aktionscodes" },
+      { tag: "neu", text: "Vertrieb neu: Pipeline mit Kennzahlen, Board-Ansicht, Filter, Kampagnen und Verlauf je Kontakt. Mails gehen nur an Kontakte mit einzeln dokumentierter Einwilligung und erst, wenn der Versanddienstleister bestätigt ist.", href: "/plattform/vertrieb" },
+    ],
+  },
+  {
+    id: "2026-11-13-u",
+    date: "2026-11-13",
+    title: "Aktionscode einlösen",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Haben Sie einen Aktionscode erhalten, lösen Sie ihn unter Abo & Tarif ein – die Testphase verlängert sich entsprechend. Je Praxis ist ein Code möglich, nicht bei laufendem Abo.", href: "/einstellungen/abo" },
+    ],
+  },
+  {
     id: "2026-11-13-t",
     date: "2026-11-13",
     title: "Leistungsdatum, aufgeräumte Formulare und neue Einstellungen",
