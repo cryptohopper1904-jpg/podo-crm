@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-h",
+    date: "2026-11-13",
+    title: "Kalender: vollständige Ansicht und freie Termine finden",
+    items: [
+      { tag: "neu", text: "Im Kalender können Sie zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Ihre Wahl wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
+      { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
+      { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
+    ],
+  },
+  {
     id: "2026-11-13-f",
     date: "2026-11-13",
     title: "Sammelrechnung: Quittungen der Patient:in auswählen",

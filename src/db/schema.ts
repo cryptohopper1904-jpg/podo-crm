@@ -271,6 +271,8 @@ export const users = pgTable("users", {
 export type UserPrefs = {
   /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
   changelog?: { seenId?: string; mutedId?: string };
+  /** Kalender: gewählte Ansicht („simple“ = einfache Liste, Standard; „full“ = Tag/Woche/Monat mit Zeitachse) */
+  calendar?: { mode?: "simple" | "full" };
 };
 
 export const memberships = pgTable(

@@ -1,12 +1,13 @@
 import "server-only";
-import { and, asc, eq, gte, isNull, lt, ne, or } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
+import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
+import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
 
@@ -87,6 +88,31 @@ async function conflictsInTx(tx: Tx, org: string, therapistId: string, start: Da
   return rows.filter((r) => r.status !== "cancelled" && r.startsAt < end && r.endsAt > start);
 }
 
+/** Berliner Tage (JJJJ-MM-TT), an denen die Behandler:in laut Team-Planung abwesend ist (Urlaub, Krankheit …). */
+async function absentDaysInTx(tx: Tx, org: string, therapistId: string, days: string[]): Promise<string[]> {
+  if (!days.length) return [];
+  const sorted = [...days].sort();
+  const rows = await tx
+    .select({ startsOn: absences.startsOn, endsOn: absences.endsOn })
+    .from(absences)
+    .where(and(eq(absences.organizationId, org), eq(absences.userId, therapistId), lte(absences.startsOn, sorted[sorted.length - 1]), gte(absences.endsOn, sorted[0])));
+  return [...new Set(days.filter((d) => rows.some((r) => r.startsOn <= d && d <= r.endsOn)))];
+}
+
+export type SlotClash = { startsAt: Date; endsAt: Date };
+export type SlotConflict = { ok: false; conflict: true; clashes: SlotClash[]; absentDays: string[] };
+
+/** Fehlertext für belegte Zeiten / Abwesenheit (Terminanlage und Verschieben). */
+export function conflictMessage(c: Pick<SlotConflict, "clashes" | "absentDays">): string {
+  const parts: string[] = [];
+  if (c.clashes.length) parts.push(`Zu dieser Zeit ist bereits ein Termin eingetragen – belegt, nicht verfügbar (${describeClashes(c.clashes.slice(0, 5))}${c.clashes.length > 5 ? " …" : ""}).`);
+  if (c.absentDays.length) {
+    const days = c.absentDays.map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`).join(", ");
+    parts.push(`Die Behandler:in ist laut Team-Planung abwesend – nicht verfügbar (${days}).`);
+  }
+  return parts.join(" ") || "Zu dieser Zeit ist bereits ein Termin eingetragen.";
+}
+
 export type InternalAppointmentInput = {
   patientId: string | null;
   therapistId: string;
@@ -105,13 +131,17 @@ export type InternalAppointmentInput = {
  * derselben Buchungssperre wie /buchen, Portal, Telefon und Warteliste (pg_advisory_xact_lock „book:<org>“).
  * `allowConflict` (bewusste Doppelbuchung nach Rückfrage) überspringt nur die Prüfung, nicht die Sperre.
  */
-export async function createInternalAppointments(org: string, input: InternalAppointmentInput): Promise<{ ok: true; ids: string[] } | { ok: false; conflict: true }> {
+export async function createInternalAppointments(org: string, input: InternalAppointmentInput): Promise<{ ok: true; ids: string[] } | SlotConflict> {
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!input.allowConflict) {
+      const clashes: SlotClash[] = [];
       for (const s of input.occurrences) {
-        if ((await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000))).length) return { ok: false as const, conflict: true as const };
+        const found = await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000));
+        clashes.push(...found.map((c) => ({ startsAt: c.startsAt, endsAt: c.endsAt })));
       }
+      const absentDays = await absentDaysInTx(tx, org, input.therapistId, input.occurrences.map((s) => berlinParts(s).dateIso));
+      if (clashes.length || absentDays.length) return { ok: false as const, conflict: true as const, clashes, absentDays };
     }
     const ids: string[] = [];
     for (const s of input.occurrences) {
@@ -230,7 +260,8 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     if (!member) return { ok: false, error: "Behandler:in nicht gefunden." };
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
-      if (clash.length) return { ok: false, conflict: true, error: "Zu dieser Zeit ist bereits ein Termin eingetragen." };
+      const absentDays = await absentDaysInTx(tx, org, input.therapistId, [berlinParts(input.startsAt).dateIso]);
+      if (clash.length || absentDays.length) return { ok: false, conflict: true, error: conflictMessage({ clashes: clash, absentDays }) };
     }
     await tx
       .update(appointments)
