@@ -25,6 +25,73 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-q",
+    date: "2026-11-13",
+    title: "Vertrieb: nächtliche Praxissuche",
+    audience: "platform",
+    items: [
+      { tag: "neu", text: "Optional jede Nacht: Suche nach Podologie-Praxen im wachsenden Umkreis (öffentliche Kartendaten, robots.txt beachtet). Übernommen werden nur Praxisname und öffentliche Geschäfts-E-Mail – keine Ansprechpersonen. Standardmäßig aus.", href: "/plattform/vertrieb/einstellungen" },
+    ],
+  },
+  {
+    id: "2026-11-13-p",
+    date: "2026-11-13",
+    title: "Kalender: Anzeige nach Wunsch",
+    items: [
+      { tag: "neu", text: "Im Kalender unter „Anzeige“ ein- und ausschalten: Feiertage, Schulferien (alle Bundesländer), Abwesenheiten, abgesagte Termine, Wochenende, Arbeitszeiten, Kalenderwoche und Zeitachse. Ihre Einstellung wird gemerkt.", href: "/kalender" },
+      { tag: "verbessert", text: "Ausgeblendete Wochenend-Termine werden mit Hinweis angezeigt, damit nichts übersehen wird. Sonntag erscheint automatisch, wenn dort Termine liegen." },
+    ],
+  },
+  {
+    id: "2026-11-13-o",
+    date: "2026-11-13",
+    title: "Mahnwesen",
+    items: [
+      { tag: "neu", text: "Offene Rechnungen im Blick: Zahlungserinnerung, 1. und 2. Mahnung als PDF oder per E-Mail. Die nächste Stufe ist erst möglich, wenn die vorige verschickt und ihre Frist abgelaufen ist. Mahngebühren sind standardmäßig 0 €.", href: "/rechnungen/mahnungen" },
+      { tag: "neu", text: "Texte, Fristen und Gebühren der Mahnstufen lassen sich unter Einstellungen → Praxis anpassen.", href: "/einstellungen/praxis" },
+    ],
+  },
+  {
+    id: "2026-11-13-n",
+    date: "2026-11-13",
+    title: "Empfang belegt keinen bezahlten Platz mehr",
+    audience: "owner",
+    items: [
+      { tag: "verbessert", text: "Personen mit der Rolle Empfang sind in jedem Tarif kostenlos. Einen Platz belegen nur Behandlungsrollen (Inhaber:in, Podolog:innen, Azubis). Empfang kann nicht als Behandler:in eingetragen werden.", href: "/einstellungen/team" },
+      { tag: "verbessert", text: "Preise werden zusätzlich brutto (inkl. 19 % USt.) angezeigt.", href: "/einstellungen/abo" },
+    ],
+  },
+  {
+    id: "2026-11-13-m",
+    date: "2026-11-13",
+    title: "Patient:in als verstorben markieren",
+    items: [
+      { tag: "neu", text: "In der Akte: „Als verstorben markieren“ (Sterbedatum optional). Danach keine Erinnerungen, Rückholung, Warteliste, Portal- oder Anamnese-Links und keine neuen Termine mehr; künftige Termine werden nach Bestätigung abgesagt. Akte und Rechnungen bleiben erhalten. Bei Fehleingabe zurücknehmbar." },
+      { tag: "verbessert", text: "Im Rechnungsformular passen die Texte unten jetzt zur gewählten Belegart (Quittung, Sammelrechnung, Ausfallhonorar)." },
+    ],
+  },
+  {
+    id: "2026-11-13-l",
+    date: "2026-11-13",
+    title: "Kalender: vollständige Ansicht und freie Termine finden",
+    items: [
+      { tag: "neu", text: "Im Kalender können Sie zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Ihre Wahl wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
+      { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
+      { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
+    ],
+  },
+  {
+    id: "2026-11-13-k",
+    date: "2026-11-13",
+    title: "Ansicht: Einfach, Kompakt oder Komplex",
+    items: [
+      { tag: "neu", text: "Unter Einstellungen → Ansicht (oder direkt unten links in der Navigation) wählen Sie, wie viel Sie sehen: „Einfach“ zeigt nur Heute, Kalender, Patienten, Behandlung, Rechnungen und Kasse, „Kompakt“ zusätzlich Posteingang, Verordnungen, Touren, Gutscheine und Auswertung, „Komplex“ alles wie bisher. Die Einstellung gilt nur für Ihr Konto.", href: "/einstellungen/ansicht" },
+      { tag: "neu", text: "Ausgeblendete Bereiche bleiben erreichbar: unten in der Navigation unter „Mehr“ oder über „Alle Bereiche“ – auf dem Handy über „Mehr“ in der unteren Leiste.", href: "/bereiche" },
+      { tag: "verbessert", text: "Die Startseite „Heute“ passt sich an: „Einfach“ zeigt die heutigen Termine, einen Schnellzugriff und offene Aufgaben, „Kompakt“ verzichtet auf die Karte „Schnittstellen“." },
+    ],
+  },
+  {
     id: "2026-11-13-j",
     date: "2026-11-13",
     title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",

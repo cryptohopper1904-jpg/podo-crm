@@ -381,7 +381,10 @@ export default async function Landing() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h2 id="preise-kurz" className="font-display text-3xl font-semibold tracking-tight">Einfache Preise</h2>
-            <p className="mt-2 text-muted">{PRICE_NOTE} Kostenpflichtige Tarife monatlich kündbar.</p>
+            <p className="mt-2 text-muted">
+              {PRICE_NOTE.replace(" (siehe unten).", ".")}{" "}
+              <Link href="/preise#vorlaeufig" className="font-semibold text-primary underline-offset-2 hover:underline">Was „vorläufig“ bedeutet</Link>. Kostenpflichtige Tarife monatlich kündbar.
+            </p>
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>
         </div>
@@ -390,7 +393,8 @@ export default async function Landing() {
             <div key={p.id} className={`rounded-[var(--radius-card)] border p-5 ${p.highlight ? "border-primary bg-surface" : "border-border bg-surface"}`}>
               <p className="font-semibold">{p.name}</p>
               <p className="mt-2 font-display text-3xl font-bold">{p.price}</p>
-              <p className="text-sm text-muted">{p.period}</p>
+              <p className="text-sm text-muted">{p.gross ? `netto ${p.period}` : p.period}</p>
+              {p.gross ? <p className="text-xs text-muted">{p.gross}</p> : null}
               <p className="mt-3 text-sm">{p.therapists}</p>
             </div>
           ))}

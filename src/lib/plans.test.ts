@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { accessMode, assertEntitled, EntitlementError, entitlements, FREE_MAX_PATIENTS, freeSwitchProblem, monthlyPriceCents, patientLimit, patientLimitProblem, seatLimit, seatProblem, type OrgBilling } from "./plans";
+import { CALENDAR_ROLES, hasOwnCalendar, ROLES } from "./auth/permissions";
+import { accessMode, assertEntitled, EntitlementError, entitlements, EXTRA_SEAT_CENTS, FREE_MAX_PATIENTS, freeSwitchProblem, grossCents, extraSeatRange, grossLabel, monthlyPriceCents, netGrossLabel, patientLimit, patientLimitProblem, PLANS, PRICES_NOTE, seatCounts, seatSummary, seatLimit, seatProblem, type OrgBilling } from "./plans";
 
 const now = new Date("2026-11-08T12:00:00Z");
 const day = 86_400_000;
@@ -57,12 +58,63 @@ describe("Plätze", () => {
     expect(seatLimit({ plan: "plus", seats: 12 })).toBe(12);
     expect(seatLimit({ plan: "internal", seats: 1 })).toBe(Infinity);
   });
-  it("seatProblem: blockiert über dem Limit, Steuerberatung zählt nie", () => {
+  it("seatProblem: blockiert über dem Limit, Empfang/Steuerberatung zählen nie (außer Kostenlos), Azubis schon", () => {
     expect(seatProblem({ plan: "starter", seats: 1 }, 0, "owner")).toBeNull();
-    expect(seatProblem({ plan: "starter", seats: 1 }, 1, "therapist")).toMatch(/Plätze.*belegt.*Abo & Tarif/);
+    expect(seatProblem({ plan: "starter", seats: 1 }, 1, "therapist")).toMatch(/Plätze.*belegt.*Abo & Tarif.*Empfang und Steuerberatung/);
     expect(seatProblem({ plan: "starter", seats: 1 }, 1, "accountant")).toBeNull();
-    expect(seatProblem({ plan: "trial", seats: 1 }, 1, "reception")).toBeNull();
-    expect(seatProblem({ plan: "trial", seats: 1 }, 2, "reception")).not.toBeNull();
+    // Empfang: kein Platz, auch wenn alle Plätze belegt sind
+    expect(seatProblem({ plan: "starter", seats: 1 }, 1, "reception")).toBeNull();
+    expect(seatProblem({ plan: "trial", seats: 1 }, 2, "reception")).toBeNull();
+    // Azubis dürfen Behandlungsdoku schreiben → belegen einen Platz (sonst Umgehung der Platzgrenze)
+    expect(seatProblem({ plan: "starter", seats: 1 }, 1, "trainee")).not.toBeNull();
+    expect(seatProblem({ plan: "trial", seats: 1 }, 2, "trainee")).not.toBeNull();
+    expect(seatProblem({ plan: "trial", seats: 1 }, 1, "trainee")).toBeNull();
+    expect(seatProblem({ plan: "trial", seats: 1 }, 2, "therapist")).not.toBeNull();
+    // Kostenlos-Tarif: „1 Person“ – dort zählt auch der Empfang, nur die Steuerberatung nicht
+    expect(seatProblem({ plan: "free", seats: 1 }, 1, "reception")).toMatch(/kostenlose Tarif ist auf 1 Person begrenzt/);
+    expect(seatProblem({ plan: "free", seats: 1 }, 1, "trainee")).not.toBeNull();
+    expect(seatProblem({ plan: "free", seats: 1 }, 1, "accountant")).toBeNull();
+    expect(seatProblem({ plan: "free", seats: 1 }, 0, "reception")).toBeNull();
+  });
+  it("seatCounts: alle außer Empfang und Steuerberatung, im Kostenlos-Tarif alle außer Steuerberatung; Kalenderspalte nur Inhaber:in/Podolog:in", () => {
+    expect(ROLES.filter((r) => seatCounts(r))).toEqual(["owner", "therapist", "trainee"]);
+    expect(ROLES.filter((r) => seatCounts(r, "praxis"))).toEqual(["owner", "therapist", "trainee"]);
+    expect(ROLES.filter((r) => seatCounts(r, "free"))).toEqual(["owner", "therapist", "reception", "trainee"]);
+    expect(ROLES.filter(hasOwnCalendar)).toEqual([...CALENDAR_ROLES]);
+    expect([...CALENDAR_ROLES]).toEqual(["owner", "therapist"]);
+  });
+  it("Plätze im Grundpreis stehen in Beschreibung und Text (aus includedSeats/maxSeats)", () => {
+    expect(seatSummary("starter")).toBe("1 Behandler:in inklusive");
+    expect(seatSummary("praxis")).toBe("2 Behandler:innen inklusive, bis 5 möglich");
+    expect(seatSummary("plus")).toBe("3 Behandler:innen inklusive, beliebig erweiterbar");
+    expect(seatSummary("free")).toBe("1 Person");
+    expect([extraSeatRange("starter"), extraSeatRange("praxis"), extraSeatRange("plus")]).toEqual([null, "3.–5.", "ab 4."]);
+    for (const p of ["trial", "starter", "praxis", "plus"] as const) {
+      expect(PLANS[p].description).toContain(seatSummary(p));
+      expect(PLANS[p].description).toContain("Empfang kostenlos");
+      expect(PLANS[p].description).not.toContain("{seats}");
+    }
+    expect(PRICES_NOTE).not.toMatch(/Platzhalter/);
+    expect(PRICES_NOTE).toMatch(/AGB § 4/);
+  });
+});
+
+describe("Brutto-Anzeige", () => {
+  const nbsp = (t: string | null) => t?.replace(/\u00a0/g, " ");
+  it("rechnet 19 % USt. aus den Netto-Cent, kaufmännisch gerundet", () => {
+    expect(grossCents(5900)).toBe(7021);
+    expect(grossCents(9900)).toBe(11781);
+    expect(grossCents(14900)).toBe(17731);
+    expect(grossCents(EXTRA_SEAT_CENTS)).toBe(1785);
+    expect(grossCents(1)).toBe(1);
+    expect(grossCents(0)).toBe(0);
+  });
+  it("Texte: netto zuerst, 0 € ohne USt-Zeile", () => {
+    expect(nbsp(netGrossLabel(PLANS.starter.priceCents))).toBe("59 € netto · 70,21 € inkl. USt.");
+    expect(nbsp(netGrossLabel(PLANS.plus.priceCents))).toBe("149 € netto · 177,31 € inkl. USt.");
+    expect(nbsp(grossLabel(PLANS.praxis.priceCents))).toBe("117,81 € inkl. USt.");
+    expect(grossLabel(0)).toBeNull();
+    expect(nbsp(netGrossLabel(PLANS.free.priceCents))).toBe("0 €");
   });
 });
 

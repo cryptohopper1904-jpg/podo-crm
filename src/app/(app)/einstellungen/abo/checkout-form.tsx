@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Button, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
 import { keepValues } from "@/lib/forms";
 import { money } from "@/lib/format";
-import { monthlyPriceCents, PAID_PLANS, PLANS, type PaidPlan } from "@/lib/plans";
+import { grossLabel, monthlyPriceCents, PAID_PLANS, PLANS, SEAT_FREE_NOTE, type PaidPlan } from "@/lib/plans";
 import { startCheckoutAction } from "./actions";
 
 export function CheckoutForm({ defaultPlan, minSeats, mock }: { defaultPlan: PaidPlan; minSeats: number; mock: boolean }) {
@@ -25,7 +25,7 @@ export function CheckoutForm({ defaultPlan, minSeats, mock }: { defaultPlan: Pai
             ))}
           </Select>
         </Field>
-        <Field label="Plätze" hint={`enthalten: ${info.includedSeats}${info.maxSeats ? `, max. ${info.maxSeats}` : ", unbegrenzt"}`}>
+        <Field label="Plätze (Inhaber:in, Podolog:innen, Azubis)" hint={`enthalten: ${info.includedSeats}${info.maxSeats ? `, max. ${info.maxSeats}` : ", unbegrenzt"}. ${SEAT_FREE_NOTE}`}>
           <Input
             name="seats"
             type="number"
@@ -38,6 +38,7 @@ export function CheckoutForm({ defaultPlan, minSeats, mock }: { defaultPlan: Pai
         <div className="flex flex-col justify-end">
           <p className="text-sm text-muted">voraussichtlich</p>
           <p className="font-display text-2xl font-semibold">{money(monthlyPriceCents(plan, effSeats))} <span className="text-sm font-normal text-muted">netto/Monat</span></p>
+          <p className="text-sm text-muted">{grossLabel(monthlyPriceCents(plan, effSeats))}</p>
         </div>
       </div>
       <div>

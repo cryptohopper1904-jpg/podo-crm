@@ -66,6 +66,11 @@ services:
       LLM_BASE_URL:
       LLM_API_KEY:
       LLM_MODEL:
+      # Praxissuche (Vertrieb): eigenes, optionales LLM nur mit ausdrücklicher Freigabe (nie für Patientendaten)
+      LEAD_SEARCH_LLM_APPROVED:
+      LEAD_LLM_BASE_URL:
+      LEAD_LLM_API_KEY:
+      LEAD_LLM_MODEL:
       TRANSCRIPTION_DATA_PROCESSING_APPROVED:
       TRANSCRIPTION_BASE_URL:
       TRANSCRIPTION_API_KEY:
@@ -194,6 +199,19 @@ services:
             else
               echo "$$(date -Iseconds) News-Abruf fehlgeschlagen"
             fi
+          fi
+          # Praxissuche (Vertrieb) einmal pro Nacht: Container läuft in UTC, 01 UTC = 2 bzw. 3 Uhr deutscher Zeit.
+          # Höchstens alle 20 h; läuft nur, wenn in der Plattform-Konsole eingeschaltet (sonst antwortet die App sofort).
+          # Im Hintergrund (bis 15 min), damit Kalender-Abo/Erinnerungen nicht warten; parallele Läufe verhindert die App.
+          LAST=$$(cat /status/cron-leads.last 2>/dev/null || echo 0)
+          if [ "$$(date -u +%H)" = "01" ] && [ $$(( $$(date +%s) - LAST )) -ge 72000 ]; then
+            (
+              if curl -fsS -m 900 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/lead-search >/dev/null; then
+                date +%s > /status/cron-leads.last
+              else
+                echo "$$(date -Iseconds) Praxissuche fehlgeschlagen"
+              fi
+            ) &
           fi
         done
     depends_on:

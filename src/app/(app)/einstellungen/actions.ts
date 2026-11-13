@@ -18,6 +18,8 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
+import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
+import { DUNNING_STAGES } from "@/lib/dunning";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -103,11 +105,12 @@ export async function updateMemberAction(form: FormData) {
   if (!m || m.userId === auth.user.id) return; // eigene Rolle nicht ändern (Aussperren verhindern)
   const nextRole = role ?? m.role;
   const nextActive = active !== null ? active === "1" : m.active;
-  // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen
-  const takesSeat = nextActive && seatCounts(nextRole) && !(m.active && seatCounts(m.role));
   const blocked = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${org}`}))`);
-    if (takesSeat && seatProblem(await currentSeatBilling(tx, org), await usedSeats(org, tx), nextRole)) return true;
+    // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen (z. B. Empfang → Podolog:in)
+    const billing = await currentSeatBilling(tx, org);
+    const takesSeat = nextActive && seatCounts(nextRole, billing.plan) && !(m.active && seatCounts(m.role, billing.plan));
+    if (takesSeat && seatProblem(billing, await usedSeats(org, tx), nextRole)) return true;
     await tx
       .update(memberships)
       .set({ ...(role ? { role } : {}), ...(active !== null ? { active: active === "1" } : {}) })
@@ -311,6 +314,24 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { dueDays: v.dueDays, therapeuticDefault: documents.therapeuticDefault, bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
   revalidatePath("/einstellungen/praxis");
+  return { ok: "Gespeichert." };
+}
+
+/** Mahnwesen: Fristen, Gebühren (nur konkrete Kosten) und Textvorlagen je Stufe – nur settings.manage, protokolliert. */
+export async function saveDunningSettingsAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const stages: Record<string, unknown> = {};
+  for (const s of DUNNING_STAGES) {
+    const feeRaw = String(form.get(`${s}.fee`) ?? "").trim();
+    const fee = feeRaw === "" ? 0 : parseMoney(feeRaw);
+    if (fee === null) return { error: "Gebühr: bitte einen Betrag wie 2,50 angeben." };
+    stages[s] = { days: form.get(`${s}.days`), feeCents: fee, text: String(form.get(`${s}.text`) ?? "") };
+  }
+  const d = dunningSettingsInput.safeParse({ payDays: form.get("payDays"), stages });
+  if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben prüfen." };
+  await saveDunningSettings(auth, d.data);
+  revalidatePath("/einstellungen/praxis");
+  revalidatePath("/rechnungen/mahnungen");
   return { ok: "Gespeichert." };
 }
 
