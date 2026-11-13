@@ -19,7 +19,8 @@ export const LOGO_KINDS = ["compact", "full"] as const;
 export type LogoKind = (typeof LOGO_KINDS)[number];
 export const LOGO_MAX_BYTES = 1024 * 1024;
 const LOGO_MIME = new Set(["image/png", "image/jpeg"]);
-const MAX_SIDE = 6000;
+/** Für Druck reichen ~300 dpi bei 8 cm; größere Bilder belasten jedes PDF und jede Mail */
+const MAX_SIDE = 2000;
 
 export const LOGO_LABEL: Record<LogoKind, string> = { compact: "Logo kompakt (Zeichen)", full: "Logo vollständig" };
 
@@ -36,7 +37,7 @@ export async function validateLogo(buf: Buffer): Promise<{ mime: string; width: 
   // Vor pdf-lib: abgeschnittene/beschädigte Dateien abweisen (pdf-lib hängt sonst bei kaputten PNGs)
   if (!imageStructureOk(buf, mime)) throw new LogoError("Das Bild lässt sich nicht lesen (Datei unvollständig oder beschädigt).");
   const size = imageSize(buf, mime);
-  if (!size || size.width > MAX_SIDE || size.height > MAX_SIDE) throw new LogoError("Das Bild lässt sich nicht lesen oder ist zu groß (max. 6000 × 6000 Pixel).");
+  if (!size || size.width > MAX_SIDE || size.height > MAX_SIDE) throw new LogoError("Das Bild lässt sich nicht lesen oder ist zu groß (max. 2000 × 2000 Pixel – bitte verkleinern).");
   try {
     const doc = await PDFDocument.create();
     if (mime === "image/png") await doc.embedPng(buf);

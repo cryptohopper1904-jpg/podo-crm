@@ -41,6 +41,10 @@ export default async function AnamnesisSheetPage(props: PageProps<"/kunden/[id]/
           ["Geburtsdatum", p.birthDate ? dateDe(p.birthDate) : null],
         ]}
       />
+      {/* Datenschutz (Art. 9 DSGVO): Das Gerät zeigt die ganze App – nur gemeinsam mit dem Personal ausfüllen */}
+      <p className="no-print mb-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">
+        Bitte gemeinsam mit dem Patienten ausfüllen und das iPad nicht unbeaufsichtigt weitergeben – auf diesem Gerät sind auch andere Kundenakten erreichbar.
+      </p>
       <div className="mb-4"><RiskBadges flags={p.riskFlags} /></div>
       {latest ? (
         <p className="mb-4 rounded-xl bg-info-soft px-4 py-3 text-info-soft-text">

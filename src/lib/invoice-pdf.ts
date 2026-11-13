@@ -150,6 +150,14 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     page.drawText(s, { x: xx, y: yy, size, font, color: opts.color ?? BLACK });
     return w;
   };
+  /** Einzeilig auf maxW kürzen (mit „…“) */
+  const clip = (t: string, maxW: number, size = 10, font = regular): string => {
+    const s = safe(t);
+    if (font.widthOfTextAtSize(s, size) <= maxW) return s;
+    let out = s;
+    while (out.length > 1 && font.widthOfTextAtSize(out + "…", size) > maxW) out = out.slice(0, -1);
+    return out.trimEnd() + "…";
+  };
   const wrap = (t: string, maxW: number, size = 10, font = regular): string[] => {
     const out: string[] = [];
     for (const para of safe(t).split("\n")) {
@@ -268,9 +276,10 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     line(boxX + 6, by - 1.5, boxX + 6 + tw, by - 1.5, 0.4, BLACK);
     by -= rowH;
     for (const c of contact) {
-      const wl = wrap(c, boxW - 12, 8.5);
-      text(wl[0], boxX + 6, by, { size: 8.5 });
-      by -= rowH;
+      for (const wlLine of wrap(c, boxW - 12, 8.5).slice(0, 2)) {
+        text(wlLine, boxX + 6, by, { size: 8.5 });
+        by -= rowH;
+      }
     }
   }
   y = Math.min(ly, y - boxH) - 26;
@@ -446,15 +455,20 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   pages.forEach((pg, i) => {
     page = pg;
     const top = FOOTER_TOP - 14;
-    left.slice(0, 5).forEach((l, li) => text(l, ML, top - li * 9, { size: 7, color: LIGHT }));
     const rx = ML + width * 0.6;
+    // Spaltenbreiten begrenzen: lange Namen/Banken werden gekürzt statt über den Rand zu laufen
+    left.slice(0, 5).forEach((l, li) => text(clip(l, rx - ML - 12, 7), ML, top - li * 9, { size: 7, color: LIGHT }));
     right.slice(0, 6).forEach(([k, v], li) => {
       text(k, rx, top - li * 9, { size: 7, color: LIGHT });
-      text(v, rx + 52, top - li * 9, { size: 7, color: LIGHT });
+      text(clip(v, RIGHT - rx - 52, 7), rx + 52, top - li * 9, { size: 7, color: LIGHT });
     });
     const cy = top - Math.max(Math.min(left.length, 5), Math.min(right.length, 6), 3) * 9 - 6;
     center.forEach((c, ci) => text(c, A4[0] / 2, cy - ci * 11, { size: 9, color: GRAY, align: "center" }));
-    if (o.qualification) text(o.qualification, A4[0] / 2, cy - center.length * 11 - 3, { size: 7, font: italic, color: LIGHT, align: "center" });
+    if (o.qualification) {
+      wrap(o.qualification, width, 7, italic)
+        .slice(0, 2)
+        .forEach((q, qi) => text(q, A4[0] / 2, cy - center.length * 11 - 3 - qi * 9, { size: 7, font: italic, color: LIGHT, align: "center" }));
+    }
     if (pages.length > 1) text(`Seite ${i + 1} von ${pages.length}`, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
   });
 

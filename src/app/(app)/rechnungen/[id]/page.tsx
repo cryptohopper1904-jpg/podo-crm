@@ -282,7 +282,6 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                 </li>
               ))}
             </ul>
-            {isReceiptLike(inv.kind) && inv.status === "paid" ? <p className="mt-2 font-semibold">Betrag dankend erhalten.</p> : null}
           </section>
         ) : null}
 
