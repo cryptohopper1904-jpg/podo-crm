@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
   Banknote,
   Phone,
@@ -12,6 +13,9 @@ import {
   ShieldAlert,
   UsersRound,
   CalendarDays,
+  ChevronDown,
+  LayoutGrid,
+  Ellipsis,
   FileText,
   Gift,
   Home,
@@ -25,27 +29,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cx } from "./ui";
+import type { NavKey } from "@/lib/nav";
+import { DEFAULT_VIEW_LEVEL, splitNav, type ViewLevel } from "@/lib/view-level";
 
-export type NavKey =
-  | "heute"
-  | "kalender"
-  | "touren"
-  | "kunden"
-  | "doku"
-  | "posteingang"
-  | "rechnungen"
-  | "gutscheine"
-  | "bewertungen"
-  | "news"
-  | "auswertung"
-  | "einstellungen"
-  | "verordnungen"
-  | "pflegeheime"
-  | "hygiene"
-  | "team"
-  | "kasse"
-  | "telefon"
-  | "plattform";
+export type { NavKey };
 
 const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobile?: boolean }[] = [
   { key: "heute", href: "/heute", label: "Heute", icon: Home, mobile: true },
@@ -69,67 +56,159 @@ const ITEMS: { key: NavKey; href: string; label: string; icon: LucideIcon; mobil
   { key: "plattform", href: "/plattform", label: "Plattform", icon: ShieldAlert },
 ];
 
-export function SideNav({ allowed, badges, collapsed = false }: { allowed: NavKey[]; badges?: Partial<Record<NavKey, number>>; collapsed?: boolean }) {
+type NavItem = (typeof ITEMS)[number];
+type Badges = Partial<Record<NavKey, number>>;
+
+const isActive = (path: string, href: string) => path === href || path.startsWith(href + "/");
+
+function SideLink({ item, active, badge, collapsed }: { item: NavItem; active: boolean; badge?: number; collapsed: boolean }) {
+  const Icon = item.icon;
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? "page" : undefined}
+      title={collapsed ? item.label : undefined}
+      className={cx(
+        "relative flex h-11 items-center rounded-xl text-[15px] font-medium",
+        collapsed ? "justify-center px-0" : "gap-3 px-3",
+        active ? "bg-primary-soft text-primary-soft-text" : "text-text hover:bg-surface-2",
+      )}
+    >
+      <Icon size={19} aria-hidden />
+      <span className={collapsed ? "sr-only" : "flex-1 truncate"}>{item.label}</span>
+      <CountBadge n={badge} collapsed={collapsed} />
+    </Link>
+  );
+}
+
+function CountBadge({ n, collapsed }: { n?: number; collapsed: boolean }) {
+  if (!n) return null;
+  return collapsed ? (
+    <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{n}</span>
+  ) : (
+    <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">{n}</span>
+  );
+}
+
+/**
+ * Hauptnavigation. `allowed` ist bereits nach Rechten/Tarif gefiltert; `level` (Ansicht, src/lib/view-level.ts)
+ * blendet zusätzlich Punkte aus – diese stehen unter „Mehr“ (klappt von selbst auf, wenn man gerade dort ist).
+ */
+export function SideNav({ allowed, badges, collapsed = false, level = DEFAULT_VIEW_LEVEL }: { allowed: NavKey[]; badges?: Badges; collapsed?: boolean; level?: ViewLevel }) {
   const path = usePathname();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const split = splitNav(allowed, level);
+  const visible = ITEMS.filter((i) => split.visible.includes(i.key));
+  const more = ITEMS.filter((i) => split.more.includes(i.key));
+  const activeInMore = more.some((i) => isActive(path, i.href));
+  const showMore = moreOpen || activeInMore;
+  const moreBadge = more.reduce((n, i) => n + (badges?.[i.key] ?? 0), 0);
   return (
     <nav aria-label="Hauptnavigation" className="flex flex-col gap-1">
-      {ITEMS.filter((i) => allowed.includes(i.key)).map((i) => {
-        const active = path === i.href || path.startsWith(i.href + "/");
-        const Icon = i.icon;
-        return (
-          <Link
-            key={i.key}
-            href={i.href}
-            aria-current={active ? "page" : undefined}
-            title={collapsed ? i.label : undefined}
+      {visible.map((i) => <SideLink key={i.key} item={i} active={isActive(path, i.href)} badge={badges?.[i.key]} collapsed={collapsed} />)}
+      {more.length ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setMoreOpen(!showMore)}
+            aria-expanded={showMore}
+            aria-controls="nav-mehr"
+            title={collapsed ? (showMore ? "Weniger anzeigen" : "Mehr Bereiche") : undefined}
             className={cx(
-              "relative flex h-11 items-center rounded-xl text-[15px] font-medium",
+              "relative flex h-11 items-center rounded-xl text-[15px] font-medium text-muted hover:bg-surface-2 hover:text-text",
               collapsed ? "justify-center px-0" : "gap-3 px-3",
-              active ? "bg-primary-soft text-primary-soft-text" : "text-text hover:bg-surface-2",
             )}
           >
-            <Icon size={19} aria-hidden />
-            <span className={collapsed ? "sr-only" : "flex-1 truncate"}>{i.label}</span>
-            {badges?.[i.key] ? (
-              collapsed ? (
-                <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{badges[i.key]}</span>
-              ) : (
-                <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">{badges[i.key]}</span>
-              )
-            ) : null}
-          </Link>
-        );
-      })}
+            <Ellipsis size={19} aria-hidden />
+            <span className={collapsed ? "sr-only" : "flex-1 truncate text-left"}>{showMore ? "Weniger" : "Mehr"}</span>
+            {showMore ? null : <CountBadge n={moreBadge} collapsed={collapsed} />}
+            {collapsed ? null : <ChevronDown size={16} aria-hidden className={cx("transition-transform", showMore && "rotate-180")} />}
+          </button>
+          {showMore ? (
+            <div id="nav-mehr" className="flex flex-col gap-1">
+              {more.map((i) => <SideLink key={i.key} item={i} active={isActive(path, i.href)} badge={badges?.[i.key]} collapsed={collapsed} />)}
+              <Link
+                href="/bereiche"
+                title={collapsed ? "Alle Bereiche" : undefined}
+                aria-current={path === "/bereiche" ? "page" : undefined}
+                className={cx("flex h-9 items-center rounded-xl text-sm font-semibold text-primary hover:bg-surface-2", collapsed ? "justify-center px-0" : "gap-3 px-3")}
+              >
+                <LayoutGrid size={17} aria-hidden />
+                <span className={collapsed ? "sr-only" : "truncate"}>Alle Bereiche</span>
+              </Link>
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </nav>
   );
 }
 
-export function BottomNav({ allowed }: { allowed: NavKey[] }) {
+/**
+ * Untere Leiste (Handy). Folgt derselben Ansicht; blendet die Ansicht Punkte aus, führt „Mehr“ zu /bereiche.
+ * Bei „Komplex“ unverändert wie bisher.
+ */
+export function BottomNav({ allowed, level = DEFAULT_VIEW_LEVEL, badges }: { allowed: NavKey[]; level?: ViewLevel; badges?: Badges }) {
   const path = usePathname();
-  const items = ITEMS.filter((i) => i.mobile && allowed.includes(i.key));
+  const split = splitNav(allowed, level);
+  const items = ITEMS.filter((i) => i.mobile && split.visible.includes(i.key));
+  const moreBadge = ITEMS.filter((i) => split.more.includes(i.key)).reduce((n, i) => n + (badges?.[i.key] ?? 0), 0);
+  const cls = (active: boolean) =>
+    cx("relative flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-semibold", active ? "text-primary" : "text-muted");
   return (
     <nav
       aria-label="Schnellnavigation"
       className="no-print fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] lg:hidden"
     >
       {items.map((i) => {
-        const active = path === i.href || path.startsWith(i.href + "/");
+        const active = isActive(path, i.href);
         const Icon = i.icon;
         return (
-          <Link
-            key={i.key}
-            href={i.href}
-            aria-current={active ? "page" : undefined}
-            className={cx(
-              "flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-semibold",
-              active ? "text-primary" : "text-muted",
-            )}
-          >
+          <Link key={i.key} href={i.href} aria-current={active ? "page" : undefined} className={cls(active)}>
             <Icon size={22} aria-hidden />
             {i.label}
           </Link>
         );
       })}
+      {level !== "komplex" && split.more.length ? (
+        <Link href="/bereiche" aria-current={path === "/bereiche" ? "page" : undefined} className={cls(path === "/bereiche")}>
+          <Ellipsis size={22} aria-hidden />
+          Mehr
+          {moreBadge ? <span className="absolute right-[calc(50%-20px)] top-1 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{moreBadge}</span> : null}
+        </Link>
+      ) : null}
     </nav>
+  );
+}
+
+/** Übersicht aller erlaubten Bereiche (/bereiche) – auch die, die die Ansicht in der Navigation ausblendet. */
+export function AreaOverview({ allowed, level, badges }: { allowed: NavKey[]; level: ViewLevel; badges?: Badges }) {
+  const split = splitNav(allowed, level);
+  const groups = [
+    { title: "In deiner Navigation", items: ITEMS.filter((i) => split.visible.includes(i.key)) },
+    { title: "Weitere Bereiche", items: ITEMS.filter((i) => split.more.includes(i.key)) },
+  ].filter((g) => g.items.length);
+  return (
+    <div className="flex flex-col gap-6">
+      {groups.map((g) => (
+        <section key={g.title} aria-label={g.title}>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">{g.title}</h2>
+          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {g.items.map((i) => {
+              const Icon = i.icon;
+              return (
+                <li key={i.key}>
+                  <Link href={i.href} className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-surface px-4 py-3 text-[15px] font-semibold hover:bg-surface-2">
+                    <Icon size={20} aria-hidden className="text-primary" />
+                    <span className="flex-1 truncate">{i.label}</span>
+                    <CountBadge n={badges?.[i.key]} collapsed={false} />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
