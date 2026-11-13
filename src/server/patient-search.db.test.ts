@@ -3,7 +3,7 @@
  * Treffer, Mandantentrennung, Rechte, archivierte/gelöschte ausgeblendet, Verstorbene gekennzeichnet,
  * „Meinten Sie“ bei Tippfehlern, mehrteilige Namen in der Patientenliste.
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import type { AuthContext } from "@/lib/auth/session";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
@@ -40,6 +40,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await q(orgA, "update patients set archived_at = now(), contact_erased_at = now() where id = $1", [ids.erased]);
     await q(orgA, `update patients set extra = '{"deceased": {"at": "2026-01-01"}}'::jsonb where id = $1`, [ids.deceased]);
   });
+  beforeEach(() => mod.__resetFuzzyStateForTests());
   afterAll(async () => {
     await f.end();
     const { db } = await import("@/db");
@@ -92,6 +93,29 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
     // genug direkte Treffer bzw. nichts Ähnliches → kein „Meinten Sie“
     expect((await mod.suggestPatients(auth(orgA), "Qwxyz")).didYouMean).toBeNull();
+  });
+
+  it("„Meinten Sie“ ohne pg_trgm (Rückfall: gleicher Anfangsbuchstabe, begrenzt)", async () => {
+    mod.__resetFuzzyStateForTests({ trgm: false });
+    const r = await mod.suggestPatients(auth(orgA), "Schmitt");
+    expect(r.didYouMean?.query).toBe("Schmidt");
+    expect(r.didYouMean!.patients.map((p) => p.id)).not.toContain(ids.foreign);
+  });
+
+  it("„Meinten Sie“ nur ohne direkten Treffer, eigene Drosselung je Person", async () => {
+    // „Schmid“ trifft Schmidt direkt → kein „Meinten Sie“, obwohl Schmitz ähnlich wäre
+    const direct = await mod.suggestPatients(auth(orgA), "Schmid");
+    expect(direct.hits.map((h) => h.id)).toEqual([ids.schmidt]);
+    expect(direct.didYouMean).toBeNull();
+    for (let i = 0; i < mod.FUZZY_PER_MIN; i++) expect((await mod.suggestPatients(auth(orgA), "Schmitt")).didYouMean).not.toBeNull();
+    // Limit erreicht: Antwort ohne Vorschlag, direkte Suche geht weiter
+    expect((await mod.suggestPatients(auth(orgA), "Schmitt")).didYouMean).toBeNull();
+    expect((await mod.suggestPatients(auth(orgA), "Schmi")).hits).toHaveLength(2);
+  });
+
+  it("pg_trgm-Index vorhanden (Migration 0043)", async () => {
+    const r = await f.pool.query("select 1 from pg_indexes where indexname = 'patients_name_trgm'");
+    expect(r.rowCount).toBe(1);
   });
 
   it("ohne patients.read: verweigert", async () => {

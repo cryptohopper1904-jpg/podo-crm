@@ -3,9 +3,12 @@ import {
   cleanQuery,
   closestNames,
   editDistance,
+  FUZZY_MAX_CANDIDATES,
+  FUZZY_MAX_CHARS,
   fuzzyEligible,
   nameScore,
   normalizeName,
+  prepareQuery,
   queryTokens,
   similarity,
   suggestedQuery,
@@ -89,12 +92,32 @@ describe("Patientensuche: „Meinten Sie“", () => {
     expect(suggestedQuery("Schmitt", people[0])).toBe("Schmidt");
     expect(suggestedQuery("Paulla", people[2])).toBe("Paula");
   });
-  it("5000 Kandidaten in vertretbarer Zeit", () => {
-    const many = Array.from({ length: 5000 }, (_, i) => ({ id: String(i), lastName: `Name${i.toString(36)}xyz`, firstName: `Vor${i % 97}` }));
-    many.push({ id: "hit", lastName: "Hoffmann", firstName: "Ilse" });
-    const t = performance.now();
+  it("Rechenzeit begrenzt: 20.000 Namen, 80-Zeichen-Suchtext, lange Namen (< 150 ms)", () => {
+    const many = Array.from({ length: 20_000 }, (_, i) => ({
+      id: String(i),
+      lastName: `Nachname${i.toString(36)}-Doppelname-${"x".repeat(i % 60)}`,
+      firstName: `Vorname${i % 97} Zweitname ${"y".repeat(i % 50)}`,
+    }));
+    many.splice(1_000, 0, { id: "hit", lastName: "Hoffmann", firstName: "Ilse" });
+    const query = "Hofmann Ilse " + "abcdefghij".repeat(7);
+    expect(query.length).toBeGreaterThanOrEqual(80);
+    closestNames("Hofmann", many.slice(0, 500)); // Aufwärmen (JIT)
+    let t = performance.now();
+    closestNames(query, many);
+    const long = performance.now() - t;
+    t = performance.now();
     const r = closestNames("Hofmann", many);
-    expect(performance.now() - t).toBeLessThan(1500);
+    const short = performance.now() - t;
     expect(r[0].id).toBe("hit");
+    expect(long).toBeLessThan(150);
+    expect(short).toBeLessThan(150);
+  });
+  it("bewertet höchstens FUZZY_MAX_CANDIDATES Kandidaten", () => {
+    const many = Array.from({ length: FUZZY_MAX_CANDIDATES + 10 }, (_, i) => ({ id: String(i), lastName: "Becker", firstName: null }));
+    many.push({ id: "spaet", lastName: "Hoffmann", firstName: null });
+    expect(closestNames("Hofmann", many)).toEqual([]);
+  });
+  it("Suchtext wird für den Vergleich gekürzt", () => {
+    expect(prepareQuery("a".repeat(200)).norm.length).toBe(FUZZY_MAX_CHARS);
   });
 });

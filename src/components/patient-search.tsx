@@ -3,7 +3,7 @@
 /**
  * Live-Patientensuche in der Kopfzeile (ARIA 1.2 Combobox mit Listbox).
  * Ab SUGGEST_MIN_CHARS Zeichen entprellt Vorschläge von /api/patienten/vorschlaege (ältere Anfragen werden
- * abgebrochen); bei wenigen Treffern „Meinten Sie: …“ mit ähnlichen Namen.
+ * abgebrochen); ohne direkten Treffer „Meinten Sie: …“ mit ähnlichen Namen.
  * Tastatur: ↑/↓ wählen, Enter öffnet die Akte (ohne Auswahl: Ergebnisliste /kunden?q=…), Esc schließt/leert.
  * Unter md: Lupen-Schaltfläche, die das Suchfeld als Leiste unter der Kopfzeile öffnet.
  */
@@ -67,7 +67,14 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
     setLoading(true);
     debounce.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${ENDPOINT}?q=${encodeURIComponent(q)}`, { signal: ctrl.signal, headers: { Accept: "application/json" }, credentials: "same-origin" });
+        // POST: Suchtext nicht in URL/Proxy-Logs
+        const res = await fetch(ENDPOINT, {
+          method: "POST",
+          signal: ctrl.signal,
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ q }),
+        });
         if (!res.ok) throw new Error(String(res.status));
         const json = (await res.json()) as Result;
         if (ctrl.signal.aborted) return;
@@ -198,7 +205,7 @@ function SearchBox({ inputId, autoFocus, onDone }: { inputId: string; autoFocus?
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={expanded}
-        aria-controls={listId}
+        aria-controls={expanded ? listId : undefined}
         aria-activedescendant={expanded && active >= 0 ? optionId(active) : undefined}
         aria-describedby={`${listId}-status`}
         autoComplete="off"
