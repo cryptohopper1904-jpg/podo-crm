@@ -313,8 +313,12 @@ const bareHost = (url: string) => {
 /** Gehört der Host zu einer Plattform (Facebook, Instagram, Doctolib, Google …)? */
 export function isPlatformHost(host: string): boolean {
   const h = host.toLowerCase().replace(/^www\./, "");
+  if (h.length > 253) return true;
   if (h in PATH_HOSTS) return false;
-  if (/^(?:[a-z0-9-]+\.)*google\.[a-z.]{2,6}$/.test(h)) return true;
+  // google.de, maps.google.com, google.co.uk … (ohne RegExp über den Host)
+  const parts = h.split(".");
+  const gi = parts.lastIndexOf("google");
+  if (gi >= 0 && parts.length - gi - 1 >= 1 && parts.length - gi - 1 <= 2) return true;
   return PLATFORM_HOSTS.some((p) => h === p || h.endsWith(`.${p}`));
 }
 
@@ -410,22 +414,34 @@ export function duplicateEmail(k: DedupeKeys, email: string | null): string | nu
 
 type RobotsRule = { allow: boolean; pattern: string };
 
-const ruleMatches = (pattern: string, path: string) => wildcardMatch(pattern, path);
-
 /**
  * robots.txt nach RFC 9309: passende Gruppe (unsere Kennung, sonst „*“), längste passende Regel gewinnt,
  * bei Gleichstand Allow. Ohne passende Regel erlaubt.
  */
+/** robots.txt: höchstens 64 KB, je Gruppe höchstens 500 Regeln, Pfade über 2048 Zeichen gelten als verboten. */
+export const ROBOTS_MAX_BYTES = 64 * 1024;
+export const ROBOTS_MAX_RULES = 500;
+export const MAX_PATH_LEN = 2048;
+/** gemeinsames Schrittbudget für alle Platzhalter-Vergleiche einer Prüfung; erschöpft → verboten */
+const ROBOTS_STEP_BUDGET = 1_000_000;
+
+/**
+ * robots.txt nach RFC 9309: passende Gruppe (unsere Kennung, sonst „*“), längste passende Regel gewinnt,
+ * bei Gleichstand Allow. Ohne passende Regel erlaubt. Begrenzt (Größe, Regelzahl, Pfadlänge, Schrittbudget);
+ * jede Überschreitung gilt als „verboten“.
+ */
 export function robotsAllows(robots: string, path: string, agent = ROBOTS_AGENT): boolean {
+  if (path.length > MAX_PATH_LEN) return false;
   const groups: { agents: string[]; rules: RobotsRule[] }[] = [];
   let cur: { agents: string[]; rules: RobotsRule[] } | null = null;
   let lastWasAgent = false;
-  for (const rawLine of robots.slice(0, 500_000).split(/\r?\n/)) {
-    const line = rawLine.replace(/#.*$/, "").trim();
-    const m = line.match(/^([a-z-]+)\s*:\s*(.*)$/i);
-    if (!m) continue;
-    const key = m[1].toLowerCase();
-    const val = m[2].trim();
+  for (const rawLine of robots.slice(0, ROBOTS_MAX_BYTES).split("\n")) {
+    const hash = rawLine.indexOf("#");
+    const line = (hash >= 0 ? rawLine.slice(0, hash) : rawLine).trim();
+    const colon = line.indexOf(":");
+    if (colon <= 0) continue;
+    const key = line.slice(0, colon).trim().toLowerCase();
+    const val = line.slice(colon + 1).trim();
     if (key === "user-agent") {
       if (!cur || !lastWasAgent) {
         cur = { agents: [], rules: [] };
@@ -435,17 +451,21 @@ export function robotsAllows(robots: string, path: string, agent = ROBOTS_AGENT)
       lastWasAgent = true;
     } else if (key === "allow" || key === "disallow") {
       lastWasAgent = false;
-      if (cur) cur.rules.push({ allow: key === "allow", pattern: val });
+      if (cur && cur.rules.length < ROBOTS_MAX_RULES) cur.rules.push({ allow: key === "allow", pattern: val });
     } else {
       lastWasAgent = false;
     }
   }
   const a = agent.toLowerCase();
   const specific = groups.filter((g) => g.agents.some((x) => x !== "*" && (a.includes(x) || x.includes(a))));
-  const chosen = specific.length ? specific : groups.filter((g) => g.agents.includes("*"));
+  const chosen = (specific.length ? specific : groups.filter((g) => g.agents.includes("*"))).flatMap((g) => g.rules).slice(0, ROBOTS_MAX_RULES);
+  const budget = { steps: ROBOTS_STEP_BUDGET };
   let best: RobotsRule | null = null;
-  for (const r of chosen.flatMap((g) => g.rules)) {
-    if (!r.pattern || !ruleMatches(r.pattern, path)) continue;
+  for (const r of chosen) {
+    if (!r.pattern) continue;
+    const m = wildcardMatch(r.pattern, path, budget);
+    if (m === null) return false;
+    if (!m) continue;
     if (!best || r.pattern.length > best.pattern.length || (r.pattern.length === best.pattern.length && r.allow)) best = r;
   }
   return best ? best.allow : true;

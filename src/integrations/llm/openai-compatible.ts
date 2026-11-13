@@ -182,7 +182,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
       // Praxissuche: keine Wiederholungen (Zeitbudget des Laufs)
       { publicDataOnly: true, maxRetries: 0 },
     );
-    const parsed = extractJson(content) as { best?: unknown; personal?: unknown } | null;
+    const parsed = extractJson(content.slice(0, 20_000)) as { best?: unknown; personal?: unknown } | null;
     const personal = Array.isArray(parsed?.personal) ? parsed.personal.map((x) => String(x).trim().toLowerCase()).filter((x) => list.includes(x)) : [];
     const b = typeof parsed?.best === "string" ? parsed.best.trim().toLowerCase() : "";
     return { best: list.includes(b) && !personal.includes(b) ? b : null, personal };

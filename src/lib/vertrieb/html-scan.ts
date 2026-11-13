@@ -78,8 +78,9 @@ export function anchors(html: string): { href: string; text: string }[] {
 /**
  * Platzhalter-Vergleich für robots.txt (`*` = beliebig, `$` am Ende = Pfadende), ohne RegExp: gierig mit
  * Rücksprungmarke, O(Pfadlänge · Musterlänge). Regeln über 512 Zeichen oder mit mehr als 16 `*` werden ignoriert.
+ * Mit `budget` werden alle Schritte gezählt; ist es aufgebraucht, kommt null zurück.
  */
-export function wildcardMatch(pattern: string, path: string): boolean {
+export function wildcardMatch(pattern: string, path: string, budget?: { steps: number }): boolean | null {
   if (!pattern || pattern.length > 512) return false;
   const anchored = pattern.endsWith("$");
   const body = anchored ? pattern.slice(0, -1) : pattern;
@@ -93,6 +94,8 @@ export function wildcardMatch(pattern: string, path: string): boolean {
   let star = -1;
   let mark = 0;
   while (i < path.length) {
+    // gemeinsames Schrittbudget (viele Regeln × langer Pfad): erschöpft → null (Aufrufer wertet als „verboten“)
+    if (budget && --budget.steps < 0) return null;
     if (j < p.length && p[j] !== "*" && p[j] === path[i]) {
       i++;
       j++;

@@ -54,6 +54,23 @@ describe("PoliteFetcher (ohne echtes Netz)", () => {
     expect(calls).toEqual(["https://a.example/", "https://b.example/robots.txt"]);
   });
 
+  it("Weiterleitung auf demselben Host zu verbotenem Pfad wird nicht abgerufen; überlange Pfade gelten als verboten", async () => {
+    const calls: string[] = [];
+    const f = new PoliteFetcher({
+      fetchImpl: async (u) => {
+        calls.push(u);
+        if (u === "https://a.example/") return new Response(null, { status: 302, headers: { location: "/privat/" } });
+        if (u === "https://a.example/robots.txt") return new Response("User-agent: *\nDisallow: /privat/", { headers: { "content-type": "text/plain" } });
+        return new Response("ok", { headers: { "content-type": "text/html" } });
+      },
+      resolver: publicIp,
+      sleep: async () => {},
+    });
+    expect(await f.get("https://a.example/")).toBeNull();
+    expect(calls).toEqual(["https://a.example/", "https://a.example/robots.txt"]);
+    expect(await f.allowed("https://a.example/" + "x".repeat(3000))).toBe(false);
+  });
+
   it("liest höchstens 200 KB", async () => {
     const f = new PoliteFetcher({ fetchImpl: async () => new Response("x".repeat(PAGE_MAX_BYTES * 3), { headers: { "content-type": "text/html" } }), resolver: publicIp, sleep: async () => {} });
     expect((await f.get("https://a.example/"))!.body.length).toBe(PAGE_MAX_BYTES);

@@ -10,7 +10,7 @@
  */
 import { assertPublicUrl, type Resolver } from "../net-guard";
 import { extractEmails } from "@/lib/vertrieb/email-filter";
-import { findContactLink, LEAD_SEARCH_USER_AGENT, looksLikeChallenge, OVERPASS_MAX_ELEMENTS, OVERPASS_URL, robotsAllows } from "@/lib/vertrieb/lead-search";
+import { findContactLink, LEAD_SEARCH_USER_AGENT, looksLikeChallenge, MAX_PATH_LEN, OVERPASS_MAX_ELEMENTS, OVERPASS_URL, ROBOTS_MAX_BYTES, robotsAllows } from "@/lib/vertrieb/lead-search";
 
 export type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -109,10 +109,11 @@ export class PoliteFetcher {
    * GET mit Prüfung jedes Ziels; null bei Netzfehler, unsicherem Ziel oder Zeitüberschreitung.
    * `checkRobots`: führt eine Weiterleitung auf einen anderen Host, gilt auch dessen robots.txt.
    */
-  async get(url: string, accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1", checkRobots = true): Promise<Page | null> {
+  async get(url: string, accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1", checkRobots = true, maxBytes?: number): Promise<Page | null> {
     const fetchImpl = this.opts.fetchImpl ?? ((u: string, i?: RequestInit) => fetch(u, i));
     let target = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (target.length > MAX_PATH_LEN + 300) return null;
       try {
         await assertPublicUrl(target, this.opts.resolver);
       } catch {
@@ -137,14 +138,14 @@ export class PoliteFetcher {
           if (!loc) return null;
           const next = new URL(loc, target);
           if (next.protocol === "http:") next.protocol = "https:";
-          const prevHost = new URL(target).host.toLowerCase();
           target = next.toString();
-          if (checkRobots && next.host.toLowerCase() !== prevHost && !(await this.allowed(target))) return null;
+          // jede Weiterleitung (auch auf demselben Host, anderer Pfad) gegen robots.txt des Ziels prüfen
+          if (checkRobots && !(await this.allowed(target))) return null;
           continue;
         }
         const ct = res.headers.get("content-type") ?? "";
         const textual = !ct || /text\/|html|xml/i.test(ct);
-        const body = textual ? await readLimited(res, this.opts.maxBytes ?? PAGE_MAX_BYTES) : (await res.body?.cancel().catch(() => undefined), "");
+        const body = textual ? await readLimited(res, Math.min(maxBytes ?? Infinity, this.opts.maxBytes ?? PAGE_MAX_BYTES)) : (await res.body?.cancel().catch(() => undefined), "");
         return { status: res.status, url: target, body, headers: res.headers };
       } catch {
         return null;
@@ -159,10 +160,16 @@ export class PoliteFetcher {
    * Darf der Pfad laut robots.txt abgerufen werden? (RFC 9309: 4xx → keine Regeln; 5xx/nicht erreichbar → nein)
    */
   async allowed(pageUrl: string): Promise<boolean> {
-    const u = new URL(pageUrl);
+    let u: URL;
+    try {
+      u = new URL(pageUrl);
+    } catch {
+      return false;
+    }
+    if (u.pathname.length + u.search.length > MAX_PATH_LEN) return false;
     const key = u.host.toLowerCase();
     if (!this.robotsCache.has(key)) {
-      const r = await this.get(`https://${u.host}/robots.txt`, "text/plain,*/*;q=0.1", false);
+      const r = await this.get(`https://${u.host}/robots.txt`, "text/plain,*/*;q=0.1", false, ROBOTS_MAX_BYTES);
       this.robotsCache.set(key, !r || r.status >= 500 || r.status === 429 ? null : r.status >= 400 ? "" : r.body);
     }
     const txt = this.robotsCache.get(key);
