@@ -4,7 +4,7 @@ import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { FileImage, Plus } from "lucide-react";
 import { withOrg } from "@/db";
 import { services } from "@/db/schema";
-import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName, money } from "@/lib/format";
@@ -74,9 +74,9 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
   return (
     <div className="mx-auto max-w-5xl">
       <header className="mb-6 flex flex-wrap items-end gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.patient)}</Link></p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">Verordnungen</h1>
+        <div className={pageTitleBox}>
+          <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.patient)}`} />
+          <h1 className={pageTitleCls}>Verordnungen</h1>
           <p className="text-sm text-muted">
             {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}` : "Hinweis: Patient ist nicht als GKV-versichert hinterlegt."}
           </p>

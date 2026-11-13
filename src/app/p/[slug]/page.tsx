@@ -47,7 +47,7 @@ function jsonLd(site: PublicSite) {
     ...(site.email ? { email: site.email } : {}),
     ...(site.street ? { address: { "@type": "PostalAddress", streetAddress: site.street, postalCode: site.zip, addressLocality: site.city, addressCountry: "DE" } } : {}),
     ...(site.homeVisitAreas.length ? { areaServed: site.homeVisitAreas } : {}),
-    openingHoursSpecification: site.openingHours.map((h) => ({ "@type": "OpeningHoursSpecification", dayOfWeek: dayCodes[h.weekday], opens: h.from, closes: h.to })),
+    ...(site.openingHours.length ? { openingHoursSpecification: site.openingHours.map((h) => ({ "@type": "OpeningHoursSpecification", dayOfWeek: dayCodes[h.weekday], opens: h.from, closes: h.to })) } : {}),
   };
   // „<“ escapen, damit Texte aus den Einstellungen das Script-Element nicht beenden können
   return JSON.stringify(data).replace(/</g, "\\u003c");

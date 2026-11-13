@@ -4,7 +4,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { isPrivateOnly } from "@/lib/features";
-import { defaultServiceDescription, homeVisitAreas, openingHours, safeUrl, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
+import { defaultServiceDescription, homeVisitAreas, safeUrl, websiteOpeningHours, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
 /**
  * Öffentliche Praxis-Website (/p/[slug]): liefert NUR öffentliche Geschäftsangaben der Praxis
@@ -75,7 +75,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     showPrices: w.showPrices,
     onlineBooking: booking?.enabled !== false,
     privateOnly: isPrivateOnly(o),
-    openingHours: openingHours(settings),
+    openingHours: websiteOpeningHours(settings),
     homeVisitAreas: homeVisitAreas(settings),
     services: svc.map((s) => ({
       name: s.name,

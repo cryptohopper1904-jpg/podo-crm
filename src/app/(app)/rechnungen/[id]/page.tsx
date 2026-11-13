@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, FileDown } from "lucide-react";
+import { FileDown } from "lucide-react";
 import QRCode from "qrcode";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Card, BackLink, pageTitleCls } from "@/components/ui";
 import { PortalLinkButton } from "@/components/portal-link-button";
 import { PracticeLogo } from "@/components/practice-logo";
 import { PrintButton } from "@/components/print-button";
@@ -49,6 +49,7 @@ import { invoiceDunningList } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, dunningTotalCents, isDunnable, type DunningStage } from "@/lib/dunning";
 import { DunningLetterActions } from "../mahnungen/dunning-actions";
 import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
+import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Rechnung" };
 
@@ -65,6 +66,7 @@ const PRINT_CSS = `
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
   const { id } = await props.params;
+  const { von } = await props.searchParams;
   const auth = await requireAuth("invoices.read");
   const data = await getInvoice(auth, id);
   if (!data) notFound();
@@ -106,11 +108,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
     <div className="mx-auto max-w-5xl">
       <style>{PRINT_CSS}</style>
       <div className="no-print mb-6 flex flex-col gap-4">
-        <Link href="/rechnungen" className="inline-flex h-11 items-center gap-2 self-start text-sm font-semibold text-muted hover:text-text">
-          <ArrowLeft size={18} aria-hidden /> Alle Rechnungen
-        </Link>
+        <BackLink href={backHref("/rechnungen", von)} label="Rechnungen" className="-mb-4 self-start" />
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-display text-3xl font-semibold tracking-tight">{inv.number ?? "Entwurf"}</h1>
+          <h1 className={pageTitleCls}>{inv.number ?? "Entwurf"}</h1>
           <Badge tone={INVOICE_STATUS_TONE[inv.status]}>{INVOICE_STATUS_LABEL[inv.status]}</Badge>
           <Badge tone="info">{INVOICE_KIND_LABEL[inv.kind]}</Badge>
           {data.cancelledBy ? (

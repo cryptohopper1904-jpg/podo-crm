@@ -23,7 +23,8 @@ export default async function TripLogPage(props: PageProps<"/touren/fahrtenbuch"
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Fahrtenbuch"
-        subtitle={auth.can("appointments.read") ? <Link href="/touren" className="hover:text-primary">← Touren</Link> : "Hilfe für Hausbesuchsfahrten"}
+        back={auth.can("appointments.read") ? { href: "/touren", label: "Touren" } : undefined}
+        subtitle="Hilfe für Hausbesuchsfahrten"
         actions={
           <>
             <a href={exportHref("csv")} className="inline-flex h-11 items-center rounded-xl border border-border bg-surface px-4 font-semibold hover:bg-surface-2">CSV</a>

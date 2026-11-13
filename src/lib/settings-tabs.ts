@@ -20,6 +20,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     label: "Praxis",
     tabs: [
       { href: "praxis", label: "Praxisdaten", perm: "settings.manage" },
+      { href: "oeffnungszeiten", label: "Öffnungszeiten", perm: "settings.manage" },
       { href: "team", label: "Team & Rollen", perm: "users.manage" },
       { href: "leistungen", label: "Leistungen", perm: "settings.manage" },
       { href: "erinnerungen", label: "Erinnerungen", perm: "settings.manage" },

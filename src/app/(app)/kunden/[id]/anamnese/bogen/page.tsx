@@ -7,6 +7,7 @@ import { initialFromRiskFlags } from "@/lib/anamnesis";
 import { dateDe, fullName, timeDe } from "@/lib/format";
 import { anamnesisSheet } from "@/server/anamnesis";
 import { AnamnesisForm } from "../anamnesis-form";
+import { BackLink } from "@/components/ui";
 
 export const metadata = { title: "Anamnesebogen" };
 
@@ -27,7 +28,7 @@ export default async function AnamnesisSheetPage(props: PageProps<"/kunden/[id]/
   return (
     <div className="mx-auto max-w-4xl">
       <p className="no-print mb-3 flex flex-wrap gap-x-4 text-sm text-muted">
-        <Link href={`/kunden/${id}/anamnese`} className="inline-flex min-h-11 items-center hover:text-primary">← Anamnese von {fullName(p)}</Link>
+        <BackLink href={`/kunden/${id}/anamnese`} label={`Anamnese ${fullName(p)}`} />
         <Link href={`/kunden/${id}/anamnese/drucken`} className="inline-flex min-h-11 items-center font-semibold text-primary">Druckfassung / PDF</Link>
       </p>
       <SheetHeader

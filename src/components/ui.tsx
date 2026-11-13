@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
 export const cx = clsx;
@@ -40,14 +41,44 @@ export function CardTitle({ children, action }: { children: ReactNode; action?: 
   );
 }
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: ReactNode; actions?: ReactNode }) {
+/**
+ * Titelblock in Seitenköpfen (Titel links, Aktionen rechts, umbrechend): Grundbreite 16rem statt `flex-1` (Basis 0).
+ * Mit Basis 0 blieben die Aktionen in derselben Zeile, solange sie selbst hineinpassen, und quetschten den Titel
+ * zusammen – lange Wörter liefen dann in die Buttons. So rutschen die Aktionen rechtzeitig in eine eigene Zeile.
+ */
+export const pageTitleBox = "min-w-0 flex-[1_1_16rem]";
+/** Überschrift im Seitenkopf: sehr lange Wörter umbrechen statt überzulaufen */
+export const pageTitleCls = "font-display text-3xl font-semibold tracking-tight wrap-break-word";
+
+/** Ziel eines Zurück-Links (logische Elternseite, siehe src/lib/back-link.ts) */
+export type Back = { href: string; label: string };
+
+/**
+ * Einheitlicher Zurück-Link oberhalb des Seitentitels („← Patienten“) – auf allen Detailseiten gleich gestaltet.
+ * Die App läuft auf dem iPad als PWA ohne Browser-Zurück; 44 px Touch-Höhe, Fokusring global (:focus-visible).
+ */
+export function BackLink({ href, label, className }: Back & { className?: string }) {
+  return (
+    <Link
+      href={href}
+      className={cx("no-print -ml-2 inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-muted hover:bg-surface-2 hover:text-primary", className)}
+    >
+      <ArrowLeft size={16} aria-hidden className="shrink-0" />
+      <span className="sr-only">Zurück zu </span>
+      <span className="truncate">{label}</span>
+    </Link>
+  );
+}
+
+export function PageHeader({ title, subtitle, actions, back }: { title: string; subtitle?: ReactNode; actions?: ReactNode; back?: Back }) {
   return (
     <header className="mb-6 flex flex-wrap items-end gap-4">
-      <div className="min-w-0 flex-1">
+      <div className={pageTitleBox}>
+        {back ? <BackLink {...back} /> : null}
         {subtitle ? <p className="text-sm text-muted">{subtitle}</p> : null}
-        <h1 className="font-display text-3xl font-semibold tracking-tight">{title}</h1>
+        <h1 className={pageTitleCls}>{title}</h1>
       </div>
-      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+      {actions ? <div className="flex min-w-0 max-w-full flex-wrap gap-2">{actions}</div> : null}
     </header>
   );
 }
@@ -69,11 +100,16 @@ export function Badge({ tone = "neutral", children, className }: { tone?: Tone; 
   );
 }
 
+/**
+ * Kennzahl-Kachel. Der Wert passt sich der Kachelbreite an (Container Query: 15 % der Innenbreite, 18–30 px), damit
+ * Beträge wie „54.962,60 €“ auch in schmalen Kacheln (4er-Reihe neben der Navigation auf dem iPad) nicht über den Rand
+ * laufen; als letzte Rettung darf der Wert umbrechen statt überzulaufen.
+ */
 export function Stat({ label, value, sub, tone = "primary" }: { label: string; value: ReactNode; sub?: ReactNode; tone?: Tone }) {
   return (
-    <div className={cx("rounded-[var(--radius-card)] p-5", tones[tone])}>
+    <div data-stat className={cx("@container min-w-0 rounded-[var(--radius-card)] p-5", tones[tone])}>
       <p className="text-sm font-medium">{label}</p>
-      <p className="mt-2 font-display text-3xl font-bold tabular-nums">{value}</p>
+      <p className="mt-2 font-display text-[clamp(1.125rem,15cqi,1.875rem)] leading-tight font-bold tabular-nums [overflow-wrap:anywhere]">{value}</p>
       {sub ? <p className="mt-1 text-[13px]">{sub}</p> : null}
     </div>
   );
