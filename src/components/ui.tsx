@@ -69,11 +69,16 @@ export function Badge({ tone = "neutral", children, className }: { tone?: Tone; 
   );
 }
 
+/**
+ * Kennzahl-Kachel. Der Wert passt sich der Kachelbreite an (Container Query: 15 % der Innenbreite, 18–30 px), damit
+ * Beträge wie „54.962,60 €“ auch in schmalen Kacheln (4er-Reihe neben der Navigation auf dem iPad) nicht über den Rand
+ * laufen; als letzte Rettung darf der Wert umbrechen statt überzulaufen.
+ */
 export function Stat({ label, value, sub, tone = "primary" }: { label: string; value: ReactNode; sub?: ReactNode; tone?: Tone }) {
   return (
-    <div className={cx("rounded-[var(--radius-card)] p-5", tones[tone])}>
+    <div data-stat className={cx("@container min-w-0 rounded-[var(--radius-card)] p-5", tones[tone])}>
       <p className="text-sm font-medium">{label}</p>
-      <p className="mt-2 font-display text-3xl font-bold tabular-nums">{value}</p>
+      <p className="mt-2 font-display text-[clamp(1.125rem,15cqi,1.875rem)] leading-tight font-bold tabular-nums [overflow-wrap:anywhere]">{value}</p>
       {sub ? <p className="mt-1 text-[13px]">{sub}</p> : null}
     </div>
   );

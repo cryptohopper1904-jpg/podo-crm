@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { Badge, Card, CardTitle, Empty, PageHeader, Stat, Table, cx } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, PageHeader, Stat, cx } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, money } from "@/lib/format";
 import { WEEKDAYS, monthLabel, periodQuery, rankWeekdays, resolvePeriod } from "@/lib/stats";
 import { statsDetailsOpen } from "@/lib/view-level";
 import { salesStats } from "@/server/stats";
 import { currentViewLevel } from "@/server/view-level";
-import { Columns, HBars, KeyValue, ValuesTable } from "../charts";
+import { Columns, CompactTable, HBars, KeyValue, ValuesTable, Weekday, summaryCls } from "../charts";
 import { StatsFilter, StatsTabs, yearOfPeriod } from "../stats-nav";
 
 export const metadata = { title: "Auswertung – Leistungen & Produkte" };
@@ -80,9 +80,9 @@ export default async function StatsSalesPage(props: PageProps<"/auswertung/leist
           <ValuesTable
             caption="Umsatz je Wochentag"
             open={open}
-            head={["Wochentag", "Umsatz", "Tage im Zeitraum", "Ø je Tag"]}
-            rows={WEEKDAYS.map((w, i) => [w, money(s.revenueWeekdays[i]), num(s.weekdayOccurrences[i]), money(s.weekdayOccurrences[i] ? Math.round(s.revenueWeekdays[i] / s.weekdayOccurrences[i]) : 0)])}
-            csv={csvOk ? { filename: file("umsatz-wochentage"), rows: WEEKDAYS.map((w, i) => [w, eur(s.revenueWeekdays[i]), s.weekdayOccurrences[i], eur(s.weekdayOccurrences[i] ? Math.round(s.revenueWeekdays[i] / s.weekdayOccurrences[i]) : 0)]) } : null}
+            head={["Tag", "Umsatz", "Tage", "Ø/Tag"]}
+            rows={WEEKDAYS.map((_, i) => [<Weekday key="d" index={i} />, money(s.revenueWeekdays[i]), num(s.weekdayOccurrences[i]), money(s.weekdayOccurrences[i] ? Math.round(s.revenueWeekdays[i] / s.weekdayOccurrences[i]) : 0)])}
+            csv={csvOk ? { filename: file("umsatz-wochentage"), head: ["Wochentag", "Umsatz", "Tage im Zeitraum", "Ø je Tag"], rows: WEEKDAYS.map((w, i) => [w, eur(s.revenueWeekdays[i]), s.weekdayOccurrences[i], eur(s.weekdayOccurrences[i] ? Math.round(s.revenueWeekdays[i] / s.weekdayOccurrences[i]) : 0)]) } : null}
           />
         </Card>
         <Card>
@@ -120,9 +120,9 @@ export default async function StatsSalesPage(props: PageProps<"/auswertung/leist
           <ValuesTable
             caption="Leistungen im Zeitraum"
             open={open}
-            head={["Leistung", "abgerechnet (Menge)", "Umsatz", "in Terminen gebucht"]}
+            head={["Leistung", "Menge", "Umsatz", "in Terminen"]}
             rows={s.services.map((x) => [x.name, num(x.quantity, 2), money(x.totalCents), num(x.bookedCount, 2)])}
-            csv={csvOk ? { filename: file("leistungen"), rows: s.services.map((x) => [x.name, num(x.quantity, 2), eur(x.totalCents), num(x.bookedCount, 2)]) } : null}
+            csv={csvOk ? { filename: file("leistungen"), head: ["Leistung", "abgerechnet (Menge)", "Umsatz", "in Terminen gebucht"], rows: s.services.map((x) => [x.name, num(x.quantity, 2), eur(x.totalCents), num(x.bookedCount, 2)]) } : null}
           />
         </Card>
       ) : null}
@@ -145,9 +145,9 @@ export default async function StatsSalesPage(props: PageProps<"/auswertung/leist
           <ValuesTable
             caption="Produkte im Zeitraum"
             open={open}
-            head={["Produkt", "verkauft (Menge)", "Umsatz verkauft", "angewendet (Menge)", "Umsatz angewendet"]}
+            head={["Produkt", "verkauft", "Umsatz verkauft", "angewendet", "Umsatz angewendet"]}
             rows={s.products.map((p) => [p.name, num(p.soldQty, 2), money(p.soldCents), num(p.usedQty, 2), money(p.usedCents)])}
-            csv={csvOk ? { filename: file("produkte"), rows: s.products.map((p) => [p.name, num(p.soldQty, 2), eur(p.soldCents), num(p.usedQty, 2), eur(p.usedCents)]) } : null}
+            csv={csvOk ? { filename: file("produkte"), head: ["Produkt", "verkauft (Menge)", "Umsatz verkauft", "angewendet (Menge)", "Umsatz angewendet"], rows: s.products.map((p) => [p.name, num(p.soldQty, 2), eur(p.soldCents), num(p.usedQty, 2), eur(p.usedCents)]) } : null}
           />
         </Card>
       ) : null}
@@ -162,34 +162,33 @@ export default async function StatsSalesPage(props: PageProps<"/auswertung/leist
           <Empty title="Keine Artikel mit Bestandsführung">Bestandsführung lässt sich je Produkt unter „Produkte“ einschalten.</Empty>
         ) : (
           <details open={open || reorder.length > 0}>
-            <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-primary">{`${num(s.stock.length)} Artikel anzeigen`}</summary>
-            <Table>
-              <caption className="sr-only">Lager: Bestand, Abgang, Reichweite und Umschlag</caption>
+            <summary className={summaryCls}>{`${num(s.stock.length)} Artikel anzeigen`}</summary>
+            <CompactTable caption="Lager: Bestand, Abgang, Reichweite und Umschlag">
               <thead>
                 <tr>
                   <th scope="col">Artikel</th>
                   <th scope="col" className="text-right">Bestand</th>
-                  <th scope="col" className="text-right">Mindestbestand</th>
+                  <th scope="col" className="text-right">Mindest&shy;bestand</th>
                   <th scope="col" className="text-right">Abgang</th>
                   <th scope="col" className="text-right">Reichweite</th>
-                  <th scope="col" className="text-right">Umschlag/Jahr</th>
+                  <th scope="col" className="text-right">Umschlag pro Jahr</th>
                   <th scope="col">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {s.stock.map((x) => (
                   <tr key={`${x.name}-${x.unit}-${x.minStock}`}>
-                    <th scope="row" className="!bg-transparent !text-[15px] !font-normal !normal-case !tracking-normal !text-text">{x.name}</th>
-                    <td className={cx("text-right tabular-nums", x.stock < 0 && "text-danger")}>{`${num(x.stock)} ${x.unit}`}</td>
-                    <td className="text-right tabular-nums">{num(x.minStock)}</td>
-                    <td className="text-right tabular-nums">{num(x.outflow)}</td>
-                    <td className="text-right tabular-nums">{x.coverageDays === null ? "–" : `${num(x.coverageDays)} Tage`}</td>
-                    <td className="text-right tabular-nums">{x.turnoverPerYear === null ? "–" : `${num(x.turnoverPerYear, 1)}×`}</td>
+                    <th scope="row" className="min-w-32 whitespace-normal">{x.name}</th>
+                    <td className={cx("text-right", x.stock < 0 && "text-danger")}>{`${num(x.stock)} ${x.unit}`}</td>
+                    <td className="text-right">{num(x.minStock)}</td>
+                    <td className="text-right">{num(x.outflow)}</td>
+                    <td className="text-right">{x.coverageDays === null ? "–" : `${num(x.coverageDays)} Tage`}</td>
+                    <td className="text-right">{x.turnoverPerYear === null ? "–" : `${num(x.turnoverPerYear, 1)}×`}</td>
                     <td>{x.reorder ? <Badge tone="warn">nachbestellen</Badge> : <Badge>ok</Badge>}</td>
                   </tr>
                 ))}
               </tbody>
-            </Table>
+            </CompactTable>
           </details>
         )}
       </Card>

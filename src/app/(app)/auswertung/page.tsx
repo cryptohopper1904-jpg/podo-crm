@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
-import { Badge, Button, Card, CardTitle, Empty, PageHeader, Stat, Table, cx } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, Empty, PageHeader, Stat, cx } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { monthlyShare, percentChange } from "@/lib/invoice-math";
 import { financeOverview } from "@/server/finance";
 import { deleteFixedCostAction } from "./actions";
 import { FixedCostForm, MaterialCostForm } from "./finance-forms";
+import { CompactTable, ValuesTable } from "./charts";
 import { StatsTabs, statsQueryForYear } from "./stats-nav";
 
 export const metadata = { title: "Auswertung" };
@@ -41,9 +42,9 @@ function BarChart({
         <span className="inline-flex items-center gap-2"><span className="size-3 rounded-sm bg-primary" /> {year}</span>
         <span className="inline-flex items-center gap-2"><span className="size-3 rounded-sm bg-border-strong" /> {year - 1}</span>
       </div>
-      <div className="flex h-52 items-end gap-1 overflow-x-auto sm:gap-2" aria-hidden>
+      <div className="flex h-52 items-end gap-0.5 sm:gap-1 xl:gap-2" aria-hidden>
         {MONTHS.map((m, i) => (
-          <div key={m} className="flex h-full min-w-7 flex-1 flex-col items-center justify-end gap-1">
+          <div key={m} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
             <div className="flex h-full w-full items-end justify-center gap-0.5">
               <div
                 className="w-1/2 max-w-5 rounded-t bg-border-strong"
@@ -56,33 +57,16 @@ function BarChart({
                 title={`${m} ${year}: ${format(current[i])}`}
               />
             </div>
-            <span className="text-[11px] text-muted">{m}</span>
+            <span className="text-[10px] text-muted sm:text-[11px]">{m}</span>
           </div>
         ))}
       </div>
       <figcaption className="sr-only">{label}</figcaption>
-      <details className="mt-3">
-        <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-primary">Werte als Tabelle</summary>
-        <Table>
-          <caption className="sr-only">{label}</caption>
-          <thead>
-            <tr>
-              <th scope="col">Monat</th>
-              <th scope="col" className="text-right">{year}</th>
-              <th scope="col" className="text-right">{year - 1}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {MONTHS.map((m, i) => (
-              <tr key={m}>
-                <th scope="row" className="!bg-transparent !text-[15px] !font-normal !normal-case !tracking-normal !text-text">{m}</th>
-                <td className="text-right tabular-nums">{format(current[i])}</td>
-                <td className="text-right tabular-nums">{format(previous[i])}</td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </details>
+      <ValuesTable
+        caption={label}
+        head={["Monat", String(year), String(year - 1)]}
+        rows={MONTHS.map((m, i) => [m, format(current[i]), format(previous[i])])}
+      />
     </figure>
   );
 }
@@ -219,33 +203,33 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
         {d.costs.length === 0 ? (
           <Empty title="Noch keine Fixkosten erfasst">Miete, Versicherungen, Software, Leasing … – für den Break-even.</Empty>
         ) : (
-          <Table>
+          <CompactTable caption="Fixkosten">
             <thead>
               <tr>
-                <th>Bezeichnung</th>
-                <th className="text-right">Betrag</th>
-                <th>Intervall</th>
-                <th className="text-right">pro Monat</th>
-                <th>ab</th>
-                <th>Status</th>
-                {canManage ? <th><span className="sr-only">Aktionen</span></th> : null}
+                <th scope="col">Bezeichnung</th>
+                <th scope="col" className="text-right">Betrag</th>
+                <th scope="col">Intervall</th>
+                <th scope="col" className="text-right">pro Monat</th>
+                <th scope="col">ab</th>
+                <th scope="col">Status</th>
+                {canManage ? <th scope="col"><span className="sr-only">Aktionen</span></th> : null}
               </tr>
             </thead>
             <tbody>
               {d.costs.map((c) => (
                 <tr key={c.id} className={cx(!c.active && "text-muted")}>
-                  <td>
+                  <td className="min-w-32 !whitespace-normal">
                     <span className="font-semibold">{c.category}</span>
                     {c.note ? <span className="block text-sm text-muted">{c.note}</span> : null}
                   </td>
-                  <td className="text-right tabular-nums">{money(c.amountCents)}</td>
-                  <td className="text-sm">{INTERVAL[c.interval] ?? c.interval}</td>
-                  <td className="text-right tabular-nums">{money(monthlyShare(c.amountCents, c.interval))}</td>
-                  <td className="text-sm tabular-nums">{dateDe(c.startDate)}</td>
+                  <td className="text-right">{money(c.amountCents)}</td>
+                  <td>{INTERVAL[c.interval] ?? c.interval}</td>
+                  <td className="text-right">{money(monthlyShare(c.amountCents, c.interval))}</td>
+                  <td>{dateDe(c.startDate)}</td>
                   <td>{c.active ? <Badge tone="primary">aktiv</Badge> : <Badge>inaktiv</Badge>}</td>
                   {canManage ? (
                     <td>
-                      <div className="flex justify-end gap-1">
+                      <div className="flex justify-end gap-0.5">
                         <Link
                           href={{ pathname: "/auswertung", query: { year, edit: c.id } }}
                           aria-label={`${c.category} bearbeiten`}
@@ -265,7 +249,7 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
                 </tr>
               ))}
             </tbody>
-          </Table>
+          </CompactTable>
         )}
         {canManage ? (
           <div className="mt-6 border-t border-border pt-5">

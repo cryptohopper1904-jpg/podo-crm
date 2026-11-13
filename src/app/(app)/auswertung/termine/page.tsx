@@ -19,7 +19,7 @@ import {
 import { statsDetailsOpen } from "@/lib/view-level";
 import { appointmentStats, statsTherapists } from "@/server/stats";
 import { currentViewLevel } from "@/server/view-level";
-import { Columns, HBars, HeatmapTable, KeyValue, ValuesTable } from "../charts";
+import { Columns, HBars, HeatmapTable, KeyValue, ValuesTable, Weekday } from "../charts";
 import { StatsFilter, StatsTabs, yearOfPeriod } from "../stats-nav";
 
 export const metadata = { title: "Auswertung – Termine" };
@@ -127,12 +127,13 @@ export default async function StatsAppointmentsPage(props: PageProps<"/auswertun
               <ValuesTable
                 caption="Termine je Wochentag"
                 open={open}
-                head={["Wochentag", "Termine", "Tage im Zeitraum", "Ø je Tag", "Median-Vorlauf"]}
-                rows={WEEKDAYS.map((w, i) => [w, num(s.weekdayCounts[i]), num(s.weekdayOccurrences[i]), num(s.weekdayOccurrences[i] ? s.weekdayCounts[i] / s.weekdayOccurrences[i] : 0, 1), formatLead(s.weekdayLead[i])])}
+                head={["Tag", "Termine", "Tage", "Ø/Tag", "Vorlauf"]}
+                rows={WEEKDAYS.map((_, i) => [<Weekday key="d" index={i} />, num(s.weekdayCounts[i]), num(s.weekdayOccurrences[i]), num(s.weekdayOccurrences[i] ? s.weekdayCounts[i] / s.weekdayOccurrences[i] : 0, 1), formatLead(s.weekdayLead[i])])}
                 csv={
                   csvOk
                     ? {
                         filename: file("termine-wochentage"),
+                        head: ["Wochentag", "Termine", "Tage im Zeitraum", "Ø je Tag", "Median-Vorlauf (Tage)"],
                         rows: WEEKDAYS.map((w, i) => [w, s.weekdayCounts[i], s.weekdayOccurrences[i], num(s.weekdayOccurrences[i] ? s.weekdayCounts[i] / s.weekdayOccurrences[i] : 0, 2), s.weekdayLead[i] === null ? "" : num(s.weekdayLead[i]! / 24, 1)]),
                       }
                     : null
