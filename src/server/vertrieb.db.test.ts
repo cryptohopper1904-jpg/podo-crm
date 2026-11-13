@@ -187,4 +187,112 @@ const day = 86_400_000;
     expect((await v.listSuppressions()).map((x) => x.email)).toContain("fehler@praxis.example");
     expect(auditCalls().map((a) => a.action)).toEqual(expect.arrayContaining(["vertrieb.lead_updated", "vertrieb.suppression_added"]));
   });
+  // ───────────── Praxissuche (OpenStreetMap, nachts) – gemocktes Netz, keine echten Abrufe ─────────────
+  describe("Praxissuche", () => {
+    let ls: typeof import("./lead-search");
+    const center = { lat: 52.4, lon: 13.0 };
+    const at = (km: number) => ({ lat: center.lat + km / 111.195, lon: center.lon });
+    const el = (id: number, km: number, tags: Record<string, string>) => ({ type: "node", id, ...at(km), tags: { healthcare: "podiatrist", ...tags } });
+    const overpassJson = {
+      elements: [
+        el(1, 2, { name: "Podologie Ost", email: "info@ost-podo.example", "addr:postcode": "14467", "addr:city": "Potsdam" }),
+        el(2, 3, { name: "Fußpflege Kern", email: "christine.kern@kern-fuss.example", website: "kern-fuss.example" }),
+        el(3, 4, { name: "Podologie Robots", website: "https://robots-podo.example/" }),
+        el(4, 5, { name: "Podologie Schutz", website: "https://schutz-podo.example/" }),
+        el(5, 6, { name: "Podologie Doppelt", email: "INFO@Bestand-Podo.example" }),
+        el(6, 7, { name: "Podologie Gesperrt", email: "info@gesperrt-podo.example" }),
+        el(7, 8, { name: "Podologie Zwei", "addr:postcode": "22222" }),
+        el(8, 9, { name: "Nagelstudio", shop: "beauty", beauty: "nails", healthcare: "" }),
+        el(9, 15, { name: "Podologie Weit", email: "praxis@weit-podo.example" }),
+      ],
+    };
+    const html = (body: string) => new Response(`<html><body>${body}</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+    const pages: Record<string, () => Response> = {
+      "https://kern-fuss.example/robots.txt": () => new Response("User-agent: *\nDisallow: /intern/", { headers: { "content-type": "text/plain" } }),
+      "https://kern-fuss.example/": () => html(`<h1>Fußpflege Kern</h1><a href="/impressum">Impressum</a>`),
+      "https://kern-fuss.example/impressum": () => html(`Inhaberin: christine.kern@kern-fuss.example<br>Praxis: praxis [at] kern-fuss [dot] example`),
+      "https://robots-podo.example/robots.txt": () => new Response("User-agent: *\nDisallow: /", { headers: { "content-type": "text/plain" } }),
+      "https://schutz-podo.example/robots.txt": () => new Response("", { status: 404 }),
+      "https://schutz-podo.example/": () => new Response("<title>Just a moment...</title>", { status: 403, headers: { "content-type": "text/html" } }),
+    };
+    const requested: string[] = [];
+    const webFetch = async (u: string) => {
+      requested.push(u);
+      const p = pages[u];
+      if (!p) throw new Error(`Unerwarteter Abruf ${u}`);
+      return p();
+    };
+    let overpassCalls = 0;
+    const overpassFetch = async () => (overpassCalls++, new Response(JSON.stringify(overpassJson), { headers: { "content-type": "application/json" } }));
+    const deps = { overpassFetch, webFetch, resolver: async () => [{ address: "93.184.216.34" }], sleep: async () => {}, llm: null };
+    const leadsBySource = async () => (await f.pool.query("select name, email, website, zip, city, distance_km, source, status, contact_person, phone from sales_leads where source like 'osm%' order by distance_km")).rows;
+
+    beforeAll(async () => {
+      ls = await import("./lead-search");
+      await f.pool.query("insert into sales_suppressions (email, reason) values ('info@gesperrt-podo.example', 'abgemeldet') on conflict do nothing");
+      await f.pool.query("insert into sales_leads (name, email, source) values ('Praxis Bestand', 'info@bestand-podo.example', 'manuell')");
+    });
+
+    it("ohne Startort/ausgeschaltet läuft nichts", async () => {
+      expect(await ls.runLeadSearch({ trigger: "cron" }, deps)).toEqual({ status: "disabled" });
+      expect(await ls.runLeadSearch({ trigger: "manual", adminUserId: admin }, deps)).toEqual({ status: "no_center" });
+      await expect(ls.saveLeadSearchSettings(admin, { enabled: true, centerText: "", ringKm: 10, maxKm: 20, resetProgress: false })).rejects.toThrow(/Startort/);
+      await ls.saveLeadSearchSettings(admin, { enabled: false, centerText: "52.4, 13.0", ringKm: 10, maxKm: 20, resetProgress: false }, { geocode: async () => null });
+      expect(await ls.runLeadSearch({ trigger: "cron" }, deps)).toEqual({ status: "disabled" });
+      expect(overpassCalls).toBe(0);
+      // Absender-Einstellungen bleiben unverändert
+      expect((await v.getSalesSettings()).senderEmail).toBe("max@podo.example");
+    });
+
+    it("erster Ring: nur Praxisname + Funktions-E-Mail, Dubletten/Sperrliste übersprungen, robots/Challenge beachtet", async () => {
+      await ls.saveLeadSearchSettings(admin, { enabled: true, centerText: "52.4, 13.0", ringKm: 10, maxKm: 20, resetProgress: false });
+      const before = await leadByName("Podologie Zwei");
+      const r = await ls.runLeadSearch({ trigger: "cron" }, deps);
+      expect(r).toMatchObject({ status: "ok", run: { innerKm: 0, outerKm: 10, found: 7, added: 4, withEmail: 2, duplicates: 3, crawled: 3 } });
+      expect(overpassCalls).toBe(1);
+      expect(await leadsBySource()).toEqual([
+        { name: "Podologie Ost", email: "info@ost-podo.example", website: null, zip: "14467", city: "Potsdam", distance_km: 2, source: "osm", status: "neu", contact_person: null, phone: null },
+        { name: "Fußpflege Kern", email: "praxis@kern-fuss.example", website: "https://kern-fuss.example/", zip: null, city: null, distance_km: 3, source: "osm+impressum", status: "neu", contact_person: null, phone: null },
+        { name: "Podologie Robots", email: null, website: "https://robots-podo.example/", zip: null, city: null, distance_km: 4, source: "osm", status: "neu", contact_person: null, phone: null },
+        { name: "Podologie Schutz", email: null, website: "https://schutz-podo.example/", zip: null, city: null, distance_km: 5, source: "osm", status: "neu", contact_person: null, phone: null },
+      ]);
+      // robots.txt verbietet alles → nur robots.txt; 403-Challenge → keine weitere Seite
+      expect(requested).toEqual([
+        "https://kern-fuss.example/robots.txt",
+        "https://kern-fuss.example/",
+        "https://kern-fuss.example/impressum",
+        "https://robots-podo.example/robots.txt",
+        "https://schutz-podo.example/robots.txt",
+        "https://schutz-podo.example/",
+      ]);
+      // bestehender (manuell gepflegter) Lead unverändert
+      expect((await f.pool.query("select * from sales_leads where name = 'Podologie Zwei'")).rows).toEqual([before]);
+      const s = await ls.getLeadSearch();
+      expect(s).toMatchObject({ doneKm: 10, runningSince: null, lastRun: { added: 4, outerKm: 10, manual: false } });
+      expect(auditCalls().some((a) => a.action === "vertrieb.lead_search")).toBe(true);
+    });
+
+    it("zweiter Ring mit LLM-Auswahl, dann Ende am Höchstradius", async () => {
+      const llm = { choosePracticeEmail: vi.fn(async () => ({ best: null, personal: ["praxis@weit-podo.example"] })) };
+      const r = await ls.runLeadSearch({ trigger: "manual", adminUserId: admin }, { ...deps, llm });
+      expect(r).toMatchObject({ status: "ok", run: { innerKm: 10, outerKm: 20, found: 1, added: 1, withEmail: 0, manual: true } });
+      expect(llm.choosePracticeEmail).toHaveBeenCalledWith("Podologie Weit", ["praxis@weit-podo.example"]);
+      expect(await leadByName("Podologie Weit")).toMatchObject({ email: null, distance_km: 15 });
+      expect(await ls.runLeadSearch({ trigger: "cron" }, deps)).toEqual({ status: "finished" });
+      // nochmal von vorn: alles schon vorhanden → nichts Neues
+      await ls.saveLeadSearchSettings(admin, { enabled: true, centerText: "52.4, 13.0", ringKm: 10, maxKm: 20, resetProgress: true });
+      const again = await ls.runLeadSearch({ trigger: "cron" }, deps);
+      expect(again).toMatchObject({ status: "ok", run: { added: 0 } });
+    });
+
+    it("Overpass-Fehler: Ring wird nicht weitergezählt; paralleler Lauf wird abgewiesen", async () => {
+      const s0 = await ls.getLeadSearch();
+      const failing = { ...deps, overpassFetch: async () => new Response("busy", { status: 429 }) };
+      const r = await ls.runLeadSearch({ trigger: "cron" }, failing);
+      expect(r).toMatchObject({ status: "error", run: { error: expect.stringMatching(/ausgelastet/) } });
+      expect((await ls.getLeadSearch()).doneKm).toBe(s0.doneKm);
+      await f.pool.query("update sales_settings set lead_search = jsonb_set(lead_search, '{runningSince}', to_jsonb(now()::text)) where id = 1");
+      expect(await ls.runLeadSearch({ trigger: "cron" }, deps)).toEqual({ status: "busy" });
+    });
+  });
 });

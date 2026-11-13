@@ -1,7 +1,7 @@
 "use client";
 
 import { ActionForm } from "@/components/action-form";
-import { Field, Input, Textarea } from "@/components/ui";
+import { Checkbox, Field, Input, Textarea } from "@/components/ui";
 
 type State = { error?: string; ok?: string } | undefined;
 type Action = (s: State, f: FormData) => Promise<State>;
@@ -27,6 +27,28 @@ export function SettingsForm({
       <Field label="Impressum / Absenderangaben *" hint="Firma, Vertretungsberechtigte:r, Anschrift, E-Mail/Telefon, ggf. Register und USt-IdNr. – steht unter jeder Mail.">
         <Textarea name="impressum" rows={7} maxLength={1500} defaultValue={values.impressum} />
       </Field>
+    </ActionForm>
+  );
+}
+
+export function LeadSearchForm({
+  action,
+  values,
+}: {
+  action: Action;
+  values: { enabled: boolean; centerText: string; ringKm: number; maxKm: number };
+}) {
+  return (
+    <ActionForm action={action} submit="Praxissuche speichern">
+      <Checkbox name="enabled" defaultChecked={values.enabled} label="Jede Nacht automatisch den nächsten Ring durchsuchen" />
+      <Field label="Startort" hint="Adresse oder PLZ und Ort (wird einmal über Photon/OpenStreetMap in Koordinaten umgewandelt) oder Koordinaten wie „52.39, 13.06“">
+        <Input name="centerText" maxLength={200} defaultValue={values.centerText} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Ringbreite (km)" hint="je Nacht ein Ring"><Input name="ringKm" type="number" min={2} max={50} defaultValue={values.ringKm} /></Field>
+        <Field label="Höchstradius (km)" hint="danach stoppt die Suche"><Input name="maxKm" type="number" min={5} max={300} defaultValue={values.maxKm} /></Field>
+      </div>
+      <Checkbox name="resetProgress" label="Fortschritt zurücksetzen (wieder bei 0 km beginnen)" />
     </ActionForm>
   );
 }

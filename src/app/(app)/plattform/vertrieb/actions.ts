@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { z } from "zod";
 import { CSV_MAX_BYTES, type LeadInput } from "@/lib/vertrieb/csv";
 import { LEAD_STATUSES, SEQUENCE_STEPS } from "@/lib/vertrieb/constants";
+import { getLeadSearch, runLeadSearch, saveLeadSearchSettings } from "@/server/lead-search";
 import { requirePlatformAdmin } from "@/server/platform";
 import {
   addSuppression,
@@ -213,4 +215,43 @@ export async function addSuppressionAction(_s: State, form: FormData): Promise<S
   }
   revalidatePath(BASE, "layout");
   return { ok: "Adresse gesperrt." };
+}
+
+// ───────────── Praxissuche (OpenStreetMap, nachts) ─────────────
+
+export async function saveLeadSearchAction(_s: State, form: FormData): Promise<State> {
+  const row = await requirePlatformAdmin();
+  const d = z
+    .object({
+      centerText: z.string().max(200),
+      ringKm: z.coerce.number().int(),
+      maxKm: z.coerce.number().int(),
+    })
+    .safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: "Eingaben ungültig." };
+  try {
+    await saveLeadSearchSettings(row.user.id, { ...d.data, enabled: form.get("enabled") === "on", resetProgress: form.get("resetProgress") === "on" });
+  } catch (e) {
+    return { error: msg(e) };
+  }
+  revalidatePath(BASE, "layout");
+  return { ok: "Praxissuche gespeichert." };
+}
+
+/** „Jetzt suchen“: startet den nächsten Ring im Hintergrund (after) – auch wenn die nächtliche Suche aus ist. */
+export async function runLeadSearchAction(_s: State, _form: FormData): Promise<State> {
+  const row = await requirePlatformAdmin();
+  const s = await getLeadSearch();
+  if (!s.center) return { error: "Bitte zuerst unter Einstellungen einen Startort für die Praxissuche angeben." };
+  if (s.doneKm >= s.maxKm) return { error: `Der Höchstradius (${s.maxKm} km) ist durchsucht. Unter Einstellungen erhöhen oder zurücksetzen.` };
+  if (s.runningSince && Date.now() - Date.parse(s.runningSince) < 30 * 60_000) return { error: "Es läuft bereits eine Suche." };
+  const userId = row.user.id;
+  after(async () => {
+    try {
+      await runLeadSearch({ trigger: "manual", adminUserId: userId });
+    } catch {
+      // Status und Fehler stehen in sales_settings.lead_search (Anzeige auf der Vertriebsseite)
+    }
+  });
+  return { ok: "Suche gestartet. Das dauert einige Minuten – danach die Seite neu laden." };
 }

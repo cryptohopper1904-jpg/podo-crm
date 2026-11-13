@@ -77,8 +77,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
     this.fetchFn = opts.fetch ?? ((u, i) => fetch(u, i));
   }
 
-  private async chat(messages: ChatMessage[], json: boolean): Promise<string> {
-    if (!this.opts.dataProcessingApproved && process.env.LLM_DATA_PROCESSING_APPROVED !== "true") {
+  /**
+   * `publicDataOnly`: nur öffentliche Geschäftsdaten (Praxisname + Funktions-E-Mails aus OSM/Impressum),
+   * keine Patientendaten – dann ist die Freigabe LLM_DATA_PROCESSING_APPROVED nicht nötig.
+   */
+  private async chat(messages: ChatMessage[], json: boolean, opts: { publicDataOnly?: boolean } = {}): Promise<string> {
+    if (!opts.publicDataOnly && !this.opts.dataProcessingApproved && process.env.LLM_DATA_PROCESSING_APPROVED !== "true") {
       throw new IntegrationNotConfiguredError(
         "llm",
         "Anbieter nicht freigegeben (EU-Verarbeitung, AVV und Zero Data Retention bestätigen: LLM_DATA_PROCESSING_APPROVED=true)",
@@ -95,7 +99,8 @@ export class OpenAiCompatibleLlm implements LlmPort {
         model: this.model,
         messages,
         temperature: this.opts.temperature ?? 0.2,
-        ...(json ? { response_format: { type: "json_object" } } : {}),
+        // kostenlose Modelle (z. B. über OpenRouter) kennen response_format oft nicht → dort nur per Prompt
+        ...(json && !opts.publicDataOnly ? { response_format: { type: "json_object" } } : {}),
       },
       sleep: this.opts.sleep,
     });
@@ -148,6 +153,35 @@ export class OpenAiCompatibleLlm implements LlmPort {
       false,
     );
     return restore(content.trim(), map);
+  }
+
+  /**
+   * Praxissuche (Vertrieb): wählt aus bereits regelgeprüften Kandidaten die beste allgemeine Praxis-Adresse
+   * und markiert Adressen, die nach einer Person aussehen. Gesendet werden NUR Praxisname und Kandidatenliste
+   * (keine Seiteninhalte, keine Patientendaten). Die Antwort wird streng auf die Kandidaten beschränkt.
+   */
+  async choosePracticeEmail(practiceName: string, candidates: string[]): Promise<{ best: string | null; personal: string[] }> {
+    const list = [...new Set(candidates.map((c) => c.trim().toLowerCase()))].slice(0, 20);
+    if (!list.length) return { best: null, personal: [] };
+    const content = await this.chat(
+      [
+        {
+          role: "system",
+          content:
+            "Du hilfst, für eine Praxis (Podologie/medizinische Fußpflege) die allgemeine Kontaktadresse zu wählen. " +
+            "Adressen, die nach einer Person aussehen (Vor- oder Nachname), dürfen NICHT gewählt werden. " +
+            'Antworte ausschließlich als JSON {"best": "<adresse oder null>", "personal": ["<adressen, die nach einer Person aussehen>"]}. ' +
+            "Wähle nur aus der Liste.",
+        },
+        { role: "user", content: JSON.stringify({ praxis: practiceName.slice(0, 200), kandidaten: list }) },
+      ],
+      true,
+      { publicDataOnly: true },
+    );
+    const parsed = extractJson(content) as { best?: unknown; personal?: unknown } | null;
+    const personal = Array.isArray(parsed?.personal) ? parsed.personal.map((x) => String(x).trim().toLowerCase()).filter((x) => list.includes(x)) : [];
+    const b = typeof parsed?.best === "string" ? parsed.best.trim().toLowerCase() : "";
+    return { best: list.includes(b) && !personal.includes(b) ? b : null, personal };
   }
 
   async summarizeNews(items: NewsItemInput[]): Promise<{ url: string; summary: string }[]> {
