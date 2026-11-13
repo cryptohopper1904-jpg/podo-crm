@@ -275,6 +275,25 @@ const NOW = new Date("2031-05-01T06:00:00Z");
     expect((await rc.replyFacts(org, null)).facts.join(" ")).toMatch(/keine freien Termine/);
   });
 
+  it("replyFacts über die Zeitumstellung (28.03.2026 23:30 Berlin): 29.03. wird nicht übersprungen, Praxis-Sperrzeit abgezogen", async () => {
+    // täglich 08:00–12:00 geöffnet (auch So)
+    const week = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, from: "08:00", to: "12:00" }));
+    const { org, owner } = await setup({ practiceHours: week });
+    const rc = await import("./reply-context");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-03-28T22:30:00Z")); // Sa 23:30 MEZ; in 24 h ist es bereits Mo 00:30 MESZ
+      const before = (await rc.replyFacts(org, null, { days: 1 })).facts.join(" ");
+      expect(before).toContain("Sonntag, 29. März um 08:00 Uhr");
+      ok(await bl.createBlock(owner, block({ userId: null, kind: "reinigung", startsOn: "2026-03-29", startTime: "08:00", endTime: "09:00" })));
+      const after = (await rc.replyFacts(org, null, { days: 1 })).facts.join(" ");
+      expect(after).not.toContain("29. März um 08:");
+      expect(after).toContain("Sonntag, 29. März um 09:00 Uhr");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("Grenzen: verständliche Meldung bei zu vielen Ausnahmen und zu vielen aktiven Sperrzeiten; inaktive Person bleibt", async () => {
     const { org, b, owner } = await setup();
     const id = ok(await bl.createBlock(owner, block({ userId: b, repeat: "daily", startsOn: "2031-01-01" })));
