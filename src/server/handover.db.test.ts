@@ -44,12 +44,14 @@ const fd = (o: Record<string, string>) => {
   let session: typeof import("@/lib/auth/session");
   let unlock: typeof import("@/app/(auth)/entsperren/actions");
   let password: typeof import("@/lib/auth/password");
+  let authActions: typeof import("@/app/(auth)/actions");
 
   beforeAll(async () => {
     process.env.DATABASE_URL = TEST_DB;
     session = await import("@/lib/auth/session");
     unlock = await import("@/app/(auth)/entsperren/actions");
     password = await import("@/lib/auth/password");
+    authActions = await import("@/app/(auth)/actions");
   });
   afterAll(async () => {
     await f.end();
@@ -74,39 +76,72 @@ const fd = (o: Record<string, string>) => {
     return { org, user, token };
   };
   const row = async (token: string) => (await f.pool.query("select * from sessions where id = $1", [sha(token)])).rows[0] ?? null;
+  /** Token nach dem Sperren (wird dabei rotiert) */
+  const current = () => jar.get(session.SESSION_COOKIE)!;
 
   it("gesperrt: keine Praxisdaten, requireAuth → /entsperren; PIN entsperrt und springt zurück", async () => {
     const { token } = await setup();
     expect(await session.getAuth()).not.toBeNull();
     expect(await session.lockCurrentSession("/kunden/abc/anamnese")).toBe(true);
+    expect(current()).not.toBe(token);
+    expect(await row(token)).toBeNull();
     expect(await session.getAuth()).toBeNull();
+    expect(await session.getSession()).toBeNull();
     expect(await redirectOf(session.requireAuth("patients.read"))).toBe("/entsperren");
 
     expect(await unlock.unlockAction(undefined, fd({ secret: "0000" }))).toMatchObject({ error: expect.stringMatching(/Noch 4 Versuch/) });
     expect(await redirectOf(unlock.unlockAction(undefined, fd({ secret: "4711" })))).toBe("/kunden/abc/anamnese");
-    expect(await row(token)).toMatchObject({ locked_at: null, unlock_failures: 0 });
+    expect(await row(current())).toMatchObject({ locked_at: null, unlock_failures: 0 });
     expect(await session.getAuth()).not.toBeNull();
   });
 
   it("Passwort entsperrt ebenfalls; fremde Rücksprungziele werden verworfen", async () => {
-    const { token } = await setup();
+    await setup();
     await session.lockCurrentSession("//evil.example/x");
-    expect((await row(token)).lock_return).toBe("/heute");
+    expect((await row(current())).lock_return).toBe("/heute");
     expect(await redirectOf(unlock.unlockAction(undefined, fd({ secret: "richtiges-passwort-123" })))).toBe("/heute");
   });
 
   it("5 Fehlversuche beenden die Sitzung", async () => {
-    const { token } = await setup();
+    await setup();
     await session.lockCurrentSession("/heute");
+    const t = current();
     for (let i = 0; i < 4; i++) expect(await unlock.unlockAction(undefined, fd({ secret: "9999" }))).toHaveProperty("error");
     expect(await redirectOf(unlock.unlockAction(undefined, fd({ secret: "9999" })))).toBe("/login?entsperren=gesperrt");
-    expect(await row(token)).toBeNull();
+    expect(await row(t)).toBeNull();
   });
 
-  it("nach 30 Minuten Sperre ist die Sitzung beendet", async () => {
-    const { token } = await setup();
-    await f.pool.query("update sessions set locked_at = now() - interval '31 minutes' where id = $1", [sha(token)]);
-    expect(await session.getAuthState()).toMatchObject({ auth: null });
-    expect(await row(token)).toBeNull();
+  it("nach 30 Minuten Sperre ist die Sitzung beendet – auch die richtige PIN entsperrt nicht mehr", async () => {
+    await setup();
+    await session.lockCurrentSession("/heute");
+    const t = current();
+    await f.pool.query("update sessions set locked_at = now() - interval '31 minutes' where id = $1", [sha(t)]);
+    expect(await redirectOf(unlock.unlockAction(undefined, fd({ secret: "4711" })))).toBe("/login");
+    expect(await row(t)).toBeNull();
+  });
+
+  it("parallele Versuche: höchstens 5 Prüfungen je Sperre", async () => {
+    await setup();
+    await session.lockCurrentSession("/heute");
+    const t = current();
+    const results = await Promise.allSettled(Array.from({ length: 12 }, () => unlock.unlockAction(undefined, fd({ secret: "1111" }))));
+    expect(results.filter((r) => r.status === "fulfilled").length).toBeLessThanOrEqual(4);
+    expect(await row(t)).toBeNull();
+  });
+
+  it("gesperrte Sitzung lässt sich weder per 2FA-Einrichtung noch per Praxiswechsel entsperren", async () => {
+    const { org, user } = await setup();
+    await f.pool.query("update users set totp_enabled = false where id = $1", [user]);
+    await session.lockCurrentSession("/heute");
+    const t = current();
+    // 2FA-Einrichtung sieht keine (entsperrte) Sitzung → zurück zur Anmeldung, kein Geheimnis
+    expect(await redirectOf(authActions.startOwnTotpAction())).toBe("/login");
+    const sw = new FormData();
+    sw.set("organizationId", org);
+    await redirectOf(authActions.switchOrganizationAction(sw));
+    expect(current()).toBe(t);
+    expect(await row(t)).toMatchObject({ locked_at: expect.any(Date) });
+    expect(await session.rotateSession(sha(t), user, org)).toBe(false);
+    expect(await session.getAuth()).toBeNull();
   });
 });

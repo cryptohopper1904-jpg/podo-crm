@@ -194,7 +194,9 @@ export async function changePasswordAction(_: SettingsState, form: FormData): Pr
 }
 
 /** Weak PINs, die leicht zu erraten sind (gleiche Ziffern, auf-/absteigende Folgen) */
-const weakPin = (pin: string) => /^(\d)\1+$/.test(pin) || "0123456789".includes(pin) || "9876543210".includes(pin);
+const COMMON_PINS = new Set(["1212", "2580", "0815", "4711", "1004", "2000", "6969", "1122", "1313", "2468", "1357", "0007", "123123", "112233", "121212", "696969"]);
+const weakPin = (pin: string) =>
+  /^(\d)\1+$/.test(pin) || "0123456789".includes(pin) || "9876543210".includes(pin) || COMMON_PINS.has(pin) || /^(19|20)\d{2}$/.test(pin);
 
 /** Entsperr-PIN für den Übergabe-Modus setzen oder entfernen (nur eigenes Konto, mit Passwort bestätigt). */
 export async function setUnlockPinAction(_: SettingsState, form: FormData): Promise<SettingsState> {

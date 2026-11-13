@@ -10,7 +10,7 @@ export function UnlockForm({ hasPin }: { hasPin: boolean }) {
     <form action={action} className="flex flex-col gap-4">
       <FormError message={state?.error} />
       <Field label={hasPin ? "PIN oder Passwort" : "Passwort"}>
-        <Input name="secret" type="password" inputMode={hasPin ? "numeric" : undefined} autoComplete="off" autoFocus required />
+        <Input name="secret" type="password" autoComplete="off" autoFocus required />
       </Field>
       <Button type="submit" disabled={pending}>Entsperren</Button>
     </form>

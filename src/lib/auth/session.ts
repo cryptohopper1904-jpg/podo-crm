@@ -63,9 +63,10 @@ export async function rotateSession(sessionId: string, userId: string, organizat
   const token = newToken();
   const meta = await requestMeta().catch(() => ({ ip: null, userAgent: null }));
   const created = await db.transaction(async (tx) => {
+    // gesperrte Sitzungen (Übergabe-Modus) werden nie rotiert – sonst wäre die neue Sitzung entsperrt
     const [old] = await tx
       .delete(sessions)
-      .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId), gt(sessions.expiresAt, new Date())))
+      .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId), gt(sessions.expiresAt, new Date()), isNull(sessions.lockedAt)))
       .returning();
     if (!old) return null;
     await tx.insert(sessions).values({
@@ -113,12 +114,15 @@ export async function markSessionVerified() {
   const jar = await cookies();
   const token = readSessionToken(jar);
   if (!token) return;
-  const [old] = await db.delete(sessions).where(eq(sessions.id, sha256(token))).returning();
+  const [old] = await db.delete(sessions).where(and(eq(sessions.id, sha256(token)), isNull(sessions.lockedAt))).returning();
   if (old) await createSession(old.userId, old.organizationId, true);
 }
 
-/** Liest die Sitzung (gecacht pro Request). Gibt null zurück, wenn keine gültige Sitzung existiert. */
-export const getSession = cache(async () => {
+/**
+ * Liest die Sitzung INKLUSIVE gesperrter (Übergabe-Modus). Nur für /entsperren, getAuthState und das Sperren selbst.
+ * Eine Sperre älter als HANDOVER_MAX_MS beendet die Sitzung (auch beim Entsperren gilt die 30-Minuten-Grenze).
+ */
+export const getSessionIncludingLocked = cache(async () => {
   const jar = await cookies();
   const token = readSessionToken(jar);
   if (!token) return null;
@@ -129,7 +133,21 @@ export const getSession = cache(async () => {
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(and(eq(sessions.id, id), gt(sessions.expiresAt, new Date())))
     .limit(1);
+  if (row?.session.lockedAt && Date.now() - row.session.lockedAt.getTime() > HANDOVER_MAX_MS) {
+    await db.delete(sessions).where(eq(sessions.id, row.session.id));
+    return null;
+  }
   return row ?? null;
+});
+
+/**
+ * Liest die Sitzung (gecacht pro Request). null, wenn keine gültige Sitzung existiert ODER sie gesperrt ist
+ * (Übergabe-Modus) – so kann kein direkter Nutzer (2FA-Einrichtung, Praxiswechsel, Plattform-Aktionen …) eine
+ * gesperrte Sitzung verwenden oder durch Rotation entsperren.
+ */
+export const getSession = cache(async () => {
+  const row = await getSessionIncludingLocked();
+  return row && !row.session.lockedAt ? row : null;
 });
 
 export type AuthContext = {
@@ -208,24 +226,31 @@ export const HANDOVER_MAX_FAILURES = 5;
 export async function lockCurrentSession(returnPath: string) {
   const row = await getSession();
   if (!row) return false;
-  const safe = /^\/(?!\/)[\w\-/?=&.%]*$/.test(returnPath) ? returnPath.slice(0, 300) : "/heute";
-  await db.update(sessions).set({ lockedAt: new Date(), lockReturn: safe, unlockFailures: 0 }).where(eq(sessions.id, row.session.id));
+  const safe = isSafeReturnPath(returnPath) ? returnPath : "/heute";
+  // Neues Token beim Sperren: setzt das Cookie neu (leert den Seiten-Zwischenspeicher des Routers, „Zurück“ zeigt
+  // keine Praxisseiten mehr aus dem Cache) und macht das alte Token wertlos.
+  const token = newToken();
+  const moved = await db.transaction(async (tx) => {
+    const [old] = await tx.delete(sessions).where(and(eq(sessions.id, row.session.id), isNull(sessions.lockedAt))).returning();
+    if (!old) return null;
+    await tx.insert(sessions).values({ ...old, id: sha256(token), lockedAt: new Date(), lockReturn: safe, unlockFailures: 0 });
+    return old;
+  });
+  if (!moved) return false;
+  await setSessionCookie(token, moved.expiresAt);
   return true;
 }
+
+/** Nur interne, einfache Pfade (kein //, kein \\, keine Schemata) */
+export const isSafeReturnPath = (p: string) => p.length <= 300 && /^\/(?!\/)[\w\-/?=&.%]*$/.test(p);
 
 export const getAuth = cache(async (): Promise<AuthContext | null> => (await getAuthState()).auth);
 
 export const getAuthState = cache(async (): Promise<AuthState> => {
-  const row = await getSession();
+  const row = await getSessionIncludingLocked();
   if (!row || !row.session.verified) return NONE;
   // Übergabe-Modus: Gerät liegt bei der Patient:in – keine Praxisdaten, bis PIN/Passwort eingegeben ist
-  if (row.session.lockedAt) {
-    if (Date.now() - row.session.lockedAt.getTime() > HANDOVER_MAX_MS) {
-      await db.delete(sessions).where(eq(sessions.id, row.session.id));
-      return NONE;
-    }
-    return LOCKED;
-  }
+  if (row.session.lockedAt) return LOCKED;
   if (!row.session.organizationId) return row.user.isPlatformAdmin && !row.user.totpEnabled ? PENDING_2FA : NONE;
   const orgId = row.session.organizationId;
   const req = await requestInfo();

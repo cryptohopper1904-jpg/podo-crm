@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { Lock } from "lucide-react";
-import { getSession } from "@/lib/auth/session";
+import { getSessionIncludingLocked } from "@/lib/auth/session";
 import { logoutAction } from "../actions";
 import { UnlockForm } from "./unlock-form";
 
@@ -11,7 +11,7 @@ export const metadata = { title: "Gerät entsperren" };
  * angemeldeten Person. Bewusst ohne Namen der Patient:in und ohne Praxisdaten.
  */
 export default async function UnlockPage() {
-  const row = await getSession();
+  const row = await getSessionIncludingLocked();
   if (!row) redirect("/login");
   if (!row.session.lockedAt) redirect("/heute");
   return (

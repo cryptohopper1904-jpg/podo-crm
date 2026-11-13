@@ -60,7 +60,7 @@ export async function handoverAction(form: FormData) {
   if (!patientId.success) redirect("/kunden");
   const res = await createAnamnesisLink(auth, patientId.data);
   if ("error" in res) redirect(`/kunden/${patientId.data}/anamnese?uebergabe=fehler`);
-  await lockCurrentSession(`/kunden/${patientId.data}/anamnese`);
+  if (!(await lockCurrentSession(`/kunden/${patientId.data}/anamnese`))) redirect("/login");
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "handover.start", entity: "patient", entityId: patientId.data });
   redirect(`/anamnese/${res.token}?vor-ort=1`);
 }
