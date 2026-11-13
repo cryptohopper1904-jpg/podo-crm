@@ -69,6 +69,7 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
         {toggle("feiertage", options.holidays, "Feiertage", stateName)}
         {toggle("ferien", options.schoolHolidays, "Schulferien", `${stateName} · Quelle: KMK`)}
         {toggle("abwesend", options.absences, "Abwesenheiten (Team)", full ? "Hinweise in Kopfzeilen; Verfügbarkeit bleibt markiert" : "Hinweis je Tag")}
+        {toggle("sperr", options.blocks, "Sperrzeiten", full ? "Pausen, Schulungen … einzeichnen; bleiben gesperrt" : "Hinweis je Tag; bleiben gesperrt")}
         {toggle("abgesagt", options.cancelled, "Abgesagte Termine")}
         {full ? toggle("az", options.workHours, "Arbeitszeiten schattieren") : <input type="hidden" name="az" value={options.workHours ? "1" : "0"} />}
         {toggle("kw", options.weekNumbers, "Kalenderwochen (KW)", "in Woche und Monat")}

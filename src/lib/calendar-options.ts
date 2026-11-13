@@ -13,6 +13,8 @@ export type CalendarOptions = {
   holidays: boolean;
   schoolHolidays: boolean;
   absences: boolean;
+  /** Sperrzeiten (Pause, Schulung …) einzeichnen – nur Anzeige, die Verfügbarkeit bleibt gesperrt */
+  blocks: boolean;
   /** abgesagte Termine anzeigen (für die aktuelle Ansicht aufgelöst) */
   cancelled: boolean;
   weekend: WeekendMode;
@@ -33,6 +35,7 @@ export function defaultCalendarOptions(mode: CalendarMode): CalendarOptions {
     holidays: true,
     schoolHolidays: false,
     absences: true,
+    blocks: true,
     cancelled: mode === "simple",
     weekend: "auto",
     workHours: true,
@@ -42,7 +45,7 @@ export function defaultCalendarOptions(mode: CalendarMode): CalendarOptions {
   };
 }
 
-const BOOL_KEYS = ["holidays", "schoolHolidays", "absences", "workHours", "weekNumbers", "cancelledSimple", "cancelledFull"] as const;
+const BOOL_KEYS = ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "cancelledSimple", "cancelledFull"] as const;
 const isHour = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 24;
 
 /** Gespeicherte Optionen aus users.prefs prüfen (unbekannte/ungültige Felder fallen weg). */
@@ -62,6 +65,7 @@ export const OPTION_PARAMS = {
   feiertage: "holidays",
   ferien: "schoolHolidays",
   abwesend: "absences",
+  sperr: "blocks",
   abgesagt: "cancelled",
   az: "workHours",
   kw: "weekNumbers",
@@ -87,6 +91,7 @@ export function parseOptionParams(sp: Record<string, string | string[] | undefin
   set("holidays", b("feiertage"));
   set("schoolHolidays", b("ferien"));
   set("absences", b("abwesend"));
+  set("blocks", b("sperr"));
   set("cancelled", b("abgesagt"));
   set("workHours", b("az"));
   set("weekNumbers", b("kw"));
@@ -122,7 +127,7 @@ export function toStoredOptions(mode: CalendarMode, o: CalendarOptions, prev: St
   const otherKey = mode === "simple" ? "cancelledFull" : "cancelledSimple";
   if (prev[otherKey] !== undefined) out[otherKey] = prev[otherKey];
   if (o.cancelled !== d.cancelled) out[mode === "simple" ? "cancelledSimple" : "cancelledFull"] = o.cancelled;
-  for (const k of ["holidays", "schoolHolidays", "absences", "workHours", "weekNumbers", "weekend"] as const) {
+  for (const k of ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "weekend"] as const) {
     if (o[k] !== d[k]) (out as Record<string, unknown>)[k] = o[k];
   }
   const t = clampTimeAxis(o.startHour, o.endHour, d);

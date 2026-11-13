@@ -17,6 +17,7 @@ describe("Kalender-Anzeigeoptionen", () => {
       holidays: true,
       schoolHolidays: false,
       absences: true,
+      blocks: true,
       cancelled: false,
       weekend: "auto",
       workHours: true,

@@ -10,6 +10,8 @@ import { ABSENCE_KINDS, computeAvailability, type Availability, type TimeRange }
 import { berlinDateIso } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { practiceHours } from "@/lib/opening-hours";
+import { blocksFor } from "@/lib/calendar-blocks";
+import { loadBlockOccurrences } from "./calendar-blocks";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 
@@ -69,13 +71,13 @@ async function orgInfo(org: string) {
 
 /**
  * Verfügbarkeit einer Person an einem Tag (Berliner Datum) – für Kalender und Online-Buchung.
- * Berücksichtigt Arbeitszeiten je Wochentag, Abwesenheiten und gesetzliche Feiertage des Bundeslands.
+ * Berücksichtigt Arbeitszeiten je Wochentag, Abwesenheiten, Sperrzeiten und gesetzliche Feiertage des Bundeslands.
  * Sind für die Person gar keine Arbeitszeiten gepflegt, gelten die Öffnungszeiten der Praxis je Wochentag
  * (`source: "opening_hours"`).
  */
 export async function availability(org: string, userId: string, dateIso: string): Promise<Availability> {
   const info = await orgInfo(org);
-  const { hours, abs } = await withOrg(org, async (tx) => ({
+  const { hours, abs, blocks } = await withOrg(org, async (tx) => ({
     hours: await tx
       .select({ weekday: workingHours.weekday, startTime: workingHours.startTime, endTime: workingHours.endTime })
       .from(workingHours)
@@ -84,8 +86,9 @@ export async function availability(org: string, userId: string, dateIso: string)
       .select({ startsOn: absences.startsOn, endsOn: absences.endsOn, kind: absences.kind })
       .from(absences)
       .where(and(eq(absences.organizationId, org), eq(absences.userId, userId), lte(absences.startsOn, dateIso), gte(absences.endsOn, dateIso))),
+    blocks: await loadBlockOccurrences(tx, org, [userId], dateIso, dateIso),
   }));
-  return computeAvailability({ dateIso, hours, absences: abs, holiday: holidayOn(dateIso, info.state), opening: info.opening });
+  return computeAvailability({ dateIso, hours, absences: abs, holiday: holidayOn(dateIso, info.state), opening: info.opening, blocks: blocksFor(blocks, userId, dateIso) });
 }
 
 export async function teamOverview(auth: AuthContext, fromIso: string, toIso: string) {
