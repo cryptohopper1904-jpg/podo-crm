@@ -15,7 +15,9 @@ describe("Vorlagen: Platzhalter", () => {
     const v = placeholderValues({ name: "Praxis X", contactPerson: null, city: null }, "Max");
     expect(renderText("{{anrede}},", v)).toBe("Guten Tag,");
     expect(renderText("Guten Tag {{ansprechpartner}},", v)).toBe("Guten Tag,");
-    expect(renderText("in {{ort}}.", v)).toBe("in Ihrer Region.");
+    expect(renderText("in {{ort}}.", v)).toBe(".");
+    expect(renderText("PodoHero – Praxissoftware für die Podologie in {{ort}}", v)).toBe("PodoHero – Praxissoftware für die Podologie");
+    expect(renderText("Podologie in {{ort}}", placeholderValues({ name: "P", city: "Potsdam" }, "Max"))).toBe("Podologie in Potsdam");
   });
 
   it("Werte werden nicht erneut ersetzt (keine Platzhalter-Injektion) und sind einzeilig", () => {
@@ -81,5 +83,16 @@ describe("composeMail", () => {
   it("List-Unsubscribe (Link + mailto) und One-Click-Kopfzeile", () => {
     expect(m.headers["List-Unsubscribe"]).toBe("<https://podo.example/abmelden/abc.def>, <mailto:max@podo.example?subject=Abmelden>");
     expect(m.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+  });
+});
+
+describe("Fußzeile: Quelle und Widerruf", () => {
+  const base = { template: { subject: "S", body: "B" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", privacyUrl: "https://p/datenschutz#vertrieb" };
+  it("konkrete Quelle des Leads, sonst allgemeine Liste; Hinweis auf Widerruf", () => {
+    expect(composeMail({ ...base, source: "osm+impressum" }).text).toContain("stammen aus: OpenStreetMap und dem Impressum Ihrer Praxis-Website");
+    expect(composeMail({ ...base, source: "Messe XY 2026 – Formular" }).text).toContain("stammen aus: Messe XY 2026 – Formular.");
+    expect(composeMail({ ...base, source: null }).text).toContain("stammen aus: öffentlich zugänglichen Quellen (Praxis-Website/Impressum, OpenStreetMap)");
+    expect(composeMail({ ...base, source: "manuell" }).text).toContain("öffentlich zugänglichen Quellen");
+    expect(composeMail(base).text).toContain("Eine erteilte Einwilligung können Sie jederzeit widerrufen (Art. 7 Abs. 3 DSGVO).");
   });
 });

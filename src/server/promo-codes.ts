@@ -316,7 +316,10 @@ export async function runPromoTrialReturns(now = new Date()): Promise<{ checked:
   const due = await db
     .select({ id: organizations.id })
     .from(organizations)
-    .where(sql`${organizations.settings}->>'promoReturnFree' = 'true' and ${organizations.subscriptionStatus} = 'trialing' and ${organizations.trialEndsAt} <= ${now}`)
+    .where(
+      sql`${organizations.settings}->>'promoReturnFree' = 'true' and ${organizations.subscriptionStatus} = 'trialing' and ${organizations.stripeSubscriptionId} is null and ${organizations.trialEndsAt} <= ${now}`,
+    )
+    .orderBy(organizations.trialEndsAt)
     .limit(500);
   const out = { checked: due.length, switched: 0, kept: 0, failed: 0 };
   for (const { id } of due) {

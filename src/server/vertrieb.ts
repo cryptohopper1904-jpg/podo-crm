@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, count, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings } from "@/db/schema";
+import { promoCodes, salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings } from "@/db/schema";
 import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
@@ -10,7 +10,7 @@ import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibili
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
 import { promoLandingUrl } from "@/lib/promo-codes";
 import { usableCodesFor } from "./promo-codes";
-import { addToBlocklist, blockedEmails, blocklistOverview, isBlocked } from "./blocklist";
+import { addLeadToBlocklist, addToBlocklist, assertBlocklistKey, blockedEmails, blocklistKeyProblem, blocklistMatcher, blocklistOverview, isBlocked } from "./blocklist";
 import { unsubscribeUrl, verifyUnsubscribeToken } from "@/lib/vertrieb/unsubscribe-token";
 import { platformMailPort } from "./mail";
 
@@ -42,6 +42,8 @@ export type SalesSettings = {
   impressum: string;
   delays: Delays;
   templates: Template[];
+  /** Betreiber hat bestätigt: Versanddienstleister mit AVV ist eingetragen (Unterauftragnehmer) – sonst kein Versand */
+  mailProcessorConfirmed: boolean;
   /** true, wenn noch nie gespeichert (Werte = Standard) */
   isDefault: boolean;
 };
@@ -66,6 +68,7 @@ export async function getSalesSettings(): Promise<SalesSettings> {
     impressum: row?.impressum ?? "",
     delays: { delay2Days: row?.delay2Days ?? DEFAULT_DELAYS.delay2Days, delay3Days: row?.delay3Days ?? DEFAULT_DELAYS.delay3Days },
     templates: validTemplates(row?.templates) ?? DEFAULT_TEMPLATES.map((t) => ({ ...t })),
+    mailProcessorConfirmed: row?.mailProcessorConfirmed ?? false,
     isDefault: !row,
   };
 }
@@ -77,6 +80,7 @@ export function settingsProblems(s: SalesSettings, env: Record<string, string | 
   if (!isEmail(s.senderEmail)) p.push("Absender-E-Mail fehlt oder ist ungültig (Einstellungen).");
   if (s.replyTo && !isEmail(s.replyTo)) p.push("Antwortadresse ist ungültig.");
   if (s.impressum.trim().length < 30) p.push("Impressum/Absenderangaben fehlen (Firma, Anschrift, Kontakt).");
+  if (!s.mailProcessorConfirmed) p.push("Versanddienstleister mit AVV ist nicht bestätigt (Unterauftragnehmer eintragen, dann in den Einstellungen bestätigen).");
   if (env.NODE_ENV === "production" && !/^https:\/\//.test(env.PUBLIC_URL ?? "")) p.push("PUBLIC_URL (https) ist nicht gesetzt – der Abmeldelink wäre ungültig.");
   s.templates.forEach((t, i) => {
     const e = validateTemplate(t);
@@ -85,7 +89,7 @@ export function settingsProblems(s: SalesSettings, env: Record<string, string | 
   return p;
 }
 
-export type SettingsInput = { senderName: string; senderEmail: string; replyTo: string; impressum: string; delay2Days: number; delay3Days: number };
+export type SettingsInput = { senderName: string; senderEmail: string; replyTo: string; impressum: string; delay2Days: number; delay3Days: number; mailProcessorConfirmed: boolean };
 
 export async function saveSalesSettings(adminUserId: string, input: SettingsInput) {
   const v = {
@@ -95,6 +99,7 @@ export async function saveSalesSettings(adminUserId: string, input: SettingsInpu
     impressum: input.impressum.replace(/\r\n?/g, "\n").trim().slice(0, 1500),
     delay2Days: input.delay2Days,
     delay3Days: input.delay3Days,
+    mailProcessorConfirmed: input.mailProcessorConfirmed === true,
   };
   if (v.senderEmail && !isEmail(v.senderEmail)) throw new Error("Absender-E-Mail ist ungültig.");
   if (v.replyTo && !isEmail(v.replyTo)) throw new Error("Antwortadresse ist ungültig.");
@@ -103,7 +108,7 @@ export async function saveSalesSettings(adminUserId: string, input: SettingsInpu
     .insert(salesSettings)
     .values({ id: 1, ...v, updatedBy: adminUserId })
     .onConflictDoUpdate({ target: salesSettings.id, set: { ...v, updatedBy: adminUserId, updatedAt: new Date() } });
-  await audit({ userId: adminUserId, action: "vertrieb.settings", entity: "sales_settings", meta: { senderEmail: v.senderEmail, replyTo: v.replyTo || null, delays: [v.delay2Days, v.delay3Days] } });
+  await audit({ userId: adminUserId, action: "vertrieb.settings", entity: "sales_settings", meta: { senderEmail: v.senderEmail, replyTo: v.replyTo || null, delays: [v.delay2Days, v.delay3Days], mailProcessorConfirmed: v.mailProcessorConfirmed } });
 }
 
 export async function saveSalesTemplates(adminUserId: string, templates: Template[]) {
@@ -162,9 +167,11 @@ export async function getLead(id: string): Promise<{ lead: Lead; sends: SalesSen
   return { lead, sends, suppressed };
 }
 
-async function assertNoDuplicate(input: LeadInput, exceptId?: string) {
+/** Dubletten und Sperrliste. `previousEmail`: beim Bearbeiten – eine unveränderte (z. B. gesperrte Kunden-)Adresse ist erlaubt. */
+async function assertNoDuplicate(input: LeadInput, exceptId?: string, previousEmail?: string | null) {
   if (input.email) {
-    if (await isBlocked(input.email)) throw new Error("Diese Adresse steht auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
+    const unchanged = previousEmail != null && normalizeEmail(previousEmail) === normalizeEmail(input.email);
+    if (!unchanged && (await isBlocked(input.email))) throw new Error("Diese Adresse steht auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
     const dup = await db
       .select({ id: salesLeads.id })
       .from(salesLeads)
@@ -181,7 +188,9 @@ export async function createLead(adminUserId: string, input: LeadInput): Promise
 }
 
 export async function updateLead(adminUserId: string, id: string, input: LeadInput) {
-  await assertNoDuplicate(input, id);
+  const [prev] = await db.select({ email: salesLeads.email }).from(salesLeads).where(eq(salesLeads.id, id));
+  if (!prev) throw new Error("Eintrag nicht gefunden.");
+  await assertNoDuplicate(input, id, prev.email);
   const email = input.email ? normalizeEmail(input.email) : null;
   await db.transaction(async (tx) => {
     const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
@@ -198,14 +207,24 @@ export async function updateLead(adminUserId: string, id: string, input: LeadInp
 }
 
 /**
- * Einwilligung in Werbe-E-Mails dokumentieren (`note` = wie/wann erteilt, Pflicht) oder entfernen (note = null).
- * Für mehrere Leads möglich; nur Leads mit E-Mail-Adresse. Gibt die Anzahl geänderter Leads zurück.
+ * Einwilligung in Werbe-E-Mails für GENAU EINEN Lead dokumentieren (`note` = Wortlaut, Kanal, Datum – Pflicht).
+ * Bewusst keine Sammelaktion: jede Einwilligung wird einzeln mit ihrem Nachweis erfasst. Nur mit E-Mail-Adresse.
  */
-export async function setLeadConsent(adminUserId: string, ids: string[], note: string | null, now = new Date()): Promise<number> {
+export async function recordLeadConsent(adminUserId: string, id: string, note: string, now = new Date()): Promise<boolean> {
+  return (await setLeadConsent(adminUserId, [id], note, now)) === 1;
+}
+
+/** Einwilligung entfernen (auch für mehrere Leads, z. B. Widerruf). */
+export async function removeLeadConsent(adminUserId: string, ids: string[], now = new Date()): Promise<number> {
+  return setLeadConsent(adminUserId, ids, null, now);
+}
+
+async function setLeadConsent(adminUserId: string, ids: string[], note: string | null, now = new Date()): Promise<number> {
   const list = [...new Set(ids)].slice(0, 500);
   if (!list.length) return 0;
+  if (note !== null && list.length !== 1) throw new Error("Eine Einwilligung wird je Praxis einzeln dokumentiert.");
   const clean = note === null ? null : note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
-  if (clean !== null && clean.length < 3) throw new Error("Bitte angeben, wie und wann die Einwilligung erteilt wurde.");
+  if (clean !== null && clean.length < 3) throw new Error("Bitte Wortlaut, Kanal und Datum der Einwilligung angeben.");
   return db.transaction(async (tx) => {
     const changed = await tx
       .update(salesLeads)
@@ -227,11 +246,13 @@ export async function setLeadConsent(adminUserId: string, ids: string[], note: s
 async function deleteLeadsForOptOut(tx: Tx, ids: string[]) {
   if (!ids.length) return;
   await tx.update(salesSends).set({ messageId: null, error: null }).where(inArray(salesSends.leadId, ids));
+  // persönliche Aktionscodes: Bezeichnung kann den Praxisnamen enthalten
+  await tx.update(promoCodes).set({ label: "(gelöscht)" }).where(inArray(promoCodes.leadId, ids));
   await tx.delete(salesLeads).where(inArray(salesLeads.id, ids));
 }
 
 /**
- * Status setzen. „abgemeldet“: Adresse als Prüfwert auf die Sperrliste und Lead löschen (Rückgabe „deleted“).
+ * Status setzen. „abgemeldet“: Adresse, Website und Name+PLZ als Prüfwerte auf die Sperrliste, Lead löschen („deleted“).
  */
 export async function setLeadStatus(adminUserId: string, id: string, status: LeadStatus): Promise<"updated" | "deleted"> {
   if (!isLeadStatus(status)) throw new Error("Status ungültig.");
@@ -239,7 +260,7 @@ export async function setLeadStatus(adminUserId: string, id: string, status: Lea
     const [before] = await tx.select().from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!before) throw new Error("Eintrag nicht gefunden.");
     if (status === "abgemeldet") {
-      if (before.email) await addToBlocklist(tx, before.email, "manuell");
+      await addLeadToBlocklist(tx, before, "manuell");
       await deleteLeadsForOptOut(tx, [id]);
       await audit({ userId: adminUserId, action: "vertrieb.opt_out", entity: "sales_lead", entityId: id, meta: { from: before.status, via: "status", blocked: !!before.email } }, tx);
       return "deleted" as const;
@@ -268,7 +289,8 @@ export async function addSuppression(adminUserId: string, email: string) {
   if (!isEmail(e)) throw new Error("Bitte eine gültige E-Mail-Adresse angeben.");
   await db.transaction(async (tx) => {
     await addToBlocklist(tx, e, "widerspruch");
-    const leads = await tx.select({ id: salesLeads.id }).from(salesLeads).where(and(sql`lower(${salesLeads.email}) = ${e}`, sql`${salesLeads.status} <> 'kunde'`)).for("update");
+    const leads = await tx.select().from(salesLeads).where(and(sql`lower(${salesLeads.email}) = ${e}`, sql`${salesLeads.status} <> 'kunde'`)).for("update");
+    for (const l of leads) await addLeadToBlocklist(tx, l, "widerspruch");
     await deleteLeadsForOptOut(tx, leads.map((l) => l.id));
     await audit({ userId: adminUserId, action: "vertrieb.suppression_added", entity: "sales_suppression", meta: { leadsDeleted: leads.length } }, tx);
   });
@@ -280,7 +302,9 @@ const suppressedSet = (emails: string[]) => blockedEmails(emails);
 
 export type ImportPreview = { decisions: ImportDecision[]; newCount: number; skippedCount: number; error?: string };
 
-export async function previewImport(csv: string): Promise<ImportPreview> {
+export async function previewImport(csv: string, exec: Tx | typeof db = db): Promise<ImportPreview> {
+  const keyProblem = await blocklistKeyProblem();
+  if (keyProblem) return { decisions: [], newCount: 0, skippedCount: 0, error: keyProblem };
   const parsed = parseLeadCsv(csv);
   if (parsed.error) return { decisions: [], newCount: 0, skippedCount: 0, error: parsed.error };
   const existing = await db.select({ email: salesLeads.email, name: salesLeads.name, zip: salesLeads.zip }).from(salesLeads);
@@ -288,7 +312,8 @@ export async function previewImport(csv: string): Promise<ImportPreview> {
   const decisions = dedupeLeads(parsed.rows, {
     emails: new Set(existing.flatMap((e) => (e.email ? [normalizeEmail(e.email)] : []))),
     nameZips: new Set(existing.map((e) => nameZipKey(e.name, e.zip))),
-    suppressed: await suppressedSet(emails),
+    suppressed: await blockedEmails(emails, exec),
+    blocked: await blocklistMatcher(exec),
   });
   const newCount = decisions.filter((d) => d.action === "neu").length;
   return { decisions, newCount, skippedCount: decisions.length - newCount };
@@ -301,10 +326,13 @@ export async function previewImport(csv: string): Promise<ImportPreview> {
 export async function importLeads(adminUserId: string, csv: string, source: string): Promise<{ imported: number; skipped: number; error?: string }> {
   const src = source.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
   if (src.length < 3) return { imported: 0, skipped: 0, error: "Bitte die Quelle der Daten angeben." };
+  const keyProblem = await blocklistKeyProblem();
+  if (keyProblem) return { imported: 0, skipped: 0, error: keyProblem };
   return db.transaction(async (tx) => {
     // Parallele Importe nacheinander (Dublettenprüfung gegen den Bestand bleibt gültig)
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('podo:vertrieb:import'))`);
-    const p = await previewImport(csv);
+    await assertBlocklistKey(tx);
+    const p = await previewImport(csv, tx);
     if (p.error) return { imported: 0, skipped: 0, error: p.error };
     const rows = p.decisions.flatMap((d) => (d.action === "neu" ? [d.lead] : []));
     if (rows.length) await tx.insert(salesLeads).values(rows.map((l) => ({ ...l, source: (l.source ? `${src} – ${l.source}` : src).slice(0, 200) })));
@@ -365,6 +393,7 @@ function mailFor(lead: Lead, step: number, s: SalesSettings, env: Record<string,
     unsubscribeMailto: isEmail(replyTo) ? replyTo : null,
     promo: c.promo,
     privacyUrl: `${(env.PUBLIC_URL ?? "").replace(/\/+$/, "")}/datenschutz#vertrieb`,
+    source: lead.source,
   });
 }
 
@@ -378,7 +407,8 @@ export async function previewSend(ids: string[], deps: { now?: Date; env?: Recor
   const leads = ids.length ? await db.select().from(salesLeads).where(inArray(salesLeads.id, uniqueIds(ids))) : [];
   const ordered = uniqueIds(ids).flatMap((id) => leads.filter((l) => l.id === id));
   const plan = planBatch(ordered, { now, delays: s.delays, suppressed: await suppressedSet(ordered.flatMap((l) => (l.email ? [l.email] : []))), sentLast24h: await sentLast24h(now) });
-  const problems = settingsProblems(s, env);
+  const keyProblem = await blocklistKeyProblem();
+  const problems = [...settingsProblems(s, env), ...(keyProblem ? [keyProblem] : [])];
   const ctx = await mailContext(ordered, s, env, db, now);
   const skipped = plan.skipped.map((x) => ({ id: x.lead.id, name: x.lead.name, reason: x.reason }));
   const send: { lead: Lead; step: number; mail: NonNullable<ReturnType<typeof mailFor>> }[] = [];
@@ -411,6 +441,8 @@ export async function sendNextMails(
   const s = await getSalesSettings();
   const problems = settingsProblems(s, env);
   if (problems.length) throw new Error(problems.join(" "));
+  // fail-closed: Sperrliste nur mit passendem Schlüssel wirksam
+  await assertBlocklistKey();
   const port = deps.port ?? platformMailPort(env);
   if (port.isMock && env.NODE_ENV === "production") throw new MailNotConfiguredError("Vertriebsmails: in Produktion ist kein echter Versand eingerichtet (SMTP_URL).");
   const from = formatFrom(s.senderName, s.senderEmail);
@@ -464,17 +496,23 @@ export async function sendStats(now = new Date()) {
 
 // ───────────── Speicherdauer ─────────────
 
-/** Speicherdauer laut Datenschutzerklärung (Abschnitt „Vertrieb“): Einträge ohne Kontakt höchstens 24 Monate */
-export const LEAD_RETENTION_MONTHS = 24;
+/** Speicherdauer laut Datenschutzerklärung (Abschnitt „Vertrieb“): ohne Einwilligung 12, mit Einwilligung 24 Monate ohne Aktivität */
+export const LEAD_RETENTION_MONTHS = { withoutConsent: 12, withConsent: 24 } as const;
 
 /**
- * Löscht Leads ohne Kontakt seit LEAD_RETENTION_MONTHS: letzte Aktivität (angelegt, geändert, Mail, Antwort,
- * Einwilligung, Verlauf) älter als die Frist, Status nicht „Kunde“. Die Sperrliste bleibt (Abmeldungen weiter beachten).
+ * Löscht Leads ohne Aktivität (angelegt, geändert, Mail, Antwort, Einwilligung, Verlauf) seit 12 Monaten (ohne
+ * Einwilligung) bzw. 24 Monaten (mit Einwilligung), Status nicht „Kunde“. Die Sperrliste bleibt.
  * Aufruf: nächtlicher Cron /api/cron/lead-search. Gibt die Anzahl gelöschter Einträge zurück.
  */
 export async function purgeStaleLeads(now = new Date()): Promise<number> {
-  const cutoff = new Date(now);
-  cutoff.setMonth(cutoff.getMonth() - LEAD_RETENTION_MONTHS);
+  const before = (months: number) => {
+    const d = new Date(now);
+    d.setMonth(d.getMonth() - months);
+    return d;
+  };
+  const cutoffWithout = before(LEAD_RETENTION_MONTHS.withoutConsent);
+  const cutoffWith = before(LEAD_RETENTION_MONTHS.withConsent);
+  const cutoff = sql`(case when ${salesLeads.consentAt} is null then ${cutoffWithout}::timestamptz else ${cutoffWith}::timestamptz end)`;
   const r = await db
     .delete(salesLeads)
     .where(
@@ -485,7 +523,7 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
       ),
     )
     .returning({ id: salesLeads.id });
-  if (r.length) await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.length, months: LEAD_RETENTION_MONTHS } });
+  if (r.length) await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.length, months: { ...LEAD_RETENTION_MONTHS } } });
   return r.length;
 }
 
@@ -505,10 +543,10 @@ export async function unsubscribeByToken(token: string): Promise<boolean> {
   if (!leadId) return false;
   const id = leadId;
   await db.transaction(async (tx) => {
-    const [lead] = await tx.select({ email: salesLeads.email, status: salesLeads.status }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
+    const [lead] = await tx.select().from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!lead) return;
-    // Abmeldung = Widerspruch: Prüfwert auf die Sperrliste, Lead samt Verlauf löschen
-    if (lead.email) await addToBlocklist(tx, lead.email, "abgemeldet");
+    // Abmeldung = Widerspruch: Prüfwerte (Adresse, Website, Name+PLZ) auf die Sperrliste, Lead samt Verlauf löschen
+    await addLeadToBlocklist(tx, lead, "abgemeldet");
     await deleteLeadsForOptOut(tx, [id]);
     await audit({ action: "vertrieb.unsubscribe", entity: "sales_lead", entityId: id, meta: { from: lead.status } }, tx);
   });

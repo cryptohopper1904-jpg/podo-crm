@@ -171,7 +171,13 @@ export type ImportDecision = { line: number; lead: LeadInput; action: "neu" } | 
 /** Entscheidet je Zeile: neu oder übersprungen (Fehler, Dublette in Datei/Bestand, Sperrliste). */
 export function dedupeLeads(
   rows: ParsedRow[],
-  existing: { emails: ReadonlySet<string>; nameZips: ReadonlySet<string>; suppressed: ReadonlySet<string> },
+  existing: {
+    emails: ReadonlySet<string>;
+    nameZips: ReadonlySet<string>;
+    suppressed: ReadonlySet<string>;
+    /** Sperrliste für Website und Name+PLZ (abgemeldete Praxis mit anderer Adresse) */
+    blocked?: { hasHost(website: string | null | undefined): boolean; hasNameZip(name: string, zip: string | null | undefined): boolean };
+  },
 ): ImportDecision[] {
   const emails = new Set(existing.emails);
   const nameZips = new Set(existing.nameZips);
@@ -184,6 +190,7 @@ export function dedupeLeads(
     const { lead } = r;
     const nz = nameZipKey(lead.name, lead.zip);
     if (lead.email && existing.suppressed.has(lead.email)) out.push({ line: r.line, lead, action: "übersprungen", reason: "Auf der Sperrliste (abgemeldet)" });
+    else if (existing.blocked?.hasHost(lead.website) || existing.blocked?.hasNameZip(lead.name, lead.zip)) out.push({ line: r.line, lead, action: "übersprungen", reason: "Praxis hat sich abgemeldet (Sperrliste: Website bzw. Name und PLZ)" });
     else if (lead.email && emails.has(lead.email)) out.push({ line: r.line, lead, action: "übersprungen", reason: "E-Mail bereits vorhanden" });
     else if (nameZips.has(nz)) out.push({ line: r.line, lead, action: "übersprungen", reason: "Name und PLZ bereits vorhanden" });
     else {

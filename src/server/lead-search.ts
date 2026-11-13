@@ -27,7 +27,7 @@ import {
   type LeadSearch,
 } from "@/lib/vertrieb/lead-search";
 import { addressProvider, geocodePlace } from "./address-suggest";
-import { blocklistMatcher } from "./blocklist";
+import { assertBlocklistKey, blocklistMatcher } from "./blocklist";
 
 /**
  * Nächtliche Praxissuche für den Vertrieb (Plattform-Betreiber).
@@ -273,6 +273,8 @@ async function enrichExisting(c: RunCtx, enrich: LeadSearch["enrich"], startedAt
 export async function runLeadSearch(opts: { trigger: "cron" | "manual"; adminUserId?: string | null }, deps: RunDeps = {}): Promise<RunResult> {
   const now = deps.now ?? (() => new Date());
   const started = now();
+  // fail-closed: ohne passenden Sperrlisten-Schlüssel würden abgemeldete Praxen wieder angelegt
+  await assertBlocklistKey();
   // atomar prüfen und „läuft“ setzen (Startort/Ring/Schalter werden unter der Sperre geprüft)
   let status: RunResult["status"] | null = null;
   const { before: s } = await updateLeadSearch((cur) => {

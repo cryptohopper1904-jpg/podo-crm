@@ -31,6 +31,22 @@ Pflicht direkt nach der Installation:
 
 Langfristig (SaaS-Betrieb): Schlüssel in ein KMS/Vault verlagern.
 
+### APP_ENCRYPTION_KEY nie tauschen ohne Umschlüsseln
+
+Aus `APP_ENCRYPTION_KEY` werden weitere Schlüssel abgeleitet. Ein Tausch ohne Umschlüsseln macht nicht nur Dateien und
+Zugangsdaten unlesbar, sondern auch:
+
+- **Sperrliste des Vertriebs** (`sales_blocklist`): Abgemeldete Adressen, Websites und Praxen sind dort nur als
+  nicht umkehrbarer Prüfwert gespeichert (HMAC mit Präfix `v1:`, Schlüssel aus `APP_ENCRYPTION_KEY`). Mit einem neuen
+  Schlüssel passt **kein** Prüfwert mehr – die Sperrliste wäre **wirkungslos**, abgemeldete Praxen würden wieder
+  angeschrieben (Abmahnrisiko, Art. 21 DSGVO). Deshalb speichert die App einen Kanarienwert
+  (`sales_settings.blocklist_key_check`); passt er nicht zum aktuellen Schlüssel, sperrt sie Versand, Import und
+  Praxissuche mit der Meldung „Sperrlisten-Schlüssel passt nicht – Versand gesperrt (siehe BETRIEB.md)“.
+  Abhilfe: alten Schlüssel wieder einsetzen. Eine Rotation geht nur per Schlüsselbund (alte Version `v1` weiter
+  vorhalten, neue Einträge mit `v2:` schreiben, beim Abgleich jede Version prüfen) – das ist noch nicht umgesetzt.
+- **Abmeldelinks** in bereits versendeten Vertriebsmails (`/abmelden/…`, HMAC) werden ungültig.
+- **Signierte Links** (Portal, Kalender-Feeds, Anamnese) werden ungültig.
+
 ---
 
 ## 1. Installation

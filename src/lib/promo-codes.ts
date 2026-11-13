@@ -151,14 +151,14 @@ export function promoTermsText(o: { validUntil: Date | null; limited: boolean })
     "Eine längere laufende Testphase wird nicht verkürzt.",
     "Keine Barauszahlung, nicht mit anderen Aktionen kombinierbar.",
     "Die Testphase endet automatisch, es wird nichts berechnet und kein Abo abgeschlossen.",
-    `Danach können Sie einen Tarif buchen (ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.) oder in den kostenlosen Tarif wechseln (bis ${FREE_MAX_PATIENTS} Patient:innen, ${seatSummary("free")}${missing ? `, ohne ${missing}` : ""}).`,
-    `Praxen, die den Code im kostenlosen Tarif eingelöst haben, kehren danach automatisch in diesen zurück (spätestens in der folgenden Nacht, sofern höchstens ${FREE_MAX_PATIENTS} Patient:innen; weitere Nutzerzugänge außer der Steuerberatung werden dabei deaktiviert).`,
+    `Danach können Sie einen Tarif buchen (ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.) oder in den kostenlosen Tarif wechseln (höchstens ${FREE_MAX_PATIENTS} Patient:innen einschließlich archivierter, ${seatSummary("free")}${missing ? `, ohne ${missing}` : ""}).`,
+    `Praxen, die den Code im kostenlosen Tarif eingelöst haben, kehren danach automatisch in diesen zurück (spätestens in der folgenden Nacht, sofern höchstens ${FREE_MAX_PATIENTS} Patient:innen einschließlich archivierter; weitere Nutzerzugänge außer der Steuerberatung werden dabei deaktiviert).`,
     "Ohne Wahl bleibt die Praxis nur lesbar, alle Daten bleiben exportierbar.",
     "Es gelten die AGB.",
   ].join(" ");
 }
 
 /** Abo-Seite, Kostenlos-Tarif vor dem Einlösen (Rückkehr umgesetzt in returnPromoTrialToFree, src/server/billing.ts) */
-export const PROMO_FREE_RETURN_NOTE_BEFORE = `Ihre Praxis nutzt den kostenlosen Tarif. Mit dem Code wechselt sie in die Testphase. Danach kehrt sie automatisch in den kostenlosen Tarif zurück (spätestens in der folgenden Nacht), wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen hat – sonst ist sie bis zur Buchung eines Tarifs nur lesbar. Weitere Personen werden dann deaktiviert (die Steuerberatung bleibt). Sofort geht es jederzeit mit „Kostenlos weiter nutzen“.`;
+export const PROMO_FREE_RETURN_NOTE_BEFORE = `Ihre Praxis nutzt den kostenlosen Tarif. Mit dem Code wechselt sie in die Testphase. Danach kehrt sie automatisch in den kostenlosen Tarif zurück (spätestens in der folgenden Nacht), wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen (einschließlich archivierter) hat – sonst ist sie bis zur Buchung eines Tarifs nur lesbar. Weitere Personen werden dann deaktiviert (die Steuerberatung bleibt). Sofort geht es jederzeit mit „Kostenlos weiter nutzen“.`;
 /** Abo-Seite, während einer aus dem Kostenlos-Tarif begonnenen Code-Testphase */
-export const PROMO_FREE_RETURN_NOTE = `Nach dem Ende der Testphase kehrt die Praxis automatisch in den kostenlosen Tarif zurück (spätestens in der folgenden Nacht), wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen hat (sonst nur lesbar bis zur Buchung eines Tarifs). Weitere Personen werden dann deaktiviert (die Steuerberatung bleibt). Sofort geht es jederzeit mit „Kostenlos weiter nutzen“.`;
+export const PROMO_FREE_RETURN_NOTE = `Nach dem Ende der Testphase kehrt die Praxis automatisch in den kostenlosen Tarif zurück (spätestens in der folgenden Nacht), wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen (einschließlich archivierter) hat (sonst nur lesbar bis zur Buchung eines Tarifs). Weitere Personen werden dann deaktiviert (die Steuerberatung bleibt). Sofort geht es jederzeit mit „Kostenlos weiter nutzen“.`;

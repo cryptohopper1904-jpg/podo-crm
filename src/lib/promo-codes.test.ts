@@ -126,7 +126,7 @@ describe("Aktionscodes: Links und Texte", () => {
     const t = promoTermsText({ validUntil: new Date("2026-12-31T22:59:59Z"), limited: true });
     expect(t).toMatch(/^Aktionsbedingungen: Nur für Unternehmer:innen \(Praxen\)\. Einlösbar bis 31\.12\.2026, nur in begrenzter Anzahl\./);
     expect(t).toContain(`ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.`);
-    expect(t).toContain("bis 20 Patient:innen, 1 Person, ohne Patientenportal, KI-Telefonagent und Praxis-Website");
+    expect(t).toContain("höchstens 20 Patient:innen einschließlich archivierter, 1 Person, ohne Patientenportal, KI-Telefonagent und Praxis-Website");
     expect(t).toMatch(/Es gelten die AGB\.$/);
     expect(t).toContain("im kostenlosen Tarif eingelöst haben, kehren danach automatisch in diesen zurück (spätestens in der folgenden Nacht");
     expect(promoTermsText({ validUntil: null, limited: false })).toContain("Einlösbar bis auf Widerruf. Je Praxis");

@@ -41,7 +41,7 @@ export const PLACEHOLDER_HELP: Record<Placeholder, string> = {
   praxis: "Name der Praxis",
   ansprechpartner: "Ansprechpartner:in (kann leer sein)",
   anrede: "„Guten Tag Frau Muster“ bzw. „Guten Tag“ ohne Ansprechpartner:in",
-  ort: "Ort der Praxis",
+  ort: "Ort der Praxis (ohne Ort entfällt z. B. „in {{ort}}“ ganz)",
   absender: "Absendername aus den Einstellungen",
   code: "Aktionscode der Kampagne (bzw. persönlicher Code des Leads), z. B. für 3 Monate kostenlos testen",
   link: "Aktionslink …/aktion/CODE (öffentliche Seite mit Registrierung und vorausgefülltem Code)",
@@ -74,7 +74,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
     body: [
       "{{anrede}},",
       "",
-      "ich wollte kurz an meine letzte Nachricht erinnern. Ein Punkt, den Praxen an PodoHero besonders schätzen: Termine aus Doctolib lassen sich per Kalender-Abo (iCal) übernehmen, und aus einem Termin wird mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende.",
+      "ich wollte kurz an meine letzte Nachricht erinnern. Aus einem Termin wird in PodoHero mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende. Außerdem: Doctolib-Termine lassen sich über Ihren Google-Kalender (z. B. mit Docal.io/CalMedi) übernehmen – diese Funktion ist derzeit im Testbetrieb.",
       "",
       "Wenn Sie mögen, zeige ich Ihnen das in 30 Minuten kostenlos. Eine kurze Antwort mit einem Terminvorschlag genügt.",
       "",

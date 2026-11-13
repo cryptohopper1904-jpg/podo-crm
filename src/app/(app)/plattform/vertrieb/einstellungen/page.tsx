@@ -20,7 +20,7 @@ export default async function SettingsPage() {
           Erscheint in jeder Mail. Die Absenderadresse muss eine beim Mail-Dienst (Resend) bestätigte Domain verwenden – Standard ist SMTP_FROM.
         </p>
         {problems.length ? <ul className="mb-4 list-disc rounded-xl bg-accent-soft py-3 pl-8 pr-4 text-sm text-accent-soft-text">{problems.map((p) => <li key={p}>{p}</li>)}</ul> : null}
-        <SettingsForm action={saveSettingsAction} values={{ senderName: s.senderName, senderEmail: s.senderEmail, replyTo: s.replyTo, impressum: s.impressum, ...s.delays }} />
+        <SettingsForm action={saveSettingsAction} values={{ senderName: s.senderName, senderEmail: s.senderEmail, replyTo: s.replyTo, impressum: s.impressum, ...s.delays, mailProcessorConfirmed: s.mailProcessorConfirmed }} />
       </Card>
       <Card>
         <h2 className="font-display text-xl font-semibold">Sperrliste</h2>

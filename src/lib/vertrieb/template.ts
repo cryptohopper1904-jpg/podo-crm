@@ -31,7 +31,8 @@ export function placeholderValues(lead: { name: string; contactPerson?: string |
     praxis: cleanValue(lead.name),
     ansprechpartner: contact,
     anrede: contact ? `Guten Tag ${contact}` : "Guten Tag",
-    ort: cleanValue(lead.city) || "Ihrer Region",
+    // ohne Ort leer – „in {{ort}}“ entfällt dann ganz (renderText)
+    ort: cleanValue(lead.city),
     absender: cleanValue(senderName),
     code: cleanValue(promo?.code, 40),
     link: cleanValue(promo?.link, 300),
@@ -48,7 +49,9 @@ const isPlaceholder = (k: string): k is Placeholder => (PLACEHOLDERS as readonly
 
 /** Ersetzt bekannte Platzhalter in einem Durchgang; unbekannte bleiben sichtbar stehen (Vorschau zeigt den Fehler). */
 export function renderText(text: string, values: TemplateValues): string {
-  return text.replace(TOKEN_RE, (whole, space: string, key: string, punct: string | undefined) => {
+  // Ohne Ort: Präposition davor mit entfernen („… für die Podologie in {{ort}}“ → „… für die Podologie“)
+  const t = values.ort ? text : text.replace(/(^|[ \t]+)(in|aus|bei|um)[ \t]+\{\{\s*ort\s*\}\}/gi, "");
+  return t.replace(TOKEN_RE, (whole, space: string, key: string, punct: string | undefined) => {
     const k = key.toLowerCase();
     if (!isPlaceholder(k)) return whole;
     const v = values[k];
@@ -85,12 +88,25 @@ export type ComposeInput = {
   promo?: PromoValues | null;
   /** Datenschutzhinweis (Art. 14 DSGVO), z. B. https://…/datenschutz#vertrieb */
   privacyUrl: string;
+  /** Quelle der Kontaktdaten dieses Leads (sales_leads.source) – sonst allgemeine Aufzählung */
+  source?: string | null;
   /** mailto-Abmeldung (Antwortadresse), zusätzlich zum Link */
   unsubscribeMailto?: string | null;
 };
 
+const GENERIC_SOURCE = "öffentlich zugänglichen Quellen (Praxis-Website/Impressum, OpenStreetMap) bzw. aus Ihrer Anfrage oder einem persönlichen Kontakt (z. B. Messe)";
+
+/** Quelle als Text für die Fußzeile (Art. 14 Abs. 2 lit. f DSGVO): konkrete Quelle des Leads, sonst allgemein */
+export function sourceText(source: string | null | undefined): string {
+  const s = cleanValue(source, 120);
+  if (!s || /^(manuell|csv-import)$/i.test(s)) return GENERIC_SOURCE;
+  if (/^osm$/i.test(s)) return "OpenStreetMap (öffentlich zugängliche Geschäftsangaben)";
+  if (/^osm\+impressum$/i.test(s)) return "OpenStreetMap und dem Impressum Ihrer Praxis-Website (öffentlich zugängliche Geschäftsangaben)";
+  return s;
+}
+
 /** Fußzeile mit Absenderangaben, Datenschutzhinweis (Art. 14 DSGVO) und Abmeldung – wird an jede Mail angehängt. */
-export function footer(impressum: string, unsubscribeUrl: string, privacyUrl: string): string {
+export function footer(impressum: string, unsubscribeUrl: string, privacyUrl: string, source?: string | null): string {
   const imp = impressum
     .replace(/\r\n?/g, "\n")
     .split("\n")
@@ -101,7 +117,7 @@ export function footer(impressum: string, unsubscribeUrl: string, privacyUrl: st
     "-- ",
     imp,
     "",
-    "Ihre geschäftlichen Kontaktdaten stammen aus öffentlich zugänglichen Quellen (Praxis-Website/Impressum, OpenStreetMap) bzw. aus Ihrer Anfrage oder einem persönlichen Kontakt (z. B. Messe). Zweck, Rechtsgrundlage, Speicherdauer und Ihre Rechte, insbesondere Ihr Widerspruchsrecht nach Art. 21 DSGVO:",
+    `Ihre geschäftlichen Kontaktdaten stammen aus: ${sourceText(source)}. Eine erteilte Einwilligung können Sie jederzeit widerrufen (Art. 7 Abs. 3 DSGVO). Zweck, Rechtsgrundlage, Speicherdauer und Ihre Rechte, insbesondere Ihr Widerspruchsrecht nach Art. 21 DSGVO:`,
     privacyUrl,
     "",
     "Sie möchten keine weiteren E-Mails von uns erhalten? Mit einem Klick abmelden:",
@@ -114,7 +130,7 @@ export function composeMail(input: ComposeInput): { subject: string; text: strin
   const values = placeholderValues(input.lead, input.senderName, input.promo);
   const subject = cleanValue(renderText(input.template.subject, values), 200);
   const body = renderText(input.template.body.replace(/\r\n?/g, "\n"), values).trim();
-  const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl, input.privacyUrl)}\n`;
+  const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl, input.privacyUrl, input.source)}\n`;
   const unsub = [`<${input.unsubscribeUrl}>`];
   if (input.unsubscribeMailto) unsub.push(`<mailto:${input.unsubscribeMailto}?subject=Abmelden>`);
   return {

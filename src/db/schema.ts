@@ -1599,6 +1599,8 @@ export const salesSends = pgTable(
  */
 export const salesBlocklist = pgTable("sales_blocklist", {
   hash: text("hash").primaryKey(),
+  /** email | host | namezip */
+  kind: text("kind").notNull().default("email"),
   reason: text("reason").notNull(),
   createdAt: createdAt(),
 });
@@ -1629,6 +1631,10 @@ export const salesSettings = pgTable("sales_settings", {
   delay3Days: smallint("delay3_days").notNull().default(10),
   templates: jsonb("templates").$type<SalesTemplate[]>(),
   leadSearch: jsonb("lead_search").$type<SalesLeadSearch>(),
+  /** Betreiber bestätigt: E-Mail-Versanddienstleister mit AVV ist in den Unterauftragnehmern eingetragen – sonst kein Versand */
+  mailProcessorConfirmed: boolean("mail_processor_confirmed").notNull().default(false),
+  /** Kanarienwert des Sperrlisten-Schlüssels (src/lib/vertrieb/blocklist.ts blocklistKeyCheck) – fail-closed bei Abweichung */
+  blocklistKeyCheck: text("blocklist_key_check"),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: updatedAt(),
 });

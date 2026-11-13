@@ -62,6 +62,7 @@ const day = 86_400_000;
       impressum: "AlgoVerdict GmbH, Musterstraße 1, 12345 Musterstadt, kontakt@podo.example",
       delay2Days: 5,
       delay3Days: 10,
+      mailProcessorConfirmed: true,
     });
     const csv = [
       "name;email;zip;city;contact_person",
@@ -97,8 +98,9 @@ const day = 86_400_000;
     const noPort = new MockMailAdapter();
     expect(await v.sendNextMails(admin, [eins.id], { port: noPort, now: () => t0, env })).toMatchObject({ sent: 0, skipped: 1 });
     expect(noPort.sent).toHaveLength(0);
-    await expect(v.setLeadConsent(admin, [eins.id], " x ")).rejects.toThrow(/wie und wann/);
-    expect(await v.setLeadConsent(admin, [eins.id, zwei.id], "Anfrage per E-Mail vom 01.11.2026")).toBe(2);
+    await expect(v.recordLeadConsent(admin, eins.id, " x ")).rejects.toThrow(/Wortlaut, Kanal und Datum/);
+    expect(await v.recordLeadConsent(admin, eins.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
+    expect(await v.recordLeadConsent(admin, zwei.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
     expect(await leadByName("Podologie Eins")).toMatchObject({ consent_note: "Anfrage per E-Mail vom 01.11.2026" });
     await expect(f.pool.query("update sales_leads set consent_note = null where id = $1", [eins.id])).rejects.toThrow(/sales_leads_consent_check/);
     const pre = await v.previewSend([eins.id, zwei.id], { now: t0, env });
@@ -180,7 +182,7 @@ const day = 86_400_000;
 
   it("Versandfehler wird protokolliert, Schritt bleibt", async () => {
     const id = await v.createLead(admin, { name: "Fehlerpraxis", contactPerson: null, email: "fehler@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
-    await v.setLeadConsent(admin, [id], "Messe Test, Formular");
+    await v.recordLeadConsent(admin, id, "Messe Test, Formular");
     const failing: MailPort = { kind: "smtp", isMock: false, source: "platform", send: async (_m: MailMessage) => Promise.reject(new MailSendError("SMTP-Server nicht erreichbar.", "ECONNECTION")) };
     const r = await v.sendNextMails(admin, [id], { port: failing, now: () => t0, env });
     expect(r.sent).toBe(0);
@@ -369,7 +371,7 @@ const day = 86_400_000;
     const later = new Date(Date.now() + 3 * day); // außerhalb des Tageslimits der vorigen Tests
     const mk = async (name: string, email: string | null, website: string | null = null) => {
       const id = await v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
-      if (email) await v.setLeadConsent(admin, [id], "Anfrage über das Kontaktformular");
+      if (email) await v.recordLeadConsent(admin, id, "Anfrage über das Kontaktformular");
       return id;
     };
     const ownerOrg = async (email: string, patch: { plan?: string; status?: string } = {}) => {
@@ -486,10 +488,57 @@ const day = 86_400_000;
       await f.pool.query("update sales_leads set status = 'kunde' where id = $1", [kunde]);
       await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[stale, kunde]]);
       await f.pool.query("update sales_leads set created_at = now() - interval '25 months', updated_at = now() - interval '25 months', consent_at = now() - interval '25 months' where id = any($1)", [[stale, kunde]]);
-      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(1);
+      // ohne Einwilligung schon nach 12 Monaten, mit Einwilligung erst nach 24
+      const noConsent = await mk("Pipe Ohne", null);
+      const withConsent13 = await mk("Pipe Mit13", `mit13@pipe6-${sfx}.example`);
+      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[noConsent, withConsent13]]);
+      await f.pool.query("update sales_leads set created_at = now() - interval '13 months', updated_at = now() - interval '13 months', consent_at = case when consent_at is null then null else now() - interval '13 months' end where id = any($1)", [[noConsent, withConsent13]]);
+      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(2);
       expect(await v.getLead(stale)).toBeNull();
+      expect(await v.getLead(noConsent)).toBeNull();
+      expect(await v.getLead(withConsent13)).not.toBeNull();
       expect(await v.getLead(fresh)).not.toBeNull();
       expect(await v.getLead(kunde)).not.toBeNull();
+    });
+
+    it("Abmeldung sperrt auch Website und Name+PLZ; persönlicher Code anonymisiert; Kunde mit gesperrter Adresse bearbeitbar", async () => {
+      const id = await v.createLead(admin, { name: `Pipe Weg ${sfx}`, contactPerson: null, email: `weg@pipe7-${sfx}.example`, phone: null, website: `https://www.pipe7-${sfx}.example/`, street: null, zip: "12345", city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-W`, label: `Pipe Weg ${sfx}`, trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: id });
+      expect(await v.setLeadStatus(admin, id, "abgemeldet")).toBe("deleted");
+      expect((await f.pool.query("select label, lead_id from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-W`])).rows[0]).toEqual({ label: "(gelöscht)", lead_id: null });
+      expect((await f.pool.query("select kind from sales_blocklist where created_at > now() - interval '1 minute' order by kind")).rows.map((r: { kind: string }) => r.kind)).toEqual(expect.arrayContaining(["email", "host", "namezip"]));
+      // gleiche Praxis mit anderer Adresse: Import überspringt (Website bzw. Name+PLZ)
+      const csv = [`name;email;website;zip;city`, `Pipe Weg ${sfx};neu@anders-${sfx}.example;;12345;Pipestadt`, `Andere Praxis ${sfx};x@y-${sfx}.example;https://pipe7-${sfx}.example;99999;Ort`].join("\n");
+      const pre = await v.previewImport(csv);
+      expect(pre.newCount).toBe(0);
+      expect(pre.decisions.map((d) => (d.action === "übersprungen" ? d.reason : d.action))).toEqual([expect.stringMatching(/abgemeldet/), expect.stringMatching(/abgemeldet/)]);
+      // Kunde mit gesperrter Adresse (Widerspruch) bleibt bearbeitbar, solange die Adresse gleich bleibt
+      const k = await v.createLead(admin, { name: `Pipe Kunde2 ${sfx}`, contactPerson: null, email: `k2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null });
+      await v.setLeadStatus(admin, k, "kunde");
+      await v.addSuppression(admin, `k2@pipe7-${sfx}.example`);
+      await expect(v.updateLead(admin, k, { name: `Pipe Kunde2 ${sfx} GmbH`, contactPerson: null, email: `K2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null })).resolves.toBeUndefined();
+    });
+
+    it("Kanarienwert: anderer Sperrlisten-Schlüssel sperrt Versand, Import und Praxissuche (fail-closed)", async () => {
+      const id = await mk("Pipe Kanarie", `kanarie@pipe8-${sfx}.example`);
+      const saved = (await f.pool.query("select blocklist_key_check from sales_settings where id = 1")).rows[0].blocklist_key_check;
+      expect(saved).toMatch(/^v1:[0-9a-f]{64}$/);
+      await f.pool.query("update sales_settings set blocklist_key_check = 'v1:' || repeat('0', 64) where id = 1");
+      try {
+        await expect(v.sendNextMails(admin, [id], { port: new MockMailAdapter(), now: () => later, env })).rejects.toThrow(/Sperrlisten-Schlüssel passt nicht/);
+        expect((await v.previewSend([id], { now: later, env })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/Sperrlisten-Schlüssel/)]));
+        expect(await v.importLeads(admin, "name,email\nX,x@kanarie.example\n", "Test")).toMatchObject({ imported: 0, error: expect.stringMatching(/Sperrlisten-Schlüssel/) });
+        const ls = await import("./lead-search");
+        await expect(ls.runLeadSearch({ trigger: "manual", adminUserId: admin })).rejects.toThrow(/Sperrlisten-Schlüssel/);
+      } finally {
+        await f.pool.query("update sales_settings set blocklist_key_check = $1 where id = 1", [saved]);
+      }
+    });
+
+    it("ohne bestätigten Versanddienstleister kein Versand", async () => {
+      const s = await v.getSalesSettings();
+      expect(v.settingsProblems({ ...s, mailProcessorConfirmed: false }, env)).toEqual(expect.arrayContaining([expect.stringMatching(/Versanddienstleister/)]));
+      expect(v.settingsProblems({ ...s, mailProcessorConfirmed: true }, env).some((x) => /Versanddienstleister/.test(x))).toBe(false);
     });
 });
 });

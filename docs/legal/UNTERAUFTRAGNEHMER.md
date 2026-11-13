@@ -15,6 +15,14 @@ Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbe
 
 <!-- TODO (Betreiber): System- und Vertriebs-E-Mail-Versand (SMTP_URL in deploy/.env) – Anbieter, Standort und AVV hier eintragen, BEVOR Vertriebs-E-Mails versendet werden (Datenschutzerklärung Abschnitt 6a/7 verweist hierher); bis dahin versenden Praxen über ihren eigenen SMTP-Zugang (Abschnitt 2). -->
 
+### Dienstleister für eigene Zwecke des Betreibers (Vertrieb)
+
+Für die Kontaktaufnahme mit Praxen (siehe [Datenschutzerklärung](/datenschutz#vertrieb)) setzen wir einen eigenen Dienstleister ein. Er verarbeitet nur Daten der angeschriebenen Praxen, keine Patientendaten.
+
+| Dienst | Zweck | Sitz / Serverstandort | Vertrag | Status |
+|---|---|---|---|---|
+| E-Mail-Versand | Versand der Vertriebs-E-Mails | noch festzulegen | AVV, ggf. SCC/DPF | **noch festzulegen – vor dem ersten Vertriebsversand eintragen (Name, Sitz, Serverstandort, AVV, ggf. SCC/DPF)** |
+
 **Hinweis Zahlungsabwicklung:** Für die Abrechnung des Abonnements der Praxis nutzen wir Stripe Payments Europe Ltd., Dublin (Irland). Stripe verarbeitet nur Rechnungs- und Zahlungsdaten der Praxis, **keine Patientendaten**, und handelt dabei als eigenständig Verantwortlicher – das ist **keine Auftragsverarbeitung** (siehe [Datenschutzerklärung](/datenschutz), Abschnitt 5).
 
 ## 2. Dienste, die die Praxis selbst aktiviert

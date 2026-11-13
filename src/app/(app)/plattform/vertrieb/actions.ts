@@ -20,7 +20,8 @@ import {
   saveSalesSettings,
   saveSalesTemplates,
   sendNextMails,
-  setLeadConsent,
+  recordLeadConsent,
+  removeLeadConsent,
   setLeadStatus,
   updateLead,
   type ImportPreview,
@@ -189,7 +190,7 @@ export async function saveSettingsAction(_s: State, form: FormData): Promise<Sta
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: "Eingaben ungültig (Abstände 1 bis 60 Tage, Impressum max. 1500 Zeichen)." };
   try {
-    await saveSalesSettings(row.user.id, d.data);
+    await saveSalesSettings(row.user.id, { ...d.data, mailProcessorConfirmed: form.get("mailProcessorConfirmed") === "on" });
   } catch (e) {
     return { error: msg(e) };
   }
@@ -304,7 +305,7 @@ export async function consentAction(_s: State, form: FormData): Promise<State> {
   const d = z.object({ id: z.uuid(), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }).safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
   try {
-    if (!(await setLeadConsent(row.user.id, [d.data.id], d.data.note))) return { error: "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." };
+    if (!(await recordLeadConsent(row.user.id, d.data.id, d.data.note))) return { error: "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." };
   } catch (e) {
     return { error: msg(e) };
   }
@@ -316,7 +317,7 @@ export async function removeConsentAction(form: FormData) {
   const row = await requirePlatformAdmin();
   const id = z.uuid().safeParse(form.get("id"));
   if (!id.success) redirect(`${BASE}?fehler=eingabe`);
-  await setLeadConsent(row.user.id, [id.data], null);
+  await removeLeadConsent(row.user.id, [id.data]);
   revalidatePath(BASE, "layout");
 }
 
@@ -324,7 +325,6 @@ const bulkSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("status"), status: z.enum(BULK_STATUSES as [string, ...string[]]) }),
   z.object({ op: z.literal("kampagne"), campaignId: z.union([z.uuid(), z.literal("")]) }),
   z.object({ op: z.literal("abmelden") }),
-  z.object({ op: z.literal("einwilligung"), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }),
   z.object({ op: z.literal("einwilligung_entfernen") }),
 ]);
 
@@ -334,12 +334,11 @@ export async function bulkAction(ids: string[], input: unknown): Promise<{ ok: s
   const list = idsSchema.safeParse(ids);
   if (!list.success) return { error: list.error.issues[0]?.message ?? "Auswahl ungültig." };
   const d = bulkSchema.safeParse(input);
-  if (!d.success) return { error: d.error.issues.find((i) => i.path[0] === "note")?.message ?? "Aktion ungültig." };
+  if (!d.success) return { error: "Aktion ungültig." };
   try {
     let text: string;
     if (d.data.op === "status") text = `${await bulkSetStatus(row.user.id, list.data, d.data.status as (typeof LEAD_STATUSES)[number])} Einträge geändert.`;
-    else if (d.data.op === "einwilligung") text = `Einwilligung für ${await setLeadConsent(row.user.id, list.data, d.data.note)} Einträge dokumentiert (nur Einträge mit E-Mail).`;
-    else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung bei ${await setLeadConsent(row.user.id, list.data, null)} Einträgen entfernt.`;
+    else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung bei ${await removeLeadConsent(row.user.id, list.data)} Einträgen entfernt.`;
     else if (d.data.op === "abmelden") text = `${await bulkSetStatus(row.user.id, list.data, "abgemeldet")} Einträge abgemeldet: Adressen gesperrt, Einträge gelöscht.`;
     else text = `${await setLeadsCampaign(row.user.id, list.data, d.data.campaignId || null)} Einträge ${d.data.campaignId ? "der Kampagne zugeordnet" : "aus der Kampagne entfernt"}.`;
     revalidatePath(BASE, "layout");
