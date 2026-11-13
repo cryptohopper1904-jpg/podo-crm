@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-s",
+    date: "2026-11-13",
+    title: "Quittungen in die Sammelrechnung, Schutz vor Doppelabrechnung",
+    items: [
+      { tag: "neu", text: "Bezahlte Quittungen (Q) können jetzt – wie Anzahlungen (AZ) – in die Sammelrechnung des Jahres übernommen werden. Die Sammelrechnung listet jede Quittung mit Nummer auf, rechnet die bezahlten Beträge an und weist die verbleibende USt. je Steuersatz aus.", href: "/rechnungen/neu" },
+      { tag: "neu", text: "Eine Behandlung oder ein Termin kann nicht mehr doppelt abgerechnet werden: PodoHero zeigt den vorhandenen Beleg mit Link („bereits mit Quittung Q… abgerechnet“). Bei gleicher Leistung am selben Tag ohne Terminbezug gibt es einen Hinweis, den Sie bewusst bestätigen können." },
+      { tag: "verbessert", text: "Gibt es zu einem Termin eine offene Anzahlung, weist PodoHero beim Abrechnen darauf hin und schlägt sie zur Anrechnung vor." },
+    ],
+  },
+  {
     id: "2026-11-13-r",
     date: "2026-11-13",
     title: "Produkte und kleine Warenwirtschaft",
