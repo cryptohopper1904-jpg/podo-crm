@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, snapMin } from "./calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
 import { berlinParts } from "./calendar-grid";
 import { berlinToUtc } from "./format";
 
@@ -78,6 +78,29 @@ describe("Zeitpunkte (Berliner Ortszeit, Sommer-/Winterzeit)", () => {
     expect(realDuration("2026-10-25", 60, 240)).toBe(240); // 01:00–04:00 Winterzeit-Beginn: 4 h
     expect(realDuration("2026-06-10", 600, 645)).toBe(45);
     expect(realDuration("2026-03-29", 60, 150)).toBe(90); // Ende in der Lücke → Uhrzeit-Differenz
+  });
+
+  it("Dauer ziehen am Winterzeit-Tag: echte Dauer höchstens 8 h", () => {
+    const base = { pxPerMin: PX, rangeStart: 0, startMin: 0, offsetPx: 99_999 };
+    // 00:00–08:00 Uhr sind am 25.10.2026 neun echte Stunden → auf 00:00–07:00 (8 h) begrenzt
+    expect(resizeOnDay({ ...base, dateIso: "2026-10-25" })).toEqual({ localMin: 420, realMin: 480 });
+    expect(resizeOnDay({ ...base, dateIso: "2026-03-29" })).toEqual({ localMin: 480, realMin: 420 });
+    expect(resizeOnDay({ ...base, dateIso: "2026-06-10", offsetPx: 45 * PX })).toEqual({ localMin: 45, realMin: 45 });
+  });
+
+  it("Beginn in der doppelten Stunde (25.10., 02:30 zweimal): echte Dauer ab dem tatsächlichen Beginn", () => {
+    const base = { dateIso: "2026-10-25", pxPerMin: PX, rangeStart: 0, startMin: 150 };
+    const first = new Date("2026-10-25T00:30:00Z"); // 02:30 Sommerzeit
+    const second = new Date("2026-10-25T01:30:00Z"); // 02:30 Winterzeit
+    // bis 03:30 Uhr: vom ersten 02:30 zwei echte Stunden, vom zweiten eine
+    expect(resizeOnDay({ ...base, offsetPx: 210 * PX, startsAt: first })).toEqual({ localMin: 60, realMin: 120 });
+    expect(resizeOnDay({ ...base, offsetPx: 210 * PX, startsAt: second })).toEqual({ localMin: 60, realMin: 60 });
+    // Ende ebenfalls in der doppelten Stunde: frühestes 02:45 nach dem Beginn
+    expect(resizeOnDay({ ...base, offsetPx: 165 * PX, startsAt: first })).toEqual({ localMin: 15, realMin: 15 });
+    expect(resizeOnDay({ ...base, offsetPx: 165 * PX, startsAt: second })).toEqual({ localMin: 15, realMin: 15 });
+    // 8-h-Grenze ab dem ersten 02:30: höchstens 7 Uhr-Stunden (= 8 echte)
+    expect(resizeOnDay({ ...base, offsetPx: 99_999, startsAt: first })).toEqual({ localMin: 420, realMin: 480 });
+    expect(resizeOnDay({ ...base, offsetPx: 99_999, startsAt: second })).toEqual({ localMin: 480, realMin: 480 });
   });
 
   it("Monatsansicht: anderer Tag, gleiche Uhrzeit – auch über die Zeitumstellung", () => {
