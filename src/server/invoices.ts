@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { readDocumentSettings } from "@/lib/practice-documents";
+import { MAX_DUE_DAYS, readDocumentSettings } from "@/lib/practice-documents";
 import { withOrg, type Tx } from "@/db";
 import {
   appointments,
@@ -73,7 +73,8 @@ export const invoiceInput = z.object({
   patientId: optUuid,
   billingContactId: optUuid,
   issuedAt: isoDate,
-  dueDays: z.coerce.number().int().min(0).max(120).default(14),
+  /** leer → Standard-Zahlungsziel der Praxis (Einstellungen → Belege) */
+  dueDays: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(0).max(MAX_DUE_DAYS).optional()),
   therapeuticConfirmed: z.boolean().default(false),
   notes: z.preprocess(emptyToNull, z.string().trim().max(2000).nullable().optional()),
   lines: z.array(lineInput).min(1, "Mindestens eine Position anlegen").max(100),
@@ -401,7 +402,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     // 3) Ausstellen: Nummer + Summen
     const number = await nextNumber(tx, org, input.kind, Number(input.issuedAt.slice(0, 4)));
-    const dueAt = input.kind === "receipt" ? input.issuedAt : addDaysIso(input.issuedAt, input.dueDays);
+    const dueAt = input.kind === "receipt" ? input.issuedAt : addDaysIso(input.issuedAt, input.dueDays ?? readDocumentSettings(o.settings as Record<string, unknown> | null).dueDays);
     await tx
       .update(invoices)
       .set({

@@ -15,7 +15,7 @@ import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seatCounts, seatProblem } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
 import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-qr";
-import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS } from "@/lib/practice-documents";
+import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
 
@@ -250,7 +250,10 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
   const d = z
     .object({
       websiteUrl: httpUrl,
-      dueDays: z.coerce.number().int("Zahlungsziel: ganze Tage").min(0).max(120, "Zahlungsziel: höchstens 120 Tage").default(14),
+      dueDays: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        z.coerce.number({ error: "Bitte ein Zahlungsziel in Tagen angeben (0 = sofort)." }).int("Zahlungsziel: ganze Tage").min(0, "Zahlungsziel: mindestens 0 Tage").max(MAX_DUE_DAYS, `Zahlungsziel: höchstens ${MAX_DUE_DAYS} Tage`),
+      ),
       qualification: z.string().trim().max(DOC_LIMITS.qualification, "Berufsbezeichnung: höchstens 200 Zeichen").optional().transform((v) => v || null),
       whatsapp: z.string().optional(),
       bookingChannel: z.enum(BOOKING_CHANNELS).default("none"),
