@@ -12,6 +12,7 @@ vi.mock("@/lib/audit", async (orig) => {
 import { MailSendError, MockMailAdapter, type MailMessage, type MailPort } from "@/integrations/mail/mail";
 import { MAX_PER_DAY } from "@/lib/vertrieb/constants";
 import { verifyUnsubscribeToken } from "@/lib/vertrieb/unsubscribe-token";
+import { Pool } from "pg";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
 const env = { PUBLIC_URL: "https://podo.example", NODE_ENV: "test" };
@@ -24,6 +25,8 @@ const day = 86_400_000;
   let auditCalls: () => { action: string; entityId?: string; meta?: Record<string, unknown> }[];
   const t0 = new Date("2026-11-10T09:00:00Z");
 
+  // Eigentümer-Verbindung für Aufräumen/Simulation (die App-Rolle darf sales_settings nicht löschen)
+  const ownerPool = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? TEST_DB, max: 1 });
   const leadByName = async (name: string) => (await f.pool.query("select * from sales_leads where name = $1", [name])).rows[0];
 
   beforeAll(async () => {
@@ -32,7 +35,9 @@ const day = 86_400_000;
     v = await import("./vertrieb");
     const { audit } = await import("@/lib/audit");
     auditCalls = () => vi.mocked(audit).mock.calls.map((c) => c[0] as { action: string; entityId?: string; meta?: Record<string, unknown> });
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_campaigns");
+    // sales_settings darf die App-Rolle nicht löschen (scripts/migrate.ts) → als Eigentümer
+    await ownerPool.query("delete from sales_settings");
     admin = await f.user();
   });
   afterAll(async () => {
@@ -42,7 +47,9 @@ const day = 86_400_000;
     await owner.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
     await owner.query("delete from promo_codes where code like 'TPIPE%'");
     await owner.end();
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_campaigns");
+    await ownerPool.query("delete from sales_settings");
+    await ownerPool.end();
     await f.end();
     const { db } = await import("@/db");
     await (db.$client as { end: () => Promise<void> }).end();
@@ -539,9 +546,12 @@ const day = 86_400_000;
       // DB-Trigger (0043): Kanarienwert nach dem ersten Setzen weder änderbar noch auf NULL zu setzen
       await expect(f.pool.query("update sales_settings set blocklist_key_check = 'v1:' || repeat('0', 64) where id = 1")).rejects.toThrow(/unveränderbar/);
       await expect(f.pool.query("update sales_settings set blocklist_key_check = null where id = 1")).rejects.toThrow(/unveränderbar/);
+      // andere Spalten bleiben änderbar (der Trigger greift nur bei einer Änderung des Kanarienwerts)
       await f.pool.query("update sales_settings set sender_name = sender_name where id = 1");
-      // Schlüsseltausch simulieren: Zeile mit fremdem Kanarienwert neu anlegen
-      await f.pool.query("delete from sales_settings where id = 1");
+      // die App-Rolle darf die Zeile nicht löschen (sonst ließe sich der Kanarienwert neu setzen)
+      await expect(f.pool.query("delete from sales_settings where id = 1")).rejects.toThrow(/permission denied/);
+      // Schlüsseltausch simulieren (als Eigentümer): Zeile mit fremdem Kanarienwert neu anlegen
+      await ownerPool.query("delete from sales_settings where id = 1");
       await f.pool.query("insert into sales_settings select * from jsonb_populate_record(null::sales_settings, $1::jsonb || jsonb_build_object('blocklist_key_check', 'v1:' || repeat('0', 64)))", [JSON.stringify(savedRow)]);
       try {
         await expect(v.sendNextMails(admin, [id], { port: new MockMailAdapter(), now: () => later, env })).rejects.toThrow(/Sperrlisten-Schlüssel passt nicht/);
@@ -551,7 +561,7 @@ const day = 86_400_000;
         const ls = await import("./lead-search");
         await expect(ls.runLeadSearch({ trigger: "manual", adminUserId: admin })).rejects.toThrow(/Sperrlisten-Schlüssel/);
       } finally {
-        await f.pool.query("delete from sales_settings where id = 1");
+        await ownerPool.query("delete from sales_settings where id = 1");
         await f.pool.query("insert into sales_settings select * from jsonb_populate_record(null::sales_settings, $1::jsonb)", [JSON.stringify(savedRow)]);
       }
     });

@@ -533,8 +533,8 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
   const cutoff = sql`(case when ${salesLeads.consentAt} is null then ${cutoffWithout}::timestamptz else ${cutoffWith}::timestamptz end)`;
   const stale = and(
     sql`${salesLeads.status} <> 'kunde'`,
-        sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
-          coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
+    sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
+      coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
   );
   const r = await db.transaction(async (tx) => {
     const ids = (await tx.select({ id: salesLeads.id }).from(salesLeads).where(stale).for("update")).map((x) => x.id);
