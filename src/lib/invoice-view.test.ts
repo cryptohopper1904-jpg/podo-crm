@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
-import { invoiceHeading, paymentNoteLines } from "./invoice-view";
+import { dueImmediately, dueLabel, invoiceHeading, paymentNoteLines } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
 const fmt = { dateDe, money };
@@ -41,5 +41,19 @@ describe("Zahlungshinweis nach Zahlart und Stand", () => {
     expect(l[0].replace(/\s/g, " ")).toBe("Bereits bezahlt per Karte: 20,00 €. Offen: 75,00 €.");
     expect(paymentNoteLines({ ...inv, status: "cancelled" }, [], iban, fmt)).toEqual([]);
     expect(paymentNoteLines({ ...inv, kind: "credit_note", totalCents: -9500, paidCents: 0, status: "issued" }, [], iban, fmt)[0]).toMatch(/erstattet/);
+  });
+});
+
+describe("Zahlungsziel sofort (0 Tage)", () => {
+  const now = { ...inv, issuedAt: "2026-11-13", dueAt: "2026-11-13" };
+  it("Fälligkeit am Rechnungstag heißt „sofort“", () => {
+    expect(dueImmediately(now)).toBe(true);
+    expect(dueLabel(now, dateDe)).toBe("sofort");
+    expect(dueImmediately(inv)).toBe(false);
+    expect(dueLabel({ ...inv, issuedAt: "2026-11-13" }, dateDe)).toBe("27.11.2026");
+  });
+  it("Zahlungshinweis nennt „sofort“ statt Datum", () => {
+    expect(paymentNoteLines(now, [], iban, fmt).join(" ")).toMatch(/überweisen Sie den Betrag sofort unter Angabe/);
+    expect(paymentNoteLines(now, [], { iban: null }, fmt)).toContain("Zahlbar sofort ohne Abzug.");
   });
 });

@@ -22,7 +22,12 @@ export const BOOKING_CHANNEL_LABEL: Record<BookingChannel, string> = {
 
 export const LIMITS = { qualification: 200, bookingLabel: 60, url: 300 } as const;
 
+/** Standard-Zahlungsziel neuer Rechnungen in Tagen (0 = sofort) */
+export const DEFAULT_DUE_DAYS = 14;
+export const MAX_DUE_DAYS = 120;
+
 export type DocumentSettings = {
+  dueDays: number;
   qualification: string | null;
   whatsapp: boolean;
   booking: { channel: BookingChannel; url: string | null; label: string | null };
@@ -34,7 +39,9 @@ export function readDocumentSettings(settings: Record<string, unknown> | null | 
   const raw = ((settings ?? {}).documents ?? {}) as Record<string, unknown>;
   const b = (raw.booking ?? {}) as Record<string, unknown>;
   const channel = BOOKING_CHANNELS.includes(b.channel as BookingChannel) ? (b.channel as BookingChannel) : "none";
+  const due = typeof raw.dueDays === "number" && Number.isInteger(raw.dueDays) && raw.dueDays >= 0 && raw.dueDays <= MAX_DUE_DAYS ? raw.dueDays : DEFAULT_DUE_DAYS;
   return {
+    dueDays: due,
     qualification: str(raw.qualification, LIMITS.qualification),
     whatsapp: raw.whatsapp === true,
     booking: { channel, url: safeUrl(b.url), label: str(b.label, LIMITS.bookingLabel) },

@@ -1,6 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { readDocumentSettings } from "@/lib/practice-documents";
 import { withOrg, type Tx } from "@/db";
 import {
   appointments,
@@ -874,6 +875,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       })),
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
+      defaultDueDays: readDocumentSettings(o.settings as Record<string, unknown> | null).dueDays,
       today: berlinDateIso(),
       openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
     };

@@ -26,6 +26,7 @@ import {
   invoiceRecipient,
   invoiceTitle,
   isReceiptLike,
+  dueImmediately,
   paymentNoteLines,
   paymentSummary,
   publicNotes,
@@ -256,7 +257,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
   const meta: [string, string][] = [[receiptLike ? "Quittungsnummer:" : "Rechnungsnummer:", inv.number ?? ""], [receiptLike ? "Datum:" : "Rechnungsdatum:", dateDe(inv.issuedAt)]];
   if (p) meta.push(["Patientennummer:", String(p.number)]);
-  if (showsDueDate(inv)) meta.push(["Zahlbar bis:", dateDe(inv.dueAt)]);
+  if (showsDueDate(inv)) meta.push(dueImmediately(inv) ? ["Zahlbar:", "sofort"] : ["Zahlbar bis:", dateDe(inv.dueAt)]);
   const contact: string[] = [];
   if (o.phone) contact.push(`Tel. ${o.phone}${o.whatsapp ? " (auch WhatsApp)" : ""}`);
   if (o.email) contact.push(o.email);
@@ -414,7 +415,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     const holder = (o.accountHolder?.trim() || o.legalName?.trim() || o.name).slice(0, 70);
     blocks.push({ title: "Bezahlen per GiroCode", sub: [`${money(open)} an ${holder}`, `Verwendungszweck: Rechnung ${inv.number}`], payload: giro });
   }
-  if (booking) blocks.push({ title: booking.label, sub: [booking.display], payload: booking.url });
+  if (booking) blocks.push({ title: booking.label, sub: [], payload: booking.url });
   if (blocks.length) {
     const qrSize = 78;
     const blockH = qrSize + 6;

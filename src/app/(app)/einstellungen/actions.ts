@@ -250,6 +250,7 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
   const d = z
     .object({
       websiteUrl: httpUrl,
+      dueDays: z.coerce.number().int("Zahlungsziel: ganze Tage").min(0).max(120, "Zahlungsziel: höchstens 120 Tage").default(14),
       qualification: z.string().trim().max(DOC_LIMITS.qualification, "Berufsbezeichnung: höchstens 200 Zeichen").optional().transform((v) => v || null),
       whatsapp: z.string().optional(),
       bookingChannel: z.enum(BOOKING_CHANNELS).default("none"),
@@ -268,14 +269,14 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
       : v.bookingChannel === "custom"
         ? { channel: "custom", url: v.customUrl, ...(v.customLabel ? { label: v.customLabel } : {}) }
         : { channel: v.bookingChannel };
-  const documents = { qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
+  const documents = { dueDays: v.dueDays, qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
   await db
     .update(organizations)
     .set({
       settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb, 'websiteUrl', ${v.websiteUrl}::text)`,
     })
     .where(eq(organizations.id, auth.organization.id));
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { dueDays: v.dueDays, bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };
 }

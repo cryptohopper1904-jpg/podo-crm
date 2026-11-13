@@ -6,7 +6,7 @@ const withBooking = (booking: Record<string, unknown>, extra: Record<string, unk
 
 describe("Belege-Einstellungen", () => {
   it("liefert sichere Standardwerte", () => {
-    expect(readDocumentSettings({})).toEqual({ qualification: null, whatsapp: false, booking: { channel: "none", url: null, label: null } });
+    expect(readDocumentSettings({})).toEqual({ dueDays: 14, qualification: null, whatsapp: false, booking: { channel: "none", url: null, label: null } });
     expect(readDocumentSettings({ documents: { booking: { channel: "evil" }, whatsapp: "yes" } }).booking.channel).toBe("none");
   });
   it("verwirft Nicht-http(s)-Links", () => {
@@ -45,5 +45,16 @@ describe("Buchungshinweis auf Rechnungen", () => {
   });
   it("Kurz-URL ohne Schema und abschließenden Schrägstrich", () => {
     expect(shortUrl("https://www.podologie-kiehne.de/")).toBe("www.podologie-kiehne.de");
+  });
+});
+
+describe("Standard-Zahlungsziel", () => {
+  it("liest documents.dueDays (0 = sofort), sonst 14 Tage", () => {
+    expect(readDocumentSettings({ documents: { dueDays: 0 } }).dueDays).toBe(0);
+    expect(readDocumentSettings({ documents: { dueDays: 30 } }).dueDays).toBe(30);
+    expect(readDocumentSettings({}).dueDays).toBe(14);
+    expect(readDocumentSettings({ documents: { dueDays: -1 } }).dueDays).toBe(14);
+    expect(readDocumentSettings({ documents: { dueDays: 500 } }).dueDays).toBe(14);
+    expect(readDocumentSettings({ documents: { dueDays: "7" } }).dueDays).toBe(14);
   });
 });

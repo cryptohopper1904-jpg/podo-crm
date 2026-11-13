@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-c",
+    date: "2026-11-13",
+    title: "Zahlungsziel nach Ihrer Gewohnheit",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Standard-Zahlungsziel: Unter Einstellungen → Praxisdaten → Belege legen Sie fest, wie viele Tage neue Rechnungen Zeit haben – oder 0 für „Zahlbar sofort“. Auf jeder Rechnung lässt es sich weiter ändern.", href: "/einstellungen/praxis" },
+      { tag: "verbessert", text: "Termin-QR auf der Rechnung ohne langen Link darunter – der QR-Code reicht." },
+    ],
+  },
+  {
     id: "2026-11-13-b",
     date: "2026-11-13",
     title: "Ihr Logo auf Rechnungen, QR-Code zum Bezahlen und Anamnese am iPad",
