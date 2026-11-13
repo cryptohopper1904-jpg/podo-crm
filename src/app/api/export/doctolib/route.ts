@@ -7,6 +7,7 @@ import type { Gender } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
+import { berlinDateIso } from "@/lib/format";
 
 /** Patienten im Doctolib-Importformat (22 Spalten). */
 export async function GET() {
@@ -54,7 +55,7 @@ export async function GET() {
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="doctolib-patienten-${new Date().toISOString().slice(0, 10)}.csv"`,
+      "Content-Disposition": `attachment; filename="doctolib-patienten-${berlinDateIso()}.csv"`,
       "Cache-Control": "private, no-store",
     },
   });

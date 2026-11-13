@@ -10,6 +10,7 @@ import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
+import { DURATION_RANGE_ERROR, isValidDurationMin } from "@/lib/appointment-duration";
 import { lockBooking } from "./portal-booking";
 import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
 import { blockClashesInTx } from "./calendar-blocks";
@@ -166,6 +167,9 @@ export async function createInternalAppointments(
   input: InternalAppointmentInput,
   now = new Date(),
 ): Promise<{ ok: true; ids: string[] } | SlotConflict | { ok: false; deceased: true } | { ok: false; conflict?: undefined; error: string }> {
+  // Dauer serverseitig prüfen (wie beim Verschieben); Konflikt-, Sperrzeiten-Prüfung und endsAt nutzen dieselbe Dauer
+  if (!isValidDurationMin(input.durationMin)) return { ok: false, error: DURATION_RANGE_ERROR };
+  const durationMin = input.durationMin;
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
@@ -176,11 +180,11 @@ export async function createInternalAppointments(
     if (!input.allowConflict) {
       const clashes: SlotClash[] = [];
       for (const s of input.occurrences) {
-        const found = await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000));
+        const found = await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + durationMin * 60_000));
         clashes.push(...found.map((c) => ({ startsAt: c.startsAt, endsAt: c.endsAt })));
       }
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, input.occurrences.map((s) => berlinParts(s).dateIso));
-      const blocks = await blockClashesInTx(tx, org, input.therapistId, input.occurrences.map((s) => ({ start: s, end: new Date(s.getTime() + input.durationMin * 60_000) })));
+      const blocks = await blockClashesInTx(tx, org, input.therapistId, input.occurrences.map((s) => ({ start: s, end: new Date(s.getTime() + durationMin * 60_000) })));
       if (clashes.length || absentDays.length || blocks.length) return { ok: false as const, conflict: true as const, clashes, absentDays, blocks };
     }
     const ids: string[] = [];
@@ -192,7 +196,7 @@ export async function createInternalAppointments(
           patientId: input.patientId,
           therapistId: input.therapistId,
           startsAt: s,
-          endsAt: new Date(s.getTime() + input.durationMin * 60_000),
+          endsAt: new Date(s.getTime() + durationMin * 60_000),
           source: input.source,
           title: input.title,
           notes: input.notes,
@@ -307,7 +311,7 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
   const org = auth.organization.id;
   if (!z.uuid().safeParse(id).success) return { ok: false, error: "Termin nicht gefunden." };
   if (Number.isNaN(input.startsAt.getTime())) return { ok: false, error: "Datum/Uhrzeit ungültig." };
-  if (!Number.isInteger(input.durationMin) || input.durationMin < 5 || input.durationMin > 480) return { ok: false, error: "Dauer muss zwischen 5 und 480 Minuten liegen." };
+  if (!isValidDurationMin(input.durationMin)) return { ok: false, error: DURATION_RANGE_ERROR };
   const now = new Date();
   const lo = new Date(now), hi = new Date(now);
   lo.setUTCFullYear(lo.getUTCFullYear() - RESCHEDULE_YEARS);

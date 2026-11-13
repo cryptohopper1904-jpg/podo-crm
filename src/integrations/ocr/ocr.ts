@@ -18,6 +18,8 @@
 import { requestJson } from "../http";
 import type { FetchLike } from "../types";
 import { parseOcrOutput, type OcrSuggestion } from "./schema";
+import { berlinDateIso } from "@/lib/format";
+import { addDaysIso } from "@/lib/calendar-grid";
 
 export interface OcrImage {
   data: Uint8Array;
@@ -66,7 +68,7 @@ export const OCR_SYSTEM_PROMPT = [
 
 /** Fester, erfundener Beispieldatensatz (keine echten Personen). */
 export function mockSuggestionJson(today = new Date()): string {
-  const iso = new Date(today.getTime() - 2 * 86_400_000).toISOString().slice(0, 10);
+  const iso = addDaysIso(berlinDateIso(today), -2);
   return JSON.stringify({
     fields: {
       patientName: { value: "Musterfrau, Erika", confidence: 0.97 },

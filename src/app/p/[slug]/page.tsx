@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { CalendarCheck, Clock, Home, MapPin, Mail, Phone } from "lucide-react";
-import { dateDe, money } from "@/lib/format";
+import { dateDe, money, berlinDateIso } from "@/lib/format";
 import { mapLink, telHref, WEEKDAYS } from "@/lib/website";
 import { loadPublicSite, type PublicSite } from "@/server/website";
 import { SITE_ROBOTS, SiteShell } from "./_site/shell";
@@ -60,7 +60,7 @@ export default async function PracticeSitePage(props: PageProps<"/p/[slug]">) {
   const tel = telHref(site.phone);
   const map = mapLink([site.street, [site.zip, site.city].filter(Boolean).join(" ")]);
   const days = hoursByDay(site);
-  const upcoming = site.openingDate && site.openingDate > new Date().toISOString().slice(0, 10);
+  const upcoming = site.openingDate && site.openingDate > berlinDateIso();
   return (
     <SiteShell site={site}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(site) }} />

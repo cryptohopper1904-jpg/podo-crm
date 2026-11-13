@@ -5,6 +5,7 @@
 import { getTableColumns, is } from "drizzle-orm";
 import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import * as schema from "@/db/schema";
+import { berlinDateIso } from "./format";
 
 /** Tabellen, die nicht in den Export gehören (Sitzungen, plattformweite Technik-Protokolle). */
 export const EXCLUDED_TABLES = new Set(["sessions", "billing_events", "webhook_events"]);
@@ -75,7 +76,7 @@ const EXT: Record<string, string> = {
 /** Pfad im ZIP: media/<Patientennummer>/<Datum>_<Zweck>_<ID-Kurz>.<Endung> – ohne Namen, nur sichere Zeichen. */
 export function mediaPath(m: { id: string; mime: string; purpose: string; takenAt: Date | string }, patientNumber: number | string | null | undefined): string {
   const safe = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const day = new Date(m.takenAt).toISOString().slice(0, 10);
+  const day = berlinDateIso(new Date(m.takenAt)); // Aufnahmetag in Berlin
   const folder = patientNumber === null || patientNumber === undefined ? "ohne-zuordnung" : safe(String(patientNumber));
   return `media/${folder}/${day}_${safe(m.purpose)}_${safe(m.id.slice(0, 8))}.${EXT[m.mime] ?? "bin"}`;
 }

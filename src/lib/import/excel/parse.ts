@@ -40,6 +40,7 @@ import type {
   VoucherImportDraft,
 } from "./types";
 import { SHEET_NAMES } from "./types";
+import { berlinDateIso } from "@/lib/format";
 
 export interface ParseOptions {
   /** Referenzdatum für Ersatzwerte (z. B. fehlendes Startdatum), YYYY-MM-DD. Standard: heute. */
@@ -756,7 +757,7 @@ function parseFixedCosts(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Im
 
 // ───────────────────────── Einstieg ─────────────────────────
 export async function parseWorkbook(buffer: ArrayBuffer | Uint8Array, opts: ParseOptions = {}): Promise<ImportResult> {
-  const today = opts.today ?? new Date().toISOString().slice(0, 10);
+  const today = opts.today ?? berlinDateIso();
   const wb = new ExcelJS.Workbook();
   const ctx = new Ctx();
   const report: ImportReport = {
