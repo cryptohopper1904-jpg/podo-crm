@@ -26,7 +26,7 @@ import { patientSearchCondition } from "./patients";
  *   in der Liste, mit Kennzeichnung.
  * - Direkte Treffer: dieselbe Suchbedingung wie die Liste (patientSearchCondition), höchstens SUGGEST_LIMIT.
  * - „Meinten Sie“ (nur ohne direkten Treffer) – Rechenzeit begrenzt (Appsec-Review):
- *   1. Vorfilter in der DB per pg_trgm (Migration 0043, GIN-Index patients_name_trgm): höchstens
+ *   1. Vorfilter in der DB per pg_trgm (Migration 0044, GIN-Index patients_name_trgm): höchstens
  *      FUZZY_DB_CANDIDATES ähnlichste Namen. Fehlt die Extension, Rückfall auf höchstens FUZZY_FALLBACK_SCAN Namen
  *      mit gleichem Anfangsbuchstaben (Nach- oder Vorname).
  *   2. Feinbewertung in der App (src/lib/patient-search.ts: Suchtext/Namen auf 40 Zeichen gekürzt, Levenshtein
@@ -100,7 +100,7 @@ let fuzzyBusy = false;
 /** pg_trgm vorhanden? (einmal je Prozess ermittelt) */
 let trgmAvailable: boolean | null = null;
 
-/** Muss exakt zum Index patients_name_trgm passen (drizzle/0043_patientensuche_trgm.sql) */
+/** Muss exakt zum Index patients_name_trgm passen (drizzle/0044_patientensuche_trgm.sql) */
 const nameExpr = sql`lower(${patients.lastName} || ' ' || coalesce(${patients.firstName}, ''))`;
 
 async function fuzzyCandidates(tx: Tx, org: string, q: string): Promise<NameRow[]> {

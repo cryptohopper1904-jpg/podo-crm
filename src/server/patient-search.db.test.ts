@@ -113,7 +113,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await mod.suggestPatients(auth(orgA), "Schmi")).hits).toHaveLength(2);
   });
 
-  it("pg_trgm-Index vorhanden (Migration 0043)", async () => {
+  it("pg_trgm-Index vorhanden (Migration 0044)", async () => {
     const r = await f.pool.query("select 1 from pg_indexes where indexname = 'patients_name_trgm'");
     expect(r.rowCount).toBe(1);
   });
