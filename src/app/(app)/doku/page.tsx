@@ -18,7 +18,7 @@ export default async function DokuEntryPage() {
       <PageHeader title="Behandlung dokumentieren" subtitle="Heute" />
       <Card className="mb-6">
         <CardTitle>Als Nächstes</CardTitle>
-        {open.length === 0 ? <Empty title="Keine offenen Termine heute" /> : open.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc canEdit={false} />)}
+        {open.length === 0 ? <Empty title="Keine offenen Termine heute" /> : open.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc canEdit={false} from="/doku" />)}
       </Card>
       <Link href="/kunden" className="flex h-14 items-center justify-center gap-2 rounded-xl border border-border bg-surface font-semibold">
         <Search size={18} aria-hidden /> Anderen Patienten suchen

@@ -134,7 +134,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               <Link href="/einstellungen/kalender-abo" className="font-semibold underline">prüfen</Link>
             </p>
           ) : null}
-          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)}
+          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" />)}
         </Card>
 
         {sideColumn ? (

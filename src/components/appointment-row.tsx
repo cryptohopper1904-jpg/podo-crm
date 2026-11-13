@@ -46,11 +46,14 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from }: 
   canDoc: boolean;
   canEdit: boolean;
   overlap?: boolean;
-  /** aktuelle Kalender-Ansicht (Pfad + Query) – der Termin führt mit „Zurück“ dorthin (src/lib/back-link.ts) */
+  /**
+   * Seite, auf die „Zurück“ im Termin führt (src/lib/back-link.ts): Kalender-Ansicht mit Query, oder „/heute“ bzw.
+   * „/doku“ – dort wird `von` immer angehängt, da der Standard im Termin der Kalender ist.
+   */
   from?: string;
 }) {
   const { a, patient, feed } = row;
-  const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from) : `/kalender/termin/${a.id}`;
+  const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from, !from.startsWith("/kalender")) : `/kalender/termin/${a.id}`;
   const st = STATUS[a.status];
   const cancelled = a.status === "cancelled";
   const open = !cancelled && a.status !== "done";
@@ -105,25 +108,26 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from }: 
           <Link href={apptHref} className={slotSecondary}>
             {canEdit && !appointmentEditLock(a, !!feed) ? "Ändern" : "Details"}
           </Link>
-          {showDrive ? <Link href={`/touren/losfahren?termin=${a.id}`} className={slotSecondary}>Losfahren</Link> : <Gap />}
+          {/* Ohne Bearbeitungsrecht hat keine Zeile Losfahren/Nicht da/Absagen – dann entfallen die drei Slots ganz */}
+          {showDrive ? <Link href={`/touren/losfahren?termin=${a.id}`} className={slotSecondary}>Losfahren</Link> : canEdit ? <Gap /> : null}
           {showStatus ? (
             <form action={setAppointmentStatusAction} className="contents">
               <input type="hidden" name="id" value={a.id} />
               <input type="hidden" name="status" value="no_show" />
               <button className={slotSecondary} title="Nicht erschienen (Ausfallhonorar möglich)">Nicht da</button>
             </form>
-          ) : (
+          ) : canEdit ? (
             <Gap />
-          )}
+          ) : null}
           {showCancel ? (
             <form action={setAppointmentStatusAction} className="contents">
               <input type="hidden" name="id" value={a.id} />
               <input type="hidden" name="status" value="cancelled" />
               <button className={slotSecondary}>Absagen</button>
             </form>
-          ) : (
+          ) : canEdit ? (
             <Gap />
-          )}
+          ) : null}
         </div>
       </div>
     </div>
