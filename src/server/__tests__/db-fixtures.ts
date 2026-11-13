@@ -3,8 +3,27 @@
  * Legt Praxis, Benutzer, Personen und ausgestellte Rechnungen direkt per SQL an (App-Rolle, RLS aktiv).
  */
 import { Pool, type PoolClient } from "pg";
+import { vi } from "vitest";
+import { addDaysIso } from "@/lib/calendar-grid";
+import { berlinDateIso } from "@/lib/format";
 
 export const TEST_DB = process.env.TEST_DATABASE_URL;
+
+/**
+ * Feste Systemzeit für zeitabhängige DB-Tests: mit `TEST_NOW` (ISO-Zeitpunkt, z. B. 2026-11-13T23:30:00Z) läuft
+ * `Date` auf diesem Zeitpunkt – so lassen sich Tagesgrenzen (UTC-Abend = Berliner Folgetag) gezielt prüfen.
+ * Nur `Date` wird ersetzt; Timer und die DB-Uhr laufen normal weiter.
+ */
+export function useTestClock() {
+  const at = process.env.TEST_NOW;
+  if (!at) return;
+  const now = new Date(at);
+  if (Number.isNaN(now.getTime())) throw new Error(`TEST_NOW ungültig: ${at}`);
+  vi.useFakeTimers({ toFake: ["Date"], now });
+}
+
+/** Berliner Kalendertag relativ zu heute (`Date`, also auch unter `TEST_NOW`) – statt SQL `current_date` (Zeitzone der DB-Sitzung). */
+export const berlinDay = (offsetDays = 0) => addDaysIso(berlinDateIso(), offsetDays);
 
 export function fixtures(url: string) {
   const pool = new Pool({ connectionString: url, max: 3 });
@@ -59,7 +78,7 @@ export function fixtures(url: string) {
       return asOrg(org, async (c) => {
         const id = (await c.query("insert into invoices (organization_id, patient_id, status) values ($1,$2,'draft') returning id", [org, patientId])).rows[0].id as string;
         await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Podologische Behandlung',$3,$3,0,1)", [org, id, totalCents]);
-        await c.query("update invoices set status='issued', number=$2, issued_at=current_date, due_at=current_date + 14, total_cents=$3, net_cents=$3 where id=$1", [id, `T${sfx()}`, totalCents]);
+        await c.query("update invoices set status='issued', number=$2, issued_at=$4, due_at=$5, total_cents=$3, net_cents=$3 where id=$1", [id, `T${sfx()}`, totalCents, berlinDay(), berlinDay(14)]);
         return id;
       });
     },
