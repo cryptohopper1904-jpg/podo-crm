@@ -65,11 +65,25 @@ export async function loadBlockOccurrences(tx: Tx, org: string, userIds: readonl
  */
 export async function blockClashesInTx(tx: Tx, org: string, therapistId: string, intervals: readonly { start: Date; end: Date }[]): Promise<BlockOccurrence[]> {
   if (!intervals.length) return [];
-  const days = intervals.flatMap((i) => [berlinParts(i.start).dateIso, berlinParts(i.end).dateIso]).sort();
-  const occ = await loadBlockOccurrences(tx, org, [therapistId], addDaysIso(days[0], -1), days[days.length - 1]);
-  const hits: BlockOccurrence[] = [];
-  for (const i of intervals) for (const o of overlappingBlocks(occ, therapistId, i.start, i.end)) if (!hits.includes(o)) hits.push(o);
-  return hits.sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.startMin - b.startMin);
+  // Regeln einmal laden; expandiert wird nur an den Berliner Tagen der Termine (keine Lücke zwischen Serienterminen,
+  // damit auch Serien über mehr als MAX_EXPAND_DAYS geprüft werden und die Prüfung unter der Buchungssperre schnell bleibt)
+  const perInterval = intervals.map((i) => {
+    const first = berlinParts(i.start).dateIso;
+    // Ende genau um Mitternacht gehört zum Vortag
+    const last = berlinParts(new Date(i.end.getTime() - 1)).dateIso;
+    const days: string[] = [];
+    for (let d = first; d <= last && days.length < 3; d = addDaysIso(d, 1)) days.push(d);
+    return { ...i, days };
+  });
+  const all = [...new Set(perInterval.flatMap((i) => i.days))].sort();
+  const rules = await loadBlockRules(tx, org, [therapistId], all[0], all[all.length - 1]);
+  if (!rules.length) return [];
+  const byDay = new Map(all.map((d) => [d, expandBlocks(rules, d, d, [therapistId])]));
+  const hits = new Map<string, BlockOccurrence>();
+  for (const i of perInterval) {
+    for (const d of i.days) for (const o of overlappingBlocks(byDay.get(d) ?? [], therapistId, i.start, i.end)) hits.set(`${o.blockId}|${o.dateIso}`, o);
+  }
+  return [...hits.values()].sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.startMin - b.startMin);
 }
 
 // ───────────── Rechte ─────────────
@@ -148,6 +162,36 @@ const auditMeta = (d: Pick<BlockInput, "userId" | "kind" | "repeat">, extra: Rec
   ...extra,
 });
 
+/** Vorheriger Stand für das Protokoll (wer/welche Wiederholung vorher) */
+const auditOld = (old: Pick<BlockRule, "userId" | "repeat">) => ({ oldTarget: old.userId ? "person" : "praxis", oldUserId: old.userId, oldRepeat: old.repeat });
+
+/** Höchstzahl aktiver Sperrzeit-Regeln je Praxis (Schutz vor Massenanlage) */
+export const MAX_ACTIVE_BLOCKS = 500;
+/** Höchstzahl einzeln gelöschter Vorkommen je Serie (wie CHECK calendar_blocks_valid_check) */
+export const MAX_EXCEPTIONS = 500;
+
+const TOO_MANY_BLOCKS = `Es gibt bereits ${MAX_ACTIVE_BLOCKS} aktive Sperrzeiten in dieser Praxis. Bitte nicht mehr benötigte löschen oder Serien zusammenfassen.`;
+const TOO_MANY_EXCEPTIONS = "Diese Serie hat zu viele einzeln geänderte oder gelöschte Vorkommen. Bitte die Serie beenden (Enddatum) und neu anlegen.";
+
+/** Aktive Regeln (Serie ohne Ende bzw. Ende/Datum heute oder später) der Praxis zählen – unter Sperre je Praxis */
+async function activeBlockCount(tx: Tx, org: string): Promise<number> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"blocks:" + org}, 0))`);
+  const today = berlinParts(new Date()).dateIso;
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(calendarBlocks)
+    .where(
+      and(
+        eq(calendarBlocks.organizationId, org),
+        or(
+          and(eq(calendarBlocks.repeat, "none"), gte(calendarBlocks.startsOn, today)),
+          and(sql`${calendarBlocks.repeat} <> 'none'`, or(isNull(calendarBlocks.endsOn), gte(calendarBlocks.endsOn, today))),
+        ),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
 /** Sperrzeit anlegen. */
 export async function createBlock(auth: AuthContext, raw: unknown): Promise<BlockResult> {
   assertWritable(auth);
@@ -156,16 +200,17 @@ export async function createBlock(auth: AuthContext, raw: unknown): Promise<Bloc
   const d = parsed.data;
   if (!canManageBlocksFor(auth, d.userId)) return { ok: false, error: NO_RIGHT };
   const org = auth.organization.id;
-  const res = await withOrg(org, async (tx): Promise<BlockResult> => {
+  return withOrg(org, async (tx): Promise<BlockResult> => {
     if (d.userId && !(await isCalendarMemberTx(tx, org, d.userId))) return { ok: false, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
+    if ((await activeBlockCount(tx, org)) >= MAX_ACTIVE_BLOCKS) return { ok: false, error: TOO_MANY_BLOCKS };
     const [row] = await tx
       .insert(calendarBlocks)
       .values({ ...values(org, d), createdBy: auth.user.id })
       .returning({ id: calendarBlocks.id });
+    // Protokoll in derselben Transaktion: keine Sperrzeit ohne Audit-Eintrag
+    await audit({ organizationId: org, userId: auth.user.id, action: "calendar_block.create", entity: "calendar_block", entityId: row.id, meta: auditMeta(d) }, tx);
     return { ok: true, id: row.id };
   });
-  if (res.ok) await audit({ organizationId: org, userId: auth.user.id, action: "calendar_block.create", entity: "calendar_block", entityId: res.id, meta: auditMeta(d) });
-  return res;
 }
 
 export type BlockScope = "series" | "occurrence";
@@ -181,7 +226,8 @@ async function lockedRule(tx: Tx, org: string, id: string) {
 
 /**
  * Sperrzeit ändern. Bei Serien: `scope` „occurrence“ ändert nur das Vorkommen am `occurrenceDate`
- * (es wird aus der Serie ausgenommen und als einzelne Sperrzeit neu angelegt), „series“ die ganze Serie.
+ * (es wird aus der Serie ausgenommen und als einzelne Sperrzeit neu angelegt), „series“ die ganze Serie
+ * (auch vergangene Vorkommen).
  */
 export async function updateBlock(auth: AuthContext, id: string, raw: unknown, scope: BlockScope = "series", occurrenceDate?: string | null): Promise<BlockResult> {
   assertWritable(auth);
@@ -190,13 +236,17 @@ export async function updateBlock(auth: AuthContext, id: string, raw: unknown, s
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
   const org = auth.organization.id;
-  const res = await withOrg(org, async (tx): Promise<BlockResult & { single?: boolean }> => {
+  return withOrg(org, async (tx): Promise<BlockResult> => {
     const old = await lockedRule(tx, org, id);
     if (!old) return { ok: false, error: "Sperrzeit nicht gefunden." };
     if (!canManageBlocksFor(auth, old.userId) || !canManageBlocksFor(auth, d.userId)) return { ok: false, error: NO_RIGHT };
     if (d.userId && d.userId !== old.userId && !(await isCalendarMemberTx(tx, org, d.userId))) return { ok: false, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
+    const log = (meta: Record<string, unknown>) =>
+      audit({ organizationId: org, userId: auth.user.id, action: "calendar_block.update", entity: "calendar_block", entityId: id, meta: { ...auditMeta(d), ...auditOld(old), ...meta } }, tx);
     if (scope === "occurrence" && old.repeat !== "none") {
       if (!occurrenceDate || !occursOn(old, occurrenceDate)) return { ok: false, error: "Dieses Vorkommen gibt es in der Serie nicht (mehr)." };
+      if (old.exceptions.length >= MAX_EXCEPTIONS) return { ok: false, error: TOO_MANY_EXCEPTIONS };
+      if ((await activeBlockCount(tx, org)) >= MAX_ACTIVE_BLOCKS) return { ok: false, error: TOO_MANY_BLOCKS };
       await tx
         .update(calendarBlocks)
         .set({ exceptions: sql`array_append(${calendarBlocks.exceptions}, ${occurrenceDate}::date)`, updatedAt: new Date() })
@@ -205,7 +255,8 @@ export async function updateBlock(auth: AuthContext, id: string, raw: unknown, s
         .insert(calendarBlocks)
         .values({ ...values(org, { ...d, repeat: "none", endsOn: null, weekdays: [], intervalWeeks: 1 }), createdBy: auth.user.id })
         .returning({ id: calendarBlocks.id });
-      return { ok: true, id: row.id, single: true };
+      await log({ scope: "occurrence", newId: row.id, date: occurrenceDate });
+      return { ok: true, id: row.id };
     }
     // Ausnahmen bleiben nur, solange sie noch zur (geänderten) Serie passen
     const exceptions = d.repeat === "none" ? [] : old.exceptions.filter((x) => x >= d.startsOn && (!d.endsOn || x <= d.endsOn));
@@ -213,18 +264,9 @@ export async function updateBlock(auth: AuthContext, id: string, raw: unknown, s
       .update(calendarBlocks)
       .set({ ...values(org, d), exceptions, updatedAt: new Date() })
       .where(and(eq(calendarBlocks.organizationId, org), eq(calendarBlocks.id, id)));
+    await log({ scope: "series" });
     return { ok: true, id };
   });
-  if (res.ok)
-    await audit({
-      organizationId: org,
-      userId: auth.user.id,
-      action: "calendar_block.update",
-      entity: "calendar_block",
-      entityId: id,
-      meta: auditMeta(d, { scope: res.single ? "occurrence" : "series", ...(res.single ? { newId: res.id, date: occurrenceDate } : {}) }),
-    });
-  return res.ok ? { ok: true, id: res.id } : res;
 }
 
 /**
@@ -235,23 +277,24 @@ export async function deleteBlock(auth: AuthContext, id: string, scope: BlockSco
   assertWritable(auth);
   if (!z.uuid().safeParse(id).success) return { ok: false, error: "Sperrzeit nicht gefunden." };
   const org = auth.organization.id;
-  const res = await withOrg(org, async (tx): Promise<{ ok: true; meta: Record<string, unknown> } | { ok: false; error: string }> => {
+  return withOrg(org, async (tx): Promise<{ ok: true } | { ok: false; error: string }> => {
     const old = await lockedRule(tx, org, id);
     if (!old) return { ok: false, error: "Sperrzeit nicht gefunden." };
     if (!canManageBlocksFor(auth, old.userId)) return { ok: false, error: NO_RIGHT };
-    const meta = auditMeta(old as Pick<BlockInput, "userId" | "kind" | "repeat">);
+    const log = (meta: Record<string, unknown>) =>
+      audit({ organizationId: org, userId: auth.user.id, action: "calendar_block.delete", entity: "calendar_block", entityId: id, meta: { ...auditMeta(old as Pick<BlockInput, "userId" | "kind" | "repeat">), ...auditOld(old), ...meta } }, tx);
     if (scope === "occurrence" && old.repeat !== "none") {
       if (!occurrenceDate || !occursOn(old, occurrenceDate)) return { ok: false, error: "Dieses Vorkommen gibt es in der Serie nicht (mehr)." };
+      if (old.exceptions.length >= MAX_EXCEPTIONS) return { ok: false, error: TOO_MANY_EXCEPTIONS };
       await tx
         .update(calendarBlocks)
         .set({ exceptions: sql`array_append(${calendarBlocks.exceptions}, ${occurrenceDate}::date)`, updatedAt: new Date() })
         .where(and(eq(calendarBlocks.organizationId, org), eq(calendarBlocks.id, id)));
-      return { ok: true, meta: { ...meta, scope: "occurrence", date: occurrenceDate } };
+      await log({ scope: "occurrence", date: occurrenceDate });
+      return { ok: true };
     }
     await tx.delete(calendarBlocks).where(and(eq(calendarBlocks.organizationId, org), eq(calendarBlocks.id, id)));
-    return { ok: true, meta: { ...meta, scope: "series" } };
+    await log({ scope: "series" });
+    return { ok: true };
   });
-  if (!res.ok) return res;
-  await audit({ organizationId: org, userId: auth.user.id, action: "calendar_block.delete", entity: "calendar_block", entityId: id, meta: res.meta });
-  return { ok: true };
 }

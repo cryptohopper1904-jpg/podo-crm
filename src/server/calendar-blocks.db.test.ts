@@ -7,6 +7,8 @@ vi.mock("server-only", () => ({}));
 import type { AuthContext } from "@/lib/auth/session";
 import type { Permission } from "@/lib/auth/permissions";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { addDaysIso } from "@/lib/calendar-grid";
+import { berlinToUtc } from "@/lib/format";
 
 // Montag 2031-05-05 (MESZ, UTC+2)
 const MON = "2031-05-05";
@@ -209,5 +211,57 @@ const NOW = new Date("2031-05-01T06:00:00Z");
     expect(await dates()).toEqual(["2031-05-12 780"]);
     const audit = await f.asOrg(org, (c) => c.query("select meta->>'scope' s from audit_log where organization_id = $1 and action like 'calendar_block.%' and action <> 'calendar_block.create' order by id", [org]));
     expect(audit.rows.map((r) => r.s)).toEqual(["occurrence", "occurrence", "series", "series"]);
+    const metas = await f.asOrg(org, (c) => c.query("select meta from audit_log where organization_id = $1 and action = 'calendar_block.delete' order by id", [org]));
+    expect(metas.rows[0].meta).toMatchObject({ oldRepeat: "weekly", oldUserId: b, oldTarget: "person" });
+  });
+
+  it("Konfliktprüfung bei Serienterminen über mehr als 400 Tage, auch mit vielen Regeln schnell", async () => {
+    const { org, b, owner } = await setup();
+    // drei tägliche Pausen-Regeln (Person + ganze Praxis), Beginn weit vorher
+    ok(await bl.createBlock(owner, block({ userId: b, repeat: "daily", startsOn: "2030-01-01", startTime: "12:00", endTime: "12:30" })));
+    ok(await bl.createBlock(owner, block({ userId: null, repeat: "daily", startsOn: "2030-01-01", kind: "reinigung", startTime: "07:00", endTime: "07:30" })));
+    ok(await bl.createBlock(owner, block({ userId: b, repeat: "daily", startsOn: "2030-01-01", kind: "schulung", startTime: "16:00", endTime: "17:00" })));
+    // Termin „alle 6 Wochen × 12“ um 12:15 Berlin: letztes Vorkommen 462 Tage nach dem ersten
+    // je Vorkommen 12:15 Berliner Zeit (über Zeitumstellungen hinweg)
+    const occurrences = Array.from({ length: 12 }, (_, i) => berlinToUtc(addDaysIso(MON, i * 42), "12:15"));
+    const t0 = Date.now();
+    const res = await ap.createInternalAppointments(org, {
+      patientId: null, therapistId: b, occurrences, durationMin: 30, source: "phone", title: "Behandlung", notes: null, homeVisit: false, serviceIds: [], allowConflict: false,
+    });
+    const ms = Date.now() - t0;
+    expect(res).toMatchObject({ ok: false, conflict: true });
+    const blocks = res.ok || !("conflict" in res) || !res.conflict ? [] : res.blocks;
+    // jedes der 12 Vorkommen kollidiert mit der Pause – auch das letzte (> 400 Tage)
+    expect(new Set(blocks.filter((x) => x.label === "Pause").map((x) => x.dateIso)).size).toBe(12);
+    expect(blocks.some((x) => x.dateIso >= "2032-08-01")).toBe(true);
+    expect(ms).toBeLessThan(1500);
+  });
+
+  it("KI-Antwortvorschläge (replyFacts): Sperrzeiten der ganzen Praxis werden nicht angeboten", async () => {
+    const { org, owner } = await setup();
+    const rc = await import("./reply-context");
+    const tomorrow = new Date(Date.now() + 86400_000).toLocaleDateString("en-CA", { timeZone: "Europe/Berlin" });
+    expect((await rc.replyFacts(org, null)).facts.join(" ")).toMatch(/Freie Termine/);
+    ok(await bl.createBlock(owner, block({ userId: null, kind: "wartung", repeat: "daily", allDay: true, startTime: "", endTime: "", startsOn: tomorrow })));
+    expect((await rc.replyFacts(org, null)).facts.join(" ")).toMatch(/keine freien Termine/);
+  });
+
+  it("Grenzen: verständliche Meldung bei zu vielen Ausnahmen und zu vielen aktiven Sperrzeiten; inaktive Person bleibt", async () => {
+    const { org, b, owner } = await setup();
+    const id = ok(await bl.createBlock(owner, block({ userId: b, repeat: "daily", startsOn: "2031-01-01" })));
+    // 500 Ausnahmen direkt setzen (Werktage ab 2031-01-01)
+    await f.asOrg(org, (c) =>
+      c.query("update calendar_blocks set exceptions = (select array_agg(d::date) from (select d from generate_series('2031-01-01'::date, '2033-12-31'::date, '1 day') d where extract(isodow from d) <= 5 limit 500) x) where id = $1", [id]),
+    );
+    expect(await bl.deleteBlock(owner, id, "occurrence", "2034-01-02")).toMatchObject({ ok: false, error: expect.stringMatching(/zu viele/) });
+    // 500 aktive Regeln → keine weitere
+    await f.asOrg(org, (c) => c.query("insert into calendar_blocks (organization_id, starts_on, all_day) select $1, '2035-01-01'::date + g, true from generate_series(1, 499) g", [org]));
+    expect(await bl.createBlock(owner, block({ userId: null, startsOn: "2036-01-01" }))).toMatchObject({ ok: false, error: expect.stringMatching(/500 aktive/) });
+    // vergangene Einzel-Sperrzeiten zählen nicht
+    await f.asOrg(org, (c) => c.query("update calendar_blocks set starts_on = '2020-01-01' where organization_id = $1 and repeat = 'none' and all_day", [org]));
+    ok(await bl.createBlock(owner, block({ userId: null, startsOn: "2036-01-01" })));
+    // Person nicht mehr aktiv: Ändern mit derselben Person bleibt möglich (kein stilles Umhängen nötig)
+    await f.pool.query("update memberships set active = false where organization_id = $1 and user_id = $2", [org, b]);
+    expect(await bl.updateBlock(owner, id, block({ userId: b, repeat: "daily", startsOn: "2031-01-01", startTime: "12:05", endTime: "12:35" }))).toMatchObject({ ok: true });
   });
 });

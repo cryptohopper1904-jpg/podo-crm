@@ -69,7 +69,7 @@ export function BlockForm({
             </label>
             <label className="flex min-h-11 items-center gap-3 text-[15px]">
               <input type="radio" name="scope" value="series" checked={scope === "series"} onChange={() => setScope("series")} className="size-5 accent-[var(--primary)]" />
-              <span>Ganze Serie</span>
+              <span>Ganze Serie <span className="text-sm text-muted">(ändert auch vergangene Vorkommen)</span></span>
             </label>
           </fieldset>
         </Card>
@@ -138,7 +138,7 @@ export function BlockForm({
             </div>
           </fieldset>
         ) : null}
-        <Field label="Notiz" className="mt-4">
+        <Field label="Notiz" className="mt-4" hint="Titel und Notiz sind für das ganze Team sichtbar – bitte keine Gesundheits- oder privaten Gründe eintragen.">
           <Textarea name="note" rows={2} defaultValue={defaults.note} maxLength={1000} />
         </Field>
       </Card>

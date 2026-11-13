@@ -26,6 +26,8 @@ export default async function BlockPage(props: PageProps<"/kalender/sperrzeit/[i
   const canEdit = canManageBlocksFor(auth, b.userId);
   const team = canEdit ? (await therapists(auth)).sort((a, c) => a.name.localeCompare(c.name, "de")) : [];
   const people = team.filter((t) => canManageBlocksFor(auth, t.id)).map((t) => ({ id: t.id, name: t.name }));
+  // Person nicht mehr aktiv (oder ohne eigenen Kalender): als Auswahl behalten, sonst würde die Sperrzeit beim Speichern still umgehängt
+  if (b.userId && !people.some((p) => p.id === b.userId)) people.unshift({ id: b.userId, name: `${b.personName ?? "Person"} (nicht mehr aktiv)` });
   const time = b.allDay ? "ganztägig" : `${b.startTime}–${b.endTime} Uhr`;
 
   return (

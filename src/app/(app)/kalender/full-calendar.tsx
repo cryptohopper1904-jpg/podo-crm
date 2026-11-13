@@ -135,8 +135,9 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
   let columns: Column[];
   const { holiday: dayHoliday, school: daySchool } = view === "tag" ? dayLabels(day, state, options) : { holiday: null, school: null };
   // Schattierung: Arbeitszeiten laut Option; Feiertag (Praxis geschlossen) immer ganztägig – das ist Verfügbarkeit, keine Anzeige-Option
-  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0] }) =>
-    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.ranges, 0, 24 * 60) : [];
+  // Arbeitszeit ohne Abzug der Sperrzeiten (hoursRanges): Pausen sind keine „außerhalb der Arbeitszeit“, sie zeichnet BlockOverlays
+  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0]; hoursRanges?: Parameters<typeof outsideRanges>[0] }) =>
+    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.hoursRanges ?? av.ranges, 0, 24 * 60) : [];
   const holidayNote = (iso: string) => {
     const h = holidayOn(iso, state);
     return h ? `Feiertag (${h}) – Praxis geschlossen` : null;
