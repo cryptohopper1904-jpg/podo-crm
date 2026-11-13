@@ -7,6 +7,7 @@ import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
+import { findServiceByCode } from "@/lib/service-code";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { createInvoiceAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
@@ -37,7 +38,7 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number };
+type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string };
 
 let seq = 0;
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -141,8 +142,30 @@ export function InvoiceForm({
 
   function chooseService(key: string, serviceId: string) {
     const s = svcById.get(serviceId);
-    if (!s) return update(key, { serviceId: "", description: "", price: "" });
-    update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate });
+    if (!s) return update(key, { serviceId: "", description: "", price: "", codeInput: undefined });
+    update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: undefined });
+  }
+
+  /** Schnelleingabe: Kürzel tippen (z. B. „PK“) → passende Leistung wird gewählt; unbekannt → Hinweis, nichts überschrieben */
+  function typeCode(key: string, value: string) {
+    const s = findServiceByCode(services, value);
+    if (s) update(key, { serviceId: s.id, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value });
+    else update(key, { codeInput: value });
+  }
+
+  /** Enter im Kürzel-Feld: nächste Position anlegen und dort weitertippen (statt das Formular abzuschicken) */
+  function codeKeyDown(e: React.KeyboardEvent<HTMLInputElement>, key: string) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const idx = lines.findIndex((l) => l.key === key);
+    const next = lines[idx + 1];
+    if (next) {
+      document.getElementById(`code-${next.key}`)?.focus();
+      return;
+    }
+    const nl = newLine();
+    setLines((ls) => [...ls, nl]);
+    requestAnimationFrame(() => document.getElementById(`code-${nl.key}`)?.focus());
   }
 
   function chooseKind(k: CreatableKind) {
@@ -259,13 +282,33 @@ export function InvoiceForm({
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
               <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
-                <Field label={`Pos. ${i + 1}: Leistung`} className="md:col-span-3 2xl:col-span-1">
-                  <Select value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
-                    <option value="">Freitext</option>
-                    {services.map((sv) => (
-                      <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
-                    ))}
-                  </Select>
+                <Field
+                  label={`Pos. ${i + 1}: Leistung`}
+                  className="md:col-span-3 2xl:col-span-1"
+                  hint={l.codeInput && !findServiceByCode(services, l.codeInput) ? `Kürzel „${l.codeInput.trim()}“ unbekannt` : undefined}
+                >
+                  <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+                    <Input
+                      id={`code-${l.key}`}
+                      aria-label={`Pos. ${i + 1}: Kürzel`}
+                      title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
+                      placeholder="Kürzel"
+                      autoComplete="off"
+                      autoCapitalize="characters"
+                      spellCheck={false}
+                      maxLength={10}
+                      className="uppercase"
+                      value={l.codeInput ?? s?.code ?? ""}
+                      onChange={(e) => typeCode(l.key, e.target.value)}
+                      onKeyDown={(e) => codeKeyDown(e, l.key)}
+                    />
+                    <Select aria-label={`Pos. ${i + 1}: Leistung wählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                      <option value="">Freitext</option>
+                      {services.map((sv) => (
+                        <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                      ))}
+                    </Select>
+                  </div>
                 </Field>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
                   <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
