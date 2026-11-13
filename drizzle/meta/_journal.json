@@ -246,6 +246,20 @@
       "when": 1794599680121,
       "tag": "0034_mahnwesen_security",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794601773253,
+      "tag": "0035_produkte",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794601773254,
+      "tag": "0036_produkte_security",
+      "breakpoints": true
     }
   ]
 }

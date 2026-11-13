@@ -15,6 +15,7 @@ export function navAllowed(auth: AuthContext): NavKey[] {
   if (auth.can("messages.read")) allowed.push("posteingang", "telefon", "bewertungen");
   if (auth.can("invoices.read")) allowed.push("rechnungen", "gutscheine");
   if (auth.can("cash.read")) allowed.push("kasse");
+  if (auth.can("invoices.read")) allowed.push("produkte");
   if (auth.can("medical.read") || auth.can("patients.write")) allowed.push("hygiene");
   if (auth.role !== "accountant") allowed.push("team");
   allowed.push("news");

@@ -45,7 +45,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen oder einen Titel (z. B. Blocker) eingeben." };
 
   const svc = serviceIds.length
-    ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds))))
+    ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
     : [];
   const duration = d.durationMin ?? (svc.reduce((s, x) => s + x.durationMin, 0) || 30);
   const firstStart = berlinToUtc(d.date, d.time);

@@ -44,6 +44,12 @@ export type CreatableKind = (typeof CREATABLE_KINDS)[number];
 
 export const THERAPEUTIC_LABEL = "Heilbehandlung mit therapeutischem Ziel (Befund/Verordnung dokumentiert)";
 export const NOTE_VAT_EXEMPT = "Umsatzsteuerfrei gemäß § 4 Nr. 14 a UStG (Heilbehandlung im Bereich der Humanmedizin).";
+/** Zusatz, wenn Produkte in der Behandlung angewendet wurden (unselbständige Nebenleistung, src/lib/product-vat.ts) */
+export const NOTE_VAT_EXEMPT_WITH_PRODUCTS =
+  "Umsatzsteuerfrei gemäß § 4 Nr. 14 a UStG (Heilbehandlung im Bereich der Humanmedizin) einschließlich der in der Behandlung angewendeten Produkte (Nebenleistung).";
+/** Steuerbefreiungs-Hinweis passend zu den Positionen */
+export const vatExemptNote = (lines: readonly { inTreatment?: boolean | null }[]) =>
+  lines.some((l) => !!l.inTreatment) ? NOTE_VAT_EXEMPT_WITH_PRODUCTS : NOTE_VAT_EXEMPT;
 export const NOTE_SMALL_BUSINESS = "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).";
 export const NOTE_NO_SHOW =
   "Ausfallhonorar gemäß § 615 BGB für einen nicht wahrgenommenen und nicht rechtzeitig abgesagten Termin. Als Schadensersatz nicht umsatzsteuerbar.";
