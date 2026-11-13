@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
@@ -9,6 +10,7 @@ import { STATES } from "@/lib/holidays";
 import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
 import { readDunningSettings } from "@/lib/dunning";
 import { formatIban } from "@/lib/invoice-view";
+import { practiceHours, weekSummary } from "@/lib/opening-hours";
 import { parseOnlineBookingSettings } from "@/lib/portal-booking";
 import { practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
@@ -27,7 +29,7 @@ export const metadata = { title: "Praxis" };
 export default async function PracticeSettings() {
   const auth = await requireAuth("settings.manage");
   const [o] = await db.select().from(organizations).where(eq(organizations.id, auth.organization.id));
-  const s = o.settings as { materialCostCents?: number; opening?: { from: string; to: string } };
+  const s = o.settings as { materialCostCents?: number };
   const logos = await logoInfo(o.id);
   const doc = readDocumentSettings(o.settings);
   const publicUrl = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
@@ -61,9 +63,11 @@ export default async function PracticeSettings() {
           <Field label="Telefon"><Input name="phone" defaultValue={o.phone ?? ""} /></Field>
           <Field label="E-Mail"><Input name="email" type="email" defaultValue={o.email ?? ""} /></Field>
           <Field label="Materialkosten" hint="je Behandlung"><Input suffix="€" name="materialCost" defaultValue={((s.materialCostCents ?? 350) / 100).toFixed(2).replace(".", ",")} /></Field>
-          <Field label="Öffnung von"><Input type="time" name="openingFrom" defaultValue={s.opening?.from ?? "08:00"} /></Field>
-          <Field label="Öffnung bis"><Input type="time" name="openingTo" defaultValue={s.opening?.to ?? "18:00"} /></Field>
         </div>
+        <p className="text-sm text-muted">
+          Öffnungszeiten ({weekSummary(practiceHours(o.settings))}) je Wochentag unter{" "}
+          <Link className="font-semibold text-primary underline" href="/einstellungen/oeffnungszeiten">Einstellungen → Öffnungszeiten</Link>.
+        </p>
         <Checkbox name="smallBusiness" defaultChecked={o.smallBusiness} label="Kleinunternehmer nach § 19 UStG (keine Umsatzsteuer auf Rechnungen)" />
       </ActionForm>
     </Card>

@@ -29,6 +29,7 @@ import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-p
 export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
 import { seedIntegrationDefaults } from "./org-defaults";
 import { BILLING_MODES, type BillingMode } from "./features";
+import { weekFromList, weekToList } from "./opening-hours";
 import { PLANS, TRIAL_DAYS } from "./plans";
 import { LIMITS } from "./website";
 
@@ -225,9 +226,8 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
     await tx.execute(sql`select pg_advisory_xact_lock(4711002)`);
     const [again] = await tx.select({ id: schema.organizations.id }).from(schema.organizations).where(eq(schema.organizations.slug, slug));
     if (again) return false;
-    const opening = spec.openingHours.length
-      ? { from: spec.openingHours.map((h) => h.from).sort()[0], to: spec.openingHours.map((h) => h.to).sort().at(-1)! }
-      : undefined;
+    // Öffnungszeiten je Wochentag = Praxis-Öffnungszeiten (Verfügbarkeit, Telefon, Website); ohne Angabe gilt Mo–Fr 08–18 Uhr
+    const hours = spec.openingHours.length ? weekToList(weekFromList(spec.openingHours)) : undefined;
     const [org] = await tx
       .insert(schema.organizations)
       .values({
@@ -245,8 +245,7 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
         trialEndsAt: new Date(Date.now() + TRIAL_DAYS * 86_400_000),
         seats: PLANS.trial.includedSeats,
         settings: {
-          ...(opening ? { opening } : {}),
-          openingHours: spec.openingHours,
+          ...(hours ? { practiceHours: hours } : {}),
           homeVisitAreas: spec.homeVisitAreas,
           ...(spec.website ? { websiteUrl: spec.website } : {}),
           ...(spec.openingDate ? { openingDate: spec.openingDate } : {}),
@@ -261,6 +260,7 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
             imprint: "",
             privacy: "",
             serviceDescriptions: Object.fromEntries(spec.services.flatMap((s, i) => (s.description ? [[codes[i], s.description]] : []))),
+            customHours: false,
           },
           /** Leistungen mit Platzhalter-Preis – Hinweis in den Einstellungen */
           servicePriceNotes: Object.fromEntries(spec.services.flatMap((s, i) => (s.priceCents === null || s.note ? [[codes[i], s.note ?? "Preis bitte prüfen"]] : []))),

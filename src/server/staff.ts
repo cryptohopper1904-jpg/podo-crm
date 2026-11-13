@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { ABSENCE_KINDS, computeAvailability, type Availability, type TimeRange } from "@/lib/availability";
 import { berlinDateIso } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { practiceHours } from "@/lib/opening-hours";
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 
@@ -63,17 +64,13 @@ async function isMember(org: string, userId: string) {
 
 async function orgInfo(org: string) {
   const [o] = await db.select({ state: organizations.state, settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  const opening = (o?.settings as { opening?: { from?: string; to?: string } } | undefined)?.opening;
-  return {
-    state: (o?.state ?? "BB") as StateCode,
-    opening: { start: opening?.from ?? "08:00", end: opening?.to ?? "18:00" } satisfies TimeRange,
-  };
+  return { state: (o?.state ?? "BB") as StateCode, opening: practiceHours(o?.settings) };
 }
 
 /**
  * Verfügbarkeit einer Person an einem Tag (Berliner Datum) – für Kalender und Online-Buchung.
  * Berücksichtigt Arbeitszeiten je Wochentag, Abwesenheiten und gesetzliche Feiertage des Bundeslands.
- * Sind für die Person gar keine Arbeitszeiten gepflegt, gelten Mo–Fr die Öffnungszeiten der Praxis
+ * Sind für die Person gar keine Arbeitszeiten gepflegt, gelten die Öffnungszeiten der Praxis je Wochentag
  * (`source: "opening_hours"`).
  */
 export async function availability(org: string, userId: string, dateIso: string): Promise<Availability> {

@@ -77,8 +77,11 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     const days = (new Date(org.trial_ends_at).getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(29);
     expect(days).toBeLessThanOrEqual(30);
-    expect(org.settings.openingHours).toEqual([{ weekday: 2, from: "08:00", to: "17:00" }, { weekday: 3, from: "08:00", to: "17:00" }]);
-    expect(org.settings.opening).toEqual({ from: "08:00", to: "17:00" });
+    // Öffnungszeiten je Wochentag = Praxis-Öffnungszeiten; die Website übernimmt sie (keine eigenen Website-Zeiten)
+    expect(org.settings.practiceHours).toEqual([{ weekday: 2, from: "08:00", to: "17:00" }, { weekday: 3, from: "08:00", to: "17:00" }]);
+    expect(org.settings.opening).toBeUndefined();
+    expect(org.settings.openingHours).toBeUndefined();
+    expect(org.settings.website.customHours).toBe(false);
     expect(org.settings.homeVisitAreas).toHaveLength(6);
     expect(org.settings.servicePriceNotes.NP).toMatch(/Preis bitte prüfen/);
     expect(org.settings.website.enabled).toBe(false);

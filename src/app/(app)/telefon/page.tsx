@@ -10,6 +10,7 @@ import { OUTCOME_LABEL } from "@/integrations/voice/core";
 import { VOICE_VENDOR_LABEL } from "@/integrations/voice/voice-agent";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateTimeDe } from "@/lib/format";
+import { weekSummary } from "@/lib/opening-hours";
 import { loadConnection } from "@/server/integrations";
 import { listVoiceCalls, simulationAllowed, voiceMonthlyReport, voicePageInfo, voiceSetupState } from "@/server/voice";
 import { saveVoiceSettingsAction } from "./actions";
@@ -190,8 +191,8 @@ export default async function TelefonPage() {
         <div className="grid gap-4 text-sm md:grid-cols-2">
           <div>
             <p className="font-semibold">Öffnungszeiten</p>
-            <p>Mo–Fr {info.opening.start}–{info.opening.end} Uhr, an Feiertagen geschlossen. Freie Termine richten sich nach den Arbeitszeiten und Abwesenheiten im Team.</p>
-            {canSettings ? <Link className="text-xs underline" href="/einstellungen/praxis">Öffnungszeiten ändern</Link> : null}
+            <p>{weekSummary(info.opening)}; an Feiertagen geschlossen. Freie Termine richten sich nach den Arbeitszeiten und Abwesenheiten im Team.</p>
+            {canSettings ? <Link className="text-xs underline" href="/einstellungen/oeffnungszeiten">Öffnungszeiten ändern</Link> : null}
             <p className="mt-3 font-semibold">Telefonisch buchbare Leistungen</p>
             <p>{info.services.length ? info.services.map((s) => `${s.code} – ${s.name} (${s.durationMin} Min.)`).join(" · ") : "keine"}</p>
             {canSettings ? <Link className="text-xs underline" href="/einstellungen/leistungen">Leistungen verwalten</Link> : null}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeAvailability, fitsInRanges, isoWeekday, mergeRanges, parseRanges } from "./availability";
+import { weekdaysWeek, weekFromList } from "./opening-hours";
 
 const hours = [
   { weekday: 1, startTime: "08:00", endTime: "12:00" },
@@ -24,11 +25,28 @@ describe("Verfügbarkeit", () => {
     expect(computeAvailability({ dateIso: "2026-11-16", hours, absences }).available).toBe(true);
   });
   it("Feiertag", () => expect(computeAvailability({ dateIso: "2026-11-09", hours, absences: [], holiday: "Testtag" })).toMatchObject({ available: false, reason: "holiday" }));
-  it("ohne gepflegte Zeiten: Mo–Fr Öffnungszeiten", () => {
-    expect(computeAvailability({ dateIso: "2026-11-10", hours: [], absences: [], opening: { start: "09:00", end: "18:00" } })).toMatchObject({
+  it("ohne gepflegte Zeiten: Öffnungszeiten der Praxis (Standard Mo–Fr 08–18 Uhr)", () => {
+    expect(computeAvailability({ dateIso: "2026-11-10", hours: [], absences: [], opening: weekdaysWeek({ start: "09:00", end: "18:00" }) })).toMatchObject({
       available: true, source: "opening_hours", ranges: [{ start: "09:00", end: "18:00" }],
     });
+    expect(computeAvailability({ dateIso: "2026-11-10", hours: [], absences: [] }).ranges).toEqual([{ start: "08:00", end: "18:00" }]);
     expect(computeAvailability({ dateIso: "2026-11-08", hours: [], absences: [] }).available).toBe(false);
+  });
+  it("Öffnungszeiten je Tag: Mittagspause, Samstag, Sonntag, geschlossener Tag", () => {
+    const opening = weekFromList([
+      { weekday: 1, from: "08:00", to: "12:00" },
+      { weekday: 1, from: "13:00", to: "18:00" },
+      { weekday: 6, from: "09:00", to: "12:00" },
+      { weekday: 7, from: "10:00", to: "14:00" },
+    ]);
+    const at = (dateIso: string) => computeAvailability({ dateIso, hours: [], absences: [], opening });
+    expect(at("2026-11-09")).toMatchObject({ available: true, ranges: [{ start: "08:00", end: "12:00" }, { start: "13:00", end: "18:00" }] }); // Mo
+    expect(at("2026-11-10")).toMatchObject({ available: false, reason: "no_hours" }); // Di geschlossen
+    expect(at("2026-11-14").ranges).toEqual([{ start: "09:00", end: "12:00" }]); // Sa
+    expect(at("2026-11-15").ranges).toEqual([{ start: "10:00", end: "14:00" }]); // So
+    expect(computeAvailability({ dateIso: "2026-11-15", hours: [], absences: [], opening, holiday: "Testtag" }).reason).toBe("holiday");
+    // gepflegte Arbeitszeiten gehen den Öffnungszeiten vor
+    expect(computeAvailability({ dateIso: "2026-11-15", hours, absences: [], opening }).available).toBe(false);
   });
   it("verschmilzt Überlappungen", () => {
     expect(mergeRanges([{ start: "10:00", end: "12:00" }, { start: "08:00", end: "10:30" }, { start: "14:00", end: "13:00" }])).toEqual([{ start: "08:00", end: "12:00" }]);

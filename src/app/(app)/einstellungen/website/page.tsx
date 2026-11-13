@@ -5,8 +5,10 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { money } from "@/lib/format";
-import { defaultServiceDescription, homeVisitAreas, LIMITS, openingHours, WEBSITE_ADDON_CENTS, websiteEntitlement, websiteSettings, WEEKDAYS } from "@/lib/website";
+import { practiceHours, weekFromList } from "@/lib/opening-hours";
+import { defaultServiceDescription, homeVisitAreas, LIMITS, openingHours, WEBSITE_ADDON_CENTS, websiteEntitlement, websiteSettings } from "@/lib/website";
 import { saveWebsiteAction } from "./actions";
+import { WebsiteHours } from "./website-hours";
 
 export const metadata = { title: "Website" };
 
@@ -16,7 +18,8 @@ export default async function WebsiteSettingsPage() {
   const settings = o.settings ?? {};
   const w = websiteSettings(settings);
   const ent = websiteEntitlement(auth.billing, settings);
-  const hours = openingHours(settings);
+  const ownHours = openingHours(settings);
+  const practice = practiceHours(settings);
   const svc = await withOrg(o.id, (tx) =>
     tx.select({ code: services.code, name: services.name, active: services.active, category: services.category }).from(services).where(eq(services.organizationId, o.id)).orderBy(services.name),
   );
@@ -68,21 +71,7 @@ export default async function WebsiteSettingsPage() {
           </Field>
           <Checkbox name="showPrices" defaultChecked={w.showPrices} label="Preise anzeigen (Leistungen mit 0 € erscheinen als „auf Anfrage“)" />
 
-          <fieldset className="min-w-0 rounded-xl border border-border p-4">
-            <legend className="px-1 text-sm font-semibold">Praxiszeiten (leer = geschlossen)</legend>
-            <div className="grid gap-2">
-              {[1, 2, 3, 4, 5, 6, 7].map((wd) => {
-                const h = hours.find((x) => x.weekday === wd);
-                return (
-                  <div key={wd} className="grid grid-cols-[5.5rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[7rem_minmax(0,1fr)_minmax(0,1fr)]">
-                    <span className="text-sm font-medium">{WEEKDAYS[wd]}</span>
-                    <Input type="time" name={`from${wd}`} defaultValue={h?.from ?? ""} aria-label={`${WEEKDAYS[wd]} von`} />
-                    <Input type="time" name={`to${wd}`} defaultValue={h?.to ?? ""} aria-label={`${WEEKDAYS[wd]} bis`} />
-                  </div>
-                );
-              })}
-            </div>
-          </fieldset>
+          <WebsiteHours custom={w.customHours} practice={practice} own={ownHours.length ? weekFromList(ownHours) : practice} />
 
           <Field label="Hausbesuche in" hint="Orte durch Komma oder Zeilenumbruch trennen">
             <Textarea name="areas" defaultValue={homeVisitAreas(settings).join(", ")} rows={2} />
