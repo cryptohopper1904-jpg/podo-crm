@@ -272,6 +272,18 @@ describe("Lange Wörter ohne Leerzeichen", () => {
     expectInsideBody(1);
   });
 
+  it("clip: mehrzeilige Werte (\\n, \\r, \\t) werden einzeilig, Fußzeile bricht die PDF-Erzeugung nicht ab", async () => {
+    const doc = await PDFDocument.create();
+    const fonts = await embedFonts(doc);
+    const w = makeWriter(() => doc.addPage(), fonts, makeSafe(fonts.regular));
+    expect(w.clip("Bank\nZweite Zeile\r\nDritte\tZeile", 1000, 7)).toBe("Bank Zweite Zeile Dritte Zeile");
+    expect(w.clip("Sehr lange Bank\nmit Zeilenumbruch und noch mehr Text dahinter", 60, 7).endsWith("…")).toBe(true);
+    const base = invoice(40);
+    const n = await pages(await renderInvoicePdf({ ...base, organization: { ...ORG, bankName: "Beispielbank\nFiliale Potsdam", legalName: "Fußwohl\r\nPodologie GmbH", accountHolder: "Erika\tMusterfrau" } }));
+    expect(n).toBeGreaterThan(1);
+    expect(drawn.some((t) => t.text === "Beispielbank Filiale Potsdam")).toBe(true);
+  });
+
   it("harter Umbruch ist nicht quadratisch: 10.000 Zeichen am Stück < 200 ms (Median)", async () => {
     const doc = await PDFDocument.create();
     const fonts = await embedFonts(doc);
@@ -292,7 +304,13 @@ describe("Lange Wörter ohne Leerzeichen", () => {
     const data = { ...base, lines: [{ ...base.lines[0], description: longWord(6000) }], invoice: { ...base.invoice, notes: longWord(3000) } };
     const ms = await medianMs(() => renderInvoicePdf(data), 3);
     expect(ms).toBeLessThan(3000);
-    expect(pagesOf(drawn, /^1 \(Forts\.\)$/).length).toBeGreaterThan(0);
+    // fortgesetzte Position: Pos-Nummer und darunter „(Forts.)“ in 7 pt auf jeder Folgeseite mit Beschreibungsteilen
+    const cont = drawn.filter((t) => t.text === "(Forts.)");
+    expect(cont.length).toBeGreaterThan(0);
+    for (const c of cont) {
+      expect(c.size).toBe(7);
+      expect(drawn.some((t) => t.page === c.page && t.text === "1" && Math.abs(t.y - (c.y + 9)) < 0.01)).toBe(true);
+    }
   });
 });
 

@@ -235,7 +235,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
       const fit = Math.max(1, Math.floor((y - FOOTER_TOP - ROW_PAD) / ROW_LINE + 1e-6));
       const part = rest.slice(0, fit);
       rest = rest.slice(fit);
-      const h = rowHeight(part.length);
+      // Fortsetzung (immer oben auf einer neuen Seite) mindestens zweizeilig: Pos-Nummer und „(Forts.)“
+      const h = rowHeight(first ? part.length : Math.max(part.length, 2));
       box(ML, y, width, h);
       rowLines(y, h);
       const ty = y - 9.5;
@@ -243,10 +244,9 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
         text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
         text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
       } else {
-        // fortgesetzte Position auf der Folgeseite kennzeichnen; Schriftgröße passend zur schmalen Pos-Spalte
-        const cont = `${i + 1} (Forts.)`;
-        const contSize = Math.min(8.5, (colW.pos - 3) / regular.widthOfTextAtSize(cont, 1));
-        text(cont, cx.pos + colW.pos / 2, ty, { size: contSize, align: "center" });
+        // fortgesetzte Position auf der Folgeseite: Pos-Nummer, darunter „(Forts.)“ in 7 pt (passt in die Pos-Spalte)
+        text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
+        text("(Forts.)", cx.pos + colW.pos / 2, ty - 9, { size: 7, align: "center" });
       }
       part.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * ROW_LINE, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
       if (first) {

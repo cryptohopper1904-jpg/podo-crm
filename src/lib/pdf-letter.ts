@@ -81,6 +81,8 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
    * Längstes Präfix von s (mindestens 1 Zeichen), das mit `suffix` in maxW passt. Exponentielle und dann binäre
    * Suche: O(k log k) Breitenmessungen-Zeichen je Zeile statt quadratisch in der Wortlänge (lange Eingaben ohne
    * Leerzeichen blockieren sonst den Server).
+   * Annahme: Die Breite wächst monoton mit der Präfixlänge – gilt für die Standardschriften (WinAnsi, keine
+   * Ligaturen, keine negativen Breiten). Bei eingebetteten TTF-Schriften mit Ligaturen/Kerning neu prüfen.
    */
   const fitPrefix = (s: string, maxW: number, size: number, font: PDFFont, suffix = ""): number => {
     const fits = (n: number) => font.widthOfTextAtSize(s.slice(0, n) + suffix, size) <= maxW;
@@ -100,7 +102,8 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
   };
   /** Einzeilig auf maxW kürzen (mit „…“) */
   const clip = (t: string, maxW: number, size = 10, font = regular): string => {
-    const s = safe(t);
+    // wie text(): einzeilig – Zeilenumbrüche (safe macht \r/\t schon zu \n bzw. Leerzeichen) wären nicht kodierbar
+    const s = safe(t).replace(/[\r\n\t]/g, " ");
     if (font.widthOfTextAtSize(s, size) <= maxW) return s;
     return s.slice(0, fitPrefix(s, maxW, size, font, "…")).trimEnd() + "…";
   };
@@ -213,7 +216,8 @@ export function drawAddressBlock(
   const boxW = RIGHT - boxX;
   const slSize = 6.5;
   const slMax = boxX - ML - 16;
-  let slText = safe(opts.senderLine.replaceAll(" · ", " - "));
+  // einzeilig (mehrzeilige Praxisangaben wären für die Standardschrift nicht kodierbar)
+  let slText = safe(opts.senderLine.replaceAll(" · ", " - ")).replaceAll("\n", " ");
   while (regular.widthOfTextAtSize(slText, slSize) > slMax && slText.length > 10) slText = slText.slice(0, -2);
   const slW = w.text(slText, ML, y - 8, { size: slSize, color: GRAY });
   w.line(ML, y - 9.5, ML + slW, y - 9.5, 0.3, GRAY);

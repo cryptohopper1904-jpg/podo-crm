@@ -12,6 +12,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, dateTimeDe, money } from "@/lib/format";
 import { invoicePaymentQr, isValidIban } from "@/lib/epc-qr";
 import { computeTotals } from "@/lib/invoice-math";
+import { cssString } from "@/lib/css-string";
 import {
   INVOICE_KIND_LABEL,
   INVOICE_STATUS_LABEL,
@@ -54,9 +55,6 @@ import { backHref } from "@/lib/back-link";
 export const metadata = { title: "Rechnung" };
 
 const qty = qtyDe;
-
-/** Text als CSS-Zeichenkette (für content:), Sonderzeichen als Escape – kein Ausbrechen aus <style> möglich */
-const cssString = (v: string) => `"${v.replace(/[\\"<>\n\r]/g, (c) => `\\${c.charCodeAt(0).toString(16)} `)}"`;
 
 /** Vermerk auf Entwürfen (Seite und Druck) */
 const DRAFT_NOTICE = "ENTWURF – kein gültiger Beleg";
