@@ -1,4 +1,5 @@
 import "server-only";
+import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { and, eq, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
 import { patients, prescriptions } from "@/db/schema";
@@ -158,6 +159,7 @@ export async function importEverordnung(auth: AuthContext, text: string, choice:
       } else {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
         if (await findExisting(tx, org, s.externalRef)) throw new ImportAbort(DUPLICATE_MSG);
+        await assertPatientCapacity(tx, org);
         const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
         const [row] = await tx
           .insert(patients)
@@ -185,7 +187,7 @@ export async function importEverordnung(auth: AuthContext, text: string, choice:
       return { id: res.id, patientId, created, warnings: res.warnings, afterCommit: res.afterCommit };
     });
   } catch (e) {
-    if (e instanceof ImportAbort) return { error: e.message };
+    if (e instanceof ImportAbort || e instanceof PatientLimitError) return { error: e.message };
     if (isDuplicateRefError(e)) return { error: DUPLICATE_MSG };
     throw e;
   }

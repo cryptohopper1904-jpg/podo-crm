@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, withOrg } from "@/db";
+import { db, withOrg, type Tx } from "@/db";
 import { memberships, organizations, services, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
@@ -76,7 +76,8 @@ export async function inviteMemberAction(_: SettingsState, form: FormData): Prom
   if (exists) return { error: "Diese Person ist bereits im Team." };
   const seatErr = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${org}`}))`);
-    const problem = seatProblem(auth.billing, await usedSeats(org, tx), d.data.role);
+    // Tarif frisch unter der Sperre lesen (nicht auth.billing vom Anfang der Anfrage – sonst Race mit Tarifwechsel)
+    const problem = seatProblem(await currentSeatBilling(tx, org), await usedSeats(org, tx), d.data.role);
     if (problem) return problem;
     await tx.insert(memberships).values({ organizationId: org, userId: user.id, role: d.data.role });
     return null;
@@ -85,6 +86,11 @@ export async function inviteMemberAction(_: SettingsState, form: FormData): Prom
   await audit({ organizationId: org, userId: auth.user.id, action: "member.add", entity: "user", entityId: user.id, meta: { role: d.data.role } });
   revalidatePath("/einstellungen/team");
   return { ok: `${d.data.name} wurde hinzugefügt. Bitte das Startpasswort sicher übergeben und beim ersten Login ändern lassen.` };
+}
+
+async function currentSeatBilling(tx: Tx, org: string) {
+  const [o] = await tx.select({ plan: organizations.plan, seats: organizations.seats }).from(organizations).where(eq(organizations.id, org));
+  return o ?? { plan: "starter", seats: 1 };
 }
 
 export async function updateMemberAction(form: FormData) {
@@ -101,7 +107,7 @@ export async function updateMemberAction(form: FormData) {
   const takesSeat = nextActive && seatCounts(nextRole) && !(m.active && seatCounts(m.role));
   const blocked = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${org}`}))`);
-    if (takesSeat && seatProblem(auth.billing, await usedSeats(org, tx), nextRole)) return true;
+    if (takesSeat && seatProblem(await currentSeatBilling(tx, org), await usedSeats(org, tx), nextRole)) return true;
     await tx
       .update(memberships)
       .set({ ...(role ? { role } : {}), ...(active !== null ? { active: active === "1" } : {}) })
@@ -191,6 +197,29 @@ export async function changePasswordAction(_: SettingsState, form: FormData): Pr
   const revokedSessions = await revokeUserSessions(auth.user.id, { exceptSessionId: auth.sessionId });
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "password.changed", meta: { revokedSessions } });
   return { ok: "Passwort geändert." };
+}
+
+/** Weak PINs, die leicht zu erraten sind (gleiche Ziffern, auf-/absteigende Folgen) */
+const COMMON_PINS = new Set(["1212", "2580", "0815", "4711", "1004", "2000", "6969", "1122", "1313", "2468", "1357", "0007", "123123", "112233", "121212", "696969"]);
+const weakPin = (pin: string) =>
+  /^(\d)\1+$/.test(pin) || "0123456789".includes(pin) || "9876543210".includes(pin) || COMMON_PINS.has(pin) || /^(19|20)\d{2}$/.test(pin);
+
+/** Entsperr-PIN für den Übergabe-Modus setzen oder entfernen (nur eigenes Konto, mit Passwort bestätigt). */
+export async function setUnlockPinAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth();
+  const [u] = await db.select().from(users).where(eq(users.id, auth.user.id));
+  if (!(await verifyPassword(u.passwordHash, String(form.get("current") ?? "")))) return { error: "Passwort stimmt nicht." };
+  if (form.get("remove") === "1") {
+    await db.update(users).set({ unlockPinHash: null }).where(eq(users.id, auth.user.id));
+    await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "unlock_pin.removed" });
+    return { ok: "PIN entfernt – Entsperren geht jetzt nur mit dem Passwort." };
+  }
+  const pin = String(form.get("pin") ?? "");
+  if (!/^\d{4,8}$/.test(pin)) return { error: "Die PIN muss aus 4 bis 8 Ziffern bestehen." };
+  if (weakPin(pin)) return { error: "Bitte keine leicht zu erratende PIN (z. B. 1111 oder 1234)." };
+  await db.update(users).set({ unlockPinHash: await hashPassword(pin) }).where(eq(users.id, auth.user.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "unlock_pin.set" });
+  return { ok: "PIN gespeichert." };
 }
 
 /**

@@ -6,8 +6,19 @@ import { AnamnesisFields } from "@/components/anamnesis-fields";
 import { Button, Card, Checkbox, FormError } from "@/components/ui";
 import { submitOnlineAnamnesisAction, type OnlineAnamnesisState } from "./actions";
 
-export function OnlineAnamnesisForm({ token }: { token: string }) {
+export function OnlineAnamnesisForm({ token, onSite = false }: { token: string; /** Übergabe-Modus am Praxis-Gerät */ onSite?: boolean }) {
   const [state, action, pending] = useActionState<OnlineAnamnesisState, FormData>(submitOnlineAnamnesisAction, undefined);
+  if (state?.done && onSite) {
+    return (
+      <Card className="mt-6 text-center">
+        <h2 className="font-display text-2xl font-semibold">Vielen Dank!</h2>
+        <p className="mt-2 text-lg">Ihre Angaben sind gespeichert. Bitte geben Sie das Gerät jetzt an die Praxis zurück.</p>
+        <p className="mt-6">
+          <a href="/entsperren" className="inline-flex min-h-11 items-center rounded-xl border border-border px-4 text-sm font-semibold">Praxis: Gerät entsperren</a>
+        </p>
+      </Card>
+    );
+  }
   if (state?.done) {
     return (
       <Card className="mt-6">

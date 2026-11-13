@@ -61,7 +61,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     allowConflict: !!d.allowConflict,
   });
   if (!res.ok) return { error: conflictMessage(res), conflict: true };
-  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length, allowConflict: !!d.allowConflict } });
   revalidatePath("/kalender");
   revalidatePath("/heute");
   redirect(`/kalender?datum=${d.date}`);

@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getBillingPort } from "@/integrations/stripe";
 import { audit } from "@/lib/audit";
-import { requireAuth, type AuthContext } from "@/lib/auth/session";
+import { requireAuth, revokeUserSessions, type AuthContext } from "@/lib/auth/session";
 import { isPaidPlan, PLANS } from "@/lib/plans";
-import { applyMockSubscription, loadOrgBilling, usedSeats } from "@/server/billing";
+import { applyMockSubscription, loadOrgBilling, switchToFreePlan, usedSeats } from "@/server/billing";
 
 export type AboState = { error?: string; ok?: string } | undefined;
 
@@ -42,7 +42,7 @@ export async function startCheckoutAction(_: AboState, form: FormData): Promise<
     revalidatePath("/", "layout");
     return { ok: `Testmodus: Tarif „${info.label}“ mit ${seats} Plätzen ist sofort aktiv (keine echte Zahlung).` };
   }
-  if (org.stripeCustomerId && ["active", "past_due", "trialing"].includes(org.subscriptionStatus) && org.plan !== "trial") {
+  if (org.stripeCustomerId && ["active", "past_due", "trialing"].includes(org.subscriptionStatus) && org.plan !== "trial" && org.plan !== "free") {
     return { error: "Es besteht bereits ein Abo. Tarif und Plätze änderst du über „Rechnungen & Zahlungsart“." };
   }
   const base = publicBase();
@@ -76,4 +76,18 @@ export async function openPortalAction(): Promise<void> {
   const { url } = await port.createPortalSession({ customerId: org.stripeCustomerId, returnUrl: `${base}/einstellungen/abo` });
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "billing.portal_opened" });
   redirect(url);
+}
+
+/** Kostenlos weiterführen (bis 20 Patient:innen) – auch aus dem Nur-Lesen-Modus heraus. */
+export async function switchToFreeAction(): Promise<AboState> {
+  const auth = await ownerAuth();
+  if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann den Tarif wechseln." };
+  const r = await switchToFreePlan(auth.organization.id, auth.user.id);
+  if ("error" in r) return { error: r.error };
+  // deaktivierte Teammitglieder: laufende Sitzungen in dieser Praxis sofort beenden
+  for (const u of r.deactivated) await revokeUserSessions(u, { organizationId: auth.organization.id });
+  revalidatePath("/", "layout");
+  return {
+    ok: `Die Praxis nutzt jetzt den kostenlosen Tarif (bis 20 Patient:innen).${r.deactivated.length ? ` ${r.deactivated.length} weitere Teammitglied(er) wurden deaktiviert.` : ""}`,
+  };
 }

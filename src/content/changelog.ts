@@ -25,7 +25,7 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    id: "2026-11-13-h",
+    id: "2026-11-13-l",
     date: "2026-11-13",
     title: "Kalender: vollständige Ansicht und freie Termine finden",
     items: [
@@ -33,6 +33,24 @@ export const CHANGELOG: ChangelogEntry[] = [
       { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
       { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
       { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
+    ],
+  },
+  {
+    id: "2026-11-13-j",
+    date: "2026-11-13",
+    title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",
+    items: [
+      { tag: "neu", text: "In der Akte unter „Anamnese“: „An Patient:in übergeben“. Das Gerät zeigt dann nur noch den Anamnesebogen mit den Datenschutz-Einwilligungen – Zurück-Taste oder andere Adressen führen zur Sperrseite. Zurück in die Praxisdaten nur mit Ihrer PIN oder Ihrem Passwort; nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig." },
+      { tag: "neu", text: "PIN einrichten unter Einstellungen → Sicherheit (4–8 Ziffern).", href: "/einstellungen/sicherheit" },
+    ],
+  },
+  {
+    id: "2026-11-13-g",
+    date: "2026-11-13",
+    title: "Neuer Tarif „Kostenlos“: bis 20 Patient:innen",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Ohne Zeitlimit kostenlos für kleine Praxen: bis zu 20 Patient:innen, 1 Person, mit Terminen, Doku, Rechnungen und Kasse. Unter Einstellungen → Abo & Tarif „Kostenlos weiter nutzen“ – auch nach Ende der Testphase. Archivierte Patient:innen zählen mit; weitere Teammitglieder werden beim Wechsel deaktiviert.", href: "/einstellungen/abo" },
     ],
   },
   {

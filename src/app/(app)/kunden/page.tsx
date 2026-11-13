@@ -5,7 +5,9 @@ import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, money } from "@/lib/format";
 import { STATUS_LABEL, type PatientStatus } from "@/lib/patient-status";
+import { withOrg } from "@/db";
 import { listPatients } from "@/server/patients";
+import { patientQuota } from "@/server/patient-limit";
 
 export const metadata = { title: "Patienten" };
 
@@ -22,6 +24,8 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "";
   const rows = await listPatients(auth, { q, status });
+  // Kostenlos-Tarif: „x von 20 Patient:innen“
+  const quota = await withOrg(auth.organization.id, (tx) => patientQuota(tx, auth.organization.id));
   const filters: { key: string; label: string }[] = [
     { key: "", label: "Alle" },
     { key: "active", label: "Aktiv" },
@@ -45,6 +49,13 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
           </>
         }
       />
+      {quota ? (
+        <p className={`mb-4 rounded-xl px-4 py-3 text-sm ${quota.used >= quota.limit ? "bg-warn-soft font-medium text-warn-soft-text" : "bg-info-soft text-info-soft-text"}`}>
+          Kostenloser Tarif: {quota.used} von {quota.limit} Patient:innen (archivierte zählen mit)
+          {quota.used >= quota.limit ? " – die Grenze ist erreicht. Für weitere Patient:innen bitte einen Tarif wählen." : "."}
+          {auth.role === "owner" ? <> <Link href="/einstellungen/abo" className="font-semibold underline">Tarif ansehen</Link></> : null}
+        </p>
+      ) : null}
       <form className="mb-4 flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="search">Suchen</label>
         <input

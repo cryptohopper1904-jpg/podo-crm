@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { isValidIsoDate } from "@/lib/iso-date";
 import { requireAuth } from "@/lib/auth/session";
 import { slotStatus } from "@/server/calendar-board";
 
@@ -7,7 +8,7 @@ const headers = { "Cache-Control": "private, no-store" };
 
 const query = z.object({
   behandler: z.string().uuid(),
-  datum: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  datum: z.string().refine((v) => isValidIsoDate(v), "Datum ungültig"),
   zeit: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   dauer: z.coerce.number().int().min(5).max(480),
   ohne: z.string().uuid().optional(),

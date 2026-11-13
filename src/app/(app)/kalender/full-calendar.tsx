@@ -325,6 +325,12 @@ function Block({ b, rangeStart, overlap, showTherapist, color }: { b: Interval &
 function MonthView({ day, today, rows, board, state, canWrite, calHref }: FullCalendarProps) {
   const weeks = monthWeeks(day);
   const month = day.slice(0, 7);
+  // einmal nach Tag gruppieren (statt je Zelle alle Termine zu formatieren)
+  const byDay = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const iso = berlinParts(r.a.startsAt).dateIso;
+    byDay.set(iso, [...(byDay.get(iso) ?? []), r]);
+  }
   return (
     <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" role="region" aria-label="Monatsübersicht">
       <div className="grid min-w-[40rem] grid-cols-7">
@@ -332,7 +338,7 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref }: FullCa
           <div key={w} className="border-b border-border px-2 py-2 text-center text-xs font-semibold uppercase tracking-wide text-muted">{w}</div>
         ))}
         {weeks.flat().map((iso) => {
-          const list = rows.filter((r) => berlinParts(r.a.startsAt).dateIso === iso);
+          const list = byDay.get(iso) ?? [];
           const holiday = holidayOn(iso, state);
           const absent = board.team.filter((t) => absentOn(board.absences.filter((a) => a.userId === t.id), iso));
           const inMonth = iso.slice(0, 7) === month;

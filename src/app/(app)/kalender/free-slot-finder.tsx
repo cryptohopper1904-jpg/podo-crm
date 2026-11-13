@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CalendarSearch } from "lucide-react";
 import { START_CHOICES, startDateFor, type StartChoice } from "@/lib/free-slots";
 
@@ -48,20 +48,26 @@ export function FreeSlotFinder({
   const dur = typed >= 5 && typed <= 480 ? typed : serviceDuration ?? duration ?? 30;
   const names = new Map(team.map((t) => [t.id, t.name]));
 
+  // nur die Antwort der LETZTEN Suche zählt (schnelles Umschalten „sofort“ → „4 Wochen“)
+  const lastSearch = useRef<AbortController | null>(null);
   async function search(c: StartChoice | "datum" = choice) {
     const ab = c === "datum" ? custom : startDateFor(c, todayIso);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ab)) return;
+    lastSearch.current?.abort();
+    const ctrl = new AbortController();
+    lastSearch.current = ctrl;
     setBusy(true);
     try {
       const p = new URLSearchParams({ ab, dauer: String(dur) });
       if (therapist) p.set("behandler", therapist);
-      const res = await fetch(`/kalender/freie-termine?${p}`, { headers: { accept: "application/json" } });
+      const res = await fetch(`/kalender/freie-termine?${p}`, { signal: ctrl.signal, headers: { accept: "application/json" } });
       const json = res.headers.get("content-type")?.includes("json") ? ((await res.json()) as { slots?: PickedSlot[]; error?: string }) : null;
       setResult(res.ok && json?.slots ? { slots: json.slots } : { slots: [], error: json?.error ?? "Suche nicht möglich – bitte erneut versuchen." });
     } catch {
+      if (ctrl.signal.aborted) return;
       setResult({ slots: [], error: "Keine Verbindung – bitte erneut versuchen." });
     } finally {
-      setBusy(false);
+      if (lastSearch.current === ctrl) setBusy(false);
     }
   }
 
