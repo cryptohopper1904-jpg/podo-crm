@@ -104,4 +104,31 @@ describe("Service Worker: erzeugtes Skript", () => {
     // Offline-Seite ohne Cookies laden
     expect(src).toContain('credentials: "omit"');
   });
+
+  it("CLEAR_CACHES (Abmelden): löscht alle App-Caches und legt die Offline-Seite danach neu ab", async () => {
+    const listeners: Record<string, (e: unknown) => void> = {};
+    const store = new Map<string, Map<string, Response>>([["podo-static-alt", new Map()], ["fremd", new Map()]]);
+    const deleted: string[] = [];
+    const caches = {
+      keys: async () => [...store.keys()],
+      delete: async (k: string) => (deleted.push(k), store.delete(k)),
+      open: async (k: string) => {
+        if (!store.has(k)) store.set(k, new Map());
+        const c = store.get(k)!;
+        return { put: async (u: string, r: Response) => void c.set(u, r), add: async (u: string) => void c.set(u, new Response("")) };
+      },
+    };
+    const fetch = async (url: string, init?: RequestInit) => {
+      expect(init?.credentials).toBe("omit");
+      return new Response(url === "/offline" ? '<link href="/_next/static/css/a.css"><script src="/_next/static/chunks/b.js"></script>' : "", { status: 200 });
+    };
+    const self = { addEventListener: (t: string, fn: (e: unknown) => void) => (listeners[t] = fn), location: { origin: ORIGIN } };
+    vm.runInContext(src, vm.createContext({ self, URL, caches, fetch, Response, Promise }));
+    let done: Promise<unknown> = Promise.resolve();
+    listeners.message({ data: { type: "CLEAR_CACHES" }, waitUntil: (p: Promise<unknown>) => (done = p) });
+    await done;
+    expect(deleted).toEqual(["podo-static-alt"]); // fremde Caches bleiben
+    const fresh = store.get(swCacheName("20261113120000"));
+    expect([...(fresh?.keys() ?? [])].sort()).toEqual(["/_next/static/chunks/b.js", "/_next/static/css/a.css", "/offline"]);
+  });
 });

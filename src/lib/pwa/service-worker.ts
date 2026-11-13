@@ -16,7 +16,8 @@ export const swCacheName = (version: string) => `${SW_CACHE_PREFIX}${version.rep
  *   aus dem Netz mit Offline-Seite als Ersatz, alles andere unberührt.
  * - Aktualisierung: eine neue Version wartet, bis die Nutzer:in „Neu laden“ bestätigt (Nachricht SKIP_WAITING,
  *   siehe src/components/pwa/pwa-client.tsx) – kein ungefragtes Neuladen mitten in einer Dokumentation.
- * - Nachricht CLEAR_CACHES (beim Abmelden, src/components/pwa/logout-form.tsx): löscht alle Caches dieser App.
+ * - Nachricht CLEAR_CACHES (beim Abmelden, src/components/pwa/logout-form.tsx): löscht alle Caches dieser App und legt
+ *   danach die Offline-Seite neu ab (ohne Cookies geladen, also unabhängig von der Sitzung).
  */
 export function buildServiceWorker(version: string): string {
   const cache = swCacheName(version);
@@ -58,9 +59,10 @@ self.addEventListener("message", function (event) {
   var type = event.data && event.data.type;
   if (type === "SKIP_WAITING") self.skipWaiting();
   if (type === "CLEAR_CACHES") {
+    // danach Offline-Seite + Programmdateien neu ablegen, damit der Offline-Hinweis weiter funktioniert
     event.waitUntil(caches.keys().then(function (keys) {
       return Promise.all(keys.filter(function (k) { return k.indexOf(PREFIX) === 0; }).map(function (k) { return caches.delete(k); }));
-    }));
+    }).then(precache).catch(function () {}));
   }
 });
 

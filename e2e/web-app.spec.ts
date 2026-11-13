@@ -273,3 +273,27 @@ test("Bildschirmfotos: iPad quer Kalender (und auf Wunsch Manifest-Screenshots)"
     await wide.context.close();
   }
 });
+
+// Zuletzt: beendet die gemeinsame Sitzung der übrigen Tests
+test("Abmelden leert die App-Caches, der Offline-Hinweis funktioniert danach weiter", async ({ browser }) => {
+  const { context, page, errors } = await newDevice(browser, profile("Pixel 7"));
+  await page.goto("/heute");
+  await closeChangelog(page);
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await page.reload(); // jetzt vom Service Worker kontrolliert
+  const cachedPaths = () =>
+    page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (k) => (await (await caches.open(k)).keys()).map((r) => new URL(r.url).pathname)))).flat());
+  await page.getByRole("button", { name: "Abmelden" }).click();
+  await expect(page).toHaveURL(/\/login/);
+  // nach dem Leeren wieder abgelegt: Offline-Seite (+ deren Programmdateien), keine Praxis-Seiten
+  await expect.poll(cachedPaths).toContain("/offline");
+  expect((await cachedPaths()).filter((p) => p !== "/offline" && !/^\/(_next\/static|icons|splash|brand)\//.test(p))).toEqual([]);
+  await context.setOffline(true);
+  await page.goto("/kalender");
+  await expect(page.getByRole("heading", { name: "Keine Internetverbindung" })).toBeVisible();
+  await context.setOffline(false);
+  expect(errors.filter((e) => !/ERR_INTERNET_DISCONNECTED|Failed to fetch|Failed to load resource/.test(e))).toEqual([]);
+  await context.close();
+});
