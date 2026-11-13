@@ -27,7 +27,7 @@ export function AccessBanner({ auth }: { auth: AuthContext }) {
         <span className="flex-1">
           <strong>Nur-Lesen-Modus:</strong> {READONLY_REASON_LABELS[a.reason]} Alle Daten bleiben lesbar und exportierbar; Änderungen sind gesperrt.
         </span>
-        {owner ? <Link href="/einstellungen/abo" className="font-semibold underline">Tarif wählen</Link> : null}
+        {owner ? <Link href="/einstellungen/abo" className="font-semibold underline">Tarif wählen – auch kostenlos bis 20 Patient:innen</Link> : null}
       </div>
     );
   }

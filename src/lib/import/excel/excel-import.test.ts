@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { getTableName, type Table } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { vi, describe, expect, it } from "vitest";
+vi.mock("server-only", () => ({}));
 import type { Tx } from "@/db";
 import { parsePayment, parseWorkbook } from "./parse";
 import { persistImport } from "./persist";

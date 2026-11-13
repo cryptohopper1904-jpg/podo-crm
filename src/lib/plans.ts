@@ -25,7 +25,7 @@ export const FEATURE_LABELS: Record<Feature, string> = {
   website: "Praxis-Website",
 };
 
-export const PLAN_IDS = ["trial", "starter", "praxis", "plus", "internal"] as const;
+export const PLAN_IDS = ["trial", "free", "starter", "praxis", "plus", "internal"] as const;
 export type PlanId = (typeof PLAN_IDS)[number];
 /** Buchbare Tarife (Stripe) */
 export const PAID_PLANS = ["starter", "praxis", "plus"] as const;
@@ -42,8 +42,13 @@ export type PlanInfo = {
   features: readonly Feature[];
   /** Im Tarif enthaltene KI-Telefon-Minuten je Kalendermonat (0 = nur als Zusatzmodul) */
   voiceMinutesIncluded: number;
+  /** Höchstzahl Patient:innen (auch archivierte; nur gelöschte zählen nicht), null = unbegrenzt */
+  maxPatients: number | null;
   description: string;
 };
+
+/** Kostenloser Tarif: ohne Zeitlimit gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
+export const FREE_MAX_PATIENTS = 20;
 
 export const PLANS: Record<PlanId, PlanInfo> = {
   trial: {
@@ -54,7 +59,18 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: 10,
     features: FEATURES,
     voiceMinutesIncluded: 30,
+    maxPatients: null,
     description: `${TRIAL_DAYS} Tage alle Funktionen, 2 Personen (auf Anfrage mehr)`,
+  },
+  free: {
+    label: "Kostenlos",
+    priceCents: 0,
+    includedSeats: 1,
+    maxSeats: 1,
+    features: [],
+    voiceMinutesIncluded: 0,
+    maxPatients: FREE_MAX_PATIENTS,
+    description: `Kostenlos ohne Zeitlimit: bis zu ${FREE_MAX_PATIENTS} Patient:innen, 1 Person; ohne Patientenportal, KI-Telefon und Website`,
   },
   starter: {
     label: "Starter",
@@ -63,6 +79,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: 1,
     features: [],
     voiceMinutesIncluded: 0,
+    maxPatients: null,
     description: "Für Einzelpraxen: 1 Person, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
   },
   praxis: {
@@ -72,6 +89,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: 5,
     features: ["portal", "website"],
     voiceMinutesIncluded: 0,
+    maxPatients: null,
     description: "Bis zu 5 Personen, alle Funktionen; KI-Telefon als Zusatzmodul",
   },
   plus: {
@@ -81,6 +99,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: null,
     features: ["portal", "voice_agent", "website"],
     voiceMinutesIncluded: 300,
+    maxPatients: null,
     description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (300 Minuten/Monat)",
   },
   internal: {
@@ -90,6 +109,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: null,
     features: FEATURES,
     voiceMinutesIncluded: 300,
+    maxPatients: null,
     description: "Betreiber-/Pilotpraxis ohne Abrechnung",
   },
 };
@@ -126,7 +146,8 @@ export function monthlyPriceCents(plan: PaidPlan, seats: number): number {
 
 /** Ermittelt, ob die Praxis schreiben darf (voll) oder nur lesen/exportieren. */
 export function accessMode(org: OrgBilling, now: Date = new Date()): AccessInfo {
-  if (org.plan === "internal") return { mode: "full" };
+  // Kostenlos und Intern laufen nie ab (Grenze beim Kostenlos-Tarif: Anzahl Patient:innen, siehe patientLimitProblem)
+  if (org.plan === "internal" || org.plan === "free") return { mode: "full" };
   const status = org.subscriptionStatus;
   if (status === "active") return { mode: "full" };
   if (status === "trialing" || (org.plan === "trial" && status === "none")) {
@@ -212,6 +233,43 @@ export function seatProblem(org: Pick<OrgBilling, "plan" | "seats">, usedSeats: 
   if (usedSeats + 1 <= limit) return null;
   const plan = isPlanId(org.plan) ? PLANS[org.plan].label : org.plan;
   return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. (Die Steuerberatung belegt keinen Platz.)`;
+}
+
+// ───────────── Patienten-Grenze (Kostenlos-Tarif) ─────────────
+
+/** Höchstzahl Patient:innen im Tarif (Infinity = unbegrenzt) */
+export function patientLimit(org: Pick<OrgBilling, "plan">): number {
+  const plan = isPlanId(org.plan) ? org.plan : "starter";
+  return PLANS[plan].maxPatients ?? Infinity;
+}
+
+/** Fehlermeldung, wenn `adding` weitere Patient:innen die Tarif-Grenze überschreiten würden, sonst null. */
+export function patientLimitProblem(org: Pick<OrgBilling, "plan">, activePatients: number, adding = 1): string | null {
+  const limit = patientLimit(org);
+  if (activePatients + adding <= limit) return null;
+  const left = Math.max(0, limit - activePatients);
+  return (
+    `Im Tarif „${PLANS[isPlanId(org.plan) ? org.plan : "starter"].label}“ sind höchstens ${limit} Patient:innen möglich (archivierte zählen mit) ` +
+    `(aktuell ${activePatients}${adding > 1 ? `, ${adding} sollen dazukommen, frei: ${left}` : ""}). ` +
+    "Für mehr Patient:innen bitte unter Einstellungen → Abo & Tarif einen Tarif wählen."
+  );
+}
+
+/**
+ * Wechsel in den Kostenlos-Tarif möglich? Nur ohne laufendes Stripe-Abo (erst kündigen; auch pausiert/überfällig
+ * zählt als laufend) und mit höchstens 20 Patient:innen. Weitere Teammitglieder deaktiviert der Wechsel selbst.
+ */
+export function freeSwitchProblem(org: OrgBilling & { stripeSubscriptionId?: string | null }, patientCount: number): string | null {
+  if (org.plan === "free") return "Die Praxis nutzt bereits den kostenlosen Tarif.";
+  if (org.plan === "internal") return "Interne Praxen brauchen keinen Tarifwechsel.";
+  const subscriptionEnded = org.subscriptionStatus === "canceled" || org.subscriptionStatus === "none";
+  if (!subscriptionEnded && (org.stripeSubscriptionId || org.plan !== "trial")) {
+    return "Bitte zuerst das bezahlte Abo unter „Rechnungen & Zahlungsart“ kündigen. Danach kann die Praxis kostenlos weitergeführt werden.";
+  }
+  if (patientCount > FREE_MAX_PATIENTS) {
+    return `Der kostenlose Tarif erlaubt höchstens ${FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit) – in der Praxis sind ${patientCount}. Bitte einen bezahlten Tarif wählen; alle Daten bleiben lesbar und exportierbar.`;
+  }
+  return null;
 }
 
 // ───────────── KI-Telefon: Zusatzmodul und Minuten ─────────────

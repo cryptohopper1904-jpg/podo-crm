@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-g",
+    date: "2026-11-13",
+    title: "Neuer Tarif „Kostenlos“: bis 20 Patient:innen",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Ohne Zeitlimit kostenlos für kleine Praxen: bis zu 20 Patient:innen, 1 Person, mit Terminen, Doku, Rechnungen und Kasse. Unter Einstellungen → Abo & Tarif „Kostenlos weiter nutzen“ – auch nach Ende der Testphase. Archivierte Patient:innen zählen mit; weitere Teammitglieder werden beim Wechsel deaktiviert.", href: "/einstellungen/abo" },
+    ],
+  },
+  {
     id: "2026-11-13-f",
     date: "2026-11-13",
     title: "Sammelrechnung: Quittungen der Patient:in auswählen",
