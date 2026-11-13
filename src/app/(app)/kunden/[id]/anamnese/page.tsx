@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, Empty, FormSuccess, LinkButton } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { anamnesisSummary, initialFromRiskFlags } from "@/lib/anamnesis";
 import { dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { listAnamneses } from "@/server/anamnesis";
-import { revokeLinkAction } from "./actions";
+import { handoverAction, revokeLinkAction } from "./actions";
 import { AnamnesisForm } from "./anamnesis-form";
 import { LinkPanel } from "./link-panel";
 
@@ -34,10 +34,17 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
         </div>
         <div className="flex flex-wrap gap-2">
           {canEdit ? <LinkButton href={`/kunden/${id}/anamnese/bogen`} variant="secondary">Am iPad ausfüllen</LinkButton> : null}
+          {auth.can("patients.write") ? (
+            <form action={handoverAction}>
+              <input type="hidden" name="patientId" value={id} />
+              <Button type="submit" variant="secondary" title="Gerät wird gesperrt – zurück nur mit PIN oder Passwort">An Patient:in übergeben</Button>
+            </form>
+          ) : null}
           {auth.can("medical.read") ? <LinkButton href={`/kunden/${id}/anamnese/drucken`} variant="secondary">Drucken / PDF</LinkButton> : null}
           {canEdit && !editing ? <LinkButton href={`/kunden/${id}/anamnese?neu=1`}>{latestOnline ? "Online-Angaben prüfen und übernehmen" : "Anamnese aktualisieren"}</LinkButton> : null}
         </div>
       </header>
+      {sp.uebergabe === "fehler" ? <p role="alert" className="mb-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">Übergabe nicht möglich (gerade parallel ein Link erzeugt?). Bitte erneut versuchen.</p> : null}
       {sp.gespeichert ? <div className="mb-4"><FormSuccess message="Anamnese als neue Version gespeichert. Frühere Versionen bleiben erhalten." /></div> : null}
 
       {editing ? (

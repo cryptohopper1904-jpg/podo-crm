@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { functionsOf, isServerActionFile, read, rel, SRC, walk } from "./app-files";
 
-const BASE_GUARDS = ["requireAuth", "getAuth", "getSession"];
+const BASE_GUARDS = ["requireAuth", "getAuth", "getSession", "getSessionIncludingLocked"];
 
 /** "datei" (alle Funktionen) oder "datei#funktion" → Begründung */
 export const PUBLIC_ACTIONS: Record<string, string> = {
