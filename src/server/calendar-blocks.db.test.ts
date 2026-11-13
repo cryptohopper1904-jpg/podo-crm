@@ -157,6 +157,30 @@ const NOW = new Date("2031-05-01T06:00:00Z");
     expect(st).toMatchObject({ blocks: ["Pause 12:00–12:30"], outsideHours: false });
   });
 
+  it("Ziehen im Kalender (moveAppointment): Ablegen in einer Pause meldet Konflikt, mit Bestätigung möglich", async () => {
+    const { org, b, owner } = await setup();
+    ok(await bl.createBlock(owner, block({ userId: b, repeat: "daily", startsOn: MON })));
+    const made = await ap.createInternalAppointments(org, {
+      patientId: null, therapistId: b, occurrences: [new Date("2031-05-06T07:00:00Z")], durationMin: 30, source: "phone", title: "Behandlung", notes: null, homeVisit: false, serviceIds: [], allowConflict: false,
+    });
+    expect(made.ok).toBe(true);
+    const id = made.ok ? made.ids[0] : "";
+    const auth = authFor(org, b, THERAPIST);
+    const move = (allowConflict: boolean) =>
+      ap.moveAppointment(auth, {
+        id,
+        startsAt: "2031-05-06T10:00:00.000Z", // 12:00 Berlin
+        durationMin: 30,
+        therapistId: b,
+        allowConflict,
+        expectedStartsAt: "2031-05-06T07:00:00.000Z",
+        expectedDurationMin: 30,
+        expectedTherapistId: b,
+      });
+    expect(await move(false)).toMatchObject({ ok: false, conflict: true, error: expect.stringContaining("Pause 12:00–12:30") });
+    expect(await move(true)).toMatchObject({ ok: true });
+  });
+
   it("freie Zeiten, Online-Buchung und KI-Telefon bieten in Sperrzeiten nichts an", async () => {
     const { org, a, b, owner } = await setup({ opening: { from: "08:00", to: "16:00" }, onlineBooking: { enabled: true, leadHours: 0 } });
     // nur b arbeitet: Mo–Fr 11:00–13:30
@@ -235,6 +259,11 @@ const NOW = new Date("2031-05-01T06:00:00Z");
     expect(new Set(blocks.filter((x) => x.label === "Pause").map((x) => x.dateIso)).size).toBe(12);
     expect(blocks.some((x) => x.dateIso >= "2032-08-01")).toBe(true);
     expect(ms).toBeLessThan(1500);
+    // mehrtägiger Zeitraum: auch Tag 4 wird geprüft (keine feste Tagesgrenze)
+    ok(await bl.createBlock(owner, block({ userId: null, kind: "wartung", allDay: true, startTime: "", endTime: "", startsOn: "2031-05-11" })));
+    const { withOrg } = await import("@/db");
+    const long = await withOrg(org, (tx) => bl.blockClashesInTx(tx, org, b, [{ start: berlinToUtc("2031-05-08", "18:00"), end: berlinToUtc("2031-05-11", "09:00") }]));
+    expect(long.some((x) => x.label === "Wartung" && x.dateIso === "2031-05-11")).toBe(true);
   });
 
   it("KI-Antwortvorschläge (replyFacts): Sperrzeiten der ganzen Praxis werden nicht angeboten", async () => {
@@ -260,6 +289,12 @@ const NOW = new Date("2031-05-01T06:00:00Z");
     // vergangene Einzel-Sperrzeiten zählen nicht
     await f.asOrg(org, (c) => c.query("update calendar_blocks set starts_on = '2020-01-01' where organization_id = $1 and repeat = 'none' and all_day", [org]));
     ok(await bl.createBlock(owner, block({ userId: null, startsOn: "2036-01-01" })));
+    // vergangene Sperrzeit per „ganze Serie“ wieder in die Zukunft legen zählt wie Anlegen (Grenze nicht umgehbar)
+    const past = (await f.asOrg(org, (c) => c.query("select id from calendar_blocks where organization_id = $1 and starts_on = '2020-01-01' limit 1", [org]))).rows[0].id as string;
+    await f.asOrg(org, (c) => c.query("update calendar_blocks set starts_on = '2035-06-01' where organization_id = $1 and starts_on = '2020-01-01' and id <> $2", [org, past]));
+    expect(await bl.updateBlock(owner, past, block({ userId: null, startsOn: "2037-01-01" }))).toMatchObject({ ok: false, error: expect.stringMatching(/500 aktive/) });
+    // in der Vergangenheit ändern bleibt möglich
+    expect(await bl.updateBlock(owner, past, block({ userId: null, startsOn: "2020-01-02" }))).toMatchObject({ ok: true });
     // Person nicht mehr aktiv: Ändern mit derselben Person bleibt möglich (kein stilles Umhängen nötig)
     await f.pool.query("update memberships set active = false where organization_id = $1 and user_id = $2", [org, b]);
     expect(await bl.updateBlock(owner, id, block({ userId: b, repeat: "daily", startsOn: "2031-01-01", startTime: "12:05", endTime: "12:35" }))).toMatchObject({ ok: true });

@@ -10,6 +10,7 @@ import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, ty
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { assignTherapistColors, byJoined } from "@/lib/therapist-colors";
 import { practiceHours } from "@/lib/opening-hours";
 import { therapists } from "./appointments";
 import { blocksFor, describeBlock, overlappingBlocks } from "@/lib/calendar-blocks";
@@ -54,7 +55,9 @@ export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: s
       opening: info.opening,
       blocks: blocksFor(blocks, userId, dateIso),
     });
-  return { team: team.map((t) => ({ id: t.id, name: t.name, color: t.color })), absences: abs, blocks, availabilityOf, state: info.state };
+  // Kalenderfarbe je Behandler:in (gewählt oder automatisch nach Eintritt)
+  const colors = assignTherapistColors(byJoined(team));
+  return { team: team.map((t) => ({ id: t.id, name: t.name, color: colors.get(t.id)! })), absences: abs, blocks, availabilityOf, state: info.state };
 }
 
 export type SlotStatus = {

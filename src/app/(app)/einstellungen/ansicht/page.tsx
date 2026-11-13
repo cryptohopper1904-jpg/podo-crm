@@ -5,6 +5,9 @@ import { requireAuth } from "@/lib/auth/session";
 import { VIEW_LEVEL_HINTS, VIEW_LEVEL_LABELS, VIEW_LEVELS } from "@/lib/view-level";
 import { currentViewLevel } from "@/server/view-level";
 import { saveViewLevelAction } from "./actions";
+import { TherapistColorForm } from "@/components/therapist-color-fieldset";
+import { assignTherapistColors, byJoined } from "@/lib/therapist-colors";
+import { therapists } from "@/server/appointments";
 
 export const metadata = { title: "Ansicht" };
 
@@ -12,6 +15,10 @@ export const metadata = { title: "Ansicht" };
 export default async function ViewSettings() {
   const auth = await requireAuth();
   const level = await currentViewLevel();
+  // eigene Kalenderfarbe nur für Personen mit eigener Kalenderspalte
+  const team = auth.can("appointments.read") ? await therapists(auth) : [];
+  const own = team.find((t) => t.id === auth.user.id) ?? null;
+  const colors = assignTherapistColors(byJoined(team));
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -40,6 +47,19 @@ export default async function ViewSettings() {
           </ActionForm>
         )}
       </Card>
+      {own ? (
+        <Card>
+          <CardTitle>Meine Kalenderfarbe</CardTitle>
+          <p className="mb-4 text-sm text-muted">
+            Deine Termine erscheinen im Kalender in dieser Farbe (getönte Fläche, farbiger Rand). Gilt für die ganze Praxis; „automatisch“ vergibt die nächste freie Farbe.
+          </p>
+          {auth.support || auth.readOnly ? (
+            <p className="text-sm text-muted">Im Support- bzw. Nur-Lesen-Modus nicht änderbar.</p>
+          ) : (
+            <TherapistColorForm userId={auth.user.id} stored={own.color} effective={colors.get(auth.user.id)!} legend="Meine Kalenderfarbe" />
+          )}
+        </Card>
+      ) : null}
     </div>
   );
 }

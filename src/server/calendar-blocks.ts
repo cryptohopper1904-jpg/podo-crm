@@ -71,8 +71,10 @@ export async function blockClashesInTx(tx: Tx, org: string, therapistId: string,
     const first = berlinParts(i.start).dateIso;
     // Ende genau um Mitternacht gehört zum Vortag
     const last = berlinParts(new Date(i.end.getTime() - 1)).dateIso;
+    // alle Berliner Tage des Zeitraums (Termine dauern höchstens 480 Min → meist 1, über Mitternacht 2 Tage;
+    // längere Zeiträume werden vollständig geprüft, nicht abgeschnitten)
     const days: string[] = [];
-    for (let d = first; d <= last && days.length < 3; d = addDaysIso(d, 1)) days.push(d);
+    for (let d = first; d <= last; d = addDaysIso(d, 1)) days.push(d);
     return { ...i, days };
   });
   const all = [...new Set(perInterval.flatMap((i) => i.days))].sort();
@@ -173,6 +175,10 @@ export const MAX_EXCEPTIONS = 500;
 const TOO_MANY_BLOCKS = `Es gibt bereits ${MAX_ACTIVE_BLOCKS} aktive Sperrzeiten in dieser Praxis. Bitte nicht mehr benötigte löschen oder Serien zusammenfassen.`;
 const TOO_MANY_EXCEPTIONS = "Diese Serie hat zu viele einzeln geänderte oder gelöschte Vorkommen. Bitte die Serie beenden (Enddatum) und neu anlegen.";
 
+/** Aktiv = einmalig heute oder später bzw. Serie ohne Ende oder mit Ende heute oder später (wie activeBlockCount) */
+const isActiveRule = (r: Pick<BlockRule, "repeat" | "startsOn" | "endsOn">, today: string) =>
+  r.repeat === "none" ? r.startsOn >= today : !r.endsOn || r.endsOn >= today;
+
 /** Aktive Regeln (Serie ohne Ende bzw. Ende/Datum heute oder später) der Praxis zählen – unter Sperre je Praxis */
 async function activeBlockCount(tx: Tx, org: string): Promise<number> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${"blocks:" + org}, 0))`);
@@ -258,6 +264,9 @@ export async function updateBlock(auth: AuthContext, id: string, raw: unknown, s
       await log({ scope: "occurrence", newId: row.id, date: occurrenceDate });
       return { ok: true, id: row.id };
     }
+    // eine bereits vergangene Regel wieder aktiv machen zählt wie Anlegen (500-Grenze nicht umgehbar)
+    const today = berlinParts(new Date()).dateIso;
+    if (!isActiveRule(old, today) && isActiveRule(d, today) && (await activeBlockCount(tx, org)) >= MAX_ACTIVE_BLOCKS) return { ok: false, error: TOO_MANY_BLOCKS };
     // Ausnahmen bleiben nur, solange sie noch zur (geänderten) Serie passen
     const exceptions = d.repeat === "none" ? [] : old.exceptions.filter((x) => x >= d.startsOn && (!d.endsOn || x <= d.endsOn));
     await tx

@@ -14,6 +14,10 @@ import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Termin" };
 
+/** Weitere Elternseiten eines Termins neben dem Kalender (Terminzeilen auf „Heute“ und „Behandlung“) */
+const TERM_PARENTS = ["/heute", "/doku"] as const;
+const termBack = (href: string) => ({ href, label: href.startsWith("/heute") ? "Heute" : href.startsWith("/doku") ? "Behandlung" : "Kalender" });
+
 export default async function AppointmentPage(props: PageProps<"/kalender/termin/[id]">) {
   const { id } = await props.params;
   const { von } = await props.searchParams;
@@ -33,7 +37,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
     <div className="mx-auto max-w-4xl">
       <header className="mb-6 flex flex-wrap items-end gap-3">
         <div className={pageTitleBox}>
-          <BackLink href={backHref(`/kalender?datum=${date}`, von)} label="Kalender" />
+          <BackLink {...termBack(backHref(`/kalender?datum=${date}`, von, TERM_PARENTS))} />
           <p className="text-sm text-muted">{weekdayLong(a.startsAt)} · {timeDe(a.startsAt)}–{timeDe(a.endsAt)} Uhr</p>
           <h1 className={pageTitleCls}>
             {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{fullName(patient)}</Link> : a.title ?? "Termin"}

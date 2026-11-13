@@ -40,7 +40,10 @@ export function columnBlocks(board: Board, target: string | "all" | "none", date
   return board.blocks.filter((o) => o.dateIso === dateIso && (target === "all" || o.userId === null || o.userId === target));
 }
 
-/** Sperrzeiten als schraffierte Blöcke in einer Spalte der Zeitachse (Tag/Woche). */
+/**
+ * Sperrzeiten als schraffierte Blöcke in einer Spalte der Zeitachse (Tag/Woche). Die Fläche lässt Zeiger durch
+ * (Termine ziehen/ablegen, Klick auf die Zeit → neuer Termin mit Konflikthinweis); nur die Beschriftung öffnet die Sperrzeit.
+ */
 export function BlockOverlays({
   board,
   target,
@@ -74,7 +77,7 @@ export function BlockOverlays({
             title={blockTitle(o, board.team)}
             aria-label={blockTitle(o, board.team)}
             data-testid="sperrzeit"
-            className="absolute z-[1] flex flex-col overflow-hidden rounded-md border border-dashed border-border-strong bg-surface-2/85 p-0.5 text-[11px] leading-tight text-muted outline-offset-1 hover:border-text focus-visible:z-[4]"
+            className="pointer-events-none absolute z-[1] flex flex-col overflow-hidden rounded-md border border-dashed border-border-strong bg-surface-2/85 p-0.5 text-[11px] leading-tight text-muted outline-offset-1 focus-visible:z-[4]"
             style={{
               ...BLOCK_HATCH,
               top: px(startMin - range.startMin),
@@ -83,7 +86,7 @@ export function BlockOverlays({
               width: `calc(${100 / lanes}% - 4px)`,
             }}
           >
-            <span className="flex min-w-0 max-w-full flex-col self-start rounded bg-surface/90 px-1 py-px">
+            <span className="pointer-events-auto flex min-w-0 max-w-full cursor-pointer flex-col self-start rounded bg-surface/90 px-1 py-px hover:ring-1 hover:ring-border-strong">
               <span className="flex min-w-0 items-center gap-1 font-semibold text-text">
                 <Ban size={11} className="shrink-0 text-muted" aria-hidden />
                 <span className="truncate">{o.label}</span>
