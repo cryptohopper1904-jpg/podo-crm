@@ -91,24 +91,36 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await billing.usedSeats(org)).toBe(2);
   });
 
-  it("Kostenlos: Wechsel nur bis 20 aktive Patient:innen, danach keine 21. Person – auch nicht per Sammel-Import", async () => {
+  it("Kostenlos: Wechsel nur bis 20 Patient:innen (archivierte zählen mit), Team wird deaktiviert, altes Abo überschreibt nicht", async () => {
     const org = await f.org();
     const u = await f.user();
-    await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,'owner',true)", [org, u]);
+    const u2 = await f.user();
+    const acc = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,'owner',true),($1,$3,'therapist',true),($1,$4,'accountant',true)", [org, u, u2, acc]);
+    await f.pool.query("update organizations set stripe_customer_id = $2, stripe_subscription_id = 'sub_old', subscription_status = 'canceled', plan = 'praxis' where id = $1", [org, `cus_${sfx()}`]);
     const ids: string[] = [];
     for (let i = 0; i < 21; i++) ids.push(await f.patient(org, { lastName: `P${i}` }));
-    expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/höchstens 20/) });
+    // Archivieren hilft nicht – archivierte zählen mit
     await f.asOrg(org, (c) => c.query("update patients set archived_at = now() where id = $1", [ids[0]]));
-    expect(await billing.switchToFreePlan(org, u)).toEqual({ ok: true });
-    expect(await orgRow(org)).toMatchObject({ plan: "free", subscription_status: "none", seats: 1 });
+    expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/höchstens 20/) });
+    // gelöscht (Kontaktdaten gelöscht) zählt nicht
+    await f.asOrg(org, (c) => c.query("update patients set contact_erased_at = now() where id = $1", [ids[0]]));
+    expect(await billing.switchToFreePlan(org, u)).toEqual({ ok: true, deactivated: [u2] });
+    expect(await orgRow(org)).toMatchObject({ plan: "free", subscription_status: "none", seats: 1, stripe_subscription_id: null });
+    expect(await billing.usedSeats(org)).toBe(1);
 
     const { withOrg } = await import("@/db");
     const { assertPatientCapacity, PatientLimitError, patientQuota } = await import("./patient-limit");
     expect(await withOrg(org, (tx) => patientQuota(tx, org))).toEqual({ used: 20, limit: 20 });
     await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org))).rejects.toBeInstanceOf(PatientLimitError);
-    await f.asOrg(org, (c) => c.query("update patients set archived_at = now() where id = any($1)", [ids.slice(1, 4)]));
+    await f.asOrg(org, (c) => c.query("update patients set contact_erased_at = now() where id = any($1)", [ids.slice(1, 4)]));
     await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org, 3))).resolves.toBeUndefined();
     await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org, 4))).rejects.toThrow(/frei: 3/);
-    expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/bereits/) });
+
+    // verspätetes Event des alten Abos ändert den Tarif nicht
+    const cust = (await orgRow(org)).stripe_customer_id;
+    const late = { id: `evt_${sfx()}`, type: "customer.subscription.updated", created: Math.floor(Date.now() / 1000) + 5, data: { object: { id: "sub_old", customer: cust, status: "past_due", items: { data: [] } } } } as unknown as StripeEvent;
+    await billing.processBillingEvent(late, { prices });
+    expect(await orgRow(org)).toMatchObject({ plan: "free", subscription_status: "none" });
   });
 });

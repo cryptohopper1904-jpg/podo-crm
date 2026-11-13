@@ -24,7 +24,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "";
   const rows = await listPatients(auth, { q, status });
-  // Kostenlos-Tarif: „x von 20 aktiven Patient:innen“
+  // Kostenlos-Tarif: „x von 20 Patient:innen“
   const quota = await withOrg(auth.organization.id, (tx) => patientQuota(tx, auth.organization.id));
   const filters: { key: string; label: string }[] = [
     { key: "", label: "Alle" },
@@ -51,8 +51,8 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
       />
       {quota ? (
         <p className={`mb-4 rounded-xl px-4 py-3 text-sm ${quota.used >= quota.limit ? "bg-warn-soft font-medium text-warn-soft-text" : "bg-info-soft text-info-soft-text"}`}>
-          Kostenloser Tarif: {quota.used} von {quota.limit} aktiven Patient:innen
-          {quota.used >= quota.limit ? " – die Grenze ist erreicht. Neue Patient:innen nach einem Upgrade oder nach dem Archivieren nicht mehr betreuter Patient:innen." : "."}
+          Kostenloser Tarif: {quota.used} von {quota.limit} Patient:innen (archivierte zählen mit)
+          {quota.used >= quota.limit ? " – die Grenze ist erreicht. Für weitere Patient:innen bitte einen Tarif wählen." : "."}
           {auth.role === "owner" ? <> <Link href="/einstellungen/abo" className="font-semibold underline">Tarif ansehen</Link></> : null}
         </p>
       ) : null}

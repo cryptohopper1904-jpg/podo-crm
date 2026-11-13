@@ -77,8 +77,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // ───── Patienten ─────
   // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Doctolib-Import)
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
-  // Tarif-Grenze (Kostenlos: 20 aktive Patient:innen) – archiviert importierte zählen nicht
-  await assertPatientCapacity(tx, organizationId, result.patients.filter((p) => !isInactive(p.legacy.status)).length);
+  // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
+  await assertPatientCapacity(tx, organizationId, result.patients.length);
   const existingNumbers = new Set(
     (await tx.select({ number: s.patients.number }).from(s.patients).where(eq(s.patients.organizationId, organizationId))).map((r) => r.number),
   );

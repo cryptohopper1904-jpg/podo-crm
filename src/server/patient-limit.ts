@@ -1,9 +1,8 @@
+import "server-only";
 import { and, count, eq, isNull } from "drizzle-orm";
+import type { Tx } from "@/db";
 import { organizations, patients } from "@/db/schema";
-import type { withOrg } from "@/db";
 import { patientLimit, patientLimitProblem } from "@/lib/plans";
-
-type Tx = Parameters<Parameters<typeof withOrg>[1]>[0];
 
 /** Grenze des Tarifs überschritten (Kostenlos: höchstens 20 aktive Patient:innen). Meldung ist für die Oberfläche gedacht. */
 export class PatientLimitError extends Error {
@@ -13,9 +12,12 @@ export class PatientLimitError extends Error {
   }
 }
 
-/** Anzahl aktiver (nicht archivierter) Patient:innen der Praxis */
-export async function activePatientCount(tx: Tx, org: string): Promise<number> {
-  const [r] = await tx.select({ n: count() }).from(patients).where(and(eq(patients.organizationId, org), isNull(patients.archivedAt)));
+/**
+ * Anzahl Patient:innen für die Tarif-Grenze: auch archivierte (sonst ließe sich die Grenze durch Archivieren umgehen),
+ * nur gelöschte (Kontaktdaten gelöscht, src/server/patient-deletion.ts) zählen nicht.
+ */
+export async function countedPatients(tx: Tx, org: string): Promise<number> {
+  const [r] = await tx.select({ n: count() }).from(patients).where(and(eq(patients.organizationId, org), isNull(patients.contactErasedAt)));
   return Number(r?.n ?? 0);
 }
 
@@ -27,7 +29,7 @@ export async function assertPatientCapacity(tx: Tx, org: string, adding = 1): Pr
   if (adding <= 0) return;
   const [o] = await tx.select({ plan: organizations.plan }).from(organizations).where(eq(organizations.id, org));
   if (!o || !Number.isFinite(patientLimit(o))) return;
-  const problem = patientLimitProblem(o, await activePatientCount(tx, org), adding);
+  const problem = patientLimitProblem(o, await countedPatients(tx, org), adding);
   if (problem) throw new PatientLimitError(problem);
 }
 
@@ -37,5 +39,5 @@ export async function patientQuota(tx: Tx, org: string): Promise<{ used: number;
   if (!o) return null;
   const limit = patientLimit(o);
   if (!Number.isFinite(limit)) return null;
-  return { used: await activePatientCount(tx, org), limit };
+  return { used: await countedPatients(tx, org), limit };
 }

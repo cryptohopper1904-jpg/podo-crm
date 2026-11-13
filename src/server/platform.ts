@@ -103,7 +103,8 @@ export async function setPracticePlan(adminUserId: string, organizationId: strin
   const s = Math.max(1, Math.min(seats, info.maxSeats ?? 999));
   const [before] = await db.select().from(organizations).where(eq(organizations.id, organizationId));
   if (!before) throw new Error("Praxis nicht gefunden");
-  const status = plan === "trial" ? "trialing" : "active";
+  // Kostenlos: kein Abo (sonst blockiert „aktiv“ später den Checkout für ein Upgrade)
+  const status = plan === "trial" ? "trialing" : plan === "free" ? "none" : "active";
   await db.update(organizations).set({ plan, seats: s, subscriptionStatus: status }).where(eq(organizations.id, organizationId));
   await platformAudit(organizationId, adminUserId, "platform.plan_changed", {
     from: { plan: before.plan, seats: before.seats, status: before.subscriptionStatus },

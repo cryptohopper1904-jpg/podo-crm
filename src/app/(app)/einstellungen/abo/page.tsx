@@ -6,7 +6,7 @@ import { WEBSITE_ADDON_CENTS, WEBSITE_ADDON_PLANS } from "@/lib/website";
 import { withOrg } from "@/db";
 import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { loadOrgBilling, usedSeats } from "@/server/billing";
-import { activePatientCount } from "@/server/patient-limit";
+import { countedPatients } from "@/server/patient-limit";
 import { FreePlanForm } from "./free-form";
 import { openPortalAction } from "./actions";
 import { CheckoutForm } from "./checkout-form";
@@ -32,8 +32,15 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const port = getBillingPort();
   const plan = PLANS[(org?.plan as keyof typeof PLANS) ?? "trial"] ?? PLANS.trial;
   const a = auth.access;
-  const activePatients = await withOrg(auth.organization.id, (tx) => activePatientCount(tx, auth.organization.id));
-  const freeProblem = org ? freeSwitchProblem({ ...org, seats: org.seats }, activePatients, used) : null;
+  const patientCount = await withOrg(auth.organization.id, (tx) => countedPatients(tx, auth.organization.id));
+  const freeProblem = org ? freeSwitchProblem(org, patientCount) : null;
+  const freeWarning =
+    [
+      a.trialDaysLeft !== undefined ? `Die Testphase (noch ${a.trialDaysLeft} ${a.trialDaysLeft === 1 ? "Tag" : "Tage"}) endet damit sofort – Patientenportal, KI-Telefon und Website werden abgeschaltet.` : null,
+      used > 1 ? `${used - 1} weitere Teammitglied(er) werden deaktiviert (die Steuerberatung bleibt).` : null,
+    ]
+      .filter(Boolean)
+      .join(" ") || null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -80,16 +87,16 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         <Card>
           <CardTitle>Kostenloser Tarif</CardTitle>
           <p className="text-sm">
-            Aktive Patient:innen: <span className="font-semibold tabular-nums">{activePatients} von {FREE_MAX_PATIENTS}</span>. Für mehr Patient:innen, ein Team, Patientenportal oder KI-Telefon unten einen Tarif wählen.
+            Patient:innen: <span className="font-semibold tabular-nums">{patientCount} von {FREE_MAX_PATIENTS}</span> (archivierte zählen mit). Für mehr Patient:innen, ein Team, Patientenportal oder KI-Telefon unten einen Tarif wählen.
           </p>
         </Card>
       ) : org?.plan !== "internal" ? (
         <Card>
           <CardTitle>Kostenlos weiter nutzen</CardTitle>
           <p className="mb-3 text-sm text-muted">
-            Dauerhaft 0 € für kleine Praxen: bis zu {FREE_MAX_PATIENTS} aktive Patient:innen, 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Archivierte Patient:innen zählen nicht. Aktuell: {activePatients} aktive Patient:innen.
+            Dauerhaft 0 € für kleine Praxen: bis zu {FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit), 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Aktuell: {patientCount} Patient:innen.
           </p>
-          <FreePlanForm disabledReason={freeProblem} />
+          <FreePlanForm disabledReason={freeProblem} warning={freeWarning} />
         </Card>
       ) : null}
 

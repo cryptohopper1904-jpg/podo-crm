@@ -79,16 +79,17 @@ describe("Kostenlos-Tarif", () => {
   it("Patienten-Grenze: 20 erlaubt, 21. nicht; Mehrfach-Import zählt alle", () => {
     const free = org({ plan: "free" });
     expect(patientLimitProblem(free, 19)).toBeNull();
-    expect(patientLimitProblem(free, 20)).toMatch(/höchstens 20 aktive/);
+    expect(patientLimitProblem(free, 20)).toMatch(/höchstens 20 Patient:innen/);
     expect(patientLimitProblem(free, 15, 5)).toBeNull();
     expect(patientLimitProblem(free, 15, 6)).toMatch(/frei: 5/);
     expect(patientLimitProblem(org({ plan: "starter" }), 5000, 100)).toBeNull();
   });
-  it("Wechsel: nicht bei laufendem Abo, über 20 Patient:innen oder mit Team", () => {
+  it("Wechsel: nur ohne laufendes Abo und bis 20 Patient:innen", () => {
     expect(freeSwitchProblem(org({ plan: "trial" }), 20)).toBeNull();
-    expect(freeSwitchProblem(org({ plan: "trial" }), 21)).toMatch(/archivieren/);
-    expect(freeSwitchProblem(org({ plan: "trial" }), 3, 2)).toMatch(/eine Person/);
+    expect(freeSwitchProblem(org({ plan: "trial" }), 21)).toMatch(/höchstens 20/);
     expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "active" }), 3)).toMatch(/kündigen/);
+    expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "paused" }), 3)).toMatch(/kündigen/);
+    expect(freeSwitchProblem(org({ plan: "trial", subscriptionStatus: "active", stripeSubscriptionId: "sub_1" } as never), 3)).toMatch(/kündigen/);
     expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "canceled" }), 3)).toBeNull();
     expect(freeSwitchProblem(org({ plan: "free" }), 3)).toMatch(/bereits/);
   });

@@ -6,7 +6,7 @@ import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/str
 import { priceIdsFromEnv, type PriceIds } from "@/integrations/stripe/stripe";
 import type { StripeEvent } from "@/integrations/stripe/types";
 import { freeSwitchProblem } from "@/lib/plans";
-import { activePatientCount } from "./patient-limit";
+import { countedPatients } from "./patient-limit";
 
 export type BillingResult = "processed" | "duplicate" | "ignored" | "unassigned";
 
@@ -50,6 +50,14 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
       return done("ignored", org.id, "veraltetes Event");
     }
 
+    // Kostenlos-Tarif: Events eines alten (gekündigten) Abos ändern nichts. Erst ein neues, aktives Abo (Checkout)
+    // stellt den Tarif um.
+    if (org.plan === "free" && !upd.patch.plan && ev.type !== "checkout.session.completed") {
+      return done("ignored", org.id, "Kostenlos-Tarif: Event ohne neues Abo");
+    }
+    if (org.plan === "free" && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
+      return done("ignored", org.id, "Kostenlos-Tarif: altes Abo");
+    }
     await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created));
     await tx.insert(auditLog).values({
       organizationId: org.id,
@@ -139,22 +147,54 @@ export async function loadOrgBilling(organizationId: string) {
 }
 
 /**
- * Wechsel in den kostenlosen Tarif (höchstens 20 aktive Patient:innen, 1 Person). Nur ohne laufendes bezahltes Abo.
- * Prüfung und Umstellung unter derselben Sperre wie Patienten-Neuanlagen, damit parallel nichts dazukommt.
+ * Wechsel in den kostenlosen Tarif (höchstens 20 Patient:innen, 1 Person). Nur ohne laufendes Stripe-Abo.
+ * Sperren in fester Reihenfolge „seats:“ → „pnum:“ (wie Team-Änderungen bzw. Patienten-Neuanlagen), damit parallel
+ * weder Personen noch Patient:innen dazukommen. Weitere Teammitglieder (außer Steuerberatung) werden deaktiviert.
+ * Die alte Abo-ID wird gelöst und der Event-Stand auf jetzt gesetzt: verspätete Stripe-Events des alten Abos
+ * überschreiben den Tarif nicht mehr (siehe processBillingEvent).
  */
-export async function switchToFreePlan(organizationId: string, userId: string): Promise<{ error: string } | { ok: true }> {
+export async function switchToFreePlan(organizationId: string, userId: string): Promise<{ error: string } | { ok: true; deactivated: string[] }> {
   const res = await withOrg(organizationId, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${organizationId}`}))`);
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
     const [o] = await tx
-      .select({ plan: organizations.plan, subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, currentPeriodEnd: organizations.currentPeriodEnd, seats: organizations.seats })
+      .select({
+        plan: organizations.plan,
+        subscriptionStatus: organizations.subscriptionStatus,
+        trialEndsAt: organizations.trialEndsAt,
+        currentPeriodEnd: organizations.currentPeriodEnd,
+        seats: organizations.seats,
+        stripeSubscriptionId: organizations.stripeSubscriptionId,
+      })
       .from(organizations)
-      .where(eq(organizations.id, organizationId));
+      .where(eq(organizations.id, organizationId))
+      .for("update");
     if (!o) return { error: "Praxis nicht gefunden." };
-    const problem = freeSwitchProblem(o, await activePatientCount(tx, organizationId), await usedSeats(organizationId, tx));
+    const problem = freeSwitchProblem(o, await countedPatients(tx, organizationId));
     if (problem) return { error: problem };
-    await tx.update(organizations).set({ plan: "free", seats: 1, subscriptionStatus: "none" }).where(eq(organizations.id, organizationId));
-    await tx.insert(auditLog).values({ organizationId, userId, action: "billing.switch_free", meta: { from: o.plan, status: o.subscriptionStatus } });
-    return { ok: true as const };
+    const off = await tx
+      .update(memberships)
+      .set({ active: false })
+      .where(and(eq(memberships.organizationId, organizationId), eq(memberships.active, true), ne(memberships.userId, userId), ne(memberships.role, "accountant")))
+      .returning({ userId: memberships.userId });
+    const nowSec = Math.floor(Date.now() / 1000);
+    await tx
+      .update(organizations)
+      .set({
+        plan: "free",
+        seats: 1,
+        subscriptionStatus: "none",
+        stripeSubscriptionId: null,
+        settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingLastEventAt', greatest(coalesce((${organizations.settings}->>'billingLastEventAt')::bigint, 0), ${nowSec}::bigint))`,
+      })
+      .where(eq(organizations.id, organizationId));
+    await tx.insert(auditLog).values({
+      organizationId,
+      userId,
+      action: "billing.switch_free",
+      meta: { from: o.plan, status: o.subscriptionStatus, deactivatedMembers: off.length },
+    });
+    return { ok: true as const, deactivated: off.map((m) => m.userId) };
   });
   return res;
 }
