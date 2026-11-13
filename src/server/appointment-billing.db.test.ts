@@ -124,6 +124,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(kasse.calc.cashPaymentsCents).toBe(4500);
     expect(kasse.calc.totals.businessCases.map((b) => b.gvTyp)).toContain("AnzahlungEinstellung");
     expect(kasse.calc.totals.businessCases.map((b) => b.gvTyp)).not.toContain("Umsatz");
+    // Formular: Quittung mit Leistung und Termin-Bezug (Auswahl in der Sammelrechnung)
+    const form = await invoices.invoiceFormData(auth, patient);
+    expect(form.openDeposits).toEqual([
+      expect.objectContaining({ id: dep.id, patientId: patient, totalCents: 4500, vatRate: 0, appointmentId: a1, treatmentRecordId: null, description: expect.stringMatching(/Behandlung am 12\.03\./) }),
+    ]);
     // Anzahlung rechnet die Leistung nicht ab
     expect((await source(auth, { appointmentId: a1 })).billedBy).toEqual([]);
 

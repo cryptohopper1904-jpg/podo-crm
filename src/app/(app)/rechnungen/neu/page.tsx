@@ -42,7 +42,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   const presetPatient = source?.patient?.id ?? yearSug?.patient.id ?? null;
   const patient = presetPatient ?? str(sp.patient);
 
-  const data = await invoiceFormData(auth, patient);
+  const data = await invoiceFormData(auth, patient, year);
   const homes = source || yearSug ? [] : await careHomes(auth);
   const travel = patient ? await travelSuggestions(auth, patient) : null;
 

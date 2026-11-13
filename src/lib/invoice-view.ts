@@ -71,15 +71,27 @@ export const dueLabel = (inv: { issuedAt?: string | null; dueAt: string | null }
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
 export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit";
 
-export type CreditedDeposit = { number: string | null; issuedAt: string | null; totalCents: number };
+export type CreditedDeposit = { number: string | null; issuedAt: string | null; totalCents: number; netCents?: number | null; vatCents?: number | null };
+
+const euroDe = (cents: number) => `${(cents / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 
 /**
  * Summenzeilen nach dem Gesamtbetrag: angerechnete Anzahlungen (Quittungen) einzeln, danach die übrigen Zahlungen.
  * paidCents enthält die Anzahlungen (siehe createInvoice).
+ * § 14 Abs. 5 S. 2 UStG: In der Endrechnung werden bei Anzahlungen mit USt auch deren Steuerbeträge abgesetzt –
+ * deshalb je Anzahlung „netto … zzgl. USt …“ und danach die verbleibende USt.
  */
-export function paymentSummary(inv: { kind: string; paidCents: number }, deposits: CreditedDeposit[], dateDe: (d: string | null) => string) {
-  const rows: { label: string; cents: number }[] = deposits.map((d) => ({ label: `abzgl. Anzahlung ${d.number ?? ""} vom ${dateDe(d.issuedAt)}`, cents: -d.totalCents }));
+export function paymentSummary(inv: { kind: string; paidCents: number; vatCents?: number | null }, deposits: CreditedDeposit[], dateDe: (d: string | null) => string) {
+  const rows: { label: string; cents: number }[] = deposits.map((d) => {
+    const vat = d.vatCents ?? 0;
+    const net = d.netCents ?? d.totalCents - vat;
+    const rate = vat && net ? Math.round((vat * 100) / net) : 0;
+    const tax = vat ? ` (netto ${euroDe(net)} zzgl. ${rate} % USt ${euroDe(vat)})` : "";
+    return { label: `abzgl. Anzahlung ${d.number ?? ""} vom ${dateDe(d.issuedAt)}${tax}`, cents: -d.totalCents };
+  });
   const depositCents = deposits.reduce((s, d) => s + d.totalCents, 0);
+  const depositVat = deposits.reduce((s, d) => s + (d.vatCents ?? 0), 0);
+  if (depositVat && inv.vatCents != null) rows.push({ label: "darin verbleibende USt", cents: inv.vatCents - depositVat });
   const rest = inv.paidCents - depositCents;
   if (rest !== 0) rows.push({ label: inv.kind === "credit_note" ? "erstattet/verrechnet" : deposits.length ? "weitere Zahlungen" : "bezahlt", cents: rest });
   return rows;

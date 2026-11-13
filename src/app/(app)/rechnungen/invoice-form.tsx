@@ -3,8 +3,9 @@
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
@@ -26,7 +27,18 @@ export type InvoicePreset = {
 };
 
 /** Noch nicht angerechnete Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet. */
-export type OpenDeposit = { id: string; patientId: string; number: string | null; issuedAt: string | null; totalCents: number };
+export type OpenDeposit = {
+  id: string;
+  patientId: string;
+  number: string | null;
+  issuedAt: string | null;
+  totalCents: number;
+  /** Leistung laut Quittung (wird bei Auswahl als Position der Sammelrechnung übernommen) */
+  description: string;
+  vatRate: number;
+  appointmentId: string | null;
+  treatmentRecordId: string | null;
+};
 
 /** Wegegeld für Hausbesuche (nur vor dem Ausstellen, nur Privat/Selbstzahler) – siehe src/server/trips.ts */
 export type TravelOptions = {
@@ -38,7 +50,7 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string; /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */ codeStart?: { serviceId: string; description: string; price: string; vatRate: number } };
+type Line = { key: string; /** aus diesen Quittungen übernommen (fällt beim Abwählen wieder weg) */ depositIds?: string[]; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string; /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */ codeStart?: { serviceId: string; description: string; price: string; vatRate: number } };
 
 let seq = 0;
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -46,6 +58,44 @@ const num = (s: string) => {
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 };
+const isEmptyLine = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
+
+/**
+ * Positionen passend zu den gewählten Quittungen. Steht die Behandlung schon als Position drin (Termin/Doku aus dem
+ * Jahresvorschlag), wird nur angerechnet. Sonst eine Position je Behandlung – mehrere Quittungen zum selben Termin
+ * ergeben eine Position mit der Summe (nie doppelt). Unveränderte Auswahl behält die vorhandene (ggf. bearbeitete) Zeile.
+ */
+function syncDepositLines(ls: Line[], chosen: OpenDeposit[]): Line[] {
+  const others = ls.filter((l) => !l.depositIds?.length);
+  const existing = ls.filter((l) => l.depositIds?.length);
+  const groups = new Map<string, OpenDeposit[]>();
+  for (const d of chosen) {
+    const covered = others.some(
+      (l) => (!!d.appointmentId && l.appointmentId === d.appointmentId) || (!!d.treatmentRecordId && l.treatmentRecordId === d.treatmentRecordId),
+    );
+    if (covered) continue;
+    const key = `${d.appointmentId ?? d.treatmentRecordId ?? d.id}|${d.vatRate}`;
+    groups.set(key, [...(groups.get(key) ?? []), d]);
+  }
+  const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+  const depLines = [...groups.values()].map((g) => {
+    const ids = g.map((d) => d.id);
+    const prev = existing.find((l) => sameIds(l.depositIds!, ids));
+    if (prev) return prev;
+    const d = g[0];
+    return newLine({
+      depositIds: ids,
+      appointmentId: d.appointmentId,
+      treatmentRecordId: d.treatmentRecordId,
+      description: depositLineText(d),
+      price: euro(g.reduce((s, x) => s + x.totalCents, 0)),
+      vatRate: d.vatRate,
+    });
+  });
+  const result = [...(depLines.length ? others.filter((l) => !isEmptyLine(l)) : others), ...depLines];
+  return result.length ? result : [newLine()];
+}
+
 const newLine = (patch: Partial<Line> = {}): Line => ({
   key: `l${++seq}`,
   serviceId: "",
@@ -70,6 +120,8 @@ export function InvoiceForm({
   travel,
   privateOnly = false,
   openDeposits = [],
+  receiptsThisYear = {},
+  receiptsYear,
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -86,6 +138,9 @@ export function InvoiceForm({
   /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
   privateOnly?: boolean;
   openDeposits?: OpenDeposit[];
+  /** normale Quittungen (sofort bezahlt) je Patient:in im laufenden Jahr – bereits abgerechnet */
+  receiptsThisYear?: Record<string, { count: number; cents: number }>;
+  receiptsYear?: number;
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
@@ -97,8 +152,8 @@ export function InvoiceForm({
   /** Auswahl der anzurechnenden Anzahlungen (Standard: bei Sammelrechnung alle offenen der Person, sonst keine) */
   const [depositSel, setDepositSel] = useState<Record<string, boolean>>({});
   const [patientFilter, setPatientFilter] = useState("");
-  const [lines, setLines] = useState<Line[]>(() =>
-    preset?.lines.length
+  const [lines, setLines] = useState<Line[]>(() => {
+    const start = preset?.lines.length
       ? preset.lines.map((l) =>
           newLine({
             treatmentRecordId: l.treatmentRecordId ?? null,
@@ -111,8 +166,12 @@ export function InvoiceForm({
             vatRate: l.vatRate,
           }),
         )
-      : [newLine()],
-  );
+      : [newLine()];
+    // Sammelrechnung: offene Quittungen der Person sind vorausgewählt → ihre Leistungen gleich als Positionen
+    const k = preset?.kind ?? "invoice";
+    const pid = initialPatient?.id;
+    return k === "collective" && pid ? syncDepositLines(start, openDeposits.filter((d) => d.patientId === pid)) : start;
+  });
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
@@ -205,9 +264,28 @@ export function InvoiceForm({
     );
   }
 
+  /** Auswahl der Quittungen ändern und Positionen nachziehen */
+  function applyDeposits(nextKind: CreatableKind, pid: string, sel: Record<string, boolean>) {
+    const allowed = nextKind === "invoice" || nextKind === "collective";
+    const chosen = allowed && pid ? openDeposits.filter((d) => d.patientId === pid && (sel[d.id] ?? nextKind === "collective")) : [];
+    setLines((ls) => syncDepositLines(ls, chosen));
+  }
+  function toggleDeposit(id: string, on: boolean) {
+    const sel = { ...depositSel, [id]: on };
+    setDepositSel(sel);
+    applyDeposits(kind, patientId, sel);
+  }
+  function selectAllDeposits(on: boolean) {
+    const sel = { ...depositSel };
+    for (const d of patientDeposits) sel[d.id] = on;
+    setDepositSel(sel);
+    applyDeposits(kind, patientId, sel);
+  }
+
   function chooseKind(k: CreatableKind) {
     setKind(k);
-    if (k === "no_show_fee" && lines.every((l) => !l.serviceId && !l.description)) {
+    applyDeposits(k, patientId, depositSel);
+    if (k === "no_show_fee" && lines.every((l) => l.depositIds?.length || (!l.serviceId && !l.description))) {
       setLines([newLine({ description: "Ausfallhonorar (§ 615 BGB) für den Termin am …", vatRate: 0 })]);
     }
     if (k === "receipt" && payments.length === 0 && totals.totalCents > 0) setPayments([newPaymentRow(totals.totalCents)]);
@@ -215,6 +293,7 @@ export function InvoiceForm({
 
   function choosePatient(id: string) {
     setPatientId(id);
+    applyDeposits(kind, id, depositSel);
     const p = patients.find((x) => x.id === id);
     if (p) setBillingContactId(p.billingContactId ?? (kind === "collective" ? (p.careHomeId ?? "") : ""));
   }
@@ -310,6 +389,50 @@ export function InvoiceForm({
         </div>
       </Card>
 
+      {patientDeposits.length ? (
+        <Card>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-lg font-semibold">
+              Quittungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({patientDeposits.length})
+            </h2>
+            <div className="flex gap-3 text-sm font-semibold">
+              <button type="button" className="text-primary hover:underline" onClick={() => selectAllDeposits(true)}>Alle wählen</button>
+              <button type="button" className="text-muted hover:underline" onClick={() => selectAllDeposits(false)}>Keine</button>
+            </div>
+          </div>
+          <p className="mb-3 text-sm text-muted">
+            Gewählte Quittungen kommen mit ihrer Leistung als Position auf die {kind === "collective" ? "Sammelrechnung" : "Rechnung"} (Betrag = gezahlter Betrag, bitte prüfen); der bereits bezahlte Betrag wird angerechnet.
+          </p>
+          <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
+            {patientDeposits.map((d) => (
+              <li key={d.id} className="px-3 py-1">
+                <Checkbox
+                  checked={depositOn(d.id)}
+                  onChange={(e) => toggleDeposit(d.id, e.target.checked)}
+                  label={`${d.number ?? "Quittung"} vom ${dateDe(d.issuedAt)} · ${depositLineText(d)} · ${money(d.totalCents)}${
+                    d.appointmentId || d.treatmentRecordId ? "" : " – ohne Terminbezug: bitte prüfen, dass die Behandlung nicht doppelt als Position steht"
+                  }`}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-sm">
+            {credited.length} von {patientDeposits.length} gewählt · angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span>
+          </p>
+        </Card>
+      ) : null}
+
+      {kind === "collective" && patientId && receiptsThisYear[patientId] ? (
+        <p className="flex gap-2 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
+          <Info size={18} className="mt-0.5 shrink-0" aria-hidden />
+          <span>
+            {receiptsYear ? `${receiptsYear} gibt es` : "Dieses Jahr gibt es"} außerdem {receiptsThisYear[patientId].count} normale Quittung(en) über {money(receiptsThisYear[patientId].cents)}. Diese sind bereits
+            fertige, bezahlte Belege und dürfen nicht noch einmal in die Sammelrechnung. Für Behandlungen, die erst zum Jahresende abgerechnet werden, beim Termin
+            „Quittung für Sammelrechnung“ wählen – nur diese erscheinen oben zur Auswahl. Für Versicherung/Beihilfe eine Kopie der Quittung verwenden.
+          </span>
+        </p>
+      ) : null}
+
       <Card>
         <h2 className="mb-4 font-display text-lg font-semibold">Positionen</h2>
         {/* Enter in Positionsfeldern stellt nie versehentlich die (unveränderbare) Rechnung aus */}
@@ -393,7 +516,11 @@ export function InvoiceForm({
                     variant="ghost"
                     aria-label={`Position ${i + 1} entfernen`}
                     disabled={lines.length === 1}
-                    onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+                    onClick={() => {
+                      // Position aus einer Quittung entfernt → Quittung auch nicht mehr anrechnen
+                      if (l.depositIds?.length) setDepositSel((x) => ({ ...x, ...Object.fromEntries(l.depositIds!.map((id) => [id, false])) }));
+                      setLines((ls) => ls.filter((x) => x.key !== l.key));
+                    }}
                   >
                     <Trash2 size={18} aria-hidden />
                   </Button>
@@ -484,25 +611,11 @@ export function InvoiceForm({
       ) : null}
 
       {patientDeposits.length ? (
-        <Card>
-          <h2 className="mb-1 font-display text-lg font-semibold">Anzahlungen anrechnen</h2>
-          <p className="mb-3 text-sm text-muted">Bereits per Quittung erhaltene Beträge werden vom Rechnungsbetrag abgezogen und auf der Rechnung aufgeführt.</p>
-          <div className="flex flex-col gap-1">
-            {patientDeposits.map((d) => (
-              <Checkbox
-                key={d.id}
-                checked={depositOn(d.id)}
-                onChange={(e) => setDepositSel((x) => ({ ...x, [d.id]: e.target.checked }))}
-                label={`Quittung ${d.number ?? ""} vom ${dateDe(d.issuedAt)} · ${money(d.totalCents)}`}
-              />
-            ))}
-          </div>
-          <p className="mt-3 text-sm">
-            Angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
-            <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
-            {openAfterDeposits < 0 ? " – die Anzahlungen übersteigen den Rechnungsbetrag." : ""}
-          </p>
-        </Card>
+        <p className="text-sm">
+          Quittungen angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
+          <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
+          {openAfterDeposits < 0 ? " – die Quittungen übersteigen den Rechnungsbetrag." : ""}
+        </p>
       ) : null}
 
       <Card>

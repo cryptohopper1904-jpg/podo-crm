@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-f",
+    date: "2026-11-13",
+    title: "Sammelrechnung: Quittungen der Patient:in auswählen",
+    items: [
+      { tag: "neu", text: "Bei „Sammelrechnung“ erscheinen nach der Wahl der Patient:in direkt alle offenen Quittungen (für die Sammelrechnung) zum Anhaken. Gewählte Quittungen kommen mit ihrer Behandlung als Position auf die Sammelrechnung, der bereits bezahlte Betrag wird angerechnet – „Alle wählen“ oder einzeln abwählen.", href: "/rechnungen/neu" },
+      { tag: "verbessert", text: "Hinweis bei normalen Quittungen: Sie sind bereits fertige, bezahlte Belege und werden nicht noch einmal in die Sammelrechnung übernommen." },
+    ],
+  },
+  {
     id: "2026-11-13-e",
     date: "2026-11-13",
     title: "USt-Wächter einmal bestätigen statt bei jeder Rechnung",

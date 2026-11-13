@@ -786,7 +786,7 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   const deposits =
     inv.kind === "invoice" || inv.kind === "collective"
       ? await tx
-          .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents })
+          .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, netCents: invoices.netCents, vatCents: invoices.vatCents })
           .from(invoices)
           .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, id), eq(invoices.kind, "deposit")))
           .orderBy(asc(invoices.issuedAt), asc(invoices.number))
@@ -835,7 +835,8 @@ export async function getInvoice(auth: AuthContext, id: string) {
 }
 
 /** Stammdaten für das Rechnungsformular. */
-export async function invoiceFormData(auth: AuthContext, preselectPatientId?: string | null) {
+/** `year`: Jahr der Sammelrechnung (Hinweis auf normale Quittungen dieses Jahres), Standard laufendes Jahr */
+export async function invoiceFormData(auth: AuthContext, preselectPatientId?: string | null, year?: number) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
@@ -866,6 +867,27 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       .from(invoices)
       .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
       .orderBy(asc(invoices.issuedAt));
+    // normale Quittungen (sofort bezahlt) des laufenden Jahres – schon abgerechnet, nur als Hinweis bei der Sammelrechnung
+    const receiptsYear = year ?? Number(berlinDateIso().slice(0, 4));
+    const yearStart = `${receiptsYear}-01-01`;
+    const yearEnd = `${receiptsYear + 1}-01-01`;
+    const receiptRows = await tx
+      .select({ patientId: invoices.patientId, n: sql<number>`count(*)::int`, cents: sql<number>`coalesce(sum(${invoices.totalCents}), 0)::int` })
+      .from(invoices)
+      .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "receipt"), ne(invoices.status, "cancelled"), ne(invoices.status, "draft"), sql`${invoices.issuedAt} >= ${yearStart}`, sql`${invoices.issuedAt} < ${yearEnd}`))
+      .groupBy(invoices.patientId);
+    const receiptsThisYear: Record<string, { count: number; cents: number }> = {};
+    for (const r of receiptRows) if (r.patientId) receiptsThisYear[r.patientId] = { count: r.n, cents: r.cents };
+    // Leistung laut Quittung (eine Position je Quittung) – für die Übernahme in die Sammelrechnung
+    const depLines = deposits.length
+      ? await tx
+          .select({ invoiceId: invoiceLines.invoiceId, description: invoiceLines.description, vatRate: invoiceLines.vatRate, appointmentId: invoiceLines.appointmentId, treatmentRecordId: invoiceLines.treatmentRecordId })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, deposits.map((d) => d.id))))
+          .orderBy(asc(invoiceLines.position))
+      : [];
+    const depLine = new Map<string, (typeof depLines)[number]>();
+    for (const l of depLines) if (!depLine.has(l.invoiceId)) depLine.set(l.invoiceId, l);
     let list = recent;
     if (preselectPatientId && z.uuid().safeParse(preselectPatientId).success && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));
@@ -888,7 +910,14 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       defaultDueDays: docSettings.dueDays,
       therapeuticDefault: docSettings.therapeuticDefault,
       today: berlinDateIso(),
-      openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
+      receiptsThisYear,
+      receiptsYear,
+      openDeposits: deposits
+        .filter((d): d is typeof d & { patientId: string } => !!d.patientId)
+        .map((d) => {
+          const l = depLine.get(d.id);
+          return { ...d, description: l?.description ?? "Anzahlung", vatRate: l?.vatRate ?? 0, appointmentId: l?.appointmentId ?? null, treatmentRecordId: l?.treatmentRecordId ?? null };
+        }),
     };
   });
 }
