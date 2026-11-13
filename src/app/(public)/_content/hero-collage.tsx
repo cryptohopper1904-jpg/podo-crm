@@ -150,7 +150,7 @@ function BookingCard() {
         <IconDot tone="info"><CalendarCheck size={18} /></IconDot>
         <div className="min-w-0">
           <p className="text-[13px] font-semibold leading-tight">Online gebucht</p>
-          <p className="text-[11px] leading-tight text-muted">über das Kundenportal</p>
+          <p className="text-[11px] leading-tight text-muted">über das Patientenportal</p>
         </div>
       </div>
       <div className="mt-2.5 rounded-xl bg-surface-2 px-2.5 py-2 text-xs">

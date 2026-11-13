@@ -44,7 +44,7 @@ export default async function IntegrationsSettings() {
         </p>
       ) : null}
       <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
-        Für jede echte Schnittstelle, über die Kundendaten fließen, ist ein Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO) nötig.
+        Für jede echte Schnittstelle, über die Patientendaten fließen, ist ein Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO) nötig.
         Zugangsdaten werden verschlüsselt gespeichert und nie wieder angezeigt.
       </p>
 

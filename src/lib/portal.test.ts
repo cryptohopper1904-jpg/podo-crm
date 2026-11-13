@@ -3,7 +3,7 @@ import { canCancelOnline, hashPortalToken, invoiceVisibleInPortal, isPortalToken
 
 const link = { organizationId: "org-a", patientId: "p-1", purpose: "portal", expiresAt: new Date(Date.now() + 86400_000), revokedAt: null };
 
-describe("Kundenportal", () => {
+describe("Patientenportal", () => {
   it("Token: 32 Byte base64url, nur Hash wird gespeichert", () => {
     const t = newPortalToken();
     expect(isPortalToken(t)).toBe(true);

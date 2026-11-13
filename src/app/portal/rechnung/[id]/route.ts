@@ -4,7 +4,7 @@ import { clientKey } from "@/lib/rate-limit";
 import { pdfResponseHeaders } from "@/server/invoice-delivery";
 import { currentPortalLink, portalFailLimiter, portalInvoicePdf, portalLimiter } from "@/server/portal-core";
 
-/** Rechnungs-PDF im Kundenportal (Sitzungs-Cookie) – nur, wenn die Rechnung zur Person des Links gehört. */
+/** Rechnungs-PDF im Patientenportal (Sitzungs-Cookie) – nur, wenn die Rechnung zur Person des Links gehört. */
 export async function GET(_req: NextRequest, ctx: RouteContext<"/portal/rechnung/[id]">) {
   const { id } = await ctx.params;
   const key = clientKey(await requestMeta());

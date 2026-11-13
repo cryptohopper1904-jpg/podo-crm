@@ -47,7 +47,7 @@ export async function savePatientAction(_: PatientFormState, form: FormData): Pr
     await audit({ organizationId: org, userId: auth.user.id, action: "patient.update", entity: "patient", entityId: id });
   } else {
     const [row] = await withOrg(org, async (tx) => {
-      // Kundennummern lückenlos und ohne Kollision vergeben (gleiche Sperre wie Import/Buchung)
+      // Patientennummern lückenlos und ohne Kollision vergeben (gleiche Sperre wie Import/Buchung)
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
       const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
       return tx.insert(patients).values({ ...values, organizationId: org, number: (m?.n ?? 0) + 1, source: "manual" }).returning({ id: patients.id });
@@ -84,15 +84,15 @@ export async function archivePatientAction(form: FormData) {
 
 export type DeletionState = { error?: string; ok?: string } | undefined;
 
-/** Kund:in vollständig löschen (Gesamt-Review H3) – nur ohne aufbewahrungspflichtige Daten, Bestätigung per Kundennummer. */
+/** Patient:in vollständig löschen (Gesamt-Review H3) – nur ohne aufbewahrungspflichtige Daten, Bestätigung per Patientennummer. */
 export async function deletePatientAction(_: DeletionState, form: FormData): Promise<DeletionState> {
   const auth = await requireAuth("users.manage");
   const id = String(form.get("id") ?? "");
   const [p] = await withOrg(auth.organization.id, (tx) =>
     tx.select({ number: patients.number }).from(patients).where(and(eq(patients.organizationId, auth.organization.id), eq(patients.id, id))),
   );
-  if (!p) return { error: "Kund:in nicht gefunden." };
-  if (String(form.get("confirm") ?? "").trim().replace(/^#/, "") !== String(p.number)) return { error: `Zur Bestätigung bitte die Kundennummer ${p.number} eintragen.` };
+  if (!p) return { error: "Patient:in nicht gefunden." };
+  if (String(form.get("confirm") ?? "").trim().replace(/^#/, "") !== String(p.number)) return { error: `Zur Bestätigung bitte die Patientennummer ${p.number} eintragen.` };
   try {
     await deletePatient(auth, id);
   } catch (e) {

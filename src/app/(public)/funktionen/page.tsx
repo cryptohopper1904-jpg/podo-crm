@@ -4,7 +4,7 @@ import { FEATURE_GROUPS, STATUS_LABEL, type FeatureStatus } from "../_content/fe
 
 export const metadata = {
   title: "Funktionen",
-  description: "Kundenakte, Behandlungsdoku mit Fotos, Termine, Verordnungen, Rechnungen, Erinnerungen, Hygiene und Team – was PodoHero heute kann.",
+  description: "Patientenakte, Behandlungsdoku mit Fotos, Termine, Verordnungen, Rechnungen, Erinnerungen, Hygiene und Team – was PodoHero heute kann.",
 };
 
 function StatusIcon({ status = "live" }: { status?: FeatureStatus }) {

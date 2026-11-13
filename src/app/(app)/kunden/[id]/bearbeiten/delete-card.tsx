@@ -6,11 +6,11 @@ import { deletePatientAction, erasePatientContactAction } from "../../actions";
 
 type Status = NonNullable<Awaited<ReturnType<typeof deletionStatus>>>;
 
-/** „Kund:in löschen“ für Inhaber:innen (Gesamt-Review H3): vollständig oder – bei Aufbewahrungspflicht – Kontaktdaten. */
+/** „Patient:in löschen“ für Inhaber:innen (Gesamt-Review H3): vollständig oder – bei Aufbewahrungspflicht – Kontaktdaten. */
 export function DeletePatientCard({ id, number, status }: { id: string; number: number; status: Status }) {
   return (
     <Card className="mt-6 border-danger/40">
-      <CardTitle>Kund:in löschen</CardTitle>
+      <CardTitle>Patient:in löschen</CardTitle>
       {status.mode === "delete" ? (
         <>
           <p className="mb-4 text-sm text-muted">
@@ -19,7 +19,7 @@ export function DeletePatientCard({ id, number, status }: { id: string; number: 
           </p>
           <ActionForm action={deletePatientAction} submit="Endgültig löschen">
             <input type="hidden" name="id" value={id} />
-            <Field label={`Zur Bestätigung die Kundennummer ${number} eintragen`}>
+            <Field label={`Zur Bestätigung die Patientennummer ${number} eintragen`}>
               <Input name="confirm" inputMode="numeric" autoComplete="off" required />
             </Field>
           </ActionForm>

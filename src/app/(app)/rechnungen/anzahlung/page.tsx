@@ -25,7 +25,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Quittung für Sammelrechnung" subtitle="Zahlung jetzt annehmen – Anrechnung auf die Sammelrechnung zum Jahresende" />
       {!src ? (
-        <Card><p className="text-sm text-danger">Bitte die Quittung aus einem Termin oder einer Behandlung heraus erstellen (Kalender → Termin bzw. Kundenakte → Behandlung).</p></Card>
+        <Card><p className="text-sm text-danger">Bitte die Quittung aus einem Termin oder einer Behandlung heraus erstellen (Kalender → Termin bzw. Patientenakte → Behandlung).</p></Card>
       ) : !src.patient ? (
         <Card><p className="text-sm text-danger">{src.error}</p></Card>
       ) : (
@@ -35,7 +35,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
               <Receipt size={20} aria-hidden /> {src.patient.name} · Behandlung am {dateDe(src.at)}
             </p>
             <p className="mt-1 text-sm text-muted">
-              Die Kund:in erhält jetzt eine Quittung über den gezahlten Betrag. Die Leistung selbst steht später auf der Sammelrechnung {year}; dort wird die Zahlung als Anzahlung abgezogen.
+              Die Patient:in erhält jetzt eine Quittung über den gezahlten Betrag. Die Leistung selbst steht später auf der Sammelrechnung {year}; dort wird die Zahlung als Anzahlung abgezogen.
             </p>
             {src.billedBy.length ? (
               <p className="mt-2 text-sm font-semibold text-danger">

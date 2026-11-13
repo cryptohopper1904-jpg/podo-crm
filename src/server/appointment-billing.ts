@@ -193,7 +193,7 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
       record = r ?? null;
     }
     const patientId = record?.patientId ?? appt?.patientId ?? null;
-    if (!patientId) return { patient: null, error: "Diesem Termin ist keine Kund:in zugeordnet." } as const;
+    if (!patientId) return { patient: null, error: "Diesem Termin ist keine Patient:in zugeordnet." } as const;
     const [p] = await tx
       .select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName, insuranceType: patients.insuranceType })
       .from(patients)
@@ -231,7 +231,7 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
   });
 }
 
-// ───────────── Sammelrechnung je Kund:in (Jahr) ─────────────
+// ───────────── Sammelrechnung je Patient:in (Jahr) ─────────────
 
 /**
  * Vorschlag für die Sammelrechnung einer Person über ein Jahr: alle noch nicht abgerechneten Leistungen als

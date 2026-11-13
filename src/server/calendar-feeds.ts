@@ -21,7 +21,7 @@ import { lockBooking } from "./portal-booking";
  * - Abruf alle ~5 min (Cron) oder „Jetzt abrufen“; Fenster heute − 7 Tage bis + 90 Tage
  * - idempotent über (Abo, UID + Vorkommen) → Termin; Änderungen/Absagen werden übernommen
  * - in PodoHero geänderte Termine werden nie überschrieben oder abgesagt (Konfliktkennzeichen „local_change“)
- * - Termine werden NIE automatisch einer Kund:in zugeordnet (wie Online-Buchung und KI-Telefon)
+ * - Termine werden NIE automatisch einer Patient:in zugeordnet (wie Online-Buchung und KI-Telefon)
  * - Termine werden nie gelöscht; im Kalender gelöschte Ereignisse werden in PodoHero abgesagt
  */
 
@@ -448,7 +448,7 @@ export async function deleteCalendarFeed(auth: AuthContext, feedId: string, now 
   return { cancelled };
 }
 
-/** Manuelle Zuordnung eines importierten Termins zu einer Kund:in (nie automatisch). */
+/** Manuelle Zuordnung eines importierten Termins zu einer Patient:in (nie automatisch). */
 export async function assignFeedAppointmentPatient(auth: AuthContext, appointmentId: string, patientId: string | null) {
   assertCan(auth, "appointments.write");
   const org = auth.organization.id;

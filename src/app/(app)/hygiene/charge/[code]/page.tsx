@@ -57,7 +57,7 @@ export default async function BatchTracePage(props: PageProps<"/hygiene/charge/[
       </Card>
 
       <Card>
-        <CardTitle>Betroffene Kund:innen ({people.length})</CardTitle>
+        <CardTitle>Betroffene Patient:innen ({people.length})</CardTitle>
         <p className="mb-3 text-sm text-muted">Behandlungen, in deren Dokumentation diese Charge eingetragen ist. Der Abruf wird protokolliert.</p>
         {people.length === 0 ? (
           <Empty title="Keine Behandlung mit dieser Charge dokumentiert" />

@@ -96,7 +96,7 @@ export function EverordnungImport({ canCreatePatient }: { canCreatePatient: bool
                 ))}
                 <label className="flex flex-wrap items-center gap-2 text-sm">
                   <input type="radio" name="patient" value="number" checked={patient === "number"} onChange={() => setPatient("number")} />
-                  Andere Person, Kundennummer:
+                  Andere Person, Patientennummer:
                   <Input name="patientNumber" inputMode="numeric" className="w-28" onFocus={() => setPatient("number")} />
                 </label>
                 {canCreatePatient ? (
@@ -120,7 +120,7 @@ export function EverordnungImport({ canCreatePatient }: { canCreatePatient: bool
                   <Input name="issuedAt" type="date" defaultValue={s.issuedAt ?? ""} />
                 </Field>
               </div>
-              <p className="text-xs text-muted">Die Verordnung wird als „offen“ angelegt und kann bis zur ersten Behandlung in der Kundenakte geändert werden.</p>
+              <p className="text-xs text-muted">Die Verordnung wird als „offen“ angelegt und kann bis zur ersten Behandlung in der Patientenakte geändert werden.</p>
               <div>
                 <Button type="submit" disabled={importing || !patient}>{importing ? "…" : "Verordnung übernehmen"}</Button>
               </div>

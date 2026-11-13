@@ -44,12 +44,12 @@ export default async function CalendarFeedSettings() {
         </ol>
         <ul className="mb-3 list-disc space-y-1 pl-5 text-sm text-muted">
           <li>Übernommen werden Termine von {FEED_WINDOW.pastDays} Tagen zurück bis {FEED_WINDOW.futureDays} Tage voraus. Absagen und Verschiebungen werden übernommen; ganztägige Einträge nicht.</li>
-          <li>Termine werden <strong>nie automatisch</strong> einer Kund:in zugeordnet – im Kalender „Kund:in zuordnen“ wählen.</li>
+          <li>Termine werden <strong>nie automatisch</strong> einer Patient:in zugeordnet – im Kalender „Patient:in zuordnen“ wählen.</li>
           <li>Importierte Termine sind nur lesend: Absagen und Verschieben bitte in Doctolib. In PodoHero geänderte Termine werden nicht überschrieben.</li>
           <li>Überschneidungen mit PodoHero-Terminen derselben Behandler:in werden im Kalender und auf „Heute“ markiert.</li>
         </ul>
         <p className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
-          <strong>Datenschutz:</strong> Google (Kalender) und Docal.io bzw. CalMedi verarbeiten dabei Termindaten Ihrer Kund:innen als eigene
+          <strong>Datenschutz:</strong> Google (Kalender) und Docal.io bzw. CalMedi verarbeiten dabei Termindaten Ihrer Patient:innen als eigene
           Auftragsverarbeiter – unabhängig von PodoHero. Schließen Sie mit jedem Anbieter einen Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO),
           nutzen Sie möglichst Google Workspace mit EU-Datenregion und tragen Sie in Doctolib-Terminen keine Diagnosen in Titel oder Beschreibung ein.
           Die private iCal-Adresse ist wie ein Passwort: Sie wird verschlüsselt gespeichert und nie wieder angezeigt. Wurde sie weitergegeben, in

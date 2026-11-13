@@ -75,7 +75,7 @@ export async function previewEverordnung(auth: AuthContext, text: string): Promi
 export interface ImportChoice {
   /** bestehende Person (ID aus den Vorschlägen) */
   patientId?: string;
-  /** bestehende Person über Kundennummer */
+  /** bestehende Person über Patientennummer */
   patientNumber?: number;
   /** neue Person aus den Daten der eVerordnung anlegen */
   createPatient?: boolean;
@@ -152,7 +152,7 @@ export async function importEverordnung(auth: AuthContext, text: string, choice:
           .select({ id: patients.id })
           .from(patients)
           .where(and(eq(patients.organizationId, org), choice.patientId ? eq(patients.id, choice.patientId) : eq(patients.number, choice.patientNumber!)));
-        if (!p) throw new ImportAbort("Kunde nicht gefunden.");
+        if (!p) throw new ImportAbort("Patient nicht gefunden.");
         patientId = p.id;
         if (await findExisting(tx, org, s.externalRef)) throw new ImportAbort(DUPLICATE_MSG);
       } else {

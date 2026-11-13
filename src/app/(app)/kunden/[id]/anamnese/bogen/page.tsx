@@ -43,12 +43,12 @@ export default async function AnamnesisSheetPage(props: PageProps<"/kunden/[id]/
       />
       {/* Datenschutz (Art. 9 DSGVO): Das Gerät zeigt die ganze App – nur gemeinsam mit dem Personal ausfüllen */}
       <p className="no-print mb-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">
-        Bitte gemeinsam mit dem Patienten ausfüllen und das iPad nicht unbeaufsichtigt weitergeben – auf diesem Gerät sind auch andere Kundenakten erreichbar.
+        Bitte gemeinsam mit dem Patienten ausfüllen und das iPad nicht unbeaufsichtigt weitergeben – auf diesem Gerät sind auch andere Patientenakten erreichbar.
       </p>
       <div className="mb-4"><RiskBadges flags={p.riskFlags} /></div>
       {latest ? (
         <p className="mb-4 rounded-xl bg-info-soft px-4 py-3 text-info-soft-text">
-          Vorausgefüllt mit der letzten Anamnese vom {dateDe(latest.createdAt)}{latest.source === "online" ? " (online vom Kunden, bitte gemeinsam prüfen)" : ""}. Bitte Punkt für Punkt gemeinsam durchgehen.
+          Vorausgefüllt mit der letzten Anamnese vom {dateDe(latest.createdAt)}{latest.source === "online" ? " (online vom Patienten, bitte gemeinsam prüfen)" : ""}. Bitte Punkt für Punkt gemeinsam durchgehen.
         </p>
       ) : (
         <p className="mb-4 rounded-xl bg-info-soft px-4 py-3 text-info-soft-text">Erstanamnese – bitte gemeinsam mit dem Patienten ausfüllen.</p>

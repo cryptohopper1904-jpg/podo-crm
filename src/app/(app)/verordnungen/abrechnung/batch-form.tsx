@@ -23,7 +23,7 @@ export function BatchForm({ rows }: { rows: ReadyRow[] }) {
       ) : null}
       <Table>
         <thead>
-          <tr><th className="w-12"><span className="sr-only">Auswahl</span></th><th>Kunde</th><th>VO</th><th>Ausgestellt</th><th>Einheiten</th><th>Zuzahlung</th><th>Hinweis</th></tr>
+          <tr><th className="w-12"><span className="sr-only">Auswahl</span></th><th>Patient</th><th>VO</th><th>Ausgestellt</th><th>Einheiten</th><th>Zuzahlung</th><th>Hinweis</th></tr>
         </thead>
         <tbody>
           {rows.map((r) => (

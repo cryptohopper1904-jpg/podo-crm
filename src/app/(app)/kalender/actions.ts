@@ -38,7 +38,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   const parsed = schema.safeParse(Object.fromEntries([...form.entries()].filter(([k, v]) => v !== "" && k !== "serviceId")));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const d = parsed.data;
-  if (!d.patientId && !d.title) return { error: "Bitte Kunde wählen oder einen Titel (z. B. Blocker) eingeben." };
+  if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen oder einen Titel (z. B. Blocker) eingeben." };
 
   const svc = serviceIds.length
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds))))
@@ -87,15 +87,15 @@ export async function setAppointmentStatusAction(form: FormData) {
 
 export type AssignState = { error?: string; ok?: string } | undefined;
 
-/** Importierten Termin (Kalender-Abo) manuell einer Kund:in zuordnen – nie automatisch. */
+/** Importierten Termin (Kalender-Abo) manuell einer Patient:in zuordnen – nie automatisch. */
 export async function assignFeedPatientAction(_: AssignState, form: FormData): Promise<AssignState> {
   const auth = await requireAuth("appointments.write");
   const id = z.string().uuid().safeParse(form.get("appointmentId"));
   const patient = z.string().uuid().safeParse(form.get("patientId"));
   if (!id.success) return { error: "Termin fehlt." };
-  if (!patient.success) return { error: "Bitte eine Kund:in wählen." };
+  if (!patient.success) return { error: "Bitte eine Patient:in wählen." };
   const ok = await assignFeedAppointmentPatient(auth, id.data, patient.data);
-  if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Kund:in nicht gefunden)." };
+  if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Patient:in nicht gefunden)." };
   revalidatePath("/kalender");
   revalidatePath("/heute");
   return { ok: "Termin zugeordnet." };

@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "PodoHero",
     short_name: "PodoHero",
-    description: "Praxis- und Kundensystem für Podologie",
+    description: "Praxis- und Patientensystem für Podologie",
     start_url: "/heute",
     display: "standalone",
     background_color: "#f4f9f8",

@@ -8,7 +8,7 @@ export const TRIP_LOG_DISCLAIMER =
   "Hilfe zur Dokumentation der Fahrten – kein automatisch finanzamtsfestes elektronisches Fahrtenbuch. Bitte Angaben prüfen; " +
   "für ein ordnungsgemäßes Fahrtenbuch u. a. Kilometerstände und Anlass vollständig und zeitnah erfassen.";
 
-/** Ziel im Fahrtenbuch: NIE der Name, nur die Kundennummer. */
+/** Ziel im Fahrtenbuch: NIE der Name, nur die Patientennummer. */
 export function tripTargetLabel(patientNumber: number | null | undefined): string {
   return Number.isInteger(patientNumber) && (patientNumber as number) > 0 ? `Hausbesuch K-${patientNumber}` : "Hausbesuch";
 }

@@ -235,7 +235,7 @@ export function anamnesisSummary(d: AnamnesisData): [string, string][] {
 }
 
 /**
- * Vorbelegung der Erstanamnese aus den Risikomerkmalen der Kundenakte.
+ * Vorbelegung der Erstanamnese aus den Risikomerkmalen der Patientenakte.
  * Verhindert, dass beim ersten Speichern (mit „Risikomerkmale übernehmen“) bekannte Risiken
  * wie Diabetes oder Blutverdünner versehentlich aus der Akte gelöscht werden.
  */

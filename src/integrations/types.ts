@@ -48,7 +48,7 @@ export interface AccountingContactInput {
   countryCode?: string;
   email?: string | null;
   phone?: string | null;
-  /** interne Kundennummer (Patientennummer) als Notiz */
+  /** interne Patientennummer als Notiz */
   customerNumber?: string | number | null;
 }
 

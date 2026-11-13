@@ -7,7 +7,7 @@ import { keepValues } from "@/lib/forms";
 import { Button, FormError, Input } from "./ui";
 
 /**
- * Erzeugt einen Kundenportal-Link (30 Tage gültig, ältere Links der Person werden widerrufen).
+ * Erzeugt einen Patientenportal-Link (30 Tage gültig, ältere Links der Person werden widerrufen).
  * Der Link wird nur einmal angezeigt – danach nur noch als Hash gespeichert.
  */
 export function PortalLinkButton({ patientId }: { patientId: string }) {
@@ -23,7 +23,7 @@ export function PortalLinkButton({ patientId }: { patientId: string }) {
       >
         <input type="hidden" name="patientId" value={patientId} />
         <Button type="submit" variant="secondary" disabled={pending}>
-          <KeyRound size={18} aria-hidden /> {pending ? "Erzeuge …" : "Kundenportal-Link"}
+          <KeyRound size={18} aria-hidden /> {pending ? "Erzeuge …" : "Patientenportal-Link"}
         </Button>
       </form>
       <FormError message={state?.error} />

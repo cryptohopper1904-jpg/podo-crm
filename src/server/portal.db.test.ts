@@ -1,10 +1,10 @@
-/** Kundenportal gegen PostgreSQL: Token-Auflösung, Rechnungs-Zugehörigkeit (fremde Rechnung → kein PDF), Absage-Regel. */
+/** Patientenportal gegen PostgreSQL: Token-Auflösung, Rechnungs-Zugehörigkeit (fremde Rechnung → kein PDF), Absage-Regel. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { hashPortalToken, newPortalToken } from "@/lib/portal";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
-(TEST_DB ? describe : describe.skip)("Kundenportal (DB)", () => {
+(TEST_DB ? describe : describe.skip)("Patientenportal (DB)", () => {
   const f = fixtures(TEST_DB!);
   let core: typeof import("./portal-core");
 

@@ -34,7 +34,7 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
   return (
     <div className="mx-auto max-w-4xl">
       <header className="mb-6">
-        <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← Kundenakte</Link></p>
+        <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← Patientenakte</Link></p>
         <h1 className="font-display text-3xl font-semibold">{fullName(data.p)}</h1>
         <div className="mt-2"><RiskBadges flags={data.p.riskFlags} /></div>
       </header>

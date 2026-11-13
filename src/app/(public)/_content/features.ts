@@ -15,7 +15,7 @@ export type FeatureGroup = {
 export const FEATURE_GROUPS: readonly FeatureGroup[] = [
   {
     id: "akte",
-    title: "Kundenakte & CRM",
+    title: "Patientenakte & CRM",
     lead: "Alles zu einer Person an einem Ort – mit Risiken immer im Blick.",
     items: [
       { text: "Stammdaten, Versicherung, abweichender Rechnungsempfänger (Angehörige, Betreuer, Pflegeheim)" },
@@ -47,7 +47,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Tages- und Wochenansicht, Serientermine, Hausbesuche, Doppelbuchungsprüfung" },
       { text: "Feiertage je Bundesland, Warnung bei Terminen in Urlaub oder Krankheit" },
       { text: "Eigene Buchungsseite für Selbstzahler-Termine und eigene Praxis-Website" },
-      { text: "Kundenportal: Patient:innen buchen selbst und verschieben bis 24 h vorher" },
+      { text: "Patientenportal: Patient:innen buchen selbst und verschieben bis 24 h vorher" },
       { text: "Warteliste: Bei einer Absage bekommen passende Personen einen Link – wer zuerst annimmt, rückt nach (nur mit Einwilligung)" },
       { text: "Kalender-Feed (iCal) ohne Patientennamen" },
       { text: "Doctolib: CSV-Import und Auswertung von Bestätigungsmails", status: "test" },
@@ -83,10 +83,10 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
   {
     id: "kommunikation",
     title: "Kommunikation & Erinnerungen",
-    lead: "Weniger Ausfälle, mehr wiederkehrende Kundschaft – nur mit Einwilligung.",
+    lead: "Weniger Ausfälle, mehr wiederkehrende Patient:innen – nur mit Einwilligung.",
     items: [
       { text: "Automatische Erinnerung 24 h vorher, Rückholung bei Überfälligkeit, Spangen-Kontrolle – ohne Doppelversand", status: "test" },
-      { text: "Kundenportal: Termine, offene Rechnungen als PDF, Gutscheine, Buchen und Verschieben" },
+      { text: "Patientenportal: Termine, offene Rechnungen als PDF, Gutscheine, Buchen und Verschieben" },
       { text: "Posteingang für E-Mail, WhatsApp und SMS mit KI-Antwortvorschlägen", status: "test" },
       { text: "SMS, E-Mail-Versand und WhatsApp (nur Organisatorisches)", status: "test" },
       { text: "Google-Bewertungen lesen und beantworten (ohne Gesundheitsdetails)", status: "test" },

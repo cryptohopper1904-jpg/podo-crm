@@ -52,7 +52,7 @@ export async function importEverordnungAction(_: ImportState, form: FormData): P
   });
   if (!c.success) return { error: "Eingaben prüfen (Einheiten 1–99, Datum)." };
   const { patient } = c.data;
-  if (patient === "new" && !auth.can("patients.write")) return { error: "Keine Berechtigung, Kunden anzulegen." };
+  if (patient === "new" && !auth.can("patients.write")) return { error: "Keine Berechtigung, Patienten anzulegen." };
   const choice =
     patient === "new"
       ? { createPatient: true }
@@ -61,7 +61,7 @@ export async function importEverordnungAction(_: ImportState, form: FormData): P
         : z.string().uuid().safeParse(patient).success
           ? { patientId: patient }
           : null;
-  if (!choice || (patient === "number" && !c.data.patientNumber)) return { error: "Bitte eine Person auswählen, eine Kundennummer angeben oder neu anlegen." };
+  if (!choice || (patient === "number" && !c.data.patientNumber)) return { error: "Bitte eine Person auswählen, eine Patientennummer angeben oder neu anlegen." };
   const res = await importEverordnung(auth, text, { ...choice, diagnosisGroup: c.data.diagnosisGroup, units: c.data.units, issuedAt: c.data.issuedAt });
   if ("error" in res) return { error: res.error };
   revalidatePath("/verordnungen");

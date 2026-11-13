@@ -180,10 +180,10 @@ export async function savePrescription(
 
   const run = async (tx: Tx): Promise<{ error: string } | { id: string; warnings: string[]; created: boolean }> => {
     const [p] = await tx.select({ id: patients.id, birthDate: patients.birthDate }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, d.patientId)));
-    if (!p) return { error: "Kunde nicht gefunden." };
+    if (!p) return { error: "Patient nicht gefunden." };
     if (d.scanMediaId) {
       const [m] = await tx.select({ id: media.id }).from(media).where(and(eq(media.organizationId, org), eq(media.id, d.scanMediaId), eq(media.patientId, d.patientId), eq(media.purpose, "prescription")));
-      if (!m) return { error: "Das Foto der Verordnung gehört nicht zu diesem Kunden." };
+      if (!m) return { error: "Das Foto der Verordnung gehört nicht zu diesem Patienten." };
     }
     // Zuzahlung aus den Preisen des Leistungskatalogs (Feld „GKV-Position“)
     const codes = positions.map((x) => x.position).filter((x): x is string => !!x);

@@ -19,7 +19,7 @@ import { mailMessagingPort } from "./mail";
 import { InvoiceError, loadInvoiceBundle, type InvoiceBundle } from "./invoices";
 
 /**
- * PDF einer Rechnung für einen Mandanten. Mit `patientId` (Kundenportal) wird zusätzlich geprüft,
+ * PDF einer Rechnung für einen Mandanten. Mit `patientId` (Patientenportal) wird zusätzlich geprüft,
  * dass die Rechnung genau dieser Person gehört. Entwürfe werden nie ausgeliefert.
  */
 export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string } = {}) {
@@ -87,7 +87,7 @@ export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
   if (!pdf) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
   const { bundle } = pdf;
   const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
-  if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Kundenakte hinterlegt.");
+  if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
   if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
   const { subject, body } = invoiceEmailText(bundle);
 

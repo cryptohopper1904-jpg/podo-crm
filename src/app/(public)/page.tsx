@@ -46,7 +46,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Termine & Kommunikation",
     items: [
-      { icon: CalendarCheck, title: "Online-Buchung & Kundenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website.", href: "/funktionen#termine" },
+      { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website.", href: "/funktionen#termine" },
       { icon: PhoneCall, title: "KI-Telefonassistent", text: "Nimmt Anrufe an, nennt freie Zeiten, notiert Termin- und Rückrufwünsche.", href: "/funktionen#kommunikation", test: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
       { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
@@ -92,7 +92,7 @@ type Cell = true | false | string;
 const COMPARISON: { topic: string; podo: Cell; typical: Cell }[] = [
   { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true, typical: "je nach Anbieter, oft per Upload" },
   { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true, typical: "selten" },
-  { topic: "CRM: Rückholung, Erinnerungen, Kundenportal mit Selbstbuchung", podo: true, typical: "teilweise" },
+  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: true, typical: "teilweise" },
   { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)", typical: "selten" },
   { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true, typical: "teilweise" },
   { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true, typical: "teilweise" },
@@ -138,7 +138,7 @@ export default async function Landing() {
               Ihre Praxis läuft.{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoHero dokumentiert am Behandlungsstuhl, nimmt Anrufe an, füllt freie Termine nach, erinnert Ihre Kundschaft und schließt abends
+              PodoHero dokumentiert am Behandlungsstuhl, nimmt Anrufe an, füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
               die Kasse. Eine Software für die ganze Praxis – vom ersten Anruf bis zum Z-Bon.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -238,7 +238,7 @@ export default async function Landing() {
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
           <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Anders als typische Podologie-Software</h2>
           <p className="mt-2 max-w-3xl text-muted">
-            Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Kundenbindung
+            Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung
             und Selbstzahler – und sagt offen, was noch fehlt. Allgemeine Einordnung, kein Vergleich mit einem bestimmten Produkt.
           </p>
           <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">

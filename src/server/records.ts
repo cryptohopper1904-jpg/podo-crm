@@ -46,17 +46,17 @@ export async function lockPatientChain(tx: Tx, patientId: string) {
 export async function checkTreatmentRefs(tx: Tx, ctx: RecordCtx, input: Pick<NewTreatment, "patientId" | "appointmentId" | "prescriptionId">): Promise<string | null> {
   const { org } = ctx;
   const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
-  if (!p) return "Kunde nicht gefunden.";
+  if (!p) return "Patient nicht gefunden.";
   if (input.appointmentId) {
     const [a] = await tx.select({ id: appointments.id }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId), eq(appointments.patientId, input.patientId)));
-    if (!a) return "Der Termin gehört nicht zu diesem Kunden.";
+    if (!a) return "Der Termin gehört nicht zu diesem Patienten.";
   }
   if (input.prescriptionId) {
     const [vo] = await tx
       .select({ status: prescriptions.status, units: prescriptions.units })
       .from(prescriptions)
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.prescriptionId), eq(prescriptions.patientId, input.patientId)));
-    if (!vo) return "Die Verordnung gehört nicht zu diesem Kunden.";
+    if (!vo) return "Die Verordnung gehört nicht zu diesem Patienten.";
     const used = await unitsUsed(tx, org, input.prescriptionId);
     if (!acceptsUnit(vo.status, used, vo.units)) return "Auf diese Verordnung kann keine weitere Einheit gebucht werden (abgeschlossen oder alle Einheiten erbracht).";
   }

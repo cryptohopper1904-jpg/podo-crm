@@ -67,7 +67,7 @@ export default async function TripLogPage(props: PageProps<"/touren/fahrtenbuch"
           </tbody>
         </Table>
       )}
-      <p className="mt-6 text-xs text-muted">{TRIP_LOG_DISCLAIMER} Ziele sind pseudonymisiert (Kundennummer), Änderungen nur als nachvollziehbare Korrektur.</p>
+      <p className="mt-6 text-xs text-muted">{TRIP_LOG_DISCLAIMER} Ziele sind pseudonymisiert (Patientennummer), Änderungen nur als nachvollziehbare Korrektur.</p>
     </div>
   );
 }

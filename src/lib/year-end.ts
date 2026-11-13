@@ -1,5 +1,5 @@
 /**
- * Sammelrechnung zum Jahresende: Viele Kund:innen bekommen im Dezember eine Sammelrechnung über alle Behandlungen
+ * Sammelrechnung zum Jahresende: Viele Patient:innen bekommen im Dezember eine Sammelrechnung über alle Behandlungen
  * des Jahres (Anzahlungen per Quittung werden angerechnet). Reine Funktionen ohne Server-Importe.
  */
 

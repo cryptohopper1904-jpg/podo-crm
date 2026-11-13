@@ -97,7 +97,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
         <Card className="mt-6">
           <h2 className="mb-3 font-display text-lg font-semibold">Abrechnung</h2>
           {billing.prescription ? (
-            <p className="mb-3 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">Behandlung auf Verordnung – Abrechnung über die Krankenkasse. Eine Rechnung an die Kund:in nur für Zusatzleistungen.</p>
+            <p className="mb-3 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">Behandlung auf Verordnung – Abrechnung über die Krankenkasse. Eine Rechnung an die Patient:in nur für Zusatzleistungen.</p>
           ) : null}
           {billing.documents.length ? (
             <ul className="mb-3 flex flex-col gap-1 text-sm">

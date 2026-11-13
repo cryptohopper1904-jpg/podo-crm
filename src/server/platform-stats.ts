@@ -7,7 +7,7 @@ import type { CheckResult } from "@/lib/ops-health";
 import { checkMigrations, checkTimestamps } from "./ops-status";
 
 /**
- * Betreiber-Dashboard: NUTZUNGSDATEN, NIE KUNDENDATEN.
+ * Betreiber-Dashboard: NUTZUNGSDATEN, NIE PATIENTENDATEN.
  *
  * Alle Werte sind Anzahlen, Summen oder Zeitstempel. Es werden keine Namen, Kontaktdaten, Akteninhalte,
  * Rechnungsempfänger o. Ä. gelesen – die SQL-Abfragen selektieren ausschließlich count()/sum()/max()/exists().
@@ -27,7 +27,7 @@ export const MODULES = {
   kasse: "Kasse",
   verordnungen: "Verordnungen",
   onlineBuchung: "Online-Buchung",
-  portal: "Kundenportal",
+  portal: "Patientenportal",
   erinnerungen: "Erinnerungen",
   email: "E-Mail-Versand",
   telefon: "KI-Telefon",

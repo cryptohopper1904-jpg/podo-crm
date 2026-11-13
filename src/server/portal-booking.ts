@@ -295,7 +295,7 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
         source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: svc.name,
-        notes: "Gebucht über das Kundenportal (Identität über den persönlichen Portal-Link).",
+        notes: "Gebucht über das Patientenportal (Identität über den persönlichen Portal-Link).",
       })
       .returning({ id: appointments.id });
     await tx.insert(appointmentServices).values({ organizationId: org, appointmentId: a.id, serviceId: svc.id });
@@ -304,8 +304,8 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
       patientId: link.patientId,
       channel: "none",
       direction: "inbound",
-      subject: "Neue Buchung über das Kundenportal",
-      body: `Über das Kundenportal gebucht: ${svc.name} am ${dateDe(start)} um ${timeDe(start)} Uhr. Der Termin ist der Akte zugeordnet (Status „geplant“) – bitte bei Bedarf bestätigen.`,
+      subject: "Neue Buchung über das Patientenportal",
+      body: `Über das Patientenportal gebucht: ${svc.name} am ${dateDe(start)} um ${timeDe(start)} Uhr. Der Termin ist der Akte zugeordnet (Status „geplant“) – bitte bei Bedarf bestätigen.`,
       status: "new",
       threadKey: `portal:${link.patientId}`,
     });
@@ -377,7 +377,7 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
         source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: a.title,
-        notes: [`Über das Kundenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`, a.notes].filter(Boolean).join("\n"),
+        notes: [`Über das Patientenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`, a.notes].filter(Boolean).join("\n"),
         homeVisit: a.homeVisit,
         prescriptionId: a.prescriptionId,
       })
@@ -388,8 +388,8 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
       patientId: link.patientId,
       channel: "none",
       direction: "inbound",
-      subject: "Terminverschiebung über das Kundenportal",
-      body: `Der Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde über das Kundenportal auf ${dateDe(start)} um ${timeDe(start)} Uhr verschoben.`,
+      subject: "Terminverschiebung über das Patientenportal",
+      body: `Der Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde über das Patientenportal auf ${dateDe(start)} um ${timeDe(start)} Uhr verschoben.`,
       status: "new",
       threadKey: `portal:${link.patientId}`,
     });

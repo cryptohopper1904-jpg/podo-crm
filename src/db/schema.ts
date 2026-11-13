@@ -55,7 +55,7 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
   "whatsapp",
   "email",
   "voice_agent",
-  /** Kundenportal (Buchung/Verschieben per persönlichem Link, Nachrücker von der Warteliste) */
+  /** Patientenportal (Buchung/Verschieben per persönlichem Link, Nachrücker von der Warteliste) */
   "portal",
   /** Kalender-Abo (iCal-Import) aus einem externen Kalender, der nicht Doctolib ist */
   "extern",
@@ -331,7 +331,7 @@ export const passwordResets = pgTable(
   (t) => [uniqueIndex("password_resets_token").on(t.tokenHash), index("password_resets_user").on(t.userId)],
 );
 
-// ───────────────────────── Kunden / Patienten ─────────────────────────
+// ───────────────────────── Patienten ─────────────────────────
 export type RiskFlags = {
   diabetes?: boolean;
   diabetesType?: string;
@@ -568,7 +568,7 @@ export const billingBatches = pgTable("billing_batches", {
   note: text("note"),
 });
 
-/** Einmal-Links für die Online-Anamnese / das Kundenportal (nur Hash des Tokens gespeichert) */
+/** Einmal-Links für die Online-Anamnese / das Patientenportal (nur Hash des Tokens gespeichert) */
 export const patientLinks = pgTable(
   "patient_links",
   {
@@ -591,7 +591,7 @@ export const patientLinks = pgTable(
   (t) => [
     uniqueIndex("patient_links_token").on(t.tokenHash),
     index("patient_links_org_appointment").on(t.organizationId, t.appointmentId),
-    // höchstens EIN aktiver (nicht widerrufener, nicht benutzter) Link je Kunde und Zweck
+    // höchstens EIN aktiver (nicht widerrufener, nicht benutzter) Link je Patient und Zweck
     uniqueIndex("patient_links_one_active")
       .on(t.organizationId, t.patientId, t.purpose)
       .where(sql`${t.revokedAt} is null and ${t.usedAt} is null`),

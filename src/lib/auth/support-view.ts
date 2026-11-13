@@ -3,7 +3,7 @@
  *
  * - Schreibende Anfragen: immer (ohne Entprellung).
  * - Alle übrigen Anfragen – Seiten (Dokument-, RSC-Navigation und Router-Prefetch) sowie Daten-Downloads
- *   unter /api (Fotos, PDFs, Kundenexport): ja, derselbe Pfad für dieselbe Freigabe höchstens einmal je 60 s.
+ *   unter /api (Fotos, PDFs, Patientenexport): ja, derselbe Pfad für dieselbe Freigabe höchstens einmal je 60 s.
  * - Es gibt bewusst KEINE Ausnahme nach Anfrage-Headern (`purpose`, `sec-purpose`, `next-router-prefetch`,
  *   `rsc`): Diese Header setzt der Client frei – eine Ausnahme ließe sich zum Abschalten des Audits
  *   missbrauchen (Gesamt-Review H6). Ein Prefetch erzeugt schlimmstenfalls einen zusätzlichen Eintrag.

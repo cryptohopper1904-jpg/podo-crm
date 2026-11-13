@@ -19,7 +19,7 @@ export default async function AuditPage() {
     .limit(300));
   return (
     <>
-      <p className="mb-4 text-sm text-muted">Jeder Zugriff auf Kundenakten, Fotos und Doku wird protokolliert (unveränderbar). Die letzten 300 Einträge:</p>
+      <p className="mb-4 text-sm text-muted">Jeder Zugriff auf Patientenakten, Fotos und Doku wird protokolliert (unveränderbar). Die letzten 300 Einträge:</p>
       <Table>
         <thead><tr><th>Zeit</th><th>Person</th><th>Aktion</th><th>Objekt</th><th>IP</th></tr></thead>
         <tbody>

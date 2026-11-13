@@ -11,7 +11,7 @@ import { buildWorkbook } from "./excel-import.test";
 
 const url = process.env.TEST_DATABASE_URL;
 (url ? describe : describe.skip)("Excel-Import gegen PostgreSQL (RLS, Trigger)", () => {
-  it("importiert Kunden, Leistungen, Gutscheine, Rechnungen und Fixkosten", async () => {
+  it("importiert Patienten, Leistungen, Gutscheine, Rechnungen und Fixkosten", async () => {
     const pool = new Pool({ connectionString: url });
     const db = drizzle(pool, { schema: s });
     const [org] = await db.insert(s.organizations).values({ name: "Import-Test", slug: `imp-${Date.now()}` }).returning();

@@ -45,7 +45,7 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
       <Card className="mt-4 p-0">
         <Table>
           <thead>
-            <tr><th>Praxis</th><th>Tarif</th><th>Test bis</th><th>Plätze</th><th>Kund:innen</th><th>Termine 30 T.</th><th>Angelegt</th><th>Aktionen</th></tr>
+            <tr><th>Praxis</th><th>Tarif</th><th>Test bis</th><th>Plätze</th><th>Patient:innen</th><th>Termine 30 T.</th><th>Angelegt</th><th>Aktionen</th></tr>
           </thead>
           <tbody>
             {practices.map((p) => (

@@ -29,7 +29,7 @@ export default async function OnlineAnamnesisPage(props: PageProps<"/anamnese/[t
             So können wir Sie sicher behandeln (z. B. bei Diabetes oder blutverdünnenden Medikamenten). Das dauert etwa 5 Minuten.
           </p>
           <p className="mt-3 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
-            Ihre Angaben werden verschlüsselt übertragen und nur in Ihrer Kundenakte gespeichert. Der Link funktioniert nur einmal.
+            Ihre Angaben werden verschlüsselt übertragen und nur in Ihrer Patientenakte gespeichert. Der Link funktioniert nur einmal.
             Wenn Sie etwas nicht wissen, lassen Sie das Feld einfach leer.
           </p>
           <OnlineAnamnesisForm token={token} />

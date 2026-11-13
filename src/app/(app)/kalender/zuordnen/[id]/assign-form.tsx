@@ -18,10 +18,10 @@ export function AssignForm({ appointmentId, patients }: { appointmentId: string;
       <FormSuccess message={state?.ok} />
       <input type="hidden" name="appointmentId" value={appointmentId} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Kund:in suchen">
+        <Field label="Patient:in suchen">
           <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Name oder Nummer" />
         </Field>
-        <Field label="Kund:in">
+        <Field label="Patient:in">
           <Select name="patientId" defaultValue="" required>
             <option value="">– bitte wählen –</option>
             {shown.map((p) => <option key={p.id} value={p.id}>{p.lastName}{p.firstName ? `, ${p.firstName}` : ""} (#{p.number})</option>)}

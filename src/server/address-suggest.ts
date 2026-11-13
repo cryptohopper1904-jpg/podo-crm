@@ -1,5 +1,5 @@
 /**
- * Adress-Vorschläge (Kundenanlage, Praxisdaten, Pflegeheime) über Photon.
+ * Adress-Vorschläge (Patientenanlage, Praxisdaten, Pflegeheime) über Photon.
  *  - ADDRESS_PROVIDER=photon (Standard) | off
  *  - PHOTON_URL: eigene Photon-Instanz (Standard: öffentliche Instanz von Komoot, https://photon.komoot.io)
  * Es verlässt nur der eingetippte Adresstext den Server – keine Namen/IDs, keine Client-IP.

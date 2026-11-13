@@ -1,7 +1,7 @@
 "use server";
 
 /**
- * Server Actions für das Kundenportal.
+ * Server Actions für das Patientenportal.
  * - createPortalLinkAction: Praxis (patients.write) erzeugt einen 30-Tage-Link für eine Person.
  * - cancelPortalAppointmentAction: öffentlich (Token), Absage ≥ 24 h vorher.
  * Die Logik liegt in ./portal-core (server-only).
@@ -55,7 +55,7 @@ export async function cancelPortalAppointmentAction(_: PortalCancelState, form: 
 }
 
 /**
- * Buchen bzw. Verschieben im Kundenportal (Sitzung aus dem HttpOnly-Cookie). Drosselung je IP und je Person;
+ * Buchen bzw. Verschieben im Patientenportal (Sitzung aus dem HttpOnly-Cookie). Drosselung je IP und je Person;
  * fehlgeschlagene Versuche zählen zusätzlich in die strenge Fehler-Drosselung.
  */
 export async function bookPortalAppointmentAction(_: PortalBookState, form: FormData): Promise<PortalBookState> {

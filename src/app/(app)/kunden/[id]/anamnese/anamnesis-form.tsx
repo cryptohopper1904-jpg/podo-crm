@@ -22,7 +22,7 @@ export function AnamnesisForm({ patientId, initial, touch = false }: { patientId
       <input type="hidden" name="patientId" value={patientId} />
       <FormError message={state?.error} />
       <AnamnesisFields mode="practice" initial={initial} />
-      <Checkbox name="updateRiskFlags" defaultChecked label="Risikomerkmale der Kundenakte (Diabetes, Blutverdünner, pAVK, Neuropathie, MRSA, Allergien) aus dieser Anamnese übernehmen" />
+      <Checkbox name="updateRiskFlags" defaultChecked label="Risikomerkmale der Patientenakte (Diabetes, Blutverdünner, pAVK, Neuropathie, MRSA, Allergien) aus dieser Anamnese übernehmen" />
       <div>
         <Button type="submit" disabled={pending}>{pending ? "Wird gespeichert …" : "Als neue Version speichern"}</Button>
       </div>

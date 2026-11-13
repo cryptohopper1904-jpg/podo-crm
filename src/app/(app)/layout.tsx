@@ -131,7 +131,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             <input
               id="q"
               name="q"
-              placeholder="Kunde suchen …"
+              placeholder="Patient suchen …"
               className="h-11 w-full rounded-xl border border-border bg-bg px-3.5 text-[15px] placeholder:text-muted focus:border-primary focus:outline-none"
             />
           </form>

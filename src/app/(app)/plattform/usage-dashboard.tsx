@@ -5,7 +5,7 @@ import type { CheckResult } from "@/lib/ops-health";
 import { isPlanId, PLANS } from "@/lib/plans";
 import { ADOPTION_DAYS, MODULE_KEYS, MODULES, MONTHLY_METRICS, type MonthlyMetric, type PlatformUsage } from "@/server/platform-stats";
 
-/** Betreiber-Dashboard: nur Nutzungsdaten (Zahlen, Summen, Zeitstempel) – nie Kundendaten. */
+/** Betreiber-Dashboard: nur Nutzungsdaten (Zahlen, Summen, Zeitstempel) – nie Patientendaten. */
 
 const monthLabel = (m: string) => `${m.slice(5, 7)}/${m.slice(2, 4)}`;
 const bytes = (n: number) => {
@@ -117,7 +117,7 @@ export function UsageDashboard({ usage }: { usage: PlatformUsage }) {
                       <p className="mt-3 flex flex-wrap gap-1">
                         {used.length ? used.map((k) => <Badge key={k} tone="primary">{MODULES[k]}</Badge>) : <span className="text-xs text-muted">keine Modul-Nutzung in {ADOPTION_DAYS} Tagen</span>}
                       </p>
-                      <p className="mt-2 text-xs text-muted">Kund:innen gesamt: {p.customersTotal} · angelegt {dateDe(p.createdAt)} · letzte Anmeldung {p.lastLoginAt ? dateTimeDe(p.lastLoginAt) : "–"}</p>
+                      <p className="mt-2 text-xs text-muted">Patient:innen gesamt: {p.customersTotal} · angelegt {dateDe(p.createdAt)} · letzte Anmeldung {p.lastLoginAt ? dateTimeDe(p.lastLoginAt) : "–"}</p>
                     </details>
                   </td>
                   <td>

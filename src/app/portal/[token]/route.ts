@@ -40,8 +40,8 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/portal/[token]"
   const session = signPortalSession(link.id, link.expiresAt);
   const res = new NextResponse(
     page(
-      "Kundenportal",
-      `<meta http-equiv="refresh" content="0;url=/portal"><script>location.replace("/portal")</script></head><body><p><a href="/portal">Weiter zum Kundenportal</a></p></body></html>`,
+      "Patientenportal",
+      `<meta http-equiv="refresh" content="0;url=/portal"><script>location.replace("/portal")</script></head><body><p><a href="/portal">Weiter zum Patientenportal</a></p></body></html>`,
     ),
     { status: 200, headers: HEADERS },
   );

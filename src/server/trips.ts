@@ -202,7 +202,7 @@ export type DayTour = {
 };
 
 /**
- * Tagesroute: Start (Startort oder „vom letzten Kunden“) → Hausbesuche → optional Rückkehr.
+ * Tagesroute: Start (Startort oder „vom letzten Patienten“) → Hausbesuche → optional Rückkehr.
  * optimize = Nearest-Neighbour + 2-opt auf Luftlinie (keine Daten nach außen); Terminzeiten nur als Warnung.
  */
 export async function dayTour(auth: AuthContext, input: { date: string; start?: TourStart | null; returnTo?: string | null; optimize?: boolean; mine?: boolean }): Promise<DayTour> {
@@ -253,7 +253,7 @@ export async function dayTour(auth: AuthContext, input: { date: string; start?: 
   }
   visits = ordered;
   const missing = visits.filter((v) => !v.point).length;
-  if (missing) notes.push(`${missing} Adresse(n) nicht gefunden – bitte in der Kundenakte prüfen.`);
+  if (missing) notes.push(`${missing} Adresse(n) nicht gefunden – bitte in der Patientenakte prüfen.`);
 
   const stops: TourStop[] = [...(start ? [start] : []), ...visits.map((v) => ({ kind: "visit" as const, label: v.label, address: v.address, point: v.point, visit: v })), ...(end ? [end] : [])];
   const legsRaw = await routeLegs(org, stops.map((s) => ({ point: s.point })));
@@ -291,7 +291,7 @@ async function loadAppointmentVisit(auth: AuthContext, appointmentId: string) {
   return r ?? null;
 }
 
-/** Vorheriger Kunde: letzte eigene (nicht stornierte) Fahrt heute, sonst der vorherige Hausbesuch am selben Tag. */
+/** Vorheriger Patient: letzte eigene (nicht stornierte) Fahrt heute, sonst der vorherige Hausbesuch am selben Tag. */
 async function previousCustomer(auth: AuthContext, appt: typeof appointments.$inferSelect) {
   const org = auth.organization.id;
   const day = berlinDateIso(appt.startsAt);
@@ -376,9 +376,9 @@ export async function startTrip(auth: AuthContext, input: StartTripInput) {
   const existing = await tripForAppointment(auth, input.appointmentId);
   if (existing && !existing.voided) throw new TripError("Für diesen Termin ist bereits eine Fahrt erfasst – ggf. im Fahrtenbuch stornieren.");
   const destAddress = addressLine(r.p);
-  if (!destAddress) throw new TripError("In der Kundenakte fehlt die Adresse.");
+  if (!destAddress) throw new TripError("In der Patientenakte fehlt die Adresse.");
   const dest = await geocodeAddress(org, destAddress);
-  if (!dest) throw new TripError("Die Adresse der Kundin/des Kunden wurde nicht gefunden – bitte in der Akte prüfen oder km später manuell eintragen.");
+  if (!dest) throw new TripError("Die Adresse der Patientin/des Patienten wurde nicht gefunden – bitte in der Akte prüfen oder km später manuell eintragen.");
 
   let from: LatLon | null = null;
   let fromLabel: string;
@@ -399,7 +399,7 @@ export async function startTrip(auth: AuthContext, input: StartTripInput) {
     const prev = await previousCustomer(auth, r.a);
     if (!prev) throw new TripError("Kein vorheriger Hausbesuch heute gefunden.");
     from = prev.address ? await geocodeAddress(org, prev.address) : null;
-    if (!from) throw new TripError("Adresse des letzten Kunden nicht gefunden.");
+    if (!from) throw new TripError("Adresse des letzten Patienten nicht gefunden.");
     fromLabel = prev.label;
   }
 

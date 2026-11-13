@@ -11,7 +11,7 @@ import { addWaitlistAction, resolveWaitlistAction } from "./waitlist-actions";
 const WD = ["Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 
 /**
- * Warteliste je Person: wird ein passender Termin frei (Absage durch Praxis oder Kundenportal), bekommt die
+ * Warteliste je Person: wird ein passender Termin frei (Absage durch Praxis oder Patientenportal), bekommt die
  * Person – nur mit Erinnerungs-Einwilligung – automatisch ein Einmal-Angebot; sonst Vorschlag im Posteingang.
  */
 export async function WaitlistCard({ auth, patientId }: { auth: AuthContext; patientId: string }) {

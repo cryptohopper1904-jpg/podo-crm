@@ -17,7 +17,7 @@ import { LogoUpload } from "./logo-upload";
 
 const LOGO_HINT = {
   compact: "Nur das Zeichen (z. B. der Fuß). Erscheint dezent auf Anamnese- und Doku-Bögen sowie auf Quittungen.",
-  full: "Das vollständige Logo mit Schriftzug. Erscheint im Rechnungskopf und in E-Mails an Kund:innen (z. B. Terminerinnerungen).",
+  full: "Das vollständige Logo mit Schriftzug. Erscheint im Rechnungskopf und in E-Mails an Patient:innen (z. B. Terminerinnerungen).",
 } as const;
 
 export const metadata = { title: "Praxis" };

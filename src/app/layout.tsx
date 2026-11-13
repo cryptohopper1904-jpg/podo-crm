@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: "PodoHero", template: "%s · PodoHero" },
-  description: "Praxis- und Kundensystem für Podologie",
+  description: "Praxis- und Patientensystem für Podologie",
   applicationName: "PodoHero",
   icons: {
     icon: { url: "/icons/icon.svg", type: "image/svg+xml" },

@@ -1,5 +1,5 @@
 /**
- * Aufbewahrung je Kund:in (Gesamt-Review H3) – reine Logik, Daten liefert src/server/patient-deletion.ts.
+ * Aufbewahrung je Patient:in (Gesamt-Review H3) – reine Logik, Daten liefert src/server/patient-deletion.ts.
  *
  * - Behandlungsdokumentation inkl. Anamnese und Behandlungsfotos: 10 Jahre nach Abschluss der Behandlung
  *   (§ 630f Abs. 3 BGB; maßgeblich ist hier die letzte Behandlung bzw. Anamnese).

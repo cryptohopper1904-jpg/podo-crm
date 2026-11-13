@@ -125,7 +125,7 @@ export async function createAnamnesisLink(auth: AuthContext, patientId: string) 
     if (isUniqueViolation(e)) return { error: "Gerade wurde parallel ein Link erzeugt. Bitte erneut versuchen." } as const;
     throw e;
   }
-  if (!ok) return { error: "Kunde nicht gefunden." } as const;
+  if (!ok) return { error: "Patient nicht gefunden." } as const;
   await audit({ organizationId: org, userId: auth.user.id, action: "patient_link.create", entity: "patient", entityId: patientId, meta: { purpose: "anamnesis" } });
   return { token, expiresAt };
 }
@@ -210,7 +210,7 @@ export async function submitOnlineAnamnesis(token: string, data: AnamnesisData, 
       direction: "inbound",
       subject: "Anamnesebogen eingegangen",
       // bewusst ohne Gesundheitsdaten (Posteingang sieht auch der Empfang)
-      body: `Der Online-Anamnesebogen von Kunde #${p.number} ist eingegangen. Bitte in der Akte unter „Anamnese“ prüfen und in einer Praxis-Version bestätigen.`,
+      body: `Der Online-Anamnesebogen von Patient #${p.number} ist eingegangen. Bitte in der Akte unter „Anamnese“ prüfen und in einer Praxis-Version bestätigen.`,
       threadKey: `anamnesis:${a.id}`,
     });
     // Audit in derselben Transaktion: Daten, Token-Verbrauch und Nachweis gelingen nur gemeinsam

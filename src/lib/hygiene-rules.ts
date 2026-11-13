@@ -160,7 +160,7 @@ export type HygieneChecklist = { daily: string[]; weekly: string[] };
 
 export const DEFAULT_HYGIENE_CHECKLIST: HygieneChecklist = {
   daily: [
-    "Flächendesinfektion Behandlungsplatz nach jedem Kunden",
+    "Flächendesinfektion Behandlungsplatz nach jedem Patienten",
     "Instrumente aufbereitet (Reinigung, Desinfektion, Sterilisation)",
     "Händedesinfektionsmittel und Handschuhe aufgefüllt",
     "Absaugung/Fräse gereinigt, Filter geprüft",

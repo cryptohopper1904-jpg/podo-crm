@@ -8,7 +8,7 @@ import { ERASABLE_CONSENTS, retentionDecision, type RetentionDecision, type Rete
 import { discardStored } from "@/lib/storage";
 
 /**
- * „Kund:in löschen“ (Gesamt-Review H3, Art. 17 DSGVO) – nur Inhaber:in, nie im Support-Modus.
+ * „Patient:in löschen“ (Gesamt-Review H3, Art. 17 DSGVO) – nur Inhaber:in, nie im Support-Modus.
  * - Ohne aufbewahrungspflichtige Daten: vollständige Löschung über die DB-Funktion podo_delete_patient
  *   (prüft die Fristen-Daten selbst noch einmal, löscht Einwilligungen/Medien ohne Behandlungsbezug mit).
  * - Mit Dokumentation/Rechnungen: Löschung gesperrt; angeboten wird das Löschen der Kontaktdaten,
@@ -17,7 +17,7 @@ import { discardStored } from "@/lib/storage";
 export class PatientDeletionError extends Error {}
 
 function assertOwner(auth: AuthContext) {
-  if (auth.support || auth.role !== "owner") throw new PatientDeletionError("Nur Inhaber:innen können Kund:innen löschen.");
+  if (auth.support || auth.role !== "owner") throw new PatientDeletionError("Nur Inhaber:innen können Patient:innen löschen.");
 }
 
 export async function retentionFacts(org: string, patientId: string): Promise<(RetentionFacts & { number: number; contactErasedAt: Date | null }) | null> {
@@ -52,13 +52,13 @@ export async function deletePatient(auth: AuthContext, patientId: string): Promi
   assertOwner(auth);
   const org = auth.organization.id;
   const facts = await retentionFacts(org, patientId);
-  if (!facts) throw new PatientDeletionError("Kund:in nicht gefunden.");
+  if (!facts) throw new PatientDeletionError("Patient:in nicht gefunden.");
   if (retentionDecision(facts).mode !== "delete") throw new PatientDeletionError("Es gibt aufbewahrungspflichtige Unterlagen – nur die Kontaktdaten können gelöscht werden.");
   const keys = await withOrg(org, async (tx) => {
     const files = await tx.select({ key: media.storageKey }).from(media).where(and(eq(media.organizationId, org), eq(media.patientId, patientId)));
     // Die DB-Funktion prüft die Aufbewahrung im selben Snapshot erneut (keine Lücke zwischen Prüfung und Löschung)
     const r = await tx.execute(sql`select podo_delete_patient(${patientId}::uuid) as ok`);
-    if (!(r.rows[0] as { ok?: boolean } | undefined)?.ok) throw new PatientDeletionError("Kund:in nicht gefunden.");
+    if (!(r.rows[0] as { ok?: boolean } | undefined)?.ok) throw new PatientDeletionError("Patient:in nicht gefunden.");
     return files.map((f) => f.key);
   });
   for (const k of keys) await discardStored(k).catch(() => undefined);
@@ -109,7 +109,7 @@ export async function erasePatientContact(auth: AuthContext, patientId: string):
     await tx.delete(waitlist).where(and(eq(waitlist.organizationId, org), eq(waitlist.patientId, patientId)));
     return { revoked: revoke.length, keys: photos.map((x) => x.key) };
   });
-  if (!res) throw new PatientDeletionError("Kund:in nicht gefunden.");
+  if (!res) throw new PatientDeletionError("Patient:in nicht gefunden.");
   for (const k of res.keys) await discardStored(k).catch(() => undefined);
   await audit({ organizationId: org, userId: auth.user.id, action: "patient.contact_erased", entity: "patient", entityId: patientId, meta: { revokedConsents: res.revoked, marketingPhotos: res.keys.length } });
   return { revoked: res.revoked, photos: res.keys.length };

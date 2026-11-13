@@ -1,12 +1,12 @@
 /**
- * Gesamt-Review H3: „Kund:in löschen“ gegen eine echte DB (RLS, Append-only-Trigger aktiv, erfundene Daten).
+ * Gesamt-Review H3: „Patient:in löschen“ gegen eine echte DB (RLS, Append-only-Trigger aktiv, erfundene Daten).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 import type { AuthContext } from "@/lib/auth/session";
 
-(TEST_DB ? describe : describe.skip)("Kund:in löschen (DB)", () => {
+(TEST_DB ? describe : describe.skip)("Patient:in löschen (DB)", () => {
   const f = fixtures(TEST_DB!);
   let del: typeof import("./patient-deletion");
   const files = new Map<string, Buffer>();

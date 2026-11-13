@@ -124,7 +124,7 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
         ) : step.key === "import" ? (
           <>
             <h2 className="mb-4 font-display text-xl font-semibold">Daten importieren</h2>
-            <p className="text-sm text-muted">Kund:innen, Leistungen, Gutscheine und Rechnungen aus der Excel-Vorlage oder einer CSV-Datei übernehmen – mit Vorschau und Prüfbericht, bevor etwas gespeichert wird.</p>
+            <p className="text-sm text-muted">Patient:innen, Leistungen, Gutscheine und Rechnungen aus der Excel-Vorlage oder einer CSV-Datei übernehmen – mit Vorschau und Prüfbericht, bevor etwas gespeichert wird.</p>
             <LinkButton href="/einstellungen/import" variant="secondary" className="mt-4">Zum Import</LinkButton>
             <NextButton step="import" label="Erledigt / überspringen" />
           </>

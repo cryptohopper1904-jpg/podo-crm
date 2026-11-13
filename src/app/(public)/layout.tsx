@@ -12,7 +12,7 @@ import { LinkButton } from "@/components/ui";
 export const metadata: Metadata = {
   title: { default: "PodoHero – Praxissoftware für Podologie", template: "%s · PodoHero" },
   description:
-    "Praxissoftware für Podologie: Kundenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
+    "Praxissoftware für Podologie: Patientenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
   robots: process.env.PUBLIC_SITE_INDEX === "true" ? { index: true, follow: true } : { index: false, follow: false },
 };
 

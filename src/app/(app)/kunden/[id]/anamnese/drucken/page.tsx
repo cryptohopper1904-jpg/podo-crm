@@ -81,7 +81,7 @@ export default async function AnamnesisPrintPage(props: PageProps<"/kunden/[id]/
         ) : (
           <>
             <p className="mb-3 text-sm text-muted">
-              Stand {dateTimeDe(latest!.createdAt)} · {latest!.source === "online" ? "online vom Kunden angegeben (ungeprüft)" : `erfasst von ${latest!.author ?? "Praxis"}`}
+              Stand {dateTimeDe(latest!.createdAt)} · {latest!.source === "online" ? "online vom Patienten angegeben (ungeprüft)" : `erfasst von ${latest!.author ?? "Praxis"}`}
             </p>
             <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
               {anamnesisSummary(latest!.data).map(([k, v]) => (
