@@ -5,11 +5,12 @@ import { absoluteUrl, siteIndexable } from "./(public)/_content/site";
 export const dynamic = "force-dynamic";
 
 /**
- * robots.txt: Solange PUBLIC_SITE_INDEX nicht "true" ist (Rechtstexte noch nicht anwaltlich geprüft), wird nichts indexiert.
- * Danach nur die öffentliche Website; App, API und persönliche Links (Portal, Anamnese, Abmeldung) bleiben ausgeschlossen.
+ * robots.txt: Solange PUBLIC_SITE_INDEX nicht "true" ist (Rechtstexte noch nicht anwaltlich geprüft), wird die PodoHero-Website
+ * nicht indexiert – die Praxis-Websites unter /p/ (Angebot an die Praxen, eigene Rechtstexte der Praxis) bleiben aber auffindbar.
+ * Danach die öffentliche Website; App, API und persönliche Links (Portal, Anamnese, Abmeldung) bleiben ausgeschlossen.
  */
 export default function robots(): MetadataRoute.Robots {
-  if (!siteIndexable()) return { rules: { userAgent: "*", disallow: "/" } };
+  if (!siteIndexable()) return { rules: { userAgent: "*", allow: "/p/", disallow: "/" } };
   return {
     rules: {
       userAgent: "*",
