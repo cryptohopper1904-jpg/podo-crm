@@ -19,6 +19,7 @@ import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/prac
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
 import { SERVICE_CATEGORIES } from "@/lib/catalog";
+import { codeTaken } from "@/server/products";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -152,8 +153,14 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
   };
   // aktiv/archiviert ändert nur setServiceActiveAction; neue Leistungen sind aktiv
   let found = true;
+  let productClash = false;
   try {
     await withOrg(org, async (tx) => {
+      // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
+      if (await codeTaken(tx, org, values.code, "product")) {
+        productClash = true;
+        return;
+      }
       if (d.data.id) {
         const r = await tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))).returning({ id: services.id });
         found = r.length > 0;
@@ -164,6 +171,7 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
   } catch {
     return { error: `Das Kürzel ${d.data.code} gibt es schon.` };
   }
+  if (productClash) return { error: `Das Kürzel ${d.data.code} hat schon ein Produkt. Bitte ein anderes wählen.` };
   if (!found) return { error: "Leistung nicht gefunden." };
   await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code: d.data.code } });
   revalidatePath("/einstellungen/leistungen");

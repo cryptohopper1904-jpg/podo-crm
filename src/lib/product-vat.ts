@@ -15,10 +15,17 @@
  */
 
 export const PRODUCT_IN_TREATMENT_LABEL = "in der Behandlung angewendet (Nebenleistung, 0 %)";
-export const PRODUCT_VAT_HINT =
-  "0 % nur, wenn das Produkt während der Behandlung angewendet/verbraucht wird. Mitgegebene oder verkaufte Produkte zum Mitnehmen: 19 %.";
-/** Zusatz in der Positionsbeschreibung (steht so auch auf dem Beleg) */
-export const IN_TREATMENT_SUFFIX = " – in der Behandlung angewendet";
+/** Hinweis im Formular; `rates` = reguläre Sätze der gewählten Produkte (19 %, ggf. 7 %) */
+export function productVatHint(rates: readonly number[]): string {
+  const list = [...new Set(rates)].sort((a, b) => b - a);
+  const regular = list.length ? list.map((r) => `${r} %`).join(" bzw. ") : "regulärer Steuersatz";
+  return `0 % nur, wenn das Produkt während der Behandlung angewendet/verbraucht wird. Mitgegebene oder verkaufte Produkte zum Mitnehmen: ${regular}.`;
+}
+
+/** Zusatz in der Positionsbeschreibung (steht so auch auf dem Beleg), mit Datum der Behandlung, falls bekannt */
+export function inTreatmentSuffix(dateDe: string | null): string {
+  return dateDe ? ` – in der Behandlung vom ${dateDe} angewendet` : " – in der Behandlung angewendet";
+}
 
 export type VatRuleLine =
   | {
@@ -45,7 +52,8 @@ export function isTreatmentLine(l: VatRuleLine, invoiceKind: InvoiceKindLike): b
   return invoiceKind !== "no_show_fee" && l.kind === "service" && l.therapeutic && l.vatRate === 0;
 }
 
-export type ProductVatResult = { vatRate: number; inTreatment: boolean };
+/** treatmentLine: Index der zugehörigen Behandlungsposition (nur bei inTreatment) */
+export type ProductVatResult = { vatRate: number; inTreatment: boolean; treatmentLine: number | null };
 
 /**
  * Prüft und bestimmt Steuersatz/Behandlungsbezug jeder Produktposition. Andere Positionen bleiben unverändert
@@ -65,23 +73,25 @@ export function resolveProductVat(
     if (l.kind !== "product") return void results.push(null);
     const pos = `Position ${i + 1}`;
     if (opts.invoiceKind === "no_show_fee") fail(`${pos}: Produkte können nicht auf ein Ausfallhonorar.`);
-    if (opts.smallBusiness) return void results.push({ vatRate: 0, inTreatment: false });
+    if (opts.smallBusiness) return void results.push({ vatRate: 0, inTreatment: false, treatmentLine: null });
     if (!l.inTreatment) {
       if (l.vatRate !== l.productVatRate) {
         fail(`${pos}: Produkte zum Mitnehmen werden mit ${l.productVatRate} % verkauft. 0 % nur, wenn das Produkt in der Behandlung angewendet wird.`);
       }
-      return void results.push({ vatRate: l.productVatRate, inTreatment: false });
+      return void results.push({ vatRate: l.productVatRate, inTreatment: false, treatmentLine: null });
     }
     // in der Behandlung angewendet → 0 %, aber nur mit Behandlung auf demselben Beleg
     if (l.vatRate !== 0) fail(`${pos}: In der Behandlung angewendete Produkte werden mit 0 % abgerechnet.`);
+    const linked = l.treatmentLine ?? null;
     if (!treatments.length) {
       fail(`${pos}: 0 % für Produkte nur zusammen mit einer Heilbehandlung (0 %) auf demselben Beleg. Ohne Behandlung: ${l.productVatRate} %.`);
-    } else if (l.treatmentLine !== null && l.treatmentLine !== undefined) {
-      if (!treatments.includes(l.treatmentLine)) fail(`${pos}: Die zugeordnete Position ist keine Heilbehandlung (0 %).`);
+    } else if (linked !== null) {
+      if (!treatments.includes(linked)) fail(`${pos}: Die zugeordnete Position ist keine Heilbehandlung (0 %).`);
     } else if (opts.invoiceKind === "collective" && treatments.length > 1) {
       fail(`${pos}: Bitte die Behandlung (Tag/Termin) zuordnen, bei der das Produkt angewendet wurde.`);
     }
-    results.push({ vatRate: 0, inTreatment: true });
+    // Bezug wird immer gespeichert: zugeordnete Behandlung, sonst die (erste) Behandlung des Belegs
+    results.push({ vatRate: 0, inTreatment: true, treatmentLine: linked ?? treatments[0] ?? null });
   });
   return { results, error };
 }

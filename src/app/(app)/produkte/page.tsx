@@ -133,7 +133,7 @@ export default async function ProductsPage(props: PageProps<"/produkte">) {
         ) : null}
       </div>
       <p className="rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
-        Verkauf über <Link href="/rechnungen/neu" className="font-semibold underline">Neue Rechnung/Quittung</Link>: Produkte zum Mitnehmen mit 19 %. 0 % nur, wenn das Produkt während der Behandlung angewendet/verbraucht wird (Nebenleistung der Heilbehandlung auf demselben Beleg).
+        Verkauf über <Link href="/rechnungen/neu" className="font-semibold underline">Neue Rechnung/Quittung</Link>: Produkte zum Mitnehmen mit ihrem regulären Satz (meist 19 %). 0 % nur, wenn das Produkt während der Behandlung angewendet/verbraucht wird (Nebenleistung der Heilbehandlung auf demselben Beleg).
       </p>
       <CatalogToolbar
         catalog="products"

@@ -50,6 +50,7 @@ CREATE TABLE "suppliers" (
 ALTER TABLE "invoice_lines" ADD COLUMN "line_kind" text DEFAULT 'service' NOT NULL;--> statement-breakpoint
 ALTER TABLE "invoice_lines" ADD COLUMN "product_id" uuid;--> statement-breakpoint
 ALTER TABLE "invoice_lines" ADD COLUMN "in_treatment" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "invoice_lines" ADD COLUMN "treatment_position" integer;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_supplier_id_suppliers_id_fk" FOREIGN KEY ("supplier_id") REFERENCES "public"."suppliers"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "stock_movements" ADD CONSTRAINT "stock_movements_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

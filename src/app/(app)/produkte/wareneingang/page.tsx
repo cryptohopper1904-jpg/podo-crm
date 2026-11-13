@@ -23,7 +23,9 @@ export default async function GoodsReceiptPage(props: PageProps<"/produkte/waren
         <Card>
           <CardTitle>Wareneingang buchen</CardTitle>
           {active.length === 0 ? (
-            <Empty title="Noch keine Produkte">Zuerst ein Produkt anlegen.</Empty>
+            <Empty title="Noch keine Produkte">
+              {auth.can("settings.manage") ? <Link href="/produkte/neu" className="font-semibold text-primary">Zuerst ein Produkt anlegen</Link> : "Produkte legt die Praxisleitung an (Einstellungsrecht)."}
+            </Empty>
           ) : (
             <ActionForm key={pre || "x"} action={bookReceiptAction} submit="Eingang buchen">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

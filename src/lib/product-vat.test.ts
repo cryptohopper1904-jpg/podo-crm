@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeClosing, ustKey, type KassePayment } from "./kasse/model";
 import { computeTotals, needsTherapeuticConfirmation } from "./invoice-math";
-import { isTreatmentLine, resolveProductVat, type VatRuleLine } from "./product-vat";
+import { inTreatmentSuffix, isTreatmentLine, productVatHint, resolveProductVat, type VatRuleLine } from "./product-vat";
 
 const treatment: VatRuleLine = { kind: "service", vatRate: 0, therapeutic: true };
 const cosmetic: VatRuleLine = { kind: "service", vatRate: 19, therapeutic: false };
@@ -16,9 +16,9 @@ const opts = { smallBusiness: false, invoiceKind: "invoice" };
 
 describe("Produkte: Umsatzsteuer je Position", () => {
   it("Produkt zum Mitnehmen: regulärer Satz (19 %), mit oder ohne Behandlung", () => {
-    expect(resolveProductVat([product()], opts)).toEqual({ results: [{ vatRate: 19, inTreatment: false }], error: null });
-    expect(resolveProductVat([treatment, product()], opts).results[1]).toEqual({ vatRate: 19, inTreatment: false });
-    expect(resolveProductVat([product({ vatRate: 7, productVatRate: 7 })], opts).results[0]).toEqual({ vatRate: 7, inTreatment: false });
+    expect(resolveProductVat([product()], opts)).toEqual({ results: [{ vatRate: 19, inTreatment: false, treatmentLine: null }], error: null });
+    expect(resolveProductVat([treatment, product()], opts).results[1]).toEqual({ vatRate: 19, inTreatment: false, treatmentLine: null });
+    expect(resolveProductVat([product({ vatRate: 7, productVatRate: 7 })], opts).results[0]).toEqual({ vatRate: 7, inTreatment: false, treatmentLine: null });
   });
 
   it("0 % ohne „in der Behandlung angewendet“ wird abgelehnt", () => {
@@ -27,7 +27,7 @@ describe("Produkte: Umsatzsteuer je Position", () => {
 
   it("in der Behandlung angewendet: 0 % nur mit Heilbehandlung (0 %) auf demselben Beleg", () => {
     const ok = resolveProductVat([treatment, product({ vatRate: 0, inTreatment: true })], opts);
-    expect(ok).toEqual({ results: [null, { vatRate: 0, inTreatment: true }], error: null });
+    expect(ok).toEqual({ results: [null, { vatRate: 0, inTreatment: true, treatmentLine: 0 }], error: null });
 
     // ohne Behandlungsposition
     expect(resolveProductVat([product({ vatRate: 0, inTreatment: true })], opts).error).toMatch(/nur zusammen mit einer Heilbehandlung/);
@@ -50,7 +50,10 @@ describe("Produkte: Umsatzsteuer je Position", () => {
     const coll = { ...opts, invoiceKind: "collective" };
     const lines = [treatment, treatment, product({ vatRate: 0, inTreatment: true })];
     expect(resolveProductVat(lines, coll).error).toMatch(/zuordnen/);
-    expect(resolveProductVat([treatment, treatment, product({ vatRate: 0, inTreatment: true, treatmentLine: 1 })], coll).error).toBeNull();
+    expect(resolveProductVat([treatment, treatment, product({ vatRate: 0, inTreatment: true, treatmentLine: 1 })], coll)).toEqual({
+      results: [null, null, { vatRate: 0, inTreatment: true, treatmentLine: 1 }],
+      error: null,
+    });
     // Zuordnung auf eine Nicht-Behandlung
     expect(resolveProductVat([treatment, cosmetic, product({ vatRate: 0, inTreatment: true, treatmentLine: 1 })], coll).error).toMatch(/keine Heilbehandlung/);
     // nur eine Behandlung → Zuordnung nicht nötig
@@ -59,8 +62,15 @@ describe("Produkte: Umsatzsteuer je Position", () => {
 
   it("Kleinunternehmer: immer 0 %, kein Behandlungsbezug, keine Fehler", () => {
     const sb = { ...opts, smallBusiness: true };
-    expect(resolveProductVat([product({ vatRate: 0, inTreatment: true })], sb)).toEqual({ results: [{ vatRate: 0, inTreatment: false }], error: null });
-    expect(resolveProductVat([product()], sb).results[0]).toEqual({ vatRate: 0, inTreatment: false });
+    expect(resolveProductVat([product({ vatRate: 0, inTreatment: true })], sb)).toEqual({ results: [{ vatRate: 0, inTreatment: false, treatmentLine: null }], error: null });
+    expect(resolveProductVat([product()], sb).results[0]).toEqual({ vatRate: 0, inTreatment: false, treatmentLine: null });
+  });
+
+  it("Hinweis und Beschreibungszusatz nennen Satz bzw. Behandlungsdatum", () => {
+    expect(productVatHint([19])).toMatch(/zum Mitnehmen: 19 %\.$/);
+    expect(productVatHint([7, 19, 19])).toMatch(/19 % bzw\. 7 %/);
+    expect(inTreatmentSuffix("03.02.2026")).toBe(" – in der Behandlung vom 03.02.2026 angewendet");
+    expect(inTreatmentSuffix(null)).toBe(" – in der Behandlung angewendet");
   });
 
   it("0-%-Produktposition zählt für den USt-Wächter, 19 % nicht", () => {

@@ -28,17 +28,20 @@ ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_kind_check
 -- Vorzeichen passend zur Art: Zugang positiv, Verkauf/Bruch/Eigenverbrauch negativ, Inventur beides (nie 0)
 ALTER TABLE stock_movements ADD CONSTRAINT stock_movements_quantity_check CHECK (
   quantity <> 0
+  AND abs(quantity) <= 1000000
   AND (kind NOT IN ('receipt', 'storno') OR quantity > 0)
   AND (kind NOT IN ('sale', 'breakage', 'own_use') OR quantity < 0)
   AND (kind NOT IN ('sale', 'storno') OR invoice_id IS NOT NULL)
   AND (unit_cost_cents IS NULL OR unit_cost_cents >= 0)
 );
 --> statement-breakpoint
--- Rechnungsposition: Produktposition ↔ product_id; „in der Behandlung angewendet“ nur bei Produkt mit 0 %
+-- Rechnungsposition: Produktposition ↔ product_id; „in der Behandlung angewendet“ nur bei Produkt mit 0 % und mit
+-- Bezug auf die Behandlungsposition desselben Belegs (treatment_position)
 ALTER TABLE invoice_lines ADD CONSTRAINT invoice_lines_kind_check CHECK (
   line_kind IN ('service', 'product')
   AND ((line_kind = 'product') = (product_id IS NOT NULL))
-  AND (NOT in_treatment OR (line_kind = 'product' AND vat_rate = 0))
+  AND (NOT in_treatment OR (line_kind = 'product' AND vat_rate = 0 AND treatment_position IS NOT NULL))
+  AND (treatment_position IS NULL OR (in_treatment AND treatment_position > 0))
 );
 --> statement-breakpoint
 -- Lagerbewegungen sind unveränderbar (Bestand = Summe der Bewegungen); Korrektur nur als neue Bewegung

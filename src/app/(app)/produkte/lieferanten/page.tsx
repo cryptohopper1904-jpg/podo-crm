@@ -35,7 +35,7 @@ export default async function SuppliersPage(props: PageProps<"/produkte/lieferan
                   </td>
                   <td className="text-sm">{s.customerNumber ?? "–"}</td>
                   <td className="text-sm">
-                    {s.email ? <a href={`mailto:${s.email}`} className="block text-primary">{s.email}</a> : null}
+                    {s.email ? <a href={`mailto:${encodeURIComponent(s.email)}`} className="block text-primary">{s.email}</a> : null}
                     {s.phone ? <span className="block">{s.phone}</span> : null}
                     {url ? (
                       <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary">

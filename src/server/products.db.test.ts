@@ -43,7 +43,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     ).id;
     const base = { patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
     const svcLine = (serviceId: string, vatRate: number, priceCents: number) => ({ serviceId, treatmentRecordId: null, description: "", quantity: 1, factor: 1, unitPriceCents: priceCents, vatRate });
-    const prodLine = (productId: string, quantity: number, p: { inTreatment?: boolean; vatRate?: number; treatmentLine?: number | null } = {}) => ({
+    const prodLine = (productId: string, quantity: number, p: { inTreatment?: boolean; vatRate?: number; treatmentLine?: number | null; priceCents?: number } = {}) => ({
       serviceId: null,
       productId,
       inTreatment: p.inTreatment ?? false,
@@ -52,7 +52,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       description: "",
       quantity,
       factor: 1,
-      unitPriceCents: 1,
+      unitPriceCents: p.priceCents ?? 1290,
       vatRate: p.vatRate ?? (p.inTreatment ? 0 : 19),
     });
     return { org, user, auth, patient, svc, supplier, salbe, base, svcLine, prodLine };
@@ -60,7 +60,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   const stockOf = async (auth: never, id: string) => (await products.getProduct(auth, id))!.stock;
   const linesOf = (org: string, invoiceId: string) =>
-    f.asOrg(org, async (c) => (await c.query("select line_kind, product_id, in_treatment, vat_rate, description, unit_price_cents, total_cents from invoice_lines where invoice_id = $1 order by position", [invoiceId])).rows);
+    f.asOrg(org, async (c) => (await c.query("select line_kind, product_id, in_treatment, treatment_position, vat_rate, description, unit_price_cents, total_cents from invoice_lines where invoice_id = $1 order by position", [invoiceId])).rows);
 
   it("Verkauf zum Mitnehmen: 19 %, Katalogpreis, Bestand sinkt beim Ausstellen und steigt beim Storno", async () => {
     const { org, auth, salbe, base, prodLine } = await setup();
@@ -76,6 +76,12 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
     const storno = await invoices.cancelInvoice(auth, inv.id, "Test");
     expect(await stockOf(auth, salbe)).toBe(10);
+    // Storno ohne Rückbuchung (Ware verbraucht/beim Kunden): Bestand bleibt
+    const inv2 = await invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(salbe, 2)] });
+    expect(await stockOf(auth, salbe)).toBe(8);
+    await invoices.cancelInvoice(auth, inv2.id, "verbraucht", { restock: false });
+    expect(await stockOf(auth, salbe)).toBe(8);
+    await products.correctStock(auth, { productId: salbe, kind: "inventory", amount: 10 });
     // Gutschrift trägt die Produktposition ebenfalls (negativ), Bewegungen verweisen auf die Belege
     expect(await linesOf(org, storno.id)).toEqual([expect.objectContaining({ line_kind: "product", product_id: salbe, total_cents: -3870 })]);
     const p = await products.getProduct(auth, salbe);
@@ -89,7 +95,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   });
 
   it("0 % für ein Produkt wird serverseitig nur mit Heilbehandlung auf demselben Beleg akzeptiert", async () => {
-    const { org, auth, svc, salbe, base, svcLine, prodLine } = await setup();
+    const { org, user, auth, svc, salbe, base, svcLine, prodLine } = await setup();
     // ohne Behandlungsposition
     await expect(invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [prodLine(salbe, 1, { inTreatment: true })] })).rejects.toThrow(/nur zusammen mit einer Heilbehandlung/);
     // nur kosmetische Leistung (19 %)
@@ -111,7 +117,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(ok.totalCents).toBe(6500 + 2 * 1290);
     expect(ok.productsInTreatment).toBe(1);
     const lines = await linesOf(org, ok.id);
-    expect(lines[1]).toMatchObject({ line_kind: "product", in_treatment: true, vat_rate: 0, description: "Hornhautsalbe – in der Behandlung angewendet" });
+    expect(lines[1]).toMatchObject({ line_kind: "product", in_treatment: true, vat_rate: 0, description: "Hornhautsalbe – in der Behandlung angewendet", treatment_position: 1 });
     const [inv] = (await f.asOrg(org, (c) => c.query("select vat_cents, notes from invoices where id = $1", [ok.id]))).rows;
     expect(inv.vat_cents).toBe(0);
     expect(inv.notes).toMatch(/USt-Wächter/);
@@ -125,17 +131,37 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(
       invoices.createInvoice(auth, { ...base, kind: "collective", lines: [svcLine(svc.treat, 0, 6500), svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true })] }),
     ).rejects.toThrow(/zuordnen/);
-    await invoices.createInvoice(auth, {
+    // Sammelrechnung: Bezug (Position) und Datum der Behandlung stehen an der Produktposition
+    const year = today.slice(0, 4);
+    const rec = (day: string, prev: string | null, hash: string) =>
+      f.asOrg(org, async (c) =>
+        (await c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prev_hash, hash) values ($1,$2,$3,$4,$5,$6) returning id", [org, base.patientId, user, `${year}-01-${day} 10:00+01`, prev, hash])).rows[0].id as string,
+      );
+    const r1 = await rec("05", null, "a");
+    const r2 = await rec("12", "a", "b");
+    const coll = await invoices.createInvoice(auth, {
       ...base,
       kind: "collective",
-      lines: [svcLine(svc.treat, 0, 6500), svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true, treatmentLine: 1 })],
+      lines: [
+        { ...svcLine(svc.treat, 0, 6500), treatmentRecordId: r1 },
+        { ...svcLine(svc.treat, 0, 6500), treatmentRecordId: r2 },
+        prodLine(salbe, 1, { inTreatment: true, treatmentLine: 1 }),
+      ],
     });
+    expect((await linesOf(org, coll.id))[2]).toMatchObject({ in_treatment: true, treatment_position: 2, description: `Hornhautsalbe – in der Behandlung vom 12.01.${year} angewendet` });
+    // Beschreibung kommt immer aus dem Katalog (kein Freitext auf Produktpositionen)
+    const free = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), { ...prodLine(salbe, 1), description: "Gratis-Probe" }] });
+    expect((await linesOf(org, free.id))[1]).toMatchObject({ description: "Hornhautsalbe", treatment_position: null });
+
+    // archivierte Leistung: nicht mehr für neue Positionen
+    await f.asOrg(org, (c) => c.query("update services set active = false where id = $1", [svc.cosm]));
+    await expect(invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.cosm, 19, 1000)] })).rejects.toThrow(/archiviert/);
 
     // Datenbank: „angewendet“ nur bei Produktposition mit 0 % (zweite Sicherung)
     await expect(
       f.asOrg(org, async (c) => {
         const id = (await c.query("insert into invoices (organization_id, patient_id, status) values ($1,$2,'draft') returning id", [org, base.patientId])).rows[0].id;
-        await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, line_kind, product_id, in_treatment) values ($1,$2,'X',1290,1290,19,'product',$3,true)", [org, id, salbe]);
+        await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, line_kind, product_id, in_treatment, treatment_position) values ($1,$2,'X',1290,1290,0,'product',$3,true,null)", [org, id, salbe]);
       }),
     ).rejects.toThrow(/invoice_lines_kind_check/);
   });
@@ -177,8 +203,58 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     ]);
     expect(creme).toBeTruthy();
 
+    // Obergrenze je Buchung (auch in der DB)
+    await expect(products.correctStock(auth, { productId: salbe, kind: "inventory", amount: 1_000_003 })).rejects.toThrow(/Höchstens/);
     // Zukunftsdatum beim Wareneingang
     await expect(products.bookReceipt(auth, { productId: salbe, quantity: 1, occurredOn: "2999-01-01" })).rejects.toThrow(/Zukunft/);
+  });
+
+  it("Kürzel: Leistungen und Produkte kollidieren in beide Richtungen nicht", async () => {
+    const { org, auth } = await setup();
+    // Produkt mit dem Kürzel einer Leistung (PK) → abgelehnt, auch klein geschrieben
+    await expect(products.saveProduct(auth, null, { name: "Salbe PK", code: "pk", category: "salbe", priceCents: 100, vatRate: 19, unit: "Stück", trackStock: false, minStock: 0 })).rejects.toThrow(/schon eine Leistung/);
+    // umgekehrt: Leistungs-Kürzel gegen Produkte (wie saveServiceAction prüft)
+    const { withOrg } = await import("@/db");
+    expect(await withOrg(org, (tx) => products.codeTaken(tx, org, "hs", "product"))).toBe(true);
+    expect(await withOrg(org, (tx) => products.codeTaken(tx, org, "XY", "product"))).toBe(false);
+    expect(await withOrg(org, (tx) => products.codeTaken(tx, org, "pk", "service"))).toBe(true);
+  });
+
+  it("Bestandsführung: nicht abschaltbar mit Bewegungen; ohne Bestandsführung keine Ab-/Rückbuchung", async () => {
+    const { auth, base, prodLine } = await setup();
+    const input = { name: "Zehenschutz", category: "hilfsmittel" as const, priceCents: 450, vatRate: 19 as const, unit: "Stück", trackStock: false, minStock: 0 };
+    const zs = (await products.saveProduct(auth, null, input)).id;
+    const inv = await invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(zs, 2, { priceCents: 450 })] });
+    expect(await stockOf(auth, zs)).toBe(0);
+    // Bestandsführung erst nach dem Verkauf eingeschaltet → Storno bucht nichts zurück
+    await products.saveProduct(auth, zs, { ...input, trackStock: true });
+    await invoices.cancelInvoice(auth, inv.id, "Test");
+    const p = await products.getProduct(auth, zs);
+    expect(p!.movements).toEqual([]);
+    expect(p!.stock).toBe(0);
+
+    await products.bookReceipt(auth, { productId: zs, quantity: 3, occurredOn: today });
+    await expect(products.saveProduct(auth, zs, { ...input, trackStock: false })).rejects.toThrow(/nicht mehr abschalten/);
+    // Wareneingang für archivierte Produkte gesperrt
+    await products.setProductActive(auth, zs, false);
+    await expect(products.bookReceipt(auth, { productId: zs, quantity: 1, occurredOn: today })).rejects.toThrow(/archiviert/);
+  });
+
+  it("Preis seit Formularöffnung geändert → eigene Meldung; parallele Inventur und Verkauf bleiben konsistent", async () => {
+    const { auth, salbe, base, prodLine } = await setup();
+    await expect(invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(salbe, 1, { priceCents: 990 })] })).rejects.toThrow(/inzwischen geändert/);
+
+    await products.bookReceipt(auth, { productId: salbe, quantity: 10, occurredOn: today });
+    const [inv, sale] = await Promise.all([
+      products.correctStock(auth, { productId: salbe, kind: "inventory", amount: 8 }),
+      invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(salbe, 3)] }),
+    ]);
+    expect(sale.totalCents).toBe(3 * 1290);
+    const p = await products.getProduct(auth, salbe);
+    // Reihenfolge egal, aber die Inventur sieht den Verkauf entweder ganz oder gar nicht
+    expect([5, 8]).toContain(p!.stock);
+    expect(inv.after).toBe(8);
+    expect(p!.movements.reduce((s, m) => s + m.quantity, 0)).toBe(p!.stock);
   });
 
   it("Lagerbewegungen sind unveränderbar, Mandanten getrennt (RLS), keine fremden Bezüge", async () => {
@@ -208,6 +284,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // Produkt einer anderen Praxis lässt sich nicht verkaufen
     await expect(invoices.createInvoice(b.auth, { ...b.base, kind: "invoice", lines: [b.prodLine(a.salbe, 1)] })).rejects.toThrow(/Produkt nicht gefunden/);
     expect(await products.getProduct(b.auth, a.salbe)).toBeNull();
+    await expect(
+      f.asOrg(a.org, (c) => c.query("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1,$2,'receipt',1000001,current_date)", [a.org, a.salbe])),
+    ).rejects.toThrow(/stock_movements_quantity_check/);
     // Vorzeichen-Regel in der DB
     await expect(
       f.asOrg(a.org, (c) => c.query("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1,$2,'sale',-1,current_date)", [a.org, a.salbe])),

@@ -8,7 +8,7 @@ import { assertCan } from "@/lib/auth/assert";
 import { audit } from "@/lib/audit";
 import { PRODUCT_CATEGORIES } from "@/lib/catalog";
 import { berlinDateIso } from "@/lib/format";
-import { CORRECTION_KINDS, correctionQuantity, reorderGroups, type ReorderSource } from "@/lib/stock";
+import { CORRECTION_KINDS, correctionQuantity, reorderGroups, stockLimitError, type ReorderSource } from "@/lib/stock";
 
 /**
  * Produkte (Verkaufsware) und kleine Warenwirtschaft.
@@ -73,7 +73,7 @@ export const correctionInput = z.object({
 export type CorrectionInput = z.infer<typeof correctionInput>;
 
 /** Bestand je Produkt (Summe der Bewegungen) */
-const stockSum = sql<number>`coalesce((select sum(m.quantity) from stock_movements m where m.product_id = ${products.id} and m.organization_id = ${products.organizationId}), 0)::int`;
+const stockSum = sql<number>`coalesce((select sum(m.quantity) from stock_movements m where m.product_id = ${products.id} and m.organization_id = ${products.organizationId}), 0)::bigint`.mapWith(Number);
 
 export async function listProducts(auth: AuthContext) {
   assertCan(auth, "invoices.read");
@@ -149,6 +149,9 @@ async function assertSupplier(tx: Tx, org: string, supplierId: string | null | u
   if (!s) throw new ProductError("Lieferant nicht gefunden.");
 }
 
+const AUDIT_FIELDS = ["name", "code", "category", "priceCents", "purchasePriceCents", "vatRate", "trackStock", "minStock", "supplierId"] as const;
+type AuditField = (typeof AUDIT_FIELDS)[number];
+
 export async function saveProduct(auth: AuthContext, id: string | null, input: ProductInput): Promise<{ id: string }> {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
@@ -175,28 +178,37 @@ export async function saveProduct(auth: AuthContext, id: string | null, input: P
         .where(and(eq(products.organizationId, org), eq(products.code, values.code)));
       if (dup && dup.id !== id) throw new ProductError(`Das Kürzel ${values.code} hat schon ein anderes Produkt.`);
       // Schnelleingabe in der Rechnung: Leistungs-Kürzel haben Vorrang – gleiche Kürzel wären nicht erreichbar
-      const [svc] = await tx.select({ id: services.id }).from(services).where(and(eq(services.organizationId, org), sql`upper(${services.code}) = ${values.code}`));
-      if (svc) throw new ProductError(`Das Kürzel ${values.code} ist schon eine Leistung. Bitte ein anderes wählen.`);
+      if (await codeTaken(tx, org, values.code, "service")) throw new ProductError(`Das Kürzel ${values.code} ist schon eine Leistung. Bitte ein anderes wählen.`);
     }
     if (id) {
-      const r = await tx
+      const [before] = await tx.select().from(products).where(and(eq(products.organizationId, org), eq(products.id, id))).for("update");
+      if (!before) throw new ProductError("Produkt nicht gefunden.");
+      if (before.trackStock && !values.trackStock) {
+        const [m] = await tx.select({ id: stockMovements.id }).from(stockMovements).where(and(eq(stockMovements.organizationId, org), eq(stockMovements.productId, id))).limit(1);
+        if (m) {
+          throw new ProductError(
+            "Die Bestandsführung lässt sich nicht mehr abschalten, weil es schon Lagerbewegungen gibt. Den Bestand bei Bedarf per Inventur auf 0 setzen oder das Produkt archivieren.",
+          );
+        }
+      }
+      await tx
         .update(products)
         .set({ ...values, updatedAt: new Date() })
-        .where(and(eq(products.organizationId, org), eq(products.id, id)))
-        .returning({ id: products.id });
-      if (!r.length) throw new ProductError("Produkt nicht gefunden.");
-      return { id, created: false };
+        .where(and(eq(products.organizationId, org), eq(products.id, id)));
+      return { id, created: false, before };
     }
     const [r] = await tx.insert(products).values({ ...values, organizationId: org }).returning({ id: products.id });
-    return { id: r.id, created: true };
+    return { id: r.id, created: true, before: null };
   });
+  const snap = (p: Record<AuditField, unknown>) => Object.fromEntries(AUDIT_FIELDS.map((k) => [k, p[k]]));
   await audit({
     organizationId: org,
     userId: auth.user.id,
     action: result.created ? "product.create" : "product.update",
     entity: "product",
     entityId: result.id,
-    meta: { name: values.name, priceCents: values.priceCents, vatRate: values.vatRate, trackStock: values.trackStock, minStock: values.minStock },
+    // Preis/USt/Name usw. vorher → nachher (nachvollziehbare Preisänderungen)
+    meta: result.before ? { before: snap(result.before), after: snap(values) } : { after: snap(values) },
   });
   return { id: result.id };
 }
@@ -247,7 +259,14 @@ export async function saveSupplier(auth: AuthContext, id: string | null, input: 
     const [r] = await tx.insert(suppliers).values({ ...values, organizationId: org }).returning({ id: suppliers.id });
     return { id: r.id, created: true };
   });
-  await audit({ organizationId: org, userId: auth.user.id, action: result.created ? "supplier.create" : "supplier.update", entity: "supplier", entityId: result.id });
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: result.created ? "supplier.create" : "supplier.update",
+    entity: "supplier",
+    entityId: result.id,
+    meta: { name: values.name, customerNumber: values.customerNumber, email: values.email, website: values.website },
+  });
   return result;
 }
 
@@ -266,9 +285,32 @@ async function lockProduct(tx: Tx, org: string, productId: string) {
   return p;
 }
 
+/**
+ * Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel (ohne Groß-/Kleinschreibung).
+ * `where`: wo gesucht wird – beim Speichern eines Produkts in den Leistungen und umgekehrt.
+ */
+export async function codeTaken(tx: Tx, org: string, code: string, where: "service" | "product"): Promise<boolean> {
+  const needle = code.trim().toUpperCase();
+  if (!needle) return false;
+  const t = where === "service" ? services : products;
+  const [r] = await tx.select({ id: t.id }).from(t).where(and(eq(t.organizationId, org), sql`upper(${t.code}) = ${needle}`)).limit(1);
+  return !!r;
+}
+
+/** mehrere Produkte sperren, sortiert nach id */
+async function lockProducts(tx: Tx, org: string, ids: string[]) {
+  if (!ids.length) return [];
+  return tx
+    .select({ id: products.id, trackStock: products.trackStock })
+    .from(products)
+    .where(and(eq(products.organizationId, org), inArray(products.id, ids)))
+    .orderBy(asc(products.id))
+    .for("update");
+}
+
 async function currentStock(tx: Tx, org: string, productId: string): Promise<number> {
   const [r] = await tx
-    .select({ n: sql<number>`coalesce(sum(${stockMovements.quantity}), 0)::int` })
+    .select({ n: sql<number>`coalesce(sum(${stockMovements.quantity}), 0)::bigint`.mapWith(Number) })
     .from(stockMovements)
     .where(and(eq(stockMovements.organizationId, org), eq(stockMovements.productId, productId)));
   return r?.n ?? 0;
@@ -281,7 +323,10 @@ export async function bookReceipt(auth: AuthContext, input: ReceiptInput) {
   if (input.occurredOn > berlinDateIso()) throw new ProductError("Das Datum des Wareneingangs darf nicht in der Zukunft liegen.");
   const result = await withOrg(org, async (tx) => {
     const p = await lockProduct(tx, org, input.productId);
+    if (!p.active) throw new ProductError(`„${p.name}“ ist archiviert. Für einen Wareneingang bitte zuerst wiederherstellen.`);
     await assertSupplier(tx, org, input.supplierId);
+    const limit = stockLimitError(await currentStock(tx, org, p.id), input.quantity);
+    if (limit) throw new ProductError(limit);
     if (!p.trackStock) await tx.update(products).set({ trackStock: true, updatedAt: new Date() }).where(and(eq(products.organizationId, org), eq(products.id, p.id)));
     const [m] = await tx
       .insert(stockMovements)
@@ -373,11 +418,9 @@ export async function bookSaleStock(tx: Tx, org: string, userId: string, invoice
   const qty = new Map<string, number>();
   for (const l of lines) if (l.productId) qty.set(l.productId, (qty.get(l.productId) ?? 0) + l.quantity);
   if (!qty.size) return;
-  const tracked = await tx
-    .select({ id: products.id })
-    .from(products)
-    .where(and(eq(products.organizationId, org), inArray(products.id, [...qty.keys()]), eq(products.trackStock, true)));
-  const rows = tracked.filter((p) => (qty.get(p.id) ?? 0) > 0);
+  // dieselbe Sperre wie Wareneingang/Inventur (Reihenfolge nach id → keine Verklemmung bei mehreren Produkten)
+  const locked = await lockProducts(tx, org, [...qty.keys()]);
+  const rows = locked.filter((p) => p.trackStock && (qty.get(p.id) ?? 0) > 0);
   if (!rows.length) return;
   await tx.insert(stockMovements).values(
     rows.map((p) => ({ organizationId: org, productId: p.id, kind: "sale", quantity: -(qty.get(p.id) ?? 0), occurredOn: date, invoiceId, createdBy: userId })),
@@ -387,12 +430,13 @@ export async function bookSaleStock(tx: Tx, org: string, userId: string, invoice
 /** Storno: genau die beim Verkauf gebuchten Mengen wieder zugehen lassen (Bezug: Stornorechnung) */
 export async function restoreSaleStock(tx: Tx, org: string, userId: string, originalInvoiceId: string, creditNoteId: string, date: string) {
   const sold = await tx
-    .select({ productId: stockMovements.productId, n: sql<number>`sum(${stockMovements.quantity})::int` })
+    .select({ productId: stockMovements.productId, n: sql<number>`sum(${stockMovements.quantity})::bigint`.mapWith(Number) })
     .from(stockMovements)
     .where(and(eq(stockMovements.organizationId, org), eq(stockMovements.invoiceId, originalInvoiceId), eq(stockMovements.kind, "sale")))
     .groupBy(stockMovements.productId);
   const rows = sold.filter((s) => s.n < 0);
   if (!rows.length) return 0;
+  await lockProducts(tx, org, rows.map((r) => r.productId));
   await tx.insert(stockMovements).values(
     rows.map((s) => ({ organizationId: org, productId: s.productId, kind: "storno", quantity: -s.n, occurredOn: date, invoiceId: creditNoteId, note: "Storno – Ware zurück ins Lager", createdBy: userId })),
   );

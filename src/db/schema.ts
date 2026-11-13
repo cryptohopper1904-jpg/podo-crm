@@ -901,6 +901,8 @@ export const invoiceLines = pgTable(
     productId: uuid("product_id").references(() => products.id),
     /** Produkt in der Behandlung angewendet/verbraucht → Nebenleistung der Heilbehandlung (0 %), siehe src/lib/product-vat.ts */
     inTreatment: boolean("in_treatment").notNull().default(false),
+    /** angewendetes Produkt: Position (invoice_lines.position) der zugehörigen Behandlung auf demselben Beleg */
+    treatmentPosition: integer("treatment_position"),
     position: integer("position").notNull().default(0),
   },
   (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],

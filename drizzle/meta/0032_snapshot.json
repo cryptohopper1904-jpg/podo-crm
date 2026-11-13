@@ -2661,6 +2661,12 @@
           "notNull": true,
           "default": false
         },
+        "treatment_position": {
+          "name": "treatment_position",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "position": {
           "name": "position",
           "type": "integer",
@@ -3168,7 +3174,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'Stück'"
+          "default": "'St\u00fcck'"
         },
         "stock": {
           "name": "stock",
@@ -5317,7 +5323,7 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "default": "'Stück'"
+          "default": "'St\u00fcck'"
         },
         "track_stock": {
           "name": "track_stock",

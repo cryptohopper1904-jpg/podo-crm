@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { catalogViewOf, filterCatalog, groupByCategory, parseCatalogQuery } from "./catalog";
-import { correctionQuantity, isBelowMinimum, orderEmailText, reorderGroups, stockOf, type ReorderSource } from "./stock";
+import { correctionQuantity, isBelowMinimum, orderEmailText, reorderGroups, stockLimitError, stockOf, type ReorderSource } from "./stock";
 
 describe("Warenwirtschaft: Bestand aus Bewegungen", () => {
   it("Bestand = Summe der Bewegungen", () => {
@@ -16,6 +16,15 @@ describe("Warenwirtschaft: Bestand aus Bewegungen", () => {
     expect(correctionQuantity("breakage", 5, 2)).toEqual({ quantity: -2 });
     expect(correctionQuantity("own_use", 5, 0)).toHaveProperty("error");
     expect(correctionQuantity("own_use", 5, 1.5)).toHaveProperty("error");
+  });
+
+  it("Obergrenzen: höchstens 1 Mio. je Buchung, Bestand höchstens 10 Mio.", () => {
+    expect(stockLimitError(0, 1_000_000)).toBeNull();
+    expect(stockLimitError(0, 1_000_001)).toMatch(/je Buchung/);
+    expect(stockLimitError(9_500_000, 600_000)).toMatch(/nicht übersteigen/);
+    expect(stockLimitError(-9_500_000, -600_000)).toMatch(/nicht übersteigen/);
+    expect(correctionQuantity("inventory", 0, 1_000_001)).toEqual({ error: expect.stringMatching(/je Buchung/) });
+    expect(correctionQuantity("breakage", 0, 2_000_000)).toHaveProperty("error");
   });
 });
 

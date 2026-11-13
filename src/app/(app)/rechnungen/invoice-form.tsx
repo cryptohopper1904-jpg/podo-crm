@@ -9,7 +9,7 @@ import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
-import { PRODUCT_IN_TREATMENT_LABEL, PRODUCT_VAT_HINT, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
+import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { createInvoiceAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
@@ -527,7 +527,7 @@ export function InvoiceForm({
                       onKeyDown={(e) => codeKeyDown(e, l.key)}
                       onBlur={() => codeBlur(l.key)}
                     />
-                    <Select aria-label={`Pos. ${i + 1}: Leistung oder Produkt auswählen`} value={l.productId ? `${PRODUCT_PREFIX}${l.productId}` : l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} title="Leistung oder Produkt auswählen" value={l.productId ? `${PRODUCT_PREFIX}${l.productId}` : l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
                       <option value="">Freitext</option>
                       {products.length ? (
                         <>
@@ -554,7 +554,7 @@ export function InvoiceForm({
                   ) : null}
                 </div>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
-                  <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
+                  <Input value={l.description} disabled={!!prod} title={prod ? "Produktname aus dem Katalog" : undefined} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
                 </Field>
                 <Field label="Menge">
                   <Input inputMode="decimal" value={l.quantity} onChange={(e) => update(l.key, { quantity: e.target.value })} />
@@ -605,10 +605,10 @@ export function InvoiceForm({
                     {!otherTreatments.length ? (
                       <span className="text-xs text-muted">Nur möglich, wenn der Beleg auch eine Heilbehandlung (0 %) enthält – sonst {prod.vatRate} %.</span>
                     ) : null}
-                    {l.inTreatment && kind === "collective" && otherTreatments.length > 1 ? (
+                    {l.inTreatment && otherTreatments.length > 1 ? (
                       <Field label="Angewendet bei Behandlung">
                         <Select value={l.treatmentKey ?? ""} onChange={(e) => update(l.key, { treatmentKey: e.target.value || undefined })}>
-                          <option value="">– bitte zuordnen –</option>
+                          <option value="">{kind === "collective" ? "– bitte zuordnen –" : "– erste Behandlung –"}</option>
                           {otherTreatments.map((t) => (
                             <option key={t.key} value={t.key}>Pos. {computed.findIndex((x) => x.key === t.key) + 1}: {t.description}</option>
                           ))}
@@ -671,7 +671,7 @@ export function InvoiceForm({
         {hasProducts && !smallBusiness ? (
           <p className="mt-3 flex gap-2 text-sm text-muted">
             <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
-            {PRODUCT_VAT_HINT}
+            {productVatHint(filled.map((l) => (l.productId ? prodById.get(l.productId)?.vatRate : undefined)).filter((r): r is number => r !== undefined))}
           </p>
         ) : null}
         {productError ? <p role="alert" className="mt-3 text-sm font-medium text-danger">{productError}</p> : null}
@@ -694,7 +694,7 @@ export function InvoiceForm({
             <div className="flex-1">
               <p className="font-semibold">USt-Wächter (§ 4 Nr. 14 UStG)</p>
               <p className="text-sm">
-                0 % USt ist nur bei einer Heilbehandlung mit therapeutischem Ziel zulässig. Bitte bestätigen – sonst die betroffenen Positionen mit 19 % abrechnen.
+                0 % USt ist nur bei einer Heilbehandlung mit therapeutischem Ziel zulässig. Bitte bestätigen – sonst die betroffenen Positionen mit dem regulären Satz abrechnen (Leistungen 19 %, Produkte ihr Verkaufssatz).
               </p>
               <Checkbox name="therapeuticConfirmed" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} label={THERAPEUTIC_LABEL} />
               <Button
@@ -704,7 +704,7 @@ export function InvoiceForm({
                   setLines((ls) => ls.map((l, i) => (computed[i]?.needsConfirm ? (l.productId ? { ...l, inTreatment: false, treatmentKey: undefined } : { ...l, vatRate: 19 }) : l)))
                 }
               >
-                Betroffene Positionen auf 19 % umstellen
+                {computed.some((l) => l.needsConfirm && l.productId) ? "Betroffene Positionen auf regulären Satz umstellen" : "Betroffene Positionen auf 19 % umstellen"}
               </Button>
             </div>
           </div>

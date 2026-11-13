@@ -28,7 +28,7 @@ export default async function ProductPage(props: PageProps<"/produkte/[id]">) {
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-display text-2xl font-semibold">{p.name}</h2>
         <Badge>{PRODUCT_CATEGORY_LABELS[p.category] ?? p.category}</Badge>
-        <Badge tone="warn">{p.vatRate} % USt</Badge>
+        <Badge>{p.vatRate} % USt</Badge>
         {!p.active ? <Badge>archiviert</Badge> : null}
         <span className="ml-auto font-display text-2xl font-bold tabular-nums">{money(p.priceCents)}</span>
       </div>

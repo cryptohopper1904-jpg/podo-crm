@@ -110,7 +110,8 @@ export async function cancelInvoiceAction(_: SimpleState, form: FormData): Promi
   const reason = String(form.get("reason") ?? "").trim().slice(0, 300);
   let creditId: string;
   try {
-    creditId = (await cancelInvoice(auth, invoiceId, reason)).id;
+    // „Ware zurück ins Lager?“ – fehlt das Feld (Beleg ohne Produkte), gilt ja
+    creditId = (await cancelInvoice(auth, invoiceId, reason, { restock: form.get("restock") !== "no" })).id;
   } catch (e) {
     return { error: errorMessage(e) };
   }

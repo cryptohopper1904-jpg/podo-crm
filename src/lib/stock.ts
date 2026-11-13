@@ -20,6 +20,17 @@ export const MOVEMENT_LABELS: Record<MovementKind, string> = {
 export const CORRECTION_KINDS = ["inventory", "breakage", "own_use"] as const;
 export type CorrectionKind = (typeof CORRECTION_KINDS)[number];
 
+/** Obergrenzen (auch per DB-CHECK): Menge je Bewegung und Betrag des Bestands */
+export const MAX_MOVEMENT_QTY = 1_000_000;
+export const MAX_STOCK = 10_000_000;
+
+/** Prüft eine Bewegung gegen die Obergrenzen; Fehlertext oder null */
+export function stockLimitError(before: number, quantity: number): string | null {
+  if (!Number.isInteger(quantity) || Math.abs(quantity) > MAX_MOVEMENT_QTY) return `Höchstens ${MAX_MOVEMENT_QTY.toLocaleString("de-DE")} je Buchung.`;
+  if (Math.abs(before + quantity) > MAX_STOCK) return `Der Bestand darf ${MAX_STOCK.toLocaleString("de-DE")} nicht übersteigen.`;
+  return null;
+}
+
 export function stockOf(movements: readonly { quantity: number }[]): number {
   return movements.reduce((s, m) => s + m.quantity, 0);
 }
@@ -35,10 +46,12 @@ export function correctionQuantity(kind: CorrectionKind, current: number, input:
     if (input < 0) return { error: "Der gezählte Bestand kann nicht negativ sein." };
     const quantity = input - current;
     if (quantity === 0) return { error: "Der gezählte Bestand stimmt bereits – keine Buchung nötig." };
-    return { quantity };
+    const err = stockLimitError(current, quantity);
+    return err ? { error: err } : { quantity };
   }
   if (input <= 0) return { error: "Bitte die entnommene Menge (größer 0) angeben." };
-  return { quantity: -input };
+  const err = stockLimitError(current, -input);
+  return err ? { error: err } : { quantity: -input };
 }
 
 export type StockItem = { trackStock: boolean; active: boolean; stock: number; minStock: number };

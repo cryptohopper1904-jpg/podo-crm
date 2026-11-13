@@ -40,7 +40,7 @@ import {
   voucherBalance,
 } from "@/lib/invoice-math";
 import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
-import { IN_TREATMENT_SUFFIX, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
+import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, productsForInvoice, restoreSaleStock } from "./products";
 
 export class InvoiceError extends Error {}
@@ -348,6 +348,11 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         if (l.treatmentRecordId || l.appointmentId) throw new InvoiceError(`Position ${i + 1}: Produktpositionen haben keinen eigenen Termin-/Behandlungsbezug.`);
         if (!Number.isInteger(l.quantity)) throw new InvoiceError(`Position ${i + 1}: Produkte nur in ganzen Mengen.`);
         if (l.factor !== 1) throw new InvoiceError(`Position ${i + 1}: Für Produkte gibt es keinen Faktor.`);
+        if (l.unitPriceCents !== p.priceCents) {
+          throw new InvoiceError(
+            `Position ${i + 1}: Der Preis von „${p.name}“ wurde inzwischen geändert (jetzt ${(p.priceCents / 100).toFixed(2).replace(".", ",")} €). Bitte die Seite neu laden und prüfen.`,
+          );
+        }
         return { kind: "product", vatRate: l.vatRate, productVatRate: p.vatRate, inTreatment: !!l.inTreatment, treatmentLine: l.treatmentLine ?? null };
       }
       if (l.inTreatment) throw new InvoiceError(`Position ${i + 1}: „In der Behandlung angewendet“ gibt es nur für Produkte.`);
@@ -357,17 +362,41 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     const productVat = resolveProductVat(ruleLines, { smallBusiness, invoiceKind: input.kind });
     if (productVat.error) throw new InvoiceError(productVat.error);
 
+    // Datum der Behandlung, bei der ein Produkt angewendet wurde (aus Termin bzw. Doku-Eintrag der Behandlungsposition)
+    const linkedIdx = [...new Set(productVat.results.map((r) => (r?.inTreatment ? r.treatmentLine : null)).filter((x): x is number => x !== null))];
+    const linkedAppts = [...new Set(linkedIdx.map((t) => input.lines[t]?.appointmentId).filter((x): x is string => !!x))];
+    const linkedRecs = [...new Set(linkedIdx.map((t) => input.lines[t]?.treatmentRecordId).filter((x): x is string => !!x))];
+    const apptDate = new Map(
+      (linkedAppts.length
+        ? await tx.select({ id: appointments.id, at: appointments.startsAt }).from(appointments).where(and(eq(appointments.organizationId, org), inArray(appointments.id, linkedAppts)))
+        : []
+      ).map((a) => [a.id, a.at]),
+    );
+    const recDate = new Map(
+      (linkedRecs.length
+        ? await tx.select({ id: treatmentRecords.id, at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, linkedRecs)))
+        : []
+      ).map((r) => [r.id, r.at]),
+    );
+    const treatmentDate = (t: number): string | null => {
+      const l = input.lines[t];
+      const at = (l?.treatmentRecordId ? recDate.get(l.treatmentRecordId) : undefined) ?? (l?.appointmentId ? apptDate.get(l.appointmentId) : undefined);
+      return at ? dateDe(at) : null;
+    };
+
     const lines = input.lines.map((l, i) => {
       const pv = productVat.results[i];
       if (pv && l.productId) {
         const p = prod.get(l.productId)!;
-        const base = (l.description || p.name).trim().replace(IN_TREATMENT_SUFFIX, "");
-        const description = pv.inTreatment ? `${base}${IN_TREATMENT_SUFFIX}` : base;
+        // Beschreibung immer aus dem Katalog (kein freier Text auf Produktpositionen), Zusatz nur serverseitig
+        const t = pv.inTreatment ? pv.treatmentLine : null;
+        const description = t !== null ? `${p.name}${inTreatmentSuffix(treatmentDate(t))}` : p.name;
         return {
           lineKind: "product",
           serviceId: null,
           productId: p.id,
           inTreatment: pv.inTreatment,
+          treatmentPosition: t !== null ? t + 1 : null,
           treatmentRecordId: null,
           appointmentId: null,
           description,
@@ -382,6 +411,10 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       }
       const s = l.serviceId ? svc.get(l.serviceId) : undefined;
       if (l.serviceId && !s) throw new InvoiceError(`Position ${i + 1}: Leistung nicht gefunden.`);
+      // archivierte Leistung nur noch für bereits erbrachte Behandlungen (Termin/Doku-Bezug), nicht für neue Positionen
+      if (s && !s.active && !l.appointmentId && !l.treatmentRecordId) {
+        throw new InvoiceError(`Position ${i + 1}: „${s.name}“ ist archiviert. Bitte eine aktive Leistung wählen.`);
+      }
       if (!isVatRate(l.vatRate)) throw new InvoiceError(`Position ${i + 1}: Steuersatz muss 0, 7 oder 19 % sein.`);
       // Eine Leistung mit 19 % darf nicht auf 0 % gesetzt werden; 0 % darf auf 19 % (kein therapeutisches Ziel).
       if (s && l.vatRate !== s.vatRate && l.vatRate !== 19) {
@@ -396,6 +429,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         serviceId: s?.id ?? null,
         productId: null,
         inTreatment: false,
+        treatmentPosition: null,
         treatmentRecordId: l.treatmentRecordId ?? null,
         appointmentId: l.appointmentId ?? null,
         description,
@@ -462,6 +496,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         lineKind: l.lineKind,
         productId: l.productId,
         inTreatment: l.inTreatment,
+        treatmentPosition: l.treatmentPosition,
         treatmentRecordId: l.treatmentRecordId,
         appointmentId: l.appointmentId,
         description: l.description,
@@ -650,7 +685,9 @@ async function deactivateProviderCheckout(org: string, checkoutRef: string) {
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
-export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string) {
+/** `restock`: verkaufte Produkte wieder ins Lager buchen (Standard ja; nein z. B. wenn die Ware verbraucht/beschädigt ist) */
+export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string, opts: { restock?: boolean } = {}) {
+  const restock = opts.restock ?? true;
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
@@ -712,6 +749,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
           lineKind: l.lineKind,
           productId: l.productId,
           inTreatment: l.inTreatment,
+          treatmentPosition: l.treatmentPosition,
           description: l.description,
           quantity: l.quantity,
           factor: l.factor,
@@ -744,7 +782,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
     // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
-    const restoredProducts = await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today);
+    const restoredProducts = restock ? await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today) : 0;
     if (credited.length) {
       await tx
         .update(invoices)
@@ -760,7 +798,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts },
+    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts, restock },
   });
   return result;
 }

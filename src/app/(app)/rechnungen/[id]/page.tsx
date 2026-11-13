@@ -141,7 +141,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
           {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} hasProducts={lines.some((l) => !!l.productId)} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">

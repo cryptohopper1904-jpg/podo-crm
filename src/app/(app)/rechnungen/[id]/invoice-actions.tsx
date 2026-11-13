@@ -57,7 +57,7 @@ export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; open
   );
 }
 
-export function CancelPanel({ invoiceId, number }: { invoiceId: string; number: string }) {
+export function CancelPanel({ invoiceId, number, hasProducts = false }: { invoiceId: string; number: string; /** Beleg enthält Produktpositionen */ hasProducts?: boolean }) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState(cancelInvoiceAction, undefined);
   if (!open) {
@@ -86,6 +86,14 @@ export function CancelPanel({ invoiceId, number }: { invoiceId: string; number: 
         <Field label="Grund (optional, keine Diagnosen)">
           <Input name="reason" maxLength={300} placeholder="z. B. falscher Rechnungsempfänger" />
         </Field>
+        {hasProducts ? (
+          <Field label="Verkaufte Produkte: Ware zurück ins Lager?" hint="Nein, wenn die Ware verbraucht, angebrochen oder beim Kunden geblieben ist.">
+            <Select name="restock" defaultValue="yes">
+              <option value="yes">Ja – Bestand wieder erhöhen</option>
+              <option value="no">Nein – Bestand bleibt</option>
+            </Select>
+          </Field>
+        ) : null}
         <div className="flex gap-3">
           <Button type="submit" variant="danger" disabled={pending}>{pending ? "Storniere …" : "Storno ausstellen"}</Button>
           <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Abbrechen</Button>
