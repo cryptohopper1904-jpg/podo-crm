@@ -10,6 +10,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { dateDe, timeDe } from "@/lib/format";
 import { hashPortalToken, isPortalToken, newPortalToken } from "@/lib/portal";
 import { chooseChannel, grantedConsents, type ReminderChannel } from "@/lib/reminders";
+import { isDeceased } from "@/lib/patient-deceased";
+import { notDeceased } from "./patient-deceased";
 import {
   describeWishes,
   matchWaitlist,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/waitlist";
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingPort, MessagingProvider } from "@/integrations/types";
+import { isCalendarMember } from "./appointments";
 import { adapterFor } from "./integrations";
 import { mailMessagingPort } from "./mail";
 
@@ -96,7 +99,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       .select({ id: waitlist.id, patientId: waitlist.patientId, createdAt: waitlist.createdAt, ...wlCols })
       .from(waitlist)
       .innerJoin(patients, eq(patients.id, waitlist.patientId))
-      .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), isNull(patients.archivedAt)));
+      .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), isNull(patients.archivedAt), notDeceased()));
     if (!entries.length) return { skipped: "no_entries" as const };
     // schon für diesen Termin angeboten oder anderes Angebot noch offen → nicht erneut
     const already = await tx
@@ -128,7 +131,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       if (!p) continue;
       const extra = (p.extra ?? {}) as Record<string, unknown>;
       const ch = chooseChannel(
-        { id: p.id, firstName: p.firstName, email: p.email, phoneMobile: p.phoneMobile, preferredChannel: p.preferredChannel, noReminders: extra.no_reminders === true || extra.no_reminders === "true" },
+        { id: p.id, firstName: p.firstName, email: p.email, phoneMobile: p.phoneMobile, preferredChannel: p.preferredChannel, noReminders: extra.no_reminders === true || extra.no_reminders === "true", deceased: isDeceased(extra) },
         grantedConsents(cons.filter((r) => r.patientId === p.id)),
       );
       const label = shortName(p.firstName, p.lastName);
@@ -347,8 +350,11 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
       await tx.update(patientLinks).set({ revokedAt: now }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, l.id)));
       return { ok: false, state: "taken", error: TAKEN_MSG };
     }
-    const [p] = await tx.select({ firstName: patients.firstName, lastName: patients.lastName, archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, l.patientId)));
-    if (!p || p.archivedAt) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
+    const [p] = await tx.select({ firstName: patients.firstName, lastName: patients.lastName, archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, l.patientId)));
+    if (!p || p.archivedAt || isDeceased(p.extra)) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
+    // Behandler:in des Ursprungstermins nur übernehmen, wenn sie weiterhin einen eigenen Kalender hat (aktiv, Inhaber:in/Podolog:in) –
+    // sonst ohne Zuordnung anlegen (wie Online-Buchungen), die Praxis ordnet zu
+    const therapistId = slot.therapistId && (await isCalendarMember(tx, org, slot.therapistId)) ? slot.therapistId : null;
     const svc = await tx
       .select({ serviceId: appointmentServices.serviceId, quantity: appointmentServices.quantity })
       .from(appointmentServices)
@@ -359,7 +365,7 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
         organizationId: org,
         locationId: slot.locationId,
         patientId: l.patientId,
-        therapistId: slot.therapistId,
+        therapistId,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         status: "planned",
@@ -426,8 +432,9 @@ export async function addWaitlistEntry(auth: AuthContext, patientId: string, wis
   const org = auth.organization.id;
   if (!z.uuid().safeParse(patientId).success) throw new Error("Person nicht gefunden.");
   const id = await withOrg(org, async (tx) => {
-    const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt)));
+    const [p] = await tx.select({ id: patients.id, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt)));
     if (!p) throw new Error("Person nicht gefunden.");
+    if (isDeceased(p.extra)) throw new Error("Die Patient:in ist als verstorben markiert.");
     const w = normalizeWishes(wishes);
     const [row] = await tx
       .insert(waitlist)

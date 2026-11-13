@@ -32,9 +32,10 @@ describe("Rechte der Navigation = Rechte der Seiten", () => {
   it("perm/allowReadOnly je Bereich entsprechen dem requireAuth-Aufruf in einstellungen/<href>/page.tsx", () => {
     for (const t of SETTINGS_GROUPS.flatMap((g) => g.tabs)) {
       const src = readFileSync(path.join(__dirname, `../app/(app)/einstellungen/${t.href}/page.tsx`), "utf8");
-      const m = src.match(/requireAuth\(([^)]*)\)/);
+      // auch mehrzeilig: requireAuth(\n  "x.y",\n  { allowReadOnly: true },\n)
+      const m = src.match(/requireAuth\(\s*([^)]*?)\s*\)/); // [^)] umfasst Zeilenumbrüche
       expect(m, `${t.href}: requireAuth fehlt`).toBeTruthy();
-      const perm = m![1].match(/^"([^"]+)"/)?.[1] ?? null;
+      const perm = m![1].match(/^\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
       expect(perm, `${t.href}: Recht`).toBe(t.perm);
       expect(/allowReadOnly:\s*true/.test(m![1]), `${t.href}: allowReadOnly`).toBe(!!t.allowReadOnly);
     }

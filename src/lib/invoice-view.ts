@@ -133,6 +133,21 @@ export function invoiceService(data: {
 }
 
 /**
+ * Leistungsdatum für die Buchhaltung (lexoffice shippingDate): Anzahlung → Tag der Zahlung (= Belegdatum); Storno →
+ * Leistungsdatum des Originals (Storno einer Anzahlung: deren Belegdatum); sonst letzter Tag des festgeschriebenen
+ * Leistungszeitraums. Altbelege ohne festgeschriebene Angabe → Belegdatum (wie bisher).
+ */
+export function accountingServiceDate(
+  inv: { kind: string; issuedAt: string | null; serviceDate?: string | null; serviceDateTo?: string | null; serviceDateFixed?: boolean | null },
+  original?: { kind: string; issuedAt: string | null } | null,
+): string | null {
+  if (inv.kind === "deposit") return inv.issuedAt;
+  if (inv.kind === "credit_note" && original?.kind === "deposit") return original.issuedAt;
+  if (!inv.serviceDateFixed) return inv.issuedAt;
+  return inv.serviceDateTo ?? inv.serviceDate ?? inv.issuedAt;
+}
+
+/**
  * Leistungstage eines Belegs: festgeschriebene Felder (service_date … service_date_to); nur bei Altbelegen ohne diese
  * Felder die Tage der verknüpften Termine/Doku-Einträge (`legacyLinked`).
  */

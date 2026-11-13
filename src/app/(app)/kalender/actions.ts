@@ -8,10 +8,13 @@ import { z } from "zod";
 import { withOrg } from "@/db";
 import { appointments, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { conflictMessage, createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
-import { saveCalendarMode } from "@/server/calendar-board";
+import { saveCalendarMode, saveCalendarOptions } from "@/server/calendar-board";
+import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
+import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
@@ -42,15 +45,18 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen oder einen Titel (z. B. Blocker) eingeben." };
 
   const svc = serviceIds.length
-    ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds))))
+    ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
     : [];
   const duration = d.durationMin ?? (svc.reduce((s, x) => s + x.durationMin, 0) || 30);
   const firstStart = berlinToUtc(d.date, d.time);
   const occurrences = Array.from({ length: d.repeatWeeks ? d.repeatCount : 1 }, (_, i) => new Date(firstStart.getTime() + i * d.repeatWeeks * 7 * 86400_000));
 
+  // Ohne Auswahl: eigene Spalte – nur wer selbst einen Kalender hat (Empfang/Azubis müssen eine Behandler:in wählen)
+  const therapistId = d.therapistId ?? (hasOwnCalendar(auth.role) ? auth.user.id : null);
+  if (!therapistId) return { error: "Bitte eine Behandler:in wählen." };
   const res = await createInternalAppointments(org, {
     patientId: d.patientId ?? null,
-    therapistId: d.therapistId ?? auth.user.id,
+    therapistId,
     occurrences,
     durationMin: duration,
     source: d.source,
@@ -60,7 +66,8 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     serviceIds: svc.map((x) => x.id),
     allowConflict: !!d.allowConflict,
   });
-  if (!res.ok) return { error: conflictMessage(res), conflict: true };
+  if (!res.ok && "deceased" in res) return { error: DECEASED_BLOCKED_MSG };
+  if (!res.ok) return res.conflict ? { error: conflictMessage(res), conflict: true } : { error: res.error };
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length, allowConflict: !!d.allowConflict } });
   revalidatePath("/kalender");
   revalidatePath("/heute");
@@ -96,6 +103,7 @@ export async function assignFeedPatientAction(_: AssignState, form: FormData): P
   if (!id.success) return { error: "Termin fehlt." };
   if (!patient.success) return { error: "Bitte eine Patient:in wählen." };
   const ok = await assignFeedAppointmentPatient(auth, id.data, patient.data);
+  if (ok === "deceased") return { error: "Patient:in ist als verstorben markiert – ein künftiger Termin kann nicht zugeordnet werden." };
   if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Patient:in nicht gefunden)." };
   revalidatePath("/kalender");
   revalidatePath("/heute");
@@ -145,6 +153,43 @@ export async function setCalendarModeAction(form: FormData) {
   const p = new URLSearchParams();
   if (d.datum) p.set("datum", d.datum);
   if (ansicht) p.set("ansicht", ansicht);
+  revalidatePath("/kalender");
+  redirect(`/kalender${p.size ? `?${p}` : ""}`);
+}
+
+const optionsNavSchema = z.object({
+  mode: z.enum(["simple", "full"]),
+  datum: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  ansicht: z.enum(["tag", "woche", "monat"]).optional(),
+  modus: z.enum(["einfach", "voll"]).optional(),
+});
+
+/**
+ * Anzeige-Optionen des Kalenders (Feiertage, Schulferien, Wochenende …) je Person merken.
+ * Nur Anzeige – keine Auswirkung auf Buchung oder Verfügbarkeit. Im Support-Modus wird nichts gespeichert:
+ * die Auswahl wird dann nur als URL-Parameter weitergegeben.
+ */
+export async function saveCalendarOptionsAction(form: FormData) {
+  const auth = await requireAuth("appointments.read");
+  const entries: Record<string, string | string[]> = {};
+  for (const k of new Set(form.keys())) {
+    const all = form.getAll(k).filter((v): v is string => typeof v === "string");
+    entries[k] = all.length > 1 ? all : (all[0] ?? "");
+  }
+  const one = (k: string) => (Array.isArray(entries[k]) ? (entries[k] as string[]).at(-1) : (entries[k] as string | undefined)) || undefined;
+  const nav = optionsNavSchema.safeParse({ mode: one("mode"), datum: one("datum"), ansicht: one("ansicht"), modus: one("modus") });
+  if (!nav.success) redirect("/kalender");
+  const { mode, datum, ansicht, modus } = nav.data;
+  const p = new URLSearchParams();
+  if (datum) p.set("datum", datum);
+  if (ansicht) p.set("ansicht", ansicht);
+  if (modus) p.set("modus", modus);
+  if (auth.support) {
+    // Support-Modus: nichts speichern, Auswahl nur in der Adresse
+    redirect(`/kalender?${p}${one("reset") ? "" : keepOptionParams(entries)}`);
+  }
+  const submitted = parseOptionParams(entries);
+  await saveCalendarOptions(auth.user.id, (prev) => (one("reset") ? null : toStoredOptions(mode, resolveCalendarOptions(mode, prev, submitted), prev)));
   revalidatePath("/kalender");
   redirect(`/kalender${p.size ? `?${p}` : ""}`);
 }

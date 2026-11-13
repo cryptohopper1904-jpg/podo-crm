@@ -1,4 +1,4 @@
-import { Checkbox, Field, Input } from "@/components/ui";
+import { Checkbox, Field, FieldSlot, Input } from "@/components/ui";
 import type { materials } from "@/db/schema";
 
 type Material = typeof materials.$inferSelect;
@@ -26,7 +26,11 @@ export function MaterialFields({ material }: { material?: Material }) {
       <Field label="Bestell-Link" hint="https://…">
         <Input type="url" name="orderUrl" defaultValue={material?.orderUrl ?? ""} maxLength={500} />
       </Field>
-      {material ? <Checkbox name="active" defaultChecked={material.active} label="aktiv" /> : null}
+      {material ? (
+        <FieldSlot spacer="hidden sm:block">
+          <Checkbox name="active" defaultChecked={material.active} label="aktiv" />
+        </FieldSlot>
+      ) : null}
     </div>
   );
 }

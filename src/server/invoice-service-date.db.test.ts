@@ -96,6 +96,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(invoices.createInvoice(auth, fee)).rejects.toThrow(/Datum des versäumten Termins/);
     const ok = await invoices.createInvoice(auth, { ...(fee as object), serviceDate: "2026-11-10" } as never);
     expect(heading(await bundle(org, ok.id)).heading).toBe("Ausfallhonorar für den Termin am 10.11.2026");
+    // verknüpfter Termin in der Zukunft kann noch nicht versäumt sein
+    const future = await f.asOrg(org, async (c) =>
+      (await c.query("insert into appointments (organization_id, patient_id, starts_at, ends_at, status) values ($1,$2, now() + interval '2 days', now() + interval '2 days 30 minutes','planned') returning id", [org, patient])).rows[0].id as string,
+    );
+    await expect(invoices.createInvoice(auth, base(patient, { kind: "no_show_fee", lines: [line({ appointmentId: future, description: "Ausfallhonorar" })] }))).rejects.toThrow(/erst nach dem versäumten Termin/);
   });
 
   it("Anzahlung für einen künftigen Termin: Zahlungstag + „Leistung noch nicht erbracht“; Storno: „Anzahlung vom …“", async () => {
@@ -113,19 +118,21 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(heading(s)).toEqual({ heading: `Stornorechnung zur Anzahlung ${dep.number}`, serviceDateNote: `Storno der Anzahlung vom ${today}.` });
   });
 
-  it("Altbeleg (vor Einführung) wird wie früher gedruckt; Leistungsangaben sind nach dem Ausstellen gesperrt", async () => {
+  it("Altbeleg (vor Einführung) wird wie früher gedruckt; Leistungsangaben sind nach dem Ausstellen gesperrt; neue Zeilen standardmäßig festgeschrieben", async () => {
     const org = await f.org();
     const auth = authFor(org, await f.user());
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     // Altbeleg nachbilden: als Entwurf ohne Leistungsangabe (wie vor der Migration ausgestellt)
     const legacy = await f.asOrg(org, async (c) => {
-      const id = (await c.query("insert into invoices (organization_id, patient_id, kind, status) values ($1,$2,'deposit','draft') returning id", [org, patient])).rows[0].id as string;
+      const id = (await c.query("insert into invoices (organization_id, patient_id, kind, status, service_date_fixed) values ($1,$2,'deposit','draft', false) returning id", [org, patient])).rows[0].id as string;
       await c.query("insert into invoice_lines (organization_id, invoice_id, description, quantity, factor, unit_price_cents, vat_rate, total_cents, position) values ($1,$2,'Anzahlung','1','1',1000,0,1000,1)", [org, id]);
       await c.query("update invoices set number = $3, status = 'paid', issued_at = '2026-01-05', total_cents = 1000, net_cents = 1000, paid_cents = 1000 where id = $2 and organization_id = $1", [org, id, `AZ-ALT-${id.slice(0, 6)}`]);
       return id;
     });
     expect(heading(await bundle(org, legacy))).toEqual({ heading: "Quittung über eine Anzahlung", serviceDateNote: null });
+    const dflt = await f.asOrg(org, async (c) => (await c.query("select column_default d from information_schema.columns where table_name = 'invoices' and column_name = 'service_date_fixed'")).rows[0].d);
+    expect(dflt).toBe("true");
 
     for (const sql of ["update invoices set service_date = '2026-01-01' where id = $1", "update invoices set service_date_to = '2026-12-31' where id = $1", "update invoices set service_date_fixed = false where id = $1"]) {
       await expect(f.asOrg(org, (c) => c.query(sql, [inv.id]))).rejects.toThrow(/unveränderbar/);

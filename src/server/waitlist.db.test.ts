@@ -153,6 +153,24 @@ function futureWeekday(minDays: number) {
     expect((await wl.loadOffer(newPortalToken())).state).toBe("invalid");
   });
 
+  it("Annahme übernimmt die Behandler:in nur, wenn sie weiterhin einen eigenen Kalender hat", async () => {
+    const org = await f.org();
+    for (const [role, keep, hour] of [["therapist", true, "09:00"], ["reception", false, "15:00"]] as const) {
+      const u = await f.user();
+      await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,$3)", [org, u, role]);
+      const email = `tp-${role}@example.org`;
+      const p = await f.patient(org, { email, preferredChannel: "email" });
+      await f.consent(org, p, "email_reminders");
+      await waitFor(org, p, null, 1);
+      const id = await appt(org, null, berlinToUtc(futureWeekday(5), hour), 30, "cancelled");
+      await f.asOrg(org, (c) => c.query("update appointments set therapist_id = $2 where id = $1", [id, u]));
+      expect((await wl.offerFreedSlot(org, id, deps)).offered).toBe(1);
+      expect((await wl.acceptOffer(tokenFor(email))).ok).toBe(true);
+      const [row] = (await f.asOrg(org, (c) => c.query("select therapist_id from appointments where organization_id=$1 and patient_id=$2 and status='planned'", [org, p]))).rows;
+      expect(row.therapist_id).toBe(keep ? u : null);
+    }
+  });
+
   it("Praxis bucht die Zeit selbst → offenes Angebot ist „schon vergeben“", async () => {
     const org = await f.org();
     const start = berlinToUtc(futureWeekday(4), "14:00");

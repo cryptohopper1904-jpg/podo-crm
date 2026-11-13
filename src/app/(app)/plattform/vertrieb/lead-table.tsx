@@ -18,6 +18,8 @@ export type LeadRow = {
   step: number;
   lastSentAt: string | null;
   suppressed: boolean;
+  /** Geschäftsadresse mit Namensbezug (Praxissuche, von der eigenen Praxis-Website) */
+  named?: boolean;
 };
 
 const tone = (s: string) =>
@@ -156,7 +158,7 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
                 <Link href={`/plattform/vertrieb/${l.id}`} className="font-semibold text-primary">{l.name}</Link>
                 {l.contactPerson ? <p className="text-xs text-muted">{l.contactPerson}</p> : null}
               </td>
-              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}</td>
+              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}</td>
               <td className="text-sm">{l.city ?? "–"}</td>
               <td className="tabular-nums text-sm">{l.distanceKm ?? "–"}</td>
               <td><Badge tone={tone(l.status)}>{isLeadStatus(l.status) ? STATUS_LABEL[l.status] : l.status}</Badge></td>

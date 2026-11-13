@@ -6,6 +6,7 @@ import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { computeAvailability, type TimeRange } from "@/lib/availability";
 import { addDaysIso, berlinParts, findClashes, toHhmm, toMin, type CalendarMode } from "@/lib/calendar-grid";
+import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, type StoredCalendarOptions, type UrlOverrides } from "@/lib/calendar-options";
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
@@ -116,6 +117,30 @@ export async function saveCalendarMode(userId: string, mode: CalendarMode): Prom
     const [u] = await tx.select({ prefs: users.prefs }).from(users).where(eq(users.id, userId)).for("update").limit(1);
     if (!u) return;
     const prefs: UserPrefs = { ...(u.prefs ?? {}), calendar: { ...(u.prefs?.calendar ?? {}), mode } };
+    await tx.update(users).set({ prefs }).where(eq(users.id, userId));
+  });
+}
+
+/** Gespeicherte Anzeige-Optionen der Person (ungültige Werte fallen weg). */
+export function storedCalendarOptionsOf(prefs: UserPrefs | null | undefined): StoredCalendarOptions {
+  return sanitizeStoredOptions(prefs?.calendar?.options);
+}
+
+/** Wirksame Anzeige-Optionen: Standard je Ansicht ← gespeichert ← URL. */
+export function calendarOptionsOf(prefs: UserPrefs | null | undefined, mode: CalendarMode, url: UrlOverrides = {}): CalendarOptions {
+  return resolveCalendarOptions(mode, storedCalendarOptionsOf(prefs), url);
+}
+
+/** Anzeige-Optionen merken (users.prefs.calendar.options; null = Standard) – eigene Einstellung der angemeldeten Person. */
+export async function saveCalendarOptions(userId: string, update: (prev: StoredCalendarOptions) => StoredCalendarOptions | null): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [u] = await tx.select({ prefs: users.prefs }).from(users).where(eq(users.id, userId)).for("update").limit(1);
+    if (!u) return;
+    const next = update(sanitizeStoredOptions(u.prefs?.calendar?.options));
+    const calendar: NonNullable<UserPrefs["calendar"]> = { ...(u.prefs?.calendar ?? {}) };
+    if (next && Object.keys(next).length) calendar.options = next;
+    else delete calendar.options;
+    const prefs: UserPrefs = { ...(u.prefs ?? {}), calendar };
     await tx.update(users).set({ prefs }).where(eq(users.id, userId));
   });
 }

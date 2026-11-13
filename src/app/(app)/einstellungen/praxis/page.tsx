@@ -7,12 +7,14 @@ import { organizations } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { STATES } from "@/lib/holidays";
 import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
+import { readDunningSettings } from "@/lib/dunning";
 import { formatIban } from "@/lib/invoice-view";
 import { parseOnlineBookingSettings } from "@/lib/portal-booking";
 import { practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
 import { removeLogoAction, saveBankTaxAction, saveBillingModeAction, savePracticeAction } from "../actions";
 import { DocumentsForm } from "./documents-form";
+import { DunningForm } from "./dunning-form";
 import { LogoUpload } from "./logo-upload";
 
 const LOGO_HINT = {
@@ -119,6 +121,13 @@ export default async function PracticeSettings() {
         ownBookingUrl={publicUrl ? `${publicUrl}/buchen/${o.slug}` : null}
         ownBookingActive={parseOnlineBookingSettings(o.settings).enabled}
       />
+    </Card>
+    <Card id="mahnwesen">
+      <h2 className="mb-1 font-display text-lg font-semibold">Mahnwesen</h2>
+      <p className="mb-4 text-sm text-muted">
+        Stufen für überfällige Privatrechnungen: Zahlungserinnerung, 1. Mahnung, 2. Mahnung (letzte Mahnung). Erstellen und Versand unter Rechnungen → Mahnungen.
+      </p>
+      <DunningForm settings={readDunningSettings(o.settings as Record<string, unknown>)} />
     </Card>
     </div>
   );

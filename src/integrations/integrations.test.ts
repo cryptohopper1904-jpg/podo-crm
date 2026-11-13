@@ -102,6 +102,17 @@ describe("lexoffice", () => {
       expect.objectContaining({ amount: 65, taxAmount: 0, taxRatePercent: 0 }),
       expect.objectContaining({ amount: 19.5, taxAmount: 3.11, taxRatePercent: 19 }),
     ]);
+    // ohne Leistungsdatum: Lieferdatum = Belegdatum
+    expect(body.shippingDate).toBe(body.voucherDate);
+  });
+
+  it("übergibt das Leistungsdatum als shippingDate", async () => {
+    const { fetch, calls } = fakeFetch([json({ id: "v2", version: 0 })]);
+    const lex = new LexofficeAdapter({ apiKey: "k", fetch, sleep: noSleep, limiter: new RateLimiter(0) });
+    await lex.pushVoucher({ invoiceId: "i2", number: "2026-0002", kind: "invoice", date: "2026-03-20", serviceDate: "2026-03-12", totalGrossCents: 6500, totalTaxCents: 0, lines: [{ grossCents: 6500, vatRate: 0 }] });
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body.voucherDate).toMatch(/^2026-03-20/);
+    expect(body.shippingDate).toMatch(/^2026-03-12/);
   });
 
   it("liest Zahlungsstatus", async () => {

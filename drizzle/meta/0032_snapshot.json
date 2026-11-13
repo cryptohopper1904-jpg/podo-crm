@@ -1,5 +1,5 @@
 {
-  "id": "8c0a8ebe-6065-4c46-9955-0d6ac7512123",
+  "id": "7d51ef92-9ac3-4608-a77a-4f28dab923e5",
   "prevId": "314df696-f47b-4dcb-929c-f285803f4790",
   "version": "7",
   "dialect": "postgresql",
@@ -2807,25 +2807,6 @@
           "type": "date",
           "primaryKey": false,
           "notNull": false
-        },
-        "service_date": {
-          "name": "service_date",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "service_date_to": {
-          "name": "service_date_to",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "service_date_fixed": {
-          "name": "service_date_fixed",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "net_cents": {
           "name": "net_cents",
@@ -6002,6 +5983,12 @@
         },
         "templates": {
           "name": "templates",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lead_search": {
+          "name": "lead_search",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false

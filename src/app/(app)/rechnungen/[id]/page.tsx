@@ -9,7 +9,7 @@ import { PrintButton } from "@/components/print-button";
 import { isMockMode } from "@/integrations/registry";
 import { fiscalIsTestMode } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
-import { dateDe, dateTimeDe, money } from "@/lib/format";
+import { berlinDateIso, dateDe, dateTimeDe, money } from "@/lib/format";
 import { invoicePaymentQr, isValidIban } from "@/lib/epc-qr";
 import { computeTotals } from "@/lib/invoice-math";
 import {
@@ -19,7 +19,7 @@ import {
   NOTE_DEPOSIT,
   NOTE_NO_SHOW,
   NOTE_SMALL_BUSINESS,
-  NOTE_VAT_EXEMPT,
+  vatExemptNote,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
 import {
@@ -42,6 +42,9 @@ import {
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings, shortUrl } from "@/lib/practice-documents";
 import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
+import { invoiceDunningList } from "@/server/dunning";
+import { DUNNING_STAGE_LABEL, dunningTotalCents, isDunnable, type DunningStage } from "@/lib/dunning";
+import { DunningLetterActions } from "../mahnungen/dunning-actions";
 import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
 
 export const metadata = { title: "Rechnung" };
@@ -90,6 +93,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
   const sumupMock = canWrite && isOpen ? isMockMode(await loadConnection(o.id, "sumup")) : false;
   const recipientEmail = b?.email || p?.email || null;
+  const dunnings = await invoiceDunningList(auth, inv.id);
   const linkChannels: { value: "email" | "sms" | "whatsapp"; label: string }[] = [];
   if (recipientEmail) linkChannels.push({ value: "email", label: `E-Mail (${recipientEmail})` });
   if (p?.phoneMobile) linkChannels.push({ value: "sms", label: "SMS" }, { value: "whatsapp", label: "WhatsApp (nur mit Einwilligung)" });
@@ -142,7 +146,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
           {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
@@ -158,6 +162,34 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             Kasse/TSE im Testmodus: Barzahlungen erhalten nur eine Test-Signatur. Vor dem echten Bargeldeinsatz ist ein Vertrag mit einer
             zertifizierten TSE (z. B. fiskaly SIGN DE) und die Kassenmeldung ans Finanzamt Pflicht (KassenSichV, § 146a AO).
           </p>
+        ) : null}
+        {dunnings.length || (isDunnable(inv) && open > 0 && inv.dueAt && inv.dueAt < berlinDateIso()) ? (
+          <Card className="w-full">
+            <h2 className="mb-1 font-display text-lg font-semibold">Mahnungen</h2>
+            {dunnings.length ? (
+              <ol className="flex flex-col gap-4">
+                {dunnings.map((d) => (
+                  <li key={d.id} className="flex flex-col gap-2 border-l-2 border-border pl-3">
+                    <p className="text-sm">
+                      <span className="font-semibold">{DUNNING_STAGE_LABEL[d.stage as DunningStage]}</span> vom {dateDe(d.letterDate)} · offen {money(d.openCents)}
+                      {d.feeCents ? ` + Gebühr ${money(d.feeCents)}` : ""} · zu zahlen {money(dunningTotalCents(d.openCents, d.feesTotalCents))} bis {dateDe(d.payBy)}
+                      <span className="block text-xs text-muted">
+                        {d.sentVia === "email" ? `per E-Mail an ${d.sentTo} am ${dateTimeDe(d.sentAt!)}` : d.sentVia === "post" ? `per Post versendet (vermerkt am ${dateTimeDe(d.sentAt!)})` : "noch nicht versendet"}
+                      </span>
+                    </p>
+                    <DunningLetterActions dunningId={d.id} recipientEmail={recipientEmail} canWrite={canWrite && isOpen} sent={!!d.sentVia} />
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-muted">Noch keine Zahlungserinnerung erstellt.</p>
+            )}
+            {isOpen ? (
+              <Link href="/rechnungen/mahnungen" className="mt-3 inline-flex h-11 items-center text-sm font-semibold text-primary underline">Zur Mahnübersicht</Link>
+            ) : dunnings.length ? (
+              <p className="mt-3 text-sm text-muted">Rechnung bezahlt oder storniert – keine weiteren Mahnstufen.</p>
+            ) : null}
+          </Card>
         ) : null}
         {canWrite && isOpen ? <SumupPanel invoiceId={inv.id} paymentLinkUrl={inv.paymentLinkUrl} mock={sumupMock} channels={linkChannels} /> : null}
       </div>
@@ -290,7 +322,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
         <section className="mt-6 flex flex-col gap-2 text-[13px]">
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
-          {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
+          {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}

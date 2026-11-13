@@ -47,6 +47,8 @@ export type ReminderPatient = {
   preferredChannel: string;
   /** Doctolib-Import: extra.no_reminders */
   noReminders?: boolean;
+  /** als verstorben markiert (extra.deceased) → nie anschreiben */
+  deceased?: boolean;
 };
 
 /** Liste der Einwilligungen (beliebige Reihenfolge) → aktuell gültiger Stand je Typ (neuester Eintrag zählt). */
@@ -65,7 +67,7 @@ const phoneOk = (p: string | null) => !!p && p.replace(/\D/g, "").length >= 7;
 
 /** Kanal wählen: bevorzugter Kanal zuerst, dann E-Mail, SMS, WhatsApp – jeweils nur mit Einwilligung und Adresse. */
 export function chooseChannel(p: ReminderPatient, consents: Set<string>): { channel: ReminderChannel; to: string } | null {
-  if (p.noReminders) return null;
+  if (p.noReminders || p.deceased) return null;
   const order: ReminderChannel[] = ["email", "sms", "whatsapp"];
   const pref = p.preferredChannel as ReminderChannel;
   const list = order.includes(pref) ? [pref, ...order.filter((c) => c !== pref)] : order;
@@ -142,7 +144,7 @@ export function planReminders(c: ReminderCandidates): PlanResult {
     const p = c.patients.get(r.patientId);
     if (!p) return void skipped.push({ kind: r.kind, patientId: r.patientId, reason: "Person nicht gefunden" });
     const ch = chooseChannel(p, c.consents.get(r.patientId) ?? new Set());
-    if (!ch) return void skipped.push({ kind: r.kind, patientId: r.patientId, reason: p.noReminders ? "keine Erinnerungen gewünscht" : "keine Einwilligung/Adresse" });
+    if (!ch) return void skipped.push({ kind: r.kind, patientId: r.patientId, reason: p.deceased ? "verstorben" : p.noReminders ? "keine Erinnerungen gewünscht" : "keine Einwilligung/Adresse" });
     seen.add(r.dedupeKey);
     planned.push({ ...r, ...ch });
   };

@@ -72,6 +72,8 @@ export interface AccountingVoucherInput {
   kind: "invoice" | "receipt" | "collective" | "credit_note" | "no_show_fee" | "deposit";
   /** YYYY-MM-DD */
   date: string;
+  /** Leistungsdatum (YYYY-MM-DD, lexoffice „shippingDate“); fehlt → Belegdatum. Siehe accountingServiceDate */
+  serviceDate?: string | null;
   dueDate?: string | null;
   totalGrossCents: number;
   totalTaxCents: number;

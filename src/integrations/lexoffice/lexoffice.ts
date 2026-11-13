@@ -163,7 +163,7 @@ export class LexofficeAdapter implements AccountingPort {
       type: mapKind(input.kind),
       voucherNumber: input.number,
       voucherDate: dateToLexofficeTimestamp(input.date),
-      shippingDate: dateToLexofficeTimestamp(input.date),
+      shippingDate: dateToLexofficeTimestamp(input.serviceDate ?? input.date),
       dueDate: dateToLexofficeTimestamp(input.dueDate ?? input.date),
       totalGrossAmount: euro(input.totalGrossCents),
       totalTaxAmount: euro(input.totalTaxCents),

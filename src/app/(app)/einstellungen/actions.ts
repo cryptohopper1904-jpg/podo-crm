@@ -18,6 +18,10 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
+import { SERVICE_CATEGORIES } from "@/lib/catalog";
+import { codeTaken } from "@/server/products";
+import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
+import { DUNNING_STAGES } from "@/lib/dunning";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -103,11 +107,12 @@ export async function updateMemberAction(form: FormData) {
   if (!m || m.userId === auth.user.id) return; // eigene Rolle nicht ändern (Aussperren verhindern)
   const nextRole = role ?? m.role;
   const nextActive = active !== null ? active === "1" : m.active;
-  // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen
-  const takesSeat = nextActive && seatCounts(nextRole) && !(m.active && seatCounts(m.role));
   const blocked = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${org}`}))`);
-    if (takesSeat && seatProblem(await currentSeatBilling(tx, org), await usedSeats(org, tx), nextRole)) return true;
+    // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen (z. B. Empfang → Podolog:in)
+    const billing = await currentSeatBilling(tx, org);
+    const takesSeat = nextActive && seatCounts(nextRole, billing.plan) && !(m.active && seatCounts(m.role, billing.plan));
+    if (takesSeat && seatProblem(billing, await usedSeats(org, tx), nextRole)) return true;
     await tx
       .update(memberships)
       .set({ ...(role ? { role } : {}), ...(active !== null ? { active: active === "1" } : {}) })
@@ -132,9 +137,8 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
       price: z.string(),
       vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v)),
       durationMin: z.coerce.number().int().min(0).max(480),
-      category: z.string().default("treatment"),
+      category: z.enum(SERVICE_CATEGORIES).default("treatment"),
       gkvPosition: opt,
-      active: z.string().optional(),
     })
     .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
   if (!d.success) return { error: d.success === false ? d.error.issues[0]?.message : undefined };
@@ -149,20 +153,49 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
     category: d.data.category,
     gkvPosition: d.data.gkvPosition,
     requiresTherapeuticPurpose: d.data.vatRate === 0,
-    active: d.data.id ? d.data.active === "on" : true,
   };
+  // aktiv/archiviert ändert nur setServiceActiveAction; neue Leistungen sind aktiv
+  let found = true;
+  let productClash = false;
   try {
-    await withOrg(org, (tx) =>
-      d.data.id
-        ? tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id)))
-        : tx.insert(services).values({ ...values, organizationId: org }),
-    );
+    await withOrg(org, async (tx) => {
+      // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
+      if (await codeTaken(tx, org, values.code, "product")) {
+        productClash = true;
+        return;
+      }
+      if (d.data.id) {
+        const r = await tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))).returning({ id: services.id });
+        found = r.length > 0;
+      } else {
+        await tx.insert(services).values({ ...values, active: true, organizationId: org });
+      }
+    });
   } catch {
     return { error: `Das Kürzel ${d.data.code} gibt es schon.` };
   }
+  if (productClash) return { error: `Das Kürzel ${d.data.code} hat schon ein Produkt. Bitte ein anderes wählen.` };
+  if (!found) return { error: "Leistung nicht gefunden." };
   await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code: d.data.code } });
   revalidatePath("/einstellungen/leistungen");
   return { ok: "Gespeichert." };
+}
+
+/**
+ * Leistung archivieren bzw. wiederherstellen (services.active). Archivierte Leistungen erscheinen nicht mehr in
+ * Termin-, Rechnungs- und Doku-Auswahl, Online-Buchung und Website; bestehende Termine/Rechnungen behalten sie.
+ */
+export async function setServiceActiveAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const org = auth.organization.id;
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) return;
+  const active = form.get("active") === "1";
+  const r = await withOrg(org, (tx) =>
+    tx.update(services).set({ active }).where(and(eq(services.organizationId, org), eq(services.id, id.data))).returning({ code: services.code }),
+  );
+  if (r[0]) await audit({ organizationId: org, userId: auth.user.id, action: active ? "service.unarchive" : "service.archive", entity: "service", entityId: id.data, meta: { code: r[0].code } });
+  revalidatePath("/einstellungen/leistungen");
 }
 
 export async function startTotpAction(): Promise<SettingsState> {
@@ -311,6 +344,24 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { dueDays: v.dueDays, therapeuticDefault: documents.therapeuticDefault, bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
   revalidatePath("/einstellungen/praxis");
+  return { ok: "Gespeichert." };
+}
+
+/** Mahnwesen: Fristen, Gebühren (nur konkrete Kosten) und Textvorlagen je Stufe – nur settings.manage, protokolliert. */
+export async function saveDunningSettingsAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const stages: Record<string, unknown> = {};
+  for (const s of DUNNING_STAGES) {
+    const feeRaw = String(form.get(`${s}.fee`) ?? "").trim();
+    const fee = feeRaw === "" ? 0 : parseMoney(feeRaw);
+    if (fee === null) return { error: "Gebühr: bitte einen Betrag wie 2,50 angeben." };
+    stages[s] = { days: form.get(`${s}.days`), feeCents: fee, text: String(form.get(`${s}.text`) ?? "") };
+  }
+  const d = dunningSettingsInput.safeParse({ payDays: form.get("payDays"), stages });
+  if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben prüfen." };
+  await saveDunningSettings(auth, d.data);
+  revalidatePath("/einstellungen/praxis");
+  revalidatePath("/rechnungen/mahnungen");
   return { ok: "Gespeichert." };
 }
 

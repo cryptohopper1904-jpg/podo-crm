@@ -3,7 +3,7 @@
 import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
 import { Ban, Copy, CreditCard, FlaskConical, Link2, Mail, Send, Smartphone } from "lucide-react";
-import { Button, Card, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
 import {
   addPaymentAction,
   cancelInvoiceAction,
@@ -57,7 +57,9 @@ export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; open
   );
 }
 
-export function CancelPanel({ invoiceId, number }: { invoiceId: string; number: string }) {
+export type CancelProductLine = { id: string; description: string; quantity: string; inTreatment: boolean };
+
+export function CancelPanel({ invoiceId, number, productLines = [] }: { invoiceId: string; number: string; /** Produktpositionen des Belegs (Rückbuchung ins Lager) */ productLines?: CancelProductLine[] }) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState(cancelInvoiceAction, undefined);
   if (!open) {
@@ -86,6 +88,20 @@ export function CancelPanel({ invoiceId, number }: { invoiceId: string; number: 
         <Field label="Grund (optional, keine Diagnosen)">
           <Input name="reason" maxLength={300} placeholder="z. B. falscher Rechnungsempfänger" />
         </Field>
+        {productLines.length ? (
+          <fieldset className="flex flex-col gap-1">
+            <legend className="text-sm font-medium">Verkaufte Produkte: Ware zurück ins Lager?</legend>
+            <input type="hidden" name="restockChoice" value="1" />
+            {productLines.map((l) =>
+              l.inTreatment ? (
+                <p key={l.id} className="text-sm text-muted">{l.quantity} × {l.description} – in der Behandlung verbraucht, keine Rückbuchung</p>
+              ) : (
+                <Checkbox key={l.id} name="restockLine" value={l.id} defaultChecked label={`${l.quantity} × ${l.description}`} />
+              ),
+            )}
+            <span className="text-xs text-muted">Abwählen, wenn die Ware beim Kunden bleibt, angebrochen oder beschädigt ist.</span>
+          </fieldset>
+        ) : null}
         <div className="flex gap-3">
           <Button type="submit" variant="danger" disabled={pending}>{pending ? "Storniere …" : "Storno ausstellen"}</Button>
           <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Abbrechen</Button>

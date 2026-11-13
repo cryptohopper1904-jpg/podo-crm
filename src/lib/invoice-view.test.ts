@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
-import { dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
+import { accountingServiceDate, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
 const fmt = { dateDe, money };
@@ -106,5 +106,17 @@ describe("Zahlungsziel sofort (0 Tage)", () => {
   it("Zahlungshinweis nennt „sofort“ statt Datum", () => {
     expect(paymentNoteLines(now, [], iban, fmt).join(" ")).toMatch(/überweisen Sie den Betrag sofort unter Angabe/);
     expect(paymentNoteLines(now, [], { iban: null }, fmt)).toContain("Zahlbar sofort ohne Abzug.");
+  });
+});
+
+describe("Leistungsdatum für die Buchhaltung (lexoffice shippingDate)", () => {
+  const base = { issuedAt: "2026-11-13", serviceDateFixed: true };
+  it("Anzahlung: Zahlungstag; Storno: Original (Anzahlung: deren Datum); sonst letzter Leistungstag; Altbeleg: Belegdatum", () => {
+    expect(accountingServiceDate({ ...base, kind: "deposit", serviceDate: "2026-11-20" })).toBe("2026-11-13");
+    expect(accountingServiceDate({ ...base, kind: "invoice", serviceDate: "2026-11-02" })).toBe("2026-11-02");
+    expect(accountingServiceDate({ ...base, kind: "collective", serviceDate: "2026-10-01", serviceDateTo: "2026-10-31" })).toBe("2026-10-31");
+    expect(accountingServiceDate({ ...base, kind: "credit_note", serviceDate: "2026-11-02" }, { kind: "invoice", issuedAt: "2026-11-05" })).toBe("2026-11-02");
+    expect(accountingServiceDate({ ...base, kind: "credit_note", serviceDate: "2026-11-20" }, { kind: "deposit", issuedAt: "2026-11-05" })).toBe("2026-11-05");
+    expect(accountingServiceDate({ kind: "invoice", issuedAt: "2026-11-13", serviceDateFixed: false })).toBe("2026-11-13");
   });
 });

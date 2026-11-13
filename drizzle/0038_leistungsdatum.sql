@@ -1,6 +1,8 @@
 ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "service_date" date;--> statement-breakpoint
 ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "service_date_to" date;--> statement-breakpoint
+-- Bestandszeilen = Altbelege → false (ADD COLUMN füllt mit dem Default); danach Default true für alle neuen Belege
 ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "service_date_fixed" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "invoices" ALTER COLUMN "service_date_fixed" SET DEFAULT true;--> statement-breakpoint
 -- Leistungsdatum/-zeitraum gehört zum Belegtext (§ 14 Abs. 4 Nr. 6 UStG) → nach dem Ausstellen ebenso unveränderbar (GoBD)
 CREATE OR REPLACE FUNCTION podo_invoice_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE locked boolean;
