@@ -6,6 +6,9 @@ import { buildServiceWorker } from "@/lib/pwa/service-worker";
  * beim Aktivieren gelöscht. Nie zwischenspeichern, damit Updates sofort erkannt werden.
  * Der Proxy (src/proxy.ts) lässt /sw.js ohne Sitzung durch; der Inhalt ist für alle gleich.
  */
+/** Version steht beim Build fest (env aus next.config.ts) → statisch vorab erzeugen */
+export const dynamic = "force-static";
+
 export function GET() {
   return new Response(buildServiceWorker(process.env.PODO_APP_VERSION ?? "dev"), {
     headers: {

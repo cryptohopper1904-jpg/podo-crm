@@ -7,6 +7,10 @@ import { startupImages } from "./startup-images";
 
 export const APP_NAME = "PodoHero";
 
+/** Markenhinweis unter den Installationsanleitungen */
+export const TRADEMARKS =
+  "iPhone, iPad, Mac und Safari sind Marken der Apple Inc.; Android und Chrome sind Marken der Google LLC. PodoHero steht in keiner Verbindung zu diesen Unternehmen.";
+
 export const PWA_COLORS = {
   /** Seitenhintergrund (--bg) – Startbildschirm Android/iOS */
   backgroundLight: "#f4f9f8",
@@ -39,7 +43,7 @@ export const PWA_ICONS = {
 
 /** Bildschirmfotos für den Installationsdialog (Demo-Praxis, keine echten Patientendaten) */
 export const PWA_SCREENSHOTS = {
-  narrow: { src: "/screenshots/app-heute-narrow.png", sizes: "780x1688" },
+  narrow: { src: "/screenshots/app-kalender-narrow.png", sizes: "780x1688" },
   wide: { src: "/screenshots/app-kalender-wide.png", sizes: "1280x800" },
 } as const;
 

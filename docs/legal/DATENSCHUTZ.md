@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.3 · Stand 13.11.2026
+> Version 0.4 · Stand 13.11.2026
 
 Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
@@ -34,6 +34,9 @@ Beim Aufruf der Website verarbeitet unser Server technisch notwendige Daten: IP-
 
 - **Sitzungs-Cookie** (`__Host-podo_session`, in der Entwicklung `podo_session`): nur nach der Anmeldung, technisch notwendig, HttpOnly, läuft nach höchstens 12 Stunden ab. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG, Art. 6 Abs. 1 lit. b DSGVO.
 - **Hell/Dunkel-Einstellung** (`podo-theme` im lokalen Speicher des Browsers): speichert nur Ihre Anzeigewahl auf Ihrem Gerät, wird nicht an uns übertragen. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG.
+- **Navigation eingeklappt/ausgeklappt** (Cookie `podo_nav`, nur nach der Anmeldung in der Praxis-Software): merkt sich, ob die seitliche Navigation eingeklappt ist, damit die Seite gleich richtig angezeigt wird. Enthält nur den Wert „eingeklappt“ bzw. „offen“, wird mit jedem Seitenaufruf an unseren Server übertragen und nicht ausgewertet; Laufzeit 1 Jahr. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG.
+- **App-Dateien im Browser-Speicher** (Service Worker und Cache `podo-static-…`, nur in der Praxis-Software): damit PodoHero als App installiert werden kann und ohne Verbindung einen Hinweis zeigt, legt der Browser Programmdateien (Skripte, Stylesheets, Schriften, Symbole) und eine Offline-Hinweisseite ab. Darin sind keine personenbezogenen Daten und keine Praxis- oder Patientendaten. Der Speicher wird bei jeder neuen Version ersetzt und lässt sich jederzeit über die Einstellungen des Browsers löschen. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG.
+- **Hinweis „App installieren“ ausgeblendet** (`podo-install-hint` im lokalen Speicher des Browsers): merkt sich nur, dass Sie den Hinweis geschlossen haben, wird nicht an uns übertragen. Rechtsgrundlage: § 25 Abs. 2 Nr. 2 TDDDG.
 
 ## 4. Registrierung und Nutzung durch Praxen
 

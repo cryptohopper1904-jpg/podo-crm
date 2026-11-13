@@ -16,7 +16,7 @@ export const swCacheName = (version: string) => `${SW_CACHE_PREFIX}${version.rep
  *   aus dem Netz mit Offline-Seite als Ersatz, alles andere unberührt.
  * - Aktualisierung: eine neue Version wartet, bis die Nutzer:in „Neu laden“ bestätigt (Nachricht SKIP_WAITING,
  *   siehe src/components/pwa/pwa-client.tsx) – kein ungefragtes Neuladen mitten in einer Dokumentation.
- * - Nachricht CLEAR_CACHES (z. B. beim Abmelden): löscht alle Caches dieser App.
+ * - Nachricht CLEAR_CACHES (beim Abmelden, src/components/pwa/logout-form.tsx): löscht alle Caches dieser App.
  */
 export function buildServiceWorker(version: string): string {
   const cache = swCacheName(version);
@@ -70,7 +70,8 @@ function cacheFirst(request) {
       if (hit) return hit;
       return fetch(request).then(function (res) {
         var cc = res.headers.get("Cache-Control") || "";
-        if (res.ok && res.type === "basic" && !/no-store|private/i.test(cc)) cache.put(request, res.clone());
+        // keine Weiterleitungen (z. B. zum Login) und nichts Privates speichern
+        if (res.ok && !res.redirected && res.type === "basic" && !/no-store|private/i.test(cc)) cache.put(request, res.clone());
         return res;
       });
     });

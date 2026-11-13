@@ -14,8 +14,12 @@ const securityHeaders = [
 /**
  * Build-Version für den Service Worker (src/app/sw.js/route.ts): ändert sich mit jedem Build, damit installierte
  * Apps „Neue Version verfügbar“ anzeigen und alte Datei-Caches löschen. Wird beim Build fest eingesetzt.
+ * Aufbau: Commit (Build-Argument GIT_SHA aus deploy/update.sh bzw. install.sh, sonst weggelassen) + Build-Zeitpunkt;
+ * PODO_APP_VERSION überschreibt beides.
  */
-const appVersion = process.env.PODO_APP_VERSION || process.env.GIT_COMMIT || new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
+const buildStamp = new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14);
+const gitSha = process.env.GIT_SHA && process.env.GIT_SHA !== "unknown" ? process.env.GIT_SHA : "";
+const appVersion = process.env.PODO_APP_VERSION || (gitSha ? `${gitSha}-${buildStamp}` : buildStamp);
 
 const nextConfig: NextConfig = {
   env: { PODO_APP_VERSION: appVersion },

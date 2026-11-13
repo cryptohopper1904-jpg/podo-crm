@@ -61,7 +61,7 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
         key={JSON.stringify(options)}
         action={persist ? saveCalendarOptionsAction : "/kalender"}
         method={persist ? undefined : "get"}
-        className={`z-40 flex flex-col gap-1 rounded-xl border border-border bg-surface p-2 shadow-lg max-sm:fixed max-sm:inset-x-4 max-sm:top-20 max-sm:max-h-[calc(100dvh-6rem)] max-sm:overflow-y-auto sm:absolute sm:mt-2 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${alignLeft ? "sm:left-0" : "sm:right-0"}`}
+        className={`z-40 flex flex-col gap-1 rounded-xl border border-border bg-surface p-2 shadow-lg max-sm:fixed max-sm:inset-x-[max(1rem,env(safe-area-inset-left))] max-sm:top-[calc(5rem+env(safe-area-inset-top))] max-sm:max-h-[calc(100dvh-6rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] max-sm:overflow-y-auto sm:absolute sm:mt-2 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${alignLeft ? "sm:left-0" : "sm:right-0"}`}
         aria-label="Anzeige-Optionen"
       >
         {Object.entries(hidden).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}

@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { Card, CardTitle } from "@/components/ui";
+import { TRADEMARKS } from "@/lib/pwa/app-meta";
 import { InstallGuide } from "@/components/pwa/install-guide";
 import { requireAuth } from "@/lib/auth/session";
 
@@ -21,13 +23,21 @@ export default async function InstallAppSettings() {
         <CardTitle>Gut zu wissen</CardTitle>
         <ul className="flex list-disc flex-col gap-2 pl-5 text-[15px]">
           <li>
-            Praxis- und Patientendaten werden nicht auf dem Gerät gespeichert. Ohne Internetverbindung zeigt die App nur einen
-            Hinweis und lädt weiter, sobald die Verbindung zurück ist.
+            Praxis- und Patientendaten werden von PodoHero nicht auf dem Gerät zwischengespeichert. Ausnahme: Dateien, die Sie
+            selbst herunterladen (z. B. PDFs, Exporte), liegen danach im Download-Ordner des Geräts.
           </li>
+          <li>Ohne Internetverbindung zeigt die App nur einen Hinweis und lädt weiter, sobald die Verbindung zurück ist.</li>
           <li>Updates kommen von selbst. Bei einer neuen Version erscheint „Neue Version verfügbar – Neu laden“.</li>
           <li>In der installierten App gibt es keine Browser-Zurück-Taste – nutze die Zurück-Links oben auf den Seiten.</li>
+          <li>Nutzen Sie für die Praxis nur Geräte mit Code-Sperre.</li>
           <li>Auf gemeinsam genutzten Geräten nach der Arbeit abmelden oder den Übergabe-Modus nutzen.</li>
         </ul>
+        <p className="mt-4 text-sm">
+          <Link href="/impressum" className="font-semibold text-primary hover:underline">Impressum</Link>
+          {" · "}
+          <Link href="/datenschutz" className="font-semibold text-primary hover:underline">Datenschutz</Link>
+        </p>
+        <p className="mt-2 text-xs text-muted">{TRADEMARKS}</p>
       </Card>
     </div>
   );

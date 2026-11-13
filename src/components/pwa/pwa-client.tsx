@@ -27,6 +27,8 @@ export function PwaClient() {
     const onControllerChange = () => {
       // nur nach Bestätigung neu laden (nicht beim allerersten Aktivieren)
       if (reloading.current) location.reload();
+      // neue Version ist schon aktiv (z. B. in einem anderen Tab bestätigt) → Hinweis ausblenden
+      else setWaiting(null);
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") reg?.update().catch(() => {});

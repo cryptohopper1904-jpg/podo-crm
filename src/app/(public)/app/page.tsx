@@ -1,6 +1,7 @@
 import { LinkButton } from "@/components/ui";
 import { InstallGuide } from "@/components/pwa/install-guide";
 import { pageMeta } from "../_content/site";
+import { TRADEMARKS } from "@/lib/pwa/app-meta";
 
 export const metadata = pageMeta({
   title: "PodoHero als App",
@@ -9,9 +10,9 @@ export const metadata = pageMeta({
 });
 
 const FACTS = [
-  ["Ohne App Store", "PodoHero wird aus dem Browser auf den Home-Bildschirm gelegt. Es gibt nichts herunterzuladen und keine eigene App-Version zu pflegen."],
-  ["Gleicher Stand überall", "iPad in der Behandlung, Computer am Empfang, Smartphone beim Hausbesuch: alle arbeiten mit denselben Daten. Updates kommen von selbst."],
-  ["Keine Daten auf dem Gerät", "Termine und Akten werden immer vom Server geladen und nicht offline auf dem Gerät gespeichert. Ohne Verbindung zeigt die App einen Hinweis."],
+  ["Ohne App Store", "Sie müssen nichts aus einem App Store laden: PodoHero wird aus dem Browser auf den Home-Bildschirm gelegt."],
+  ["Gleicher Stand überall", "iPad in der Behandlung, Computer am Empfang, Smartphone beim Hausbesuch: alle arbeiten mit denselben Daten. Updates kommen automatisch – ein Tipp auf „Neu laden“ genügt."],
+  ["Keine Patientendaten auf dem Gerät", "Termine, Akten und Fotos werden immer frisch vom Server geladen und nicht für die Offline-Nutzung auf dem Gerät gespeichert. Auf dem Gerät liegen nur die Anmeldung und Programmdateien. Ohne Verbindung zeigt die App einen Hinweis."],
 ] as const;
 
 /** Kurze, sachliche Infoseite zur installierbaren Web-App (öffentlich, ohne Praxisdaten). */
@@ -22,6 +23,10 @@ export default function AppInfoPage() {
       <p className="mt-4 text-lg text-muted">
         PodoHero läuft im Browser und lässt sich auf iPhone, iPad, Android-Geräten und am Computer wie eine App installieren:
         mit eigenem Symbol, im Vollbild und ohne Browserleiste.
+      </p>
+      <p className="mt-3 text-[15px] text-muted">
+        PodoHero ist eine Web-App – es gibt keine Version im App Store oder bei Google Play. Für die Nutzung ist eine
+        Internetverbindung nötig.
       </p>
       <ul className="mt-8 grid gap-4 sm:grid-cols-3">
         {FACTS.map(([title, text]) => (
@@ -34,6 +39,8 @@ export default function AppInfoPage() {
       <section aria-labelledby="anleitung" className="mt-10">
         <h2 id="anleitung" className="mb-4 font-display text-2xl font-semibold">So installieren Sie PodoHero</h2>
         <InstallGuide headingLevel={3} />
+        <p className="mt-4 text-sm text-muted">Nutzen Sie für die Praxis nur Geräte mit Code-Sperre.</p>
+        <p className="mt-2 text-xs text-muted">{TRADEMARKS}</p>
       </section>
       <div className="mt-10 flex flex-wrap gap-3">
         <LinkButton href="/login">Anmelden</LinkButton>

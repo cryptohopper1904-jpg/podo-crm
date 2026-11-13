@@ -39,6 +39,10 @@ describe("Service Worker: was gecacht werden darf", () => {
       "/icons/readme.txt",
       "/screenshots/heute-tagesueberblick.webp",
       "/offline",
+      "/_next/static/chunks/a.js?v=1",
+      "/_next/static/%2e%2e/api/x",
+      "/_next/static/chunks/a%20b.js",
+      "/brand/sub/logo.svg",
     ];
     for (const p of never) expect(get(p), p).toBe("network");
   });

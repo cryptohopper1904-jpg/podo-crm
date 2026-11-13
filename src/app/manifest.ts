@@ -39,7 +39,7 @@ export default function manifest(): MetadataRoute.Manifest {
       { name: "Patientensuche", short_name: "Suche", url: "/kunden?suche=1", icons: [{ src: PWA_ICONS.shortcutSearch, sizes: "96x96", type: "image/png" }] },
     ],
     screenshots: [
-      { src: PWA_SCREENSHOTS.narrow.src, sizes: PWA_SCREENSHOTS.narrow.sizes, type: "image/png", form_factor: "narrow", label: "Tagesübersicht „Heute“ auf dem Smartphone (Demo-Praxis)" },
+      { src: PWA_SCREENSHOTS.narrow.src, sizes: PWA_SCREENSHOTS.narrow.sizes, type: "image/png", form_factor: "narrow", label: "Termine der Woche auf dem Smartphone (Demo-Praxis)" },
       { src: PWA_SCREENSHOTS.wide.src, sizes: PWA_SCREENSHOTS.wide.sizes, type: "image/png", form_factor: "wide", label: "Kalender auf dem Tablet (Demo-Praxis)" },
     ],
   };

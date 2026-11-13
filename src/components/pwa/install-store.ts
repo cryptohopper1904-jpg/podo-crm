@@ -15,6 +15,8 @@ export type BeforeInstallPromptEvent = Event & {
 declare global {
   interface Window {
     __podoBip?: BeforeInstallPromptEvent | null;
+    /** von der nativen Capacitor-Hülle eingebunden (capacitor.config.ts) */
+    Capacitor?: { isNativePlatform?: () => boolean };
   }
   interface Navigator {
     /** iOS Safari: true, wenn vom Home-Bildschirm gestartet */
@@ -56,10 +58,17 @@ function subscribe(cb: () => void) {
   };
 }
 
-/** Läuft die Seite als installierte App (Home-Bildschirm/App-Fenster)? */
+/** Läuft die Seite in der nativen iOS-Hülle (Capacitor, capacitor.config.ts → appendUserAgent)? */
+export function isNativeShell(): boolean {
+  if (typeof window === "undefined") return false;
+  return /PodoHeroNative/.test(navigator.userAgent) || window.Capacitor?.isNativePlatform?.() === true;
+}
+
+/** Läuft die Seite als installierte App (Home-Bildschirm/App-Fenster oder native Hülle)? */
 export function isStandalone(): boolean {
   if (typeof window === "undefined") return false;
   return (
+    isNativeShell() ||
     navigator.standalone === true ||
     matchMedia("(display-mode: standalone)").matches ||
     matchMedia("(display-mode: minimal-ui)").matches ||

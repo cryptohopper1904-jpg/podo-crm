@@ -52,12 +52,10 @@ export function classifyRequest(req: SwRequestInfo): SwDecision {
     if (p.indexOf("/api/") === 0 || /\.[a-z0-9]{2,5}$/i.test(p)) return "network";
     return "navigate";
   }
-  // RSC-Daten (Client-Navigation) und alles mit Abfrageparametern außerhalb von /_next/static nie cachen
-  if (u.searchParams.has("_rsc")) return "network";
-  if (p.indexOf("/_next/static/") === 0) return "static";
-  if (u.search) return "network";
-  if (p.indexOf("/icons/") === 0 || p.indexOf("/splash/") === 0 || p.indexOf("/brand/") === 0) {
-    return /\.(png|svg|ico|webp)$/i.test(p) ? "static" : "network";
-  }
+  // RSC-Daten (Client-Navigation), alles mit Abfrageparametern und kodierte Pfade (%) nie cachen
+  if (u.search || p.indexOf("%") !== -1) return "network";
+  // gehashte Next.js-Dateien: nur einfache Pfadzeichen
+  if (/^\/_next\/static\/[A-Za-z0-9._~/-]+$/.test(p)) return "static";
+  if (/^\/(icons|splash|brand)\/[A-Za-z0-9._-]+\.(png|svg|ico|webp)$/i.test(p)) return "static";
   return "network";
 }

@@ -3,12 +3,33 @@
 import { useEffect } from "react";
 import { RotateCw } from "lucide-react";
 
-/** Lädt die aufgerufene Seite neu – auf Knopfdruck oder von selbst, sobald der Browser wieder online meldet. */
+/** Abstand der automatischen Prüfung, solange die Seite sichtbar ist */
+const PROBE_MS = 25_000;
+
+/**
+ * Lädt die aufgerufene Seite neu – auf Knopfdruck, sobald der Browser „online“ meldet, und zusätzlich alle 25 s,
+ * wenn der Server wieder antwortet (WLAN ohne Internet oder Server-Neustart lösen kein „online“-Ereignis aus).
+ * data-offline-ready am <html>: Seite ist hydriert (für Tests).
+ */
 export function RetryButton() {
   useEffect(() => {
     const onOnline = () => location.reload();
     addEventListener("online", onOnline);
-    return () => removeEventListener("online", onOnline);
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      fetch("/api/health", { cache: "no-store", credentials: "omit" })
+        .then((r) => {
+          if (r.ok) location.reload();
+        })
+        .catch(() => {
+          // weiterhin offline
+        });
+    }, PROBE_MS);
+    document.documentElement.dataset.offlineReady = "1";
+    return () => {
+      removeEventListener("online", onOnline);
+      clearInterval(timer);
+    };
   }, []);
   return (
     <button

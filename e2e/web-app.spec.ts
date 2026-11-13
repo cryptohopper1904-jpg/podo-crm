@@ -178,7 +178,8 @@ test("Service Worker: registriert, nur statische Dateien im Cache, Offline-Seite
   // keine Patientendaten aus einem Cache
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Keine Internetverbindung");
   await shot(page, "offline-seite");
-  // wieder online → die Seite lädt von selbst neu (Ereignis „online“)
+  // Offline-Seite hydriert (Ereignis-Listener aktiv), dann wieder online → die Seite lädt von selbst neu
+  await expect(page.locator("html[data-offline-ready]")).toHaveCount(1);
   await context.setOffline(false);
   await expect(page).toHaveURL(new RegExp(`/kunden/${ids.patient}$`));
   await expect(page.getByRole("heading", { name: "Keine Internetverbindung" })).toHaveCount(0);
@@ -252,9 +253,17 @@ test("Bildschirmfotos: iPad quer Kalender (und auf Wunsch Manifest-Screenshots)"
     const out = path.resolve(__dirname, "../public/screenshots");
     const narrow = await newDevice(browser, { ...profile("iPhone 15"), viewport: { width: 390, height: 844 } }, { deviceScaleFactor: 2 });
     await narrow.context.addInitScript(standalone);
-    await narrow.page.goto("/heute");
+    // Woche mit Demo-Terminen (Termin-Liste)
+    await narrow.page.goto("/kalender?modus=einfach&ansicht=woche");
     await closeChangelog(narrow.page);
-    await narrow.page.screenshot({ path: path.join(out, "app-heute-narrow.png") });
+    // zum Tag mit den meisten Demo-Terminen scrollen (unter der festen Kopfzeile)
+    await narrow.page.evaluate(() => {
+      const days = Array.from(document.querySelectorAll("main section")).filter((x) => x.querySelector('a[href^="/kalender/termin/"]'));
+      const count = (x: Element) => x.querySelectorAll('a[href^="/kalender/termin/"]').length;
+      const best = days.sort((a, b) => count(b) - count(a))[0];
+      if (best) window.scrollTo(0, window.scrollY + best.getBoundingClientRect().top - 80);
+    });
+    await narrow.page.screenshot({ path: path.join(out, "app-kalender-narrow.png") });
     await narrow.context.close();
     const wide = await newDevice(browser, { ...profile("iPad Pro 11 landscape"), viewport: { width: 1280, height: 800 } }, { deviceScaleFactor: 1 });
     await wide.context.addInitScript(standalone);

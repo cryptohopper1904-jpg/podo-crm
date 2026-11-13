@@ -9,6 +9,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: "de.podocrm.app",
   appName: "PodoCRM",
+  // Kennung für die Web-App: in der Hülle keinen Installationshinweis zeigen (src/components/pwa/install-store.ts)
+  appendUserAgent: "PodoHeroNative",
   webDir: "public",
   server: {
     url: process.env.CAP_SERVER_URL ?? "https://crm.deine-praxis.de",

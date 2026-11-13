@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { LogoutForm } from "@/components/pwa/logout-form";
 import { Lock } from "lucide-react";
 import { getSessionIncludingLocked } from "@/lib/auth/session";
 import { logoutAction } from "../actions";
@@ -24,9 +25,9 @@ export default async function UnlockPage() {
         Dieses Gerät wurde an eine Patientin bzw. einen Patienten übergeben. Zum Entsperren gibt {row.user.name.split(" ")[0]} die eigene {row.user.unlockPinHash ? "PIN oder das Passwort" : "Passwort"} ein.
       </p>
       <UnlockForm hasPin={!!row.user.unlockPinHash} />
-      <form action={logoutAction}>
+      <LogoutForm action={logoutAction}>
         <button type="submit" className="text-sm font-semibold text-muted hover:text-text">Stattdessen abmelden</button>
-      </form>
+      </LogoutForm>
       <p className="text-xs text-muted">Nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig.</p>
     </div>
   );

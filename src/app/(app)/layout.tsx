@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutForm } from "@/components/pwa/logout-form";
 import { LogOut, Sparkles } from "lucide-react";
 import { AccessBanner } from "@/components/access-banner";
 import { cookies } from "next/headers";
@@ -57,11 +58,11 @@ function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: st
           {switcher?.show ? <OrgSwitcher model={{ ...switcher, platformLink: false }} /> : null}
           <NewsLink />
           <ThemeToggle />
-          <form action={logoutAction}>
+          <LogoutForm action={logoutAction}>
             <button type="submit" aria-label="Abmelden" title="Abmelden" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
               <LogOut size={19} aria-hidden />
             </button>
-          </form>
+          </LogoutForm>
         </div>
       </header>
       <main className="flex-1 pt-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[max(2.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] lg:px-8">
@@ -125,7 +126,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             <OrgSwitcher model={switcher} />
             <NewsLink />
             <ThemeToggle />
-            <form action={logoutAction}>
+            <LogoutForm action={logoutAction}>
               <button
                 type="submit"
                 aria-label="Abmelden"
@@ -134,7 +135,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               >
                 <LogOut size={19} aria-hidden />
               </button>
-            </form>
+            </LogoutForm>
           </div>
         </header>
         <AccessBanner auth={auth} />

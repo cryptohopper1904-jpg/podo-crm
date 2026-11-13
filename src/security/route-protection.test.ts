@@ -136,6 +136,12 @@ describe("Proxy: Routen-Schutz", () => {
     // public/splash/* (iOS-Startbildschirme) ebenso
     expect(runsProxy("/splash/apple-splash-1170x2532.png")).toBe(false);
     expect(runsProxy("/splashx")).toBe(true);
+    // public/brand/* und genau /sw.js
+    expect(runsProxy("/brand/podohero-mark.svg")).toBe(false);
+    expect(runsProxy("/brandx")).toBe(true);
+    expect(runsProxy("/sw.js")).toBe(false);
+    expect(runsProxy("/sw.jsx")).toBe(true);
+    expect(runsProxy("/sw.js/x")).toBe(true);
   });
 
   it("Matcher: jede Seite/API-Route läuft durch den Proxy (setzt x-podo-method/x-podo-path, überschreibt Client-Werte)", () => {
