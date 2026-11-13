@@ -21,17 +21,16 @@ import { configuredVoiceVendor, isImplementedVoiceVendor } from "@/integrations/
 import { describeError } from "@/integrations/test-connection";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
-import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availability";
+import type { TimeRange } from "@/lib/availability";
 import { berlinToUtc } from "@/lib/format";
-import { holidayOn, type StateCode } from "@/lib/holidays";
-import { openingSpeech, openingSummary, practiceHours } from "@/lib/opening-hours";
+import { openingSpeech, openingSummary } from "@/lib/opening-hours";
 import { voiceEntitlement, type OrgBilling, type VoiceEntitlement } from "@/lib/plans";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { berlinMonth, monthBounds, recentMonths, voiceMonthReport, voiceUsage, type VoiceUsage } from "@/lib/voice-usage";
 import { assertCan } from "./authz";
 import { freeSlots } from "./appointments";
 import { loadConnection, logSync } from "./integrations";
-import { availability, bookableStaff } from "./staff";
+import { teamDayRanges } from "./portal-booking";
 import { isPrivateOnly, PRIVATE_ONLY_VOICE_NOTE } from "@/lib/features";
 
 /**
@@ -140,7 +139,7 @@ const dayList = (fromIso: string, toIso: string) => {
 };
 
 /**
- * Freie Startzeiten: Verfügbarkeit des Teams (Arbeitszeiten, Abwesenheiten, Feiertage; ohne gepflegte
+ * Freie Startzeiten: Verfügbarkeit des Teams (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage; ohne gepflegte
  * Arbeitszeiten die Öffnungszeiten der Praxis je Wochentag) und – wie bei der Online-Buchung – praxisweit belegte Zeiten.
  */
 export async function findVoiceSlots(
@@ -148,15 +147,8 @@ export async function findVoiceSlots(
   o: Pick<OrgRow, "state" | "settings">,
   input: { fromIso: string; toIso: string; durationMin: number; limit: number; earliest: Date; perDay?: number },
 ): Promise<Date[]> {
-  const staff = await bookableStaff(org);
-  const opening = practiceHours(o.settings);
-  const days: { dateIso: string; ranges: TimeRange[] }[] = [];
-  for (const d of dayList(input.fromIso, input.toIso)) {
-    const ranges = staff.length
-      ? mergeRanges((await Promise.all(staff.map((s) => availability(org, s.id, d)))).flatMap((a) => a.ranges))
-      : computeAvailability({ dateIso: d, hours: [], absences: [], holiday: holidayOn(d, o.state as StateCode), opening }).ranges;
-    if (ranges.length) days.push({ dateIso: d, ranges });
-  }
+  // gleiche Team-Fenster wie Online-/Portal-Buchung (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage) in wenigen Abfragen
+  const days = await teamDayRanges({ id: org, state: o.state, settings: o.settings }, dayList(input.fromIso, input.toIso));
   if (!days.length) return [];
   const from = berlinToUtc(days[0].dateIso, "00:00");
   const to = new Date(berlinToUtc(days[days.length - 1].dateIso, "00:00").getTime() + 26 * 3600_000);

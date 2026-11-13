@@ -9,6 +9,7 @@ import { dotStyle, colorVar, type TherapistColor } from "@/lib/therapist-colors"
 import { dragLock } from "@/lib/calendar-dnd";
 import type { listAppointments } from "@/server/appointments";
 import type { calendarBoard } from "@/server/calendar-board";
+import { BLOCK_HATCH, BlockOverlays, MonthBlockHints } from "./calendar-blocks-view";
 import { DndSurface } from "./calendar-dnd";
 
 type Row = Awaited<ReturnType<typeof listAppointments>>[number];
@@ -135,7 +136,7 @@ export function FullCalendar(props: FullCalendarProps) {
       ) : null}
       {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} />}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin</span> : null}
+        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin oder Sperrzeit</span> : null}
         {props.canMove && props.view !== "monat" ? <span>Termin ziehen = verschieben (Touch: lange drücken), unteren Rand ziehen = Dauer ändern</span> : null}
         {props.canMove && props.view === "monat" ? <span>Termin auf einen anderen Tag ziehen = verschieben (Uhrzeit bleibt; Touch: lange drücken)</span> : null}
         {props.board.team.length > 1 ? (
@@ -150,6 +151,7 @@ export function FullCalendar(props: FullCalendarProps) {
         ) : null}
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border" style={HATCH} aria-hidden /> belegt/abwesend – nicht verfügbar</span>
         {props.options.workHours ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border bg-surface-2" aria-hidden /> außerhalb der Arbeitszeit</span> : null}
+        {props.options.blocks ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-dashed border-border-strong bg-surface-2" style={BLOCK_HATCH} aria-hidden /> Sperrzeit (Pause, Schulung …) – nicht verfügbar</span> : null}
         {props.options.schoolHolidays ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-sm bg-info-soft-text/60" aria-hidden /> Schulferien</span> : null}
         {props.options.cancelled ? <span className="inline-flex items-center gap-1.5"><span className="line-through">abgesagt</span> = abgesagter Termin</span> : null}
         {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</span> : null}
@@ -175,8 +177,9 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
   let columns: Column[];
   const { holiday: dayHoliday, school: daySchool } = view === "tag" ? dayLabels(day, state, options) : { holiday: null, school: null };
   // Schattierung: Arbeitszeiten laut Option; Feiertag (Praxis geschlossen) immer ganztägig – das ist Verfügbarkeit, keine Anzeige-Option
-  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0] }) =>
-    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.ranges, 0, 24 * 60) : [];
+  // Arbeitszeit ohne Abzug der Sperrzeiten (hoursRanges): Pausen sind keine „außerhalb der Arbeitszeit“, sie zeichnet BlockOverlays
+  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0]; hoursRanges?: Parameters<typeof outsideRanges>[0] }) =>
+    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.hoursRanges ?? av.ranges, 0, 24 * 60) : [];
   const holidayNote = (iso: string) => {
     const h = holidayOn(iso, state);
     return h ? `Feiertag (${h}) – Praxis geschlossen` : null;
@@ -369,6 +372,8 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
                     );
                   })
                 )}
+                {/* Sperrzeiten (Pause, Schulung …) */}
+                {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
                   <Block key={b.row.a.id} b={b} rangeStart={range.startMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} />
@@ -532,6 +537,7 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options,
                   </div>
                   {holiday ? <span className="truncate text-[10px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
                   {school ? <span className="truncate text-[10px] text-info-soft-text" title={`Schulferien: ${school}`}>{school}</span> : null}
+                  {options.blocks ? <MonthBlockHints board={board} dateIso={iso} dayHref={calHref({ ansicht: "tag", datum: iso })} /> : null}
                   {list.slice(0, 3).map((r) => {
                     const mv = moveAttrs(r, canMove, billed);
                     const c = colorOf(board, r.a.therapistId);

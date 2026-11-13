@@ -33,6 +33,7 @@ export default async function InvoicesPage(props: PageProps<"/rechnungen">) {
             {auth.can("invoices.write") ? (
               <>
                 <LinkButton href="/rechnungen/sammelrechnungen" variant="secondary">Sammelrechnungen zum Jahresende</LinkButton>
+                <LinkButton href="/rechnungen/anzahlung" variant="secondary">Anzahlung ohne Termin</LinkButton>
                 <LinkButton href="/rechnungen/neu"><Plus size={18} aria-hidden /> Neue Rechnung</LinkButton>
               </>
             ) : null}

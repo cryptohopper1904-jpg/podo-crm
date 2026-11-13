@@ -105,7 +105,10 @@ test("Wochenansicht: Termin per Zeiger auf Mittwoch 11:00 ziehen, dann Rückgän
   await expect.poll(startsAt).toBe("2031-06-04T09:00:00.000Z");
   await expect(page).toHaveURL(/datum=2031-06-02/); // kein Öffnen des Termins nach dem Ziehen
 
-  await page.locator("[data-dnd-toast]").getByRole("button", { name: "Rückgängig" }).click();
+  // per Tastatur (Fokus hält den Hinweis an) – der folgende Hinweis muss trotzdem wieder ausblenden
+  await page.locator("[data-dnd-toast]").getByRole("button", { name: "Rückgängig" }).focus();
+  await page.keyboard.press("Enter");
   await expect(page.locator("[data-dnd-toast]")).toContainText("Zurückgesetzt");
   await expect.poll(startsAt).toBe("2031-06-03T08:00:00.000Z");
+  await expect(page.locator("[data-dnd-toast]")).toBeHidden({ timeout: 15_000 });
 });

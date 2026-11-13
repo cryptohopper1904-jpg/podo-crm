@@ -52,8 +52,14 @@ export function assignTherapistColors<T extends { id: string; color: string | nu
 }
 
 /** Reihenfolge für die automatische Farbvergabe: Eintritt in die Praxis (stabil – neue Personen verschieben nichts). */
-export function byJoined<T extends { id: string; joinedAt: Date }>(team: readonly T[]): T[] {
-  return [...team].sort((a, b) => a.joinedAt.getTime() - b.joinedAt.getTime() || a.id.localeCompare(b.id));
+export function byJoined<T extends { id: string; joinedAt: Date; joinedKey?: string }>(team: readonly T[]): T[] {
+  // feste Gesamtordnung unabhängig von der Eingabereihenfolge: Eintritt (µs, sonst ms), dann ID –
+  // so ist die automatische Farbe in Kalender, Liste und Einstellungen gleich und springt nicht zwischen Aufrufen
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+  return [...team].sort((a, b) => {
+    const byTime = a.joinedKey !== undefined && b.joinedKey !== undefined ? cmp(a.joinedKey, b.joinedKey) : a.joinedAt.getTime() - b.joinedAt.getTime();
+    return byTime || cmp(a.id, b.id);
+  });
 }
 
 /** Inline-Stile (nur CSS-Variablen – Hell/Dunkel schaltet globals.css um) */

@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, PageHeader, Select } from "@/components/ui"
 import { requireAuth } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
+import { depositPreselected } from "@/lib/deposit-rules";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
 import { parseYear } from "@/lib/year-end";
 import { billingFromSource, patientYearSuggestion } from "@/server/appointment-billing";
@@ -46,6 +47,10 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   // offene Anzahlungen zum Termin (bezahlt, noch nicht angerechnet): werden bei einer Rechnung angerechnet
   const openDeposits = (source?.documents ?? []).filter((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId);
   const homes = source || yearSug ? [] : await careHomes(auth);
+  // Sammelrechnung: angerechnet (vorausgewählt) werden nur Anzahlungen mit erbrachter Leistung (src/lib/deposit-rules.ts)
+  // (gleiche Vorauswahl-Logik wie im Formular: depositPreselected mit den Terminen/Behandlungen der Vorlage)
+  const sugRefs = new Set((yearSug?.lines ?? []).flatMap((l) => [l.appointmentId, l.treatmentRecordId]).filter((x): x is string => !!x));
+  const dueDeposits = (yearSug?.deposits ?? []).filter((d) => depositPreselected("collective", d, { today: berlinDateIso(), receiptsYear: year, presetRefs: sugRefs }));
   const travel = patient ? await travelSuggestions(auth, patient) : null;
 
   let preset: InvoicePreset | undefined;
@@ -129,8 +134,11 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
               <p className="text-muted">
                 {yearSug.items} noch nicht abgerechnete Behandlung(en) als Positionen vorgeschlagen
                 {yearSug.skipped ? `, ${yearSug.skipped} bereits abgerechnet (übersprungen)` : ""}.
-                {yearSug.deposits.length
-                  ? ` ${yearSug.deposits.length} Anzahlung(en) über ${money(yearSug.deposits.reduce((s, d) => s + d.totalCents, 0))} werden angerechnet.`
+                {dueDeposits.length
+                  ? ` ${dueDeposits.length} Anzahlung(en) über ${money(dueDeposits.reduce((s, d) => s + d.totalCents, 0))} werden angerechnet.`
+                  : ""}
+                {yearSug.deposits.length > dueDeposits.length
+                  ? ` ${yearSug.deposits.length - dueDeposits.length} weitere Anzahlung(en) (künftiger, abgesagter oder kein Termin bzw. anderes Jahr) sind nicht vorausgewählt.`
                   : ""}
                 {yearSug.receipts.length
                   ? ` ${yearSug.receipts.length} bezahlte Quittung(en) über ${money(yearSug.receipts.reduce((s, d) => s + d.totalCents, 0))} werden mit ihren Leistungen übernommen und als „bereits bezahlt“ angerechnet.`

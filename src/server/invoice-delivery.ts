@@ -9,7 +9,7 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
-import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
+import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, showsDueDate } from "@/lib/invoice-view";
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
@@ -61,7 +61,7 @@ export function pdfResponseHeaders(filename: string, disposition: "inline" | "at
 export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organization"> & { recipientName?: string | null }) {
   const inv = b.invoice;
   const o = b.organization;
-  const label = inv.kind === "credit_note" ? "Stornorechnung" : INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  const label = inv.kind === "credit_note" ? "Stornorechnung" : INVOICE_DOC_LABEL[inv.kind] ?? "Rechnung";
   const open = inv.totalCents - inv.paidCents;
   const lines = [
     "Guten Tag,",

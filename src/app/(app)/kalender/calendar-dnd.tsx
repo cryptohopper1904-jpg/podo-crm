@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, useTransition, type Re
 import { Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { berlinParts } from "@/lib/calendar-grid";
-import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration } from "@/lib/calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, resizeOnDay } from "@/lib/calendar-dnd";
 import { moveAppointmentAction, type MoveResult } from "./actions";
 
 /**
@@ -82,8 +82,14 @@ export function DndSurface({
   const [announce, setAnnounce] = useState("");
   /** Speichern läuft (Doppelklick-Schutz für Dialog/Rückgängig) */
   const [saving, setSaving] = useState(false);
-  /** Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt */
-  const [toastHold, setToastHold] = useState(false);
+  /**
+   * Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt – je an den Hinweis (key) gebunden: ein neuer
+   * Hinweis (z. B. nach „Rückgängig“ per Tastatur, Button ohne blur deaktiviert) ist nicht per Fokus gehalten;
+   * die Maus hält ihn wieder, sobald sie sich darüber bewegt (pointermove).
+   */
+  const [hoverKey, setHoverKey] = useState<number | null>(null);
+  const [focusKey, setFocusKey] = useState<number | null>(null);
+  const held = toast !== null && (hoverKey === toast.key || focusKey === toast.key);
   const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -149,10 +155,10 @@ export function DndSurface({
 
   // Hinweis nach 10 s ausblenden (Fehler bleiben ebenso lange stehen)
   useEffect(() => {
-    if (!toast || toastHold) return;
+    if (!toast || held) return;
     const t = window.setTimeout(() => setToast((cur) => (cur?.key === toast.key ? null : cur)), TOAST_MS);
     return () => window.clearTimeout(t);
-  }, [toast, toastHold]);
+  }, [toast, held]);
 
   // ───── Zeiger ─────
   useEffect(() => {
@@ -197,8 +203,10 @@ export function DndSurface({
         const p = berlinParts(s.startsAt);
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
-        dur = resizeDuration({ offsetPx, pxPerMin, rangeStart, startMin });
-        realDur = realDuration(date, startMin, startMin + dur); // am Tag der Zeitumstellung echte Minuten
+        // am Tag der Zeitumstellung echte Minuten speichern (und auf 8 h begrenzen)
+        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, startsAt: s.startsAt });
+        dur = sized.localMin;
+        realDur = sized.realMin;
       } else {
         dur = durationMin;
         startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur });
@@ -456,10 +464,11 @@ export function DndSurface({
             toast.error ? "border-accent bg-accent-soft text-accent-soft-text" : "border-border bg-surface text-text"
           }`}
           data-dnd-toast
-          onPointerEnter={() => setToastHold(true)}
-          onPointerLeave={() => setToastHold(false)}
-          onFocus={() => setToastHold(true)}
-          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setToastHold(false)}
+          onPointerEnter={() => setHoverKey(toast.key)}
+          onPointerMove={() => hoverKey !== toast.key && setHoverKey(toast.key)}
+          onPointerLeave={() => setHoverKey(null)}
+          onFocus={() => setFocusKey(toast.key)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setFocusKey(null)}
         >
           <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.undo ? (

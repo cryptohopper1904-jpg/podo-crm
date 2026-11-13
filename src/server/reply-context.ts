@@ -2,16 +2,18 @@ import "server-only";
 import { and, asc, eq, gt, gte, lt, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { appointments, organizations } from "@/db/schema";
-import { isoWeekday } from "@/lib/availability";
+import { isoWeekday, subtractRanges } from "@/lib/availability";
+import { blocksFor } from "@/lib/calendar-blocks";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { hoursOnWeekday, practiceHours } from "@/lib/opening-hours";
 import { berlinDateIso, berlinToUtc, dateTimeDe, weekdayLong, timeDe } from "@/lib/format";
 import { addDaysIso } from "@/lib/calendar-grid";
 import { freeSlots } from "./appointments";
+import { loadBlockOccurrences } from "./calendar-blocks";
 
 /**
  * Fakten für KI-Antwortvorschläge: freie Termine der nächsten Öffnungstage (Öffnungszeiten der Praxis je
- * Wochentag, ohne Feiertage) und der nächste Termin der Person.
+ * Wochentag, ohne Feiertage und ohne Sperrzeiten der ganzen Praxis) und der nächste Termin der Person.
  * Bewusst ohne medizinische Inhalte.
  */
 export async function replyFacts(organizationId: string, patientId: string | null, opts: { days?: number; durationMin?: number; maxSlots?: number } = {}) {
@@ -26,9 +28,11 @@ export async function replyFacts(organizationId: string, patientId: string | nul
     // Kalendertage zählen statt 24-h-Schritte (Zeitumstellung: Tage mit 23 bzw. 25 Stunden)
     const now = new Date();
     const today = berlinDateIso(now);
+    // Sperrzeiten der ganzen Praxis (Wartung, Reinigung, Schulung …) im Suchzeitraum einmal laden (Kalendertage, keine 24-h-Arithmetik)
+    const praxisBlocks = await loadBlockOccurrences(tx, organizationId, [], addDaysIso(today, 1), addDaysIso(today, 14));
     for (let i = 1, checked = 0; checked < (opts.days ?? 5) && i < 14; i++) {
       const day = addDaysIso(today, i);
-      const ranges = hoursOnWeekday(week, isoWeekday(day));
+      const ranges = subtractRanges(hoursOnWeekday(week, isoWeekday(day)), blocksFor(praxisBlocks, null, day));
       if (!ranges.length || holidayOn(day, state)) continue;
       checked++;
       const from = berlinToUtc(day, "00:00");
