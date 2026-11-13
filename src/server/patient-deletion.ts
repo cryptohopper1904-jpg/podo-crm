@@ -82,7 +82,8 @@ export async function erasePatientContact(auth: AuthContext, patientId: string):
         preferredChannel: "none",
         visitIntervalWeeks: null,
         notes: null,
-        extra: {},
+        // Zusatzangaben löschen – nur die Markierung „verstorben“ bleibt erhalten (sonst bekäme die Akte wieder Erinnerungen o. Ä.)
+        extra: sql`case when ${patients.extra} ? 'deceased' then jsonb_build_object('deceased', ${patients.extra} -> 'deceased') else '{}'::jsonb end`,
         archivedAt: sql`coalesce(${patients.archivedAt}, now())`,
         contactErasedAt: new Date(),
       })

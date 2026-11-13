@@ -39,4 +39,10 @@ describe("Markdown (Rechtstexte)", () => {
     const blocks = parseMarkdown("## Löschung\n\n## Löschung");
     expect(blocks.map((b) => (b.type === "heading" ? b.id : ""))).toEqual(["loeschung", "loeschung-2"]);
   });
+
+  it("entfernt HTML-Kommentare (interne TODOs), auch mehrzeilig", () => {
+    const blocks = parseMarkdown("Name\n<!-- TODO: Telefon ergänzen -->\n\n<!--\nTODO: USt-IdNr.\n-->\nE-Mail");
+    expect(JSON.stringify(blocks)).not.toContain("TODO");
+    expect(blocks).toHaveLength(2);
+  });
 });

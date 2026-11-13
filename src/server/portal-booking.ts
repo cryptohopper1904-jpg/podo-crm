@@ -23,6 +23,7 @@ import {
 } from "@/lib/portal-booking";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { staffMembers } from "./staff";
+import { isDeceased } from "@/lib/patient-deceased";
 
 /** Drosselung je Person (zusätzlich zur IP-Drosselung des Portals): Buchen/Verschieben. */
 export const portalBookingLimiter = createRateLimiter({ windowMs: 60 * 60_000, max: 6 });
@@ -266,8 +267,8 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
 
   const res = await withOrg(org, async (tx): Promise<PortalBookResult> => {
     await lockBooking(tx, org);
-    const [p] = await tx.select({ archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
-    if (!p || p.archivedAt) return { ok: false, error: "Buchung nicht möglich. Bitte wenden Sie sich an die Praxis." };
+    const [p] = await tx.select({ archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
+    if (!p || p.archivedAt || isDeceased(p.extra)) return { ok: false, error: "Buchung nicht möglich. Bitte wenden Sie sich an die Praxis." };
     const open = await tx
       .select({ id: appointments.id })
       .from(appointments)
@@ -344,6 +345,8 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
 
   const res = await withOrg(org, async (tx): Promise<PortalRescheduleResult> => {
     await lockBooking(tx, org);
+    const [p] = await tx.select({ archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
+    if (!p || p.archivedAt || isDeceased(p.extra)) return { ok: false, error: "Verschieben nicht möglich. Bitte wenden Sie sich an die Praxis." };
     const [a] = await tx
       .select()
       .from(appointments)

@@ -9,6 +9,7 @@ import { describeError } from "@/integrations/test-connection";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { patientIsDeceased } from "./patient-deceased";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
 import { eventKey, parseIcs, type IcsWarnings, type ParsedIcsEvent } from "@/lib/ics-parse";
 import { mapPool, withTimeout } from "@/lib/pool";
@@ -449,10 +450,11 @@ export async function deleteCalendarFeed(auth: AuthContext, feedId: string, now 
 }
 
 /** Manuelle Zuordnung eines importierten Termins zu einer Patient:in (nie automatisch). */
-export async function assignFeedAppointmentPatient(auth: AuthContext, appointmentId: string, patientId: string | null) {
+/** true = zugeordnet, false = Termin/Person nicht gefunden, "deceased" = künftiger Termin, Person als verstorben markiert. */
+export async function assignFeedAppointmentPatient(auth: AuthContext, appointmentId: string, patientId: string | null): Promise<boolean | "deceased"> {
   assertCan(auth, "appointments.write");
   const org = auth.organization.id;
-  const ok = await withOrg(org, async (tx) => {
+  const ok = await withOrg(org, async (tx): Promise<boolean | "deceased"> => {
     const [m] = await tx
       .select({ id: calendarFeedEvents.id })
       .from(calendarFeedEvents)
@@ -461,12 +463,15 @@ export async function assignFeedAppointmentPatient(auth: AuthContext, appointmen
     if (patientId) {
       const p = await tx.execute(sql`select 1 from patients where organization_id = ${org} and id = ${patientId} and archived_at is null`);
       if (!p.rows.length) return false;
+      // verstorben: keinen künftigen Termin mehr zuordnen (vergangene schon – z. B. für die Abrechnung)
+      const future = await tx.execute(sql`select 1 from appointments where organization_id = ${org} and id = ${appointmentId} and starts_at > now()`);
+      if (future.rows.length && (await patientIsDeceased(tx, org, patientId, { lock: true }))) return "deceased";
     }
     // patient_id ist nicht Teil des Abgleich-Hashes: die Zuordnung bleibt bei späteren Kalender-Änderungen erhalten
     await tx.update(appointments).set({ patientId, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId)));
     return true;
   });
-  if (ok) await audit({ organizationId: org, userId: auth.user.id, action: "calendar_feed.assign_patient", entity: "appointment", entityId: appointmentId, meta: { assigned: !!patientId } });
+  if (ok === true) await audit({ organizationId: org, userId: auth.user.id, action: "calendar_feed.assign_patient", entity: "appointment", entityId: appointmentId, meta: { assigned: !!patientId } });
   return ok;
 }
 
