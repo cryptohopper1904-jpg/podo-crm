@@ -131,7 +131,7 @@ export async function citiesByZip(zip: string, now = Date.now()): Promise<string
 }
 
 /** Koordinate zu einem freien Ortstext (z. B. „14467 Potsdam“) – für die Ortsgewichtung. */
-async function geocodePlace(text: string, now: number): Promise<Bias | null> {
+export async function geocodePlace(text: string, now = Date.now()): Promise<Bias | null> {
   const url = buildPhotonUrl(photonBaseUrl(), { q: text, layers: ["house", "street", "city", "district", "locality"], limit: 1 });
   const json = await cachedPhoton("geo", url, now);
   return json === null ? null : firstCoordinate(json);

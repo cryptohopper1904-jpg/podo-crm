@@ -1500,6 +1500,12 @@ export const salesSuppressions = pgTable("sales_suppressions", {
 
 export type SalesTemplate = { subject: string; body: string };
 
+/**
+ * Nächtliche Praxissuche (OpenStreetMap, Ring um den Startort): Einstellungen + Fortschritt in einer jsonb-Spalte.
+ * Struktur und Prüfung in src/lib/vertrieb/lead-search.ts (normalizeLeadSearch). Enthält nur Einstellungen, Zähler und Lead-IDs (Anreicherung), keine Lead-Inhalte.
+ */
+export type SalesLeadSearch = Record<string, unknown>;
+
 /** Einstellungen des Vertriebs (genau eine Zeile, id = 1): Absender, Impressum, Vorlagen, Abstände. */
 export const salesSettings = pgTable("sales_settings", {
   id: smallint("id").primaryKey().default(1),
@@ -1510,6 +1516,7 @@ export const salesSettings = pgTable("sales_settings", {
   delay2Days: smallint("delay2_days").notNull().default(5),
   delay3Days: smallint("delay3_days").notNull().default(10),
   templates: jsonb("templates").$type<SalesTemplate[]>(),
+  leadSearch: jsonb("lead_search").$type<SalesLeadSearch>(),
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: updatedAt(),
 });
