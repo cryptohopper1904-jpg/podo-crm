@@ -32,7 +32,7 @@ export async function createPortalLinkAction(_: PortalLinkState, form: FormData)
     const r = await createPortalLink(auth, String(form.get("patientId") ?? ""));
     return { url: r.url, expires: dateDe(r.expiresAt) };
   } catch (e) {
-    return { error: e instanceof Error && e.message === "Person nicht gefunden." ? e.message : "Link konnte nicht erzeugt werden." };
+    return { error: e instanceof Error && (e.message === "Person nicht gefunden." || e.message === "Patient:in ist als verstorben markiert.") ? e.message : "Link konnte nicht erzeugt werden." };
   }
 }
 

@@ -231,5 +231,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await appts.getAppointment(auth, doc))!.lock?.reason).toBe("doctolib");
     // unbekannte Behandler:in
     expect(await appts.rescheduleAppointment(auth, a, { startsAt: at, durationMin: 30, therapistId: "00000000-0000-4000-8000-000000000000", allowConflict: false })).toMatchObject({ ok: false });
+    // Empfang/Azubi haben keinen eigenen Kalender (und belegen keinen Platz) → nicht als Behandler:in wählbar
+    for (const role of ["reception", "trainee"]) {
+      const staff = await f.user();
+      await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,$3)", [org, staff, role]);
+      expect(await appts.rescheduleAppointment(auth, a, { startsAt: at, durationMin: 30, therapistId: staff, allowConflict: false })).toMatchObject({ ok: false, error: expect.stringMatching(/nicht gefunden/) });
+      expect((await appts.therapists(auth)).map((t) => t.id)).not.toContain(staff);
+      // Arbeitszeiten von Empfang/Azubis ergeben keine buchbaren Zeiten (Online-Buchung, KI-Telefon)
+      expect((await (await import("./staff")).bookableStaff(org)).map((t) => t.id)).not.toContain(staff);
+    }
+    expect((await appts.therapists(auth)).map((t) => t.id)).toContain(user);
+    expect((await (await import("./staff")).bookableStaff(org)).map((t) => t.id)).toContain(user);
   });
 });

@@ -12,6 +12,9 @@ import { CONSENT_LABELS } from "@/lib/consents";
 import { currentConsents, getPatient } from "@/server/patients";
 import { recordConsentAction } from "../actions";
 import { WaitlistCard } from "./waitlist-card";
+import { DeceasedCard } from "./deceased-card";
+import { deceasedStatus } from "@/server/patient-deceased";
+import { DECEASED_LABEL } from "@/lib/patient-deceased";
 
 export const metadata = { title: "Patientenakte" };
 
@@ -31,6 +34,8 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
   const phone = p.phoneMobile ?? p.phoneLandline;
   const waNumber = p.phoneMobile?.replace(/\D/g, "").replace(/^0/, "49");
   const waAllowed = consents.get("whatsapp")?.granted;
+  const deceased = data.deceased;
+  const deceasedCard = auth.can("patients.write") ? await deceasedStatus(auth, p.id) : null;
 
   type Item = { at: Date; kind: string; title: string; detail?: string; href?: string };
   const timeline: Item[] = [
@@ -49,7 +54,11 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
           </p>
           <h1 className="font-display text-3xl font-semibold tracking-tight">{fullName(p)}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Badge tone="primary">{STATUS_LABEL[data.status]}</Badge>
+            {deceased ? (
+              <Badge>{DECEASED_LABEL}{deceased.date ? ` am ${dateDe(deceased.date)}` : ""}</Badge>
+            ) : (
+              <Badge tone="primary">{STATUS_LABEL[data.status]}</Badge>
+            )}
             {p.homeVisit ? <Badge tone="info">Hausbesuch</Badge> : null}
             <RiskBadges flags={p.riskFlags} />
           </div>
@@ -65,7 +74,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
           {auth.can("medical.read") && feature(auth.organization, "verordnungen") ? (
             <LinkButton href={`/kunden/${p.id}/verordnungen`} variant="secondary"><ClipboardList size={18} aria-hidden /> Verordnungen</LinkButton>
           ) : null}
-          {auth.can("appointments.write") ? (
+          {auth.can("appointments.write") && !deceased ? (
             <LinkButton href={`/kalender/neu?patient=${p.id}`} variant="secondary"><CalendarPlus size={18} aria-hidden /> Termin</LinkButton>
           ) : null}
           {auth.can("invoices.write") ? (
@@ -190,16 +199,18 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             <p className="mt-3 text-xs text-muted">Die Behandlungsdoku selbst braucht keine Einwilligung (Art. 9 Abs. 2 lit. h DSGVO). Jede Änderung wird mit Zeitpunkt protokolliert.</p>
           </Card>
 
-          {auth.can("appointments.write") ? <WaitlistCard auth={auth} patientId={p.id} /> : null}
+          {auth.can("appointments.write") && !deceased ? <WaitlistCard auth={auth} patientId={p.id} /> : null}
 
           <Card>
             <CardTitle>Datenschutz</CardTitle>
             <div className="flex flex-col gap-2">
               <LinkButton variant="secondary" href={`/api/patients/${p.id}/export`}><Download size={18} aria-hidden /> Auskunft (Art. 15) als JSON</LinkButton>
               <LinkButton variant="secondary" href={`/kunden/${p.id}/akte-drucken`}>Akte drucken / PDF</LinkButton>
-              {auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
+              {auth.can("patients.write") && !deceased ? <PortalLinkButton patientId={p.id} /> : null}
             </div>
           </Card>
+
+          {deceasedCard ? <DeceasedCard id={p.id} info={deceasedCard.info} futureOwn={deceasedCard.futureOwn} futureFeed={deceasedCard.futureFeed} /> : null}
         </div>
       </div>
     </div>

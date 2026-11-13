@@ -2,6 +2,7 @@
 
 import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { and, eq, max, sql } from "drizzle-orm";
 import { withOrg } from "@/db";
@@ -10,6 +11,8 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { deletePatient, erasePatientContact, PatientDeletionError } from "@/server/patient-deletion";
 import { findDuplicates, patientInput, toPatientValues } from "@/server/patients";
+import { markPatientDeceased, undoPatientDeceased } from "@/server/patient-deceased";
+import { offerFreedSlotSafe } from "@/server/waitlist";
 
 export type PatientFormState = { error?: string; duplicates?: { id: string; number: number; name: string }[] } | undefined;
 
@@ -124,4 +127,37 @@ export async function erasePatientContactAction(_: DeletionState, form: FormData
     if (e instanceof PatientDeletionError) return { error: e.message };
     throw e;
   }
+}
+
+export type DeceasedState = { error?: string; ok?: string } | undefined;
+
+/** „Patient:in verstorben“ markieren – optional mit Sterbedatum; künftige Termine nur nach Bestätigung absagen. */
+export async function markDeceasedAction(_: DeceasedState, form: FormData): Promise<DeceasedState> {
+  const auth = await requireAuth("patients.write");
+  const id = String(form.get("id") ?? "");
+  if (form.get("confirm") !== "on") return { error: "Bitte bestätigen." };
+  const res = await markPatientDeceased(auth, id, { date: String(form.get("deathDate") ?? ""), cancelFuture: form.get("cancelFuture") === "on" });
+  if (!res.ok) return { error: res.error };
+  // frei gewordene Termine wie bei jeder Absage der Warteliste anbieten
+  for (const appointmentId of res.cancelled) after(() => offerFreedSlotSafe(auth.organization.id, appointmentId));
+  revalidatePath(`/kunden/${id}`);
+  revalidatePath("/kunden");
+  revalidatePath("/kalender");
+  revalidatePath("/heute");
+  const parts = ["Als verstorben markiert."];
+  if (res.cancelled.length) parts.push(`${res.cancelled.length} Termin(e) abgesagt.`);
+  if (res.feedRemaining) parts.push(`${res.feedRemaining} Termin(e) aus dem Kalender-Abo bitte in der Quelle (z. B. Doctolib) absagen.`);
+  return { ok: parts.join(" ") };
+}
+
+/** Markierung zurücknehmen (Fehleingabe) – protokolliert. */
+export async function undoDeceasedAction(_: DeceasedState, form: FormData): Promise<DeceasedState> {
+  const auth = await requireAuth("patients.write");
+  const id = String(form.get("id") ?? "");
+  if (form.get("confirm") !== "on") return { error: "Bitte bestätigen." };
+  const res = await undoPatientDeceased(auth, id, String(form.get("reason") ?? ""));
+  if (!res.ok) return { error: res.error };
+  revalidatePath(`/kunden/${id}`);
+  revalidatePath("/kunden");
+  return { ok: "Markierung zurückgenommen." };
 }
