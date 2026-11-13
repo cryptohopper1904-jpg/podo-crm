@@ -11,7 +11,7 @@ import { serviceDateDefaults } from "@/lib/invoice-view";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
-import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, RECEIPT_COLLECTIVE_HINT, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { euro, isEmptyLine, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
 import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
@@ -206,7 +206,7 @@ export function InvoiceForm({
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
   const patientDeposits = depositsAllowed && patientId ? openDeposits.filter((d) => d.patientId === patientId) : [];
-  /** Sammelrechnung: vorausgewählt sind die offenen Quittungen (AZ und Q) aus dem Jahr der Sammelrechnung */
+  /** Sammelrechnung: vorausgewählt sind die offenen Quittungen (Q) und Anzahlungen (AZ) aus dem Jahr der Sammelrechnung */
   const inYear = (iso: string | null) => !receiptsYear || !iso || iso.startsWith(String(receiptsYear));
   /** Termine/Behandlungen der Vorlage: offene Anzahlungen dazu sind bei einer Rechnung vorausgewählt (nie doppelt kassieren) */
   const presetRefs = new Set((preset?.lines ?? []).flatMap((l) => [l.appointmentId, l.treatmentRecordId]).filter((x): x is string => !!x));
@@ -231,7 +231,7 @@ export function InvoiceForm({
   const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" ? "Leistung von" : "Leistungsdatum";
   const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0) + creditedReceiptCents;
   const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
-  /** eine Auswahlliste für beide Quittungsarten (Sammelrechnung), nach Datum */
+  /** eine Auswahlliste für Quittungen und Anzahlungen (Sammelrechnung), nach Datum */
   const partialItems = [
     ...patientDeposits.map((d) => ({ id: d.id, kind: "deposit" as const, number: d.number, issuedAt: d.issuedAt, totalCents: d.totalCents, text: depositLineText(d), warn: !d.appointmentId && !d.treatmentRecordId, on: depositOn(d.id) })),
     ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: false, on: receiptOn(r.id) })),
@@ -550,7 +550,7 @@ export function InvoiceForm({
         <Card>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-lg font-semibold">
-              Quittungen (Anzahlungen) von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({patientDeposits.length})
+              Anzahlungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({patientDeposits.length})
             </h2>
             <div className="flex gap-3 text-sm font-semibold">
               <button type="button" className="text-primary hover:underline" onClick={() => selectAllDeposits(true)}>Alle wählen</button>
@@ -558,7 +558,7 @@ export function InvoiceForm({
             </div>
           </div>
           <p className="mb-3 text-sm text-muted">
-            Gewählte Quittungen kommen mit ihrer Leistung als Position auf die Rechnung (Betrag = gezahlter Betrag, bitte prüfen); der bereits bezahlte Betrag wird angerechnet.
+            Gewählte Anzahlungen kommen mit ihrer Leistung als Position auf die Rechnung (Betrag = gezahlter Betrag, bitte prüfen); der bereits bezahlte Betrag wird angerechnet.
           </p>
           <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
             {patientDeposits.map((d) => (
@@ -566,7 +566,7 @@ export function InvoiceForm({
                 <Checkbox
                   checked={depositOn(d.id)}
                   onChange={(e) => toggleDeposit(d.id, e.target.checked)}
-                  label={`${d.number ?? "Quittung"} vom ${dateDe(d.issuedAt)} · ${depositLineText(d)} · ${money(d.totalCents)}${
+                  label={`${d.number ?? "Anzahlung"} vom ${dateDe(d.issuedAt)} · ${depositLineText(d)} · ${money(d.totalCents)}${
                     d.appointmentId || d.treatmentRecordId ? "" : " – ohne Terminbezug: bitte prüfen, dass die Behandlung nicht doppelt als Position steht"
                   }`}
                 />
@@ -580,13 +580,13 @@ export function InvoiceForm({
       ) : null}
 
       {kind === "collective" && patientId && loadingReceipts && !(patientId in receiptsBy) ? (
-        <p className="text-sm text-muted" aria-live="polite">Quittungen {receiptsYear ?? ""} werden geladen …</p>
+        <p className="text-sm text-muted" aria-live="polite">Quittungen & Anzahlungen {receiptsYear ?? ""} werden geladen …</p>
       ) : null}
       {kind === "collective" && hasPartials ? (
         <Card>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-lg font-semibold">
-              Quittungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({partialItems.length})
+              Quittungen & Anzahlungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({partialItems.length})
             </h2>
             <div className="flex gap-3 text-sm font-semibold">
               <button type="button" className="text-primary hover:underline" onClick={() => selectAllPartials(true)}>Alle wählen</button>
@@ -594,9 +594,9 @@ export function InvoiceForm({
             </div>
           </div>
           <p className="mb-3 text-sm text-muted">
-            Alle bezahlten Quittungen – aus dem Kalender (AZ…) und aus Rechnungen (Q…) – werden auf der Sammelrechnung zusammengeführt: ihre Leistungen kommen als
+            Bezahlte Quittungen (Q…) und Anzahlungen (AZ…) werden auf der Sammelrechnung zusammengeführt: ihre Leistungen kommen als
             Positionen dazu, der bezahlte Betrag wird als „bereits bezahlt“ abgezogen (mit USt-Ausweis). Kein zweiter Umsatz und keine neue Kassenbuchung.
-            Vorausgewählt sind die offenen Quittungen {receiptsYear ? `aus ${receiptsYear}` : "des Jahres"}.
+            Vorausgewählt sind die offenen Quittungen und Anzahlungen {receiptsYear ? `aus ${receiptsYear}` : "des Jahres"}.
           </p>
           <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
             {partialItems.map((it) => (
@@ -604,7 +604,7 @@ export function InvoiceForm({
                 <Checkbox
                   checked={it.on}
                   onChange={(e) => (it.kind === "receipt" ? toggleReceipt(it.id, e.target.checked) : toggleDeposit(it.id, e.target.checked))}
-                  label={`${it.number ?? "Quittung"} vom ${dateDe(it.issuedAt)} · ${it.text} · ${money(it.totalCents)}${it.warn ? " – ohne Terminbezug: bitte prüfen, dass die Behandlung nicht doppelt als Position steht" : ""}`}
+                  label={`${it.number ?? (it.kind === "receipt" ? "Quittung" : "Anzahlung")} vom ${dateDe(it.issuedAt)} · ${it.text} · ${money(it.totalCents)}${it.warn ? " – ohne Terminbezug: bitte prüfen, dass die Behandlung nicht doppelt als Position steht" : ""}`}
                 />
               </li>
             ))}
@@ -851,9 +851,9 @@ export function InvoiceForm({
 
       {hasPartials ? (
         <p className="text-sm">
-          Quittungen angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
+          {kind === "collective" ? "Quittungen & Anzahlungen" : "Anzahlungen"} angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
           <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
-          {openAfterDeposits < 0 ? ` – die Quittungen übersteigen den Betrag der ${docLabel}.` : ""}
+          {openAfterDeposits < 0 ? ` – die angerechneten Beträge übersteigen den Betrag der ${docLabel}.` : ""}
         </p>
       ) : null}
 
@@ -861,9 +861,9 @@ export function InvoiceForm({
         <h2 className="mb-1 font-display text-lg font-semibold">Zahlung</h2>
         <p className="mb-4 text-sm text-muted">
           {kind === "receipt"
-            ? "Quittung: Der Betrag wird sofort vollständig bezahlt. Kann später in die Sammelrechnung übernommen werden (wird dort als „bereits bezahlt“ angerechnet)."
+            ? `Quittung: Der Betrag wird sofort vollständig bezahlt. ${RECEIPT_COLLECTIVE_HINT} Dort wird er als „bereits bezahlt“ angerechnet.`
             : kind === "collective"
-              ? "Optional – nur den noch offenen Betrag der Sammelrechnung erfassen (Quittungen sind oben bereits angerechnet). Mischzahlung möglich."
+              ? "Optional – nur den noch offenen Betrag der Sammelrechnung erfassen (Quittungen und Anzahlungen sind oben bereits angerechnet). Mischzahlung möglich."
               : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
         </p>
         <PaymentsEditor rows={payments} onChange={setPayments} openCents={Math.max(0, openAfterDeposits)} />

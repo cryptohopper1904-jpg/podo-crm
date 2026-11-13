@@ -42,7 +42,7 @@ export default async function CollectiveOverviewPage(props: PageProps<"/rechnung
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Patient:innen ohne Sammelrechnung" value={rows.length} tone={rows.length ? "accent" : "primary"} />
         <Stat label="Geschätzter Betrag" value={money(sum)} sub="Katalogpreise der Termin-Leistungen" tone="info" />
-        <Stat label="Anzahlungen" value={money(deposits)} sub="Quittungen für Sammelrechnung – werden angerechnet" tone="neutral" />
+        <Stat label="Anzahlungen" value={money(deposits)} sub="Vorauszahlungen (AZ) – werden angerechnet" tone="neutral" />
         <Stat label="Quittungen (bereits bezahlt)" value={money(receipts)} sub="werden auf der Sammelrechnung vermerkt und angerechnet" tone="neutral" />
       </div>
       {rows.length === 0 ? (
@@ -89,7 +89,7 @@ export default async function CollectiveOverviewPage(props: PageProps<"/rechnung
       )}
       <p className="mt-4 text-sm text-muted">
         Gezählt werden Behandlungen (Doku) und vergangene, nicht abgesagte Termine ohne Rechnung{isPrivateOnly(auth.organization) ? "" : " – ohne Leistungen auf Verordnung"} sowie
-        bezahlte Quittungen des Jahres, die noch auf keiner Sammelrechnung stehen (sie werden mit ihren Leistungen übernommen und als „bereits bezahlt“
+        bezahlte Quittungen des Jahres und offene Anzahlungen, die noch auf keiner Sammelrechnung stehen (sie werden mit ihren Leistungen übernommen und als „bereits bezahlt“
         angerechnet – kein zweiter Umsatz). Bewohner:innen, deren Rechnungen ans Pflegeheim gehen, laufen über die monatliche Pflegeheim-Sammelrechnung.
       </p>
     </div>

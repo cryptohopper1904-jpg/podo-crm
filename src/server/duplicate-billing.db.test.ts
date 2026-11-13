@@ -69,7 +69,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       });
     const deposit = (appointmentId: string) =>
       invoices.createDeposit(auth, { patientId: patient, appointmentId, treatmentRecordId: null, description: "Anzahlung auf die Sammelrechnung: Behandlung", amountCents: 4500, vatRate: 0, method: "cash", notes: null });
-    return { org, auth, service, patient, appointment, line, doc, deposit };
+    /** Termin erst in die Zukunft legen (Anzahlung = Vorauszahlung), dann auf den Behandlungstag verschieben */
+    const moveTo = (id: string, startsAt: string) =>
+      f.asOrg(org, (c) => c.query("update appointments set starts_at = $2::timestamptz, ends_at = $2::timestamptz + interval '45 minutes' where id = $1", [id, startsAt]));
+    return { org, auth, service, patient, appointment, line, doc, deposit, moveTo };
   }
 
   it("Termin schon quittiert: zweite Quittung/Rechnung/Anzahlung abgelehnt, mit Belegart und Nummer", async () => {
@@ -83,9 +86,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   });
 
   it("offene Anzahlung: keine zweite, Quittung/Rechnung nur mit Anrechnung", async () => {
-    const { appointment, line, doc, deposit } = await setup();
-    const a2 = await appointment(`${year}-05-12 10:00+02`);
+    const { appointment, line, doc, deposit, moveTo } = await setup();
+    const a2 = await appointment(`${year + 2}-05-12 10:00+02`);
     const az = await deposit(a2);
+    // Anzahlung vor der Behandlung; danach findet der Termin statt (Vergangenheit) – die Anzahlung bleibt anrechenbar
+    await moveTo(a2, `${year}-05-12 10:00+02`);
     await expect(deposit(a2)).rejects.toThrow(new RegExp(`bereits die Anzahlung ${az.number} – bitte anrechnen`));
     // Quittung kann keine Anzahlung anrechnen → Hinweis, zuerst anzurechnen oder zu stornieren
     await expect(doc("receipt", [line({ appointmentId: a2 })])).rejects.toThrow(new RegExp(`offene Anzahlung ${az.number}\\. Bitte zuerst auf eine Rechnung`));
@@ -99,6 +104,29 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(inv).toMatchObject({ status: "paid", depositCents: 4500 });
     // danach ist die Behandlung abgerechnet
     await expect(deposit(a2)).rejects.toThrow(new RegExp(`bereits die Rechnung ${inv.number} erstellt`));
+  });
+
+  it("Anzahlung nur vor der Behandlung: Termin heute/vergangen oder Doku-Eintrag → Quittung erstellen", async () => {
+    const { org, auth, patient, appointment, deposit } = await setup();
+    const msg = "Für erbrachte Behandlungen bitte eine Quittung erstellen.";
+    await expect(deposit(await appointment(`${year}-03-03 10:00+01`))).rejects.toThrow(msg);
+    // heute (auch später am Tag) zählt nicht als künftig
+    const todayLate = await appointment(`${today} 23:30 Europe/Berlin`);
+    await expect(deposit(todayLate)).rejects.toThrow(msg);
+    // dokumentierte Behandlung (auch ohne Termin)
+    const user = await f.user();
+    const rec = await f.asOrg(org, async (c) =>
+      (await c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash) values ($1,$2,$3,now(),'h') returning id", [org, patient, user])).rows[0].id as string,
+    );
+    await expect(
+      invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: rec, description: "Anzahlung: Behandlung", amountCents: 1000, vatRate: 0, method: "cash", notes: null }),
+    ).rejects.toThrow(msg);
+    // morgen bzw. ohne Termin (z. B. Nagelspange): erlaubt
+    const tomorrow = await appointment(new Date(Date.now() + 36 * 3600_000).toISOString());
+    await expect(deposit(tomorrow)).resolves.toMatchObject({ status: "paid" });
+    await expect(
+      invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Nagelspange", amountCents: 3000, vatRate: 0, method: "transfer", notes: null }),
+    ).resolves.toMatchObject({ status: "paid", totalCents: 3000 });
   });
 
   it("gleiche Leistung ohne Terminbezug am selben Tag: Hinweis mit Beleg, nur mit Bestätigung (protokolliert)", async () => {
@@ -127,7 +155,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect.stringMatching(/wurde bereits die (Quittung|Rechnung)/),
       expect.stringMatching(/wurde bereits die (Quittung|Rechnung)/),
     ]);
-    const a4 = await appointment(`${year}-06-09 10:00+02`);
+    const a4 = await appointment(`${year + 2}-06-09 10:00+02`);
     const deps = await Promise.allSettled([deposit(a4), deposit(a4)]);
     expect(deps.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   });

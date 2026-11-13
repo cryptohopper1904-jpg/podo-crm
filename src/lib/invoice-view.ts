@@ -4,7 +4,7 @@
  * Keine Server-Importe.
  */
 import { fullName } from "./format";
-import { INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL } from "./invoice-labels";
+import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL } from "./invoice-labels";
 
 type Org = {
   name: string;
@@ -37,7 +37,7 @@ export function invoiceRecipient(patient: Person | null, billing: Contact | null
 export const senderLine = (o: Org) => [o.legalName ?? o.name, o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
 
 export function invoiceTitle(inv: { kind: string; number: string | null }) {
-  return inv.kind === "credit_note" ? `Stornorechnung ${inv.number}` : `${INVOICE_KIND_LABEL[inv.kind]} ${inv.number}`;
+  return inv.kind === "credit_note" ? `Stornorechnung ${inv.number}` : `${INVOICE_DOC_LABEL[inv.kind]} ${inv.number}`;
 }
 
 /** Hinweiszeilen, die auf den Beleg gedruckt werden (interne Zeilen mit Präfix werden ausgelassen). */

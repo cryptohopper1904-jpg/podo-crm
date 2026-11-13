@@ -10,7 +10,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { feature } from "@/lib/features";
 import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { BRACE_ACTION_LABEL, MEDIA_PURPOSE_LABEL } from "@/lib/labels";
-import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE } from "@/lib/invoice-labels";
+import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE, RECEIPT_COLLECTIVE_HINT } from "@/lib/invoice-labels";
 import { billingFromSource } from "@/server/appointment-billing";
 import { addAddendumAction } from "../actions";
 
@@ -115,7 +115,8 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
           ) : (
             <div className="flex flex-wrap gap-2">
               <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen</LinkButton>
-              <LinkButton href={`/rechnungen/anzahlung?behandlung=${recordId}`} variant="secondary">Quittung für Sammelrechnung</LinkButton>
+              <LinkButton href={`/rechnungen/neu?behandlung=${recordId}&art=quittung`} variant="secondary">Quittung</LinkButton>
+              <p className="w-full text-xs text-muted">{RECEIPT_COLLECTIVE_HINT}</p>
             </div>
           )}
         </Card>

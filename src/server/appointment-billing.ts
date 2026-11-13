@@ -334,3 +334,24 @@ export async function collectiveOverview(auth: AuthContext, year: number): Promi
     return rows.sort((a, b) => a.name.localeCompare(b.name, "de"));
   });
 }
+
+// ───────────── Anzahlung (Vorauszahlung) ohne Termin ─────────────
+
+/**
+ * Personen zur Auswahl für eine Anzahlung ohne Termin (Vorauszahlung, z. B. Nagelspange) – nur Name und Nummer.
+ * Mit `patientId`: genau diese Person (leer, wenn unbekannt oder archiviert).
+ */
+export async function depositPatients(auth: AuthContext, patientId?: string | null) {
+  assertCan(auth, "invoices.write");
+  const org = auth.organization.id;
+  if (patientId && !z.uuid().safeParse(patientId).success) return [];
+  return withOrg(org, async (tx) => {
+    const rows = await tx
+      .select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), isNull(patients.archivedAt), patientId ? eq(patients.id, patientId) : undefined))
+      .orderBy(asc(patients.lastName), asc(patients.firstName))
+      .limit(500);
+    return rows.map((p) => ({ id: p.id, number: p.number, name: fullName(p) }));
+  });
+}

@@ -25,6 +25,7 @@ import { getAdapter } from "@/integrations/registry";
 import { fiscalRef } from "@/integrations/tse";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
+import { depositAllowed } from "@/lib/deposit-rules";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { accountingServiceDate, monthSpanTaxHint, serviceDays, serviceRange } from "@/lib/invoice-view";
 import { nextNumber } from "@/lib/numbering";
@@ -43,7 +44,7 @@ import {
   vatPortion,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 
@@ -1005,9 +1006,10 @@ export const depositInput = z.object({
 export type DepositInput = z.infer<typeof depositInput>;
 
 /**
- * Quittung über eine Anzahlung (z. B. bar beim Termin), die später auf die Sammelrechnung der Person angerechnet
- * wird. Wie jede Rechnung sofort ausgestellt (eigener Nummernkreis „AZ“), unveränderbar und voll bezahlt; Bar/Karte
- * laufen über denselben Kassen-/TSE-Weg wie jede andere Zahlung (applyPayments). Termin-/Doku-Bezug steht an der
+ * Anzahlung (Vorauszahlung vor der Behandlung, z. B. Nagelspange) – Beleg „Quittung über eine Anzahlung“, der später
+ * auf eine Rechnung bzw. die Sammelrechnung der Person angerechnet wird. Nur ohne Termin oder für künftige Termine
+ * (src/lib/deposit-rules.ts). Wie jede Rechnung sofort ausgestellt (eigener Nummernkreis „AZ“), unveränderbar und voll
+ * bezahlt; Bar/Karte laufen über denselben Kassen-/TSE-Weg wie jede andere Zahlung (applyPayments). Termin-/Doku-Bezug steht an der
  * Position (nur zur Nachvollziehbarkeit – die Leistung selbst wird erst mit der Sammelrechnung abgerechnet).
  */
 export async function createDeposit(auth: AuthContext, input: DepositInput) {
@@ -1019,9 +1021,14 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     const o = await loadOrg(tx, org);
     const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
     if (!p) throw new InvoiceError("Patient nicht gefunden.");
+    let apptDay: string | null = null;
     if (input.appointmentId) {
-      const [a] = await tx.select({ patientId: appointments.patientId }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
+      const [a] = await tx
+        .select({ patientId: appointments.patientId, startsAt: appointments.startsAt })
+        .from(appointments)
+        .where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
       if (!a || a.patientId !== input.patientId) throw new InvoiceError("Termin nicht gefunden.");
+      apptDay = berlinDateIso(a.startsAt);
     }
     if (input.treatmentRecordId) {
       const [r] = await tx.select({ patientId: treatmentRecords.patientId }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, input.treatmentRecordId)));
@@ -1033,6 +1040,9 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
         canCreditDeposits: true,
       });
     }
+    // Anzahlung nur als Vorauszahlung vor der Behandlung: nicht für dokumentierte Behandlungen und nicht für Termine
+    // von heute oder früher (dafür gibt es die Quittung). Bestehende offene Anzahlungen bleiben anrechenbar.
+    if (!depositAllowed({ appointmentDay: apptDay, today, hasRecord: !!input.treatmentRecordId })) throw new InvoiceError(DEPOSIT_PAST_ERROR);
     const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
     const line = { totalCents: input.amountCents, vatRate };
     // Tag der verknüpften Behandlung festschreiben („Anzahlung … für die Behandlung am …“)
