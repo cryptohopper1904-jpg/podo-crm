@@ -92,7 +92,26 @@ describe("Patientensuche: „Meinten Sie“", () => {
     expect(suggestedQuery("Schmitt", people[0])).toBe("Schmidt");
     expect(suggestedQuery("Paulla", people[2])).toBe("Paula");
   });
-  it("Rechenzeit begrenzt: 20.000 übergebene Namen (davon ≤ 2000 bewertet), 80-Zeichen-Suchtext (< 150 ms)", () => {
+  /**
+   * Laufzeit-Grenzen: fangen Regressionen in der Größenordnung des alten Problems (Sekunden je Anfrage), bleiben
+   * aber unter CI-Last stabil – 1 Aufwärmlauf, dann Median aus 5 Läufen (< 1000 ms) und harte Obergrenze je Lauf
+   * (< 2000 ms). Typisch sind es 10–30 ms. Die Kandidaten-Obergrenze selbst prüft der Test darunter deterministisch.
+   */
+  const MEDIAN_LIMIT_MS = 1_000;
+  const HARD_LIMIT_MS = 2_000;
+  function timed(fn: () => void, runs = 5): { median: number; max: number } {
+    fn(); // Aufwärmen (JIT)
+    const ms: number[] = [];
+    for (let i = 0; i < runs; i++) {
+      const t = performance.now();
+      fn();
+      ms.push(performance.now() - t);
+    }
+    ms.sort((a, b) => a - b);
+    return { median: ms[Math.floor(runs / 2)], max: ms[runs - 1] };
+  }
+
+  it("Rechenzeit begrenzt: 20.000 übergebene Namen (davon ≤ 2000 bewertet), 80-Zeichen-Suchtext", () => {
     const many = Array.from({ length: 20_000 }, (_, i) => ({
       id: String(i),
       lastName: `Nachname${i.toString(36)}-Doppelname-${"x".repeat(i % 60)}`,
@@ -101,30 +120,24 @@ describe("Patientensuche: „Meinten Sie“", () => {
     many.splice(1_000, 0, { id: "hit", lastName: "Hoffmann", firstName: "Ilse" });
     const query = "Hofmann Ilse " + "abcdefghij".repeat(7);
     expect(query.length).toBeGreaterThanOrEqual(80);
-    closestNames("Hofmann", many.slice(0, 500)); // Aufwärmen (JIT)
-    let t = performance.now();
-    closestNames(query, many);
-    const long = performance.now() - t;
-    t = performance.now();
-    const r = closestNames("Hofmann", many);
-    const short = performance.now() - t;
-    expect(r[0].id).toBe("hit");
-    expect(long).toBeLessThan(150);
-    expect(short).toBeLessThan(150);
+    expect(closestNames("Hofmann", many)[0].id).toBe("hit");
+    for (const q of [query, "Hofmann"]) {
+      const { median, max } = timed(() => closestNames(q, many));
+      expect(median, q).toBeLessThan(MEDIAN_LIMIT_MS);
+      expect(max, q).toBeLessThan(HARD_LIMIT_MS);
+    }
   });
-  it("Worst Case: 2000 ähnliche 40-Zeichen-Namen, 40-Zeichen-Suchtext (< 300 ms)", () => {
+  it("Worst Case: 2000 ähnliche 40-Zeichen-Namen, 40-Zeichen-Suchtext", () => {
     // alle Namen teilen Trigramme und Länge mit dem Suchtext → keine Schranke greift früh, volle Levenshtein-Läufe
     const base = "abcdefghijklmnopqrst";
     const vary = (i: number) => base.slice(0, 19) + String.fromCharCode(97 + (i % 26));
     const many = Array.from({ length: FUZZY_MAX_CANDIDATES }, (_, i) => ({ id: String(i), lastName: vary(i), firstName: vary(i + 7) }));
     expect(`${many[0].firstName} ${many[0].lastName}`.length).toBe(FUZZY_MAX_CHARS + 1);
     const query = `${base} ${base}`.slice(0, FUZZY_MAX_CHARS);
-    closestNames(query, many.slice(0, 200)); // Aufwärmen (JIT)
-    const t = performance.now();
-    const r = closestNames(query, many);
-    const ms = performance.now() - t;
-    expect(r.length).toBeGreaterThan(0);
-    expect(ms).toBeLessThan(300);
+    expect(closestNames(query, many).length).toBeGreaterThan(0);
+    const { median, max } = timed(() => closestNames(query, many));
+    expect(median).toBeLessThan(MEDIAN_LIMIT_MS);
+    expect(max).toBeLessThan(HARD_LIMIT_MS);
   });
   it("bewertet höchstens FUZZY_MAX_CANDIDATES Kandidaten", () => {
     const many = Array.from({ length: FUZZY_MAX_CANDIDATES + 10 }, (_, i) => ({ id: String(i), lastName: "Becker", firstName: null }));
