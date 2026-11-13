@@ -25,6 +25,14 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13",
+    date: "2026-11-13",
+    title: "Rechnungen schneller schreiben",
+    items: [
+      { tag: "neu", text: "Kürzel-Eingabe: In jeder Rechnungsposition einfach das Kürzel der Leistung tippen (z. B. „PK“) – Leistung und Preis stehen sofort drin. Mit Enter geht es direkt zur nächsten Position. Das Auswahlmenü daneben bleibt wie gewohnt.", href: "/rechnungen/neu" },
+    ],
+  },
+  {
     id: "2026-11-09-h",
     date: "2026-11-09",
     title: "Termine verschieben, Rechnung und Quittung direkt aus dem Termin",
