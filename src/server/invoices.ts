@@ -108,6 +108,8 @@ export const lineInput = z.object({
   inTreatment: z.boolean().default(false),
   /** Sammelrechnung: Index der Behandlungsposition, zu der das angewendete Produkt gehört */
   treatmentLine: z.number().int().min(0).max(99).nullable().optional(),
+  /** Position aus einer angerechneten Quittung übernommen – deren festgeschriebenes Leistungsdatum gilt */
+  fromReceipt: z.boolean().optional(),
 });
 export type LineInput = z.infer<typeof lineInput>;
 
@@ -384,7 +386,16 @@ export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
  */
 export async function openReceiptsFor(tx: Tx, org: string, patientId: string, year: number) {
   const list = await tx
-    .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, vatCents: invoices.vatCents })
+    .select({
+      id: invoices.id,
+      number: invoices.number,
+      issuedAt: invoices.issuedAt,
+      totalCents: invoices.totalCents,
+      vatCents: invoices.vatCents,
+      serviceDate: invoices.serviceDate,
+      serviceDateTo: invoices.serviceDateTo,
+      serviceDateFixed: invoices.serviceDateFixed,
+    })
     .from(invoices)
     .where(
       and(
@@ -424,6 +435,18 @@ export async function openReceiptsFor(tx: Tx, org: string, patientId: string, ye
     ? await tx.select({ id: treatmentRecords.id, at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
     : [];
   const day = new Map([...apptAt, ...recAt].map((r) => [r.id, berlinDateIso(r.at)]));
+  /**
+   * Leistungsdatum je Position: festgeschriebene Quittung → ihr service_date (Zeitraum: Termin-Tag, auf den Zeitraum
+   * begrenzt – ein später verschobener Termin ändert nichts); Altbeleg → Termin-/Doku-Tag bzw. Quittungsdatum wie bisher.
+   */
+  const lineDay = (r: (typeof list)[number], l: (typeof lines)[number]): string | null => {
+    const live = (l.treatmentRecordId ? day.get(l.treatmentRecordId) : undefined) ?? (l.appointmentId ? day.get(l.appointmentId) : undefined);
+    if (r.serviceDateFixed && r.serviceDate) {
+      const to = r.serviceDateTo ?? r.serviceDate;
+      return live && live >= r.serviceDate && live <= to ? live : r.serviceDate;
+    }
+    return live ?? r.issuedAt;
+  };
   return list.map((r) => ({
     ...r,
     patientId,
@@ -439,7 +462,7 @@ export async function openReceiptsFor(tx: Tx, org: string, patientId: string, ye
         totalCents: l.totalCents,
         appointmentId: l.appointmentId,
         treatmentRecordId: l.treatmentRecordId,
-        serviceDate: (l.treatmentRecordId ? day.get(l.treatmentRecordId) : undefined) ?? (l.appointmentId ? day.get(l.appointmentId) : undefined) ?? r.issuedAt,
+        serviceDate: lineDay(r, l),
       })),
   }));
 }
@@ -719,11 +742,14 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     if (input.kind === "no_show_fee" && !linkedDays.length && !input.serviceDate) {
       throw new InvoiceError("Bitte das Datum des versäumten Termins angeben („Termin am“).");
     }
-    const hasFreeLines = lines.some((l) => !l.treatmentRecordId && !l.appointmentId);
-    const range = serviceRange(
-      linkedDays,
-      hasFreeLines || !linkedDays.length ? { from: input.serviceDate ?? input.issuedAt, to: input.kind === "collective" ? input.serviceDateTo : null } : null,
-    );
+    // Angerechnete Quittungen (Sammelrechnung): ihr festgeschriebenes Leistungsdatum bzw. -zeitraum gehört in den Zeitraum
+    // (§ 14 Abs. 4 Nr. 6 UStG); Altbelege ohne festgeschriebene Angabe: Quittungsdatum
+    const receiptDays = partials.receipts.flatMap((r) => (r.serviceDateFixed && r.serviceDate ? serviceDays(r) : r.issuedAt ? [r.issuedAt] : []));
+    const refDays = [...linkedDays, ...receiptDays];
+    // Formular-Datum nur für eigene Positionen ohne Bezug (nicht aus einer angerechneten Quittung übernommen)
+    const ownFreeLines = input.lines.some((l) => !l.treatmentRecordId && !l.appointmentId && !(l.fromReceipt && partials.receipts.length));
+    const freeRange = { from: input.serviceDate ?? input.issuedAt, to: (input.kind === "collective" ? input.serviceDateTo : null) ?? null };
+    const range = serviceRange(refDays, ownFreeLines || !refDays.length ? freeRange : null);
 
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
     if (needsConfirm && !input.therapeuticConfirmed) {
@@ -784,6 +810,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
           kind: invoices.kind,
           issuedAt: invoices.issuedAt,
           name: services.name,
+          serviceDate: invoices.serviceDate,
+          serviceDateTo: invoices.serviceDateTo,
+          serviceDateFixed: invoices.serviceDateFixed,
           treatedAt: treatmentRecords.treatedAt,
           startsAt: appointments.startsAt,
         })
@@ -803,14 +832,27 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
           ),
         )
         .orderBy(asc(invoices.number));
-      const serviceDay = (c: (typeof candidates)[number]) => (c.treatedAt ? berlinDateIso(c.treatedAt) : c.startsAt ? berlinDateIso(c.startsAt) : c.issuedAt);
-      const dup = candidates.find((c) => serviceDay(c) === input.issuedAt);
+      // Vergleich über das Leistungsdatum (nicht das Belegdatum): neue Positionen ohne Bezug → Formular-Datum (ggf. bis);
+      // vorhandene Belege → festgeschriebener Leistungszeitraum, Altbelege → Tag des verknüpften Eintrags bzw. Belegdatum
+      const newFrom = freeRange.from;
+      const newTo = freeRange.to ?? freeRange.from;
+      const candRange = (c: (typeof candidates)[number]): [string, string] | null => {
+        if (c.serviceDateFixed && c.serviceDate) return [c.serviceDate, c.serviceDateTo ?? c.serviceDate];
+        const d = c.treatedAt ? berlinDateIso(c.treatedAt) : c.startsAt ? berlinDateIso(c.startsAt) : c.issuedAt;
+        return d ? [d, d] : null;
+      };
+      const dup = candidates.find((c) => {
+        const r = candRange(c);
+        return !!r && r[0] <= newTo && r[1] >= newFrom;
+      });
       if (dup) {
         duplicateOf = { id: dup.id, number: dup.number };
         // Bestätigung gilt nur für genau den Beleg, auf den der Hinweis zeigte
         if (input.duplicateAck !== dup.id) {
+          const [from, to] = candRange(dup)!;
+          const when = from === to ? `mit Leistungsdatum ${dateDe(from)}` : `im Leistungszeitraum ${dateDe(from)} bis ${dateDe(to)}`;
           throw new DuplicateInvoiceError(
-            `„${dup.name}“ wurde für diese Person am ${dateDe(input.issuedAt)} bereits abgerechnet (${INVOICE_KIND_LABEL[dup.kind] ?? "Beleg"} ${dup.number}). Wirklich ein zweites Mal?`,
+            `„${dup.name}“ wurde für diese Person ${when} bereits abgerechnet (${INVOICE_KIND_LABEL[dup.kind] ?? "Beleg"} ${dup.number}). Wirklich ein zweites Mal?`,
             duplicateOf,
           );
         }

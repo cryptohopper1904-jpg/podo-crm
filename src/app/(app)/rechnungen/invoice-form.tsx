@@ -154,7 +154,7 @@ export function InvoiceForm({
   /** Leistungsdatum ohne Termin-/Doku-Bezug; null = folgt dem Rechnungsdatum, bis es geändert wird */
   const [serviceDate, setServiceDate] = useState<string | null>(preset?.serviceDate ?? null);
   /** Sammelrechnung ohne Termin-Bezug: Ende des Leistungszeitraums (optional) */
-  const [serviceDateTo, setServiceDateTo] = useState("");
+  const [serviceDateTo, setServiceDateTo] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
@@ -195,13 +195,12 @@ export function InvoiceForm({
   const productError = resolveProductVat(filled.map(ruleOf), { smallBusiness, invoiceKind: kind }).error;
   const hasProducts = filled.some((l) => l.productId);
   const totals = computeTotals(filled);
-  /** Positionen mit Termin/Doku-Eintrag: das Leistungsdatum kommt von dort (Überschrift „… zur Behandlung am …“) */
-  const linkedService = computed.some((l) => !l.blank && (!!l.appointmentId || !!l.treatmentRecordId));
-  /** Positionen ohne Bezug (z. B. Pflegeprodukt): brauchen ein eigenes Leistungsdatum – auch neben verknüpften */
-  const freeLines = computed.some((l) => !l.blank && !l.appointmentId && !l.treatmentRecordId);
-  // Ausfallhonorar: Termin-Datum bewusst eintragen (nicht das Rechnungsdatum unterstellen)
-  const serviceValue = serviceDate ?? (kind === "no_show_fee" ? "" : issuedAt);
-  const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" && !linkedService ? "Leistung von" : "Leistungsdatum";
+  /**
+   * Eigene Positionen ohne Bezug (z. B. Pflegeprodukt, nicht aus einer Quittung übernommen): brauchen ein Leistungsdatum –
+   * auch neben verknüpften. Übernommene Quittungen bringen ihr festgeschriebenes Leistungsdatum selbst mit.
+   */
+  const freeLines = computed.some((l) => !l.blank && !l.appointmentId && !l.treatmentRecordId && !l.fromReceipt);
+  const fromRefs = computed.some((l) => !l.blank && (!!l.appointmentId || !!l.treatmentRecordId || !!l.fromReceipt));
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -225,6 +224,12 @@ export function InvoiceForm({
   const receiptOn = (id: string) => receiptSel[id] ?? true;
   const creditedReceipts = patientReceipts.filter((r) => receiptOn(r.id));
   const creditedReceiptCents = creditedReceipts.reduce((s, r) => s + r.totalCents, 0);
+  /** Leistungstage der übernommenen Quittungen → Vorbelegung des Leistungszeitraums (Sammelrechnung) */
+  const receiptDays = creditedReceipts.flatMap((r) => r.lines.map((l) => l.serviceDate ?? r.issuedAt)).filter((d): d is string => !!d).sort();
+  // Ausfallhonorar: Termin-Datum bewusst eintragen (nicht das Rechnungsdatum unterstellen)
+  const serviceValue = serviceDate ?? (kind === "no_show_fee" ? "" : (receiptDays[0] ?? issuedAt));
+  const serviceToValue = serviceDateTo ?? (receiptDays.length && receiptDays.at(-1) !== serviceValue ? receiptDays.at(-1)! : "");
+  const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" ? "Leistung von" : "Leistungsdatum";
   const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0) + creditedReceiptCents;
   const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
   /** eine Auswahlliste für beide Quittungsarten (Sammelrechnung), nach Datum */
@@ -409,6 +414,8 @@ export function InvoiceForm({
         treatmentLine: rule.kind === "product" ? (rule.treatmentLine ?? null) : null,
         treatmentRecordId: l.treatmentRecordId || null,
         appointmentId: l.appointmentId || null,
+        // aus einer übernommenen Quittung: deren Leistungsdatum gilt (nicht das Formular-Datum)
+        fromReceipt: !!l.fromReceipt,
         description: l.description,
         quantity: num(l.quantity),
         factor: l.productId ? 1 : num(l.factor),
@@ -509,21 +516,21 @@ export function InvoiceForm({
           </Field>
           {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Verknüpfte Termine liefern ihn selbst; Positionen ohne Bezug
               brauchen ein Datum – der Beleg nennt beim Ausstellen den Zeitraum aus beidem (festgeschrieben). */}
-          {linkedService && !freeLines ? (
-            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint="aus dem verknüpften Termin bzw. der Behandlung">
-              <Input value="laut Termin/Behandlung" disabled readOnly />
+          {fromRefs && !freeLines ? (
+            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint="aus den verknüpften Terminen bzw. übernommenen Quittungen">
+              <Input value="laut Termin/Quittung" disabled readOnly />
             </Field>
           ) : (
             <Field
               label={serviceLabel}
-              hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : linkedService ? "für Positionen ohne Termin (z. B. Produkte)" : "Tag der Behandlung bzw. Lieferung"}
+              hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : fromRefs ? "für Positionen ohne Termin/Quittung (z. B. Produkte)" : "Tag der Behandlung bzw. Lieferung"}
             >
               <Input type="date" name="serviceDate" value={serviceValue} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
             </Field>
           )}
-          {kind === "collective" && !linkedService ? (
+          {kind === "collective" && (freeLines || !fromRefs) ? (
             <Field label="Leistung bis" hint="optional – Leistungszeitraum (§ 31 Abs. 4 UStDV)">
-              <Input type="date" name="serviceDateTo" value={serviceDateTo} onChange={(e) => setServiceDateTo(e.target.value)} min={serviceValue || undefined} max={today} />
+              <Input type="date" name="serviceDateTo" value={serviceToValue} onChange={(e) => setServiceDateTo(e.target.value)} min={serviceValue || undefined} max={today} />
             </Field>
           ) : null}
           <Field label="Zahlungsziel" hint={kind === "receipt" ? "Quittung: sofort bezahlt" : "in Tagen, 0 = sofort"}>

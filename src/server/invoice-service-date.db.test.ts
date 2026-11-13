@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { dateDe } from "@/lib/format";
-import { invoiceHeading, invoiceService } from "@/lib/invoice-view";
+import { accountingServiceDate, invoiceHeading, invoiceService } from "@/lib/invoice-view";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("Leistungsdatum auf Belegen (DB)", () => {
@@ -137,5 +137,60 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     for (const sql of ["update invoices set service_date = '2026-01-01' where id = $1", "update invoices set service_date_to = '2026-12-31' where id = $1", "update invoices set service_date_fixed = false where id = $1"]) {
       await expect(f.asOrg(org, (c) => c.query(sql, [inv.id]))).rejects.toThrow(/unveränderbar/);
     }
+  });
+
+  it("Sammelrechnung mit übernommenen Quittungen: Leistungszeitraum deckt die Quittungen ab (nicht das Rechnungsdatum)", async () => {
+    const org = await f.org();
+    const auth = authFor(org, await f.user());
+    const patient = await f.patient(org);
+    const year = Number(berlinDateIso().slice(0, 4)) - 1;
+    const cash = (cents: number) => [{ method: "cash", amountCents: cents, voucherCode: null, externalRef: null }];
+    const r1 = await invoices.createInvoice(auth, base(patient, { kind: "receipt", issuedAt: `${year}-02-10`, payments: cash(6500) }));
+    // Quittung am 20.03. für eine Behandlung am 18.03. (Leistungsdatum ausdrücklich)
+    const r2 = await invoices.createInvoice(auth, base(patient, { kind: "receipt", issuedAt: `${year}-03-20`, serviceDate: `${year}-03-18`, payments: cash(6500) }));
+
+    // Positionsdatum der offenen Quittungen = festgeschriebenes Leistungsdatum
+    const open = await withOrg(org, (tx) => invoices.openReceiptsFor(tx, org, patient, year));
+    expect(open.map((r) => r.lines[0].serviceDate)).toEqual([`${year}-02-10`, `${year}-03-18`]);
+
+    const fromReceipts = [line({ fromReceipt: true }), line({ fromReceipt: true })];
+    const sr = await invoices.createInvoice(auth, base(patient, { kind: "collective", issuedAt: berlinDateIso(), collectiveYear: year, receiptIds: [r1.id, r2.id], lines: fromReceipts }));
+    const b = await bundle(org, sr.id);
+    expect(b.invoice).toMatchObject({ serviceDate: `${year}-02-10`, serviceDateTo: `${year}-03-18` });
+    expect(heading(b).serviceDateNote).toBe(`Leistungszeitraum: 10.02.${year} bis 18.03.${year}`);
+    expect(accountingServiceDate(b.invoice)).toBe(`${year}-03-18`);
+
+    // eigene Position ohne Bezug (z. B. Produkt): das Formular-Datum kommt dazu
+    await invoices.cancelInvoice(auth, sr.id, "neu");
+    const sr2 = await invoices.createInvoice(auth, base(patient, {
+      kind: "collective",
+      issuedAt: berlinDateIso(),
+      collectiveYear: year,
+      receiptIds: [r1.id, r2.id],
+      serviceDate: `${year}-05-02`,
+      lines: [...fromReceipts, line({ description: "Pflegecreme" })],
+    }));
+    expect((await bundle(org, sr2.id)).invoice).toMatchObject({ serviceDate: `${year}-02-10`, serviceDateTo: `${year}-05-02` });
+  });
+
+  it("weicher Doppel-Schutz vergleicht das Leistungsdatum, nicht das Rechnungsdatum", async () => {
+    const org = await f.org();
+    const auth = authFor(org, await f.user());
+    const patient = await f.patient(org);
+    const service = await f.asOrg(org, async (c) =>
+      (await c.query("insert into services (organization_id, code, name, price_cents, vat_rate) values ($1,'PKB','Podologische Komplexbehandlung',6500,0) returning id", [org])).rows[0].id as string,
+    );
+    const today = berlinDateIso();
+    const shift = (days: number) => berlinDateIso(new Date(Date.now() - days * 86_400_000));
+    const doc = (serviceDate: string, extra: Record<string, unknown> = {}) =>
+      invoices.createInvoice(auth, base(patient, { issuedAt: today, serviceDate, lines: [line({ serviceId: service })], ...extra }));
+    const first = await doc(shift(7));
+    // heute ausgestellt, Leistung wieder letzte Woche → erkannt, Meldung nennt das Leistungsdatum
+    const err = await doc(shift(7)).catch((e) => e);
+    expect(err).toBeInstanceOf(invoices.DuplicateInvoiceError);
+    expect(err.message).toContain(`mit Leistungsdatum ${dateDe(shift(7))}`);
+    expect(err.duplicate).toEqual({ id: first.id, number: first.number });
+    // gleiches Rechnungsdatum, anderer Leistungstag → kein Hinweis
+    await expect(doc(shift(1))).resolves.toMatchObject({ number: expect.any(String) });
   });
 });
