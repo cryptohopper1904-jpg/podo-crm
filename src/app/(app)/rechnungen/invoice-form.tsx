@@ -38,7 +38,7 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string };
+type Line = { key: string; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string; /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */ codeStart?: { serviceId: string; description: string; price: string; vatRate: number } };
 
 let seq = 0;
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -126,11 +126,11 @@ export function InvoiceForm({
       vatRate,
       totalCents: lineTotalCents(unit, num(l.quantity), num(l.factor)),
       // komplett leere Zeile (z. B. nach Enter im Kürzel-Feld) wird ignoriert – weder abgerechnet noch geprüft
-      blank: !l.serviceId && !l.description.trim() && !l.price.trim(),
+      blank: !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId,
       needsConfirm: !smallBusiness && vatRate === 0 && (s ? s.requiresTherapeuticPurpose : kind !== "no_show_fee"),
     };
   }).map((l) => (l.blank ? { ...l, needsConfirm: false } : l));
-  const totals = computeTotals(computed);
+  const totals = computeTotals(computed.filter((l) => !l.blank));
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -144,23 +144,23 @@ export function InvoiceForm({
 
   function chooseService(key: string, serviceId: string) {
     const s = svcById.get(serviceId);
-    if (!s) return update(key, { serviceId: "", description: "", price: "", codeInput: undefined });
-    update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: undefined });
+    if (!s) return update(key, { serviceId: "", description: "", price: "", codeInput: undefined, codeStart: undefined });
+    update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: undefined, codeStart: undefined });
   }
 
   /**
-   * Schnelleingabe: Kürzel tippen (z. B. „PK“) → passende Leistung wird gewählt. Die Beschreibung wird nur ersetzt,
-   * wenn sie leer ist oder noch dem Namen der bisherigen Leistung entspricht (vorbefüllte Texte wie „03.02.: …“ bleiben).
+   * Schnelleingabe: Kürzel tippen (z. B. „PK“) → passende Leistung wird gewählt – genau wie über die Auswahlliste
+   * (Beschreibung, Katalogpreis und USt werden ersetzt, damit Text, Entgelt und Steuer zusammenpassen).
+   * Bleibt das Kürzel unbekannt, stellt codeBlur den Stand vor der Eingabe wieder her.
    */
   function typeCode(key: string, value: string) {
     const s = findServiceByCode(services, value);
     setLines((ls) =>
       ls.map((l) => {
         if (l.key !== key) return l;
-        if (!s || s.id === l.serviceId) return { ...l, codeInput: value };
-        const prev = l.serviceId ? svcById.get(l.serviceId) : undefined;
-        const keepText = l.description.trim() !== "" && l.description !== prev?.name;
-        return { ...l, serviceId: s.id, description: keepText ? l.description : s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value };
+        const codeStart = l.codeStart ?? { serviceId: l.serviceId, description: l.description, price: l.price, vatRate: l.vatRate };
+        if (!s || s.id === l.serviceId) return { ...l, codeInput: value, codeStart };
+        return { ...l, serviceId: s.id, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value, codeStart };
       }),
     );
   }
@@ -171,7 +171,7 @@ export function InvoiceForm({
   const pendingFocus = useRef<string | null>(null);
 
   const codeUnknown = (l: Line) => !!l.codeInput?.trim() && !findServiceByCode(services, l.codeInput);
-  const isBlank = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim();
+  const isBlank = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
 
   /** Enter im Kürzel-Feld: zur nächsten Position bzw. neue anlegen – nie das Formular abschicken */
   function codeKeyDown(e: React.KeyboardEvent<HTMLInputElement>, key: string) {
@@ -187,9 +187,15 @@ export function InvoiceForm({
     setLines((ls) => [...ls, nl]);
   }
 
-  /** Verlassen mit unbekanntem/leerem Kürzel: wieder das Kürzel der tatsächlich gewählten Leistung anzeigen */
+  /** Verlassen des Kürzel-Felds: unbekanntes/leeres Kürzel → Stand vor der Eingabe zurück (kein stehengebliebener Zwischentreffer) */
   function codeBlur(key: string) {
-    setLines((ls) => ls.map((l) => (l.key === key && l.codeInput !== undefined && (codeUnknown(l) || !l.codeInput.trim()) ? { ...l, codeInput: undefined } : l)));
+    setLines((ls) =>
+      ls.map((l) => {
+        if (l.key !== key || l.codeInput === undefined) return l;
+        if ((codeUnknown(l) || !l.codeInput.trim()) && l.codeStart) return { ...l, ...l.codeStart, codeInput: undefined, codeStart: undefined };
+        return { ...l, codeInput: undefined, codeStart: undefined };
+      }),
+    );
   }
 
   function chooseKind(k: CreatableKind) {
