@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
@@ -47,7 +47,15 @@ export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
   const { db } = await import("@/db");
   return db
-    .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color, joinedAt: memberships.createdAt })
+    .select({
+      id: users.id,
+      name: users.name,
+      role: memberships.role,
+      color: memberships.color,
+      joinedAt: memberships.createdAt,
+      // Eintritt mit Mikrosekunden (Date kennt nur Millisekunden) – für die stabile Farbvergabe (byJoined)
+      joinedKey: sql<string>`to_char(${memberships.createdAt} at time zone 'UTC', 'YYYYMMDDHH24MISSUS')`,
+    })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
     .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));

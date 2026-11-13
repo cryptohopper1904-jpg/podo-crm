@@ -32,6 +32,17 @@ describe("Farbvergabe je Behandler:in", () => {
     expect(after.get("y")).toBe(before.get("y"));
   });
 
+  it("gleiche Millisekunde: Mikrosekunden entscheiden, sonst die ID – unabhängig von der Eingabereihenfolge", () => {
+    const at = new Date("2026-05-01T10:00:00.123Z");
+    const a = { id: "b-later-id", color: null, joinedAt: at, joinedKey: "20260501100000123001" };
+    const b = { id: "a-earlier-id", color: null, joinedAt: at, joinedKey: "20260501100000123002" };
+    expect(byJoined([b, a]).map((t) => t.id)).toEqual(["b-later-id", "a-earlier-id"]);
+    expect(byJoined([a, b]).map((t) => t.id)).toEqual(["b-later-id", "a-earlier-id"]);
+    const c = { id: "y", color: null, joinedAt: at }, d = { id: "x", color: null, joinedAt: at };
+    expect(byJoined([c, d]).map((t) => t.id)).toEqual(["x", "y"]);
+    expect(byJoined([d, c]).map((t) => t.id)).toEqual(["x", "y"]);
+  });
+
   it("nur bekannte Schlüssel sind gültig; jede Farbe hat einen Namen", () => {
     expect(isTherapistColor("teal")).toBe(true);
     expect(isTherapistColor("#0d9488")).toBe(false);
