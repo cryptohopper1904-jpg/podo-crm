@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TEMPLATES, PRODUCT_URL } from "./constants";
-import { cleanValue, composeMail, placeholderValues, renderText, unknownPlaceholders, validateTemplate } from "./template";
+import { cleanValue, composeMail, placeholderValues, renderText, templateUsesPromo, unknownPlaceholders, validateTemplate } from "./template";
 
 const values = placeholderValues({ name: "Podologie Am Markt", contactPerson: "Frau Muster", city: "Musterstadt" }, "Max Betreiber");
 
@@ -15,7 +15,9 @@ describe("Vorlagen: Platzhalter", () => {
     const v = placeholderValues({ name: "Praxis X", contactPerson: null, city: null }, "Max");
     expect(renderText("{{anrede}},", v)).toBe("Guten Tag,");
     expect(renderText("Guten Tag {{ansprechpartner}},", v)).toBe("Guten Tag,");
-    expect(renderText("in {{ort}}.", v)).toBe("in Ihrer Region.");
+    expect(renderText("in {{ort}}.", v)).toBe(".");
+    expect(renderText("PodoHero – Praxissoftware für die Podologie in {{ort}}", v)).toBe("PodoHero – Praxissoftware für die Podologie");
+    expect(renderText("Podologie in {{ort}}", placeholderValues({ name: "P", city: "Potsdam" }, "Max"))).toBe("Podologie in Potsdam");
   });
 
   it("Werte werden nicht erneut ersetzt (keine Platzhalter-Injektion) und sind einzeilig", () => {
@@ -23,6 +25,18 @@ describe("Vorlagen: Platzhalter", () => {
     const out = renderText("{{praxis}} / {{ansprechpartner}}", v);
     expect(out).toBe("{{absender}} Bcc: evil@x.de / Herr X");
     expect(cleanValue("a\u0000b c   d")).toBe("a b c d");
+  });
+
+  it("Aktionscode: {{code}}/{{link}} werden ersetzt; Vorlage mit Code wird erkannt", () => {
+    const v = placeholderValues({ name: "P", city: "O" }, "Max", { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12" });
+    expect(renderText("Code {{code}} unter {{ link }}.", v)).toBe("Code PODO-AB12 unter https://podo.example/aktion/PODO-AB12.");
+    expect(validateTemplate({ subject: "3 Monate gratis: {{CODE}}", body: "{{link}}" })).toBeNull();
+    expect(templateUsesPromo({ subject: "x", body: "Ihr Link: {{ link }}" })).toBe(true);
+    expect(templateUsesPromo({ subject: "{{Code}}", body: "x" })).toBe(true);
+    expect(templateUsesPromo(DEFAULT_TEMPLATES[0])).toBe(false);
+    const m = composeMail({ template: { subject: "Code {{code}}", body: "{{link}}" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", privacyUrl: "https://p/datenschutz#vertrieb", promo: { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12\nBcc: x" } });
+    expect(m.subject).toBe("Code PODO-AB12");
+    expect(m.text.split("\n")[0]).toBe("https://podo.example/aktion/PODO-AB12 Bcc: x");
   });
 
   it("unbekannte Platzhalter bleiben sichtbar und werden beim Speichern abgelehnt", () => {
@@ -53,6 +67,7 @@ describe("composeMail", () => {
     senderName: "Max",
     impressum: "Muster GmbH\nMusterstr. 1, 12345 Musterstadt\nkontakt@podo.example",
     unsubscribeUrl: "https://podo.example/abmelden/abc.def",
+    privacyUrl: "https://podo.example/datenschutz#vertrieb",
     unsubscribeMailto: "max@podo.example",
   });
 
@@ -60,6 +75,7 @@ describe("composeMail", () => {
     expect(m.subject).toBe("Hallo Praxis X Bcc: x@y.de");
     expect(m.text.startsWith("Guten Tag,\n\nText.\n\n-- \nMuster GmbH")).toBe(true);
     expect(m.text).toContain("https://podo.example/abmelden/abc.def");
+    expect(m.text).toContain("Widerspruchsrecht nach Art. 21 DSGVO:\nhttps://podo.example/datenschutz#vertrieb");
     expect(m.text).toMatch(/abmelden/i);
     expect(m.text).not.toContain("\r");
   });
@@ -67,5 +83,16 @@ describe("composeMail", () => {
   it("List-Unsubscribe (Link + mailto) und One-Click-Kopfzeile", () => {
     expect(m.headers["List-Unsubscribe"]).toBe("<https://podo.example/abmelden/abc.def>, <mailto:max@podo.example?subject=Abmelden>");
     expect(m.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+  });
+});
+
+describe("Fußzeile: Quelle und Widerruf", () => {
+  const base = { template: { subject: "S", body: "B" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", privacyUrl: "https://p/datenschutz#vertrieb" };
+  it("konkrete Quelle des Leads, sonst allgemeine Liste; Hinweis auf Widerruf", () => {
+    expect(composeMail({ ...base, source: "osm+impressum" }).text).toContain("stammen aus: OpenStreetMap und dem Impressum Ihrer Praxis-Website");
+    expect(composeMail({ ...base, source: "Messe XY 2026 – Formular" }).text).toContain("stammen aus: Messe XY 2026 – Formular.");
+    expect(composeMail({ ...base, source: null }).text).toContain("stammen aus: öffentlich zugänglichen Quellen (Praxis-Website/Impressum, OpenStreetMap)");
+    expect(composeMail({ ...base, source: "manuell" }).text).toContain("öffentlich zugänglichen Quellen");
+    expect(composeMail(base).text).toContain("Eine erteilte Einwilligung können Sie jederzeit widerrufen (Art. 7 Abs. 3 DSGVO).");
   });
 });

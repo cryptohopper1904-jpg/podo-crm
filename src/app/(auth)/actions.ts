@@ -18,6 +18,8 @@ import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seedOrganizationDefaults } from "@/lib/org-defaults";
 import { isDemoPractice } from "@/lib/demo-practice";
 import { PLATFORM_TARGET } from "@/lib/org-switcher";
+import { PROMO_INVALID } from "@/lib/promo-codes";
+import { lookupPromoCode, PromoCodeError, promoFailLimiter, redeemPromoCodeTx } from "@/server/promo-codes";
 
 export type FormState = { error?: string; ok?: string } | undefined;
 
@@ -157,7 +159,7 @@ export async function logoutAction() {
 
 const setupSchema = z.object({
   practiceName: z.string().trim().min(2, "Bitte den Praxisnamen angeben."),
-  name: z.string().trim().min(2, "Bitte deinen Namen angeben."),
+  name: z.string().trim().min(2, "Bitte Ihren Namen angeben."),
   email: z.string().trim().toLowerCase().email("Bitte eine gültige E-Mail angeben."),
   password: z.string(),
   state: z.string().length(2).default("BB"),
@@ -165,6 +167,8 @@ const setupSchema = z.object({
   setupToken: z.string().optional(),
   agb: z.string().optional(),
   avv: z.string().optional(),
+  /** Aktionscode (optional, z. B. aus /einrichtung?code=…): längere Testphase */
+  code: z.string().max(64).optional(),
 });
 
 /** Registrierungen je IP drosseln (SaaS-Modus): max. 5 pro Stunde */
@@ -181,6 +185,16 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   }
   const pwProblem = passwordProblem(d.password);
   if (pwProblem) return { error: pwProblem };
+  // Aktionscode: vorab prüfen (allgemeine Meldung, Fehlversuche je Anschluss gedrosselt); eingelöst wird atomar unten
+  const promoInput = d.code?.trim() ? d.code : null;
+  const promoKey = `signup:${clientKey(await requestMeta())}`;
+  if (promoInput) {
+    if (promoFailLimiter.exceeded(promoKey)) return { error: `${PROMO_INVALID} Zu viele Versuche – bitte später erneut versuchen.` };
+    if (!(await lookupPromoCode(promoInput))) {
+      promoFailLimiter.limited(promoKey);
+      return { error: `${PROMO_INVALID} Ohne Code bitte das Feld „Aktionscode“ leeren (dann 30 Tage Testphase).` };
+    }
+  }
 
   const [existing] = await db.select({ id: users.id }).from(users).where(eq(users.email, d.email)).limit(1);
   if (existing) return { error: "Mit diesen Angaben ist keine Registrierung möglich. Bereits registriert? Bitte anmelden oder das Passwort zurücksetzen lassen." };
@@ -194,7 +208,8 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
   const slug = `${slugBase}-${Math.random().toString(36).slice(2, 6)}`;
   const passwordHash = await hashPassword(d.password);
 
-  const result = await db.transaction(async (tx) => {
+  const result = await db
+    .transaction(async (tx) => {
     // Erstinstallation serialisieren: nur genau eine erste Praxis/ein Plattform-Admin
     await tx.execute(sql`select pg_advisory_xact_lock(4711001)`);
     const [{ n }] = await tx.select({ n: count() }).from(users);
@@ -229,14 +244,24 @@ export async function setupAction(_: FormState, form: FormData): Promise<FormSta
     await tx.execute(sql`select set_config('app.org_id', ${org.id}, true)`);
     await tx.insert(locations).values({ organizationId: org.id, name: "Hauptpraxis" });
     await seedOrganizationDefaults(tx, org.id);
-    return { userId: user.id, orgId: org.id, legal: n > 0 };
-  });
+    // Aktionscode (nur bei Selbstregistrierung): Testphase = max(30 Tage, Code-Tage); Fehler rollt alles zurück
+    const promo = n > 0 && promoInput ? await redeemPromoCodeTx(tx, { input: promoInput, organizationId: org.id, userId: user.id, via: "signup" }) : null;
+    return { userId: user.id, orgId: org.id, legal: n > 0, promo: promo?.code ?? null };
+  })
+    .catch((e: unknown) => {
+      if (e instanceof PromoCodeError) return "promo" as const;
+      throw e;
+    });
+  if (result === "promo") {
+    promoFailLimiter.limited(promoKey);
+    return { error: PROMO_INVALID };
+  }
   if (!result) return { error: "Neue Registrierungen sind auf diesem Server deaktiviert." };
   if (result === "token") return { error: "Einrichtungs-Code ist falsch (siehe SETUP_TOKEN in der Server-Konfiguration)." };
   if (result === "legal") return { error: "Bitte AGB und Auftragsverarbeitungsvertrag (AVV) akzeptieren." };
-  const { userId, orgId, legal } = result;
+  const { userId, orgId, legal, promo } = result;
   await createSession(userId, orgId, true);
-  await audit({ organizationId: orgId, userId, action: "organization.created", meta: legal ? { legal: legalAcceptance(userId) } : undefined });
+  await audit({ organizationId: orgId, userId, action: "organization.created", meta: legal ? { legal: legalAcceptance(userId), ...(promo ? { promo } : {}) } : undefined });
   redirect("/willkommen");
 }
 

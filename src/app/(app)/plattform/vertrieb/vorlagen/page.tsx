@@ -22,6 +22,7 @@ export default async function TemplatesPage() {
             ))}
           </ul>
           <p className="mt-3 text-muted">Reiner Text, kein HTML. Impressum und Abmeldelink werden automatisch unter jede Mail gesetzt.</p>
+          <p className="mt-2 text-muted">{"{{code}}"} und {"{{link}}"} nur verwenden, wenn die angeschriebenen Praxen einer Kampagne mit aktivem Aktionscode angehören – sonst werden sie beim Versand übersprungen. Eigene Vorlagen je Kampagne: Reiter „Kampagnen“.</p>
         </Card>
         <Card className="text-sm">
           <h2 className="font-display text-lg font-semibold">Standard</h2>

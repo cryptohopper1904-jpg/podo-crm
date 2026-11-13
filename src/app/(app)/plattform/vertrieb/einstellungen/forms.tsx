@@ -11,7 +11,7 @@ export function SettingsForm({
   values,
 }: {
   action: Action;
-  values: { senderName: string; senderEmail: string; replyTo: string; impressum: string; delay2Days: number; delay3Days: number };
+  values: { senderName: string; senderEmail: string; replyTo: string; impressum: string; delay2Days: number; delay3Days: number; mailProcessorConfirmed: boolean };
 }) {
   return (
     <ActionForm action={action} submit="Einstellungen speichern">
@@ -27,6 +27,11 @@ export function SettingsForm({
       <Field label="Impressum / Absenderangaben *" hint="Firma, Vertretungsberechtigte:r, Anschrift, E-Mail/Telefon, ggf. Register und USt-IdNr. – steht unter jeder Mail.">
         <Textarea name="impressum" rows={7} maxLength={1500} defaultValue={values.impressum} />
       </Field>
+      <Checkbox
+        name="mailProcessorConfirmed"
+        defaultChecked={values.mailProcessorConfirmed}
+        label="Der E-Mail-Versanddienstleister ist mit Name, Sitz, Serverstandort und AVV (ggf. SCC/DPF) unter „Unterauftragnehmer“ eingetragen. Ohne diese Bestätigung wird nicht versendet."
+      />
     </ActionForm>
   );
 }

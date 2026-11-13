@@ -32,11 +32,17 @@ const day = 86_400_000;
     v = await import("./vertrieb");
     const { audit } = await import("@/lib/audit");
     auditCalls = () => vi.mocked(audit).mock.calls.map((c) => c[0] as { action: string; entityId?: string; meta?: Record<string, unknown> });
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
     admin = await f.user();
   });
   afterAll(async () => {
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings");
+    // Einlösungen darf die App-Rolle nicht löschen → als Eigentümer aufräumen
+    const { Pool } = await import("pg");
+    const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? TEST_DB, max: 1 });
+    await owner.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
+    await owner.query("delete from promo_codes where code like 'TPIPE%'");
+    await owner.end();
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
     await f.end();
     const { db } = await import("@/db");
     await (db.$client as { end: () => Promise<void> }).end();
@@ -47,6 +53,7 @@ const day = 86_400_000;
   });
 
   it("Import mit Dubletten und Sperrliste", async () => {
+    // Altbestand (Klartext, bis 0038) wird beim ersten Zugriff in Prüfwerte überführt und gelöscht
     await f.pool.query("insert into sales_suppressions (email, reason) values ('gesperrt@praxis.example', 'abgemeldet')");
     await v.saveSalesSettings(admin, {
       senderName: "Max Betreiber",
@@ -55,6 +62,7 @@ const day = 86_400_000;
       impressum: "AlgoVerdict GmbH, Musterstraße 1, 12345 Musterstadt, kontakt@podo.example",
       delay2Days: 5,
       delay3Days: 10,
+      mailProcessorConfirmed: true,
     });
     const csv = [
       "name;email;zip;city;contact_person",
@@ -65,16 +73,36 @@ const day = 86_400_000;
     ].join("\n");
     const p = await v.previewImport(csv);
     expect(p.newCount).toBe(2);
-    const r = await v.importLeads(admin, csv);
+    expect(await v.importLeads(admin, csv, " ")).toMatchObject({ imported: 0, error: expect.stringMatching(/Quelle/) });
+    const r = await v.importLeads(admin, csv, "Messe Test 2026");
     expect(r).toEqual({ imported: 2, skipped: 2 });
-    expect((await v.importLeads(admin, csv)).imported).toBe(0);
-    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([{ imported: 2, skipped: 2 }, { imported: 0, skipped: 4 }]);
+    expect((await v.importLeads(admin, csv, "Messe Test 2026")).imported).toBe(0);
+    expect((await leadByName("Podologie Eins")).source).toBe("Messe Test 2026");
+    // Altbestand überführt: kein Klartext mehr, nur Prüfwert
+    expect((await f.pool.query("select count(*)::int as n from sales_suppressions")).rows[0].n).toBe(0);
+    expect((await f.pool.query("select hash, reason from sales_blocklist where reason = 'abgemeldet'")).rows.every((r: { hash: string }) => /^v1:[0-9a-f]{64}$/.test(r.hash))).toBe(true);
+    const bl = await import("./blocklist");
+    expect(await bl.isBlocked(" Gesperrt@Praxis.example")).toBe(true);
+    await expect(v.createLead(admin, { name: "Gesperrt neu", contactPerson: null, email: "gesperrt@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/Sperrliste/);
+    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([{ imported: 2, skipped: 2, source: "Messe Test 2026" }, { imported: 0, skipped: 4, source: "Messe Test 2026" }]);
     expect(auditCalls().some((a) => a.action === "vertrieb.settings")).toBe(true);
   });
 
   it("Vorschau zeigt genau die erste Mail; Senden protokolliert, setzt Schritt/Status, Kopfzeilen und Abmeldelink", async () => {
     const eins = await leadByName("Podologie Eins");
     const zwei = await leadByName("Podologie Zwei");
+    // ohne dokumentierte Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) wird nie gesendet – auch nicht serverseitig
+    const none = await v.previewSend([eins.id, zwei.id], { now: t0, env });
+    expect(none.count).toBe(0);
+    expect(none.skipped.map((x) => x.reason)).toEqual(["keine dokumentierte Einwilligung", "keine dokumentierte Einwilligung"]);
+    const noPort = new MockMailAdapter();
+    expect(await v.sendNextMails(admin, [eins.id], { port: noPort, now: () => t0, env })).toMatchObject({ sent: 0, skipped: 1 });
+    expect(noPort.sent).toHaveLength(0);
+    await expect(v.recordLeadConsent(admin, eins.id, " x ")).rejects.toThrow(/Wortlaut, Kanal und Datum/);
+    expect(await v.recordLeadConsent(admin, eins.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
+    expect(await v.recordLeadConsent(admin, zwei.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
+    expect(await leadByName("Podologie Eins")).toMatchObject({ consent_note: "Anfrage per E-Mail vom 01.11.2026" });
+    await expect(f.pool.query("update sales_leads set consent_note = null where id = $1", [eins.id])).rejects.toThrow(/sales_leads_consent_check/);
     const pre = await v.previewSend([eins.id, zwei.id], { now: t0, env });
     expect(pre.problems).toEqual([]);
     expect(pre.count).toBe(2);
@@ -89,6 +117,7 @@ const day = 86_400_000;
     expect(m).toMatchObject({ to: "eins@praxis.example", from: '"Max Betreiber" <max@podo.example>', replyTo: "max@podo.example", subject: pre.first!.subject });
     expect(m.text).toBe(pre.first!.text);
     expect(m.text).toContain("AlgoVerdict GmbH");
+    expect(m.text).toContain("Widerspruchsrecht nach Art. 21 DSGVO:\nhttps://podo.example/datenschutz#vertrieb");
     const link = /https:\/\/podo\.example\/abmelden\/(\S+)/.exec(m.text)![1];
     expect(verifyUnsubscribeToken(link)).toBe(eins.id);
     expect(m.text).not.toContain(eins.id);
@@ -101,7 +130,7 @@ const day = 86_400_000;
     const sends = await f.pool.query("select step, ok, mock, sent_by from sales_sends where lead_id = $1", [eins.id]);
     expect(sends.rows).toEqual([{ step: 1, ok: true, mock: true, sent_by: admin }]);
     expect((await v.getLead(eins.id))!.sends).toHaveLength(1);
-    expect(auditCalls().find((a) => a.action === "vertrieb.send")?.meta).toMatchObject({ sent: 2, failed: 0, skipped: 0, mock: true });
+    expect(auditCalls().filter((a) => a.action === "vertrieb.send").at(-1)?.meta).toMatchObject({ sent: 2, failed: 0, skipped: 0, mock: true });
   });
 
   it("Mail 2 erst nach dem Abstand; Doppelklick sendet nicht doppelt", async () => {
@@ -138,20 +167,22 @@ const day = 86_400_000;
     expect(await v.unsubscribeByToken(token)).toBe(true);
     expect(await v.unsubscribeByToken(token)).toBe(true);
     expect(r.sent).toBe(1);
-    expect(await leadByName("Podologie Eins")).toMatchObject({ status: "abgemeldet", step: 3 });
-    expect((await f.pool.query("select reason from sales_suppressions where email = 'eins@praxis.example'")).rows).toEqual([{ reason: "abgemeldet" }]);
-    // auch nach Statuswechsel zurück auf „neu“ bleibt die Adresse gesperrt (DB-Trigger)
-    await f.pool.query("update sales_leads set status = 'neu', step = 0 where id = $1", [eins.id]);
-    expect(await leadByName("Podologie Eins")).toMatchObject({ status: "abgemeldet" });
+    // Abmeldung = Widerspruch: Lead samt Verlauf gelöscht, Versandzeilen ohne Bezug/Mailangaben, nur Prüfwert bleibt
+    expect(await leadByName("Podologie Eins")).toBeUndefined();
+    expect((await f.pool.query("select count(*)::int as n from sales_lead_events where lead_id = $1", [eins.id])).rows[0].n).toBe(0);
+    expect((await f.pool.query("select count(*)::int as n from sales_sends where lead_id = $1", [eins.id])).rows[0].n).toBe(0);
+    expect((await f.pool.query("select count(*)::int as n from sales_sends where lead_id is null and message_id is not null and sent_at = $1", [new Date(t0.getTime() + 30 * day)])).rows[0].n).toBe(0);
+    const bl = await import("./blocklist");
+    expect(await bl.isBlocked("eins@praxis.example")).toBe(true);
+    expect((await f.pool.query("select count(*)::int as n from sales_blocklist where hash like '%eins%' or reason like '%@%'")).rows[0].n).toBe(0);
     expect(auditCalls().some((a) => a.action === "vertrieb.unsubscribe" && a.entityId === eins.id)).toBe(true);
-    await v.deleteLead(admin, eins.id);
-    expect(auditCalls().some((a) => a.action === "vertrieb.lead_deleted" && a.entityId === eins.id)).toBe(true);
-    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n");
+    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n", "Messe Test 2026");
     expect(again).toEqual({ imported: 0, skipped: 1 });
   });
 
   it("Versandfehler wird protokolliert, Schritt bleibt", async () => {
     const id = await v.createLead(admin, { name: "Fehlerpraxis", contactPerson: null, email: "fehler@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
+    await v.recordLeadConsent(admin, id, "Messe Test, Formular");
     const failing: MailPort = { kind: "smtp", isMock: false, source: "platform", send: async (_m: MailMessage) => Promise.reject(new MailSendError("SMTP-Server nicht erreichbar.", "ECONNECTION")) };
     const r = await v.sendNextMails(admin, [id], { port: failing, now: () => t0, env });
     expect(r.sent).toBe(0);
@@ -175,16 +206,23 @@ const day = 86_400_000;
   it("Liste mit Filter/Suche, Zähler, manuelle Sperre und Bearbeiten", async () => {
     const id = (await leadByName("Fehlerpraxis")).id;
     await v.updateLead(admin, id, { name: "Fehlerpraxis", contactPerson: "Herr Test", email: "Fehler@Praxis.example", phone: null, website: null, street: null, zip: "99999", city: "Teststadt", distanceKm: 4.2, source: "OpenStreetMap", notes: null });
-    expect(await leadByName("Fehlerpraxis")).toMatchObject({ email: "fehler@praxis.example", city: "Teststadt" });
+    expect(await leadByName("Fehlerpraxis")).toMatchObject({ email: "fehler@praxis.example", city: "Teststadt", consent_note: "Messe Test, Formular" });
     expect((await v.listLeads({ q: "teststadt" })).map((l) => l.name)).toEqual(["Fehlerpraxis"]);
     expect((await v.listLeads({ q: "100%_" })).length).toBe(0);
     expect((await v.listLeads({ status: "geantwortet" })).map((l) => l.name)).toEqual(["Podologie Zwei"]);
     await expect(v.updateLead(admin, id, { name: "X", contactPerson: null, email: "zwei@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/bereits/);
+    const before = (await v.listSuppressions()).count;
     await v.addSuppression(admin, " FEHLER@praxis.example ");
-    const [row] = await v.listLeads({ q: "Fehlerpraxis" });
-    expect(row).toMatchObject({ suppressed: true, status: "abgemeldet" });
-    expect((await v.statusCounts()).abgemeldet).toBeGreaterThanOrEqual(1);
-    expect((await v.listSuppressions()).map((x) => x.email)).toContain("fehler@praxis.example");
+    // Widerspruch: Eintrag gelöscht, nur Prüfwert (die Konsole zeigt keine Adressen)
+    expect(await v.listLeads({ q: "Fehlerpraxis" })).toEqual([]);
+    const ov = await v.listSuppressions();
+    expect(ov.count).toBe(before + 1);
+    expect(ov.recent[0]).toMatchObject({ reason: "widerspruch" });
+    // manuell „abgemeldet“ löscht ebenfalls
+    const ab = await v.createLead(admin, { name: "Abmelde-Test", contactPerson: null, email: "ab@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
+    expect(await v.setLeadStatus(admin, ab, "abgemeldet")).toBe("deleted");
+    expect(await v.getLead(ab)).toBeNull();
+    expect(await (await import("./blocklist")).isBlocked("ab@praxis.example")).toBe(true);
     expect(auditCalls().map((a) => a.action)).toEqual(expect.arrayContaining(["vertrieb.lead_updated", "vertrieb.suppression_added"]));
   });
   // ───────────── Praxissuche (OpenStreetMap, nachts) – gemocktes Netz, keine echten Abrufe ─────────────
@@ -236,7 +274,9 @@ const day = 86_400_000;
 
     beforeAll(async () => {
       ls = await import("./lead-search");
-      await f.pool.query("insert into sales_suppressions (email, reason) values ('info@gesperrt-podo.example', 'abgemeldet') on conflict do nothing");
+      const bl = await import("./blocklist");
+      const { db } = await import("@/db");
+      await bl.addToBlocklist(db, "info@gesperrt-podo.example", "abgemeldet");
       await f.pool.query("insert into sales_leads (name, email, source) values ('Praxis Bestand', 'info@bestand-podo.example', 'manuell')");
     });
 
@@ -323,4 +363,182 @@ const day = 86_400_000;
       expect(ls.llmPickerFromEnv({ ...cfg, LEAD_SEARCH_LLM_APPROVED: "true" })).not.toBeNull();
     });
   });
+  // ───────────── Pipeline, Kampagnen, Aktionscodes in Mails ─────────────
+  describe("Pipeline und Kampagnen", () => {
+    let pl: typeof import("./vertrieb-pipeline");
+    let promo: typeof import("./promo-codes");
+    const sfx = Math.random().toString(36).slice(2, 7);
+    const later = new Date(Date.now() + 3 * day); // außerhalb des Tageslimits der vorigen Tests
+    const mk = async (name: string, email: string | null, website: string | null = null) => {
+      const id = await v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      if (email) await v.recordLeadConsent(admin, id, "Anfrage über das Kontaktformular");
+      return id;
+    };
+    const ownerOrg = async (email: string, patch: { plan?: string; status?: string } = {}) => {
+      const org = await f.org();
+      const u = (await f.pool.query("insert into users (email, name, password_hash) values ($1, 'Inhaberin', 'x') returning id", [email])).rows[0].id;
+      await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, u]);
+      await f.pool.query("update organizations set plan = $2, subscription_status = $3, trial_ends_at = now() + interval '30 days' where id = $1", [org, patch.plan ?? "trial", patch.status ?? "trialing"]);
+      return org;
+    };
+    const item = async (id: string) => (await pl.loadPipeline()).find((l) => l.id === id)!;
+
+    beforeAll(async () => {
+      pl = await import("./vertrieb-pipeline");
+      promo = await import("./promo-codes");
+      // die Praxissuche-Tests lassen eine laufende Suche zurück – für den Versand egal
+    });
+
+    it("Stufen: neu → angeschrieben → Antwort erhalten (Verlauf, Status)", async () => {
+      const id = await mk("Pipe Eins", `info@pipe1-${sfx}.example`);
+      expect((await item(id)).stage).toBe("neu");
+      const port = new MockMailAdapter();
+      expect((await v.sendNextMails(admin, [id], { port, now: () => later, env })).sent).toBe(1);
+      expect(await item(id)).toMatchObject({ stage: "angeschrieben", step: 1, sendsOk: 1 });
+      await pl.addLeadNote(admin, id, "Rückruf Montag");
+      await pl.markReplied(admin, id);
+      expect(await item(id)).toMatchObject({ stage: "geantwortet", status: "geantwortet" });
+      const lead = (await v.getLead(id))!.lead;
+      expect(lead.repliedAt).not.toBeNull();
+      const tl = await pl.leadTimeline(lead);
+      expect(tl.map((e) => e.kind)).toEqual(expect.arrayContaining(["created", "send", "note", "reply"]));
+      // Antwort beendet die Sequenz
+      expect((await v.sendNextMails(admin, [id], { port, now: () => new Date(later.getTime() + 30 * day), env })).sent).toBe(0);
+      await expect(pl.addLeadNote(admin, id, "   ")).rejects.toThrow(/leer/);
+    });
+
+    it("Test gestartet / Kunde: Registrierung per Domain, E-Mail oder persönlichem Code", async () => {
+      const dom = await mk("Pipe Domain", `info@pipe2-${sfx}.example`);
+      const web = await mk("Pipe Web", null, `https://www.pipe3-${sfx}.example/`);
+      const viaCode = await mk("Pipe Code", `kontakt@gmx.de`);
+      const orgDom = await ownerOrg(`anna@pipe2-${sfx}.example`);
+      await ownerOrg(`chef@pipe3-${sfx}.example`, { plan: "praxis", status: "active" });
+      const orgCode = await ownerOrg(`irgendwer-${sfx}@gmx.de`);
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode });
+      await promo.redeemPromoCodeForOrganization(orgCode, admin, `TPIPE${sfx.toUpperCase()}-L`);
+      expect(await item(dom)).toMatchObject({ stage: "test", org: { id: orgDom, via: "domain" } });
+      expect(await item(web)).toMatchObject({ stage: "kunde", org: { via: "domain", converted: true } });
+      expect(await item(viaCode)).toMatchObject({ stage: "test", org: { id: orgCode, via: "code" } });
+      const dash = await pl.salesDashboard(await pl.loadPipeline());
+      expect(dash.tests).toBeGreaterThanOrEqual(2);
+      expect(dash.customers).toBeGreaterThanOrEqual(1);
+      expect(dash.redemptions).toBeGreaterThanOrEqual(1);
+    });
+
+    it("Sammelaktionen und Filter: Status, Kampagne, Abmelden (Sperrliste)", async () => {
+      const a = await mk("Pipe Bulk A", `a@pipe4-${sfx}.example`);
+      const b = await mk("Pipe Bulk B", `b@pipe4-${sfx}.example`);
+      const camp = await pl.createCampaign(admin, { name: `Herbst ${sfx}`, notes: null });
+      expect(await pl.setLeadsCampaign(admin, [a, b, a], camp)).toBe(2);
+      expect(await pl.setLeadsCampaign(admin, [a], camp)).toBe(0); // unverändert
+      const all = await pl.loadPipeline();
+      expect(pl.filterPipeline(all, { campaign: camp }).map((l) => l.name).sort()).toEqual(["Pipe Bulk A", "Pipe Bulk B"]);
+      expect(pl.filterPipeline(all, { q: "pipe bulk", email: "ohne" })).toEqual([]);
+      expect(pl.filterPipeline(all, { stage: "neu", q: "Pipe Bulk" })).toHaveLength(2);
+      expect(await pl.bulkSetStatus(admin, [a], "kein_interesse")).toBe(1);
+      expect((await item(a)).stage).toBe("aus");
+      expect((await pl.leadTimeline((await v.getLead(b))!.lead)).some((e) => e.kind === "campaign")).toBe(true);
+      expect(await pl.bulkSetStatus(admin, [b, "00000000-0000-4000-8000-000000000000"], "abgemeldet")).toBe(1);
+      expect(await v.getLead(b)).toBeNull();
+      expect(await (await import("./blocklist")).isBlocked(`b@pipe4-${sfx}.example`)).toBe(true);
+    });
+
+    it("Kampagne mit {{code}}/{{link}}: ohne gültigen Code übersprungen, mit Code im Text", async () => {
+      const id = await mk("Pipe Kampagne", `info@pipe5-${sfx}.example`);
+      const camp = await pl.createCampaign(admin, { name: `Code ${sfx}`, notes: null });
+      await pl.setLeadsCampaign(admin, [id], camp);
+      await expect(pl.saveCampaignTemplates(admin, camp, [{ subject: "x {{falsch}}", body: "y" }, { subject: "a", body: "b" }, { subject: "a", body: "b" }])).rejects.toThrow(/Unbekannte/);
+      await pl.saveCampaignTemplates(admin, camp, [
+        { subject: "3 Monate gratis: {{code}}", body: "{{anrede}},\nhier testen: {{link}}" },
+        { subject: "Mail 2", body: "Text" },
+        { subject: "Mail 3", body: "Text" },
+      ]);
+      const pre = await v.previewSend([id], { now: later, env });
+      expect(pre.count).toBe(0);
+      expect(pre.skipped[0].reason).toMatch(/Aktionscode/);
+      const port = new MockMailAdapter();
+      expect(await v.sendNextMails(admin, [id], { port, now: () => later, env })).toMatchObject({ sent: 0, skipped: 1 });
+      const code = `TPIPE${sfx.toUpperCase()}-K`;
+      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: new Date(Date.now() + 90 * day), campaignId: camp });
+      const pre2 = await v.previewSend([id], { now: later, env });
+      expect(pre2.first).toMatchObject({ subject: `3 Monate gratis: ${code}` });
+      expect(pre2.first!.text).toContain(`https://podo.example/aktion/${code}`);
+      expect((await v.sendNextMails(admin, [id], { port, now: () => later, env })).sent).toBe(1);
+      expect(port.sent[0].text).toContain(`https://podo.example/aktion/${code}`);
+      const stats = (await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)!;
+      expect(stats).toMatchObject({ leads: 1, contacted: 1, sent: 1, tests: 0, codes: [{ code, active: true }] });
+      // Code einer Praxis eingelöst → Test in der Kampagnen-Statistik
+      const o = await ownerOrg(`x-${sfx}@gmx.de`);
+      await promo.redeemPromoCodeForOrganization(o, admin, code);
+      expect((await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)).toMatchObject({ tests: 1, converted: 0 });
+      // Einwilligung gilt für die Adresse: neue E-Mail → Einwilligung weg, Versand übersprungen
+      await v.updateLead(admin, id, { name: "Pipe Kampagne", contactPerson: null, email: `neu@pipe5-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      const after = (await v.getLead(id))!.lead;
+      expect(after).toMatchObject({ consentAt: null, consentNote: null });
+      expect((await pl.leadTimeline(after)).some((e) => e.kind === "consent")).toBe(true);
+      // zurück auf Standardvorlagen
+      await pl.saveCampaignTemplates(admin, camp, null);
+      expect(pl.campaignTemplates((await pl.getCampaign(camp))!)).toBeNull();
+    });
+  
+    it("Speicherdauer: Leads ohne Kontakt seit 24 Monaten werden gelöscht, Kunden und aktive bleiben", async () => {
+      const stale = await mk("Pipe Alt", `alt@pipe6-${sfx}.example`);
+      const fresh = await mk("Pipe Frisch", `frisch@pipe6-${sfx}.example`);
+      const kunde = await mk("Pipe Kunde", `kunde@pipe6-${sfx}.example`);
+      await f.pool.query("update sales_leads set status = 'kunde' where id = $1", [kunde]);
+      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[stale, kunde]]);
+      await f.pool.query("update sales_leads set created_at = now() - interval '25 months', updated_at = now() - interval '25 months', consent_at = now() - interval '25 months' where id = any($1)", [[stale, kunde]]);
+      // ohne Einwilligung schon nach 12 Monaten, mit Einwilligung erst nach 24
+      const noConsent = await mk("Pipe Ohne", null);
+      const withConsent13 = await mk("Pipe Mit13", `mit13@pipe6-${sfx}.example`);
+      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[noConsent, withConsent13]]);
+      await f.pool.query("update sales_leads set created_at = now() - interval '13 months', updated_at = now() - interval '13 months', consent_at = case when consent_at is null then null else now() - interval '13 months' end where id = any($1)", [[noConsent, withConsent13]]);
+      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(2);
+      expect(await v.getLead(stale)).toBeNull();
+      expect(await v.getLead(noConsent)).toBeNull();
+      expect(await v.getLead(withConsent13)).not.toBeNull();
+      expect(await v.getLead(fresh)).not.toBeNull();
+      expect(await v.getLead(kunde)).not.toBeNull();
+    });
+
+    it("Abmeldung sperrt auch Website und Name+PLZ; persönlicher Code anonymisiert; Kunde mit gesperrter Adresse bearbeitbar", async () => {
+      const id = await v.createLead(admin, { name: `Pipe Weg ${sfx}`, contactPerson: null, email: `weg@pipe7-${sfx}.example`, phone: null, website: `https://www.pipe7-${sfx}.example/`, street: null, zip: "12345", city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-W`, label: `Pipe Weg ${sfx}`, trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: id });
+      expect(await v.setLeadStatus(admin, id, "abgemeldet")).toBe("deleted");
+      expect((await f.pool.query("select label, lead_id from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-W`])).rows[0]).toEqual({ label: "(gelöscht)", lead_id: null });
+      expect((await f.pool.query("select kind from sales_blocklist where created_at > now() - interval '1 minute' order by kind")).rows.map((r: { kind: string }) => r.kind)).toEqual(expect.arrayContaining(["email", "host", "namezip"]));
+      // gleiche Praxis mit anderer Adresse: Import überspringt (Website bzw. Name+PLZ)
+      const csv = [`name;email;website;zip;city`, `Pipe Weg ${sfx};neu@anders-${sfx}.example;;12345;Pipestadt`, `Andere Praxis ${sfx};x@y-${sfx}.example;https://pipe7-${sfx}.example;99999;Ort`].join("\n");
+      const pre = await v.previewImport(csv);
+      expect(pre.newCount).toBe(0);
+      expect(pre.decisions.map((d) => (d.action === "übersprungen" ? d.reason : d.action))).toEqual([expect.stringMatching(/abgemeldet/), expect.stringMatching(/abgemeldet/)]);
+      // Kunde mit gesperrter Adresse (Widerspruch) bleibt bearbeitbar, solange die Adresse gleich bleibt
+      const k = await v.createLead(admin, { name: `Pipe Kunde2 ${sfx}`, contactPerson: null, email: `k2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null });
+      await v.setLeadStatus(admin, k, "kunde");
+      await v.addSuppression(admin, `k2@pipe7-${sfx}.example`);
+      await expect(v.updateLead(admin, k, { name: `Pipe Kunde2 ${sfx} GmbH`, contactPerson: null, email: `K2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null })).resolves.toBeUndefined();
+    });
+
+    it("Kanarienwert: anderer Sperrlisten-Schlüssel sperrt Versand, Import und Praxissuche (fail-closed)", async () => {
+      const id = await mk("Pipe Kanarie", `kanarie@pipe8-${sfx}.example`);
+      const saved = (await f.pool.query("select blocklist_key_check from sales_settings where id = 1")).rows[0].blocklist_key_check;
+      expect(saved).toMatch(/^v1:[0-9a-f]{64}$/);
+      await f.pool.query("update sales_settings set blocklist_key_check = 'v1:' || repeat('0', 64) where id = 1");
+      try {
+        await expect(v.sendNextMails(admin, [id], { port: new MockMailAdapter(), now: () => later, env })).rejects.toThrow(/Sperrlisten-Schlüssel passt nicht/);
+        expect((await v.previewSend([id], { now: later, env })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/Sperrlisten-Schlüssel/)]));
+        expect(await v.importLeads(admin, "name,email\nX,x@kanarie.example\n", "Test")).toMatchObject({ imported: 0, error: expect.stringMatching(/Sperrlisten-Schlüssel/) });
+        const ls = await import("./lead-search");
+        await expect(ls.runLeadSearch({ trigger: "manual", adminUserId: admin })).rejects.toThrow(/Sperrlisten-Schlüssel/);
+      } finally {
+        await f.pool.query("update sales_settings set blocklist_key_check = $1 where id = 1", [saved]);
+      }
+    });
+
+    it("ohne bestätigten Versanddienstleister kein Versand", async () => {
+      const s = await v.getSalesSettings();
+      expect(v.settingsProblems({ ...s, mailProcessorConfirmed: false }, env)).toEqual(expect.arrayContaining([expect.stringMatching(/Versanddienstleister/)]));
+      expect(v.settingsProblems({ ...s, mailProcessorConfirmed: true }, env).some((x) => /Versanddienstleister/.test(x))).toBe(false);
+    });
+});
 });

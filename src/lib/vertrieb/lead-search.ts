@@ -348,7 +348,13 @@ export function websiteHostKey(url: string | null | undefined): string | null {
 
 // ───────────── Dubletten ─────────────
 
-export type DedupeKeys = { emails: Set<string>; hosts: Set<string>; nameLocs: Set<string>; suppressed: Set<string> };
+/** suppressed: Sperrliste – Menge oder Abgleich über Prüfwerte (src/lib/vertrieb/blocklist.ts) */
+export type DedupeKeys = {
+  emails: Set<string>;
+  hosts: Set<string>;
+  nameLocs: Set<string>;
+  suppressed: { has(email: string): boolean; hasHost?(website: string | null | undefined): boolean; hasNameZip?(name: string, zip: string | null | undefined): boolean };
+};
 type LeadKeyInput = {
   email: string | null;
   website: string | null;
@@ -382,8 +388,9 @@ export function nameLocationKeys(l: LeadKeyInput): string[] {
   return keys;
 }
 
-export function buildDedupeKeys(existing: LeadKeyInput[], suppressed: Iterable<string>): DedupeKeys {
-  const k: DedupeKeys = { emails: new Set(), hosts: new Set(), nameLocs: new Set(), suppressed: new Set([...suppressed].map(emailKey)) };
+export function buildDedupeKeys(existing: LeadKeyInput[], suppressed: Iterable<string> | DedupeKeys["suppressed"]): DedupeKeys {
+  const sup = Symbol.iterator in suppressed ? new Set([...(suppressed as Iterable<string>)].map(emailKey)) : (suppressed as DedupeKeys["suppressed"]);
+  const k: DedupeKeys = { emails: new Set(), hosts: new Set(), nameLocs: new Set(), suppressed: sup };
   for (const l of existing) rememberLead(k, l);
   return k;
 }
@@ -397,6 +404,8 @@ export function rememberLead(k: DedupeKeys, l: LeadKeyInput) {
 
 /** Grund, warum die Praxis schon bekannt ist (Website-Host, Name+PLZ/Ort/Lage) – vor dem Website-Abruf prüfbar. */
 export function duplicateBeforeEmail(k: DedupeKeys, p: Omit<LeadKeyInput, "email">): string | null {
+  // abgemeldete Praxis (Sperrliste über Website-Host bzw. Name+PLZ) nicht wieder anlegen
+  if (k.suppressed.hasHost?.(p.website) || k.suppressed.hasNameZip?.(p.name, p.zip)) return "Auf der Sperrliste (Praxis abgemeldet)";
   const h = websiteHostKey(p.website);
   if (h && k.hosts.has(h)) return "Website bereits vorhanden";
   if (nameLocationKeys({ ...p, email: null }).some((key) => k.nameLocs.has(key))) return "Name und PLZ/Ort bzw. OSM-Objekt bereits vorhanden";
