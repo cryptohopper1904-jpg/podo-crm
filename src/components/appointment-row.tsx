@@ -3,6 +3,7 @@ import type { RiskFlags } from "@/db/schema";
 import { setAppointmentStatusAction } from "@/app/(app)/kalender/actions";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
+import { colorVar, type TherapistColor } from "@/lib/therapist-colors";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 
@@ -23,12 +24,16 @@ export type ApptRow = {
   feed?: { label: string; conflict: string | null } | null;
 };
 
-export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row: ApptRow; canDoc: boolean; canEdit: boolean; overlap?: boolean }) {
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false, color }: { row: ApptRow; canDoc: boolean; canEdit: boolean; overlap?: boolean; color?: TherapistColor }) {
   const { a, patient, feed } = row;
   const st = STATUS[a.status];
   const cancelled = a.status === "cancelled";
   return (
-    <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>
+    <div
+      className={`flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}
+      // Behandler:in-Farbe nur als Streifen links (Name steht in der Zeile)
+      style={color ? { boxShadow: `inset 4px 0 0 ${colorVar(color)}`, paddingLeft: "0.75rem" } : undefined}
+    >
       <Link href={`/kalender/termin/${a.id}`} className="w-28 shrink-0 whitespace-nowrap font-semibold tabular-nums hover:text-primary" title="Termin öffnen (verschieben, abrechnen)">
         {timeDe(a.startsAt)}–{timeDe(a.endsAt)}
       </Link>

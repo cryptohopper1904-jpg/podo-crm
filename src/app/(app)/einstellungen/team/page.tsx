@@ -9,6 +9,9 @@ import { hasOwnCalendar, ROLE_LABELS, ROLES, permissionsFor } from "@/lib/auth/p
 import { SEAT_FREE_NOTE, seatCounts, seatLimit } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
 import { inviteMemberAction, updateMemberAction } from "../actions";
+import { TherapistColorForm } from "@/components/therapist-color-fieldset";
+import { assignTherapistColors, byJoined, dotStyle } from "@/lib/therapist-colors";
+import { therapists } from "@/server/appointments";
 
 export const metadata = { title: "Team" };
 
@@ -22,6 +25,8 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
     .where(eq(memberships.organizationId, auth.organization.id));
+  const calendarTeam = byJoined(await therapists(auth));
+  const colors = assignTherapistColors(calendarTeam);
   return (
     <div className="flex flex-col gap-6">
       <div className={`flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-sm ${plaetze === "voll" || used >= limit ? "bg-warn-soft text-warn-soft-text" : "bg-surface-2"}`}>
@@ -64,6 +69,23 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
           ))}
         </tbody>
       </Table>
+      {calendarTeam.length ? (
+        <Card>
+          <CardTitle>Kalenderfarben</CardTitle>
+          <p className="mb-4 text-sm text-muted">Termine im Kalender erscheinen in der Farbe der Behandler:in. „Automatisch“ vergibt die nächste freie Farbe. Jede Person kann ihre eigene Farbe auch unter Einstellungen → Ansicht wählen.</p>
+          <ul className="flex flex-col divide-y divide-border">
+            {calendarTeam.map((t) => (
+              <li key={t.id} className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0">
+                <p className="flex items-center gap-2 font-semibold">
+                  <span className="inline-block size-3 rounded-full" style={dotStyle(colors.get(t.id)!)} aria-hidden />
+                  {t.name}
+                </p>
+                {auth.support ? null : <TherapistColorForm userId={t.id} stored={t.color} effective={colors.get(t.id)!} legend={`Kalenderfarbe für ${t.name}`} />}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       <Card>
         <CardTitle>Person hinzufügen</CardTitle>
         <ActionForm action={inviteMemberAction} submit="Hinzufügen">

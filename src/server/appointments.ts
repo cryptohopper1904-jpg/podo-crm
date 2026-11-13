@@ -47,7 +47,7 @@ export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
   const { db } = await import("@/db");
   return db
-    .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
+    .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color, joinedAt: memberships.createdAt })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
     .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
@@ -235,21 +235,35 @@ export async function getAppointment(auth: AuthContext, id: string) {
 
 /** Steht der Termin auf einer ausgestellten (nicht stornierten, nicht Entwurf) Rechnung, Quittung o. Ä.? */
 async function isAppointmentBilled(tx: Tx, org: string, appointmentId: string): Promise<boolean> {
-  const [hit] = await tx
-    .select({ id: invoiceLines.id })
+  return (await billedIdsInTx(tx, org, [appointmentId])).size > 0;
+}
+
+/** Welche der Termine stehen auf einem ausgestellten Beleg (gleiche Regel wie isAppointmentBilled)? */
+async function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
+  if (!appointmentIds.length) return new Set();
+  const rows = await tx
+    .selectDistinct({ id: invoiceLines.appointmentId })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
     .where(
       and(
         eq(invoiceLines.organizationId, org),
-        eq(invoiceLines.appointmentId, appointmentId),
+        inArray(invoiceLines.appointmentId, appointmentIds),
         ne(invoices.status, "cancelled"),
         ne(invoices.status, "draft"),
         ne(invoices.kind, "credit_note"),
       ),
-    )
-    .limit(1);
-  return !!hit;
+    );
+  return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
+}
+
+/** Kalender (vollständige Ansicht): abgerechnete Termine – dort gibt es keinen Griff zum Verschieben. */
+export async function billedAppointmentIds(auth: AuthContext, appointmentIds: string[]): Promise<Set<string>> {
+  assertCan(auth, "appointments.read");
+  const org = auth.organization.id;
+  const ids = appointmentIds.filter((id) => z.uuid().safeParse(id).success);
+  if (!ids.length) return new Set();
+  return withOrg(org, (tx) => billedIdsInTx(tx, org, ids));
 }
 
 export type RescheduleInput = { startsAt: Date; durationMin: number; therapistId: string; allowConflict: boolean };
@@ -308,4 +322,26 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     },
   });
   return { ok: true };
+}
+
+const moveSchema = z.object({
+  id: z.uuid(),
+  startsAt: z.iso.datetime(),
+  durationMin: z.number().int(),
+  therapistId: z.uuid(),
+  allowConflict: z.boolean().default(false),
+});
+export type MoveInput = z.input<typeof moveSchema>;
+
+/**
+ * Kalender: Termin per Ziehen verschieben (und „Rückgängig“). Nur Eingabeprüfung – die eigentliche Logik
+ * (Buchungssperre, Überschneidung/Abwesenheit mit allowConflict, Sperren für Doctolib/Kalender-Abo/abgerechnet/abgesagt,
+ * verstorben, Protokoll) ist dieselbe wie beim Formular: rescheduleAppointment.
+ */
+export async function moveAppointment(auth: AuthContext, raw: unknown): Promise<RescheduleResult> {
+  assertCan(auth, "appointments.write");
+  const p = moveSchema.safeParse(raw);
+  if (!p.success) return { ok: false, error: "Termin konnte nicht verschoben werden (ungültige Angaben)." };
+  const d = p.data;
+  return rescheduleAppointment(auth, d.id, { startsAt: new Date(d.startsAt), durationMin: d.durationMin, therapistId: d.therapistId, allowConflict: d.allowConflict });
 }
