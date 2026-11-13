@@ -16,6 +16,7 @@
  *    daher bleibt `collective_invoice_id` beim Import leer.
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
  */
+import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
 import * as s from "@/db/schema";
@@ -76,6 +77,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // ───── Patienten ─────
   // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Doctolib-Import)
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
+  // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
+  await assertPatientCapacity(tx, organizationId, result.patients.length);
   const existingNumbers = new Set(
     (await tx.select({ number: s.patients.number }).from(s.patients).where(eq(s.patients.organizationId, organizationId))).map((r) => r.number),
   );

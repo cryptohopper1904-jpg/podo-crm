@@ -1,5 +1,6 @@
 "use server";
 
+import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { and, eq, max, sql } from "drizzle-orm";
@@ -102,6 +103,7 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
     };
   } catch (e) {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.excel.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
+    if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     console.error("[import.excel]", e instanceof Error ? e.message : e);
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte Datei prüfen oder den Support kontaktieren." };
   }
@@ -204,6 +206,7 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
         seen.add(d.externalId);
         return true;
       });
+      await assertPatientCapacity(tx, org, todo.length);
       const [r] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
       let next = (r?.n ?? 0) + 1;
       for (let i = 0; i < todo.length; i += 500) {
@@ -212,6 +215,7 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
       return todo.length;
     });
   } catch (e) {
+    if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     console.error("[import.doctolib]", e instanceof Error ? e.message : e);
     return { error: "Import abgebrochen, es wurde nichts gespeichert." };
   }
