@@ -6,10 +6,22 @@ import type { Template } from "@/lib/vertrieb/constants";
 
 type State = { error?: string; ok?: string } | undefined;
 
-export function TemplatesForm({ action, templates, delays }: { action: (s: State, f: FormData) => Promise<State>; templates: Template[]; delays: { delay2Days: number; delay3Days: number } }) {
+export function TemplatesForm({
+  action,
+  templates,
+  delays,
+  hidden = {},
+}: {
+  action: (s: State, f: FormData) => Promise<State>;
+  templates: Template[];
+  delays: { delay2Days: number; delay3Days: number };
+  /** zusätzliche versteckte Felder (z. B. Kampagnen-ID) */
+  hidden?: Record<string, string>;
+}) {
   const when = ["sofort beim ersten Klick", `frühestens ${delays.delay2Days} Tage nach Mail 1`, `frühestens ${delays.delay3Days} Tage nach Mail 2`];
   return (
     <ActionForm action={action} submit="Vorlagen speichern" className="flex flex-col gap-6">
+      {Object.entries(hidden).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
       {templates.map((t, i) => (
         <fieldset key={i} className="rounded-[var(--radius-card)] border border-border bg-surface p-5">
           <legend className="px-1 font-display text-lg font-semibold">Mail {i + 1}</legend>

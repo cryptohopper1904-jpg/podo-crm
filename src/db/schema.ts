@@ -1465,13 +1465,51 @@ export const salesLeads = pgTable(
     status: text("status").notNull().default("neu"),
     step: smallint("step").notNull().default(0),
     lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+    /** Kampagne (höchstens eine je Lead): Vorlagen-Variante und Aktionscode für {{code}}/{{link}} */
+    campaignId: uuid("campaign_id").references((): AnyPgColumn => salesCampaigns.id, { onDelete: "set null" }),
+    /** Zeitpunkt der zuletzt manuell erfassten Antwort („Antwort erhalten“) */
+    repliedAt: timestamp("replied_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("sales_leads_email").on(sql`lower(${t.email})`).where(sql`${t.email} is not null`),
     index("sales_leads_status").on(t.status),
+    index("sales_leads_campaign").on(t.campaignId),
   ],
+);
+
+/**
+ * Kampagnen des Vertriebs: gruppieren Leads, optional eigene Vorlagen-Variante (3 Mails; null = Standardvorlagen
+ * aus sales_settings) und einen Aktionscode (promo_codes.campaign_id). Versand bleibt manuell (Vertriebsseite).
+ */
+export const salesCampaigns = pgTable("sales_campaigns", {
+  id: id(),
+  name: text("name").notNull(),
+  notes: text("notes"),
+  templates: jsonb("templates").$type<SalesTemplate[]>(),
+  active: boolean("active").notNull().default(true),
+  createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Verlauf eines Leads (Notizen, Statuswechsel, „Antwort erhalten“, Kampagne) – Versand steht in sales_sends. */
+export const salesLeadEvents = pgTable(
+  "sales_lead_events",
+  {
+    id: id(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => salesLeads.id, { onDelete: "cascade" }),
+    /** note | status | reply | campaign */
+    kind: text("kind").notNull(),
+    text: text("text"),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sales_lead_events_lead").on(t.leadId, t.createdAt)],
 );
 
 /** Versandprotokoll der Sequenz (je Mail eine Zeile). Lead gelöscht → lead_id NULL (Tageslimit bleibt korrekt). */
@@ -1520,3 +1558,50 @@ export const salesSettings = pgTable("sales_settings", {
   updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
   updatedAt: updatedAt(),
 });
+
+// ───────────────────────── Aktionscodes (SaaS-Testphase, Plattform-Betreiber) ─────────────────────────
+/**
+ * Aktionscodes für eine verlängerte Testphase (z. B. 90 Tage) – NICHT die Gutscheine der Praxis (/gutscheine).
+ * Plattformweit wie sales_*: keine RLS, Zugriff nur über src/server/promo-codes.ts (Konsole: Plattform-Admin + 2FA;
+ * Einlösen: Registrierung bzw. Inhaber:in auf der Abo-Seite). Code normalisiert (A–Z, 0–9, „-“), per CHECK erzwungen (0034).
+ * grant_plan: null = Testphase mit allen Funktionen, sonst Tarif-Umfang während der Testphase (starter|praxis|plus).
+ */
+export const promoCodes = pgTable(
+  "promo_codes",
+  {
+    id: id(),
+    code: text("code").notNull(),
+    label: text("label").notNull(),
+    trialDays: smallint("trial_days").notNull(),
+    grantPlan: text("grant_plan"),
+    maxRedemptions: integer("max_redemptions"),
+    validUntil: timestamp("valid_until", { withTimezone: true }),
+    active: boolean("active").notNull().default(true),
+    campaignId: uuid("campaign_id").references(() => salesCampaigns.id, { onDelete: "set null" }),
+    leadId: uuid("lead_id").references(() => salesLeads.id, { onDelete: "set null" }),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("promo_codes_code").on(t.code), index("promo_codes_campaign").on(t.campaignId)],
+);
+
+/** Einlösungen: je Praxis höchstens EINE (unique), unveränderbar (Trigger, 0034); Obergrenze je Code per Trigger. */
+export const promoRedemptions = pgTable(
+  "promo_redemptions",
+  {
+    id: id(),
+    codeId: uuid("code_id")
+      .notNull()
+      .references(() => promoCodes.id, { onDelete: "restrict" }),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    redeemedBy: uuid("redeemed_by").references(() => users.id, { onDelete: "set null" }),
+    /** signup | abo */
+    via: text("via").notNull(),
+    trialEndsBefore: timestamp("trial_ends_before", { withTimezone: true }),
+    trialEndsAfter: timestamp("trial_ends_after", { withTimezone: true }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("promo_redemptions_org").on(t.organizationId), index("promo_redemptions_code").on(t.codeId)],
+);

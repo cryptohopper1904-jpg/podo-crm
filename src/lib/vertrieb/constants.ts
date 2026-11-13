@@ -32,7 +32,9 @@ export const MAX_PER_DAY = 50;
 
 export const DEFAULT_DELAYS = { delay2Days: 5, delay3Days: 10 } as const;
 
-export const PLACEHOLDERS = ["praxis", "ansprechpartner", "anrede", "ort", "absender"] as const;
+export const PLACEHOLDERS = ["praxis", "ansprechpartner", "anrede", "ort", "absender", "code", "link"] as const;
+/** Platzhalter, die einen gültigen Aktionscode (Kampagne oder Lead) voraussetzen – sonst wird der Lead beim Versand übersprungen */
+export const PROMO_PLACEHOLDERS = ["code", "link"] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 export const PLACEHOLDER_HELP: Record<Placeholder, string> = {
@@ -41,6 +43,8 @@ export const PLACEHOLDER_HELP: Record<Placeholder, string> = {
   anrede: "„Guten Tag Frau Muster“ bzw. „Guten Tag“ ohne Ansprechpartner:in",
   ort: "Ort der Praxis",
   absender: "Absendername aus den Einstellungen",
+  code: "Aktionscode der Kampagne (bzw. persönlicher Code des Leads), z. B. für 3 Monate kostenlos testen",
+  link: "Aktionslink …/aktion/CODE (öffentliche Seite mit Registrierung und vorausgefülltem Code)",
 };
 
 export const PRODUCT_URL = "https://podo.algoverdict.com";

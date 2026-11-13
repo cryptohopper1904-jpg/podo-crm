@@ -163,6 +163,7 @@ export async function loadOrgBilling(organizationId: string) {
       currentPeriodEnd: organizations.currentPeriodEnd,
       seats: organizations.seats,
       stripeCustomerId: organizations.stripeCustomerId,
+      stripeSubscriptionId: organizations.stripeSubscriptionId,
     })
     .from(organizations)
     .where(eq(organizations.id, organizationId));

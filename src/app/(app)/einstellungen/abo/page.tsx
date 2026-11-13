@@ -7,7 +7,10 @@ import { withOrg } from "@/db";
 import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { activeTeamMembers, loadOrgBilling, usedSeats } from "@/server/billing";
 import { countedPatients } from "@/server/patient-limit";
+import { promoRedemptionProblem } from "@/lib/promo-codes";
+import { redemptionForOrganization } from "@/server/promo-codes";
 import { FreePlanForm } from "./free-form";
+import { PromoForm } from "./promo-form";
 import { openPortalAction } from "./actions";
 import { CheckoutForm } from "./checkout-form";
 
@@ -34,6 +37,8 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const a = auth.access;
   const patientCount = await withOrg(auth.organization.id, (tx) => countedPatients(tx, auth.organization.id));
   const freeProblem = org ? freeSwitchProblem(org, patientCount) : null;
+  const redemption = await redemptionForOrganization(auth.organization.id);
+  const promoProblem = org ? promoRedemptionProblem(org) : "Praxis nicht gefunden.";
   const freeWarning =
     [
       a.trialDaysLeft !== undefined ? `Die Testphase (noch ${a.trialDaysLeft} ${a.trialDaysLeft === 1 ? "Tag" : "Tage"}) endet damit sofort – Patientenportal, KI-Telefon und Website werden abgeschaltet.` : null,
@@ -97,6 +102,22 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
             0 € ohne Zeitlimit für kleine Praxen: bis zu {FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit), 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Aktuell: {patientCount} Patient:innen.
           </p>
           <FreePlanForm disabledReason={freeProblem} warning={freeWarning} />
+        </Card>
+      ) : null}
+
+      {redemption ? (
+        <Card>
+          <CardTitle>Aktionscode</CardTitle>
+          <p className="text-sm">Code <span className="font-mono font-semibold">{redemption.code}</span> eingelöst am {dateDe(redemption.redeemedAt)} ({redemption.trialDays} Tage Testphase). Je Praxis ist ein Aktionscode möglich.</p>
+        </Card>
+      ) : !promoProblem ? (
+        <Card>
+          <CardTitle>Aktionscode einlösen</CardTitle>
+          <p className="mb-3 text-sm text-muted">
+            Mit einem Aktionscode verlängert sich die Testphase (z. B. auf 3 Monate ab heute; eine längere laufende Testphase wird nie verkürzt).
+            Auch nach Ablauf der Testphase möglich – je Praxis einmal, nicht bei laufendem Abo.
+          </p>
+          <PromoForm />
         </Card>
       ) : null}
 

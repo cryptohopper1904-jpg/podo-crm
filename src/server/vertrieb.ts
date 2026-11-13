@@ -1,13 +1,15 @@
 import "server-only";
 import { and, asc, count, desc, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { salesLeads, salesSends, salesSettings, salesSuppressions } from "@/db/schema";
+import { salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings, salesSuppressions } from "@/db/schema";
 import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { dedupeLeads, nameZipKey, parseLeadCsv, type ImportDecision, type LeadInput } from "@/lib/vertrieb/csv";
 import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibility";
-import { composeMail, validateTemplate } from "@/lib/vertrieb/template";
+import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
+import { promoLandingUrl } from "@/lib/promo-codes";
+import { usableCodesFor } from "./promo-codes";
 import { unsubscribeUrl, verifyUnsubscribeToken } from "@/lib/vertrieb/unsubscribe-token";
 import { platformMailPort } from "./mail";
 
@@ -16,7 +18,9 @@ import { platformMailPort } from "./mail";
  * - Kein Mandantenbezug: Tabellen sales_* ohne organization_id/RLS, Zugriff NUR über diese Datei.
  *   Aufrufer (Server Actions/Seiten unter /plattform/vertrieb) prüfen vorher requirePlatformAdmin() (Admin + 2FA).
  * - Versand nur manuell, in kleinen Mengen (MAX_PER_CLICK, MAX_PER_DAY), mit Vorschau, Abmeldelink,
- *   List-Unsubscribe-Kopfzeilen und Sperrliste. Keine Automatik/Cron.
+ *   List-Unsubscribe-Kopfzeilen und Sperrliste. Keine Automatik/Cron (nur die Praxissuche läuft nachts, ohne Versand).
+ * - Kampagnen (sales_campaigns): eigene Vorlagen-Variante und Aktionscode für {{code}}/{{link}}; ohne gültigen Code
+ *   wird ein Lead mit solcher Vorlage übersprungen (nie eine Mail mit leerem Code).
  * - Audit: Import, Versand, Statuswechsel, Einstellungen, Löschen, Abmeldung (ohne Mailinhalte).
  */
 
@@ -41,7 +45,7 @@ function envSender(env: Record<string, string | undefined> = process.env) {
   return { name: f?.name ?? "", address: f?.address ?? "" };
 }
 
-const validTemplates = (t: unknown): Template[] | null =>
+export const validTemplates = (t: unknown): Template[] | null =>
   Array.isArray(t) && t.length === SEQUENCE_STEPS && t.every((x) => x && typeof x.subject === "string" && typeof x.body === "string")
     ? t.map((x) => ({ subject: x.subject, body: x.body }))
     : null;
@@ -189,6 +193,7 @@ export async function setLeadStatus(adminUserId: string, id: string, status: Lea
       await tx.insert(salesSuppressions).values({ email: normalizeEmail(before.email), reason: "manuell" }).onConflictDoNothing();
     }
     await tx.update(salesLeads).set({ status, updatedAt: new Date() }).where(eq(salesLeads.id, id));
+    if (before.status !== status) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "status", meta: { from: before.status, to: status }, createdBy: adminUserId });
     await audit({ userId: adminUserId, action: "vertrieb.status", entity: "sales_lead", entityId: id, meta: { from: before.status, to: status } }, tx);
   });
 }
@@ -272,15 +277,38 @@ async function sentLast24h(now: Date, tx: Tx | typeof db = db): Promise<number> 
   return Number(r?.n ?? 0);
 }
 
-function mailFor(lead: Lead, step: number, s: SalesSettings, env: Record<string, string | undefined>) {
+/** Je Lead: Vorlagen (Kampagnen-Variante oder Standard) und Aktionscode (persönlich vor Kampagne). */
+type MailContext = (lead: Lead) => { templates: Template[]; promo: PromoValues | null };
+
+async function mailContext(leads: Lead[], s: SalesSettings, env: Record<string, string | undefined>, tx: Tx | typeof db = db, now = new Date()): Promise<MailContext> {
+  const campaignIds = [...new Set(leads.flatMap((l) => (l.campaignId ? [l.campaignId] : [])))];
+  const camps = campaignIds.length ? await tx.select({ id: salesCampaigns.id, templates: salesCampaigns.templates }).from(salesCampaigns).where(inArray(salesCampaigns.id, campaignIds)) : [];
+  const tpl = new Map(camps.map((c) => [c.id, validTemplates(c.templates)]));
+  const codes = await usableCodesFor({ campaignIds, leadIds: leads.map((l) => l.id) }, now);
+  return (lead) => {
+    const code = codes.byLead.get(lead.id) ?? (lead.campaignId ? codes.byCampaign.get(lead.campaignId) : undefined);
+    return {
+      templates: (lead.campaignId ? tpl.get(lead.campaignId) : null) ?? s.templates,
+      promo: code ? { code, link: promoLandingUrl(env.PUBLIC_URL, code) } : null,
+    };
+  };
+}
+
+const PROMO_MISSING = "Vorlage nutzt {{code}}/{{link}}, aber es gibt keinen gültigen Aktionscode (Kampagne/Lead)";
+
+function mailFor(lead: Lead, step: number, s: SalesSettings, env: Record<string, string | undefined>, ctx: MailContext) {
   const replyTo = s.replyTo || s.senderEmail;
+  const c = ctx(lead);
+  const template = c.templates[step - 1];
+  if (templateUsesPromo(template) && !c.promo) return null;
   return composeMail({
-    template: s.templates[step - 1],
+    template,
     lead,
     senderName: s.senderName,
     impressum: s.impressum,
     unsubscribeUrl: unsubscribeUrl(lead.id, env.PUBLIC_URL),
     unsubscribeMailto: isEmail(replyTo) ? replyTo : null,
+    promo: c.promo,
   });
 }
 
@@ -295,15 +323,20 @@ export async function previewSend(ids: string[], deps: { now?: Date; env?: Recor
   const ordered = uniqueIds(ids).flatMap((id) => leads.filter((l) => l.id === id));
   const plan = planBatch(ordered, { now, delays: s.delays, suppressed: await suppressedSet(ordered.flatMap((l) => (l.email ? [l.email] : []))), sentLast24h: await sentLast24h(now) });
   const problems = settingsProblems(s, env);
-  const f = plan.send[0];
-  let first: SendPreview["first"] = null;
-  if (f && !problems.length) {
-    const m = mailFor(f.lead, f.step, s, env);
-    first = { to: f.lead.email!, from: formatFrom(s.senderName, s.senderEmail), subject: m.subject, text: m.text, step: f.step, leadName: f.lead.name };
+  const ctx = await mailContext(ordered, s, env, db, now);
+  const skipped = plan.skipped.map((x) => ({ id: x.lead.id, name: x.lead.name, reason: x.reason }));
+  const send: { lead: Lead; step: number; mail: NonNullable<ReturnType<typeof mailFor>> }[] = [];
+  for (const x of plan.send) {
+    const mail = mailFor(x.lead, x.step, s, env, ctx);
+    if (mail) send.push({ ...x, mail });
+    else skipped.push({ id: x.lead.id, name: x.lead.name, reason: PROMO_MISSING });
   }
+  const f = send[0];
+  const first: SendPreview["first"] =
+    f && !problems.length ? { to: f.lead.email!, from: formatFrom(s.senderName, s.senderEmail), subject: f.mail.subject, text: f.mail.text, step: f.step, leadName: f.lead.name } : null;
   const steps: Record<number, number> = {};
-  for (const x of plan.send) steps[x.step] = (steps[x.step] ?? 0) + 1;
-  return { count: plan.send.length, steps, skipped: plan.skipped.map((x) => ({ id: x.lead.id, name: x.lead.name, reason: x.reason })), dayLeft: plan.dayLeft, first, problems };
+  for (const x of send) steps[x.step] = (steps[x.step] ?? 0) + 1;
+  return { count: send.length, steps, skipped, dayLeft: plan.dayLeft, first, problems };
 }
 
 export type SendResult = { sent: number; failed: { name: string; error: string }[]; skipped: number; mock: boolean };
@@ -336,8 +369,15 @@ export async function sendNextMails(
     const supp = emails.length ? await tx.select({ e: salesSuppressions.email }).from(salesSuppressions).where(inArray(salesSuppressions.email, [...new Set(emails)])) : [];
     const plan = planBatch(ordered, { now: now(), delays: s.delays, suppressed: new Set(supp.map((r) => r.e)), sentLast24h: await sentLast24h(now(), tx) });
     const out: SendResult = { sent: 0, failed: [], skipped: plan.skipped.length, mock: port.isMock };
+    const ctx = await mailContext(ordered, s, env, tx, now());
+    const sentLeads: { id: string; step: number }[] = [];
     for (const { lead, step } of plan.send) {
-      const m = mailFor(lead, step, s, env);
+      const m = mailFor(lead, step, s, env, ctx);
+      if (!m) {
+        out.skipped++;
+        continue;
+      }
+      sentLeads.push({ id: lead.id, step });
       try {
         const r = await port.send({ to: lead.email!, from, replyTo, subject: m.subject, text: m.text, headers: m.headers });
         const at = now();
@@ -354,7 +394,7 @@ export async function sendNextMails(
       }
     }
     await audit(
-      { userId: adminUserId, action: "vertrieb.send", entity: "sales_lead", meta: { sent: out.sent, failed: out.failed.length, skipped: out.skipped, mock: port.isMock, leads: plan.send.map((x) => ({ id: x.lead.id, step: x.step })) } },
+      { userId: adminUserId, action: "vertrieb.send", entity: "sales_lead", meta: { sent: out.sent, failed: out.failed.length, skipped: out.skipped, mock: port.isMock, leads: sentLeads } },
       tx,
     );
     return out;
@@ -387,6 +427,7 @@ export async function unsubscribeByToken(token: string): Promise<boolean> {
     if (lead.email) await tx.insert(salesSuppressions).values({ email: normalizeEmail(lead.email), reason: "abgemeldet" }).onConflictDoNothing();
     if (lead.status !== "abgemeldet") {
       await tx.update(salesLeads).set({ status: "abgemeldet", updatedAt: new Date() }).where(eq(salesLeads.id, id));
+      await tx.insert(salesLeadEvents).values({ leadId: id, kind: "status", meta: { from: lead.status, to: "abgemeldet", via: "link" } });
       await audit({ action: "vertrieb.unsubscribe", entity: "sales_lead", entityId: id, meta: { from: lead.status } }, tx);
     }
   });

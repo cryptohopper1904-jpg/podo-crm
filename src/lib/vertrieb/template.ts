@@ -1,12 +1,13 @@
 /**
- * Vorlagen der Vertriebs-Sequenz: reiner Text mit Platzhaltern {{praxis}}, {{ansprechpartner}}, {{anrede}}, {{ort}}, {{absender}}.
+ * Vorlagen der Vertriebs-Sequenz: reiner Text mit Platzhaltern {{praxis}}, {{ansprechpartner}}, {{anrede}}, {{ort}}, {{absender}},
+ * {{code}}, {{link}} (Aktionscode der Kampagne bzw. des Leads; ohne gültigen Code wird der Lead nicht angeschrieben).
  * - Ersetzung in EINEM Durchgang: Werte, die selbst „{{…}}“ enthalten, werden nicht erneut ersetzt.
  * - Werte sind einzeilig (Steuerzeichen/Zeilenumbrüche entfernt) und gekürzt; der Betreff nie mit Zeilenumbruch
  *   (keine Kopfzeilen-Injektion). HTML gibt es nicht – die Mail ist text/plain, die Vorschau rendert React (escaped).
  * - Leerer Wert vor Satzzeichen: das Leerzeichen davor entfällt („Guten Tag {{ansprechpartner}},“ → „Guten Tag,“).
  * - Jede Mail bekommt automatisch Absender-Impressum und Abmeldelink (nicht aus der Vorlage entfernbar).
  */
-import { PLACEHOLDERS, type Placeholder, type Template } from "./constants";
+import { PLACEHOLDERS, PROMO_PLACEHOLDERS, type Placeholder, type Template } from "./constants";
 
 export type TemplateValues = Record<Placeholder, string>;
 
@@ -22,7 +23,9 @@ export function cleanValue(v: string | null | undefined, max = 120): string {
     .slice(0, max);
 }
 
-export function placeholderValues(lead: { name: string; contactPerson?: string | null; city?: string | null }, senderName: string): TemplateValues {
+export type PromoValues = { code: string; link: string };
+
+export function placeholderValues(lead: { name: string; contactPerson?: string | null; city?: string | null }, senderName: string, promo?: PromoValues | null): TemplateValues {
   const contact = cleanValue(lead.contactPerson);
   return {
     praxis: cleanValue(lead.name),
@@ -30,7 +33,15 @@ export function placeholderValues(lead: { name: string; contactPerson?: string |
     anrede: contact ? `Guten Tag ${contact}` : "Guten Tag",
     ort: cleanValue(lead.city) || "Ihrer Region",
     absender: cleanValue(senderName),
+    code: cleanValue(promo?.code, 40),
+    link: cleanValue(promo?.link, 300),
   };
+}
+
+/** Nutzt die Vorlage {{code}} oder {{link}}? Dann braucht der Lead einen gültigen Aktionscode. */
+export function templateUsesPromo(t: Template): boolean {
+  const re = new RegExp(`\\{\\{\\s*(${PROMO_PLACEHOLDERS.join("|")})\\s*\\}\\}`, "i");
+  return re.test(t.subject) || re.test(t.body);
 }
 
 const isPlaceholder = (k: string): k is Placeholder => (PLACEHOLDERS as readonly string[]).includes(k);
@@ -70,6 +81,8 @@ export type ComposeInput = {
   senderName: string;
   impressum: string;
   unsubscribeUrl: string;
+  /** Aktionscode/-link für {{code}}/{{link}} */
+  promo?: PromoValues | null;
   /** mailto-Abmeldung (Antwortadresse), zusätzlich zum Link */
   unsubscribeMailto?: string | null;
 };
@@ -93,7 +106,7 @@ export function footer(impressum: string, unsubscribeUrl: string): string {
 }
 
 export function composeMail(input: ComposeInput): { subject: string; text: string; headers: Record<string, string> } {
-  const values = placeholderValues(input.lead, input.senderName);
+  const values = placeholderValues(input.lead, input.senderName, input.promo);
   const subject = cleanValue(renderText(input.template.subject, values), 200);
   const body = renderText(input.template.body.replace(/\r\n?/g, "\n"), values).trim();
   const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl)}\n`;

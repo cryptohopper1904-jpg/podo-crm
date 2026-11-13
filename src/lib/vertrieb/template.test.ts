@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TEMPLATES, PRODUCT_URL } from "./constants";
-import { cleanValue, composeMail, placeholderValues, renderText, unknownPlaceholders, validateTemplate } from "./template";
+import { cleanValue, composeMail, placeholderValues, renderText, templateUsesPromo, unknownPlaceholders, validateTemplate } from "./template";
 
 const values = placeholderValues({ name: "Podologie Am Markt", contactPerson: "Frau Muster", city: "Musterstadt" }, "Max Betreiber");
 
@@ -23,6 +23,18 @@ describe("Vorlagen: Platzhalter", () => {
     const out = renderText("{{praxis}} / {{ansprechpartner}}", v);
     expect(out).toBe("{{absender}} Bcc: evil@x.de / Herr X");
     expect(cleanValue("a\u0000b c   d")).toBe("a b c d");
+  });
+
+  it("Aktionscode: {{code}}/{{link}} werden ersetzt; Vorlage mit Code wird erkannt", () => {
+    const v = placeholderValues({ name: "P", city: "O" }, "Max", { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12" });
+    expect(renderText("Code {{code}} unter {{ link }}.", v)).toBe("Code PODO-AB12 unter https://podo.example/aktion/PODO-AB12.");
+    expect(validateTemplate({ subject: "3 Monate gratis: {{CODE}}", body: "{{link}}" })).toBeNull();
+    expect(templateUsesPromo({ subject: "x", body: "Ihr Link: {{ link }}" })).toBe(true);
+    expect(templateUsesPromo({ subject: "{{Code}}", body: "x" })).toBe(true);
+    expect(templateUsesPromo(DEFAULT_TEMPLATES[0])).toBe(false);
+    const m = composeMail({ template: { subject: "Code {{code}}", body: "{{link}}" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", promo: { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12\nBcc: x" } });
+    expect(m.subject).toBe("Code PODO-AB12");
+    expect(m.text.split("\n")[0]).toBe("https://podo.example/aktion/PODO-AB12 Bcc: x");
   });
 
   it("unbekannte Platzhalter bleiben sichtbar und werden beim Speichern abgelehnt", () => {

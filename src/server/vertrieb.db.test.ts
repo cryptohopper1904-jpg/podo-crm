@@ -32,11 +32,13 @@ const day = 86_400_000;
     v = await import("./vertrieb");
     const { audit } = await import("@/lib/audit");
     auditCalls = () => vi.mocked(audit).mock.calls.map((c) => c[0] as { action: string; entityId?: string; meta?: Record<string, unknown> });
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings; delete from sales_campaigns");
     admin = await f.user();
   });
   afterAll(async () => {
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings");
+    await f.pool.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
+    await f.pool.query("delete from promo_codes where code like 'TPIPE%'");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings; delete from sales_campaigns");
     await f.end();
     const { db } = await import("@/db");
     await (db.$client as { end: () => Promise<void> }).end();
@@ -321,6 +323,115 @@ const day = 86_400_000;
       expect(ls.llmPickerFromEnv(cfg)).toBeNull();
       expect(ls.llmPickerFromEnv({ LEAD_SEARCH_LLM_APPROVED: "true", LLM_BASE_URL: "https://x.example", LLM_API_KEY: "k", LLM_MODEL: "m" })).toBeNull();
       expect(ls.llmPickerFromEnv({ ...cfg, LEAD_SEARCH_LLM_APPROVED: "true" })).not.toBeNull();
+    });
+  });
+  // ───────────── Pipeline, Kampagnen, Aktionscodes in Mails ─────────────
+  describe("Pipeline und Kampagnen", () => {
+    let pl: typeof import("./vertrieb-pipeline");
+    let promo: typeof import("./promo-codes");
+    const sfx = Math.random().toString(36).slice(2, 7);
+    const later = new Date(Date.now() + 3 * day); // außerhalb des Tageslimits der vorigen Tests
+    const mk = (name: string, email: string | null, website: string | null = null) =>
+      v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+    const ownerOrg = async (email: string, patch: { plan?: string; status?: string } = {}) => {
+      const org = await f.org();
+      const u = (await f.pool.query("insert into users (email, name, password_hash) values ($1, 'Inhaberin', 'x') returning id", [email])).rows[0].id;
+      await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, u]);
+      await f.pool.query("update organizations set plan = $2, subscription_status = $3, trial_ends_at = now() + interval '30 days' where id = $1", [org, patch.plan ?? "trial", patch.status ?? "trialing"]);
+      return org;
+    };
+    const item = async (id: string) => (await pl.loadPipeline()).find((l) => l.id === id)!;
+
+    beforeAll(async () => {
+      pl = await import("./vertrieb-pipeline");
+      promo = await import("./promo-codes");
+      // die Praxissuche-Tests lassen eine laufende Suche zurück – für den Versand egal
+    });
+
+    it("Stufen: neu → angeschrieben → Antwort erhalten (Verlauf, Status)", async () => {
+      const id = await mk("Pipe Eins", `info@pipe1-${sfx}.example`);
+      expect((await item(id)).stage).toBe("neu");
+      const port = new MockMailAdapter();
+      expect((await v.sendNextMails(admin, [id], { port, now: () => later, env })).sent).toBe(1);
+      expect(await item(id)).toMatchObject({ stage: "angeschrieben", step: 1, sendsOk: 1 });
+      await pl.addLeadNote(admin, id, "Rückruf Montag");
+      await pl.markReplied(admin, id);
+      expect(await item(id)).toMatchObject({ stage: "geantwortet", status: "geantwortet" });
+      const lead = (await v.getLead(id))!.lead;
+      expect(lead.repliedAt).not.toBeNull();
+      const tl = await pl.leadTimeline(lead);
+      expect(tl.map((e) => e.kind)).toEqual(expect.arrayContaining(["created", "send", "note", "reply"]));
+      // Antwort beendet die Sequenz
+      expect((await v.sendNextMails(admin, [id], { port, now: () => new Date(later.getTime() + 30 * day), env })).sent).toBe(0);
+      await expect(pl.addLeadNote(admin, id, "   ")).rejects.toThrow(/leer/);
+    });
+
+    it("Test gestartet / Kunde: Registrierung per Domain, E-Mail oder persönlichem Code", async () => {
+      const dom = await mk("Pipe Domain", `info@pipe2-${sfx}.example`);
+      const web = await mk("Pipe Web", null, `https://www.pipe3-${sfx}.example/`);
+      const viaCode = await mk("Pipe Code", `kontakt@gmx.de`);
+      const orgDom = await ownerOrg(`anna@pipe2-${sfx}.example`);
+      await ownerOrg(`chef@pipe3-${sfx}.example`, { plan: "praxis", status: "active" });
+      const orgCode = await ownerOrg(`irgendwer-${sfx}@gmx.de`);
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode });
+      await promo.redeemPromoCodeForOrganization(orgCode, admin, `TPIPE${sfx.toUpperCase()}-L`);
+      expect(await item(dom)).toMatchObject({ stage: "test", org: { id: orgDom, via: "domain" } });
+      expect(await item(web)).toMatchObject({ stage: "kunde", org: { via: "domain", converted: true } });
+      expect(await item(viaCode)).toMatchObject({ stage: "test", org: { id: orgCode, via: "code" } });
+      const dash = await pl.salesDashboard(await pl.loadPipeline());
+      expect(dash.tests).toBeGreaterThanOrEqual(2);
+      expect(dash.customers).toBeGreaterThanOrEqual(1);
+      expect(dash.redemptions).toBeGreaterThanOrEqual(1);
+    });
+
+    it("Sammelaktionen und Filter: Status, Kampagne, Abmelden (Sperrliste)", async () => {
+      const a = await mk("Pipe Bulk A", `a@pipe4-${sfx}.example`);
+      const b = await mk("Pipe Bulk B", `b@pipe4-${sfx}.example`);
+      const camp = await pl.createCampaign(admin, { name: `Herbst ${sfx}`, notes: null });
+      expect(await pl.setLeadsCampaign(admin, [a, b, a], camp)).toBe(2);
+      expect(await pl.setLeadsCampaign(admin, [a], camp)).toBe(0); // unverändert
+      const all = await pl.loadPipeline();
+      expect(pl.filterPipeline(all, { campaign: camp }).map((l) => l.name).sort()).toEqual(["Pipe Bulk A", "Pipe Bulk B"]);
+      expect(pl.filterPipeline(all, { q: "pipe bulk", email: "ohne" })).toEqual([]);
+      expect(pl.filterPipeline(all, { stage: "neu", q: "Pipe Bulk" })).toHaveLength(2);
+      expect(await pl.bulkSetStatus(admin, [a], "kein_interesse")).toBe(1);
+      expect((await item(a)).stage).toBe("aus");
+      expect(await pl.bulkSetStatus(admin, [b, "00000000-0000-4000-8000-000000000000"], "abgemeldet")).toBe(1);
+      expect((await f.pool.query("select 1 from sales_suppressions where email = $1", [`b@pipe4-${sfx}.example`])).rowCount).toBe(1);
+      expect((await pl.leadTimeline((await v.getLead(b))!.lead)).some((e) => e.kind === "campaign")).toBe(true);
+    });
+
+    it("Kampagne mit {{code}}/{{link}}: ohne gültigen Code übersprungen, mit Code im Text", async () => {
+      const id = await mk("Pipe Kampagne", `info@pipe5-${sfx}.example`);
+      const camp = await pl.createCampaign(admin, { name: `Code ${sfx}`, notes: null });
+      await pl.setLeadsCampaign(admin, [id], camp);
+      await expect(pl.saveCampaignTemplates(admin, camp, [{ subject: "x {{falsch}}", body: "y" }, { subject: "a", body: "b" }, { subject: "a", body: "b" }])).rejects.toThrow(/Unbekannte/);
+      await pl.saveCampaignTemplates(admin, camp, [
+        { subject: "3 Monate gratis: {{code}}", body: "{{anrede}},\nhier testen: {{link}}" },
+        { subject: "Mail 2", body: "Text" },
+        { subject: "Mail 3", body: "Text" },
+      ]);
+      const pre = await v.previewSend([id], { now: later, env });
+      expect(pre.count).toBe(0);
+      expect(pre.skipped[0].reason).toMatch(/Aktionscode/);
+      const port = new MockMailAdapter();
+      expect(await v.sendNextMails(admin, [id], { port, now: () => later, env })).toMatchObject({ sent: 0, skipped: 1 });
+      const code = `TPIPE${sfx.toUpperCase()}-K`;
+      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: camp });
+      const pre2 = await v.previewSend([id], { now: later, env });
+      expect(pre2.first).toMatchObject({ subject: `3 Monate gratis: ${code}` });
+      expect(pre2.first!.text).toContain(`https://podo.example/aktion/${code}`);
+      expect((await v.sendNextMails(admin, [id], { port, now: () => later, env })).sent).toBe(1);
+      expect(port.sent[0].text).toContain(`https://podo.example/aktion/${code}`);
+      const stats = (await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)!;
+      expect(stats).toMatchObject({ leads: 1, contacted: 1, sent: 1, tests: 0, codes: [{ code, active: true }] });
+      // Code einer Praxis eingelöst → Test in der Kampagnen-Statistik
+      const o = await ownerOrg(`x-${sfx}@gmx.de`);
+      await promo.redeemPromoCodeForOrganization(o, admin, code);
+      expect((await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)).toMatchObject({ tests: 1, converted: 0 });
+      // zurück auf Standardvorlagen
+      await pl.saveCampaignTemplates(admin, camp, null);
+      expect(pl.campaignTemplates((await pl.getCampaign(camp))!)).toBeNull();
     });
   });
 });

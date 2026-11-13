@@ -10,6 +10,8 @@ const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/
   "/p",
   // Abmeldung von Vertriebsmails (HMAC-signiertes Token, keine Daten in der Antwort)
   "/abmelden",
+  // Aktionsseite für Vertriebskampagnen (/aktion/[code]): nur Angebot gültiger Codes, neutral bei ungültigen, gedrosselt
+  "/aktion",
   // öffentliche Website/Rechtstexte (src/app/(public)) – u. a. aus der Registrierung verlinkt
   "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer"];
 
