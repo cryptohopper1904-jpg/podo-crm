@@ -90,7 +90,11 @@ const fd = (o: Record<string, string>) => {
     expect(await redirectOf(session.requireAuth("patients.read"))).toBe("/entsperren");
 
     expect(await unlock.unlockAction(undefined, fd({ secret: "0000" }))).toMatchObject({ error: expect.stringMatching(/Noch 4 Versuch/) });
+    const lockedToken = current();
     expect(await redirectOf(unlock.unlockAction(undefined, fd({ secret: "4711" })))).toBe("/kunden/abc/anamnese");
+    // neues Token nach dem Entsperren, das Übergabe-Token ist wertlos
+    expect(current()).not.toBe(lockedToken);
+    expect(await row(lockedToken)).toBeNull();
     expect(await row(current())).toMatchObject({ locked_at: null, unlock_failures: 0 });
     expect(await session.getAuth()).not.toBeNull();
   });

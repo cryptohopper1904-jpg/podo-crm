@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { and, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { auditLog, memberships, organizations, sessions, supportGrants, users } from "@/db/schema";
 import { accessMode, type AccessInfo, type OrgBilling } from "@/lib/plans";
@@ -234,6 +234,23 @@ export async function lockCurrentSession(returnPath: string) {
     const [old] = await tx.delete(sessions).where(and(eq(sessions.id, row.session.id), isNull(sessions.lockedAt))).returning();
     if (!old) return null;
     await tx.insert(sessions).values({ ...old, id: sha256(token), lockedAt: new Date(), lockReturn: safe, unlockFailures: 0 });
+    return old;
+  });
+  if (!moved) return false;
+  await setSessionCookie(token, moved.expiresAt);
+  return true;
+}
+
+/**
+ * Übergabe beenden: gesperrte Zeile durch eine neue, entsperrte mit NEUEM Token ersetzen (das während der Übergabe
+ * auf dem Gerät liegende Token wird wertlos). false, wenn die Sitzung nicht (mehr) gesperrt ist.
+ */
+export async function unlockAndRotate(sessionId: string): Promise<boolean> {
+  const token = newToken();
+  const moved = await db.transaction(async (tx) => {
+    const [old] = await tx.delete(sessions).where(and(eq(sessions.id, sessionId), isNotNull(sessions.lockedAt))).returning();
+    if (!old) return null;
+    await tx.insert(sessions).values({ ...old, id: sha256(token), lockedAt: null, lockReturn: null, unlockFailures: 0 });
     return old;
   });
   if (!moved) return false;

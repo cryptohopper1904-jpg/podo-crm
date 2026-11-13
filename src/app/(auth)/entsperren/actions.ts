@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { patientLinks, sessions } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { verifyPassword } from "@/lib/auth/password";
-import { destroySession, getSessionIncludingLocked, HANDOVER_MAX_FAILURES, isSafeReturnPath } from "@/lib/auth/session";
+import { destroySession, getSessionIncludingLocked, HANDOVER_MAX_FAILURES, isSafeReturnPath, unlockAndRotate } from "@/lib/auth/session";
 
 export type UnlockState = { error?: string } | undefined;
 
@@ -44,17 +44,25 @@ export async function unlockAction(_: UnlockState, form: FormData): Promise<Unlo
     }
     return { error: `Falsche Eingabe. Noch ${HANDOVER_MAX_FAILURES - slot.n} Versuch(e), danach ist eine neue Anmeldung nötig.` };
   }
-  const [done] = await db
-    .update(sessions)
-    .set({ lockedAt: null, lockReturn: null, unlockFailures: 0 })
-    .where(and(eq(sessions.id, row.session.id), isNotNull(sessions.lockedAt)))
-    .returning({ id: sessions.id });
-  if (!done) redirect("/heute");
-  // noch nicht ausgefüllte Übergabe-Links dieser Person widerrufen (Token steht sonst im Browserverlauf des Geräts)
-  await db
-    .update(patientLinks)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(patientLinks.createdBy, row.user.id), eq(patientLinks.purpose, "anamnesis"), isNull(patientLinks.usedAt), isNull(patientLinks.revokedAt), gte(patientLinks.createdAt, new Date(row.session.lockedAt.getTime() - 60_000))));
+  if (!(await unlockAndRotate(row.session.id))) redirect("/heute");
+  // den noch nicht ausgefüllten Übergabe-Link DIESER Übergabe widerrufen (Patient:in aus dem Rücksprungpfad), nicht
+  // die Links anderer Geräte oder per E-Mail verschickte
+  const pid = /^\/kunden\/([0-9a-f-]{36})\/anamnese$/.exec(row.session.lockReturn ?? "")?.[1];
+  if (pid) {
+    await db
+      .update(patientLinks)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(patientLinks.patientId, pid),
+          eq(patientLinks.createdBy, row.user.id),
+          eq(patientLinks.purpose, "anamnesis"),
+          isNull(patientLinks.usedAt),
+          isNull(patientLinks.revokedAt),
+          gte(patientLinks.createdAt, new Date(row.session.lockedAt.getTime() - 60_000)),
+        ),
+      );
+  }
   await audit({ organizationId: row.session.organizationId, userId: row.user.id, action: "handover.unlocked", meta: { via: pinOk ? "pin" : "password" } });
   const back = row.session.lockReturn && isSafeReturnPath(row.session.lockReturn) ? row.session.lockReturn : "/heute";
   redirect(back);
