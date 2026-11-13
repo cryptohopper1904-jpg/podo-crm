@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Card, CardTitle, Empty, Field, Input, LinkButton, Select, Table } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, Field, Input, LinkButton, Select, Table, BackLink } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { PRODUCT_CATEGORY_LABELS } from "@/lib/catalog";
 import { dateDe, money } from "@/lib/format";
@@ -25,6 +25,7 @@ export default async function ProductPage(props: PageProps<"/produkte/[id]">) {
 
   return (
     <div className="flex flex-col gap-6">
+      <BackLink href="/produkte" label="Produkte" className="-mb-6 self-start" />
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-display text-2xl font-semibold">{p.name}</h2>
         <Badge>{PRODUCT_CATEGORY_LABELS[p.category] ?? p.category}</Badge>

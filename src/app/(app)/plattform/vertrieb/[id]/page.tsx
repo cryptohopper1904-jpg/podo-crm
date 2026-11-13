@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Button, Card, Textarea } from "@/components/ui";
+import { Badge, Button, Card, Textarea, BackLink } from "@/components/ui";
 import { dateDe, dateTimeDe } from "@/lib/format";
 import { isPlanId, PLANS } from "@/lib/plans";
 import { LEAD_STATUSES, SEQUENCE_STEPS, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
@@ -49,6 +49,7 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
       <div className="flex flex-col gap-5">
+        <BackLink href="/plattform/vertrieb" label="Praxen" className="-mb-5 self-start" />
         <Card>
           <h2 className="mb-4 font-display text-xl font-semibold">{lead.name}</h2>
           <LeadForm action={updateLeadAction} submit="Speichern" values={{ ...lead }} />

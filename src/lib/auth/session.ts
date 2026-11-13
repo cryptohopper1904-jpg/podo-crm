@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { isSafeReturnPath } from "@/lib/safe-path";
 import { and, eq, gt, isNotNull, isNull, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { auditLog, memberships, organizations, sessions, supportGrants, users } from "@/db/schema";
@@ -260,8 +261,8 @@ export async function unlockAndRotate(sessionId: string): Promise<boolean> {
   return true;
 }
 
-/** Nur interne, einfache Pfade (kein //, kein \\, keine Schemata) */
-export const isSafeReturnPath = (p: string) => p.length <= 300 && /^\/(?!\/)[\w\-/?=&.%]*$/.test(p);
+/** Nur interne, einfache Pfade (src/lib/safe-path.ts) */
+export { isSafeReturnPath };
 
 export const getAuth = cache(async (): Promise<AuthContext | null> => (await getAuthState()).auth);
 

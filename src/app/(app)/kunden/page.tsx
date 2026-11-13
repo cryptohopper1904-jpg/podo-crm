@@ -9,6 +9,7 @@ import { DECEASED_LABEL } from "@/lib/patient-deceased";
 import { withOrg } from "@/db";
 import { listPatients } from "@/server/patients";
 import { patientQuota } from "@/server/patient-limit";
+import { returnPath, withReturn } from "@/lib/back-link";
 
 export const metadata = { title: "Patienten" };
 
@@ -25,6 +26,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "";
   const rows = await listPatients(auth, { q, status });
+  const from = returnPath("/kunden", { q, status }); // Akte → „Zurück“ landet wieder auf dieser gefilterten Liste
   // Kostenlos-Tarif: „x von 20 Patient:innen“
   const quota = await withOrg(auth.organization.id, (tx) => patientQuota(tx, auth.organization.id));
   const filters: { key: string; label: string }[] = [
@@ -101,7 +103,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
               <tr key={p.id} className="hover:bg-surface-2">
                 <td className="tabular-nums text-muted">{p.number}</td>
                 <td>
-                  <Link href={`/kunden/${p.id}`} className="font-semibold hover:text-primary">
+                  <Link href={withReturn(`/kunden/${p.id}`, from)} className="font-semibold hover:text-primary">
                     {p.lastName}{p.firstName ? `, ${p.firstName}` : ""}
                   </Link>
                   <div className="mt-1"><RiskBadges flags={p.riskFlags} compact /></div>

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, FileText, Info, Receipt } from "lucide-react";
+import { FileText, Info, Receipt } from "lucide-react";
 import { SOURCE, STATUS } from "@/components/appointment-row";
-import { Badge, Card, CardTitle, LinkButton } from "@/components/ui";
+import { Badge, Card, CardTitle, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { durationMinutes } from "@/lib/appointment-edit";
 import { berlinDateIso, dateDe, fullName, money, timeDe, weekdayLong } from "@/lib/format";
@@ -10,11 +10,13 @@ import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE } from "@
 import { billingFromSource } from "@/server/appointment-billing";
 import { getAppointment, therapists } from "@/server/appointments";
 import { RescheduleForm } from "./reschedule-form";
+import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Termin" };
 
 export default async function AppointmentPage(props: PageProps<"/kalender/termin/[id]">) {
   const { id } = await props.params;
+  const { von } = await props.searchParams;
   const auth = await requireAuth("appointments.read");
   const data = await getAppointment(auth, id);
   if (!data) notFound();
@@ -29,13 +31,11 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
 
   return (
     <div className="mx-auto max-w-4xl">
-      <Link href={`/kalender?datum=${date}`} className="mb-4 inline-flex h-11 items-center gap-2 text-sm font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Kalender
-      </Link>
       <header className="mb-6 flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
+        <div className={pageTitleBox}>
+          <BackLink href={backHref(`/kalender?datum=${date}`, von)} label="Kalender" />
           <p className="text-sm text-muted">{weekdayLong(a.startsAt)} · {timeDe(a.startsAt)}–{timeDe(a.endsAt)} Uhr</p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">
+          <h1 className={pageTitleCls}>
             {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{fullName(patient)}</Link> : a.title ?? "Termin"}
           </h1>
         </div>
