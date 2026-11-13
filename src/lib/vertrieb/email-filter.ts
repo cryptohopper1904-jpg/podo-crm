@@ -1,11 +1,17 @@
 /**
  * Praxissuche: E-Mail-Adressen aus öffentlichen Webseiten herauslesen und NUR Funktionspostfächer
- * (info@, praxis@, kontakt@ …) übernehmen. Adressen, die nach einer Person aussehen (anna.mueller@,
- * a.mueller@, mueller@ bei „Podologie Müller“), werden verworfen – es werden keine Personendaten gespeichert.
- * Reine Funktionen ohne Netz (Tests: email-filter.test.ts).
+ * (info@, praxis@, kontakt@ …) übernehmen. Adressen mit Personenbezug (anna.mueller@, a.mueller@, mueller@,
+ * mueller-podologie@, praxis.petra@ …) werden verworfen. Reine Funktionen ohne Netz (Tests: email-filter.test.ts).
+ *
+ * Regel (streng): Zuerst Namensprüfung – enthält der Lokalteil einen Namen aus dem Praxisnamen (außer
+ * Fachbegriffen) oder einen gängigen Vornamen → verwerfen. Danach muss JEDES Teilstück des Lokalteils ein
+ * erlaubtes Funktions-/Fachwort (feste Liste, keine beliebigen Wortanfänge), eine Zahl oder der Ort bzw. der
+ * Domainname der Website sein.
  */
 
-/** Lokalteile, die eindeutig ein Funktionspostfach der Praxis sind. */
+import { stripHtml } from "./html-scan";
+
+/** Erlaubte Teilstücke (explizite Varianten, keine Präfix-Regel). */
 const ROLE_WORDS = new Set([
   "info",
   "infos",
@@ -16,6 +22,7 @@ const ROLE_WORDS = new Set([
   "termine",
   "terminvergabe",
   "terminanfrage",
+  "terminanfragen",
   "mail",
   "email",
   "office",
@@ -24,14 +31,19 @@ const ROLE_WORDS = new Set([
   "anmeldung",
   "service",
   "podologie",
+  "podologische",
+  "podologisch",
   "podo",
-  "podologe",
-  "podologin",
   "fusspflege",
+  "fuss",
   "fusspflegepraxis",
+  "podologiepraxis",
+  "praxisfuerpodologie",
+  "praxisfuerfusspflege",
+  "medizinische",
+  "med",
   "hallo",
   "hello",
-  "hi",
   "team",
   "anfrage",
   "anfragen",
@@ -43,15 +55,20 @@ const ROLE_WORDS = new Set([
   "willkommen",
   "welcome",
   "therapie",
+  "zentrum",
+  "fuer",
+  "und",
+  "am",
+  "im",
+  "de",
 ]);
 
-/** Wortanfänge, die ebenfalls auf ein Funktionspostfach hindeuten (z. B. „podologiepraxis“, „info2024“). */
-const ROLE_STEMS = ["info", "praxis", "kontakt", "termin", "podolog", "fusspfleg", "fussprax", "empfang", "anmeld"];
+/** Fachbegriffe, die im Praxisnamen stehen dürfen, ohne als Personenname zu gelten. */
+const TRADE_WORDS = new Set([...ROLE_WORDS, "praxis", "podologin", "podologe", "podologen", "medizinische", "mobile", "mobil", "gmbh", "ug", "studio", "der", "die", "das", "bei", "an", "zur", "zum", "fuesse", "gesunde", "gesundheit"]);
 
 /** Funktionspostfächer, die nicht für eine Ansprache gedacht sind. */
 const BLOCKED_WORDS = new Set([
   "noreply",
-  "no-reply",
   "donotreply",
   "nichtantworten",
   "datenschutz",
@@ -73,6 +90,21 @@ const BLOCKED_WORDS = new Set([
   "buchhaltung",
 ]);
 
+/** Gängige Vornamen (Auswahl) – ein solches Teilstück gilt als Personenbezug, auch wenn es der Domain entspricht. */
+const FIRST_NAMES = new Set(
+  (
+    "anna anne anja andrea angelika anke antje astrid barbara beate bettina birgit brigitte carina carmen caroline christa christiane christina christine " +
+    "claudia corinna cornelia daniela diana doris dorothea elena elisabeth elke ellen emma erika eva franziska frauke gabi gabriele gisela gudrun hanna hannah " +
+    "heike helga hildegard ilona ines ingrid irene iris jana jasmin jennifer jessica johanna julia juliane jutta karin katharina kathrin katja kerstin kirsten " +
+    "klara kristin laura lea lena lisa luisa manuela maren maria marie marina marion marlene martina melanie michaela miriam monika nadine natalie nicole " +
+    "nina olga petra rebecca regina renate rita ronja rosemarie ruth sabine sabrina sandra sara sarah silke silvia simone sonja stefanie stephanie susanne " +
+    "svenja svetlana tanja tatjana theresa ulrike ursula ute vanessa vera verena viktoria yvonne " +
+    "alexander andreas axel bernd christian daniel david dennis dieter dirk eric erik felix florian frank georg gerhard hans harald heiko helmut jan jens " +
+    "joerg johannes jonas juergen kai karl klaus lars lukas marc marco marcus mario markus martin matthias max michael nils oliver patrick paul peter " +
+    "philipp rainer ralf ralph rene robert sebastian simon stefan stephan sven thomas thorsten tim tobias torsten uwe volker werner wolfgang"
+  ).split(" "),
+);
+
 /** Platzhalter- und Dienstleister-Domains, die in Seitenvorlagen auftauchen. */
 const BLOCKED_DOMAINS = [
   "example.com",
@@ -89,10 +121,34 @@ const BLOCKED_DOMAINS = [
   "muster.de",
   "wixpress.com",
   "sentry.io",
-  "sentry-next.wixpress.com",
   "jimdo.com",
   "godaddy.com",
 ];
+
+/** Freemail-Anbieter, deren Adressen auch von der Website übernommen werden dürfen (sonst nur die eigene Domain). */
+export const FREEMAIL_DOMAINS = new Set([
+  "t-online.de",
+  "gmx.de",
+  "gmx.net",
+  "gmx.at",
+  "gmx.ch",
+  "web.de",
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "outlook.de",
+  "hotmail.com",
+  "hotmail.de",
+  "live.de",
+  "icloud.com",
+  "me.com",
+  "posteo.de",
+  "mailbox.org",
+  "freenet.de",
+  "arcor.de",
+  "yahoo.com",
+  "yahoo.de",
+]);
 
 const FILE_TLDS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "ico", "bmp", "css", "js", "pdf"]);
 
@@ -141,13 +197,11 @@ export function decodeEntities(s: string): string {
  */
 export function deobfuscate(text: string): string {
   let t = text
-    .replace(/\s*[[({<]\s*(?:at|ät|@|et)\s*[\])}>]\s*/gi, "@")
+    .replace(/\s*[[({<]\s*(?:at|ät|@)\s*[\])}>]\s*/gi, "@")
     .replace(/\s*[[({<]\s*(?:dot|punkt|\.)\s*[\])}>]\s*/gi, ".");
-  // ohne Klammern nur in eindeutiger Form „wort at domain dot tld“
-  t = t.replace(/\b([a-z0-9][a-z0-9._-]{0,63})\s+(?:at|ät)\s+([a-z0-9-]+(?:\s*(?:\.|\bdot\b|\bpunkt\b)\s*[a-z0-9-]+)+)\b/gi, (_m, local: string, dom: string) => {
-    const d = dom.replace(/\s*(?:\bdot\b|\bpunkt\b|\.)\s*/gi, ".");
-    return /\.[a-z]{2,24}$/i.test(d) ? `${local}@${d}` : _m;
-  });
+  // ohne Klammern nur in der eindeutigen Form „wort at domain dot tld“ (ausgeschriebenes „dot“/„punkt“, bekannte Endung)
+  // Literal „ at “ zuerst (schnelle Suche), Lokalteil per Lookbehind – keine Prüfung an jeder Textstelle
+  t = t.replace(/ at (?<=\b[a-z0-9][a-z0-9._-]{1,63} at )([a-z0-9-]{2,63}(?: (?:dot|punkt) [a-z0-9-]{2,63})*) (?:dot|punkt) (de|com|net|org|eu|info|at|ch|example)\b/g, (_m, dom: string, tld: string) => `@${dom.replace(/ (?:dot|punkt) /g, ".")}.${tld}`);
   return t;
 }
 
@@ -167,55 +221,110 @@ export function extractEmails(html: string): string[] {
     }
     add(decodeEntities(v));
   }
-  const text = decodeEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<[^>]+>/g, " "),
-  ).replace(/\s+/g, " ");
-  for (const m of deobfuscate(text).matchAll(EMAIL_RE)) add(m[0]);
+  // linear (indexOf-Schleife) statt rückverfolgender RegExp über die ganze Seite (ReDoS)
+  const text = decodeEntities(stripHtml(html)).replace(/\s+/g, " ");
+  // Regex nur in einem Fenster um jedes „@“ (höchstens 500) – sonst prüft sie an jeder Textstelle bis zu 64 Zeichen
+  const plain = deobfuscate(text);
+  for (let at = plain.indexOf("@"), k = 0; at >= 0 && k < 500; at = plain.indexOf("@", at + 1), k++) {
+    const from = Math.max(0, at - 64);
+    const rel = at - from;
+    for (const m of plain.slice(from, at + 256).matchAll(EMAIL_RE)) if (m.index <= rel && m.index + m[0].length > rel) add(m[0]);
+  }
   return [...out].slice(0, 50);
 }
 
-export type EmailVerdict = { ok: true; email: string } | { ok: false; email: string; reason: string };
+export type EmailKind = "role" | "named";
+export type EmailVerdict = { ok: true; email: string; kind: EmailKind } | { ok: false; email: string; reason: string };
 
-const tokensOf = (local: string) => local.split(/[._+\-\d]+/).filter(Boolean);
+/** Kontext der Praxis: Name (Personenbezug), Ort und Website-Host (erlaubte Teilstücke). */
+export type EmailContext = {
+  practiceName?: string;
+  city?: string | null;
+  websiteHost?: string | null;
+  /** Adresse stammt von der eigenen Website/dem Impressum (nicht aus OSM) */
+  crawled?: boolean;
+  /**
+   * Einstellung „Auch Geschäftsadressen mit Namen übernehmen“ (Standard: an; nur `false` schaltet ab):
+   * zusätzlich Adressen mit Namensbezug (praxis.petra@, mueller-podologie@) – NUR von der eigenen Website
+   * und NUR mit der Domain dieser Website. Aus OSM, von Fremd- oder Freemail-Domains nie.
+   */
+  allowNamed?: boolean;
+};
 
-/** Wörter des Praxisnamens (≥ 3 Zeichen, ohne Fachbegriffe), transliteriert – mögliche Familiennamen. */
-function nameWords(practiceName: string): Set<string> {
-  const generic = new Set([...ROLE_WORDS, "medizinische", "med", "praxis", "fuer", "und", "der", "die", "das", "gmbh", "ug", "zentrum", "studio", "podologische", "mobile"]);
-  return new Set(
-    translit(practiceName)
-      .split(/[^a-z]+/)
-      .filter((w) => w.length >= 3 && !generic.has(w)),
-  );
+const splitTokens = (local: string) => local.split(/[._+-]+/).filter(Boolean);
+const lettersOnly = (s: string) => translit(s).replace(/[^a-z]/g, "");
+const stripDigits = (t: string) => t.replace(/\d+$/, "");
+
+/** Wörter des Praxisnamens (≥ 3 Buchstaben, ohne Fachbegriffe), transliteriert – mögliche Vor-/Familiennamen. */
+function nameWords(practiceName: string): string[] {
+  return [...new Set(translit(practiceName).split(/[^a-z]+/).filter((w) => w.length >= 3 && !TRADE_WORDS.has(w)))];
+}
+
+/** Zusätzlich erlaubte Teilstücke: Ort (ganz und in Teilen) und Domainname der Website (ohne Endung). */
+function placeTokens(ctx: EmailContext): Set<string> {
+  const s = new Set<string>();
+  if (ctx.city) {
+    s.add(lettersOnly(ctx.city));
+    for (const w of translit(ctx.city).split(/[^a-z]+/)) if (w.length >= 3) s.add(w);
+  }
+  const host = ctx.websiteHost?.toLowerCase().replace(/^www\./, "");
+  if (host) {
+    const label = host.split(".").slice(0, -1).pop() ?? "";
+    if (label) s.add(label.replace(/[^a-z0-9]/g, ""));
+  }
+  s.delete("");
+  return s;
 }
 
 /**
- * Entscheidet, ob eine Adresse ein unpersönliches Funktionspostfach der Praxis ist.
- * Regel: Der Lokalteil muss ein Funktionswort enthalten (info, praxis, kontakt, termin …). Alles andere –
- * insbesondere vorname.nachname@, v.nachname@ oder nachname@ (Name aus dem Praxisnamen) – wird verworfen.
+ * Entscheidet, ob eine Adresse übernommen werden darf.
+ *  - kind „role“: reines Funktionspostfach (Standard, siehe Regel oben)
+ *  - kind „named“: Geschäftsadresse mit Namensbezug – nur wenn `allowNamed` nicht false ist, nur von der eigenen Website (`crawled`)
+ *    und nur mit deren Domain (keine Freemail-/Fremddomain); mindestens ein Funktionswort ist trotzdem Pflicht.
+ * `context` darf als String (nur Praxisname) übergeben werden.
  */
-export function classifyEmail(raw: string, practiceName = ""): EmailVerdict {
+export function classifyEmail(raw: string, context: string | EmailContext = {}): EmailVerdict {
+  const ctx: EmailContext = typeof context === "string" ? { practiceName: context } : context;
   const email = normalizeEmailAddress(raw);
   if (!email) return { ok: false, email: raw, reason: "ungültig" };
   const [local, domain] = email.split("@");
   if (BLOCKED_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) return { ok: false, email, reason: "Platzhalter-/Dienstleister-Domain" };
-  const tokens = tokensOf(local);
-  if (BLOCKED_WORDS.has(local) || tokens.some((t) => BLOCKED_WORDS.has(t)) || /no-?reply|do-?not-?reply/.test(local)) {
+  const tokens = splitTokens(local);
+  const letters = local.replace(/[^a-z]/g, "");
+  if (!tokens.length) return { ok: false, email, reason: "ungültig" };
+  if (/no-?reply|do-?not-?reply/.test(local) || tokens.some((t) => BLOCKED_WORDS.has(t))) {
     return { ok: false, email, reason: "kein Ansprechpostfach (z. B. noreply, datenschutz)" };
   }
-  const isRole = tokens.some((t) => ROLE_WORDS.has(t) || ROLE_STEMS.some((s) => t.startsWith(s)));
-  if (isRole) return { ok: true, email };
-  const names = nameWords(practiceName);
-  if (tokens.some((t) => names.has(t))) return { ok: false, email, reason: "enthält einen Namen aus dem Praxisnamen (Person)" };
-  if (/^[a-z]+[._-][a-z]+$/.test(local) || /^[a-z][._-]?[a-z]{2,}$/.test(local)) return { ok: false, email, reason: "sieht nach Vor-/Nachname aus" };
-  return { ok: false, email, reason: "kein Funktionspostfach erkennbar" };
+  const names = nameWords(ctx.practiceName ?? "");
+  const place = placeTokens(ctx);
+  const isRole = (t: string) => ROLE_WORDS.has(stripDigits(t));
+  const isPlain = (t: string) => /^\d+$/.test(t) || isRole(t) || place.has(stripDigits(t));
+  const hasRole = tokens.some(isRole) || [...ROLE_WORDS].some((r) => r.length >= 4 && tokens.some((t) => t !== r && t.includes(r)));
+
+  // 1. Namensprüfung (auch zusammengeschrieben: „infomueller“, „praxismueller“)
+  const nameHit = names.some((w) => letters.includes(w)) || tokens.some((t) => FIRST_NAMES.has(stripDigits(t)));
+  if (!nameHit) {
+    // 2. jedes Teilstück erlaubt?
+    if (tokens.every(isPlain) && tokens.some(isRole)) return { ok: true, email, kind: "role" };
+    return { ok: false, email, reason: "kein reines Funktionspostfach" };
+  }
+  // Namensbezug: nur im Modus „Geschäftsadressen mit Namen“, nur eigene Website + eigene Domain
+  if (ctx.allowNamed === false) return { ok: false, email, reason: "enthält einen Namen (Person)" };
+  if (!ctx.crawled) return { ok: false, email, reason: "Adresse mit Namen nur von der eigenen Website" };
+  if (!sameSite(domain, ctx.websiteHost) || FREEMAIL_DOMAINS.has(domain)) return { ok: false, email, reason: "Adresse mit Namen nur mit der Domain der Praxis-Website" };
+  if (!hasRole) return { ok: false, email, reason: "persönliches Postfach ohne Praxisbezug" };
+  const isNameToken = (t: string) => {
+    const w = stripDigits(t);
+    if (FIRST_NAMES.has(w) || names.includes(w)) return true;
+    // zusammengeschrieben: Funktionswort + Name („praxismueller“) oder umgekehrt
+    return [...ROLE_WORDS].some((r) => r.length >= 4 && (w.startsWith(r) || w.endsWith(r)) && names.concat([...FIRST_NAMES]).some((n) => w === r + n || w === n + r));
+  };
+  if (!tokens.every((t) => isPlain(t) || isNameToken(t))) return { ok: false, email, reason: "kein Praxispostfach" };
+  return { ok: true, email, kind: "named" };
 }
 
 const rolePriority = (email: string) => {
-  const tokens = tokensOf(email.split("@")[0]);
+  const tokens = splitTokens(email.split("@")[0]);
   const idx = tokens.map((t) => ROLE_PRIORITY.indexOf(t)).filter((i) => i >= 0);
   return idx.length ? Math.min(...idx) : ROLE_PRIORITY.length;
 };
@@ -228,18 +337,31 @@ export function sameSite(emailDomain: string, websiteHost: string | null | undef
   return d === h || h.endsWith(`.${d}`) || d.endsWith(`.${h}`);
 }
 
-/** Alle zulässigen Adressen, beste zuerst (Domain der Website vor fremden Domains, info@ vor praxis@ vor kontakt@ …). */
-export function acceptedEmails(candidates: string[], practiceName: string, websiteHost?: string | null): string[] {
-  const ok = [...new Set(candidates.flatMap((c) => {
-    const v = classifyEmail(c, practiceName);
-    return v.ok ? [v.email] : [];
-  }))];
+export type AcceptOptions = EmailContext;
+export type AcceptedEmail = { email: string; kind: EmailKind };
+
+/**
+ * Alle zulässigen Adressen, beste zuerst: Funktionspostfach vor Namensbezug, Domain der Website vor fremden
+ * Domains, info@ vor praxis@ vor kontakt@ … Von der Website (`crawled`) nur eigene Domain oder Freemail –
+ * keine Fremddomains (z. B. Webagentur im Footer); Fremddomains nur aus OSM.
+ */
+export function acceptedEmails(candidates: string[], opts: AcceptOptions = {}): AcceptedEmail[] {
+  const seen = new Set<string>();
+  const ok: AcceptedEmail[] = [];
+  for (const c of candidates) {
+    const v = classifyEmail(c, opts);
+    if (!v.ok || seen.has(v.email)) continue;
+    const domain = v.email.split("@")[1];
+    if (opts.crawled && !sameSite(domain, opts.websiteHost) && !FREEMAIL_DOMAINS.has(domain)) continue;
+    seen.add(v.email);
+    ok.push({ email: v.email, kind: v.kind });
+  }
   return ok
-    .map((e, i) => ({ e, i, site: sameSite(e.split("@")[1], websiteHost) ? 0 : 1, prio: rolePriority(e) }))
-    .sort((a, b) => a.site - b.site || a.prio - b.prio || a.i - b.i)
-    .map((x) => x.e);
+    .map((x, i) => ({ x, i, k: x.kind === "role" ? 0 : 1, site: sameSite(x.email.split("@")[1], opts.websiteHost) ? 0 : 1, prio: rolePriority(x.email) }))
+    .sort((a, b) => a.k - b.k || a.site - b.site || a.prio - b.prio || a.i - b.i)
+    .map((y) => y.x);
 }
 
-export function pickBestEmail(candidates: string[], practiceName: string, websiteHost?: string | null): string | null {
-  return acceptedEmails(candidates, practiceName, websiteHost)[0] ?? null;
+export function pickBestEmail(candidates: string[], opts: AcceptOptions = {}): string | null {
+  return acceptedEmails(candidates, opts)[0]?.email ?? null;
 }

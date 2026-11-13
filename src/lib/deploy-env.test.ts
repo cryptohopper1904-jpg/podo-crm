@@ -72,6 +72,16 @@ describe("deploy/docker-compose.yml – Umgebung des App-Containers", () => {
     expect(missing).toEqual([]);
   });
 
+  it("Praxissuche: eigenes LLM (LEAD_LLM_*) mit Freigabe, nur in src/server/lead-search.ts gelesen", () => {
+    for (const k of ["LEAD_SEARCH_LLM_APPROVED", "LEAD_LLM_BASE_URL", "LEAD_LLM_API_KEY", "LEAD_LLM_MODEL"]) expect(keys).toContain(k);
+    const readers = walk(path.join(process.cwd(), "src"))
+      .filter((f) => /env\.LEAD_LLM_|env\.LEAD_SEARCH_LLM_APPROVED/.test(readFileSync(f, "utf8")))
+      .map((f) => path.relative(process.cwd(), f));
+    expect(readers).toEqual(["src/server/lead-search.ts"]);
+    // die Praxissuche nutzt NICHT die globalen LLM_* (Patientendaten-Funktionen)
+    expect(readFileSync(path.join(process.cwd(), "src/server/lead-search.ts"), "utf8")).not.toMatch(/env\.LLM_/);
+  });
+
   it("Eigentümer-Passwort nur bei db/migrate/backup, Backup-Passphrase nur bei backup", () => {
     expect(serviceBlock("migrate")).toContain("${DB_OWNER_PASSWORD}");
     expect(serviceBlock("backup")).toContain("${DB_OWNER_PASSWORD}");

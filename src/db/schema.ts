@@ -1500,7 +1500,7 @@ export type SalesTemplate = { subject: string; body: string };
 
 /**
  * Nächtliche Praxissuche (OpenStreetMap, Ring um den Startort): Einstellungen + Fortschritt in einer jsonb-Spalte.
- * Struktur und Prüfung in src/lib/vertrieb/lead-search.ts (normalizeLeadSearch). Keine Personendaten.
+ * Struktur und Prüfung in src/lib/vertrieb/lead-search.ts (normalizeLeadSearch). Enthält nur Einstellungen, Zähler und Lead-IDs (Anreicherung), keine Lead-Inhalte.
  */
 export type SalesLeadSearch = Record<string, unknown>;
 

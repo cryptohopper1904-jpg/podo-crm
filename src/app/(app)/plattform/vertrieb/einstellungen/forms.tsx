@@ -36,7 +36,7 @@ export function LeadSearchForm({
   values,
 }: {
   action: Action;
-  values: { enabled: boolean; centerText: string; ringKm: number; maxKm: number };
+  values: { enabled: boolean; centerText: string; ringKm: number; maxKm: number; allowNamed: boolean };
 }) {
   return (
     <ActionForm action={action} submit="Praxissuche speichern">
@@ -48,6 +48,11 @@ export function LeadSearchForm({
         <Field label="Ringbreite (km)" hint="je Nacht ein Ring"><Input name="ringKm" type="number" min={2} max={50} defaultValue={values.ringKm} /></Field>
         <Field label="Höchstradius (km)" hint="danach stoppt die Suche"><Input name="maxKm" type="number" min={5} max={300} defaultValue={values.maxKm} /></Field>
       </div>
+      <Checkbox
+        name="allowNamed"
+        defaultChecked={values.allowNamed}
+        label="Auch Geschäftsadressen mit Namen übernehmen (nur von der eigenen Praxis-Website / Impressum, nur mit deren Domain)"
+      />
       <Checkbox name="resetProgress" label="Fortschritt zurücksetzen (wieder bei 0 km beginnen)" />
     </ActionForm>
   );

@@ -81,7 +81,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
    * `publicDataOnly`: nur öffentliche Geschäftsdaten (Praxisname + Funktions-E-Mails aus OSM/Impressum),
    * keine Patientendaten – dann ist die Freigabe LLM_DATA_PROCESSING_APPROVED nicht nötig.
    */
-  private async chat(messages: ChatMessage[], json: boolean, opts: { publicDataOnly?: boolean } = {}): Promise<string> {
+  private async chat(messages: ChatMessage[], json: boolean, opts: { publicDataOnly?: boolean; maxRetries?: number } = {}): Promise<string> {
     if (!opts.publicDataOnly && !this.opts.dataProcessingApproved && process.env.LLM_DATA_PROCESSING_APPROVED !== "true") {
       throw new IntegrationNotConfiguredError(
         "llm",
@@ -103,6 +103,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
         ...(json && !opts.publicDataOnly ? { response_format: { type: "json_object" } } : {}),
       },
       sleep: this.opts.sleep,
+      maxRetries: opts.maxRetries,
     });
     const content = res?.choices?.[0]?.message?.content;
     if (typeof content !== "string") throw new Error("LLM-Antwort ohne Inhalt.");
@@ -158,7 +159,9 @@ export class OpenAiCompatibleLlm implements LlmPort {
   /**
    * Praxissuche (Vertrieb): wählt aus bereits regelgeprüften Kandidaten die beste allgemeine Praxis-Adresse
    * und markiert Adressen, die nach einer Person aussehen. Gesendet werden NUR Praxisname und Kandidatenliste
-   * (keine Seiteninhalte, keine Patientendaten). Die Antwort wird streng auf die Kandidaten beschränkt.
+   * (keine Seiteninhalte, keine Patientendaten). Praxisnamen von Einzelpraxen können den Namen der Inhaberin/des
+   * Inhabers enthalten – deshalb nur mit ausdrücklicher Freigabe LEAD_SEARCH_LLM_APPROVED=true (src/server/lead-search.ts).
+   * Die Antwort wird streng auf die Kandidaten beschränkt.
    */
   async choosePracticeEmail(practiceName: string, candidates: string[]): Promise<{ best: string | null; personal: string[] }> {
     const list = [...new Set(candidates.map((c) => c.trim().toLowerCase()))].slice(0, 20);
@@ -176,7 +179,8 @@ export class OpenAiCompatibleLlm implements LlmPort {
         { role: "user", content: JSON.stringify({ praxis: practiceName.slice(0, 200), kandidaten: list }) },
       ],
       true,
-      { publicDataOnly: true },
+      // Praxissuche: keine Wiederholungen (Zeitbudget des Laufs)
+      { publicDataOnly: true, maxRetries: 0 },
     );
     const parsed = extractJson(content) as { best?: unknown; personal?: unknown } | null;
     const personal = Array.isArray(parsed?.personal) ? parsed.personal.map((x) => String(x).trim().toLowerCase()).filter((x) => list.includes(x)) : [];

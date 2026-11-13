@@ -38,6 +38,22 @@ describe("PoliteFetcher (ohne echtes Netz)", () => {
     expect(await f.get("https://127.0.0.1/")).toBeNull();
   });
 
+  it("Weiterleitung auf anderen Host: auch dessen robots.txt gilt", async () => {
+    const calls: string[] = [];
+    const f = new PoliteFetcher({
+      fetchImpl: async (u) => {
+        calls.push(u);
+        if (u === "https://a.example/") return new Response(null, { status: 301, headers: { location: "https://b.example/" } });
+        if (u === "https://b.example/robots.txt") return new Response("User-agent: *\nDisallow: /", { headers: { "content-type": "text/plain" } });
+        return new Response("ok", { headers: { "content-type": "text/html" } });
+      },
+      resolver: publicIp,
+      sleep: async () => {},
+    });
+    expect(await f.get("https://a.example/")).toBeNull();
+    expect(calls).toEqual(["https://a.example/", "https://b.example/robots.txt"]);
+  });
+
   it("liest höchstens 200 KB", async () => {
     const f = new PoliteFetcher({ fetchImpl: async () => new Response("x".repeat(PAGE_MAX_BYTES * 3), { headers: { "content-type": "text/html" } }), resolver: publicIp, sleep: async () => {} });
     expect((await f.get("https://a.example/"))!.body.length).toBe(PAGE_MAX_BYTES);

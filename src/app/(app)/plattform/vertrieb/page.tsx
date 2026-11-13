@@ -4,7 +4,8 @@ import { dateTimeDe } from "@/lib/format";
 import { describeMailSettings, resolveMailSettings } from "@/integrations/mail/mail";
 import { LEAD_STATUSES, MAX_PER_CLICK, MAX_PER_DAY, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
 import { requirePlatformAdmin } from "@/server/platform";
-import { getLeadSearch } from "@/server/lead-search";
+import { isRunning } from "@/lib/vertrieb/lead-search";
+import { getLeadSearch, NAMED_NOTE } from "@/server/lead-search";
 import { getSalesSettings, listLeads, sendStats, settingsProblems, statusCounts } from "@/server/vertrieb";
 import { runLeadSearchAction } from "./actions";
 import { LeadTable } from "./lead-table";
@@ -23,9 +24,9 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
     : [
         `Praxissuche nachts: ${ls.enabled ? "an" : "aus"}`,
         run
-          ? `Letzter Suchlauf: ${dateTimeDe(run.at)}${run.manual ? " (manuell)" : ""}, Ring bis ${run.outerKm} km, ${run.added} neue Praxen (${run.withEmail} mit E-Mail)${run.error ? ` – Fehler: ${run.error}` : ""}`
+          ? `Letzter Suchlauf: ${dateTimeDe(run.at)}${run.manual ? " (manuell)" : ""}, Ring bis ${run.outerKm} km, ${run.added} neue Praxen (${run.withEmail} mit E-Mail${run.enriched ? `, ${run.enriched} nachträglich ergänzt` : ""})${run.error ? ` – Fehler: ${run.error}` : ""}`
           : "noch kein Suchlauf",
-        ls.runningSince ? "Suche läuft gerade …" : ls.doneKm >= ls.maxKm ? `Höchstradius ${ls.maxKm} km erreicht` : `nächster Ring: ${ls.doneKm}–${Math.min(ls.doneKm + ls.ringKm, ls.maxKm)} km`,
+        isRunning(ls) ? "Suche läuft gerade …" : ls.doneKm >= ls.maxKm ? `Höchstradius ${ls.maxKm} km erreicht` : `nächster Ring: ${ls.doneKm}–${Math.min(ls.doneKm + ls.ringKm, ls.maxKm)} km`,
       ].join(" · ");
   const problems = settingsProblems(settings);
   const mail = describeMailSettings(resolveMailSettings({ connection: null, env: process.env, practice: { name: "PodoHero", email: null }, platform: true }));
@@ -84,6 +85,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           step: l.step,
           lastSentAt: l.lastSentAt?.toISOString() ?? null,
           suppressed: l.suppressed,
+          named: !!l.notes?.startsWith(NAMED_NOTE),
         }))}
       />
     </div>

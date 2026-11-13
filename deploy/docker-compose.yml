@@ -66,6 +66,11 @@ services:
       LLM_BASE_URL:
       LLM_API_KEY:
       LLM_MODEL:
+      # Praxissuche (Vertrieb): eigenes, optionales LLM nur mit ausdrücklicher Freigabe (nie für Patientendaten)
+      LEAD_SEARCH_LLM_APPROVED:
+      LEAD_LLM_BASE_URL:
+      LEAD_LLM_API_KEY:
+      LEAD_LLM_MODEL:
       TRANSCRIPTION_DATA_PROCESSING_APPROVED:
       TRANSCRIPTION_BASE_URL:
       TRANSCRIPTION_API_KEY:

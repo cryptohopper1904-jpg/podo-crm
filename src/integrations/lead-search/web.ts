@@ -2,7 +2,7 @@
  * Praxissuche – Netzzugriffe (Overpass/OpenStreetMap und öffentliche Praxis-Websites).
  *
  * Höflich und sparsam:
- *  - Overpass: genau eine Abfrage je Lauf, Zeitlimit, allgemeiner User-Agent ohne Personendaten.
+ *  - Overpass: genau eine Abfrage je Lauf, Zeitlimit, allgemeiner User-Agent ohne Daten des Betreibers.
  *  - Websites: höchstens Startseite + EINE Impressum-/Kontaktseite derselben Website, vorher robots.txt
  *    (Disallow → überspringen), 1 Anfrage/Sekunde, 10 s Zeitlimit, max. 200 KB je Seite, keine Cookies, kein JS.
  *    403/429/503 oder Bot-Challenge (Cloudflare & Co.) → überspringen, nie umgehen.
@@ -10,7 +10,7 @@
  */
 import { assertPublicUrl, type Resolver } from "../net-guard";
 import { extractEmails } from "@/lib/vertrieb/email-filter";
-import { findContactLink, LEAD_SEARCH_USER_AGENT, looksLikeChallenge, OVERPASS_URL, robotsAllows } from "@/lib/vertrieb/lead-search";
+import { findContactLink, LEAD_SEARCH_USER_AGENT, looksLikeChallenge, OVERPASS_MAX_ELEMENTS, OVERPASS_URL, robotsAllows } from "@/lib/vertrieb/lead-search";
 
 export type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -43,6 +43,9 @@ export async function queryOverpass(query: string, opts: { fetchImpl?: FetchImpl
     if (!res.ok) throw new OverpassError(res.status === 429 || res.status === 504 ? `Overpass ausgelastet (HTTP ${res.status}) – nächster Versuch beim nächsten Lauf.` : `Overpass antwortet mit HTTP ${res.status}.`);
     const json = (await res.json()) as { remark?: string };
     if (typeof json?.remark === "string" && /runtime error|timed out|out of memory/i.test(json.remark)) throw new OverpassError("Overpass-Abfrage abgebrochen (Zeit/Speicher) – nächster Versuch beim nächsten Lauf.");
+    if (Array.isArray((json as { elements?: unknown[] }).elements) && (json as { elements: unknown[] }).elements.length >= OVERPASS_MAX_ELEMENTS) {
+      throw new OverpassError(`Overpass: ${OVERPASS_MAX_ELEMENTS} oder mehr Treffer (evtl. abgeschnitten) – der Ring wird verkleinert.`);
+    }
     return json;
   } catch (e) {
     if (e instanceof OverpassError) throw e;
@@ -102,8 +105,11 @@ export class PoliteFetcher {
     this.last = now();
   }
 
-  /** GET mit Prüfung jedes Ziels; null bei Netzfehler, unsicherem Ziel oder Zeitüberschreitung. */
-  async get(url: string, accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"): Promise<Page | null> {
+  /**
+   * GET mit Prüfung jedes Ziels; null bei Netzfehler, unsicherem Ziel oder Zeitüberschreitung.
+   * `checkRobots`: führt eine Weiterleitung auf einen anderen Host, gilt auch dessen robots.txt.
+   */
+  async get(url: string, accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1", checkRobots = true): Promise<Page | null> {
     const fetchImpl = this.opts.fetchImpl ?? ((u: string, i?: RequestInit) => fetch(u, i));
     let target = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -131,7 +137,9 @@ export class PoliteFetcher {
           if (!loc) return null;
           const next = new URL(loc, target);
           if (next.protocol === "http:") next.protocol = "https:";
+          const prevHost = new URL(target).host.toLowerCase();
           target = next.toString();
+          if (checkRobots && next.host.toLowerCase() !== prevHost && !(await this.allowed(target))) return null;
           continue;
         }
         const ct = res.headers.get("content-type") ?? "";
@@ -154,7 +162,7 @@ export class PoliteFetcher {
     const u = new URL(pageUrl);
     const key = u.host.toLowerCase();
     if (!this.robotsCache.has(key)) {
-      const r = await this.get(`https://${u.host}/robots.txt`, "text/plain,*/*;q=0.1");
+      const r = await this.get(`https://${u.host}/robots.txt`, "text/plain,*/*;q=0.1", false);
       this.robotsCache.set(key, !r || r.status >= 500 || r.status === 429 ? null : r.status >= 400 ? "" : r.body);
     }
     const txt = this.robotsCache.get(key);

@@ -4,16 +4,19 @@
  *  - Ring-Logik: jede Nacht der nächste Ring um den Startort (0–10 km, 10–20 km, … bis max. km)
  *  - Overpass-Abfrage (OpenStreetMap) bauen und Antwort in Praxis-Kandidaten übersetzen
  *  - robots.txt auswerten, Impressum-/Kontakt-Link finden, Dubletten-Schlüssel
- * Gespeichert werden nur Praxisname, Funktions-E-Mail, Website, PLZ, Ort, Entfernung, Quelle – keine Personen.
+ * Gespeichert werden nur Praxisname, E-Mail (Funktionspostfach bzw. Geschäftsadresse der eigenen Website), Website,
+ * PLZ, Ort, Entfernung, Quelle – keine Ansprechpartner/Telefon. Hinweis: Bei Einzelpraxen enthält der Praxisname oft
+ * den Namen der Inhaberin/des Inhabers und ist damit ein personenbezogenes Datum (Art. 6 Abs. 1 lit. f DSGVO, B2B).
  */
 import { nameZipKey } from "./csv";
+import { anchors, wildcardMatch } from "./html-scan";
 
 export const RING_KM_DEFAULT = 10;
 export const MAX_KM_DEFAULT = 150;
 export const RING_KM_LIMITS = [2, 50] as const;
 export const MAX_KM_LIMITS = [5, 300] as const;
 export const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
-/** Allgemeiner Kennzeichner ohne Personendaten (Overpass-Nutzungsregeln verlangen einen aussagekräftigen User-Agent). */
+/** Allgemeiner Kennzeichner ohne Daten des Betreibers (Overpass-Nutzungsregeln verlangen einen aussagekräftigen User-Agent). */
 export const LEAD_SEARCH_USER_AGENT = "PodoHero-Praxissuche/1.0 (+https://podo.algoverdict.com)";
 /** Produktkennung für robots.txt-Gruppen („User-agent: PodoHero-Praxissuche“) */
 export const ROBOTS_AGENT = "podohero-praxissuche";
@@ -32,6 +35,10 @@ export type LastRun = {
   duplicates: number;
   /** Websites, die geprüft wurden */
   crawled: number;
+  /** bestehende OSM-Leads ohne E-Mail, die nachträglich eine E-Mail bekommen haben */
+  enriched?: number;
+  /** Leads mit Geschäftsadresse mit Namensbezug */
+  named?: number;
   error?: string;
 };
 
@@ -45,9 +52,29 @@ export type LeadSearch = {
   /** gesetzt, solange ein Lauf aktiv ist (Schutz gegen parallele Läufe) */
   runningSince: string | null;
   lastRun: LastRun | null;
+  /** „Auch Geschäftsadressen mit Namen übernehmen (nur eigene Praxis-Website/Impressum)“ – Standard an */
+  allowNamed: boolean;
+  /** aufeinanderfolgende Fehlschläge desselben Rings (ab 3 wird der Ring halbiert) */
+  ringFailures: number;
+  /** Nachträgliche Anreicherung: Lead-ID → { n: Versuche, at: letzter Versuch ISO } (begrenzt) */
+  enrich: Record<string, { n: number; at: string }>;
 };
 
-export const DEFAULT_LEAD_SEARCH: LeadSearch = { enabled: false, center: null, ringKm: RING_KM_DEFAULT, maxKm: MAX_KM_DEFAULT, doneKm: 0, runningSince: null, lastRun: null };
+export const DEFAULT_LEAD_SEARCH: LeadSearch = {
+  enabled: false,
+  center: null,
+  ringKm: RING_KM_DEFAULT,
+  maxKm: MAX_KM_DEFAULT,
+  doneKm: 0,
+  runningSince: null,
+  lastRun: null,
+  allowNamed: true,
+  ringFailures: 0,
+  enrich: {},
+};
+/** Ein „laufender“ Lauf gilt nach dieser Zeit als abgebrochen */
+export const STALE_RUN_MS = 30 * 60_000;
+export const isRunning = (s: Pick<LeadSearch, "runningSince">, now = Date.now()) => !!s.runningSince && now - Date.parse(s.runningSince) < STALE_RUN_MS;
 
 const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi ? v : d);
 
@@ -69,16 +96,35 @@ export function normalizeLeadSearch(raw: unknown): LeadSearch {
     doneKm: num(r.doneKm, 0, MAX_KM_LIMITS[1], 0),
     runningSince: typeof r.runningSince === "string" ? r.runningSince : null,
     lastRun: lr && typeof lr === "object" && typeof lr.at === "string" ? lr : null,
+    allowNamed: r.allowNamed !== false,
+    ringFailures: num(r.ringFailures, 0, 1000, 0),
+    enrich: normalizeEnrich(r.enrich),
   };
+}
+
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+function normalizeEnrich(v: unknown): LeadSearch["enrich"] {
+  if (!v || typeof v !== "object") return {};
+  const out: LeadSearch["enrich"] = {};
+  for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+    const e = x as { n?: unknown; at?: unknown };
+    if (UUID_RE.test(k) && typeof e?.n === "number" && typeof e.at === "string") out[k] = { n: e.n, at: e.at };
+  }
+  return out;
 }
 
 export type Ring = { innerKm: number; outerKm: number };
 
-/** Nächster Ring oder null, wenn der Höchstradius erreicht ist. */
-export function nextRing(s: Pick<LeadSearch, "doneKm" | "ringKm" | "maxKm">): Ring | null {
+/**
+ * Nächster Ring oder null, wenn der Höchstradius erreicht ist. Nach je 3 Fehlschlägen desselben Rings
+ * (z. B. Overpass-Zeitüberschreitung, zu viele Treffer) wird die Breite halbiert (mind. 1 km), damit die Suche
+ * nicht dauerhaft hängen bleibt.
+ */
+export function nextRing(s: Pick<LeadSearch, "doneKm" | "ringKm" | "maxKm"> & { ringFailures?: number }): Ring | null {
   if (s.doneKm >= s.maxKm) return null;
   const innerKm = Math.max(0, s.doneKm);
-  return { innerKm, outerKm: Math.min(innerKm + s.ringKm, s.maxKm) };
+  const width = Math.max(1, s.ringKm / 2 ** Math.floor((s.ringFailures ?? 0) / 3));
+  return { innerKm, outerKm: Math.min(Math.round((innerKm + width) * 10) / 10, s.maxKm) };
 }
 
 /** Luftlinie in km (Haversine). */
@@ -106,21 +152,33 @@ export function parseCoordinates(text: string): { lat: number; lon: number } | n
 const NAME_PATTERN = "podolog|fu(ß|ss)pflege";
 const NAME_RE = new RegExp(NAME_PATTERN, "i");
 
+/** Höchstzahl Elemente je Abfrage; wird sie erreicht, ist das Ergebnis evtl. abgeschnitten → Ring gilt als fehlgeschlagen. */
+export const OVERPASS_MAX_ELEMENTS = 2000;
+/** Sicherheitsabstand: Der innere Kreis wird um so viel kleiner abgezogen (Wege, deren Mittelpunkt knapp im Ring liegt). */
+const INNER_MARGIN_KM = 1;
+
 /**
- * Overpass-QL: Knoten/Wege/Relationen mit podologischen Tags oder passendem Namen im Kreis (Außenradius).
- * Der Innenradius wird danach per Entfernung gefiltert (Overpass kennt keine Ringe).
+ * Overpass-QL: Knoten/Wege/Relationen mit podologischen Tags oder passendem Namen – nur der Ring
+ * (Außenkreis minus Innenkreis, Innenkreis mit 1 km Sicherheitsabstand). Die genaue Ringgrenze prüft danach
+ * parseOverpass anhand der Entfernung.
  */
-export function buildOverpassQuery(center: { lat: number; lon: number }, outerKm: number, timeoutSec = 120): string {
-  const around = `(around:${Math.round(outerKm * 1000)},${center.lat.toFixed(5)},${center.lon.toFixed(5)})`;
+export function buildOverpassQuery(center: { lat: number; lon: number }, ring: Ring | number, timeoutSec = 120): string {
+  const r = typeof ring === "number" ? { innerKm: 0, outerKm: ring } : ring;
+  const around = (km: number) => `(around:${Math.round(km * 1000)},${center.lat.toFixed(5)},${center.lon.toFixed(5)})`;
+  const set = (km: number, name: string) => [
+    "(",
+    `  nwr["healthcare"="podiatrist"]${around(km)};`,
+    `  nwr["healthcare:speciality"~"podiatry|chiropody"]${around(km)};`,
+    `  nwr["shop"="chiropodist"]${around(km)};`,
+    `  nwr["name"~"${NAME_PATTERN}",i]${around(km)};`,
+    `)->.${name};`,
+  ];
+  const inner = r.innerKm - INNER_MARGIN_KM;
   return [
     `[out:json][timeout:${timeoutSec}];`,
-    "(",
-    `  nwr["healthcare"="podiatrist"]${around};`,
-    `  nwr["healthcare:speciality"~"podiatry|chiropody"]${around};`,
-    `  nwr["shop"="chiropodist"]${around};`,
-    `  nwr["name"~"${NAME_PATTERN}",i]${around};`,
-    ");",
-    "out tags center 2000;",
+    ...set(r.outerKm, "aussen"),
+    ...(inner > 0 ? [...set(inner, "innen"), "(.aussen; - .innen;)->.ring;"] : ["(.aussen;)->.ring;"]),
+    `.ring out tags center ${OVERPASS_MAX_ELEMENTS};`,
   ].join("\n");
 }
 
@@ -130,7 +188,8 @@ type OsmElement = { type?: string; id?: number; lat?: number; lon?: number; cent
 export function isPodiatry(tags: Record<string, string>): boolean {
   if (tags.healthcare === "podiatrist" || tags.shop === "chiropodist") return true;
   if (/podiatry|chiropody/.test(tags["healthcare:speciality"] ?? "")) return true;
-  if (tags.shop === "beauty" && /nails/.test(tags.beauty ?? "")) return false;
+  // Kosmetik-/Nagelstudios nur, wenn der Name eindeutig podologisch ist
+  if (tags.shop === "beauty") return /podolog|medizinische\s+fu(ß|ss)pflege/i.test(tags.name ?? "");
   if (tags.disused || tags["disused:shop"] || tags["was:shop"] || tags.abandoned) return false;
   return NAME_RE.test(tags.name ?? "");
 }
@@ -143,6 +202,8 @@ export type OsmPractice = {
   zip: string | null;
   city: string | null;
   distanceKm: number;
+  lat: number;
+  lon: number;
 };
 
 const clean = (v: string | undefined, max: number) => {
@@ -182,6 +243,8 @@ export function parseOverpass(json: unknown, center: { lat: number; lon: number 
       zip: zip && /^\d{4,5}$/.test(zip) ? zip : null,
       city: clean(tags["addr:city"], 120),
       distanceKm: Math.round(d * 10) / 10,
+      lat,
+      lon,
     });
   }
   return out.sort((a, b) => a.distanceKm - b.distanceKm || a.name.localeCompare(b.name));
@@ -205,40 +268,134 @@ export function normalizeWebsite(raw: string | null | undefined): string | null 
   return u.toString();
 }
 
-/** Dubletten-Schlüssel der Website: Host ohne „www.“, klein. */
-export function websiteHostKey(url: string | null | undefined): string | null {
-  if (!url) return null;
+/** Plattformen/Verzeichnisse: viele Praxen teilen sich den Host → kein Website-Dubletten-Schlüssel, kein Abruf. */
+const PLATFORM_HOSTS = [
+  "facebook.com",
+  "fb.com",
+  "fb.me",
+  "instagram.com",
+  "doctolib.de",
+  "jameda.de",
+  "goo.gl",
+  "g.page",
+  "g.co",
+  "linktr.ee",
+  "youtube.com",
+  "xing.com",
+  "linkedin.com",
+  "twitter.com",
+  "x.com",
+  "tiktok.com",
+  "yelp.de",
+  "yelp.com",
+  "gelbeseiten.de",
+  "dasoertliche.de",
+  "dastelefonbuch.de",
+  "11880.com",
+  "meinestadt.de",
+  "treatwell.de",
+  "booksy.com",
+  "wa.me",
+  "whatsapp.com",
+  "t.me",
+];
+/** Gemeinsame Hosts, auf denen die Seite über den Pfad unterschieden wird → Schlüssel = Host + erste Pfadteile. */
+const PATH_HOSTS: Record<string, number> = { "sites.google.com": 2, "wixsite.com": 1, "jimdo.com": 1, "jimdofree.com": 1, "business.site": 1 };
+
+const bareHost = (url: string) => {
   try {
-    return new URL(/^[a-z]+:\/\//i.test(url) ? url : `https://${url}`).hostname.toLowerCase().replace(/^www\./, "") || null;
+    return new URL(/^[a-z]+:\/\//i.test(url) ? url : `https://${url}`);
   } catch {
     return null;
   }
+};
+
+/** Gehört der Host zu einer Plattform (Facebook, Instagram, Doctolib, Google …)? */
+export function isPlatformHost(host: string): boolean {
+  const h = host.toLowerCase().replace(/^www\./, "");
+  if (h in PATH_HOSTS) return false;
+  if (/^(?:[a-z0-9-]+\.)*google\.[a-z.]{2,6}$/.test(h)) return true;
+  return PLATFORM_HOSTS.some((p) => h === p || h.endsWith(`.${p}`));
+}
+
+/** Darf die Website abgerufen werden (keine Plattform)? */
+export const crawlableWebsite = (url: string | null | undefined): url is string => {
+  const u = url ? bareHost(url) : null;
+  return !!u && !isPlatformHost(u.hostname);
+};
+
+/**
+ * Dubletten-Schlüssel der Website: Host ohne „www.“, klein. Plattformen → kein Schlüssel; gemeinsame Hosts mit
+ * Pfad-Unterscheidung (sites.google.com/view/x, www.wixsite.com/x) → Host + Pfadteile.
+ */
+export function websiteHostKey(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const u = bareHost(url);
+  if (!u) return null;
+  const h = u.hostname.toLowerCase().replace(/^www\./, "");
+  if (!h || isPlatformHost(h)) return null;
+  const segs = PATH_HOSTS[h];
+  if (segs) {
+    const parts = u.pathname.split("/").filter(Boolean).slice(0, segs);
+    return parts.length === segs ? `${h}/${parts.join("/").toLowerCase()}` : null;
+  }
+  return h;
 }
 
 // ───────────── Dubletten ─────────────
 
-export type DedupeKeys = { emails: Set<string>; hosts: Set<string>; nameZips: Set<string>; suppressed: Set<string> };
+export type DedupeKeys = { emails: Set<string>; hosts: Set<string>; nameLocs: Set<string>; suppressed: Set<string> };
+type LeadKeyInput = {
+  email: string | null;
+  website: string | null;
+  name: string;
+  zip: string | null;
+  city?: string | null;
+  lat?: number | null;
+  lon?: number | null;
+  /** OSM-Objekt („node/123“) – bei bestehenden Leads aus den Notizen gelesen */
+  osmId?: string | null;
+  notes?: string | null;
+};
+
+/** OSM-Kennung aus den Notizen eines automatisch angelegten Leads („… OpenStreetMap node/123 …“). */
+export const osmIdFromNotes = (notes: string | null | undefined) => notes?.match(/OpenStreetMap ((?:node|way|relation)\/\d+)/)?.[1] ?? null;
 
 export const emailKey = (e: string) => e.trim().toLowerCase();
+const normName = (n: string) => n.trim().toLowerCase().replace(/\s+/g, " ");
 
-export function buildDedupeKeys(existing: { email: string | null; website: string | null; name: string; zip: string | null }[], suppressed: Iterable<string>): DedupeKeys {
-  const k: DedupeKeys = { emails: new Set(), hosts: new Set(), nameZips: new Set(), suppressed: new Set([...suppressed].map(emailKey)) };
+/**
+ * Name + Ort-Schlüssel: Name+PLZ (wie CSV-Import), zusätzlich Name+Ort und Name+gerundete Koordinate (~100 m).
+ * Ohne PLZ/Ort/Koordinate gibt es keinen Schlüssel (nicht nur über den Namen zusammenführen).
+ */
+export function nameLocationKeys(l: LeadKeyInput): string[] {
+  const keys: string[] = [];
+  if (l.zip?.trim()) keys.push(nameZipKey(l.name, l.zip));
+  if (l.city?.trim()) keys.push(`${normName(l.name)}|ort:${normName(l.city)}`);
+  if (typeof l.lat === "number" && typeof l.lon === "number") keys.push(`${normName(l.name)}|geo:${l.lat.toFixed(3)},${l.lon.toFixed(3)}`);
+  const osm = l.osmId ?? osmIdFromNotes(l.notes);
+  if (osm) keys.push(`osm:${osm}`);
+  return keys;
+}
+
+export function buildDedupeKeys(existing: LeadKeyInput[], suppressed: Iterable<string>): DedupeKeys {
+  const k: DedupeKeys = { emails: new Set(), hosts: new Set(), nameLocs: new Set(), suppressed: new Set([...suppressed].map(emailKey)) };
   for (const l of existing) rememberLead(k, l);
   return k;
 }
 
-export function rememberLead(k: DedupeKeys, l: { email: string | null; website: string | null; name: string; zip: string | null }) {
+export function rememberLead(k: DedupeKeys, l: LeadKeyInput) {
   if (l.email) k.emails.add(emailKey(l.email));
   const h = websiteHostKey(l.website);
   if (h) k.hosts.add(h);
-  k.nameZips.add(nameZipKey(l.name, l.zip));
+  for (const key of nameLocationKeys(l)) k.nameLocs.add(key);
 }
 
-/** Grund, warum die Praxis schon bekannt ist (Website-Host, Name+PLZ) – vor dem Website-Abruf prüfbar. */
-export function duplicateBeforeEmail(k: DedupeKeys, p: { name: string; zip: string | null; website: string | null }): string | null {
+/** Grund, warum die Praxis schon bekannt ist (Website-Host, Name+PLZ/Ort/Lage) – vor dem Website-Abruf prüfbar. */
+export function duplicateBeforeEmail(k: DedupeKeys, p: Omit<LeadKeyInput, "email">): string | null {
   const h = websiteHostKey(p.website);
   if (h && k.hosts.has(h)) return "Website bereits vorhanden";
-  if (k.nameZips.has(nameZipKey(p.name, p.zip))) return "Name und PLZ bereits vorhanden";
+  if (nameLocationKeys({ ...p, email: null }).some((key) => k.nameLocs.has(key))) return "Name und PLZ/Ort bzw. OSM-Objekt bereits vorhanden";
   return null;
 }
 
@@ -253,13 +410,7 @@ export function duplicateEmail(k: DedupeKeys, email: string | null): string | nu
 
 type RobotsRule = { allow: boolean; pattern: string };
 
-function ruleMatches(pattern: string, path: string): boolean {
-  if (!pattern) return false;
-  const anchored = pattern.endsWith("$");
-  const body = anchored ? pattern.slice(0, -1) : pattern;
-  const re = new RegExp("^" + body.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + (anchored ? "$" : ""));
-  return re.test(path);
-}
+const ruleMatches = (pattern: string, path: string) => wildcardMatch(pattern, path);
 
 /**
  * robots.txt nach RFC 9309: passende Gruppe (unsere Kennung, sonst „*“), längste passende Regel gewinnt,
@@ -313,9 +464,9 @@ export function findContactLink(html: string, pageUrl: string): string | null {
     return null;
   }
   let best: { url: string; score: number } | null = null;
-  for (const m of html.matchAll(/<a\b[^>]*?\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]{0,300}?)<\/a>/gi)) {
-    const href = m[2].trim();
-    const text = m[3].replace(/<[^>]+>/g, " ").toLowerCase();
+  for (const a of anchors(html)) {
+    const href = a.href;
+    const text = a.text.toLowerCase();
     const h = href.toLowerCase();
     const score = /impressum|imprint/.test(h) || /impressum|imprint/.test(text) ? 2 : /kontakt|contact/.test(h) || /kontakt|contact/.test(text) ? 1 : 0;
     if (!score || /^(mailto|tel|javascript|data):/i.test(href)) continue;

@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { z } from "zod";
 import { CSV_MAX_BYTES, type LeadInput } from "@/lib/vertrieb/csv";
 import { LEAD_STATUSES, SEQUENCE_STEPS } from "@/lib/vertrieb/constants";
+import { isRunning } from "@/lib/vertrieb/lead-search";
 import { getLeadSearch, runLeadSearch, saveLeadSearchSettings } from "@/server/lead-search";
 import { requirePlatformAdmin } from "@/server/platform";
 import {
@@ -230,7 +231,7 @@ export async function saveLeadSearchAction(_s: State, form: FormData): Promise<S
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: "Eingaben ungültig." };
   try {
-    await saveLeadSearchSettings(row.user.id, { ...d.data, enabled: form.get("enabled") === "on", resetProgress: form.get("resetProgress") === "on" });
+    await saveLeadSearchSettings(row.user.id, { ...d.data, enabled: form.get("enabled") === "on", resetProgress: form.get("resetProgress") === "on", allowNamed: form.get("allowNamed") === "on" });
   } catch (e) {
     return { error: msg(e) };
   }
@@ -239,12 +240,14 @@ export async function saveLeadSearchAction(_s: State, form: FormData): Promise<S
 }
 
 /** „Jetzt suchen“: startet den nächsten Ring im Hintergrund (after) – auch wenn die nächtliche Suche aus ist. */
-export async function runLeadSearchAction(_s: State, _form: FormData): Promise<State> {
+export async function runLeadSearchAction(): Promise<State> {
   const row = await requirePlatformAdmin();
   const s = await getLeadSearch();
   if (!s.center) return { error: "Bitte zuerst unter Einstellungen einen Startort für die Praxissuche angeben." };
   if (s.doneKm >= s.maxKm) return { error: `Der Höchstradius (${s.maxKm} km) ist durchsucht. Unter Einstellungen erhöhen oder zurücksetzen.` };
-  if (s.runningSince && Date.now() - Date.parse(s.runningSince) < 30 * 60_000) return { error: "Es läuft bereits eine Suche." };
+  if (isRunning(s)) return { error: "Es läuft bereits eine Suche." };
+  // höchstens alle 10 Minuten (Overpass-Nutzungsregeln)
+  if (s.lastRun && Date.now() - Date.parse(s.lastRun.at) < 10 * 60_000) return { error: "Bitte 10 Minuten nach dem letzten Suchlauf warten." };
   const userId = row.user.id;
   after(async () => {
     try {

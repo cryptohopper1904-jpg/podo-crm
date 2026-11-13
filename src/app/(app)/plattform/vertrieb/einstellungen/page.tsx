@@ -40,12 +40,14 @@ export default async function SettingsPage() {
         <h2 className="mb-1 font-display text-xl font-semibold">Praxissuche (nachts)</h2>
         <p className="mb-4 text-sm text-muted">
           Sucht jede Nacht im nächsten Ring um den Startort Podologie-/Fußpflegepraxen in OpenStreetMap und legt sie mit Status „Neu“ an.
-          Übernommen werden nur Praxisname, Website, PLZ, Ort, Entfernung und eine allgemeine Praxis-Adresse (info@, praxis@, kontakt@ …) –
-          keine Ansprechpartner, keine persönlichen Adressen. Fehlt die E-Mail in OpenStreetMap, werden höchstens Startseite und Impressum
-          der Website gelesen (robots.txt wird beachtet). Es wird nie automatisch eine Mail versendet.
+          Übernommen werden Praxisname, Website, PLZ, Ort, Entfernung und eine allgemeine Praxis-Adresse (info@, praxis@, kontakt@ …) –
+          keine Ansprechpartner, kein Telefon. Geschäftsadressen mit Namen (z. B. praxis.petra@) nur, wenn unten erlaubt, und nur
+          von der eigenen Praxis-Website mit deren Domain; solche Einträge sind mit „Adresse mit Namensbezug“ markiert. Hinweis: Bei
+          Einzelpraxen enthält schon der Praxisname oft den Namen der Inhaberin/des Inhabers. Fehlt die E-Mail in OpenStreetMap,
+          werden höchstens Startseite und Impressum der Website gelesen (robots.txt wird beachtet). Es wird nie automatisch eine Mail versendet.
           {ls.center ? ` Stand: bis ${ls.doneKm} km von ${ls.maxKm} km durchsucht.` : ""}
         </p>
-        <LeadSearchForm action={saveLeadSearchAction} values={{ enabled: ls.enabled, centerText: ls.center?.label ?? "", ringKm: ls.ringKm, maxKm: ls.maxKm }} />
+        <LeadSearchForm action={saveLeadSearchAction} values={{ enabled: ls.enabled, centerText: ls.center?.label ?? "", ringKm: ls.ringKm, maxKm: ls.maxKm, allowNamed: ls.allowNamed }} />
       </Card>
     </div>
   );
