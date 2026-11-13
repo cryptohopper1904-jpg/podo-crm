@@ -65,7 +65,11 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
         <input
           id="search"
           name="q"
+          type="search"
+          enterKeyHint="search"
           defaultValue={q}
+          // App-Verknüpfung „Patientensuche“ (src/app/manifest.ts): /kunden?suche=1 setzt den Cursor direkt ins Feld
+          autoFocus={sp.suche === "1"}
           placeholder="Name, Telefon, E-Mail, Ort oder Nummer"
           className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-surface px-3.5 text-[15px] placeholder:text-muted focus:border-primary focus:outline-none sm:max-w-md"
         />

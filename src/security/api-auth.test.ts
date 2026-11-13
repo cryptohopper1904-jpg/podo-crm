@@ -30,6 +30,8 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   // Antwort ohne Daten des Eintrags; Wirkung nur „nicht mehr anschreiben“.
   "src/app/abmelden/[token]/route.ts": ["Abmeldung Vertriebsmails: HMAC-signiertes Token", /unsubscribeByToken\(/],
   "src/app/portal/rechnung/[id]/route.ts": ["Portal-Rechnung: Portal-Sitzung (Cookie)", /currentPortalLink\(/],
+  // Service Worker der Web-App: für alle gleicher, statischer Quelltext ohne Daten (Regeln: src/lib/pwa/sw-rules.ts)
+  "src/app/sw.js/route.ts": ["Service Worker: statischer Quelltext ohne Daten", /buildServiceWorker\(process\.env\.PODO_APP_VERSION/],
 };
 
 describe("API-Routen: Authentisierung", () => {

@@ -72,7 +72,7 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           {timeDe(a.startsAt)}–{timeDe(a.endsAt)}
         </Link>
         <span
-          className={`col-start-2 row-span-3 row-start-1 w-1 self-stretch rounded @xl:row-span-2 @min-[62.5rem]:row-span-1 ${a.homeVisit ? "bg-[#e9b931]" : a.status === "done" ? "bg-primary" : "bg-accent"}`}
+          className={`col-start-2 row-span-2 row-start-1 w-1 self-stretch rounded @xl:row-span-2 @min-[62.5rem]:row-span-1 ${a.homeVisit ? "bg-[#e9b931]" : a.status === "done" ? "bg-primary" : "bg-accent"}`}
           aria-hidden
         />
         <div className="col-start-3 row-start-1 min-w-0">

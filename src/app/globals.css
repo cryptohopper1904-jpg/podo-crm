@@ -222,6 +222,30 @@ body {
   }
 }
 
+/*
+ * iOS (Safari und installierte App): Eingabefelder unter 16px lösen beim Antippen ein Hineinzoomen aus, das danach
+ * stehen bleibt. Ungeschichtet (außerhalb von @layer) gewinnt diese Regel gegen Utility-Klassen wie text-sm/text-[15px].
+ * -webkit-touch-callout gibt es nur auf iOS/iPadOS – Desktop und Android behalten die kleineren Schriften.
+ */
+@supports (-webkit-touch-callout: none) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: max(16px, 1em);
+  }
+}
+
+/*
+ * Installierte App (ohne Browserleiste): kein versehentliches „Ziehen zum Aktualisieren“ (Android), das eine halb
+ * ausgefüllte Dokumentation verwerfen würde. Das elastische Nachfedern bleibt.
+ */
+@media (display-mode: standalone) {
+  html,
+  body {
+    overscroll-behavior-y: contain;
+  }
+}
+
 @media print {
   .no-print {
     display: none !important;

@@ -31,6 +31,7 @@ const RESOURCES = [
   ["/wissen", "Wissen für Podologie-Praxen"],
   ["/wissen/sammelrechnung-und-quittung-podologie", "Sammelrechnung & Quittung"],
   ["/wissen/hygieneplan-podologie-checkliste", "Hygieneplan-Checkliste"],
+  ["/app", "PodoHero als App"],
 ] as const;
 
 const LEGAL = [

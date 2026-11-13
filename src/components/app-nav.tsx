@@ -161,7 +161,7 @@ export function BottomNav({ allowed, level = DEFAULT_VIEW_LEVEL, badges }: { all
   return (
     <nav
       aria-label="Schnellnavigation"
-      className="no-print fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] lg:hidden"
+      className="no-print fixed inset-x-0 bottom-0 z-30 flex border-t border-border bg-surface pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] lg:hidden"
     >
       {items.map((i) => {
         const active = isActive(path, i.href);

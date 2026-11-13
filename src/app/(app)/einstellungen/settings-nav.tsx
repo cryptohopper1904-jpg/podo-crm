@@ -23,7 +23,8 @@ export function SettingsNav({ groups }: { groups: SettingsGroup[] }) {
     <>
       {/* iPad/Handy */}
       <label className="mb-6 flex flex-col gap-1.5 xl:hidden">
-        <span className={fieldLabelCls}>Bereich</span>
+        {/* fieldLabelCls ohne self-end: in dieser Flex-Spalte würde self-end die Beschriftung nach rechts schieben */}
+        <span className={fieldLabelCls.replace("self-end", "self-start")}>Bereich</span>
         <span className="relative block">
           <select
             value={current?.href ?? ""}

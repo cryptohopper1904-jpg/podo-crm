@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { LogoutForm } from "@/components/pwa/logout-form";
 import { getAuthState, getSession } from "@/lib/auth/session";
 import { TotpSetup } from "@/app/(app)/einstellungen/sicherheit/totp-setup";
 import { confirmOwnTotpAction, logoutAction, startOwnTotpAction } from "../../actions";
@@ -28,9 +29,9 @@ export default async function TotpEnrollPage() {
         Funktioniert mit jeder Authenticator-App (z. B. Apple Passwörter, Google Authenticator, 1Password).
       </p>
       <TotpSetup email={row.user.email} startAction={startOwnTotpAction} confirmAction={confirmOwnTotpAction} />
-      <form action={logoutAction} className="mt-6 text-center">
+      <LogoutForm action={logoutAction} className="mt-6 text-center">
         <button type="submit" className="text-sm font-semibold text-muted hover:text-text">Abmelden</button>
-      </form>
+      </LogoutForm>
     </>
   );
 }

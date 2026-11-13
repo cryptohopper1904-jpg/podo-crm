@@ -1,4 +1,21 @@
 import { Pool } from "pg";
+import type { Page } from "@playwright/test";
+import { totpCode } from "../src/lib/auth/totp";
+
+/** Demo-Zugang anmelden inkl. Pflicht-2FA-Einrichtung (setzt die 2FA vorher zurück). Endet auf /heute. */
+export async function loginDemoWithFreshTotp(page: Page): Promise<void> {
+  await resetDemoTotp();
+  await page.goto("/login");
+  await page.getByLabel("E-Mail", { exact: true }).fill(DEMO_EMAIL);
+  await page.getByLabel("Passwort", { exact: true }).fill(DEMO_PASSWORD);
+  await page.getByRole("button", { name: "Anmelden" }).click();
+  await page.waitForURL(/\/login\/2fa-einrichten/);
+  await page.getByRole("button", { name: "Jetzt einrichten" }).click();
+  const secret = (await page.locator("code").innerText()).replace(/\s/g, "");
+  await page.getByLabel("Code", { exact: true }).fill(totpCode(secret));
+  await page.getByRole("button", { name: "Bestätigen" }).click();
+  await page.waitForURL(/\/heute/);
+}
 
 export const DEMO_EMAIL = "demo@podocrm.local";
 export const DEMO_PASSWORD = "demo-passwort-123";

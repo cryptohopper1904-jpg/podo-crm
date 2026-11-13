@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutForm } from "@/components/pwa/logout-form";
 import { LogOut, Sparkles } from "lucide-react";
 import { AccessBanner } from "@/components/access-banner";
 import { cookies } from "next/headers";
@@ -17,6 +18,20 @@ import { PatientSearch } from "@/components/patient-search";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
+import type { Metadata } from "next";
+import { appLayoutMetadata } from "@/lib/pwa/app-meta";
+import { PwaClient } from "@/components/pwa/pwa-client";
+import { InstallBanner } from "@/components/pwa/install-banner";
+
+/** iOS-Startbildschirme der installierten App (src/lib/pwa/startup-images.ts) */
+export const metadata: Metadata = appLayoutMetadata();
+
+/**
+ * Kopfzeile: in der installierten App (viewport-fit=cover) Abstand zu Statusleiste/Notch und im Querformat zu den
+ * seitlichen Aussparungen des iPhones (env(safe-area-inset-*), sonst 0).
+ */
+const headerCls =
+  "no-print sticky top-0 z-20 flex min-h-[calc(4rem+env(safe-area-inset-top))] items-center gap-3 border-b border-border bg-surface/90 pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] backdrop-blur lg:pr-[max(2rem,env(safe-area-inset-right))] lg:pl-8";
 
 /** Dauerhafter Zugang zu den Neuigkeiten (Popup „Neu in PodoHero“ erscheint einmal je Anmeldung) */
 function NewsLink() {
@@ -35,7 +50,7 @@ function NewsLink() {
 function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: string; totpEnabled: boolean; switcher: SwitcherModel | null; children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
+      <header className={headerCls}>
         <Link href="/plattform"><Logo /></Link>
         <span className="hidden text-sm text-muted sm:inline">Plattform-Konsole · {name}</span>
         {totpEnabled ? <Link href="/plattform/vertrieb" className="text-sm font-semibold text-primary">Vertrieb</Link> : null}
@@ -43,14 +58,14 @@ function PlatformOnlyShell({ name, totpEnabled, switcher, children }: { name: st
           {switcher?.show ? <OrgSwitcher model={{ ...switcher, platformLink: false }} /> : null}
           <NewsLink />
           <ThemeToggle />
-          <form action={logoutAction}>
+          <LogoutForm action={logoutAction}>
             <button type="submit" aria-label="Abmelden" title="Abmelden" className="inline-flex size-11 items-center justify-center rounded-xl border border-border bg-surface hover:bg-surface-2">
               <LogOut size={19} aria-hidden />
             </button>
-          </form>
+          </LogoutForm>
         </div>
       </header>
-      <main className="flex-1 px-4 pb-10 pt-6 lg:px-8">
+      <main className="flex-1 pt-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[max(2.5rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] lg:px-8">
         {totpEnabled ? children : (
           <div className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-surface p-6">
             <h1 className="font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung erforderlich</h1>
@@ -102,7 +117,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         canChangeView={!auth.support}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
+        <header className={headerCls}>
           <Link href="/heute" className="lg:hidden">
             <Logo />
           </Link>
@@ -111,7 +126,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             <OrgSwitcher model={switcher} />
             <NewsLink />
             <ThemeToggle />
-            <form action={logoutAction}>
+            <LogoutForm action={logoutAction}>
               <button
                 type="submit"
                 aria-label="Abmelden"
@@ -120,14 +135,17 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
               >
                 <LogOut size={19} aria-hidden />
               </button>
-            </form>
+            </LogoutForm>
           </div>
         </header>
         <AccessBanner auth={auth} />
-        <main className="flex-1 px-4 pb-28 pt-6 lg:px-8 lg:pb-10">{children}</main>
+        {auth.support ? null : <InstallBanner />}
+        {/* unten Platz für die feste Leiste (BottomNav) samt Home-Indikator des iPhones */}
+        <main className="flex-1 pt-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(7rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] lg:px-8 lg:pb-10">{children}</main>
       </div>
       <BottomNav allowed={allowed} level={level} badges={badges} />
       {auth.support ? null : <LoginChangelog />}
+      <PwaClient />
     </div>
   );
 }

@@ -313,7 +313,8 @@ export function DokuForm({
         </div>
       </Card>
 
-      <div className="sticky bottom-20 z-10 lg:bottom-4">
+      {/* über der unteren Leiste (BottomNav) samt Home-Indikator des iPhones */}
+      <div className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-10 lg:bottom-4">
         <Button type="submit" variant="accent" disabled={pending || uploading} className="h-14 w-full text-base">
           {pending ? "Wird gespeichert …" : <><Check size={20} aria-hidden /> Prüfen und abschließen</>}
         </Button>
