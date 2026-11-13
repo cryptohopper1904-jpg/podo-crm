@@ -344,8 +344,6 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       : [];
     const svc = new Map(svcRows.map((s) => [s.id, s]));
     const productIds = [...new Set(input.lines.map((l) => l.productId).filter((x): x is string => !!x))];
-    // Produkte zuerst sperren (vor dem Einfügen der Positionen, sortiert) – siehe lockProducts
-    await lockProducts(tx, org, productIds);
     const prodRows = productIds.length
       ? await tx.select().from(products).where(and(eq(products.organizationId, org), inArray(products.id, productIds)))
       : [];
@@ -500,7 +498,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .returning({ id: invoices.id });
 
-    // 2) Positionen
+    // 2) Positionen – Produkte vorher sortiert sperren (Reihenfolge: angerechnete Belege → Advisory-Lock
+    //    invoice-records → Produkte → Positionen), siehe lockProducts
+    await lockProducts(tx, org, productIds);
     await tx.insert(invoiceLines).values(
       lines.map((l, i) => ({
         organizationId: org,
