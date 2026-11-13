@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Empty, FormError, FormSuccess, Table } from "@/components/ui";
 import { MAX_PER_CLICK, STATUS_LABEL, STOP_STATUSES, isLeadStatus } from "@/lib/vertrieb/constants";
+import { BULK_STATUSES, type Stage } from "@/lib/vertrieb/pipeline";
 import type { SendPreview } from "@/server/vertrieb";
-import { previewSendAction, sendAction } from "./actions";
+import { bulkAction, previewSendAction, sendAction } from "./actions";
 
 export type LeadRow = {
   id: string;
@@ -20,15 +21,25 @@ export type LeadRow = {
   suppressed: boolean;
   /** Geschäftsadresse mit Namensbezug (Praxissuche, von der eigenen Praxis-Website) */
   named?: boolean;
+  stage?: Stage;
+  stageLabel?: string;
+  campaignName?: string | null;
+  /** registrierte Praxis (zugeordnet über Code/E-Mail/Domain) */
+  orgName?: string | null;
+  /** dokumentierte Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) – ohne sie wird nicht gesendet */
+  consent?: boolean;
 };
+
+const stageTone = (s?: Stage) => (s === "kunde" ? "primary" : s === "test" ? "info" : s === "geantwortet" ? "warn" : s === "aus" ? "accent" : "neutral");
 
 const tone = (s: string) =>
   s === "kunde" || s === "interessiert" ? "primary" : s === "in_sequenz" ? "info" : s === "geantwortet" ? "warn" : s === "abgemeldet" || s === "kein_interesse" ? "accent" : "neutral";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" }) : "–");
 
-export function LeadTable({ leads }: { leads: LeadRow[] }) {
+export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaigns?: { id: string; name: string }[] }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState("");
   // Vorschau gilt genau für die Auswahl zum Zeitpunkt der Vorschau
   const [preview, setPreview] = useState<(SendPreview & { ids: string[] }) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +48,7 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
 
   // Auswahl „alle“ nur für Einträge, die grundsätzlich noch eine Mail bekommen können
   const selectable = useMemo(
-    () => leads.filter((l) => l.email && !l.suppressed && l.step < 3 && !(isLeadStatus(l.status) && STOP_STATUSES.includes(l.status))).map((l) => l.id),
+    () => leads.filter((l) => l.email && l.consent && !l.suppressed && l.step < 3 && !(isLeadStatus(l.status) && STOP_STATUSES.includes(l.status))).map((l) => l.id),
     [leads],
   );
   const toggle = (id: string) =>
@@ -48,6 +59,23 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
       return n;
     });
   const ids = [...selected];
+  const allIds = leads.map((l) => l.id);
+
+  const runBulk = () =>
+    start(async () => {
+      setError(null);
+      setOk(null);
+      const [op, value = ""] = bulk.split(":");
+      if (op === "abmelden" && !window.confirm(`${ids.length} Einträge abmelden? Die Adressen kommen dauerhaft auf die Sperrliste, die Einträge werden samt Verlauf gelöscht.`)) return;
+      const input = op === "status" ? { op, status: value } : op === "kampagne" ? { op, campaignId: value } : { op };
+      const r = await bulkAction(ids, input);
+      if ("error" in r) setError(r.error);
+      else {
+        setOk(r.ok);
+        setSelected(new Set());
+        setBulk("");
+      }
+    });
 
   const askPreview = () =>
     start(async () => {
@@ -86,6 +114,25 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
         <Button onClick={askPreview} disabled={pending || ids.length === 0}>Nächste Mail senden …</Button>
         <span className="text-sm text-muted">
           {ids.length} ausgewählt · höchstens {MAX_PER_CLICK} je Klick. Vor dem Versand erscheint eine Vorschau.
+        </span>
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          <button type="button" className="text-sm font-semibold text-primary" onClick={() => setSelected(new Set(allIds))} disabled={!!preview}>Alle {allIds.length} auswählen</button>
+          <label className="sr-only" htmlFor="bulk">Sammelaktion</label>
+          <select id="bulk" value={bulk} onChange={(e) => setBulk(e.target.value)} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm" disabled={!!preview}>
+            <option value="">Sammelaktion …</option>
+            <optgroup label="Status setzen">
+              {BULK_STATUSES.map((st) => <option key={st} value={`status:${st}`}>{STATUS_LABEL[st]}</option>)}
+            </optgroup>
+            <optgroup label="Kampagne">
+              {campaigns.map((c) => <option key={c.id} value={`kampagne:${c.id}`}>zu „{c.name}“ hinzufügen</option>)}
+              <option value="kampagne:">aus Kampagne entfernen</option>
+            </optgroup>
+            <optgroup label="Einwilligung (dokumentieren nur einzeln im Eintrag)">
+              <option value="einwilligung_entfernen">Einwilligung entfernen</option>
+            </optgroup>
+            <option value="abmelden">Abmelden (Sperrliste, Einträge löschen)</option>
+          </select>
+          <Button variant="secondary" className="h-10" onClick={runBulk} disabled={pending || !bulk || ids.length === 0 || !!preview}>Ausführen</Button>
         </span>
       </div>
       <FormError message={error} />
@@ -132,7 +179,7 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
             <th>
               <input
                 type="checkbox"
-                aria-label="Alle sendbaren auswählen"
+                aria-label="Alle sendbaren auswählen (mit Einwilligung)"
                 className="size-5 accent-[var(--primary)]"
                 checked={selectable.length > 0 && selectable.every((id) => selected.has(id))}
                 onChange={(e) => setSelected(e.target.checked ? new Set(selectable) : new Set())}
@@ -143,6 +190,7 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
             <th>E-Mail</th>
             <th>Ort</th>
             <th>km</th>
+            <th>Stufe</th>
             <th>Status</th>
             <th>Mails</th>
             <th>Zuletzt</th>
@@ -157,10 +205,13 @@ export function LeadTable({ leads }: { leads: LeadRow[] }) {
               <td>
                 <Link href={`/plattform/vertrieb/${l.id}`} className="font-semibold text-primary">{l.name}</Link>
                 {l.contactPerson ? <p className="text-xs text-muted">{l.contactPerson}</p> : null}
+                {l.campaignName ? <p className="text-xs text-muted">Kampagne: {l.campaignName}</p> : null}
+                {l.orgName ? <p className="text-xs text-muted">registriert als „{l.orgName}“</p> : null}
               </td>
-              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}</td>
+              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}{l.email && l.consent === false ? <> <Badge tone="neutral">ohne Einwilligung</Badge></> : null}{l.consent ? <> <Badge tone="primary">Einwilligung</Badge></> : null}</td>
               <td className="text-sm">{l.city ?? "–"}</td>
               <td className="tabular-nums text-sm">{l.distanceKm ?? "–"}</td>
+              <td>{l.stage ? <Badge tone={stageTone(l.stage)}>{l.stageLabel}</Badge> : "–"}</td>
               <td><Badge tone={tone(l.status)}>{isLeadStatus(l.status) ? STATUS_LABEL[l.status] : l.status}</Badge></td>
               <td className="tabular-nums">{l.step} / 3</td>
               <td className="text-sm">{fmt(l.lastSentAt)}</td>

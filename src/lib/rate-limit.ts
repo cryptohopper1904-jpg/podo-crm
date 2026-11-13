@@ -44,8 +44,33 @@ export function createRateLimiter(opts: { windowMs: number; max: number; maxKeys
   };
 }
 
-/** Schlüssel für die Drosselung: IP, sonst eigener (strengerer) Eimer je User-Agent. */
+/**
+ * IPv6 wird je /64 gezählt (ein Anschluss bekommt meist ein ganzes /64 – sonst ließe sich die Drosselung mit wechselnden
+ * Adressen umgehen). IPv4-gemappte Adressen (::ffff:1.2.3.4) zählen als IPv4. Ungültiges bleibt unverändert.
+ */
+export function ipKey(ip: string): string {
+  const v = ip.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/%.*$/, "");
+  if (!v.includes(":")) return v;
+  const mapped = /^(?:0{0,4}:){0,5}(?::|0{0,4}:)?ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(v);
+  if (mapped) return mapped[1];
+  const parts = v.split("::");
+  if (parts.length > 2) return v;
+  const head = parts[0] ? parts[0].split(":") : [];
+  const tail = parts.length === 2 && parts[1] ? parts[1].split(":") : [];
+  if (tail.some((x) => x.includes("."))) return v; // eingebettetes IPv4 außerhalb ::ffff: – selten, unverändert
+  const fill = parts.length === 2 ? Array(Math.max(0, 8 - head.length - tail.length)).fill("0") : [];
+  const groups = [...head, ...fill, ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return v;
+  // IPv4-gemappt in Hex-Form (::ffff:c000:201) → 192.0.2.1
+  if (groups.slice(0, 5).every((g) => /^0+$/.test(g)) && groups[5] === "ffff") {
+    const n = groups.slice(6).map((g) => parseInt(g, 16));
+    return [n[0] >> 8, n[0] & 255, n[1] >> 8, n[1] & 255].join(".");
+  }
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
+/** Schlüssel für die Drosselung: IP (IPv6 je /64), sonst eigener (strengerer) Eimer je User-Agent. */
 export function clientKey(meta: { ip: string | null; userAgent?: string | null }): string {
-  if (meta.ip) return meta.ip;
+  if (meta.ip) return ipKey(meta.ip);
   return `${NO_IP_PREFIX}${createHash("sha256").update(meta.userAgent ?? "").digest("hex").slice(0, 16)}`;
 }

@@ -144,5 +144,8 @@ describe("Kostenlos-Tarif", () => {
     expect(freeSwitchProblem(org({ plan: "trial", subscriptionStatus: "active", stripeSubscriptionId: "sub_1" } as never), 3)).toMatch(/kündigen/);
     expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "canceled" }), 3)).toBeNull();
     expect(freeSwitchProblem(org({ plan: "free" }), 3)).toMatch(/bereits/);
+    // Testphase per Aktionscode mit Tarif-Umfang (ohne Stripe-Abo) ist kein Abo; Stripe-Testphase schon
+    expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "trialing" }), 3)).toBeNull();
+    expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "trialing", stripeSubscriptionId: "sub_1" } as never), 3)).toMatch(/kündigen/);
   });
 });

@@ -3,6 +3,7 @@ import { safeEqual } from "@/lib/safe-equal";
 import { log } from "@/lib/log";
 import { runReminders } from "@/server/reminders";
 import { retryDueWebhooks } from "@/server/webhooks";
+import { runPromoTrialReturns } from "@/server/promo-codes";
 
 /**
  * Erinnerungs-Lauf (alle 15 Minuten): POST /api/cron/reminders mit `Authorization: Bearer ${CRON_SECRET}`.
@@ -11,6 +12,8 @@ import { retryDueWebhooks } from "@/server/webhooks";
  * GET wird ebenfalls akzeptiert (Vercel Cron ruft per GET mit demselben Header auf).
  * Zusätzlich: Wiederholung fehlgeschlagener/liegengebliebener Webhook-Ereignisse mit Backoff und Löschung alter
  * Ereignisse (Gesamt-Review H4/H7) – eigener Fehlerpfad, damit Erinnerungen davon unabhängig laufen.
+ * Zusätzlich: abgelaufene Aktionscode-Testphasen aus dem Kostenlos-Tarif zurückstellen (runPromoTrialReturns, eigener
+ * Fehlerpfad; läuft auch im nächtlichen Cron – die Hinweise versprechen „spätestens in der folgenden Nacht“).
  * Antwort enthält nur Zähler, keine Personendaten.
  */
 
@@ -26,10 +29,16 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.webhooks.failed", { error: e });
   }
+  let promoReturns: Awaited<ReturnType<typeof runPromoTrialReturns>> | null = null;
+  try {
+    promoReturns = await runPromoTrialReturns();
+  } catch (e) {
+    log.error("cron.promo_return_free.failed", { error: e });
+  }
   try {
     const result = await runReminders();
     if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
-    return NextResponse.json({ ok: true, ...result, webhooks }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     log.error("cron.reminders.failed", { error: e });
     return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });

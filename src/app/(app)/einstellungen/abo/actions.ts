@@ -5,9 +5,13 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getBillingPort } from "@/integrations/stripe";
 import { audit } from "@/lib/audit";
-import { requireAuth, revokeUserSessions, type AuthContext } from "@/lib/auth/session";
+import { requestMeta, requireAuth, revokeUserSessions, type AuthContext } from "@/lib/auth/session";
 import { isPaidPlan, PLANS } from "@/lib/plans";
 import { applyMockSubscription, loadOrgBilling, switchToFreePlan, usedSeats } from "@/server/billing";
+import { dateDe } from "@/lib/format";
+import { PROMO_INVALID, trialDaysLabel } from "@/lib/promo-codes";
+import { clientKey } from "@/lib/rate-limit";
+import { PromoCodeError, promoFailLimiter, redeemPromoCodeForOrganization } from "@/server/promo-codes";
 
 export type AboState = { error?: string; ok?: string } | undefined;
 
@@ -90,4 +94,25 @@ export async function switchToFreeAction(): Promise<AboState> {
   return {
     ok: `Die Praxis nutzt jetzt den kostenlosen Tarif (bis 20 Patient:innen).${r.deactivated.length ? ` ${r.deactivated.length} weitere Teammitglied(er) wurden deaktiviert.` : ""}`,
   };
+}
+
+/**
+ * Aktionscode einlösen (Inhaber:in): in der Testphase, nach deren Ablauf (Nur-Lesen), im Kostenlos-Tarif oder nach
+ * beendetem Abo – nicht bei laufendem bezahlten Abo, je Praxis nur einmal. Fehlversuche je Anschluss UND je Praxis gedrosselt.
+ */
+export async function redeemPromoAction(_: AboState, form: FormData): Promise<AboState> {
+  const auth = await ownerAuth();
+  if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann einen Aktionscode einlösen." };
+  const keys = [`abo:${clientKey(await requestMeta())}`, `abo-org:${auth.organization.id}`];
+  if (keys.some((k) => promoFailLimiter.exceeded(k))) return { error: `${PROMO_INVALID} Zu viele Versuche – bitte später erneut versuchen.` };
+  const code = String(form.get("code") ?? "").slice(0, 64);
+  try {
+    const r = await redeemPromoCodeForOrganization(auth.organization.id, auth.user.id, code);
+    revalidatePath("/", "layout");
+    return { ok: `Aktionscode ${r.code} eingelöst: Die Testphase läuft jetzt bis ${dateDe(r.trialEndsAt)} (${trialDaysLabel(r.trialDays)}).` };
+  } catch (e) {
+    if (!(e instanceof PromoCodeError)) throw e;
+    for (const k of keys) promoFailLimiter.limited(k);
+    return { error: e.message };
+  }
 }

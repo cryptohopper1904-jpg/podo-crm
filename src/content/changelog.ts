@@ -25,6 +25,17 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-t",
+    date: "2026-11-13",
+    title: "Leistungsdatum, aufgeräumte Formulare und neue Einstellungen",
+    items: [
+      { tag: "verbessert", text: "Belege nennen das richtige Leistungsdatum bzw. den Leistungszeitraum – aus Terminen, Behandlungen und übernommenen Quittungen. Es wird beim Ausstellen fest gespeichert und ändert sich später nicht mehr. Sammelrechnungen ohne Termine können einen Zeitraum „von – bis“ angeben.", href: "/rechnungen/neu" },
+      { tag: "verbessert", text: "Rechnungen für Termine in der Zukunft sind nicht mehr möglich (dafür gibt es die Anzahlung). Beim Ausfallhonorar muss das Datum des versäumten Termins angegeben werden." },
+      { tag: "verbessert", text: "Alle Formularfelder sind einheitlich ausgerichtet; lange Beschriftungen werden nicht mehr abgeschnitten." },
+      { tag: "neu", text: "Einstellungen mit neuer Navigation: am großen Bildschirm links nach Gruppen sortiert, auf iPad und Handy als Auswahlliste. Es erscheinen nur Bereiche, die Sie auch öffnen dürfen.", href: "/einstellungen" },
+    ],
+  },
+  {
     id: "2026-11-13-s",
     date: "2026-11-13",
     title: "Quittungen in die Sammelrechnung, Schutz vor Doppelabrechnung",

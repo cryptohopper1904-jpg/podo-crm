@@ -274,6 +274,34 @@
       "when": 1794603112644,
       "tag": "0038_leistungsdatum",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794604944900,
+      "tag": "0039_aktionscodes",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794604952533,
+      "tag": "0040_aktionscodes_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794604953899,
+      "tag": "0041_aktionscodes_einwilligung",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794604955440,
+      "tag": "0042_sperrliste_pruefwert",
+      "breakpoints": true
     }
   ]
 }
