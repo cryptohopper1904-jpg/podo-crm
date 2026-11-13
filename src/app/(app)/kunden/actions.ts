@@ -1,5 +1,6 @@
 "use server";
 
+import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { and, eq, max, sql } from "drizzle-orm";
@@ -46,12 +47,19 @@ export async function savePatientAction(_: PatientFormState, form: FormData): Pr
     );
     await audit({ organizationId: org, userId: auth.user.id, action: "patient.update", entity: "patient", entityId: id });
   } else {
-    const [row] = await withOrg(org, async (tx) => {
+    let row: { id: string };
+    try {
+      [row] = await withOrg(org, async (tx) => {
       // Patientennummern lückenlos und ohne Kollision vergeben (gleiche Sperre wie Import/Buchung)
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
+      await assertPatientCapacity(tx, org);
       const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
       return tx.insert(patients).values({ ...values, organizationId: org, number: (m?.n ?? 0) + 1, source: "manual" }).returning({ id: patients.id });
-    });
+      });
+    } catch (e) {
+      if (e instanceof PatientLimitError) return { error: e.message };
+      throw e;
+    }
     savedId = row.id;
     await audit({ organizationId: org, userId: auth.user.id, action: "patient.create", entity: "patient", entityId: row.id });
   }

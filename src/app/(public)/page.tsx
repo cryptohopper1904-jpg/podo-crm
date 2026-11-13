@@ -294,7 +294,7 @@ export default async function Landing() {
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>
         </div>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PUBLIC_PLANS.map((p) => (
             <div key={p.id} className={`rounded-[var(--radius-card)] border p-5 ${p.highlight ? "border-primary bg-surface" : "border-border bg-surface"}`}>
               <p className="font-semibold">{p.name}</p>

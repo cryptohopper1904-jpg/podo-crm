@@ -38,10 +38,13 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [shownLevel, setShownLevel] = useOptimistic(level);
   const [, startTransition] = useTransition();
+  const [levelError, setLevelError] = useState<string | null>(null);
   const chooseLevel = (l: ViewLevel) =>
     startTransition(async () => {
       setShownLevel(l);
-      await setViewLevelAction(l);
+      setLevelError(null);
+      const res = await setViewLevelAction(l);
+      if (res && "error" in res && res.error) setLevelError(res.error);
     });
   const toggle = () => {
     const next = !collapsed;
@@ -119,6 +122,7 @@ export function Sidebar({
               ))}
             </div>
           ) : null}
+          {levelError ? <p role="alert" className="mt-1 text-xs font-medium text-danger">{levelError}</p> : null}
           <Link href="/neuigkeiten" className="mt-2 inline-flex min-h-8 items-center gap-1.5 font-semibold text-primary hover:underline">
             <Sparkles size={15} aria-hidden /> Neuigkeiten
           </Link>

@@ -96,12 +96,13 @@ function CountBadge({ n, collapsed }: { n?: number; collapsed: boolean }) {
  */
 export function SideNav({ allowed, badges, collapsed = false, level = DEFAULT_VIEW_LEVEL }: { allowed: NavKey[]; badges?: Badges; collapsed?: boolean; level?: ViewLevel }) {
   const path = usePathname();
-  const [moreOpen, setMoreOpen] = useState(false);
+  // null = automatisch (offen, wenn die aktive Seite unter „Mehr“ liegt); sonst ausdrücklich auf-/zugeklappt
+  const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
   const split = splitNav(allowed, level);
   const visible = ITEMS.filter((i) => split.visible.includes(i.key));
   const more = ITEMS.filter((i) => split.more.includes(i.key));
   const activeInMore = more.some((i) => isActive(path, i.href));
-  const showMore = moreOpen || activeInMore;
+  const showMore = moreOpen ?? activeInMore;
   const moreBadge = more.reduce((n, i) => n + (badges?.[i.key] ?? 0), 0);
   return (
     <nav aria-label="Hauptnavigation" className="flex flex-col gap-1">
