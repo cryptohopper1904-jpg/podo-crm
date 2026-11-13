@@ -225,6 +225,20 @@
       "when": 1794596609134,
       "tag": "0031_uebergabe_modus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794598434009,
+      "tag": "0032_mahnwesen",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794598435235,
+      "tag": "0033_mahnwesen_security",
+      "breakpoints": true
     }
   ]
 }
