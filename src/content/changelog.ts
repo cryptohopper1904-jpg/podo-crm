@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-j",
+    date: "2026-11-13",
+    title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",
+    items: [
+      { tag: "neu", text: "In der Akte unter „Anamnese“: „An Patient:in übergeben“. Das Gerät zeigt dann nur noch den Anamnesebogen mit den Datenschutz-Einwilligungen – Zurück-Taste oder andere Adressen führen zur Sperrseite. Zurück in die Praxisdaten nur mit Ihrer PIN oder Ihrem Passwort; nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig." },
+      { tag: "neu", text: "PIN einrichten unter Einstellungen → Sicherheit (4–8 Ziffern).", href: "/einstellungen/sicherheit" },
+    ],
+  },
+  {
     id: "2026-11-13-g",
     date: "2026-11-13",
     title: "Neuer Tarif „Kostenlos“: bis 20 Patient:innen",

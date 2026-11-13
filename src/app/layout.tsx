@@ -24,7 +24,8 @@ export const viewport: Viewport = {
 };
 
 /** Setzt das Theme vor dem ersten Paint (kein Aufblitzen). Gespeichert in localStorage, sonst Systemeinstellung. */
-const themeScript = `(function(){try{var t=localStorage.getItem('podo-theme');if(t!=='light'&&t!=='dark'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='light'}})()`;
+// Übergabe-Modus: Seiten aus dem Browser-Zwischenspeicher („Zurück“, bfcache) immer neu laden – der Server prüft dann die Sperre
+const themeScript = `addEventListener('pageshow',function(e){if(e.persisted)location.reload()});(function(){try{var t=localStorage.getItem('podo-theme');if(t!=='light'&&t!=='dark'){t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'}document.documentElement.dataset.theme=t}catch(e){document.documentElement.dataset.theme='light'}})()`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
