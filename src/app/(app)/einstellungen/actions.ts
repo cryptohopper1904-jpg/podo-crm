@@ -18,6 +18,7 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
+import { SERVICE_CATEGORIES } from "@/lib/catalog";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -132,9 +133,8 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
       price: z.string(),
       vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v)),
       durationMin: z.coerce.number().int().min(0).max(480),
-      category: z.string().default("treatment"),
+      category: z.enum(SERVICE_CATEGORIES).default("treatment"),
       gkvPosition: opt,
-      active: z.string().optional(),
     })
     .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
   if (!d.success) return { error: d.success === false ? d.error.issues[0]?.message : undefined };
@@ -149,20 +149,42 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
     category: d.data.category,
     gkvPosition: d.data.gkvPosition,
     requiresTherapeuticPurpose: d.data.vatRate === 0,
-    active: d.data.id ? d.data.active === "on" : true,
   };
+  // aktiv/archiviert ändert nur setServiceActiveAction; neue Leistungen sind aktiv
+  let found = true;
   try {
-    await withOrg(org, (tx) =>
-      d.data.id
-        ? tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id)))
-        : tx.insert(services).values({ ...values, organizationId: org }),
-    );
+    await withOrg(org, async (tx) => {
+      if (d.data.id) {
+        const r = await tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))).returning({ id: services.id });
+        found = r.length > 0;
+      } else {
+        await tx.insert(services).values({ ...values, active: true, organizationId: org });
+      }
+    });
   } catch {
     return { error: `Das Kürzel ${d.data.code} gibt es schon.` };
   }
+  if (!found) return { error: "Leistung nicht gefunden." };
   await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code: d.data.code } });
   revalidatePath("/einstellungen/leistungen");
   return { ok: "Gespeichert." };
+}
+
+/**
+ * Leistung archivieren bzw. wiederherstellen (services.active). Archivierte Leistungen erscheinen nicht mehr in
+ * Termin-, Rechnungs- und Doku-Auswahl, Online-Buchung und Website; bestehende Termine/Rechnungen behalten sie.
+ */
+export async function setServiceActiveAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const org = auth.organization.id;
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) return;
+  const active = form.get("active") === "1";
+  const r = await withOrg(org, (tx) =>
+    tx.update(services).set({ active }).where(and(eq(services.organizationId, org), eq(services.id, id.data))).returning({ code: services.code }),
+  );
+  if (r[0]) await audit({ organizationId: org, userId: auth.user.id, action: active ? "service.unarchive" : "service.archive", entity: "service", entityId: id.data, meta: { code: r[0].code } });
+  revalidatePath("/einstellungen/leistungen");
 }
 
 export async function startTotpAction(): Promise<SettingsState> {

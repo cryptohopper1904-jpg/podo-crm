@@ -12,6 +12,7 @@ import {
   organizations,
   patients,
   payments,
+  products,
   services,
   syncLog,
   treatmentRecords,
@@ -39,6 +40,8 @@ import {
   voucherBalance,
 } from "@/lib/invoice-math";
 import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { IN_TREATMENT_SUFFIX, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
+import { bookSaleStock, productsForInvoice, restoreSaleStock } from "./products";
 
 export class InvoiceError extends Error {}
 
@@ -57,6 +60,12 @@ export const lineInput = z.object({
   factor: z.coerce.number().positive("Faktor muss größer 0 sein").max(99),
   unitPriceCents: z.coerce.number().int().min(0, "Preis darf nicht negativ sein").max(10_000_000),
   vatRate: z.coerce.number().int(),
+  /** Produktverkauf (Katalog „Produkte“); dann kein serviceId */
+  productId: optUuid,
+  /** Produkt in der Behandlung angewendet → 0 % (nur mit Heilbehandlung auf demselben Beleg, src/lib/product-vat.ts) */
+  inTreatment: z.boolean().default(false),
+  /** Sammelrechnung: Index der Behandlungsposition, zu der das angewendete Produkt gehört */
+  treatmentLine: z.number().int().min(0).max(99).nullable().optional(),
 });
 export type LineInput = z.infer<typeof lineInput>;
 
@@ -88,7 +97,12 @@ type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
 export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "lines"> & {
   depositIds?: string[];
-  lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
+  lines: (Omit<LineInput, "appointmentId" | "productId" | "inTreatment" | "treatmentLine"> & {
+    appointmentId?: string | null;
+    productId?: string | null;
+    inTreatment?: boolean;
+    treatmentLine?: number | null;
+  })[];
 };
 
 type OrgRow = typeof organizations.$inferSelect;
@@ -318,8 +332,54 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       ? await tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds)))
       : [];
     const svc = new Map(svcRows.map((s) => [s.id, s]));
+    const productIds = [...new Set(input.lines.map((l) => l.productId).filter((x): x is string => !!x))];
+    const prodRows = productIds.length
+      ? await tx.select().from(products).where(and(eq(products.organizationId, org), inArray(products.id, productIds)))
+      : [];
+    const prod = new Map(prodRows.map((p) => [p.id, p]));
+
+    // Produktpositionen: Steuersatz nach Behandlungsbezug (verbindlich hier, nicht nur im Formular)
+    const ruleLines: VatRuleLine[] = input.lines.map((l, i) => {
+      if (l.productId) {
+        const p = prod.get(l.productId);
+        if (!p) throw new InvoiceError(`Position ${i + 1}: Produkt nicht gefunden.`);
+        if (!p.active) throw new InvoiceError(`Position ${i + 1}: „${p.name}“ ist archiviert und kann nicht mehr verkauft werden.`);
+        if (l.serviceId) throw new InvoiceError(`Position ${i + 1}: Leistung und Produkt gleichzeitig ist nicht möglich.`);
+        if (l.treatmentRecordId || l.appointmentId) throw new InvoiceError(`Position ${i + 1}: Produktpositionen haben keinen eigenen Termin-/Behandlungsbezug.`);
+        if (!Number.isInteger(l.quantity)) throw new InvoiceError(`Position ${i + 1}: Produkte nur in ganzen Mengen.`);
+        if (l.factor !== 1) throw new InvoiceError(`Position ${i + 1}: Für Produkte gibt es keinen Faktor.`);
+        return { kind: "product", vatRate: l.vatRate, productVatRate: p.vatRate, inTreatment: !!l.inTreatment, treatmentLine: l.treatmentLine ?? null };
+      }
+      if (l.inTreatment) throw new InvoiceError(`Position ${i + 1}: „In der Behandlung angewendet“ gibt es nur für Produkte.`);
+      const s = l.serviceId ? svc.get(l.serviceId) : undefined;
+      return { kind: "service", vatRate: l.vatRate, therapeutic: !!s?.requiresTherapeuticPurpose };
+    });
+    const productVat = resolveProductVat(ruleLines, { smallBusiness, invoiceKind: input.kind });
+    if (productVat.error) throw new InvoiceError(productVat.error);
 
     const lines = input.lines.map((l, i) => {
+      const pv = productVat.results[i];
+      if (pv && l.productId) {
+        const p = prod.get(l.productId)!;
+        const base = (l.description || p.name).trim().replace(IN_TREATMENT_SUFFIX, "");
+        const description = pv.inTreatment ? `${base}${IN_TREATMENT_SUFFIX}` : base;
+        return {
+          lineKind: "product",
+          serviceId: null,
+          productId: p.id,
+          inTreatment: pv.inTreatment,
+          treatmentRecordId: null,
+          appointmentId: null,
+          description,
+          quantity: l.quantity,
+          factor: 1,
+          unitPriceCents: p.priceCents,
+          vatRate: effectiveVatRate(pv.vatRate, { smallBusiness }),
+          totalCents: lineTotalCents(p.priceCents, l.quantity, 1),
+          // 0 % als Nebenleistung der Heilbehandlung → zählt für den USt-Wächter
+          requiresTherapeuticPurpose: pv.inTreatment,
+        };
+      }
       const s = l.serviceId ? svc.get(l.serviceId) : undefined;
       if (l.serviceId && !s) throw new InvoiceError(`Position ${i + 1}: Leistung nicht gefunden.`);
       if (!isVatRate(l.vatRate)) throw new InvoiceError(`Position ${i + 1}: Steuersatz muss 0, 7 oder 19 % sein.`);
@@ -332,7 +392,10 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       const unitPriceCents = s ? s.priceCents : l.unitPriceCents;
       const vatRate = effectiveVatRate(l.vatRate, { smallBusiness });
       return {
+        lineKind: "service",
         serviceId: s?.id ?? null,
+        productId: null,
+        inTreatment: false,
         treatmentRecordId: l.treatmentRecordId ?? null,
         appointmentId: l.appointmentId ?? null,
         description,
@@ -396,6 +459,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         organizationId: org,
         invoiceId: draft.id,
         serviceId: l.serviceId,
+        lineKind: l.lineKind,
+        productId: l.productId,
+        inTreatment: l.inTreatment,
         treatmentRecordId: l.treatmentRecordId,
         appointmentId: l.appointmentId,
         description: l.description,
@@ -424,12 +490,17 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
+    // Produkte mit Bestandsführung: Abgang mit dem Ausstellen
+    await bookSaleStock(tx, org, auth.user.id, draft.id, lines, input.issuedAt);
+
     // 4) Anzahlungen (Quittungen) anrechnen – kein neuer Zahlungseingang, das Geld kam schon mit der Quittung
     const depositCents = await creditDeposits(tx, org, draft.id, input.patientId ?? null, depositIds, totals.totalCents);
 
     // 5) Zahlungen (Mischzahlung möglich)
     const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: depositCents }, input.payments, today, totals.groups);
-    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
+    const productLines = lines.filter((l) => l.productId).length;
+    const productsInTreatment = lines.filter((l) => l.inTreatment).length;
+    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null, productLines, productsInTreatment };
   });
 
   await audit({
@@ -438,7 +509,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, ustWaechter: result.ustWaechter },
+    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, ustWaechter: result.ustWaechter, productLines: result.productLines, productsInTreatment: result.productsInTreatment },
   });
   return result;
 }
@@ -638,6 +709,9 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
           organizationId: org,
           invoiceId: draft.id,
           serviceId: l.serviceId,
+          lineKind: l.lineKind,
+          productId: l.productId,
+          inTreatment: l.inTreatment,
           description: l.description,
           quantity: l.quantity,
           factor: l.factor,
@@ -669,13 +743,15 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .update(invoices)
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
+    // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
+    const restoredProducts = await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today);
     if (credited.length) {
       await tx
         .update(invoices)
         .set({ collectiveInvoiceId: null })
         .where(and(eq(invoices.organizationId, org), inArray(invoices.id, credited.map((d) => d.id))));
     }
-    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents - creditedCents, checkoutRef: orig.checkoutRef, releasedDeposits: credited.length };
+    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents - creditedCents, checkoutRef: orig.checkoutRef, releasedDeposits: credited.length, restoredProducts };
   });
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
@@ -684,7 +760,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits },
+    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts },
   });
   return result;
 }
@@ -859,6 +935,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         .from(services)
         .where(and(eq(services.organizationId, org), eq(services.active, true)))
         .orderBy(asc(services.category), asc(services.name)));
+    const prods = await productsForInvoice(tx, org);
     const contacts = await (tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)));
     const o = await (loadOrg(tx, org));
     // offene Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet
@@ -905,6 +982,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         vatRate: s.vatRate,
         requiresTherapeuticPurpose: s.requiresTherapeuticPurpose,
       })),
+      products: prods,
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
       defaultDueDays: docSettings.dueDays,

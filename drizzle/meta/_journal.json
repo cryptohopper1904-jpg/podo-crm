@@ -225,6 +225,20 @@
       "when": 1794596609134,
       "tag": "0031_uebergabe_modus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794599213056,
+      "tag": "0032_produkte",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794599217888,
+      "tag": "0033_produkte_security",
+      "breakpoints": true
     }
   ]
 }
