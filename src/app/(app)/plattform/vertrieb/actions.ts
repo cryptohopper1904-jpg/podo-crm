@@ -13,6 +13,7 @@ import {
   addSuppression,
   createLead,
   deleteLead,
+  getLead,
   importLeads,
   previewImport,
   previewSend,
@@ -305,7 +306,10 @@ export async function consentAction(_s: State, form: FormData): Promise<State> {
   const d = z.object({ id: z.uuid(), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }).safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
   try {
-    if (!(await recordLeadConsent(row.user.id, d.data.id, d.data.note))) return { error: "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." };
+    if (!(await recordLeadConsent(row.user.id, d.data.id, d.data.note))) {
+      const lead = await getLead(d.data.id);
+      return { error: lead ? "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." : "Eintrag nicht gefunden (inzwischen gelöscht?)." };
+    }
   } catch (e) {
     return { error: msg(e) };
   }

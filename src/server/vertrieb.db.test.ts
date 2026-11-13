@@ -53,7 +53,7 @@ const day = 86_400_000;
   });
 
   it("Import mit Dubletten und Sperrliste", async () => {
-    // Altbestand (Klartext, bis 0038) wird beim ersten Zugriff in Prüfwerte überführt und gelöscht
+    // Altbestand (Klartext, bis 0042) wird beim ersten Zugriff in Prüfwerte überführt und gelöscht
     await f.pool.query("insert into sales_suppressions (email, reason) values ('gesperrt@praxis.example', 'abgemeldet')");
     await v.saveSalesSettings(admin, {
       senderName: "Max Betreiber",
@@ -493,7 +493,9 @@ const day = 86_400_000;
       const withConsent13 = await mk("Pipe Mit13", `mit13@pipe6-${sfx}.example`);
       await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[noConsent, withConsent13]]);
       await f.pool.query("update sales_leads set created_at = now() - interval '13 months', updated_at = now() - interval '13 months', consent_at = case when consent_at is null then null else now() - interval '13 months' end where id = any($1)", [[noConsent, withConsent13]]);
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-P`, label: "Pipe Ohne", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: noConsent });
       expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(2);
+      expect((await f.pool.query("select label from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-P`])).rows[0].label).toBe("(gelöscht)");
       expect(await v.getLead(stale)).toBeNull();
       expect(await v.getLead(noConsent)).toBeNull();
       expect(await v.getLead(withConsent13)).not.toBeNull();
@@ -512,6 +514,16 @@ const day = 86_400_000;
       const pre = await v.previewImport(csv);
       expect(pre.newCount).toBe(0);
       expect(pre.decisions.map((d) => (d.action === "übersprungen" ? d.reason : d.action))).toEqual([expect.stringMatching(/abgemeldet/), expect.stringMatching(/abgemeldet/)]);
+      // Anlegen von Hand: Website bzw. Name+PLZ der abgemeldeten Praxis abgelehnt
+      const base = { contactPerson: null, phone: null, street: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null };
+      await expect(v.createLead(admin, { ...base, name: `Neu ${sfx}`, email: `neu1@x-${sfx}.example`, website: `https://pipe7-${sfx}.example`, zip: "99999" })).rejects.toThrow(/Website/);
+      await expect(v.createLead(admin, { ...base, name: `Pipe Weg ${sfx}`, email: `neu2@x-${sfx}.example`, website: null, zip: "12345" })).rejects.toThrow(/Name und PLZ/);
+      const okId = await v.createLead(admin, { ...base, name: `Neu ${sfx}`, email: `neu3@x-${sfx}.example`, website: null, zip: "99999" });
+      await expect(v.updateLead(admin, okId, { ...base, name: `Neu ${sfx}`, email: `neu3@x-${sfx}.example`, website: `https://www.pipe7-${sfx}.example/`, zip: "99999" })).rejects.toThrow(/Website/);
+      // gelöschter Lead (manuell bzw. Löschlauf): persönlicher Code anonymisiert
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-D`, label: `Neu ${sfx}`, trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: okId });
+      await v.deleteLead(admin, okId);
+      expect((await f.pool.query("select label from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-D`])).rows[0].label).toBe("(gelöscht)");
       // Kunde mit gesperrter Adresse (Widerspruch) bleibt bearbeitbar, solange die Adresse gleich bleibt
       const k = await v.createLead(admin, { name: `Pipe Kunde2 ${sfx}`, contactPerson: null, email: `k2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null });
       await v.setLeadStatus(admin, k, "kunde");
@@ -521,17 +533,26 @@ const day = 86_400_000;
 
     it("Kanarienwert: anderer Sperrlisten-Schlüssel sperrt Versand, Import und Praxissuche (fail-closed)", async () => {
       const id = await mk("Pipe Kanarie", `kanarie@pipe8-${sfx}.example`);
-      const saved = (await f.pool.query("select blocklist_key_check from sales_settings where id = 1")).rows[0].blocklist_key_check;
+      const savedRow = (await f.pool.query("select to_jsonb(s) as j from sales_settings s where id = 1")).rows[0].j;
+      const saved = savedRow.blocklist_key_check;
       expect(saved).toMatch(/^v1:[0-9a-f]{64}$/);
-      await f.pool.query("update sales_settings set blocklist_key_check = 'v1:' || repeat('0', 64) where id = 1");
+      // DB-Trigger (0043): Kanarienwert nach dem ersten Setzen weder änderbar noch auf NULL zu setzen
+      await expect(f.pool.query("update sales_settings set blocklist_key_check = 'v1:' || repeat('0', 64) where id = 1")).rejects.toThrow(/unveränderbar/);
+      await expect(f.pool.query("update sales_settings set blocklist_key_check = null where id = 1")).rejects.toThrow(/unveränderbar/);
+      await f.pool.query("update sales_settings set sender_name = sender_name where id = 1");
+      // Schlüsseltausch simulieren: Zeile mit fremdem Kanarienwert neu anlegen
+      await f.pool.query("delete from sales_settings where id = 1");
+      await f.pool.query("insert into sales_settings select * from jsonb_populate_record(null::sales_settings, $1::jsonb || jsonb_build_object('blocklist_key_check', 'v1:' || repeat('0', 64)))", [JSON.stringify(savedRow)]);
       try {
         await expect(v.sendNextMails(admin, [id], { port: new MockMailAdapter(), now: () => later, env })).rejects.toThrow(/Sperrlisten-Schlüssel passt nicht/);
         expect((await v.previewSend([id], { now: later, env })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/Sperrlisten-Schlüssel/)]));
         expect(await v.importLeads(admin, "name,email\nX,x@kanarie.example\n", "Test")).toMatchObject({ imported: 0, error: expect.stringMatching(/Sperrlisten-Schlüssel/) });
+        await expect(v.createLead(admin, { name: "Kanarie neu", contactPerson: null, email: null, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/Sperrlisten-Schlüssel/);
         const ls = await import("./lead-search");
         await expect(ls.runLeadSearch({ trigger: "manual", adminUserId: admin })).rejects.toThrow(/Sperrlisten-Schlüssel/);
       } finally {
-        await f.pool.query("update sales_settings set blocklist_key_check = $1 where id = 1", [saved]);
+        await f.pool.query("delete from sales_settings where id = 1");
+        await f.pool.query("insert into sales_settings select * from jsonb_populate_record(null::sales_settings, $1::jsonb)", [JSON.stringify(savedRow)]);
       }
     });
 
