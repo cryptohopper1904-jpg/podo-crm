@@ -1,10 +1,10 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { Badge } from "@/components/ui";
-import { absentOn, berlinParts, dayInterval, gridRange, isBusy, layoutLanes, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView } from "@/lib/calendar-grid";
+import { absentOn, addDaysIso, berlinParts, dayInterval, gridRange, isBusy, layoutLanes, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView } from "@/lib/calendar-grid";
 import { isoWeek, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
 import { holidayOn, type StateCode } from "@/lib/holidays";
-import { schoolHolidayOn } from "@/lib/school-holidays";
+import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import type { listAppointments } from "@/server/appointments";
 import type { calendarBoard } from "@/server/calendar-board";
 
@@ -18,6 +18,7 @@ const px = (min: number) => `${Math.round(min * PX_PER_MIN)}px`;
 
 const WD_SHORT = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
+const fmtDe = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
 const wdIndex = (iso: string) => (new Date(`${iso}T12:00:00Z`).getUTCDay() + 6) % 7;
 
 const GRID_BG: CSSProperties = {
@@ -47,6 +48,8 @@ export type FullCalendarProps = {
   calHref: (p: { ansicht?: FullView; datum?: string }) => string;
   /** Anzeige-Optionen (nur Darstellung – Verfügbarkeit/Buchung bleiben unberührt) */
   options: CalendarOptions;
+  /** Link „Wochenende einblenden“ (aktuelle Ansicht mit we=alle) */
+  showWeekendHref: string;
 };
 
 /** Feiertag/Schulferien eines Tages laut Anzeige-Optionen */
@@ -65,6 +68,8 @@ type Column = {
   busy: Interval[] | null;
   absent: boolean;
   outside: Interval[];
+  /** Hinweis für Tooltip (z. B. Feiertag – auch wenn die Feiertags-Anzeige aus ist) */
+  note: string | null;
   today: boolean;
   /** Link für „Neuer Termin“ (Behandler:in-Spalte → vorbelegt) */
   withTherapist: string | null;
@@ -80,11 +85,22 @@ function newHref(dateIso: string, min: number | null, therapistId: string | null
 export function FullCalendar(props: FullCalendarProps) {
   const live = props.options.cancelled ? props.rows : props.rows.filter((r) => r.a.status !== "cancelled");
   const cancelled = props.rows.length - live.length;
+  // Wochenende „nur Mo–Fr“: ausgeblendete Sa/So-Termine nicht stumm verschlucken
+  const hiddenWeekend =
+    props.view !== "tag" && props.options.weekend === "keine" ? live.filter((r) => wdIndex(berlinParts(r.a.startsAt).dateIso) >= 5).length : 0;
+  const shownDates = props.view === "tag" ? [props.day] : props.view === "woche" ? Array.from({ length: 7 }, (_, i) => addDaysIso(props.day, i)) : monthWeeks(props.day).flat();
+  const schoolUncovered = props.options.schoolHolidays && shownDates.some((d) => !schoolHolidaysCovered(d));
   return (
     <div className="flex flex-col gap-3">
       {props.overlaps.size ? (
         <p className="rounded-xl bg-accent-soft p-4 text-sm text-accent-soft-text">
           <strong>Überschneidung:</strong> {props.overlaps.size} Termine überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in). Bitte in PodoHero oder in der Quelle (z. B. Doctolib) verlegen.
+        </p>
+      ) : null}
+      {hiddenWeekend ? (
+        <p className="rounded-xl bg-warn-soft px-4 py-2 text-sm text-warn-soft-text">
+          {hiddenWeekend} Termin{hiddenWeekend === 1 ? "" : "e"} am Wochenende ausgeblendet (Anzeige „nur Mo–Fr“).{" "}
+          <Link href={props.showWeekendHref} className="font-semibold underline">Wochenende einblenden</Link>
         </p>
       ) : null}
       {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} />}
@@ -95,6 +111,7 @@ export function FullCalendar(props: FullCalendarProps) {
         {props.options.schoolHolidays ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-sm bg-info-soft-text/60" aria-hidden /> Schulferien</span> : null}
         {props.options.cancelled ? <span className="inline-flex items-center gap-1.5"><span className="line-through">abgesagt</span> = abgesagter Termin</span> : null}
         {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</span> : null}
+        {schoolUncovered ? <span>Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {fmtDe(SCHOOL_HOLIDAYS_META.coverage.to)}.</span> : null}
       </p>
     </div>
   );
@@ -115,7 +132,13 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
 
   let columns: Column[];
   const { holiday: dayHoliday, school: daySchool } = view === "tag" ? dayLabels(day, state, options) : { holiday: null, school: null };
-  const outsideOf = (ranges: Parameters<typeof outsideRanges>[0]) => (options.workHours ? outsideRanges(ranges, 0, 24 * 60) : []);
+  // Schattierung: Arbeitszeiten laut Option; Feiertag (Praxis geschlossen) immer ganztägig – das ist Verfügbarkeit, keine Anzeige-Option
+  const outsideOf = (av: { reason: string | null; ranges: Parameters<typeof outsideRanges>[0] }) =>
+    av.reason === "holiday" ? [{ startMin: 0, endMin: 24 * 60 }] : options.workHours ? outsideRanges(av.ranges, 0, 24 * 60) : [];
+  const holidayNote = (iso: string) => {
+    const h = holidayOn(iso, state);
+    return h ? `Feiertag (${h}) – Praxis geschlossen` : null;
+  };
 
   if (view === "tag") {
     const dayRows = onDay(day);
@@ -137,7 +160,8 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         rows: dayRows.filter((r) => r.a.therapistId === t.id),
         busy: busyFor(t.id, day),
         absent: av.reason === "absence",
-        outside: av.reason === "absence" ? [] : outsideOf(av.ranges),
+        outside: av.reason === "absence" ? [] : outsideOf(av),
+        note: holidayNote(day),
         today: day === today,
         withTherapist: t.id,
       };
@@ -153,6 +177,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         busy: null,
         absent: false,
         outside: [],
+        note: holidayNote(day),
         today: day === today,
         withTherapist: null,
       });
@@ -193,7 +218,8 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
         rows: onDay(iso),
         busy: single ? busyFor(single.id, iso) : null,
         absent: av?.reason === "absence",
-        outside: av && av.reason !== "absence" ? outsideOf(av.ranges) : [],
+        outside: av && av.reason !== "absence" ? outsideOf(av) : [],
+        note: holidayNote(iso),
         today: iso === today,
         withTherapist: single?.id ?? null,
       };
@@ -243,21 +269,22 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
 
           {/* Spalten */}
           {columns.map((c) => {
-            const blocks = layoutLanes(
-              c.rows
-                .map((r) => {
-                  const iv = dayInterval(r.a.startsAt, r.a.endsAt, c.dateIso);
-                  return iv ? { ...iv, row: r } : null;
-                })
-                .filter((x): x is Interval & { row: Row } => !!x),
-            );
+            const placed = c.rows
+              .map((r) => {
+                const iv = dayInterval(r.a.startsAt, r.a.endsAt, c.dateIso);
+                return iv ? { ...iv, row: r } : null;
+              })
+              .filter((x): x is Interval & { row: Row } => !!x);
+            // Abgesagte belegen keine eigene Spalte: halbtransparent über die volle Breite, aktive Termine liegen darüber
+            const cancelledBlocks = placed.filter((p) => p.row.a.status === "cancelled").map((p) => ({ ...p, lane: 0, lanes: 1 }));
+            const blocks = [...cancelledBlocks, ...layoutLanes(placed.filter((p) => p.row.a.status !== "cancelled"))];
             const nowMin = c.today && nowP.dateIso === c.dateIso && nowP.min >= range.startMin && nowP.min <= range.endMin ? nowP.min : null;
             return (
               <div key={c.key} className={`relative border-l border-border ${c.today ? "bg-primary-soft/25" : ""}`} style={{ height: px(height), ...GRID_BG }}>
                 {/* außerhalb der Arbeitszeit */}
                 {c.outside.map((o, i) => {
                   const s = Math.max(o.startMin, range.startMin), e = Math.min(o.endMin, range.endMin);
-                  return e > s ? <div key={`o${i}`} className="pointer-events-none absolute inset-x-0 bg-surface-2/70" style={{ top: px(s - range.startMin), height: px(e - s) }} title="außerhalb der Arbeitszeit" /> : null;
+                  return e > s ? <div key={`o${i}`} className="pointer-events-none absolute inset-x-0 bg-surface-2/70" style={{ top: px(s - range.startMin), height: px(e - s) }} title={c.note ?? "außerhalb der Arbeitszeit"} /> : null;
                 })}
                 {/* Slots: frei → neuer Termin; belegt → nicht verfügbar */}
                 {c.absent ? (
@@ -277,7 +304,7 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
                         href={newHref(c.dateIso, m, c.withTherapist)}
                         tabIndex={-1}
                         aria-label={`Neuer Termin am ${dm(c.dateIso)} um ${toHhmm(m)} Uhr`}
-                        title={`${toHhmm(m)} – neuer Termin`}
+                        title={c.note ? `${toHhmm(m)} – ${c.note}; neuer Termin trotzdem möglich` : `${toHhmm(m)} – neuer Termin`}
                         className="absolute inset-x-0 z-[1] hover:bg-primary-soft/70"
                         style={{ top, height: px(SLOT_MIN) }}
                       />

@@ -9,7 +9,7 @@ import { addDaysIso, modeParam, mondayOfIso, monthWeeks, parseFullView, parseMod
 import { berlinDateIso, weekdayLong } from "@/lib/format";
 import { holidayOn, STATES, type StateCode } from "@/lib/holidays";
 import { isoWeek, keepOptionParams, parseOptionParams, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
-import { schoolHolidayOn } from "@/lib/school-holidays";
+import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { services } from "@/db/schema";
@@ -88,6 +88,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   // Anzeige-Optionen: URL-Parameter (z. B. Support-Modus) vor gemerkter Einstellung, sonst Standard je Ansicht
   const optKeep = keepOptionParams(sp);
   const keep = `${modeKeep}${optKeep}`;
+  // Link „Wochenende einblenden“: aktuelle Optionen, Wochenende per URL auf „alle“
+  const weekendKeep = `${modeKeep}${keepOptionParams({ ...sp, we: "alle" })}`;
   const persist = !auth.support;
   const options = calendarOptionsOf(session?.user.prefs, mode, parseOptionParams(sp));
   const state = auth.organization.state as StateCode;
@@ -101,7 +103,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
     />
   );
 
-  if (mode === "full") return <FullPage auth={auth} sp={sp} day={day} keep={keep} optKeep={optKeep} persist={persist} options={options} panel={panel} />;
+  if (mode === "full") return <FullPage auth={auth} sp={sp} day={day} keep={keep} optKeep={optKeep} persist={persist} options={options} panel={panel} weekendKeep={weekendKeep} />;
 
   const view = sp.ansicht === "woche" ? "woche" : "tag";
   const start = view === "woche" ? mondayOf(day) : day;
@@ -116,6 +118,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const byDay = (iso: string) => rows.filter((r) => berlinDateIso(r.a.startsAt) === iso);
   const allDates = Array.from({ length: days }, (_, i) => addDays(start, i));
   const dates = view === "woche" ? visibleWeekDays(allDates, options.weekend, (iso) => byDay(iso).length > 0, today) : allDates;
+  const hiddenWeekend = allDates.filter((d) => !dates.includes(d)).reduce((n, d) => n + byDay(d).length, 0);
+  const schoolUncovered = options.schoolHolidays && allDates.some((d) => !schoolHolidaysCovered(d));
   const absentNames = (iso: string) =>
     board ? board.team.filter((t) => board.absences.some((a) => a.userId === t.id && a.startsOn <= iso && iso <= a.endsOn)).map((t) => t.name) : [];
 
@@ -149,6 +153,13 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
         {hiddenCancelled ? (
           <p className="text-xs text-muted">{hiddenCancelled} abgesagte{hiddenCancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</p>
         ) : null}
+        {hiddenWeekend ? (
+          <p className="rounded-xl bg-warn-soft px-4 py-2 text-sm text-warn-soft-text">
+            {hiddenWeekend} Termin{hiddenWeekend === 1 ? "" : "e"} am Wochenende ausgeblendet (Anzeige „nur Mo–Fr“).{" "}
+            <Link href={`/kalender?datum=${day}&ansicht=woche${weekendKeep}`} className="font-semibold underline">Wochenende einblenden</Link>
+          </p>
+        ) : null}
+        {schoolUncovered ? <p className="text-xs text-muted">Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {SCHOOL_HOLIDAYS_META.coverage.to.split("-").reverse().join(".")}.</p> : null}
         {dates.map((iso) => {
           const list = byDay(iso);
           const holiday = options.holidays ? holidayOn(iso, state) : null;
@@ -192,6 +203,7 @@ async function FullPage({
   day,
   keep,
   optKeep,
+  weekendKeep,
   persist,
   options,
   panel,
@@ -201,6 +213,7 @@ async function FullPage({
   day: string;
   keep: string;
   optKeep: string;
+  weekendKeep: string;
   persist: boolean;
   options: CalendarOptions;
   panel: (ansicht: string) => ReactNode;
@@ -261,6 +274,7 @@ async function FullPage({
         canWrite={canWrite}
         calHref={calHref}
         options={options}
+        showWeekendHref={`/kalender?ansicht=${view}&datum=${day}${weekendKeep}`}
       />
     </div>
   );

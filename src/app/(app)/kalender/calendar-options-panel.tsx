@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState, type SyntheticEvent } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import type { CalendarMode } from "@/lib/calendar-grid";
 import type { CalendarOptions, OptionParam } from "@/lib/calendar-options";
@@ -26,6 +26,12 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
   const form = useRef<HTMLFormElement>(null);
   const submit = () => form.current?.requestSubmit();
   const full = mode === "full";
+  // Ab sm: Panel unter dem Knopf – rechtsbündig, außer links wäre zu wenig Platz (z. B. iPad, Knopf in umbrochener Zeile)
+  const [alignLeft, setAlignLeft] = useState(false);
+  const onToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
+    const el = e.currentTarget;
+    if (el.open) setAlignLeft(el.getBoundingClientRect().right < 320 + 16);
+  };
 
   const toggle = (name: OptionParam, checked: boolean, label: string, hint?: string) => (
     <label key={name} className="flex cursor-pointer items-start justify-between gap-3 rounded-lg px-2 py-2 hover:bg-surface-2">
@@ -46,7 +52,7 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
   const select = "h-10 rounded-xl border border-border bg-surface px-2 text-sm";
 
   return (
-    <details className="relative">
+    <details className="relative" onToggle={onToggle}>
       <summary className="inline-flex h-11 cursor-pointer list-none items-center gap-2 rounded-xl border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
         <SlidersHorizontal size={17} aria-hidden /> Anzeige
       </summary>
@@ -55,7 +61,7 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
         key={JSON.stringify(options)}
         action={persist ? saveCalendarOptionsAction : "/kalender"}
         method={persist ? undefined : "get"}
-        className="z-40 flex flex-col gap-1 rounded-xl border border-border bg-surface p-2 shadow-lg max-sm:fixed max-sm:inset-x-4 max-sm:top-20 max-sm:max-h-[calc(100dvh-6rem)] max-sm:overflow-y-auto sm:absolute sm:right-0 sm:mt-2 sm:w-80"
+        className={`z-40 flex flex-col gap-1 rounded-xl border border-border bg-surface p-2 shadow-lg max-sm:fixed max-sm:inset-x-4 max-sm:top-20 max-sm:max-h-[calc(100dvh-6rem)] max-sm:overflow-y-auto sm:absolute sm:mt-2 sm:w-80 sm:max-w-[calc(100vw-2rem)] ${alignLeft ? "sm:left-0" : "sm:right-0"}`}
         aria-label="Anzeige-Optionen"
       >
         {Object.entries(hidden).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
@@ -66,10 +72,10 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
         {toggle("abgesagt", options.cancelled, "Abgesagte Termine")}
         {full ? toggle("az", options.workHours, "Arbeitszeiten schattieren") : <input type="hidden" name="az" value={options.workHours ? "1" : "0"} />}
         {toggle("kw", options.weekNumbers, "Kalenderwochen (KW)", "in Woche und Monat")}
-        <label className="flex items-center justify-between gap-3 px-2 py-2 text-sm font-medium">
+        <label className="flex flex-col gap-1 px-2 py-2 text-sm font-medium">
           Wochenende
-          <select name="we" defaultValue={options.weekend} onChange={submit} className={select}>
-            <option value="auto">Sa, So nur mit Terminen</option>
+          <select name="we" defaultValue={options.weekend} onChange={submit} className={`${select} w-full`}>
+            <option value="auto">Sa immer, So nur mit Terminen</option>
             <option value="alle">Sa und So</option>
             <option value="keine">nur Mo–Fr</option>
           </select>
