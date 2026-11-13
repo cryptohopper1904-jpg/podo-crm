@@ -19,7 +19,7 @@ import {
   NOTE_DEPOSIT,
   NOTE_NO_SHOW,
   NOTE_SMALL_BUSINESS,
-  NOTE_VAT_EXEMPT,
+  vatExemptNote,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
 import {
@@ -154,7 +154,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
           {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
@@ -366,7 +366,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
         <section className="mt-6 flex flex-col gap-2 text-[13px]">
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
-          {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
+          {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
           {receiptBlock.rows.length ? <p>{creditedReceiptsNote(serviceYear(data.serviceDates, inv.issuedAt))}</p> : null}

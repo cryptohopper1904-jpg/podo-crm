@@ -17,7 +17,7 @@ import { PDFDocument, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
+import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
@@ -72,7 +72,7 @@ export type InvoicePdfData = {
     notes: string | null;
     paymentLinkUrl?: string | null;
   };
-  lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number }[];
+  lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number; inTreatment?: boolean | null }[];
   payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
   /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
   credited?: CreditedPartial[];
@@ -296,7 +296,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   const giro = isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
   if (o.smallBusiness) notes.push({ t: NOTE_SMALL_BUSINESS });
-  if (hasExemptNote(o, inv, lines)) notes.push({ t: NOTE_VAT_EXEMPT });
+  if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });
   if (rb.rows.length) notes.push({ t: creditedReceiptsNote(serviceYear(data.serviceDates ?? [], inv.issuedAt)) });

@@ -23,5 +23,6 @@ export type NavKey =
   | "hygiene"
   | "team"
   | "kasse"
+  | "produkte"
   | "telefon"
   | "plattform";

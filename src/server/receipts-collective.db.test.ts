@@ -255,7 +255,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const alien = await other2.receipt(p2, `${year}-03-03`, [{ description: "Behandlung", unitPriceCents: 4500, vatRate: 0 }]);
     await expect(invoices.createInvoice(auth, { ...base, receiptIds: [alien.id] })).rejects.toThrow(/Quittung nicht gefunden/);
     expect(await invoices.openReceiptsForPatient(auth, p2, year)).toEqual([]);
-    await expect(invoices.createInvoice(auth, { ...base, depositIds: [mine.id] })).rejects.toThrow(/keine Anzahlung dieser Person/);
+    await expect(invoices.createInvoice(auth, { ...base, depositIds: [mine.id] })).rejects.toThrow(/Anzahlung nicht gefunden/);
     await expect(invoices.createInvoice(auth, { ...base, issuedAt: `${year}-03-01`, receiptIds: [mine.id] })).rejects.toThrow(/jünger als die Sammelrechnung/);
     await expect(invoices.createInvoice(auth, { ...base, lines: [{ ...line, unitPriceCents: 4000 }], receiptIds: [mine.id] })).rejects.toThrow(/enthalten 45,00 € mit 0 % USt, die Sammelrechnung nur 40,00 €/);
     // Rechnung einer anderen Person an die Anrechnung hängen: auch der Termin gehört nicht zu ihr

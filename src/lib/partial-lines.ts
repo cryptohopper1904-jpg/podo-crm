@@ -54,6 +54,12 @@ export type Line = {
   treatmentRecordId?: string | null;
   appointmentId?: string | null;
   serviceId: string;
+  /** Produktverkauf statt Leistung (übernommene Quittungspositionen nie – keine zweite Lagerabbuchung) */
+  productId?: string;
+  /** Produkt in der Behandlung angewendet (0 %) */
+  inTreatment?: boolean;
+  /** zugeordnete Behandlungsposition (Zeilen-Key) */
+  treatmentKey?: string;
   description: string;
   quantity: string;
   factor: string;
@@ -62,12 +68,12 @@ export type Line = {
   /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */
   codeInput?: string;
   /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */
-  codeStart?: { serviceId: string; description: string; price: string; vatRate: number };
+  codeStart?: { serviceId: string; productId?: string; inTreatment?: boolean; description: string; price: string; vatRate: number };
 };
 
 let seq = 0;
 export const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
-export const isEmptyLine = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
+export const isEmptyLine = (l: Line) => !l.serviceId && !l.productId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
 
 export const newLine = (patch: Partial<Line> = {}): Line => ({
   key: `l${++seq}`,

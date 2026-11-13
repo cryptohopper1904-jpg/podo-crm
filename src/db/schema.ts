@@ -292,6 +292,8 @@ export type UserPrefs = {
   };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";
+  /** Darstellung der Kataloge (Einstellungen → Leistungen, Produkte): Kacheln, Liste oder Kompakt (src/lib/catalog.ts) */
+  catalog?: { services?: "kacheln" | "liste" | "kompakt"; products?: "kacheln" | "liste" | "kompakt" };
 };
 
 export const memberships = pgTable(
@@ -909,9 +911,100 @@ export const invoiceLines = pgTable(
     treatmentRecordId: uuid("treatment_record_id").references(() => treatmentRecords.id),
     /** Bezug zum Termin (Rechnung aus dem Termin ohne Doku-Eintrag): verhindert Doppelabrechnung, Jahresend-Erinnerung */
     appointmentId: uuid("appointment_id").references(() => appointments.id),
+    /** Art der Position: „service“ (Leistung oder Freitext, Altbestand) | „product“ (Produktverkauf, product_id gesetzt) */
+    lineKind: text("line_kind").notNull().default("service"),
+    productId: uuid("product_id").references(() => products.id),
+    /** Produkt in der Behandlung angewendet/verbraucht → Nebenleistung der Heilbehandlung (0 %), siehe src/lib/product-vat.ts */
+    inTreatment: boolean("in_treatment").notNull().default(false),
+    /** angewendetes Produkt: Position (invoice_lines.position) der zugehörigen Behandlung auf demselben Beleg */
+    treatmentPosition: integer("treatment_position"),
     position: integer("position").notNull().default(0),
   },
   (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],
+);
+
+// ───────────────────────── Produkte & Warenwirtschaft ─────────────────────────
+/** Lieferanten für Produkte (nur Geschäftsdaten) */
+export const suppliers = pgTable(
+  "suppliers",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    /** unsere Kundennummer beim Lieferanten */
+    customerNumber: text("customer_number"),
+    email: text("email"),
+    website: text("website"),
+    phone: text("phone"),
+    note: text("note"),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("suppliers_org").on(t.organizationId)],
+);
+
+/**
+ * Verkaufsprodukte (Salben, Cremes, Pflegeprodukte, Hilfsmittel). Preise brutto in Cent.
+ * Bestand = Summe der Lagerbewegungen (stock_movements), kein eigenes Bestandsfeld.
+ * Verbrauchsmaterial der Praxis (Hygiene) bleibt in `materials`.
+ */
+export const products = pgTable(
+  "products",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    /** Kürzel für die Schnelleingabe in Rechnungspositionen (optional) */
+    code: text("code"),
+    /** Artikelnummer (optional) */
+    sku: text("sku"),
+    ean: text("ean"),
+    /** salbe | creme | pflege | hilfsmittel | sonstiges */
+    category: text("category").notNull().default("sonstiges"),
+    priceCents: integer("price_cents").notNull(),
+    purchasePriceCents: integer("purchase_price_cents"),
+    /** regulärer Steuersatz beim Verkauf (19 %, ggf. 7 %); 0 % nur als Nebenleistung in der Behandlung */
+    vatRate: integer("vat_rate").notNull().default(19),
+    unit: text("unit").notNull().default("Stück"),
+    trackStock: boolean("track_stock").notNull().default(false),
+    minStock: integer("min_stock").notNull().default(0),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("products_org_code").on(t.organizationId, t.code), index("products_org").on(t.organizationId)],
+);
+
+/**
+ * Lagerbewegungen (append-only): Wareneingang, Verkauf, Storno, Inventur, Bruch, Eigenverbrauch.
+ * Menge mit Vorzeichen (+ Zugang, − Abgang). Unveränderbar per DB-Trigger; Korrekturen als neue Bewegung.
+ */
+export const stockMovements = pgTable(
+  "stock_movements",
+  {
+    id: id(),
+    organizationId: orgId(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    /** receipt | sale | storno | inventory | breakage | own_use */
+    kind: text("kind").notNull(),
+    quantity: integer("quantity").notNull(),
+    occurredOn: date("occurred_on").notNull(),
+    /** Einkaufspreis je Einheit (Wareneingang, optional) */
+    unitCostCents: integer("unit_cost_cents"),
+    /** Lieferscheinnummer (Wareneingang, optional) */
+    deliveryNote: text("delivery_note"),
+    /** Lieferant beim Wareneingang (Lieferanten werden nur archiviert, nie gelöscht) */
+    supplierId: uuid("supplier_id").references(() => suppliers.id),
+    /** Verkauf/Storno: zugehöriger Beleg */
+    invoiceId: uuid("invoice_id").references(() => invoices.id),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("stock_movements_product").on(t.organizationId, t.productId), index("stock_movements_invoice").on(t.organizationId, t.invoiceId)],
 );
 
 /**

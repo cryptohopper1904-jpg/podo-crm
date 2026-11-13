@@ -12,6 +12,7 @@ import {
   organizations,
   patients,
   payments,
+  products,
   services,
   syncLog,
   treatmentRecords,
@@ -42,8 +43,21 @@ import {
   voucherBalance,
 } from "@/lib/invoice-math";
 import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
+import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 
 export class InvoiceError extends Error {}
+
+/** Fehler der Bestandsbuchung (Grenzen) als Rechnungsfehler melden */
+async function asInvoiceError<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ProductError) throw new InvoiceError(e.message);
+    throw e;
+  }
+}
+
 
 /** Offene Anzahlung zur Behandlung, die dieser Beleg nicht anrechnen kann (Sackgasse) – Link auf die Anzahlung */
 export class OpenDepositError extends InvoiceError {
@@ -87,6 +101,12 @@ export const lineInput = z.object({
   factor: z.coerce.number().positive("Faktor muss größer 0 sein").max(99),
   unitPriceCents: z.coerce.number().int().min(0, "Preis darf nicht negativ sein").max(10_000_000),
   vatRate: z.coerce.number().int(),
+  /** Produktverkauf (Katalog „Produkte“); dann kein serviceId */
+  productId: optUuid,
+  /** Produkt in der Behandlung angewendet → 0 % (nur mit Heilbehandlung auf demselben Beleg, src/lib/product-vat.ts) */
+  inTreatment: z.boolean().default(false),
+  /** Sammelrechnung: Index der Behandlungsposition, zu der das angewendete Produkt gehört */
+  treatmentLine: z.number().int().min(0).max(99).nullable().optional(),
 });
 export type LineInput = z.infer<typeof lineInput>;
 
@@ -127,7 +147,12 @@ export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" 
   duplicateAck?: string | null;
   depositIds?: string[];
   receiptIds?: string[];
-  lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
+  lines: (Omit<LineInput, "appointmentId" | "productId" | "inTreatment" | "treatmentLine"> & {
+    appointmentId?: string | null;
+    productId?: string | null;
+    inTreatment?: boolean;
+    treatmentLine?: number | null;
+  })[];
 };
 
 type OrgRow = typeof organizations.$inferSelect;
@@ -425,6 +450,11 @@ type PartialRow = typeof invoices.$inferSelect;
  * Quittungen (nur auf eine Sammelrechnung) – jeweils bezahlt, von derselben Person, noch nicht angerechnet, Quittungen
  * nicht jünger als die Sammelrechnung. Läuft vor der Doppelabrechnungs-Prüfung, damit nur wirklich angerechnete
  * Quittungen ihre Behandlungen für diese Sammelrechnung freigeben.
+ *
+ * Sperr-Reihenfolge in createInvoice (immer gleich, gegen Verklemmungen): 1) Zeilen der angerechneten Belege
+ * (FOR UPDATE, hier) → 2) Advisory-Lock invoice-records (assertNotInvoiced bzw. weicher Doppel-Schutz, nur wenn
+ * Positionen mit Termin-/Doku-Bezug oder Katalogleistungen ohne Bezug vorkommen) → 3) Produkte (lockProducts,
+ * FOR NO KEY UPDATE, sortiert) → 4) Positionen einfügen. createDeposit nimmt nur 2).
  */
 async function lockPartials(
   tx: Tx,
@@ -442,10 +472,14 @@ async function lockPartials(
   const deps = [...new Set(depositIds)];
   const recs = [...new Set(receiptIds)];
   if (deps.some((id) => recs.includes(id))) throw new InvoiceError("Beleg doppelt ausgewählt.");
+  // nur Belege der passenden Art sperren (eine falsche ID sperrt keine fremde Rechnung mit)
+  const kindConds: SQL[] = [];
+  if (deps.length) kindConds.push(and(inArray(invoices.id, deps), eq(invoices.kind, "deposit"))!);
+  if (recs.length) kindConds.push(and(inArray(invoices.id, recs), eq(invoices.kind, "receipt"))!);
   const rows = await tx
     .select()
     .from(invoices)
-    .where(and(eq(invoices.organizationId, org), inArray(invoices.id, [...deps, ...recs])))
+    .where(and(eq(invoices.organizationId, org), or(...kindConds)))
     .orderBy(asc(invoices.issuedAt), asc(invoices.number))
     .for("update");
   const deposits = rows.filter((r) => deps.includes(r.id));
@@ -534,10 +568,89 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       ? await tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds)))
       : [];
     const svc = new Map(svcRows.map((s) => [s.id, s]));
+    const productIds = [...new Set(input.lines.map((l) => l.productId).filter((x): x is string => !!x))];
+    const prodRows = productIds.length
+      ? await tx.select().from(products).where(and(eq(products.organizationId, org), inArray(products.id, productIds)))
+      : [];
+    const prod = new Map(prodRows.map((p) => [p.id, p]));
+
+    // Produktpositionen: Steuersatz nach Behandlungsbezug (verbindlich hier, nicht nur im Formular)
+    const ruleLines: VatRuleLine[] = input.lines.map((l, i) => {
+      if (l.productId) {
+        const p = prod.get(l.productId);
+        if (!p) throw new InvoiceError(`Position ${i + 1}: Produkt nicht gefunden.`);
+        if (!p.active) throw new InvoiceError(`Position ${i + 1}: „${p.name}“ ist archiviert und kann nicht mehr verkauft werden.`);
+        if (l.serviceId) throw new InvoiceError(`Position ${i + 1}: Leistung und Produkt gleichzeitig ist nicht möglich.`);
+        if (l.treatmentRecordId || l.appointmentId) throw new InvoiceError(`Position ${i + 1}: Produktpositionen haben keinen eigenen Termin-/Behandlungsbezug.`);
+        if (!Number.isInteger(l.quantity)) throw new InvoiceError(`Position ${i + 1}: Produkte nur in ganzen Mengen.`);
+        if (l.factor !== 1) throw new InvoiceError(`Position ${i + 1}: Für Produkte gibt es keinen Faktor.`);
+        if (l.unitPriceCents !== p.priceCents) {
+          throw new InvoiceError(
+            `Position ${i + 1}: Der Preis von „${p.name}“ wurde inzwischen geändert (jetzt ${(p.priceCents / 100).toFixed(2).replace(".", ",")} €). Bitte die Seite neu laden und prüfen.`,
+          );
+        }
+        return { kind: "product", vatRate: l.vatRate, productVatRate: p.vatRate, inTreatment: !!l.inTreatment, treatmentLine: l.treatmentLine ?? null };
+      }
+      if (l.inTreatment) throw new InvoiceError(`Position ${i + 1}: „In der Behandlung angewendet“ gibt es nur für Produkte.`);
+      const s = l.serviceId ? svc.get(l.serviceId) : undefined;
+      return { kind: "service", vatRate: l.vatRate, therapeutic: !!s?.requiresTherapeuticPurpose };
+    });
+    const productVat = resolveProductVat(ruleLines, { smallBusiness, invoiceKind: input.kind });
+    if (productVat.error) throw new InvoiceError(productVat.error);
+
+    // Datum der Behandlung, bei der ein Produkt angewendet wurde (aus Termin bzw. Doku-Eintrag der Behandlungsposition)
+    const linkedIdx = [...new Set(productVat.results.map((r) => (r?.inTreatment ? r.treatmentLine : null)).filter((x): x is number => x !== null))];
+    const linkedAppts = [...new Set(linkedIdx.map((t) => input.lines[t]?.appointmentId).filter((x): x is string => !!x))];
+    const linkedRecs = [...new Set(linkedIdx.map((t) => input.lines[t]?.treatmentRecordId).filter((x): x is string => !!x))];
+    const apptDate = new Map(
+      (linkedAppts.length
+        ? await tx.select({ id: appointments.id, at: appointments.startsAt }).from(appointments).where(and(eq(appointments.organizationId, org), inArray(appointments.id, linkedAppts)))
+        : []
+      ).map((a) => [a.id, a.at]),
+    );
+    const recDate = new Map(
+      (linkedRecs.length
+        ? await tx.select({ id: treatmentRecords.id, at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, linkedRecs)))
+        : []
+      ).map((r) => [r.id, r.at]),
+    );
+    const treatmentDate = (t: number): string | null => {
+      const l = input.lines[t];
+      const at = (l?.treatmentRecordId ? recDate.get(l.treatmentRecordId) : undefined) ?? (l?.appointmentId ? apptDate.get(l.appointmentId) : undefined);
+      return at ? dateDe(at) : null;
+    };
 
     const lines = input.lines.map((l, i) => {
+      const pv = productVat.results[i];
+      if (pv && l.productId) {
+        const p = prod.get(l.productId)!;
+        // Beschreibung immer aus dem Katalog (kein freier Text auf Produktpositionen), Zusatz nur serverseitig
+        const t = pv.inTreatment ? pv.treatmentLine : null;
+        const description = t !== null ? `${p.name}${inTreatmentSuffix(treatmentDate(t))}` : p.name;
+        return {
+          lineKind: "product",
+          serviceId: null,
+          productId: p.id,
+          inTreatment: pv.inTreatment,
+          treatmentPosition: t !== null ? t + 1 : null,
+          treatmentRecordId: null,
+          appointmentId: null,
+          description,
+          quantity: l.quantity,
+          factor: 1,
+          unitPriceCents: p.priceCents,
+          vatRate: effectiveVatRate(pv.vatRate, { smallBusiness }),
+          totalCents: lineTotalCents(p.priceCents, l.quantity, 1),
+          // 0 % als Nebenleistung der Heilbehandlung → zählt für den USt-Wächter
+          requiresTherapeuticPurpose: pv.inTreatment,
+        };
+      }
       const s = l.serviceId ? svc.get(l.serviceId) : undefined;
       if (l.serviceId && !s) throw new InvoiceError(`Position ${i + 1}: Leistung nicht gefunden.`);
+      // archivierte Leistung nur noch für bereits erbrachte Behandlungen (Termin/Doku-Bezug), nicht für neue Positionen
+      if (s && !s.active && !l.appointmentId && !l.treatmentRecordId) {
+        throw new InvoiceError(`Position ${i + 1}: „${s.name}“ ist archiviert. Bitte eine aktive Leistung wählen.`);
+      }
       if (!isVatRate(l.vatRate)) throw new InvoiceError(`Position ${i + 1}: Steuersatz muss 0, 7 oder 19 % sein.`);
       // Eine Leistung mit 19 % darf nicht auf 0 % gesetzt werden; 0 % darf auf 19 % (kein therapeutisches Ziel).
       if (s && l.vatRate !== s.vatRate && l.vatRate !== 19) {
@@ -548,7 +661,11 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       const unitPriceCents = s ? s.priceCents : l.unitPriceCents;
       const vatRate = effectiveVatRate(l.vatRate, { smallBusiness });
       return {
+        lineKind: "service",
         serviceId: s?.id ?? null,
+        productId: null,
+        inTreatment: false,
+        treatmentPosition: null,
         treatmentRecordId: l.treatmentRecordId ?? null,
         appointmentId: l.appointmentId ?? null,
         description,
@@ -571,7 +688,52 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         canCreditDeposits: (input.kind === "invoice" || input.kind === "collective") && !!input.patientId,
       });
     }
-    // Weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleiches
+    const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
+    if (needsConfirm && !input.therapeuticConfirmed) {
+      throw new InvoiceError(
+        "USt-Wächter: 0 % nur bei Heilbehandlung mit therapeutischem Ziel. Bitte bestätigen oder die Position auf 19 % umstellen.",
+      );
+    }
+
+    const totals = computeTotals(lines);
+    if (totals.totalCents <= 0) throw new InvoiceError("Der Rechnungsbetrag muss größer 0 sein.");
+    if (input.kind === "receipt") {
+      const sum = input.payments.reduce((s, p) => s + p.amountCents, 0);
+      if (sum !== totals.totalCents) throw new InvoiceError("Eine Quittung muss sofort vollständig bezahlt werden.");
+    }
+    // Angerechnete Teilrechnungen je Steuersatz: die Rechnung muss je Satz mindestens so viel enthalten (sonst würde
+    // USt abgesetzt, die hier gar nicht entsteht). Der Rest je Satz ist die Grundlage für Restzahlungen (Kasse/TSE).
+    const partialIds = [...partials.deposits, ...partials.receipts].map((d) => d.id);
+    const partialLines = partialIds.length
+      ? await tx
+          .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, partialIds)))
+      : [];
+    const creditedGroups = computeTotals(partialLines).groups;
+    const payGroups = partialIds.length ? remainingVatGroups(totals.groups, creditedGroups) : totals.groups;
+    const short = payGroups.find((g) => g.grossCents < 0);
+    if (short) {
+      const has = totals.groups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      const want = creditedGroups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      throw new InvoiceError(
+        `Die angerechneten Quittungen enthalten ${(want / 100).toFixed(2).replace(".", ",")} € mit ${short.rate} % USt, die ${input.kind === "collective" ? "Sammelrechnung" : "Rechnung"} nur ${(has / 100).toFixed(2).replace(".", ",")} €. Bitte Positionen bzw. Steuersätze prüfen.`,
+      );
+    }
+
+    // „Aus Einstellung“ nur gelten lassen, wenn die Praxis-Einstellung gerade wirklich aktiv ist – sonst als manuell werten
+    const fromSetting = input.therapeuticSource === "setting" && readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault;
+    const noteParts: string[] = [];
+    if (input.notes) noteParts.push(input.notes);
+    if (needsConfirm && input.therapeuticConfirmed) {
+      noteParts.push(
+        fromSetting
+          ? `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – durch Praxis-Einstellung vorbelegt, von ${auth.user.name} am ${dateDe(new Date())} ohne Änderung übernommen.`
+          : `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – bestätigt von ${auth.user.name} am ${dateDe(new Date())}.`,
+      );
+    }
+
+    // Zuletzt (nach allen harten Prüfungen): weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleiches
     // Leistungsdatum. Leistungsdatum der neuen Position = Belegdatum (kein Bezug); bei vorhandenen Positionen das Datum
     // des verknüpften Doku-Eintrags bzw. Termins, sonst deren Belegdatum.
     const freeServiceIds = [...new Set(lines.filter((l) => !l.treatmentRecordId && !l.appointmentId && l.serviceId).map((l) => l.serviceId!))];
@@ -618,51 +780,6 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       }
     }
 
-    const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
-    if (needsConfirm && !input.therapeuticConfirmed) {
-      throw new InvoiceError(
-        "USt-Wächter: 0 % nur bei Heilbehandlung mit therapeutischem Ziel. Bitte bestätigen oder die Position auf 19 % umstellen.",
-      );
-    }
-
-    const totals = computeTotals(lines);
-    if (totals.totalCents <= 0) throw new InvoiceError("Der Rechnungsbetrag muss größer 0 sein.");
-    if (input.kind === "receipt") {
-      const sum = input.payments.reduce((s, p) => s + p.amountCents, 0);
-      if (sum !== totals.totalCents) throw new InvoiceError("Eine Quittung muss sofort vollständig bezahlt werden.");
-    }
-    // Angerechnete Teilrechnungen je Steuersatz: die Rechnung muss je Satz mindestens so viel enthalten (sonst würde
-    // USt abgesetzt, die hier gar nicht entsteht). Der Rest je Satz ist die Grundlage für Restzahlungen (Kasse/TSE).
-    const partialIds = [...partials.deposits, ...partials.receipts].map((d) => d.id);
-    const partialLines = partialIds.length
-      ? await tx
-          .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
-          .from(invoiceLines)
-          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, partialIds)))
-      : [];
-    const creditedGroups = computeTotals(partialLines).groups;
-    const payGroups = partialIds.length ? remainingVatGroups(totals.groups, creditedGroups) : totals.groups;
-    const short = payGroups.find((g) => g.grossCents < 0);
-    if (short) {
-      const has = totals.groups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
-      const want = creditedGroups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
-      throw new InvoiceError(
-        `Die angerechneten Quittungen enthalten ${(want / 100).toFixed(2).replace(".", ",")} € mit ${short.rate} % USt, die ${input.kind === "collective" ? "Sammelrechnung" : "Rechnung"} nur ${(has / 100).toFixed(2).replace(".", ",")} €. Bitte Positionen bzw. Steuersätze prüfen.`,
-      );
-    }
-
-    // „Aus Einstellung“ nur gelten lassen, wenn die Praxis-Einstellung gerade wirklich aktiv ist – sonst als manuell werten
-    const fromSetting = input.therapeuticSource === "setting" && readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault;
-    const noteParts: string[] = [];
-    if (input.notes) noteParts.push(input.notes);
-    if (needsConfirm && input.therapeuticConfirmed) {
-      noteParts.push(
-        fromSetting
-          ? `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – durch Praxis-Einstellung vorbelegt, von ${auth.user.name} am ${dateDe(new Date())} ohne Änderung übernommen.`
-          : `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – bestätigt von ${auth.user.name} am ${dateDe(new Date())}.`,
-      );
-    }
-
     // 1) Entwurf
     const [draft] = await tx
       .insert(invoices)
@@ -677,12 +794,18 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .returning({ id: invoices.id });
 
-    // 2) Positionen
+    // 2) Positionen – Produkte vorher sortiert sperren (Reihenfolge: angerechnete Belege → Advisory-Lock
+    //    invoice-records → Produkte → Positionen), siehe lockProducts
+    await lockProducts(tx, org, productIds);
     await tx.insert(invoiceLines).values(
       lines.map((l, i) => ({
         organizationId: org,
         invoiceId: draft.id,
         serviceId: l.serviceId,
+        lineKind: l.lineKind,
+        productId: l.productId,
+        inTreatment: l.inTreatment,
+        treatmentPosition: l.treatmentPosition,
         treatmentRecordId: l.treatmentRecordId,
         appointmentId: l.appointmentId,
         description: l.description,
@@ -711,6 +834,10 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
+    // Produkte mit Bestandsführung: Abgang mit dem Ausstellen (übernommene Quittungspositionen sind Freitext ohne
+    // Produkt – ihr Abgang wurde schon mit der Quittung gebucht)
+    await asInvoiceError(() => bookSaleStock(tx, org, auth.user.id, draft.id, lines, input.issuedAt));
+
     // 4) Anzahlungen und Quittungen (Teilrechnungen) anrechnen – kein neuer Zahlungseingang und kein neuer Kassenvorgang:
     //    das Geld kam schon mit der Quittung (dort als Umsatz bzw. Anzahlung in Kasse/TSE gebucht)
     const creditedCents = await creditPartials(tx, org, draft.id, [...partials.deposits, ...partials.receipts], totals.totalCents);
@@ -719,7 +846,20 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     // 5) Zahlungen (Mischzahlung möglich)
     const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
-    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, receiptCents, duplicateOf, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
+    const productLines = lines.filter((l) => l.productId).length;
+    const productsInTreatment = lines.filter((l) => l.inTreatment).length;
+    return {
+      id: draft.id,
+      number,
+      totalCents: totals.totalCents,
+      depositCents,
+      receiptCents,
+      duplicateOf,
+      ...paid,
+      ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null,
+      productLines,
+      productsInTreatment,
+    };
   });
 
   await audit({
@@ -728,7 +868,20 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, receipts: receiptIds.length, receiptCents: result.receiptCents, duplicateOf: result.duplicateOf?.number ?? null, ustWaechter: result.ustWaechter },
+    meta: {
+      number: result.number,
+      kind: input.kind,
+      totalCents: result.totalCents,
+      payments: input.payments.length,
+      deposits: depositIds.length,
+      depositCents: result.depositCents,
+      receipts: receiptIds.length,
+      receiptCents: result.receiptCents,
+      duplicateOf: result.duplicateOf?.number ?? null,
+      ustWaechter: result.ustWaechter,
+      productLines: result.productLines,
+      productsInTreatment: result.productsInTreatment,
+    },
   });
   return result;
 }
@@ -873,7 +1026,11 @@ async function deactivateProviderCheckout(org: string, checkoutRef: string) {
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
-export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawReason: string) {
+/**
+ * `restockLineIds`: Produktpositionen, deren Ware zurück ins Lager geht (Auswahl im Storno-Dialog);
+ * fehlt = alle verkauften Produkte. In der Behandlung angewendete Produkte werden nie zurückgebucht.
+ */
+export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawReason: string, opts: { restockLineIds?: string[] } = {}) {
   assertCan(auth, "invoices.write");
   // Grund steht in Zeile 1 der Notiz – ohne Zeilenumbrüche, damit er keine internen (System-)Zeilen vortäuschen kann
   const reason = rawReason.replace(/[\r\n]+/g, " ").trim().slice(0, 300);
@@ -915,6 +1072,8 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
       .from(invoiceLines)
       .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, orig.id)))
       .orderBy(asc(invoiceLines.position));
+    // Produkte vor dem Einfügen der Gutschriftpositionen sperren (sortiert) – siehe lockProducts
+    await lockProducts(tx, org, [...new Set(origLines.map((l) => l.productId).filter((x): x is string => !!x))]);
 
     const [draft] = await tx
       .insert(invoices)
@@ -947,6 +1106,10 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
           organizationId: org,
           invoiceId: draft.id,
           serviceId: l.serviceId,
+          lineKind: l.lineKind,
+          productId: l.productId,
+          inTreatment: l.inTreatment,
+          treatmentPosition: l.treatmentPosition,
           description: l.description,
           quantity: l.quantity,
           factor: l.factor,
@@ -978,6 +1141,8 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
       .update(invoices)
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
+    // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
+    const restoredProducts = await asInvoiceError(() => restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today, origLines, opts.restockLineIds));
     if (credited.length) {
       await tx
         .update(invoices)
@@ -992,6 +1157,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
       checkoutRef: orig.checkoutRef,
       releasedDeposits: creditedDeposits.length,
       releasedReceipts: creditedReceipts.length,
+      restoredProducts,
     };
   });
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
@@ -1001,7 +1167,14 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, releasedReceipts: result.releasedReceipts },
+    meta: {
+      creditNoteId: result.id,
+      creditNoteNumber: result.number,
+      refundCents: result.refundCents,
+      releasedDeposits: result.releasedDeposits,
+      releasedReceipts: result.releasedReceipts,
+      restoredProducts: result.restoredProducts,
+    },
   });
   return result;
 }
@@ -1195,6 +1368,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         .from(services)
         .where(and(eq(services.organizationId, org), eq(services.active, true)))
         .orderBy(asc(services.category), asc(services.name)));
+    const prods = await productsForInvoice(tx, org);
     const contacts = await (tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)));
     const o = await (loadOrg(tx, org));
     // offene Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet
@@ -1234,6 +1408,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         vatRate: s.vatRate,
         requiresTherapeuticPurpose: s.requiresTherapeuticPurpose,
       })),
+      products: prods,
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
       defaultDueDays: docSettings.dueDays,

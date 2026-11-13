@@ -3,18 +3,21 @@
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
+import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
-import { euro, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
+import { euro, isEmptyLine, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
 import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
 
 type Service = { id: string; code: string; name: string; priceCents: number; vatRate: number; requiresTherapeuticPurpose: boolean };
+/** Verkaufsprodukt (Produkte-Katalog); vatRate = regulärer Satz (19/7 %) */
+export type ProductOpt = { id: string; code: string | null; name: string; priceCents: number; vatRate: number; unit: string };
 type PatientOpt = { id: string; number: number; firstName: string | null; lastName: string; billingContactId: string | null; careHomeId: string | null };
 type ContactOpt = { id: string; name: string; kind: string };
 
@@ -43,10 +46,12 @@ const num = (s: string) => {
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 };
+const PRODUCT_PREFIX = "p:";
 
 export function InvoiceForm({
   patients,
   services,
+  products = [],
   billingContacts,
   smallBusiness,
   defaultDueDays = 14,
@@ -63,6 +68,8 @@ export function InvoiceForm({
 }: {
   patients: PatientOpt[];
   services: Service[];
+  /** aktive Verkaufsprodukte (Salben, Cremes …) */
+  products?: ProductOpt[];
   billingContacts: ContactOpt[];
   smallBusiness: boolean;
   /** Standard-Zahlungsziel der Praxis (Einstellungen → Praxisdaten → Belege), 0 = sofort */
@@ -85,6 +92,15 @@ export function InvoiceForm({
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
+  const prodById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  /** Kürzel-Schnelleingabe: zuerst Leistungen, dann Produkte mit Kürzel */
+  const codeItems = useMemo(
+    () => [
+      ...services.map((s) => ({ code: s.code, serviceId: s.id, productId: "" })),
+      ...products.filter((p) => p.code).map((p) => ({ code: p.code!, serviceId: "", productId: p.id })),
+    ],
+    [services, products],
+  );
   const initialPatient = patients.find((p) => p.id === (preset ? preset.patientId : preselectPatientId));
 
   const [kind, setKind] = useState<CreatableKind>(preset?.kind ?? "invoice");
@@ -143,19 +159,35 @@ export function InvoiceForm({
 
   const computed = lines.map((l) => {
     const s = l.serviceId ? svcById.get(l.serviceId) : undefined;
-    const unit = s ? s.priceCents : (parseMoney(l.price) ?? 0);
-    const vatRate = smallBusiness ? 0 : l.vatRate;
+    const p = l.productId ? prodById.get(l.productId) : undefined;
+    const unit = s ? s.priceCents : p ? p.priceCents : (parseMoney(l.price) ?? 0);
+    const requested = p ? (l.inTreatment ? 0 : p.vatRate) : l.vatRate;
+    const vatRate = smallBusiness ? 0 : requested;
     return {
       ...l,
+      requested,
       unit,
       vatRate,
-      totalCents: lineTotalCents(unit, num(l.quantity), num(l.factor)),
+      totalCents: lineTotalCents(unit, num(l.quantity), p ? 1 : num(l.factor)),
       // komplett leere Zeile (z. B. nach Enter im Kürzel-Feld) wird ignoriert – weder abgerechnet noch geprüft
-      blank: !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId,
-      needsConfirm: !smallBusiness && vatRate === 0 && (s ? s.requiresTherapeuticPurpose : kind !== "no_show_fee"),
+      blank: isEmptyLine(l),
+      // Behandlungsposition (Katalogleistung mit therapeutischem Ziel, 0 %): Voraussetzung für 0 % bei Produkten
+      treatment: !!s && s.requiresTherapeuticPurpose && l.vatRate === 0 && kind !== "no_show_fee",
+      needsConfirm: !smallBusiness && vatRate === 0 && (p ? !!l.inTreatment : s ? s.requiresTherapeuticPurpose : kind !== "no_show_fee"),
     };
-  }).map((l) => (l.blank ? { ...l, needsConfirm: false } : l));
-  const totals = computeTotals(computed.filter((l) => !l.blank));
+  }).map((l) => (l.blank ? { ...l, needsConfirm: false, treatment: false } : l));
+  const filled = computed.filter((l) => !l.blank);
+  const treatmentLines = filled.filter((l) => l.treatment);
+  /** dieselbe Regel wie auf dem Server (src/lib/product-vat.ts) */
+  const ruleOf = (l: (typeof computed)[number]): VatRuleLine => {
+    const p = l.productId ? prodById.get(l.productId) : undefined;
+    if (!p) return { kind: "service", vatRate: l.vatRate, therapeutic: l.treatment };
+    const idx = l.treatmentKey ? filled.findIndex((x) => x.key === l.treatmentKey) : -1;
+    return { kind: "product", vatRate: l.requested, productVatRate: p.vatRate, inTreatment: !!l.inTreatment, treatmentLine: idx >= 0 ? idx : null };
+  };
+  const productError = resolveProductVat(filled.map(ruleOf), { smallBusiness, invoiceKind: kind }).error;
+  const hasProducts = filled.some((l) => l.productId);
+  const totals = computeTotals(filled);
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -185,10 +217,19 @@ export function InvoiceForm({
 
   const update = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  function chooseService(key: string, serviceId: string) {
-    const s = svcById.get(serviceId);
-    if (!s) return update(key, { serviceId: "", description: "", price: "", codeInput: undefined, codeStart: undefined });
-    update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: undefined, codeStart: undefined });
+  /** Patch für eine gewählte Leistung bzw. ein Produkt (Beschreibung, Katalogpreis, USt) */
+  function itemPatch(serviceId: string, productId: string): Partial<Line> | null {
+    const s = serviceId ? svcById.get(serviceId) : undefined;
+    if (s) return { serviceId: s.id, productId: undefined, inTreatment: false, treatmentKey: undefined, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate };
+    const p = productId ? prodById.get(productId) : undefined;
+    if (p) return { serviceId: "", productId: p.id, inTreatment: false, treatmentKey: undefined, description: p.name, price: euro(p.priceCents), vatRate: p.vatRate, factor: "1" };
+    return null;
+  }
+
+  function chooseService(key: string, value: string) {
+    const patch = value.startsWith(PRODUCT_PREFIX) ? itemPatch("", value.slice(PRODUCT_PREFIX.length)) : itemPatch(value, "");
+    if (!patch) return update(key, { serviceId: "", productId: undefined, inTreatment: false, treatmentKey: undefined, description: "", price: "", codeInput: undefined, codeStart: undefined });
+    update(key, { ...patch, codeInput: undefined, codeStart: undefined });
   }
 
   /**
@@ -197,13 +238,15 @@ export function InvoiceForm({
    * Bleibt das Kürzel unbekannt, stellt codeBlur den Stand vor der Eingabe wieder her.
    */
   function typeCode(key: string, value: string) {
-    const s = findServiceByCode(services, value);
+    const hit = findServiceByCode(codeItems, value);
     setLines((ls) =>
       ls.map((l) => {
         if (l.key !== key) return l;
-        const codeStart = l.codeStart ?? { serviceId: l.serviceId, description: l.description, price: l.price, vatRate: l.vatRate };
-        if (!s || s.id === l.serviceId) return { ...l, codeInput: value, codeStart };
-        return { ...l, serviceId: s.id, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value, codeStart };
+        const codeStart = l.codeStart ?? { serviceId: l.serviceId, productId: l.productId, inTreatment: l.inTreatment, description: l.description, price: l.price, vatRate: l.vatRate };
+        const same = hit && (hit.serviceId ? hit.serviceId === l.serviceId : hit.productId === l.productId);
+        const patch = hit && !same ? itemPatch(hit.serviceId, hit.productId) : null;
+        if (!patch) return { ...l, codeInput: value, codeStart };
+        return { ...l, ...patch, codeInput: value, codeStart };
       }),
     );
   }
@@ -213,8 +256,8 @@ export function InvoiceForm({
   /** neu angelegte Zeile: Fokus, sobald ihr Kürzel-Feld im DOM ist (im Ref-Callback) */
   const pendingFocus = useRef<string | null>(null);
 
-  const codeUnknown = (l: Line) => !!l.codeInput?.trim() && !findServiceByCode(services, l.codeInput);
-  const isBlank = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
+  const codeUnknown = (l: Line) => !!l.codeInput?.trim() && !findServiceByCode(codeItems, l.codeInput);
+  const isBlank = isEmptyLine;
 
   /** Enter im Kürzel-Feld: zur nächsten Position bzw. neue anlegen – nie das Formular abschicken */
   function codeKeyDown(e: React.KeyboardEvent<HTMLInputElement>, key: string) {
@@ -320,7 +363,7 @@ export function InvoiceForm({
   const [addedTrips, setAddedTrips] = useState<string[]>([]);
   const showTravel = !!travel && travel.patientId === patientId && (kind === "invoice" || kind === "receipt" || kind === "collective");
   /** Position anhängen (leere Startzeile ersetzen) */
-  const appendLine = (l: Line) => setLines((ls) => [...ls.filter((x) => x.serviceId || x.description || x.price), l]);
+  const appendLine = (l: Line) => setLines((ls) => [...ls.filter((x) => x.serviceId || x.productId || x.description || x.price), l]);
   function addTravel(s: NonNullable<TravelOptions>["suggestions"][number]) {
     if (!travel?.rateCents) return;
     appendLine(newLine({ description: s.description, quantity: String(s.km).replace(".", ","), price: euro(travel.rateCents), vatRate: 0 }));
@@ -338,16 +381,23 @@ export function InvoiceForm({
   };
 
   const linesJson = JSON.stringify(
-    computed.filter((l) => !l.blank).map((l) => ({
-      serviceId: l.serviceId || null,
-      treatmentRecordId: l.treatmentRecordId || null,
-      appointmentId: l.appointmentId || null,
-      description: l.description,
-      quantity: num(l.quantity),
-      factor: num(l.factor),
-      unitPriceCents: l.unit,
-      vatRate: l.vatRate,
-    })),
+    filled.map((l) => {
+      const rule = ruleOf(l);
+      return {
+        serviceId: l.serviceId || null,
+        productId: l.productId || null,
+        inTreatment: !!l.productId && !!l.inTreatment && !smallBusiness,
+        treatmentLine: rule.kind === "product" ? (rule.treatmentLine ?? null) : null,
+        treatmentRecordId: l.treatmentRecordId || null,
+        appointmentId: l.appointmentId || null,
+        description: l.description,
+        quantity: num(l.quantity),
+        factor: l.productId ? 1 : num(l.factor),
+        unitPriceCents: l.unit,
+        // Wunschsatz; Kleinunternehmer → der Server setzt 0 %
+        vatRate: l.productId ? l.requested : l.vatRate,
+      };
+    }),
   );
 
   // Texte unten passend zur oben gewählten Belegart (Rechnung, Quittung, Sammelrechnung, Ausfallhonorar)
@@ -522,12 +572,14 @@ export function InvoiceForm({
         >
           {computed.map((l, i) => {
             const s = l.serviceId ? svcById.get(l.serviceId) : undefined;
+            const prod = l.productId ? prodById.get(l.productId) : undefined;
+            const otherTreatments = treatmentLines.filter((t) => t.key !== l.key);
             return (
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
               <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
                 <div role="group" aria-labelledby={`pos-${i}-label`} className="flex flex-col gap-1.5 md:col-span-3 2xl:col-span-1">
-                  <span id={`pos-${i}-label`} className="text-sm font-medium">{`Pos. ${i + 1}: Leistung`}</span>
+                  <span id={`pos-${i}-label`} className="text-sm font-medium">{`Pos. ${i + 1}: ${prod ? "Produkt" : "Leistung"}`}</span>
                   <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
                     <Input
                       ref={(el) => {
@@ -548,16 +600,31 @@ export function InvoiceForm({
                       spellCheck={false}
                       maxLength={10}
                       className="uppercase"
-                      value={l.codeInput ?? s?.code ?? ""}
+                      value={l.codeInput ?? s?.code ?? prod?.code ?? ""}
                       onChange={(e) => typeCode(l.key, e.target.value)}
                       onKeyDown={(e) => codeKeyDown(e, l.key)}
                       onBlur={() => codeBlur(l.key)}
                     />
-                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} title="Leistung oder Produkt auswählen" value={l.productId ? `${PRODUCT_PREFIX}${l.productId}` : l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
                       <option value="">Freitext</option>
-                      {services.map((sv) => (
-                        <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
-                      ))}
+                      {products.length ? (
+                        <>
+                          <optgroup label="Leistungen">
+                            {services.map((sv) => (
+                              <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Produkte">
+                            {products.map((p) => (
+                              <option key={p.id} value={`${PRODUCT_PREFIX}${p.id}`}>{p.code ? `${p.code} · ` : ""}{p.name}</option>
+                            ))}
+                          </optgroup>
+                        </>
+                      ) : (
+                        services.map((sv) => (
+                          <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                        ))
+                      )}
                     </Select>
                   </div>
                   {codeUnknown(l) ? (
@@ -565,20 +632,22 @@ export function InvoiceForm({
                   ) : null}
                 </div>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
-                  <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
+                  <Input value={l.description} disabled={!!prod} title={prod ? "Produktname aus dem Katalog" : undefined} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
                 </Field>
                 <Field label="Menge">
                   <Input inputMode="decimal" value={l.quantity} onChange={(e) => update(l.key, { quantity: e.target.value })} />
                 </Field>
                 <Field label="Faktor">
-                  <Input inputMode="decimal" value={l.factor} onChange={(e) => update(l.key, { factor: e.target.value })} />
+                  <Input inputMode="decimal" value={prod ? "1" : l.factor} disabled={!!prod} onChange={(e) => update(l.key, { factor: e.target.value })} />
                 </Field>
-                <Field label="Preis (€)" hint={s ? "aus Katalog" : undefined}>
-                  <Input inputMode="decimal" value={l.price} disabled={!!s} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
+                <Field label="Preis (€)" hint={s || prod ? "aus Katalog" : undefined}>
+                  <Input inputMode="decimal" value={l.price} disabled={!!s || !!prod} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
                 </Field>
                 <Field label="USt">
                   {smallBusiness ? (
                     <Input value="0 % (§ 19)" disabled />
+                  ) : prod ? (
+                    <Input value={l.inTreatment ? "0 % (Behandlung)" : `${prod.vatRate} %`} disabled />
                   ) : (
                     <Select value={l.vatRate} onChange={(e) => update(l.key, { vatRate: Number(e.target.value) })}>
                       {vatOptions(l).map((r) => (
@@ -599,6 +668,34 @@ export function InvoiceForm({
                     <Trash2 size={18} aria-hidden />
                   </Button>
                 </div>
+                {prod && !smallBusiness ? (
+                  <div className="flex flex-col gap-1 md:col-span-6 2xl:col-span-7">
+                    <Checkbox
+                      checked={!!l.inTreatment}
+                      disabled={!l.inTreatment && !otherTreatments.length}
+                      onChange={(e) => update(l.key, { inTreatment: e.target.checked, treatmentKey: e.target.checked ? l.treatmentKey : undefined })}
+                      label={PRODUCT_IN_TREATMENT_LABEL}
+                    />
+                    {!otherTreatments.length ? (
+                      <span className="text-xs text-muted">Nur möglich, wenn der Beleg auch eine Heilbehandlung (0 %) enthält – sonst {prod.vatRate} %.</span>
+                    ) : null}
+                    {l.inTreatment && num(l.quantity) >= 2 ? (
+                      <span role="status" className="text-xs font-medium text-warn-soft-text">
+                        Wirklich {l.quantity} Stück in der Behandlung verbraucht? Mitgegebene Ware ist eine Lieferung mit regulärem Satz ({prod.vatRate} %) – dann bitte eine eigene Position ohne Haken.
+                      </span>
+                    ) : null}
+                    {l.inTreatment && otherTreatments.length > 1 ? (
+                      <Field label="Angewendet bei Behandlung">
+                        <Select value={l.treatmentKey ?? ""} onChange={(e) => update(l.key, { treatmentKey: e.target.value || undefined })}>
+                          <option value="">– bitte zuordnen –</option>
+                          {otherTreatments.map((t) => (
+                            <option key={t.key} value={t.key}>Pos. {filled.findIndex((x) => x.key === t.key) + 1}: {t.description}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             );
           })}
@@ -650,6 +747,13 @@ export function InvoiceForm({
           <dd className="text-right font-display text-xl font-bold tabular-nums">{money(totals.totalCents)}</dd>
         </dl>
         {smallBusiness ? <p className="mt-3 text-sm text-muted">{NOTE_SMALL_BUSINESS}</p> : null}
+        {hasProducts && !smallBusiness ? (
+          <p className="mt-3 flex gap-2 text-sm text-muted">
+            <Info size={16} className="mt-0.5 shrink-0" aria-hidden />
+            {productVatHint(filled.map((l) => (l.productId ? prodById.get(l.productId)?.vatRate : undefined)).filter((r): r is number => r !== undefined))}
+          </p>
+        ) : null}
+        {productError ? <p role="alert" className="mt-3 text-sm font-medium text-danger">{productError}</p> : null}
       </Card>
 
       {/* Einklappen nur, wenn alle betroffenen Positionen Katalogleistungen sind – Freitext mit 0 % bleibt sichtbar zu prüfen */}
@@ -669,15 +773,17 @@ export function InvoiceForm({
             <div className="flex-1">
               <p className="font-semibold">USt-Wächter (§ 4 Nr. 14 UStG)</p>
               <p className="text-sm">
-                0 % USt ist nur bei einer Heilbehandlung mit therapeutischem Ziel zulässig. Bitte bestätigen – sonst die betroffenen Positionen mit 19 % abrechnen.
+                0 % USt ist nur bei einer Heilbehandlung mit therapeutischem Ziel zulässig. Bitte bestätigen – sonst die betroffenen Positionen mit dem regulären Satz abrechnen (Leistungen 19 %, Produkte ihr Verkaufssatz).
               </p>
               <Checkbox name="therapeuticConfirmed" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} label={THERAPEUTIC_LABEL} />
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => setLines((ls) => ls.map((l, i) => (computed[i]?.needsConfirm ? { ...l, vatRate: 19 } : l)))}
+                onClick={() =>
+                  setLines((ls) => ls.map((l, i) => (computed[i]?.needsConfirm ? (l.productId ? { ...l, inTreatment: false, treatmentKey: undefined } : { ...l, vatRate: 19 }) : l)))
+                }
               >
-                Betroffene Positionen auf 19 % umstellen
+                {computed.some((l) => l.needsConfirm && l.productId) ? "Betroffene Positionen auf regulären Satz umstellen" : "Betroffene Positionen auf 19 % umstellen"}
               </Button>
             </div>
           </div>
@@ -716,7 +822,9 @@ export function InvoiceForm({
       <div className="flex flex-wrap gap-3">
         <Button
           type="submit"
-          disabled={pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed) || alreadyBilled.length > 0 || (!!state?.duplicate && !confirmDuplicate)}
+          disabled={
+            pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed) || !!productError || alreadyBilled.length > 0 || (!!state?.duplicate && !confirmDuplicate)
+          }
         >
           {pending ? "Wird ausgestellt …" : `${INVOICE_KIND_LABEL[kind]} ausstellen`}
         </Button>
