@@ -139,7 +139,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // abgesagter künftiger Termin
     const off = await appointment(new Date(Date.now() + 6 * 86_400_000).toISOString());
     await f.asOrg(org, (c) => c.query("update appointments set status = 'cancelled' where id = $1", [off]));
-    await expect(deposit(off)).rejects.toThrow(/abgesagt/);
+    await expect(deposit(off)).rejects.toThrow(/abgesagt bzw\. versäumt/);
+    const missed = await appointment(new Date(Date.now() + 7 * 86_400_000).toISOString());
+    await f.asOrg(org, (c) => c.query("update appointments set status = 'no_show' where id = $1", [missed]));
+    await expect(deposit(missed)).rejects.toThrow(/abgesagt bzw\. versäumt/);
     // archivierte Patient:in
     const gone = await f.patient(org, { lastName: "Archiviert" });
     await f.asOrg(org, (c) => c.query("update patients set archived_at = now() where id = $1", [gone]));

@@ -26,6 +26,8 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
   const termin = str(sp.termin);
   const behandlung = str(sp.behandlung);
   const src = termin || behandlung ? await billingFromSource(auth, { appointmentId: termin, recordId: behandlung }) : null;
+  // archivierte Person bzw. gelöschte Kontaktdaten: keine Anzahlung (wie depositPatient/createDeposit)
+  const srcPatientActive = src?.patient ? !!(await depositPatient(auth, src.patient.id)) : true;
   const smallBusiness = auth.organization.smallBusiness;
   const today = berlinDateIso();
   const patientParam = str(sp.patient);
@@ -43,6 +45,8 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
           <Card><p className="text-sm text-danger">Termin bzw. Behandlung nicht gefunden.</p></Card>
         ) : !src.patient ? (
           <Card><p className="text-sm text-danger">{src.error}</p></Card>
+        ) : !srcPatientActive ? (
+          <Card><p className="text-sm text-danger">{src.patient.name} ist archiviert – keine Anzahlung möglich.</p></Card>
         ) : !depositAllowed({ appointmentDay: berlinDateIso(src.at), today, hasRecord: !!src.recordId }) ? (
           <Card>
             <p className="text-sm font-semibold">

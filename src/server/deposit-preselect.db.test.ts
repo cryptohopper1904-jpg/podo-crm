@@ -72,17 +72,24 @@ import { depositCheckHint, depositPreselected } from "@/lib/deposit-rules";
     const ctx = { today: form.today, receiptsYear: year, presetRefs: new Set<string>() };
     expect(form.openDeposits.filter((d) => depositPreselected("collective", d, ctx)).map((d) => d.id)).toEqual([depDone.id]);
     expect(depositCheckHint(byId.get(depDone.id)!, today)).toBeNull();
-    expect(depositCheckHint(byId.get(depFuture.id)!, today)).toMatch(/Leistung erbracht\? Bitte prüfen/);
+    expect(depositCheckHint(byId.get(depFuture.id)!, today)).toBe("erst nach dem Termin anrechenbar");
     expect(depositCheckHint(byId.get(depFree.id)!, today)).toMatch(/Leistung erbracht\? Bitte prüfen/);
 
     // Vorschlag „Sammelrechnung des Jahres“ kennt den Leistungstag ebenso
     const sug = await billing.patientYearSuggestion(auth, patient, year);
     expect(new Map(sug!.deposits.map((d) => [d.id, d.serviceDay])).get(depFuture.id)).toBe(byId.get(depFuture.id)!.serviceDay);
 
-    // abgesagter Termin: Leistung gilt nicht als erbracht
-    await f.asOrg(org, (c) => c.query("update appointments set status = 'cancelled' where id = $1", [done]));
-    const after = await invoices.invoiceFormData(auth, patient, year);
-    expect(after.openDeposits.find((d) => d.id === depDone.id)!.serviceDay).toBeNull();
+    // abgesagter bzw. versäumter Termin: Leistung gilt nicht als erbracht – nicht vorausgewählt, Hinweis auf Erstattung
+    for (const status of ["cancelled", "no_show"]) {
+      await f.asOrg(org, (c) => c.query("update appointments set status = $2 where id = $1", [done, status]));
+      const after = await invoices.invoiceFormData(auth, patient, year);
+      const d = after.openDeposits.find((x) => x.id === depDone.id)!;
+      expect(d).toMatchObject({ serviceDay: null, appointmentMissed: true });
+      expect(depositPreselected("collective", d, ctx)).toBe(false);
+      expect(depositCheckHint(d, today)).toBe("Termin abgesagt/versäumt – bitte prüfen, ggf. erstatten");
+      const s2 = await billing.patientYearSuggestion(auth, patient, year);
+      expect(s2!.deposits.find((x) => x.id === depDone.id)).toMatchObject({ serviceDay: null, appointmentMissed: true });
+    }
     await f.asOrg(org, (c) => c.query("update appointments set status = 'done' where id = $1", [done]));
 
     // bewusst angewählt bleibt die künftige Anzahlung anrechenbar

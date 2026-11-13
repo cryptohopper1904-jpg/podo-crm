@@ -22,6 +22,8 @@ export type OpenDeposit = {
    * abgesagtem Termin. Nur Anzahlungen mit erbrachter Leistung (Tag ≤ heute) werden vorausgewählt (deposit-rules.ts).
    */
   serviceDay?: string | null;
+  /** verknüpfter Termin abgesagt oder versäumt (ohne Doku-Eintrag) – Leistung nicht erbracht, ggf. erstatten */
+  appointmentMissed?: boolean;
 };
 
 /**

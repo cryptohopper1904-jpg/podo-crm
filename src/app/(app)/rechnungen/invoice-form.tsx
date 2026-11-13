@@ -12,7 +12,7 @@ import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, RECEIPT_COLLECTIVE_HINT, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
-import { depositCheckHint, depositPreselected } from "@/lib/deposit-rules";
+import { depositCheckHint, depositNotYetCreditable, depositPreselected } from "@/lib/deposit-rules";
 import { euro, isEmptyLine, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
 import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
@@ -128,6 +128,8 @@ export function InvoiceForm({
   const presetRefs = new Set((preset?.lines ?? []).flatMap((l) => [l.appointmentId, l.treatmentRecordId]).filter((x): x is string => !!x));
   /** Vorauswahl: Sammelrechnung nur Anzahlungen des Jahres mit erbrachter Leistung (src/lib/deposit-rules.ts) */
   const depositDefault = (k: CreatableKind, d: OpenDeposit) => depositPreselected(k, d, { today, receiptsYear, presetRefs });
+  /** Anzahlung zu einem künftigen Termin: erst nach dem Termin anrechenbar (deaktiviert) */
+  const depositBlocked = (d: OpenDeposit) => depositNotYetCreditable(d, today);
   const [lines, setLines] = useState<Line[]>(() => {
     const start = preset?.lines.length
       ? preset.lines.map((l) =>
@@ -217,7 +219,10 @@ export function InvoiceForm({
   const duplicateId = state?.duplicate?.id ?? null;
   const confirmDuplicate = !!duplicateId && duplicateAckFor === duplicateId;
   const setConfirmDuplicate = (on: boolean) => setDuplicateAckFor(on ? duplicateId : null);
-  const depositOn = (id: string) => depositSel[id] ?? depositDefault(kind, patientDeposits.find((d) => d.id === id)!);
+  const depositOn = (id: string) => {
+    const d = patientDeposits.find((x) => x.id === id)!;
+    return !depositBlocked(d) && (depositSel[id] ?? depositDefault(kind, d));
+  };
   const credited = patientDeposits.filter((d) => depositOn(d.id));
   const patientReceipts = kind === "collective" && patientId ? (receiptsBy[patientId] ?? []) : [];
   const receiptOn = (id: string) => receiptSel[id] ?? true;
@@ -231,8 +236,8 @@ export function InvoiceForm({
   const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
   /** eine Auswahlliste für Quittungen und Anzahlungen (Sammelrechnung), nach Datum */
   const partialItems = [
-    ...patientDeposits.map((d) => ({ id: d.id, kind: "deposit" as const, number: d.number, issuedAt: d.issuedAt, totalCents: d.totalCents, text: depositLineText(d), warn: depositCheckHint(d, today), on: depositOn(d.id) })),
-    ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: null as string | null, on: receiptOn(r.id) })),
+    ...patientDeposits.map((d) => ({ id: d.id, kind: "deposit" as const, number: d.number, issuedAt: d.issuedAt, totalCents: d.totalCents, text: depositLineText(d), warn: depositCheckHint(d, today), on: depositOn(d.id), blocked: depositBlocked(d) })),
+    ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: null as string | null, on: receiptOn(r.id), blocked: false })),
   ].sort((x, y) => (x.issuedAt ?? "").localeCompare(y.issuedAt ?? "") || (x.number ?? "").localeCompare(y.number ?? ""));
   const openAfterDeposits = totals.totalCents - creditedCents;
 
@@ -308,7 +313,7 @@ export function InvoiceForm({
   /** gewählte Anzahlungen und Quittungen für Belegart/Person/Auswahl */
   function chosenPartials(nextKind: CreatableKind, pid: string, dSel: Record<string, boolean>, rSel: Record<string, boolean>, rBy: Record<string, OpenReceipt[]>) {
     const allowed = nextKind === "invoice" || nextKind === "collective";
-    const deps = allowed && pid ? openDeposits.filter((d) => d.patientId === pid && (dSel[d.id] ?? depositDefault(nextKind, d))) : [];
+    const deps = allowed && pid ? openDeposits.filter((d) => d.patientId === pid && !depositBlocked(d) && (dSel[d.id] ?? depositDefault(nextKind, d))) : [];
     const recs = nextKind === "collective" && pid ? (rBy[pid] ?? []).filter((r) => rSel[r.id] ?? true) : [];
     return { deps, recs };
   }
@@ -336,13 +341,13 @@ export function InvoiceForm({
   }
   function selectAllDeposits(on: boolean) {
     const sel = { ...depositSel };
-    for (const d of patientDeposits) sel[d.id] = on;
+    for (const d of patientDeposits) sel[d.id] = on && !depositBlocked(d);
     setDepositSel(sel);
     applyDeposits(kind, patientId, sel);
   }
   function selectAllPartials(on: boolean) {
     const dSel = { ...depositSel };
-    for (const d of patientDeposits) dSel[d.id] = on;
+    for (const d of patientDeposits) dSel[d.id] = on && !depositBlocked(d);
     const rSel = { ...receiptSel };
     for (const r of patientReceipts) rSel[r.id] = on;
     setDepositSel(dSel);
@@ -563,6 +568,7 @@ export function InvoiceForm({
               <li key={d.id} className="px-3 py-1">
                 <Checkbox
                   checked={depositOn(d.id)}
+                  disabled={depositBlocked(d)}
                   onChange={(e) => toggleDeposit(d.id, e.target.checked)}
                   label={`${d.number ?? "Anzahlung"} vom ${dateDe(d.issuedAt)} · ${depositLineText(d)} · ${money(d.totalCents)}${
                     depositCheckHint(d, today) ? ` – ${depositCheckHint(d, today)}` : ""
@@ -595,13 +601,14 @@ export function InvoiceForm({
             Bezahlte Quittungen (Q…) und Anzahlungen (AZ…) werden auf der Sammelrechnung zusammengeführt: ihre Leistungen kommen als
             Positionen dazu, der bezahlte Betrag wird als „bereits bezahlt“ abgezogen (mit USt-Ausweis). Kein zweiter Umsatz und keine neue Kassenbuchung.
             Vorausgewählt sind die offenen Quittungen {receiptsYear ? `aus ${receiptsYear}` : "des Jahres"} und Anzahlungen, deren Termin schon stattgefunden hat;
-            Anzahlungen für künftige Termine oder ohne Termin bitte nur nach Prüfung anwählen.
+            Anzahlungen ohne Termin bitte nur nach Prüfung anwählen. Anzahlungen für künftige Termine sind erst nach dem Termin anrechenbar.
           </p>
           <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
             {partialItems.map((it) => (
               <li key={it.id} className="px-3 py-1">
                 <Checkbox
                   checked={it.on}
+                  disabled={it.blocked}
                   onChange={(e) => (it.kind === "receipt" ? toggleReceipt(it.id, e.target.checked) : toggleDeposit(it.id, e.target.checked))}
                   label={`${it.number ?? (it.kind === "receipt" ? "Quittung" : "Anzahlung")} vom ${dateDe(it.issuedAt)} · ${it.text} · ${money(it.totalCents)}${it.warn ? ` – ${it.warn}` : ""}`}
                 />

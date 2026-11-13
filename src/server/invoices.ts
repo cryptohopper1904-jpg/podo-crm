@@ -380,7 +380,7 @@ export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
     .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, patientId), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
     .orderBy(asc(invoices.issuedAt), asc(invoices.number));
   const days = await depositServiceDays(tx, org, list.map((d) => d.id));
-  return list.map((d) => ({ ...d, serviceDay: days.get(d.id)?.serviceDay ?? null }));
+  return list.map((d) => ({ ...d, serviceDay: days.get(d.id)?.serviceDay ?? null, appointmentMissed: days.get(d.id)?.appointmentMissed ?? false }));
 }
 
 /**
@@ -389,7 +389,10 @@ export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
  * nur Anzahlungen mit erbrachter Leistung (src/lib/deposit-rules.ts).
  */
 export async function depositServiceDays(tx: Tx, org: string, depositIds: string[]) {
-  const out = new Map<string, { description: string; vatRate: number; appointmentId: string | null; treatmentRecordId: string | null; serviceDay: string | null }>();
+  const out = new Map<
+    string,
+    { description: string; vatRate: number; appointmentId: string | null; treatmentRecordId: string | null; serviceDay: string | null; appointmentMissed: boolean }
+  >();
   if (!depositIds.length) return out;
   const lines = await tx
     .select({ invoiceId: invoiceLines.invoiceId, description: invoiceLines.description, vatRate: invoiceLines.vatRate, appointmentId: invoiceLines.appointmentId, treatmentRecordId: invoiceLines.treatmentRecordId })
@@ -412,11 +415,14 @@ export async function depositServiceDays(tx: Tx, org: string, depositIds: string
         .from(treatmentRecords)
         .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
     : [];
-  const apptDay = new Map(appts.map((a) => [a.id, a.status === "cancelled" ? null : berlinDateIso(a.startsAt)]));
+  // abgesagt oder versäumt: Leistung nicht erbracht → kein Leistungstag (nicht vorauswählen)
+  const apptDay = new Map(appts.map((a) => [a.id, a.status === "cancelled" || a.status === "no_show" ? null : berlinDateIso(a.startsAt)]));
+  const apptMissed = new Set(appts.filter((a) => a.status === "cancelled" || a.status === "no_show").map((a) => a.id));
   const recDay = new Map(recs.map((r) => [r.id, berlinDateIso(r.treatedAt)]));
   for (const [id, l] of first) {
     const day = (l.treatmentRecordId ? recDay.get(l.treatmentRecordId) : undefined) ?? (l.appointmentId ? apptDay.get(l.appointmentId) : undefined) ?? null;
-    out.set(id, { description: l.description, vatRate: l.vatRate, appointmentId: l.appointmentId, treatmentRecordId: l.treatmentRecordId, serviceDay: day });
+    const missed = !l.treatmentRecordId && !!l.appointmentId && apptMissed.has(l.appointmentId);
+    out.set(id, { description: l.description, vatRate: l.vatRate, appointmentId: l.appointmentId, treatmentRecordId: l.treatmentRecordId, serviceDay: missed ? null : day, appointmentMissed: missed });
   }
   return out;
 }
@@ -1068,12 +1074,17 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     let apptDay: string | null = null;
     let apptHasRecord = false;
     if (input.appointmentId) {
+      // Sperr-Reihenfolge wie createInvoice/assertNotInvoiced: zuerst Advisory-Lock invoice-records, dann die Terminzeile
+      // FOR UPDATE – blockiert bis zum Ende der Transaktion Verschieben, Statuswechsel und (per FK-KEY-SHARE) neue
+      // Doku-Einträge zu diesem Termin, damit die Prüfung unten nicht veraltet (TOCTOU).
+      await lockInvoiceRecords(tx, org);
       const [a] = await tx
         .select({ patientId: appointments.patientId, startsAt: appointments.startsAt, status: appointments.status })
         .from(appointments)
-        .where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
+        .where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)))
+        .for("update");
       if (!a || a.patientId !== input.patientId) throw new InvoiceError("Termin nicht gefunden.");
-      if (a.status === "cancelled") throw new InvoiceError("Der Termin ist abgesagt – keine Anzahlung möglich.");
+      if (a.status === "cancelled" || a.status === "no_show") throw new InvoiceError("Der Termin ist abgesagt bzw. versäumt – keine Anzahlung möglich.");
       apptDay = berlinDateIso(a.startsAt);
       // Doku-Eintrag zum Termin = Behandlung erbracht
       const [rec] = await tx
@@ -1088,7 +1099,7 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
       if (!r || r.patientId !== input.patientId) throw new InvoiceError("Behandlung nicht gefunden.");
     }
     // Anzahlung nur als Vorauszahlung vor der Behandlung: nicht für dokumentierte Behandlungen und nicht für Termine
-    // von heute oder früher (dafür gibt es die Quittung). Günstige Prüfung vor der Abrechnungs-Sperre.
+    // von heute oder früher (dafür gibt es die Quittung). Ohne Termin keine Sperre nötig (Doku-Eintrag → abgelehnt).
     // Bestehende offene Anzahlungen bleiben anrechenbar.
     if (!depositAllowed({ appointmentDay: apptDay, today, hasRecord: !!input.treatmentRecordId || apptHasRecord })) throw new InvoiceError(DEPOSIT_PAST_ERROR);
     // nie doppelt kassieren: Behandlung schon abgerechnet bzw. schon eine offene Anzahlung dazu → ablehnen
@@ -1612,6 +1623,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
             appointmentId: l?.appointmentId ?? null,
             treatmentRecordId: l?.treatmentRecordId ?? null,
             serviceDay: l?.serviceDay ?? null,
+            appointmentMissed: l?.appointmentMissed ?? false,
           };
         }),
     };

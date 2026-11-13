@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { depositAllowed, depositCheckHint, depositPreselected } from "./deposit-rules";
+import { depositAllowed, depositCheckHint, depositNotYetCreditable, depositPreselected } from "./deposit-rules";
 
 describe("Anzahlung nur als Vorauszahlung", () => {
   const today = "2026-11-13";
@@ -40,13 +40,21 @@ describe("Vorauswahl von Anzahlungen in Rechnung/Sammelrechnung", () => {
   });
   it("Rechnung aus genau diesem Termin: immer; sonst bei Rechnung nie; andere Belegarten nie", () => {
     const refs = { ...ctx, presetRefs: new Set(["a1"]) };
-    expect(depositPreselected("invoice", dep({ serviceDay: "2026-11-20" }), refs)).toBe(true);
+    expect(depositPreselected("invoice", dep({ serviceDay: "2026-11-10" }), refs)).toBe(true);
+    // künftiger Termin: nie vorausgewählt (erst nach dem Termin anrechenbar)
+    expect(depositPreselected("invoice", dep({ serviceDay: "2026-11-20" }), refs)).toBe(false);
+    expect(depositNotYetCreditable(dep({ serviceDay: "2026-11-20" }), today)).toBe(true);
+    expect(depositNotYetCreditable(dep({ serviceDay: today }), today)).toBe(false);
+    expect(depositNotYetCreditable(dep({ appointmentId: null, serviceDay: null }), today)).toBe(false);
     expect(depositPreselected("invoice", dep({ serviceDay: "2026-05-02" }), ctx)).toBe(false);
     expect(depositPreselected("receipt", dep({ serviceDay: "2026-05-02" }), refs)).toBe(false);
   });
   it("Hinweis nur, wenn die Leistung nicht belegt erbracht ist", () => {
     expect(depositCheckHint(dep({ serviceDay: "2026-05-02" }), today)).toBeNull();
-    expect(depositCheckHint(dep({ serviceDay: "2026-11-20" }), today)).toMatch(/Zukunft – Leistung erbracht\? Bitte prüfen/);
+    expect(depositCheckHint(dep({ serviceDay: "2026-11-20" }), today)).toBe("erst nach dem Termin anrechenbar");
+    expect(depositCheckHint({ ...dep({ serviceDay: null }), appointmentMissed: true }, today)).toBe("Termin abgesagt/versäumt – bitte prüfen, ggf. erstatten");
+    // versäumter Termin: nicht vorausgewählt
+    expect(depositPreselected("collective", { ...dep({ serviceDay: null }), appointmentMissed: true }, ctx)).toBe(false);
     expect(depositCheckHint(dep({ appointmentId: null, serviceDay: null }), today)).toMatch(/ohne Termin – Leistung erbracht\? Bitte prüfen/);
   });
 });
