@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { CalendarSync, Check, FileSpreadsheet, ShieldCheck, Upload } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
 import { Breadcrumbs, FaqList } from "../_content/faq-list";
@@ -53,11 +54,11 @@ const CHECKLIST = [
 ] as const;
 
 const FAQ = [
-  ["Was kostet der Wechsel?", "Der Import ist in allen Tarifen enthalten (im kostenlosen Tarif bis 20 Patient:innen). Sie können 30 Tage kostenlos testen; danach wählen Sie einen Tarif oder nutzen den kostenlosen Tarif (1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit)."],
+  ["Was kostet der Wechsel?", "Der Import ist in allen Tarifen enthalten (im kostenlosen Tarif bis 20 Patient:innen). Sie können 30 Tage kostenlos testen; danach wählen Sie einen Tarif oder nutzen den kostenlosen Tarif (1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit, eingeschränkter Funktionsumfang – siehe Preise)."],
   ["Kann ich Daten aus jeder Praxissoftware importieren?", "Direkt eingelesen werden die Excel-Vorlage „Podologie Rechnungsmanager“ und die Doctolib-Patientenliste (CSV). Aus anderen Programmen exportieren Sie die Patientenliste und übertragen sie in die Excel-Vorlage. Welche Exporte Ihr bisheriges Programm anbietet, erfahren Sie beim jeweiligen Anbieter."],
   ["Werden Behandlungsdokumentationen und Fotos übernommen?", "Ein automatischer Import alter Behandlungsdokumentation ist nicht vorgesehen. Bewahren Sie die alte Dokumentation für die gesetzliche Frist auf – lesend im alten System oder als vollständiger Export."],
   ["Was passiert mit Doctolib?", "Sie können Doctolib parallel weiter nutzen: Termine kommen über das Kalender-Abo zu PodoHero, Patientenlisten per CSV. Zusätzlich bietet PodoHero eine eigene Online-Buchung und ein Patientenportal."],
-  ["Kann ich PodoHero wieder verlassen?", "Ja, monatlich kündbar. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten."],
+  ["Kann ich PodoHero wieder verlassen?", "Ja. Kostenpflichtige Tarife sind monatlich kündbar; für den kostenlosen Tarif gilt die Frist laut AGB. Ihre Daten können Sie jederzeit vollständig exportieren."],
   ["Wo liegen meine Daten?", "Die PodoHero-Cloud läuft bei Hetzner in Deutschland. Fotos und Dokumente werden mit einem eigenen Schlüssel je Praxis verschlüsselt."],
 ] as const;
 
@@ -73,13 +74,13 @@ export default function SwitchPage() {
           <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">Wechseln zu PodoHero</h1>
           <p className="mt-4 text-lg text-muted">
             Von Excel-Listen, Doctolib oder einer anderen Praxissoftware: Importieren Sie Ihre Patient:innen mit Prüfbericht, übernehmen Sie
-            Doctolib-Termine automatisch und starten Sie unverbindlich.
+            Doctolib-Termine per Kalender-Abo über einen Synchronisationsdienst (Testmodus) und starten Sie unverbindlich.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">30 Tage kostenlos testen</LinkButton>
             <LinkButton href="/preise" variant="secondary" className="h-12 px-6 text-base">Kostenloser Tarif</LinkButton>
           </div>
-          <p className="mt-3 text-sm text-muted">Keine Zahlungsdaten nötig · endet automatisch · monatlich kündbar</p>
+          <p className="mt-3 text-sm text-muted">Keine Zahlungsdaten nötig · endet automatisch · kostenpflichtige Tarife monatlich kündbar</p>
         </header>
         <div>
           <ScreenshotFrame shot={SHOTS.akte} sizes="(min-width: 1024px) 560px, 100vw" eager />
@@ -135,7 +136,10 @@ export default function SwitchPage() {
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Jetzt unverbindlich wechseln</h2>
-          <p className="mt-1 opacity-90">30 Tage alle Funktionen testen. Danach kostenlos weiter mit bis zu 20 Patient:innen oder Tarif wählen.</p>
+          <p className="mt-1 opacity-90">
+            30 Tage alle Funktionen testen. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
+            <Link href="/preise" className="underline">siehe Preise</Link>) oder Tarif wählen.
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>

@@ -23,7 +23,7 @@ const INCLUDED = [
 const FAQ = [
   ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und hat kein Zeitlimit. Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
   ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 Patient:innen, 1 Person."],
-  ["Kann ich monatlich kündigen?", "Ja. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten – Ihre Aufbewahrungspflichten bleiben bestehen."],
+  ["Kann ich monatlich kündigen?", "Ja, die kostenpflichtigen Tarife; für den kostenlosen Tarif gilt die Frist laut AGB. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten – Ihre Aufbewahrungspflichten bleiben bestehen."],
   ["Sind Drittanbieter enthalten?", "Nein. Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI-Anbieter rechnen ihre Leistungen selbst mit Ihnen ab."],
 ] as const;
 
@@ -33,7 +33,7 @@ export default function PricingPage() {
       <JsonLd data={[softwareApplicationLd(), faqLd(FAQ)]} />
       <header className="max-w-3xl">
         <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Preise</h1>
-        <p className="mt-4 text-lg text-muted">Ein Preis je Praxisgröße, monatlich kündbar.</p>
+        <p className="mt-4 text-lg text-muted">Ein Preis je Praxisgröße, kostenpflichtige Tarife monatlich kündbar.</p>
         <p className="mt-3"><Badge tone="warn">{PRICE_NOTE}</Badge></p>
       </header>
 

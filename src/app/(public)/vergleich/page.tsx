@@ -92,7 +92,10 @@ export default function ComparisonHub() {
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Selbst ausprobieren statt nur vergleichen</h2>
-          <p className="mt-1 opacity-90">30 Tage kostenlos, danach auf Wunsch im kostenlosen Tarif weiter (bis 20 Patient:innen).</p>
+          <p className="mt-1 opacity-90">
+            30 Tage kostenlos, danach auf Wunsch im kostenlosen Tarif weiter (bis 20 Patient:innen, eingeschränkter Funktionsumfang,{" "}
+            <Link href="/preise" className="underline">siehe Preise</Link>).
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>

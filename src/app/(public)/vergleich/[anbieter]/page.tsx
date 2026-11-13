@@ -91,7 +91,8 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
         </div>
         <p className="mt-3 text-sm text-muted">
           „Nicht angegeben“: Auf den unten genannten Seiten von {c.name} fanden wir dazu keine Angabe – die Funktion kann trotzdem vorhanden sein.
-          Preise vergleichen wir hier bewusst nicht; aktuelle Preise finden Sie beim jeweiligen Anbieter bzw. unter „Preise“.
+          Preise vergleichen wir hier bewusst nicht; aktuelle Preise finden Sie beim jeweiligen Anbieter bzw. unter{" "}
+          <Link href="/preise" className="font-semibold text-primary hover:underline">Preise</Link>.
         </p>
       </section>
 
@@ -118,7 +119,10 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">PodoHero 30 Tage kostenlos testen</h2>
-          <p className="mt-1 opacity-90">Keine Zahlungsdaten nötig, endet automatisch. Danach kostenlos weiter mit bis zu 20 Patient:innen.</p>
+          <p className="mt-1 opacity-90">
+            Keine Zahlungsdaten nötig, endet automatisch. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
+            <Link href="/preise" className="underline">siehe Preise</Link>).
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>

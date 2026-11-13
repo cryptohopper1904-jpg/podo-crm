@@ -115,7 +115,7 @@ export const ARTICLES: Article[] = [
       {
         heading: "Die Grundregel",
         paragraphs: [
-          "Nach § 4 Nr. 14 Buchst. a UStG sind Heilbehandlungen im Bereich der Humanmedizin steuerfrei, die im Rahmen der Ausübung eines Heilberufs oder einer ähnlichen heilberuflichen Tätigkeit durchgeführt werden. Podologinnen und Podologen mit Erlaubnis nach dem Podologengesetz üben eine solche Tätigkeit aus (Abschnitt 4.14.4 des Umsatzsteuer-Anwendungserlasses). Fußpflege ohne diese Erlaubnis – etwa kosmetische oder medizinische Fußpflege ohne Podologen-Erlaubnis – ist danach nicht befreit.",
+          "Nach § 4 Nr. 14 Buchst. a UStG sind Heilbehandlungen im Bereich der Humanmedizin steuerfrei, die im Rahmen der Ausübung eines Heilberufs oder einer ähnlichen heilberuflichen Tätigkeit durchgeführt werden. Podologinnen und Podologen mit Erlaubnis nach dem Podologengesetz üben eine solche Tätigkeit aus (Abschnitt 4.14.4 des Umsatzsteuer-Anwendungserlasses). Fußpflege durch Personen ohne Erlaubnis nach dem Podologengesetz ist in der Regel nicht befreit; Sonderfälle (Übergangs- bzw. Bestandsschutz) klären Sie mit der Steuerberatung.",
           "Steuerfrei ist dabei nur die Heilbehandlung: Sie muss der Diagnose, Behandlung oder Vorbeugung von Krankheiten dienen. Ein Indiz ist eine ärztliche Verordnung; auch Selbstzahler-Leistungen können steuerfrei sein, wenn ein therapeutisches Ziel besteht und dokumentiert ist.",
         ],
       },
@@ -182,7 +182,8 @@ export const ARTICLES: Article[] = [
       {
         heading: "Fristen im Blick behalten",
         list: [
-          "Behandlungsbeginn: grundsätzlich innerhalb von 28 Kalendertagen nach Ausstellung, bei dringlichem Behandlungsbedarf innerhalb von 14 Kalendertagen.",
+          "Behandlungsbeginn: grundsätzlich innerhalb von 28 Kalendertagen nach Verordnung, bei dringlichem Behandlungsbedarf innerhalb von 14 Kalendertagen (§ 15 HeilM-RL). Sonst verliert die Verordnung ihre Gültigkeit.",
+          "Blankoverordnung: Verordnungen mit erweiterter Versorgungsverantwortung sind bei Maßnahmen der podologischen Therapie höchstens 40 Wochen ab Verordnungsdatum gültig (§ 13a Abs. 2 HeilM-RL).",
           "Unterbrechungen: Grundsätzlich verliert eine Verordnung ihre Gültigkeit, wenn die Behandlung länger als 14 Kalendertage ohne angemessene Begründung unterbrochen wird (§ 16 Abs. 4 HeilM-RL). Für Maßnahmen der podologischen Therapie gilt das ausdrücklich nicht – Unterbrechungen machen die Verordnung hier nicht ungültig. Ergänzende Regeln können sich aus Ihrem Vertrag nach § 125 SGB V ergeben.",
           "Frequenz und Einheiten: verbrauchte und offene Einheiten je Position mitzählen; Hinweis rechtzeitig vor der letzten Einheit (Folgeverordnung).",
         ],
@@ -208,6 +209,7 @@ export const ARTICLES: Article[] = [
     ],
     sources: [
       { label: "G-BA – Heilmittel-Richtlinie (aktuelle, konsolidierte Fassung)", url: "https://www.g-ba.de/richtlinien/12/" },
+      { label: "G-BA – HeilM-RL, Fassung vom 15.05.2025, in Kraft seit 05.08.2025 (PDF)", url: "https://www.g-ba.de/downloads/62-492-3865/HeilM-RL_2025-05-15_iK-2025-08-05.pdf" },
       { label: "G-BA – Verordnung von Heilmitteln", url: "https://www.g-ba.de/themen/veranlasste-leistungen/heilmittel/verordnung-heilmittel-vertragsaerzte/" },
       { label: "G-BA – Beschluss Podologische Therapie (NF/QF), 2020", url: "https://www.g-ba.de/downloads/39-261-4179/2020-02-20_HeilM-RL_Podologische-Therapie.pdf" },
       { label: "KVBW – FAQ Heilmittel", url: "https://www.kvbawue.de/praxis/verordnungen/heilmittel/faq" },

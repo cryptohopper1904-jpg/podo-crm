@@ -48,7 +48,7 @@ const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: 
   { shot: SHOTS.fussschema, tag: "iPad", title: "Doku am Behandlungsstuhl", text: "Befunde im Fußschema antippen, je Stelle notieren, Sterilgut-Charge erfassen.", href: "/funktionen#doku" },
   { shot: SHOTS.besuchstag, tag: "iPad", title: "Besuchstag im Pflegeheim", text: "Je Bewohner:in Leistungen antippen und Kurzbefund speichern – Liste statt Einzelakten.", href: "/funktionen#praxis" },
   { shot: SHOTS.sammelrechnung, tag: "Desktop", title: "Sammelrechnung ans Pflegeheim", text: "Positionen kommen aus dem Besuchstag, Steuerbefreiung wird geprüft und vermerkt.", href: "/funktionen#rechnungen" },
-  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss; TSE-Signatur über fiskaly im Testmodus.", href: "/funktionen#rechnungen" },
   { shot: SHOTS.hygiene, tag: "Desktop", title: "Hygiene & Gerätebuch", text: "Chargen freigeben, Fristen für Wartung und Validierung, Tages-Checkliste.", href: "/funktionen#praxis" },
   { shot: SHOTS.website, tag: "Website", title: "Ihre Praxis-Website", text: "Aus Ihren Praxisdaten erzeugt – mit „Termin online buchen“, ohne Cookies.", href: "/funktionen#termine" },
 ];
@@ -77,7 +77,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Termine & Kommunikation",
     items: [
-      { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website.", href: "/funktionen#termine" },
+      { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website (Patientenportal ab Tarif Praxis).", href: "/funktionen#termine" },
       { icon: PhoneCall, title: "KI-Telefonassistent", text: "Nimmt Anrufe an, nennt freie Zeiten, notiert Termin- und Rückrufwünsche.", href: "/funktionen#kommunikation", test: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
       { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
@@ -86,7 +86,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Abrechnung & Kasse",
     items: [
-      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine, SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen" },
+      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine; Kartenzahlung über SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen", test: true },
       { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export; TSE-Signatur über fiskaly (Testmodus)", href: "/funktionen#rechnungen", test: true },
       { icon: ClipboardList, title: "GKV-Verordnungen", text: "Fristen-Ampel, Einheiten, Export ans Abrechnungszentrum, KIM vorbereitet.", href: "/funktionen#verordnungen" },
     ],
@@ -123,7 +123,7 @@ type Cell = true | false | string;
 const COMPARISON: { topic: string; podo: Cell }[] = [
   { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true },
   { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true },
-  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: true },
+  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: "ja (Patientenportal ab Tarif Praxis)" },
   { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)" },
   { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true },
   { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true },
@@ -381,7 +381,7 @@ export default async function Landing() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h2 id="preise-kurz" className="font-display text-3xl font-semibold tracking-tight">Einfache Preise</h2>
-            <p className="mt-2 text-muted">{PRICE_NOTE} Monatlich kündbar.</p>
+            <p className="mt-2 text-muted">{PRICE_NOTE} Kostenpflichtige Tarife monatlich kündbar.</p>
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>
         </div>

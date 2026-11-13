@@ -49,7 +49,7 @@ export const PODO = {
   kasse: "Kassenbuch, Zählprotokoll, Z-Bon, DSFinV-K-Export; TSE über fiskaly im Testmodus",
   hygiene: "Sterilgut-Chargen mit Freigabe und Rückverfolgung, Gerätebuch, Tages-Checkliste",
   carehome: "Pflegeheim-Modus mit Besuchstag, Schnell-Doku und Sammelrechnung; Tourenplanung",
-  free: "kostenloser Tarif: 1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit",
+  free: "kostenloser Tarif: 1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit (eingeschränkter Funktionsumfang, siehe „Preise“)",
   trial: "30 Tage kostenlos, endet automatisch, keine Zahlungsdaten nötig",
 } as const;
 
@@ -148,7 +148,7 @@ export const COMPETITORS: Competitor[] = [
       { topic: "Kasse", podo: PODO.kasse, vendor: null },
       { topic: "Hygiene", podo: PODO.hygiene, vendor: null },
       { topic: "Pflegeheime / Hausbesuche", podo: PODO.carehome, vendor: "für die mobile Nutzung optimiert und laut Hersteller für Hausbesuche geeignet; Pflegeheim-Funktionen nicht angegeben", source: 0 },
-      { topic: "Test / Demo", podo: `${PODO.trial}; ${PODO.free}`, vendor: "Demo bzw. Termin für eine Softwareberatung auf Anfrage", source: [0, 1] },
+      { topic: "Test / Demo", podo: `${PODO.trial}; ${PODO.free}`, vendor: "Klick-Demo auf der Website; Termin für eine Softwareberatung vereinbar", source: 0 },
     ],
     strengths: [
       "Laut Herstellerwebsite: Abrechnung mit allen Kostenträgern und automatische Verordnungsprüfung.",
@@ -156,7 +156,7 @@ export const COMPETITORS: Competitor[] = [
     ],
     podoDifferent: [
       "Ausschließlich für Podologie gebaut – mit Fußschema in 2D und 3D und Fotos direkt am iPad.",
-      "Kostenloser Tarif und 30 Tage Test ohne Zahlungsdaten.",
+      "Kostenloser Tarif (eingeschränkter Funktionsumfang) und 30 Tage Test ohne Zahlungsdaten.",
       "Patientenportal, Online-Buchung, Praxis-Website, Hygiene, Pflegeheim-Modus und Kasse sind eingebaut.",
       "GKV-Abrechnung über ein Abrechnungszentrum per Export statt Direktabrechnung.",
     ],
