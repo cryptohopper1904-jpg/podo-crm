@@ -193,6 +193,27 @@ export async function changePasswordAction(_: SettingsState, form: FormData): Pr
   return { ok: "Passwort geändert." };
 }
 
+/** Weak PINs, die leicht zu erraten sind (gleiche Ziffern, auf-/absteigende Folgen) */
+const weakPin = (pin: string) => /^(\d)\1+$/.test(pin) || "0123456789".includes(pin) || "9876543210".includes(pin);
+
+/** Entsperr-PIN für den Übergabe-Modus setzen oder entfernen (nur eigenes Konto, mit Passwort bestätigt). */
+export async function setUnlockPinAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth();
+  const [u] = await db.select().from(users).where(eq(users.id, auth.user.id));
+  if (!(await verifyPassword(u.passwordHash, String(form.get("current") ?? "")))) return { error: "Passwort stimmt nicht." };
+  if (form.get("remove") === "1") {
+    await db.update(users).set({ unlockPinHash: null }).where(eq(users.id, auth.user.id));
+    await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "unlock_pin.removed" });
+    return { ok: "PIN entfernt – Entsperren geht jetzt nur mit dem Passwort." };
+  }
+  const pin = String(form.get("pin") ?? "");
+  if (!/^\d{4,8}$/.test(pin)) return { error: "Die PIN muss aus 4 bis 8 Ziffern bestehen." };
+  if (weakPin(pin)) return { error: "Bitte keine leicht zu erratende PIN (z. B. 1111 oder 1234)." };
+  await db.update(users).set({ unlockPinHash: await hashPassword(pin) }).where(eq(users.id, auth.user.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "unlock_pin.set" });
+  return { ok: "PIN gespeichert." };
+}
+
 /**
  * 2FA-Pflicht für alle Rollen der Praxis (Gesamt-Review H1). Inhaber:innen haben immer Pflicht-2FA;
  * hier legt die Inhaber:in fest, ob auch Team-Mitglieder sie brauchen (src/lib/auth/two-factor.ts).

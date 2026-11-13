@@ -191,15 +191,41 @@ export async function findActiveSupportGrant(organizationId: string, userId: str
  * Pflicht-2FA (Inhaber:in, Plattform-Admin, ggf. alle Rollen der Praxis – ./two-factor.ts) ist noch nicht aktiv.
  * Dann gibt es KEINEN Praxis-Zugriff (auch nicht für Route-Handler), Seiten leiten zur 2FA-Einrichtung.
  */
-export type AuthState = { auth: AuthContext | null; twoFactorSetupRequired: boolean };
+export type AuthState = { auth: AuthContext | null; twoFactorSetupRequired: boolean; /** Übergabe-Modus aktiv */ locked?: boolean };
 const NONE: AuthState = { auth: null, twoFactorSetupRequired: false };
 const PENDING_2FA: AuthState = { auth: null, twoFactorSetupRequired: true };
+const LOCKED: AuthState = { auth: null, twoFactorSetupRequired: false, locked: true };
+
+/** Übergabe-Modus: nach so langer Sperre ist die Sitzung beendet (dann Anmeldung mit Passwort + 2FA) */
+export const HANDOVER_MAX_MS = 30 * 60_000;
+/** Fehlversuche beim Entsperren, danach wird die Sitzung beendet */
+export const HANDOVER_MAX_FAILURES = 5;
+
+/**
+ * Übergabe-Modus starten: die aktuelle Sitzung wird gesperrt (getAuthState liefert dann keine Praxisdaten mehr,
+ * requireAuth leitet auf /entsperren). Nur interne Rücksprungpfade.
+ */
+export async function lockCurrentSession(returnPath: string) {
+  const row = await getSession();
+  if (!row) return false;
+  const safe = /^\/(?!\/)[\w\-/?=&.%]*$/.test(returnPath) ? returnPath.slice(0, 300) : "/heute";
+  await db.update(sessions).set({ lockedAt: new Date(), lockReturn: safe, unlockFailures: 0 }).where(eq(sessions.id, row.session.id));
+  return true;
+}
 
 export const getAuth = cache(async (): Promise<AuthContext | null> => (await getAuthState()).auth);
 
 export const getAuthState = cache(async (): Promise<AuthState> => {
   const row = await getSession();
   if (!row || !row.session.verified) return NONE;
+  // Übergabe-Modus: Gerät liegt bei der Patient:in – keine Praxisdaten, bis PIN/Passwort eingegeben ist
+  if (row.session.lockedAt) {
+    if (Date.now() - row.session.lockedAt.getTime() > HANDOVER_MAX_MS) {
+      await db.delete(sessions).where(eq(sessions.id, row.session.id));
+      return NONE;
+    }
+    return LOCKED;
+  }
   if (!row.session.organizationId) return row.user.isPlatformAdmin && !row.user.totpEnabled ? PENDING_2FA : NONE;
   const orgId = row.session.organizationId;
   const req = await requestInfo();
@@ -308,8 +334,8 @@ export function denyAccess(auth: AuthContext, permission?: Permission): never {
  * ohne Recht werden im Lesemodus ebenfalls abgelehnt.
  */
 export async function requireAuth(permission?: Permission, opts: { allowReadOnly?: boolean } = {}): Promise<AuthContext> {
-  const { auth, twoFactorSetupRequired } = await getAuthState();
-  if (!auth) redirect(twoFactorSetupRequired ? TWO_FACTOR_SETUP_PATH : "/login");
+  const { auth, twoFactorSetupRequired, locked } = await getAuthState();
+  if (!auth) redirect(locked ? "/entsperren" : twoFactorSetupRequired ? TWO_FACTOR_SETUP_PATH : "/login");
   if (!mutationAllowedWithoutPermission(auth)) denyAccess(auth, permission);
   if (permission && !auth.can(permission)) {
     const fixingSubscription = opts.allowReadOnly && auth.readOnly && !auth.support && can(auth.role, permission);

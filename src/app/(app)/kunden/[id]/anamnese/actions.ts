@@ -4,7 +4,8 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { requireAuth } from "@/lib/auth/session";
+import { lockCurrentSession, requireAuth } from "@/lib/auth/session";
+import { audit } from "@/lib/audit";
 import { parseAnamnesis } from "@/lib/anamnesis";
 import { createAnamnesisLink, revokeAnamnesisLink, saveAnamnesis } from "@/server/anamnesis";
 
@@ -47,4 +48,19 @@ export async function revokeLinkAction(form: FormData) {
   const linkId = z.string().uuid().parse(form.get("linkId"));
   await revokeAnamnesisLink(auth, patientId, linkId);
   revalidatePath(`/kunden/${patientId}/anamnese`);
+}
+
+/**
+ * Übergabe-Modus: Einmal-Link für den Anamnesebogen (inkl. Datenschutz-Einwilligungen) erzeugen, die eigene
+ * Sitzung sperren und das Gerät direkt auf den Bogen leiten. Zurück in die Praxisdaten nur über /entsperren.
+ */
+export async function handoverAction(form: FormData) {
+  const auth = await requireAuth("patients.write");
+  const patientId = z.string().uuid().safeParse(form.get("patientId"));
+  if (!patientId.success) redirect("/kunden");
+  const res = await createAnamnesisLink(auth, patientId.data);
+  if ("error" in res) redirect(`/kunden/${patientId.data}/anamnese?uebergabe=fehler`);
+  await lockCurrentSession(`/kunden/${patientId.data}/anamnese`);
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "handover.start", entity: "patient", entityId: patientId.data });
+  redirect(`/anamnese/${res.token}?vor-ort=1`);
 }
