@@ -20,6 +20,8 @@ import {
   dunningState,
   dunningTotalCents,
   fillTemplate,
+  FRIST_PLACEHOLDER,
+  normalizeNewlines,
   readDunningSettings,
   salutationLine,
   type DunningStage,
@@ -172,6 +174,8 @@ export async function createDunnings(auth: AuthContext, invoiceIds: string[]): P
         if (st.state === "not_dunnable") return { skip: st.reason, number: inv.number };
         if (st.state === "not_overdue") return { skip: "Noch nicht überfällig.", number: inv.number };
         if (st.state === "exhausted") return { skip: "Alle Mahnstufen sind bereits erstellt.", number: inv.number };
+        if (st.state === "unsent")
+          return { skip: `${DUNNING_STAGE_LABEL[st.last]} ist noch nicht versendet – bitte zuerst per E-Mail senden oder „per Post versendet“ vermerken.`, number: inv.number };
         if (st.state === "waiting") return { skip: `${DUNNING_STAGE_LABEL[st.next]} ist erst ab ${dateDe(st.dueOn)} fällig.`, number: inv.number };
         const stage = st.next;
         const patient = inv.patientId
@@ -193,7 +197,8 @@ export async function createDunnings(auth: AuthContext, invoiceIds: string[]): P
           offener_betrag: money(openCents),
           gebuehren: money(feesTotalCents),
           gesamtbetrag: money(dunningTotalCents(openCents, feesTotalCents)),
-          frist: dateDe(payBy),
+          // Frist erst beim Erzeugen aus pay_by (beim E-Mail-Versand ab Versandtag)
+          frist: FRIST_PLACEHOLDER,
           praxis: o?.legalName ?? o?.name ?? "",
         }).slice(0, MAX_TEXT * 2);
         const [row] = await tx
@@ -279,13 +284,13 @@ async function loadDunning(tx: Tx, org: string, dunningId: string) {
   return { dunning: d, fees, invoice: inv, organization: o, patient, billingContact: billing };
 }
 
-export async function dunningPdfForOrg(org: string, dunningId: string) {
-  if (!z.uuid().safeParse(dunningId).success) return null;
-  const b = await withOrg(org, (tx) => loadDunning(tx, org, dunningId));
-  if (!b) return null;
+type DunningBundle = NonNullable<Awaited<ReturnType<typeof loadDunning>>>;
+
+/** PDF aus der gespeicherten Mahnung (Briefkopf-Schnappschuss); `payBy` überschreibt die Frist (E-Mail-Versand). */
+async function buildDunningPdf(org: string, b: DunningBundle, payBy = b.dunning.payBy) {
   const snap = b.dunning.letterhead as unknown as DunningLetterhead;
   const data: DunningPdfData = {
-    dunning: { ...b.dunning, stage: b.dunning.stage as DunningStage, fees: b.fees },
+    dunning: { ...b.dunning, payBy, stage: b.dunning.stage as DunningStage, fees: b.fees },
     invoice: b.invoice,
     organization: snap.organization,
     patient: snap.patient,
@@ -293,64 +298,106 @@ export async function dunningPdfForOrg(org: string, dunningId: string) {
     logos: await loadLogos(org),
   };
   const bytes = await renderDunningPdf(data);
-  return { bytes, filename: dunningPdfFilename({ stage: data.dunning.stage }, b.invoice), bundle: b };
+  return { bytes, filename: dunningPdfFilename({ stage: data.dunning.stage }, b.invoice) };
+}
+
+export async function dunningPdfForOrg(org: string, dunningId: string) {
+  if (!z.uuid().safeParse(dunningId).success) return null;
+  const b = await withOrg(org, (tx) => loadDunning(tx, org, dunningId));
+  if (!b) return null;
+  return { ...(await buildDunningPdf(org, b)), bundle: b };
 }
 
 const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
 /** Begleit-E-Mail: Text des Schreibens, Anhang PDF. */
-export function dunningEmailText(b: { dunning: Pick<DunningRow, "stage" | "body">; invoice: { number: string | null }; organization: { name: string; legalName: string | null; phone: string | null } }) {
+export function dunningEmailText(b: { dunning: Pick<DunningRow, "stage" | "body" | "payBy">; invoice: { number: string | null }; organization: { name: string; legalName: string | null; phone: string | null } }) {
   const label = DUNNING_STAGE_LABEL[b.dunning.stage as DunningStage] ?? "Mahnung";
   const o = b.organization;
-  const body = [b.dunning.body, "", "Das Schreiben finden Sie zusätzlich als PDF im Anhang.", "", "Bei Fragen erreichen Sie uns gern" + (o.phone ? ` unter ${o.phone}` : "") + ".", "", "Mit freundlichen Grüßen", o.legalName ?? o.name].join("\n");
+  const body = [fillTemplate(b.dunning.body, { frist: dateDe(b.dunning.payBy) }), "", "Das Schreiben finden Sie zusätzlich als PDF im Anhang.", "", "Bei Fragen erreichen Sie uns gern" + (o.phone ? ` unter ${o.phone}` : "") + ".", "", "Mit freundlichen Grüßen", o.legalName ?? o.name].join("\n");
   return { subject: `${label} zur Rechnung ${b.invoice.number ?? ""} – ${o.name}`, body };
 }
 
-/** Mahnung per E-Mail (PDF-Anhang) an Rechnungsempfänger bzw. Person. Nicht mehr, wenn die Rechnung inzwischen bezahlt/storniert ist. */
+/**
+ * Mahnung per E-Mail (PDF-Anhang) an Rechnungsempfänger bzw. Person – nicht mehr, wenn die Rechnung inzwischen
+ * bezahlt/storniert ist oder das Schreiben schon einen Versandvermerk hat.
+ * Ablauf in EINER Transaktion: Zeile sperren (FOR UPDATE, verhindert Doppelversand), Rechnung FOR SHARE prüfen,
+ * Frist ab Versandtag neu setzen, PDF erzeugen, senden, Versandvermerk + Nachricht speichern. Scheitert der Versand,
+ * wird alles zurückgerollt. Testmodus: kein Versandvermerk (es wurde nichts versendet).
+ */
 export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
-  const pdf = await dunningPdfForOrg(org, dunningId);
-  if (!pdf) throw new InvoiceError("Mahnung nicht gefunden.");
-  const { bundle } = pdf;
-  const inv = bundle.invoice;
-  if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Die Rechnung ist inzwischen bezahlt oder storniert – die Mahnung wird nicht mehr versendet.");
-  if (bundle.dunning.sentVia) throw new InvoiceError("Dieses Schreiben ist bereits als versendet vermerkt.");
-  const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
-  if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
-  if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
-  const { subject, body } = dunningEmailText(bundle);
-  let externalId: string;
-  let mock = false;
+  if (!z.uuid().safeParse(dunningId).success) throw new InvoiceError("Mahnung nicht gefunden.");
+  const today = berlinDateIso();
+  let failed: { invoiceId: string; number: string | null; error: unknown } | null = null;
   try {
-    const port = await mailMessagingPort(org, { purpose: "dunning", userId: auth.user.id, entity: "invoice", entityId: inv.id });
-    mock = port.isMock;
-    externalId = (await port.send({ to, subject, body, attachments: [{ filename: pdf.filename, contentType: "application/pdf", data: pdf.bytes }] })).externalId;
-  } catch (e) {
-    await logSync(org, "email_imap", { direction: "out", ok: false, message: `Mahnung ${inv.number}: ${describeError(e)}`, entity: "invoice", entityId: inv.id });
-    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${e instanceof MailSendError || e instanceof MailNotConfiguredError ? e.message : "Details im Synchronisationsprotokoll."}`);
-  }
-  await withOrg(org, async (tx) => {
-    await tx
-      .update(invoiceDunnings)
-      .set({ sentVia: "email", sentAt: new Date(), sentTo: to })
-      .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId), isNull(invoiceDunnings.sentVia)));
-    await tx.insert(messages).values({
-      organizationId: org,
-      patientId: inv.patientId,
-      channel: "email",
-      direction: "outbound",
-      toAddress: to,
-      subject,
-      body: `${body}\n\n[Anhang: ${pdf.filename}]`,
-      status: "answered",
-      externalId,
-      threadKey: to,
+    const r = await withOrg(org, async (tx) => {
+      const [claim] = await tx
+        .select()
+        .from(invoiceDunnings)
+        .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId)))
+        .for("update");
+      if (!claim) throw new InvoiceError("Mahnung nicht gefunden.");
+      if (claim.sentVia) throw new InvoiceError("Dieses Schreiben ist bereits als versendet vermerkt.");
+      const [lock] = await tx
+        .select({ status: invoices.status })
+        .from(invoices)
+        .where(and(eq(invoices.organizationId, org), eq(invoices.id, claim.invoiceId)))
+        .for("share");
+      if (!lock || (lock.status !== "issued" && lock.status !== "partially_paid"))
+        throw new InvoiceError("Die Rechnung ist inzwischen bezahlt oder storniert – die Mahnung wird nicht mehr versendet.");
+      const bundle = (await loadDunning(tx, org, dunningId))!;
+      const inv = bundle.invoice;
+      const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
+      if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
+      if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
+      const port = await mailMessagingPort(org, { purpose: "dunning", userId: auth.user.id, entity: "invoice", entityId: inv.id });
+      const mock = port.isMock;
+      // Frist ab Versandtag (nie kürzer als im erstellten Schreiben); im Testmodus bleibt alles unverändert
+      const settings = readDunningSettings((bundle.organization.settings ?? {}) as Record<string, unknown>);
+      const sendPayBy = addDaysIso(today, settings.payDays);
+      const payBy = !mock && sendPayBy > claim.payBy ? sendPayBy : claim.payBy;
+      const pdf = await buildDunningPdf(org, bundle, payBy);
+      const { subject, body } = dunningEmailText({ ...bundle, dunning: { ...bundle.dunning, payBy } });
+      let externalId: string;
+      try {
+        externalId = (await port.send({ to, subject, body, attachments: [{ filename: pdf.filename, contentType: "application/pdf", data: pdf.bytes }] })).externalId;
+      } catch (e) {
+        failed = { invoiceId: inv.id, number: inv.number, error: e };
+        throw e;
+      }
+      if (!mock) {
+        const done = await tx
+          .update(invoiceDunnings)
+          .set({ sentVia: "email", sentAt: new Date(), sentTo: to, payBy })
+          .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId), isNull(invoiceDunnings.sentVia)))
+          .returning({ id: invoiceDunnings.id });
+        if (done.length !== 1) throw new InvoiceError("Dieses Schreiben ist bereits als versendet vermerkt.");
+      }
+      await tx.insert(messages).values({
+        organizationId: org,
+        patientId: inv.patientId,
+        channel: "email",
+        direction: "outbound",
+        toAddress: to,
+        subject,
+        body: `${body}\n\n[Anhang: ${pdf.filename}]`,
+        status: "answered",
+        externalId,
+        threadKey: to,
+      });
+      return { to, mock, invoiceId: inv.id, number: inv.number, stage: bundle.dunning.stage, payBy };
     });
-  });
-  await logSync(org, "email_imap", { direction: "out", ok: true, message: `Mahnung ${inv.number}: ${mock ? "Testmodus – nicht wirklich versendet" : "versendet"}`, entity: "invoice", entityId: inv.id });
-  await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_send_email", entity: "invoice", entityId: inv.id, meta: { dunningId, stage: bundle.dunning.stage, mock } });
-  return { to, mock, invoiceId: inv.id };
+    await logSync(org, "email_imap", { direction: "out", ok: true, message: `Mahnung ${r.number}: ${r.mock ? "Testmodus – nicht wirklich versendet" : "versendet"}`, entity: "invoice", entityId: r.invoiceId });
+    await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_send_email", entity: "invoice", entityId: r.invoiceId, meta: { dunningId, stage: r.stage, mock: r.mock, payBy: r.payBy } });
+    return { to: r.to, mock: r.mock, invoiceId: r.invoiceId };
+  } catch (e) {
+    if (!failed) throw e;
+    const f = failed as { invoiceId: string; number: string | null; error: unknown };
+    await logSync(org, "email_imap", { direction: "out", ok: false, message: `Mahnung ${f.number}: ${describeError(f.error)}`, entity: "invoice", entityId: f.invoiceId });
+    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${f.error instanceof MailSendError || f.error instanceof MailNotConfiguredError ? f.error.message : "Details im Synchronisationsprotokoll."}`);
+  }
 }
 
 /** Versandvermerk „per Post“ (Ausdruck verschickt). */
@@ -380,7 +427,7 @@ const stageInput = z.object({
     .int()
     .min(0, "Gebühr: nicht negativ")
     .max(MAX_FEE_CENTS, MAX_FEE_CENTS > 0 ? `Gebühr: höchstens ${money(MAX_FEE_CENTS)} (nur konkrete Kosten)` : "Mahngebühren folgen, sobald die Verbuchung eingebaut ist."),
-  text: z.string().trim().min(20, "Text: bitte einen Brieftext angeben.").max(MAX_TEXT, `Text: höchstens ${MAX_TEXT} Zeichen`),
+  text: z.preprocess((v) => (typeof v === "string" ? normalizeNewlines(v) : v), z.string().trim().min(20, "Text: bitte einen Brieftext angeben.").max(MAX_TEXT, `Text: höchstens ${MAX_TEXT} Zeichen`)),
 });
 export const dunningSettingsInput = z.object({
   payDays: z.coerce.number({ error: "Zahlungsfrist: bitte eine Zahl angeben." }).int().min(1, "Zahlungsfrist: mindestens 1 Tag").max(MAX_PAY_DAYS, `Zahlungsfrist: höchstens ${MAX_PAY_DAYS} Tage`),

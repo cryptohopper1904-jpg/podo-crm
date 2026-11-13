@@ -97,7 +97,7 @@ export function readDunningSettings(settings: Record<string, unknown> | null | u
   for (const s of DUNNING_STAGES) {
     const d = DEFAULT_DUNNING_SETTINGS.stages[s];
     const r = st[s] ?? {};
-    const text = typeof r.text === "string" && r.text.trim() ? r.text.slice(0, MAX_TEXT) : d.text;
+    const text = typeof r.text === "string" && r.text.trim() ? normalizeNewlines(r.text).slice(0, MAX_TEXT) : d.text;
     stages[s] = {
       days: intIn(r.days, 1, MAX_STAGE_DAYS, d.days),
       // Zahlungserinnerung begründet erst den Verzug → keine Gebühr
@@ -109,7 +109,7 @@ export function readDunningSettings(settings: Record<string, unknown> | null | u
 }
 
 export type DunnableInvoice = { kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number };
-export type PastDunning = { stage: string; letterDate: string; payBy: string };
+export type PastDunning = { stage: string; letterDate: string; payBy: string; sentVia: string | null };
 
 /** Ganze Kalendertage von a bis b (YYYY-MM-DD). */
 export function daysBetween(a: string, b: string): number {
@@ -123,12 +123,14 @@ export type DunningState =
   | { state: "not_dunnable"; reason: string }
   | { state: "not_overdue"; daysOverdue: 0 }
   | { state: "exhausted"; daysOverdue: number; last: DunningStage }
+  /** vorige Stufe erstellt, aber noch nicht versendet (kein Versandvermerk) → nächste Stufe gesperrt */
+  | { state: "unsent"; daysOverdue: number; last: DunningStage; next: DunningStage }
   | { state: "waiting" | "due"; daysOverdue: number; next: DunningStage; dueOn: string; last: DunningStage | null };
 
 /**
  * Nächste Mahnstufe einer Rechnung zum Stichtag `today` (YYYY-MM-DD, Berliner Kalendertag).
  * Zahlungserinnerung: `days` Tage nach dem Zahlungsziel; weitere Stufen: `days` Tage nach dem vorigen Schreiben,
- * frühestens am Tag nach der dort gesetzten Zahlungsfrist (pay_by).
+ * frühestens am Tag nach der dort gesetzten Zahlungsfrist (pay_by) und nur, wenn es versendet ist (Versandvermerk).
  * Feiertage/Wochenenden werden nicht berücksichtigt.
  */
 export function dunningState(inv: DunnableInvoice, past: PastDunning[], settings: DunningSettings, today: string): DunningState {
@@ -140,17 +142,20 @@ export function dunningState(inv: DunnableInvoice, past: PastDunning[], settings
   let lastIdx = -1;
   let lastDate: string | null = null;
   let lastPayBy: string | null = null;
+  let lastSent: string | null = null;
   for (const p of past) {
     const i = DUNNING_STAGES.indexOf(p.stage as DunningStage);
     if (i > lastIdx) {
       lastIdx = i;
       lastDate = p.letterDate.slice(0, 10);
       lastPayBy = p.payBy.slice(0, 10);
+      lastSent = p.sentVia;
     }
   }
   const last = lastIdx >= 0 ? DUNNING_STAGES[lastIdx] : null;
   if (lastIdx >= DUNNING_STAGES.length - 1) return { state: "exhausted", daysOverdue, last: last! };
   const next = DUNNING_STAGES[lastIdx + 1];
+  if (last && !lastSent) return { state: "unsent", daysOverdue, last, next };
   let dueOn = addDaysIso(lastDate ?? inv.dueAt.slice(0, 10), settings.stages[next].days);
   // nie vor Ablauf der im vorigen Schreiben gesetzten Zahlungsfrist
   if (lastPayBy) {
@@ -170,6 +175,15 @@ export function salutationLine(p: { salutation?: string | null; title?: string |
   if (s === "herr") return `Sehr geehrter Herr ${name}`;
   return `Guten Tag ${[p.title, p.firstName, p.lastName].filter(Boolean).join(" ")}`;
 }
+
+/** Zeilenumbrüche vereinheitlichen (Textarea sendet \r\n) – vor Längenprüfung und Speicherung. */
+export const normalizeNewlines = (s: string) => s.replace(/\r\n?/g, "\n");
+
+/**
+ * Platzhalter, der erst beim Erzeugen von PDF/E-Mail aus pay_by ersetzt wird: Beim E-Mail-Versand beginnt
+ * die Frist am Versandtag (pay_by wird dann einmalig nach hinten verschoben).
+ */
+export const FRIST_PLACEHOLDER = "{frist}";
 
 /** Ersetzt {platzhalter}; unbekannte Platzhalter bleiben stehen (fällt in der Vorschau auf). */
 export function fillTemplate(template: string, values: Record<string, string>): string {

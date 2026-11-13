@@ -1,11 +1,12 @@
 /**
  * PDF einer Zahlungserinnerung / Mahnung (pdf-lib, reine Funktion ohne Server-Importe).
  * Gleicher Briefkopf, Anschriftenblock, GiroCode und Fußzeile wie die Rechnung (src/lib/pdf-letter.ts).
- * Alle Inhalte stammen aus der gespeicherten Mahnung (Text, offener Betrag, Gebühren, Fristen) – das PDF
- * sieht deshalb bei jedem Abruf gleich aus; nur der Briefkopf folgt den aktuellen Praxisdaten.
+ * Inhalte stammen aus der gespeicherten Mahnung: Text, offener Betrag, Gebühren, Fristen sowie Briefkopf,
+ * Bankverbindung und Empfängeranschrift (Schnappschuss beim Erstellen). Nur die Logos werden aktuell geladen.
+ * Der Platzhalter {frist} im Text wird hier aus pay_by ersetzt.
  */
 import { PDFDocument, type PDFPage } from "pdf-lib";
-import { DUNNING_STAGE_LABEL, DUNNING_STAGE_TITLE, dunningTotalCents, type DunningStage } from "./dunning";
+import { DUNNING_STAGE_LABEL, DUNNING_STAGE_TITLE, dunningTotalCents, fillTemplate, type DunningStage } from "./dunning";
 import { epcPayload, isValidIban } from "./epc-qr";
 import { dateDe, money } from "./format";
 import { invoiceRecipient, senderLine } from "./invoice-view";
@@ -93,7 +94,7 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
   w.text(`zur Rechnung ${inv.number ?? ""} vom ${dateDe(inv.issuedAt)} (zahlbar bis ${dateDe(inv.dueAt)})`, ML, y, { size: 9.5 });
   y -= 22;
 
-  for (const l of w.wrap(d.body, CONTENT_WIDTH, 10)) {
+  for (const l of w.wrap(fillTemplate(d.body, { frist: dateDe(d.payBy) }), CONTENT_WIDTH, 10)) {
     ensure(13);
     if (l) w.text(l, ML, y, { size: 10 });
     y -= 13;

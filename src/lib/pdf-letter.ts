@@ -46,7 +46,7 @@ export async function embedImage(doc: PDFDocument, img: PdfImage | null | undefi
 export function makeSafe(font: PDFFont) {
   const charset = new Set(font.getCharacterSet());
   return (s: string) =>
-    [...s.normalize("NFC")]
+    [...s.replace(/\r\n?/g, "\n").normalize("NFC")]
       .map((c) => {
         if (c === "\t") return " ";
         // Zeilenumbrüche bleiben erhalten (wrap teilt daran Absätze auf)

@@ -17,11 +17,16 @@ export default async function DunningPage() {
     const daysOverdue = "daysOverdue" in s ? s.daysOverdue : 0;
     let nextLabel = "–";
     let due = false;
+    let warn = false;
     if (s.state === "due") {
       nextLabel = `${DUNNING_STAGE_LABEL[s.next]} fällig`;
       due = true;
     } else if (s.state === "waiting") nextLabel = `${DUNNING_STAGE_LABEL[s.next]} ab ${dateDe(s.dueOn)}`;
     else if (s.state === "exhausted") nextLabel = "alle Stufen erstellt";
+    else if (s.state === "unsent") {
+      nextLabel = `${DUNNING_STAGE_LABEL[s.last]} noch nicht versendet`;
+      warn = true;
+    }
     return {
       invoiceId: r.invoiceId,
       number: r.number,
@@ -31,6 +36,7 @@ export default async function DunningPage() {
       openLabel: money(r.openCents),
       nextLabel,
       due,
+      warn,
       hasEmail: r.hasEmail,
       last: r.last
         ? {
@@ -68,7 +74,8 @@ export default async function DunningPage() {
             <Link href="/einstellungen/praxis#mahnwesen" className="font-semibold text-primary underline">Fristen, Gebühren und Texte ändern</Link>
           </>
         ) : null}
-        {" "}Bezahlte oder stornierte Rechnungen, Quittungen und Anzahlungen erscheinen hier nicht. Teilzahlungen verringern den offenen Betrag.
+        {" "}Bezahlte oder stornierte Rechnungen, Quittungen und Anzahlungen erscheinen hier nicht. Teilzahlungen verringern den offenen Betrag. Die nächste Stufe gibt es erst, wenn das vorige Schreiben versendet ist
+        (E-Mail oder Vermerk „per Post“) und dessen Zahlungsfrist abgelaufen ist.
       </p>
       {items.length === 0 ? (
         <Empty title="Keine überfälligen Rechnungen">Alle ausgestellten Rechnungen sind bezahlt oder noch nicht fällig.</Empty>

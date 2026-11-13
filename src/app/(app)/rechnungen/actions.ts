@@ -243,7 +243,7 @@ export async function sendDunningEmailAction(_: SimpleState, form: FormData): Pr
     const r = await sendDunningEmail(auth, id.data);
     refresh(r.invoiceId);
     revalidatePath("/rechnungen/mahnungen");
-    return { success: r.mock ? `Testmodus: E-Mail an ${r.to} vorbereitet, aber nicht wirklich versendet.` : `An ${r.to} gesendet.` };
+    return { success: r.mock ? `Testmodus: nicht versendet (E-Mail an ${r.to} nur simuliert, kein Versandvermerk gesetzt).` : `An ${r.to} gesendet.` };
   } catch (e) {
     return { error: errorMessage(e) };
   }

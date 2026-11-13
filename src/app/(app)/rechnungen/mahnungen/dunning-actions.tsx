@@ -17,6 +17,8 @@ export type OverviewItem = {
   /** „Zahlungserinnerung ab sofort“ / „1. Mahnung ab 12.12.2026“ / „alle Stufen erstellt“ */
   nextLabel: string;
   due: boolean;
+  /** vorige Stufe noch nicht versendet */
+  warn: boolean;
   last: { id: string; label: string; date: string; sentLabel: string | null } | null;
   hasEmail: boolean;
 };
@@ -101,14 +103,16 @@ export function DunningOverviewTable({ items, canWrite }: { items: OverviewItem[
               <td className="text-sm tabular-nums">{i.dueAt}</td>
               <td className="text-right tabular-nums">{i.daysOverdue}</td>
               <td className="text-right font-semibold tabular-nums text-danger">{i.openLabel}</td>
-              <td className="text-sm">{i.due ? <Badge tone="accent">{i.nextLabel}</Badge> : <span className="text-muted">{i.nextLabel}</span>}</td>
+              <td className="text-sm">
+                {i.due ? <Badge tone="accent">{i.nextLabel}</Badge> : i.warn ? <Badge tone="warn">{i.nextLabel}</Badge> : <span className="text-muted">{i.nextLabel}</span>}
+              </td>
               <td className="text-sm">
                 {i.last ? (
                   <span className="flex flex-col">
                     <a href={`/api/mahnungen/${i.last.id}/pdf`} target="_blank" rel="noreferrer" className="font-semibold text-primary underline">
                       {i.last.label} vom {i.last.date}
                     </a>
-                    <span className="text-xs text-muted">{i.last.sentLabel ?? "noch nicht versendet"}</span>
+                    {i.last.sentLabel ? <span className="text-xs text-muted">{i.last.sentLabel}</span> : <span className="text-xs font-semibold text-danger">noch nicht versendet</span>}
                   </span>
                 ) : (
                   <span className="text-muted">–</span>

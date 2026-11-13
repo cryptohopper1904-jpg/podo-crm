@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import { makeSafe } from "./pdf-letter";
 import {
   DEFAULT_DUNNING_SETTINGS,
   DEFAULT_DUNNING_TEXT,
@@ -7,6 +8,7 @@ import {
   dunningState,
   fillTemplate,
   isDunnable,
+  normalizeNewlines,
   readDunningSettings,
   salutationLine,
 } from "./dunning";
@@ -62,24 +64,29 @@ describe("Mahnwesen: Stufenberechnung", () => {
   });
 
   it("weitere Stufen jeweils 14 Tage nach dem vorigen Schreiben, danach erschöpft", () => {
-    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-20" }];
+    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-20", sentVia: "post" }];
     expect(dunningState(inv(), r, S, "2026-11-23")).toMatchObject({ state: "waiting", next: "dunning1", dueOn: "2026-11-24", last: "reminder" });
     expect(dunningState(inv(), r, S, "2026-11-24")).toMatchObject({ state: "due", next: "dunning1" });
-    const r2 = [...r, { stage: "dunning1", letterDate: "2026-11-30", payBy: "2026-12-10" }];
+    const r2 = [...r, { stage: "dunning1", letterDate: "2026-11-30", payBy: "2026-12-10", sentVia: "post" }];
     expect(dunningState(inv(), r2, S, "2026-12-14")).toMatchObject({ state: "due", next: "dunning2", dueOn: "2026-12-14" });
-    const r3 = [...r2, { stage: "dunning2", letterDate: "2026-12-20", payBy: "2026-12-30" }];
+    const r3 = [...r2, { stage: "dunning2", letterDate: "2026-12-20", payBy: "2026-12-30", sentVia: "post" }];
     expect(dunningState(inv(), r3, S, "2027-02-01")).toMatchObject({ state: "exhausted", last: "dunning2" });
   });
 
   it("nächste Stufe nie vor Ablauf der Zahlungsfrist des vorigen Schreibens", () => {
     // Frist im Schreiben (30 Tage) länger als der Abstand der Stufen (14 Tage) → erst am Tag nach der Frist
-    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-12-10" }];
+    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-12-10", sentVia: "post" }];
     expect(dunningState(inv(), r, S, "2026-11-24")).toMatchObject({ state: "waiting", next: "dunning1", dueOn: "2026-12-11" });
     expect(dunningState(inv(), r, S, "2026-12-10").state).toBe("waiting");
     expect(dunningState(inv(), r, S, "2026-12-11").state).toBe("due");
     // kurze Frist: Abstand der Stufen gilt
-    const short = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-12" }];
+    const short = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-12", sentVia: "post" }];
     expect(dunningState(inv(), short, S, "2026-11-23")).toMatchObject({ state: "waiting", dueOn: "2026-11-24" });
+  });
+
+  it("nächste Stufe gesperrt, solange das vorige Schreiben nicht versendet ist", () => {
+    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-20", sentVia: null }];
+    expect(dunningState(inv(), r, S, "2027-01-15")).toMatchObject({ state: "unsent", last: "reminder", next: "dunning1" });
   });
 
   it("über Monats-/Jahresgrenzen und mit eigenen Fristen", () => {
@@ -96,6 +103,15 @@ describe("Mahnwesen: Texte", () => {
     expect(salutationLine({ salutation: "Herr", title: "Dr.", lastName: "Beispiel" })).toBe("Sehr geehrter Herr Dr. Beispiel");
     expect(salutationLine({ salutation: null, firstName: "Alex", lastName: "Muster" })).toBe("Guten Tag Alex Muster");
     expect(salutationLine({ lastName: "Muster" }, "Haus Sonnenschein")).toBe("Sehr geehrte Damen und Herren");
+  });
+
+  it("Zeilenumbrüche aus Textareas (\\r\\n) werden vereinheitlicht – im PDF kein „?“", async () => {
+    expect(normalizeNewlines("a\r\nb\rc\nd")).toBe("a\nb\nc\nd");
+    const s = readDunningSettings({ dunning: { stages: { reminder: { text: "{anrede},\r\n\r\nbitte zahlen." } } } });
+    expect(s.stages.reminder.text).toBe("{anrede},\n\nbitte zahlen.");
+    const doc = await PDFDocument.create();
+    const safe = makeSafe(await doc.embedFont(StandardFonts.Helvetica));
+    expect(safe("Zeile 1\r\nZeile 2\rZeile 3")).toBe("Zeile 1\nZeile 2\nZeile 3");
   });
 
   it("Platzhalter ersetzen, unbekannte bleiben stehen", () => {
