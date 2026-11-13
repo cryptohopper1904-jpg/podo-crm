@@ -68,13 +68,13 @@ export default async function WebsiteSettingsPage() {
           </Field>
           <Checkbox name="showPrices" defaultChecked={w.showPrices} label="Preise anzeigen (Leistungen mit 0 € erscheinen als „auf Anfrage“)" />
 
-          <fieldset className="rounded-xl border border-border p-4">
+          <fieldset className="min-w-0 rounded-xl border border-border p-4">
             <legend className="px-1 text-sm font-semibold">Praxiszeiten (leer = geschlossen)</legend>
             <div className="grid gap-2">
               {[1, 2, 3, 4, 5, 6, 7].map((wd) => {
                 const h = hours.find((x) => x.weekday === wd);
                 return (
-                  <div key={wd} className="grid grid-cols-[7rem_1fr_1fr] items-center gap-2">
+                  <div key={wd} className="grid grid-cols-[5.5rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2 sm:grid-cols-[7rem_minmax(0,1fr)_minmax(0,1fr)]">
                     <span className="text-sm font-medium">{WEEKDAYS[wd]}</span>
                     <Input type="time" name={`from${wd}`} defaultValue={h?.from ?? ""} aria-label={`${WEEKDAYS[wd]} von`} />
                     <Input type="time" name={`to${wd}`} defaultValue={h?.to ?? ""} aria-label={`${WEEKDAYS[wd]} bis`} />
@@ -89,7 +89,7 @@ export default async function WebsiteSettingsPage() {
           </Field>
 
           {shown.length ? (
-            <fieldset className="rounded-xl border border-border p-4">
+            <fieldset className="min-w-0 rounded-xl border border-border p-4">
               <legend className="px-1 text-sm font-semibold">Kurzbeschreibungen der Leistungen</legend>
               <div className="grid gap-3 md:grid-cols-2">
                 {shown.map((s) => (

@@ -4,9 +4,10 @@ import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
-import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, cx, Field, fieldCls, FieldSlot, fieldLabelCls, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
+import { serviceDateDefaults } from "@/lib/invoice-view";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
@@ -27,6 +28,8 @@ export type InvoicePreset = {
   patientId?: string | null;
   billingContactId?: string | null;
   notes?: string | null;
+  /** Leistungsdatum für Positionen ohne Termin-Bezug (z. B. Tag des Termins, aus dem die Rechnung entsteht) */
+  serviceDate?: string | null;
   lines: { treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
 
@@ -148,6 +151,11 @@ export function InvoiceForm({
     const cents = preset.lines.reduce((s, l) => s + lineTotalCents(l.unitPriceCents ?? 0, l.quantity, 1), 0);
     return cents > 0 ? [newPaymentRow(cents)] : [];
   });
+  const [issuedAt, setIssuedAt] = useState(today);
+  /** Leistungsdatum ohne Termin-/Doku-Bezug; null = folgt dem Rechnungsdatum, bis es geändert wird */
+  const [serviceDate, setServiceDate] = useState<string | null>(preset?.serviceDate ?? null);
+  /** Sammelrechnung ohne Termin-Bezug: Ende des Leistungszeitraums (optional) */
+  const [serviceDateTo, setServiceDateTo] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
@@ -188,6 +196,12 @@ export function InvoiceForm({
   const productError = resolveProductVat(filled.map(ruleOf), { smallBusiness, invoiceKind: kind }).error;
   const hasProducts = filled.some((l) => l.productId);
   const totals = computeTotals(filled);
+  /**
+   * Eigene Positionen ohne Bezug (z. B. Pflegeprodukt, nicht aus einer Quittung übernommen): brauchen ein Leistungsdatum –
+   * auch neben verknüpften. Übernommene Quittungen bringen ihr festgeschriebenes Leistungsdatum selbst mit.
+   */
+  const freeLines = computed.some((l) => !l.blank && !l.appointmentId && !l.treatmentRecordId && !l.fromReceipt);
+  const fromRefs = computed.some((l) => !l.blank && (!!l.appointmentId || !!l.treatmentRecordId || !!l.fromReceipt));
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -199,13 +213,22 @@ export function InvoiceForm({
   const depositDefault = (k: CreatableKind, d: OpenDeposit) =>
     (k === "collective" && inYear(d.issuedAt)) ||
     ((k === "invoice" || k === "collective") && ((!!d.appointmentId && presetRefs.has(d.appointmentId)) || (!!d.treatmentRecordId && presetRefs.has(d.treatmentRecordId))));
-  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+  // „Trotzdem erstellen“ gilt nur für genau den angezeigten Dubletten-Beleg: zeigt der nächste Hinweis auf einen anderen,
+  // ist der Haken automatisch wieder aus (Bestätigung an die ID gebunden statt per Effekt zurückgesetzt)
+  const [duplicateAckFor, setDuplicateAckFor] = useState<string | null>(null);
+  const duplicateId = state?.duplicate?.id ?? null;
+  const confirmDuplicate = !!duplicateId && duplicateAckFor === duplicateId;
+  const setConfirmDuplicate = (on: boolean) => setDuplicateAckFor(on ? duplicateId : null);
   const depositOn = (id: string) => depositSel[id] ?? depositDefault(kind, patientDeposits.find((d) => d.id === id)!);
   const credited = patientDeposits.filter((d) => depositOn(d.id));
   const patientReceipts = kind === "collective" && patientId ? (receiptsBy[patientId] ?? []) : [];
   const receiptOn = (id: string) => receiptSel[id] ?? true;
   const creditedReceipts = patientReceipts.filter((r) => receiptOn(r.id));
   const creditedReceiptCents = creditedReceipts.reduce((s, r) => s + r.totalCents, 0);
+  /** Leistungstage der übernommenen Quittungen → Vorbelegung des Leistungszeitraums (Sammelrechnung) */
+  const receiptDays = creditedReceipts.flatMap((r) => r.lines.map((l) => l.serviceDate ?? r.issuedAt)).filter((d): d is string => !!d).sort();
+  const { from: serviceValue, to: serviceToValue, receiptHint } = serviceDateDefaults({ kind, issuedAt, serviceDate, serviceDateTo, receiptDays, dateDe });
+  const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" ? "Leistung von" : "Leistungsdatum";
   const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0) + creditedReceiptCents;
   const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
   /** eine Auswahlliste für beide Quittungsarten (Sammelrechnung), nach Datum */
@@ -390,6 +413,8 @@ export function InvoiceForm({
         treatmentLine: rule.kind === "product" ? (rule.treatmentLine ?? null) : null,
         treatmentRecordId: l.treatmentRecordId || null,
         appointmentId: l.appointmentId || null,
+        // aus einer übernommenen Quittung: deren Leistungsdatum gilt (nicht das Formular-Datum)
+        fromReceipt: !!l.fromReceipt,
         description: l.description,
         quantity: num(l.quantity),
         factor: l.productId ? 1 : num(l.factor),
@@ -458,12 +483,13 @@ export function InvoiceForm({
             </button>
           ))}
         </div>
-        {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl vier (Gesamt-Review M8) */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+        {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl drei (Gesamt-Review M8). Beschriftungen
+            einzeilig, Hinweise unter dem Feld – die Eingaben einer Zeile stehen immer auf derselben Höhe. */}
+        <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Field label="Patient suchen">
             <Input value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)} placeholder="Name oder Nummer" autoComplete="off" />
           </Field>
-          <Field label={kind === "collective" ? "Patient (für die Jahres-Sammelrechnung)" : "Patient *"}>
+          <Field label={kind === "collective" ? "Patient" : "Patient *"} hint={kind === "collective" ? "für die Jahres-Sammelrechnung" : undefined}>
             <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective" || !billingContactId}>
               <option value="">– bitte wählen –</option>
               {filteredPatients.map((p) => (
@@ -473,7 +499,10 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <Field label={kind === "collective" ? "Rechnungsempfänger (z. B. Pflegeheim)" : "Abweichender Rechnungsempfänger"} hint={kind === "collective" ? "Patient oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}>
+          <Field
+            label={kind === "collective" ? "Rechnungsempfänger" : "Abweichender Rechnungsempfänger"}
+            hint={kind === "collective" ? "z. B. Pflegeheim – Patient oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}
+          >
             <Select name="billingContactId" value={billingContactId} onChange={(e) => setBillingContactId(e.target.value)} required={kind === "collective" && !patientId}>
               <option value="">– keiner –</option>
               {billingContacts.map((c) => (
@@ -481,14 +510,39 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Datum">
-              <Input type="date" name="issuedAt" defaultValue={today} max={today} required />
+          <Field label="Datum">
+            <Input type="date" name="issuedAt" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} max={today} required />
+          </Field>
+          {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Verknüpfte Termine liefern ihn selbst; Positionen ohne Bezug
+              brauchen ein Datum – der Beleg nennt beim Ausstellen den Zeitraum aus beidem (festgeschrieben). */}
+          {fromRefs && !freeLines ? (
+            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint={receiptHint ?? "aus den verknüpften Terminen bzw. übernommenen Quittungen"}>
+              <Input value="laut Termin/Quittung" disabled readOnly />
             </Field>
-            <Field label="Zahlungsziel (Tage)" hint="0 = sofort">
-              <Input type="number" name="dueDays" min={0} max={120} defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
+          ) : (
+            <Field
+              label={serviceLabel}
+              hint={
+                kind === "no_show_fee"
+                  ? "Datum des versäumten Termins"
+                  : receiptHint
+                    ? `Eigene Positionen (z. B. Produkte). ${receiptHint}.`
+                    : fromRefs
+                      ? "für Positionen ohne Termin/Quittung (z. B. Produkte)"
+                      : "Tag der Behandlung bzw. Lieferung"
+              }
+            >
+              <Input type="date" name="serviceDate" value={serviceValue} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
             </Field>
-          </div>
+          )}
+          {kind === "collective" && (freeLines || !fromRefs) ? (
+            <Field label="Leistung bis" hint="optional – Leistungszeitraum (§ 31 Abs. 4 UStDV)">
+              <Input type="date" name="serviceDateTo" value={serviceToValue} onChange={(e) => setServiceDateTo(e.target.value)} min={serviceValue || undefined} max={today} />
+            </Field>
+          ) : null}
+          <Field label="Zahlungsziel" hint={kind === "receipt" ? "Quittung: sofort bezahlt" : "in Tagen, 0 = sofort"}>
+            <Input type="number" name="dueDays" min={0} max={120} suffix="Tage" defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
+          </Field>
         </div>
       </Card>
 
@@ -577,59 +631,61 @@ export function InvoiceForm({
             return (
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
-              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
-                <div role="group" aria-labelledby={`pos-${i}-label`} className="flex flex-col gap-1.5 md:col-span-3 2xl:col-span-1">
-                  <span id={`pos-${i}-label`} className="text-sm font-medium">{`Pos. ${i + 1}: ${prod ? "Produkt" : "Leistung"}`}</span>
-                  <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
-                    <Input
-                      ref={(el) => {
-                        if (!el) return void codeRefs.current.delete(l.key);
-                        codeRefs.current.set(l.key, el);
-                        if (pendingFocus.current === l.key) {
-                          pendingFocus.current = null;
-                          el.focus();
-                        }
-                      }}
-                      aria-label={`Pos. ${i + 1}: Leistung – Kürzel`}
-                      aria-invalid={codeUnknown(l) || undefined}
-                      aria-describedby={codeUnknown(l) ? `pos-${i}-hint` : undefined}
-                      title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
-                      placeholder="Kürzel"
-                      autoComplete="off"
-                      autoCapitalize="characters"
-                      spellCheck={false}
-                      maxLength={10}
-                      className="uppercase"
-                      value={l.codeInput ?? s?.code ?? prod?.code ?? ""}
-                      onChange={(e) => typeCode(l.key, e.target.value)}
-                      onKeyDown={(e) => codeKeyDown(e, l.key)}
-                      onBlur={() => codeBlur(l.key)}
-                    />
-                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} title="Leistung oder Produkt auswählen" value={l.productId ? `${PRODUCT_PREFIX}${l.productId}` : l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
-                      <option value="">Freitext</option>
-                      {products.length ? (
-                        <>
-                          <optgroup label="Leistungen">
-                            {services.map((sv) => (
-                              <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Produkte">
-                            {products.map((p) => (
-                              <option key={p.id} value={`${PRODUCT_PREFIX}${p.id}`}>{p.code ? `${p.code} · ` : ""}{p.name}</option>
-                            ))}
-                          </optgroup>
-                        </>
-                      ) : (
-                        services.map((sv) => (
-                          <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
-                        ))
-                      )}
-                    </Select>
+              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-start 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
+                <div role="group" aria-labelledby={`pos-${i}-label`} className={cx(fieldCls, "md:col-span-3 2xl:col-span-1")}>
+                  <span id={`pos-${i}-label`} className={fieldLabelCls}>{`Pos. ${i + 1}: ${prod ? "Produkt" : "Leistung"}`}</span>
+                  <div className="flex min-w-0 flex-col gap-1.5">
+                    <div className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
+                      <Input
+                        ref={(el) => {
+                          if (!el) return void codeRefs.current.delete(l.key);
+                          codeRefs.current.set(l.key, el);
+                          if (pendingFocus.current === l.key) {
+                            pendingFocus.current = null;
+                            el.focus();
+                          }
+                        }}
+                        aria-label={`Pos. ${i + 1}: Leistung – Kürzel`}
+                        aria-invalid={codeUnknown(l) || undefined}
+                        aria-describedby={codeUnknown(l) ? `pos-${i}-hint` : undefined}
+                        title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
+                        placeholder="Kürzel"
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        maxLength={10}
+                        className="uppercase placeholder:normal-case"
+                        value={l.codeInput ?? s?.code ?? prod?.code ?? ""}
+                        onChange={(e) => typeCode(l.key, e.target.value)}
+                        onKeyDown={(e) => codeKeyDown(e, l.key)}
+                        onBlur={() => codeBlur(l.key)}
+                      />
+                      <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} title="Leistung oder Produkt auswählen" value={l.productId ? `${PRODUCT_PREFIX}${l.productId}` : l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                        <option value="">Freitext</option>
+                        {products.length ? (
+                          <>
+                            <optgroup label="Leistungen">
+                              {services.map((sv) => (
+                                <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                              ))}
+                            </optgroup>
+                            <optgroup label="Produkte">
+                              {products.map((p) => (
+                                <option key={p.id} value={`${PRODUCT_PREFIX}${p.id}`}>{p.code ? `${p.code} · ` : ""}{p.name}</option>
+                              ))}
+                            </optgroup>
+                          </>
+                        ) : (
+                          services.map((sv) => (
+                            <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
+                          ))
+                        )}
+                      </Select>
+                    </div>
+                    {codeUnknown(l) ? (
+                      <span id={`pos-${i}-hint`} aria-live="polite" className="text-xs text-danger">Kürzel „{normalizeServiceCode(l.codeInput ?? "")}“ unbekannt</span>
+                    ) : null}
                   </div>
-                  {codeUnknown(l) ? (
-                    <span id={`pos-${i}-hint`} aria-live="polite" className="text-xs text-danger">Kürzel „{normalizeServiceCode(l.codeInput ?? "")}“ unbekannt</span>
-                  ) : null}
                 </div>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
                   <Input value={l.description} disabled={!!prod} title={prod ? "Produktname aus dem Katalog" : undefined} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
@@ -640,8 +696,8 @@ export function InvoiceForm({
                 <Field label="Faktor">
                   <Input inputMode="decimal" value={prod ? "1" : l.factor} disabled={!!prod} onChange={(e) => update(l.key, { factor: e.target.value })} />
                 </Field>
-                <Field label="Preis (€)" hint={s || prod ? "aus Katalog" : undefined}>
-                  <Input inputMode="decimal" value={l.price} disabled={!!s || !!prod} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
+                <Field label="Preis" hint={s || prod ? "aus Katalog" : undefined}>
+                  <Input inputMode="decimal" suffix="€" value={l.price} disabled={!!s || !!prod} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
                 </Field>
                 <Field label="USt">
                   {smallBusiness ? (
@@ -656,18 +712,21 @@ export function InvoiceForm({
                     </Select>
                   )}
                 </Field>
-                <div className="flex items-center justify-between gap-2 md:col-span-2 md:justify-end 2xl:col-span-1 2xl:flex-col 2xl:items-end">
-                  <span className="font-semibold tabular-nums">{money(l.totalCents)}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`Position ${i + 1} entfernen`}
-                    disabled={lines.length === 1}
-                    onClick={() => removeLine(l)}
-                  >
-                    <Trash2 size={18} aria-hidden />
-                  </Button>
-                </div>
+                {/* Zeilensumme + Löschen auf der Linie der Eingaben (Platzhalter in Höhe der Beschriftung) */}
+                <FieldSlot spacer="hidden md:block" className="md:col-span-2 2xl:col-span-1">
+                  <div className="flex w-full items-center justify-between gap-2 md:justify-end">
+                    <span className="font-semibold whitespace-nowrap tabular-nums">{money(l.totalCents)}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-label={`Position ${i + 1} entfernen`}
+                      disabled={lines.length === 1}
+                      onClick={() => removeLine(l)}
+                    >
+                      <Trash2 size={18} aria-hidden />
+                    </Button>
+                  </div>
+                </FieldSlot>
                 {prod && !smallBusiness ? (
                   <div className="flex flex-col gap-1 md:col-span-6 2xl:col-span-7">
                     <Checkbox

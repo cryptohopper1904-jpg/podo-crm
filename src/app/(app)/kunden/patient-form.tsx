@@ -4,7 +4,7 @@ import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState } from "react";
 import type { patients } from "@/db/schema";
-import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FieldSlot, FormError, Input, Select, Textarea } from "@/components/ui";
 import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { savePatientAction } from "./actions";
 
@@ -75,8 +75,8 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
               <option value="letter">Brief</option>
             </Select>
           </Field>
-          <Field label="Wunsch-Intervall (Wochen)"><Input name="visitIntervalWeeks" type="number" min={1} max={52} defaultValue={patient?.visitIntervalWeeks ?? ""} /></Field>
-          <div className="flex items-end"><Checkbox name="homeVisit" defaultChecked={patient?.homeVisit} label="Hausbesuch" /></div>
+          <Field label="Wunsch-Intervall"><Input suffix="Wochen" name="visitIntervalWeeks" type="number" min={1} max={52} defaultValue={patient?.visitIntervalWeeks ?? ""} /></Field>
+          <FieldSlot spacer="hidden sm:block"><Checkbox name="homeVisit" defaultChecked={patient?.homeVisit} label="Hausbesuch" /></FieldSlot>
         </div>
       </Card>
 

@@ -866,6 +866,19 @@ export const invoices = pgTable(
     status: invoiceStatusEnum("status").notNull().default("draft"),
     issuedAt: date("issued_at"),
     dueAt: date("due_at"),
+    /**
+     * Leistungsdatum bzw. erster Tag des Leistungszeitraums (§ 14 Abs. 4 Nr. 6 UStG, § 31 Abs. 4 UStDV) – beim Ausstellen
+     * aus verknüpften Terminen/Doku-Einträgen und dem Formular-Datum festgeschrieben (danach per Trigger unveränderbar,
+     * spätere Terminverschiebungen ändern den Beleg nicht). Anzahlung: Tag der verknüpften Behandlung. NULL = Altbeleg.
+     */
+    serviceDate: date("service_date"),
+    /** letzter Tag des Leistungszeitraums; NULL = ein einzelner Tag */
+    serviceDateTo: date("service_date_to"),
+    /**
+     * Leistungsangabe beim Ausstellen festgeschrieben (true für alle Belege ab Einführung, auch ohne Datum wie eine
+     * Anzahlung ohne Terminbezug). false = Altbeleg (Bestand vor Migration 0037) → Neudruck exakt wie früher.
+     */
+    serviceDateFixed: boolean("service_date_fixed").notNull().default(true),
     netCents: integer("net_cents").notNull().default(0),
     vatCents: integer("vat_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),

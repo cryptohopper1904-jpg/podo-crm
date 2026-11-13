@@ -51,8 +51,9 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   let preset: InvoicePreset | undefined;
   let presetKey = "plain";
   if (source?.patient) {
-    // ?art=quittung: sofort bezahlte Quittung zum Termin (Positionen mit Terminbezug → später in die Sammelrechnung übernehmbar)
-    preset = { kind: sp.art === "quittung" ? "receipt" : "invoice", patientId: source.patient.id, notes: `Leistungsdatum: ${dateDe(source.at)}`, lines: source.lines };
+    // ?art=quittung: sofort bezahlte Quittung zum Termin (Positionen mit Terminbezug → später in die Sammelrechnung übernehmbar).
+    // Leistungsdatum steht über den Termin-/Doku-Bezug in der Überschrift („… zur Behandlung am …“), nicht im Hinweis.
+    preset = { kind: sp.art === "quittung" ? "receipt" : "invoice", patientId: source.patient.id, serviceDate: berlinDateIso(source.at), lines: source.lines };
     presetKey = `src-${preset.kind}-${source.appointmentId ?? source.recordId}`;
   } else if (yearSug) {
     const first = yearSug.lines.length ? yearSug.lines[0].description.slice(0, 10) : null;

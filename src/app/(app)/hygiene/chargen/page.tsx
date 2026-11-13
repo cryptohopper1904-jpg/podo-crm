@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
-import { Button, Card, CardTitle, Checkbox, Empty, Field, Input, Select, Table } from "@/components/ui";
+import { Button, Card, CardTitle, Checkbox, Empty, Field, FieldSlot, Input, Select, Table } from "@/components/ui";
 import { berlinDateIso, dateDe, dateTimeDe } from "@/lib/format";
 import { addMonthsIso, normalizeBatchCode } from "@/lib/hygiene-rules";
 import { canReleaseBatch, listBatches, listDevices, suggestCodeForToday } from "@/server/hygiene";
@@ -66,9 +66,9 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
               <Field label="Bemerkung" className="sm:col-span-2 lg:col-span-3">
                 <Input name="note" maxLength={500} placeholder="z. B. Programm 134 °C, Beladung" />
               </Field>
-              <div className="flex items-end">
+              <FieldSlot spacer="hidden sm:block">
                 <Checkbox name="indicatorOk" label="Indikator OK" />
-              </div>
+              </FieldSlot>
             </div>
           </ActionForm>
         </Card>

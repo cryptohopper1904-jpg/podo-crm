@@ -1,12 +1,15 @@
 import "server-only";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
 import type { AuthContext } from "@/lib/auth/session";
+import { can } from "@/lib/auth/permissions";
 import { billingModeOf, feature, hiddenAreaRedirect, type BillingMode, type GkvArea } from "@/lib/features";
+import { visibleSettingsGroups, type SettingsGroup } from "@/lib/settings-tabs";
 import { loadConnection } from "./integrations";
 
 /**
@@ -28,6 +31,14 @@ export async function hiddenSettingsTabs(auth: AuthContext): Promise<string[]> {
   if (feature(auth.organization, "gkv")) return [];
   return (await kimConnected(auth.organization.id)) ? ["ocr"] : ["ocr", "ti"];
 }
+
+/** Einstellungs-Navigation dieser Person: nur Bereiche, die requireAuth auf der Seite auch zulässt (je Anfrage einmal: cache). */
+export const settingsGroupsFor = cache(async (auth: AuthContext): Promise<SettingsGroup[]> =>
+  visibleSettingsGroups(
+    (t) => !t.perm || auth.can(t.perm) || (!!t.allowReadOnly && auth.readOnly && !auth.support && can(auth.role, t.perm)),
+    await hiddenSettingsTabs(auth),
+  ),
+);
 
 /**
  * Praxis-Modus setzen (organizations.settings.billingMode) – nur über requireAuth("settings.manage") aufrufen.

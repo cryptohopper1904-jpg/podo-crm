@@ -267,6 +267,13 @@
       "when": 1794602648777,
       "tag": "0037_quittungen_sammelrechnung",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794603112644,
+      "tag": "0038_leistungsdatum",
+      "breakpoints": true
     }
   ]
 }

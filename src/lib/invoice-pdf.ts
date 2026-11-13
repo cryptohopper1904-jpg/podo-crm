@@ -24,6 +24,7 @@ import {
   serviceYear,
   hasExemptNote,
   invoiceHeading,
+  invoiceService,
   invoiceRecipient,
   invoiceTitle,
   isReceiptLike,
@@ -67,6 +68,8 @@ export type InvoicePdfData = {
     status: string;
     issuedAt: string | null;
     dueAt: string | null;
+    /** Leistungsangabe festgeschrieben (false = Altbeleg, Darstellung wie früher) */
+    serviceDateFixed?: boolean | null;
     totalCents: number;
     paidCents: number;
     notes: string | null;
@@ -99,9 +102,11 @@ export type InvoicePdfData = {
   };
   patient: { number: number; salutation?: string | null; title?: string | null; firstName?: string | null; lastName: string; street?: string | null; zip?: string | null; city?: string | null } | null;
   billingContact: { name: string; street: string | null; zip: string | null; city: string | null } | null;
-  cancels?: { number: string | null } | null;
-  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen */
+  cancels?: { number: string | null; kind?: string; issuedAt?: string | null } | null;
+  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen (Storno: die der stornierten Rechnung) */
   serviceDates?: string[];
+  /** Positionen mit Termin-/Doku-Bezug („… zur Behandlung am …“) */
+  serviceLinked?: boolean;
   /** Praxis-Logos (PNG/JPEG); ohne Logo erscheint der Praxisname */
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
   /** Buchungshinweis mit QR-Code (Einstellungen → Praxisdaten → Belege) */
@@ -159,13 +164,13 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   });
 
   // ── Überschrift ──
-  const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates ?? [], dateDe, data.cancels?.number);
+  const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
   for (const hl of wrap(heading, width, 12.5, bold)) {
     text(hl, ML, y, { size: 12.5, font: bold });
     y -= 16;
   }
-  if (serviceDateNote) {
-    text(serviceDateNote, ML, y, { size: 8.5, color: GRAY });
+  for (const nl of serviceDateNote ? wrap(serviceDateNote, width, 8.5) : []) {
+    text(nl, ML, y, { size: 8.5, color: GRAY });
     y -= 12;
   }
   y -= 6;

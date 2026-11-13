@@ -29,8 +29,8 @@ export default async function ReminderSettingsPage() {
           <Checkbox name="r24" defaultChecked={s.r24} label="Terminerinnerung ca. 24 Stunden vorher (geplante/bestätigte Termine)" />
           <Checkbox name="recall" defaultChecked={s.recall} label="Rückholung bei überfälligen Patient:innen (höchstens alle 30 Tage)" />
           <Checkbox name="braceCheck" defaultChecked={s.braceCheck} label="Erinnerung bei laufender Spangenbehandlung ohne Termin seit über 4 Wochen" />
-          <Field label="Standard-Intervall für die Rückholung (Wochen)" hint="Gilt, wenn in der Akte kein eigenes Intervall steht. Überfällig = Intervall + 2 Wochen." className="max-w-xs">
-            <Input type="number" name="recallAfterWeeks" min={2} max={104} defaultValue={s.recallAfterWeeks} />
+          <Field label="Rückhol-Intervall" hint="Standard für die Rückholung. Gilt, wenn in der Akte kein eigenes Intervall steht. Überfällig = Intervall + 2 Wochen." className="max-w-xs">
+            <Input suffix="Wochen" type="number" name="recallAfterWeeks" min={2} max={104} defaultValue={s.recallAfterWeeks} />
           </Field>
         </ActionForm>
       </Card>
