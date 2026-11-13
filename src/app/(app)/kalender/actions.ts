@@ -17,6 +17,7 @@ import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
+import { seriesStarts } from "@/lib/appointment-series";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
@@ -48,8 +49,8 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
     : [];
   const duration = d.durationMin ?? (svc.reduce((s, x) => s + x.durationMin, 0) || 30);
-  const firstStart = berlinToUtc(d.date, d.time);
-  const occurrences = Array.from({ length: d.repeatWeeks ? d.repeatCount : 1 }, (_, i) => new Date(firstStart.getTime() + i * d.repeatWeeks * 7 * 86400_000));
+  // Wanduhrzeit in Berlin bleibt über Zeitumstellungen gleich (Datum weiterzählen, dann in UTC umrechnen)
+  const occurrences = seriesStarts(d.date, d.time, d.repeatWeeks, d.repeatCount);
 
   // Ohne Auswahl: eigene Spalte – nur wer selbst einen Kalender hat (Empfang/Azubis müssen eine Behandler:in wählen)
   const therapistId = d.therapistId ?? (hasOwnCalendar(auth.role) ? auth.user.id : null);

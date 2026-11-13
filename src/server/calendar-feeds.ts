@@ -12,6 +12,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { patientIsDeceased } from "./patient-deceased";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
+import { addDaysIso } from "@/lib/calendar-grid";
 import { eventKey, parseIcs, type IcsWarnings, type ParsedIcsEvent } from "@/lib/ics-parse";
 import { mapPool, withTimeout } from "@/lib/pool";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
@@ -56,9 +57,9 @@ const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).diges
 
 /** Abgleichsfenster: heute (Berlin) − 7 Tage bis Ende von heute + 90 Tage. */
 export function feedWindow(now = new Date()) {
-  const midnight = berlinToUtc(berlinDateIso(now), "00:00").getTime();
-  const day = 86400_000;
-  return { from: new Date(midnight - FEED_WINDOW.pastDays * day), to: new Date(midnight + (FEED_WINDOW.futureDays + 1) * day) };
+  // Kalendertage zählen statt 24-h-Schritte: Grenzen bleiben auch über Zeitumstellungen auf Berliner Mitternacht
+  const today = berlinDateIso(now);
+  return { from: berlinToUtc(addDaysIso(today, -FEED_WINDOW.pastDays), "00:00"), to: berlinToUtc(addDaysIso(today, FEED_WINDOW.futureDays + 1), "00:00") };
 }
 
 /** Terminfelder, die der Abgleich aus einem Kalender-Ereignis setzt. */
