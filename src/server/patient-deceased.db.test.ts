@@ -140,6 +140,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("keine neuen künftigen Termine – vergangene (Abrechnung) bleiben möglich", async () => {
     const org = await f.org();
     const user = await f.user();
+    // Behandler:in mit eigenem Kalender (nur Inhaber:in/Podolog:in sind als Behandler:in zulässig)
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, user]);
     const p = await f.patient(org);
     expect((await mod.markPatientDeceased(auth(org, user), p, { cancelFuture: false })).ok).toBe(true);
     const input = (start: Date) => ({

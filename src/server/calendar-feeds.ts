@@ -7,6 +7,7 @@ import { CalendarFeedError, feedUrlHint, fetchIcs, normalizeFeedUrl } from "@/in
 import type { Resolver } from "@/integrations/net-guard";
 import { describeError } from "@/integrations/test-connection";
 import { assertCan } from "@/lib/auth/assert";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { patientIsDeceased } from "./patient-deceased";
@@ -14,6 +15,7 @@ import { berlinDateIso, berlinToUtc } from "@/lib/format";
 import { eventKey, parseIcs, type IcsWarnings, type ParsedIcsEvent } from "@/lib/ics-parse";
 import { mapPool, withTimeout } from "@/lib/pool";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
+import { isCalendarMember } from "./appointments";
 import { logSync } from "./integrations";
 import { lockBooking } from "./portal-booking";
 
@@ -110,6 +112,8 @@ export async function applyFeedEvents(
   const appts = apptIds.length ? await tx.select().from(appointments).where(and(eq(appointments.organizationId, org), inArray(appointments.id, apptIds))) : [];
   const apptById = new Map(appts.map((a) => [a.id, a]));
   const seen = new Set<string>();
+  // Ist die gebundene Person keine Behandler:in mehr (z. B. jetzt Empfang oder gesperrt), neue Termine ohne Zuordnung anlegen
+  const therapistId = feed.therapistId && (await isCalendarMember(tx, org, feed.therapistId)) ? feed.therapistId : null;
 
   const setMap = (id: string, v: Partial<typeof calendarFeedEvents.$inferInsert>) =>
     tx.update(calendarFeedEvents).set({ ...v, updatedAt: now }).where(and(eq(calendarFeedEvents.organizationId, org), eq(calendarFeedEvents.id, id)));
@@ -130,7 +134,7 @@ export async function applyFeedEvents(
       if (fields.status === "cancelled") continue; // abgesagt, bevor es je übernommen wurde
       const [a] = await tx
         .insert(appointments)
-        .values({ organizationId: org, patientId: null, therapistId: feed.therapistId, source: feed.source, externalId: externalIdFor(feed.id, key), ...fields })
+        .values({ organizationId: org, patientId: null, therapistId, source: feed.source, externalId: externalIdFor(feed.id, key), ...fields })
         .onConflictDoNothing()
         .returning();
       if (!a) continue; // gleiche externe ID existiert bereits (sollte über die Zuordnung nicht vorkommen)
@@ -369,8 +373,8 @@ async function assertTherapist(tx: Tx, org: string, therapistId: string | null) 
   const [m] = await tx
     .select({ id: memberships.userId })
     .from(memberships)
-    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, therapistId), eq(memberships.active, true)));
-  if (!m) throw new CalendarFeedError("Behandler:in gehört nicht zur Praxis.");
+    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, therapistId), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+  if (!m) throw new CalendarFeedError("Behandler:in gehört nicht zur Praxis (Empfang und Azubis haben keinen eigenen Kalender).");
 }
 
 export async function createCalendarFeed(auth: AuthContext, input: { url: string; label: string; therapistId: string | null; source: FeedSource }) {
@@ -405,7 +409,10 @@ export async function updateCalendarFeed(
   const org = auth.organization.id;
   const url = input.url ? normalizeFeedUrl(input.url) : null;
   const n = await withOrg(org, async (tx) => {
-    await assertTherapist(tx, org, input.therapistId);
+    // Unveränderte Zuordnung nicht erneut prüfen: Umbenennen bleibt möglich, auch wenn die Person inzwischen keinen
+    // eigenen Kalender mehr hat (der Abgleich legt neue Termine dann ohne Zuordnung an, siehe applyFeedEvents)
+    const [cur] = await tx.select({ therapistId: calendarFeeds.therapistId }).from(calendarFeeds).where(and(eq(calendarFeeds.organizationId, org), eq(calendarFeeds.id, feedId)));
+    if (!cur || cur.therapistId !== input.therapistId) await assertTherapist(tx, org, input.therapistId);
     const r = await tx
       .update(calendarFeeds)
       .set({

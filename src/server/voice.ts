@@ -30,7 +30,7 @@ import { berlinMonth, monthBounds, recentMonths, voiceMonthReport, voiceUsage, t
 import { assertCan } from "./authz";
 import { freeSlots } from "./appointments";
 import { loadConnection, logSync } from "./integrations";
-import { availability, staffMembers } from "./staff";
+import { availability, bookableStaff } from "./staff";
 import { isPrivateOnly, PRIVATE_ONLY_VOICE_NOTE } from "@/lib/features";
 
 /**
@@ -152,7 +152,7 @@ export async function findVoiceSlots(
   o: Pick<OrgRow, "state" | "settings">,
   input: { fromIso: string; toIso: string; durationMin: number; limit: number; earliest: Date; perDay?: number },
 ): Promise<Date[]> {
-  const staff = await staffMembers(org);
+  const staff = await bookableStaff(org);
   const opening = openingOf(o.settings);
   const days: { dateIso: string; ranges: TimeRange[] }[] = [];
   for (const d of dayList(input.fromIso, input.toIso)) {

@@ -22,7 +22,7 @@ import {
   type OnlineBookingSettings,
 } from "@/lib/portal-booking";
 import { createRateLimiter } from "@/lib/rate-limit";
-import { staffMembers } from "./staff";
+import { bookableStaff } from "./staff";
 import { isDeceased } from "@/lib/patient-deceased";
 
 /** Drosselung je Person (zusätzlich zur IP-Drosselung des Portals): Buchen/Verschieben. */
@@ -64,7 +64,7 @@ const openingOf = (settings: Record<string, unknown>): TimeRange => {
 export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">, days: string[]): Promise<{ dateIso: string; ranges: TimeRange[] }[]> {
   if (!days.length) return [];
   const org = o.id;
-  const staff = await staffMembers(org);
+  const staff = await bookableStaff(org);
   const ids = staff.map((s) => s.id);
   const opening = openingOf(o.settings);
   const { hours, abs } = await withOrg(org, async (tx) => ({

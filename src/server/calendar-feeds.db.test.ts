@@ -41,6 +41,7 @@ const CANCELLED_NEW = vevent("c@google.com", "20261113T080000", "20261113T083000
   async function setup() {
     const org = await f.org();
     const therapist = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, therapist]);
     const id = crypto.randomUUID();
     await f.asOrg(org, (c) =>
       c.query("insert into calendar_feeds (id, organization_id, label, url_enc, url_hint, therapist_id, source) values ($1,$2,'Doctolib',$3,'calendar.google.com/…/basic.ics',$4,'doctolib')", [
@@ -187,6 +188,19 @@ const CANCELLED_NEW = vevent("c@google.com", "20261113T080000", "20261113T083000
     const r2 = await feeds.syncCalendarFeed(org, id, { fetchImpl, resolver: publicDns, now: NOW });
     expect(r2).toMatchObject({ overlaps: 0 });
     expect((await rows(org)).every((x) => x.conflict === null)).toBe(true);
+  });
+
+  it("Behandler:in wird Empfang: neue Termine ohne Zuordnung, Umbenennen bleibt möglich, Empfang nicht neu zuordenbar", async () => {
+    const { org, id, therapist } = await setup();
+    await f.pool.query("update memberships set role = 'reception' where organization_id = $1 and user_id = $2", [org, therapist]);
+    const r = await feeds.syncCalendarFeed(org, id, { fetchImpl: server({ body: cal(A()) }), resolver: publicDns, now: NOW });
+    expect(r).toMatchObject({ created: 1 });
+    expect((await rows(org))[0].therapist_id).toBeNull();
+    const auth = { organization: { id: org }, user: { id: crypto.randomUUID() }, can: () => true } as unknown as Parameters<typeof feeds.updateCalendarFeed>[0];
+    await feeds.updateCalendarFeed(auth, id, { label: "Doctolib neu", therapistId: therapist, source: "doctolib", active: true });
+    const other = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'reception')", [org, other]);
+    await expect(feeds.updateCalendarFeed(auth, id, { label: "Doctolib", therapistId: other, source: "doctolib", active: true })).rejects.toThrow(/keinen eigenen Kalender/);
   });
 
   it("Fehler werden ohne URL gespeichert; private Ziele werden nicht abgerufen", async () => {

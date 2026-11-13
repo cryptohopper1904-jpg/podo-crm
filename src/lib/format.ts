@@ -3,6 +3,12 @@ export const TZ = "Europe/Berlin";
 
 const eur = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 export const money = (cents: number | null | undefined) => eur.format((cents ?? 0) / 100);
+const eurWhole = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR", minimumFractionDigits: 0, maximumFractionDigits: 0 });
+/** Wie money, aber ganze Euro ohne Nachkommastellen („59 €“, „70,21 €“) – für Preisangaben */
+export const moneyShort = (cents: number | null | undefined) => {
+  const c = cents ?? 0;
+  return c % 100 === 0 ? eurWhole.format(c / 100) : eur.format(c / 100);
+};
 
 /** "65,00" / "65" / "65.5" → 6500 Cent. Gibt null bei ungültiger Eingabe zurück. */
 export function parseMoney(input: string | number | null | undefined): number | null {

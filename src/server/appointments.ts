@@ -1,11 +1,12 @@
 import "server-only";
-import { and, asc, eq, gte, isNull, lt, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
@@ -37,6 +38,11 @@ export async function listAppointments(auth: AuthContext, fromIso: string, days:
   return rows.map(({ feedLabel, feedConflict, ...r }) => ({ ...r, feed: feedLabel !== null ? { label: feedLabel, conflict: feedConflict } : null }));
 }
 
+/**
+ * Wählbare Behandler:innen (eigene Kalenderspalte): nur Inhaber:in und Podolog:in (CALENDAR_ROLES).
+ * Empfang, Azubis und Steuerberatung haben keine eigene Kalenderspalte (Azubis belegen trotzdem einen Platz,
+ * siehe seatCounts in src/lib/plans.ts).
+ */
 export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
   const { db } = await import("@/db");
@@ -44,7 +50,16 @@ export async function therapists(auth: AuthContext) {
     .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
-    .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), ne(memberships.role, "accountant")));
+    .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+}
+
+/** Ist `userId` aktive Behandler:in der Praxis (Rolle mit eigenem Kalender)? */
+export async function isCalendarMember(tx: Tx, org: string, userId: string): Promise<boolean> {
+  const [m] = await tx
+    .select({ id: memberships.userId })
+    .from(memberships)
+    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, userId), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+  return !!m;
 }
 
 /** Überschneidungen beim selben Behandler (ohne abgesagte Termine). */
@@ -136,9 +151,10 @@ export async function createInternalAppointments(
   org: string,
   input: InternalAppointmentInput,
   now = new Date(),
-): Promise<{ ok: true; ids: string[] } | SlotConflict | { ok: false; deceased: true }> {
+): Promise<{ ok: true; ids: string[] } | SlotConflict | { ok: false; deceased: true } | { ok: false; conflict?: undefined; error: string }> {
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
+    if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {
       return { ok: false as const, deceased: true as const };
@@ -263,11 +279,8 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
     if (a.patientId && input.startsAt > new Date() && (await patientIsDeceased(tx, org, a.patientId, { lock: true }))) return { ok: false, error: DECEASED_BLOCKED_MSG };
-    const [member] = await tx
-      .select({ id: memberships.userId })
-      .from(memberships)
-      .where(and(eq(memberships.organizationId, org), eq(memberships.userId, input.therapistId), eq(memberships.active, true)));
-    if (!member) return { ok: false, error: "Behandler:in nicht gefunden." };
+    // Nur Rollen mit eigenem Kalender (Empfang/Azubis bekommen keine eigenen Termine)
+    if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false, error: "Behandler:in nicht gefunden." };
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, [berlinParts(input.startsAt).dateIso]);
