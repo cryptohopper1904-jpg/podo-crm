@@ -12,7 +12,8 @@ const MAX_BODY = 1_024;
  * Live-Suche der Kopfzeile. POST statt GET, damit der Suchtext nicht in URL/Proxy-Logs landet.
  * Nur mit Anmeldung und Recht „patients.read“ (wie die Patientenliste /kunden), Praxis aus der Sitzung (withOrg),
  * gedrosselt je Benutzer:in. Der Suchtext wird weder geloggt noch im Audit gespeichert
- * (siehe src/server/patient-search.ts); Support-Zugriffe protokolliert getAuth() als support.view.
+ * (siehe src/server/patient-search.ts). Gilt trotz POST als Lesezugriff (src/lib/auth/read-requests.ts): funktioniert
+ * mit Support-Freigabe „read“ und im Nur-Lesen-Modus; getAuth() protokolliert support.view entprellt als „read“.
  */
 export async function POST(req: NextRequest) {
   const auth = await getAuth();

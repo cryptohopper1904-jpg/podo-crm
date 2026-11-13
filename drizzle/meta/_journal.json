@@ -302,13 +302,6 @@
       "when": 1794604955440,
       "tag": "0042_sperrliste_pruefwert",
       "breakpoints": true
-    },
-    {
-      "idx": 43,
-      "version": "7",
-      "when": 1794605538439,
-      "tag": "0043_patientensuche_trgm",
-      "breakpoints": true
     }
   ]
 }
