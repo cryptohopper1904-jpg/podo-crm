@@ -52,6 +52,21 @@ export function realDuration(dateIso: string, startMin: number, endMin: number):
   return s && e ? durationOf(s, e) : endMin - startMin;
 }
 
+/**
+ * Dauer ändern am unteren Rand an einem bestimmten Tag: Uhrzeit-Dauer fürs Geisterbild und echte Dauer zum Speichern.
+ * Am Tag der Winterzeit-Umstellung ist die echte Dauer eine Stunde länger – auch sie bleibt ≤ 8 h (sonst nicht speicherbar).
+ */
+export function resizeOnDay(p: { dateIso: string; offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; step?: number }): { localMin: number; realMin: number } {
+  const step = p.step ?? SLOT_MIN;
+  let localMin = resizeDuration(p);
+  let realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin);
+  while (realMin > MAX_DURATION_MIN && localMin > step) {
+    localMin -= step;
+    realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin);
+  }
+  return { localMin, realMin };
+}
+
 /** Spalte unter dem Zeiger (Spaltenwechsel Tag ↔ Tag bzw. Behandler:in ↔ Behandler:in); -1 = keine */
 export function columnIndexAt(cols: readonly { left: number; right: number }[], x: number): number {
   return cols.findIndex((c) => x >= c.left && x < c.right);

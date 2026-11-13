@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, snapMin } from "./calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
 import { berlinParts } from "./calendar-grid";
 import { berlinToUtc } from "./format";
 
@@ -78,6 +78,14 @@ describe("Zeitpunkte (Berliner Ortszeit, Sommer-/Winterzeit)", () => {
     expect(realDuration("2026-10-25", 60, 240)).toBe(240); // 01:00–04:00 Winterzeit-Beginn: 4 h
     expect(realDuration("2026-06-10", 600, 645)).toBe(45);
     expect(realDuration("2026-03-29", 60, 150)).toBe(90); // Ende in der Lücke → Uhrzeit-Differenz
+  });
+
+  it("Dauer ziehen am Winterzeit-Tag: echte Dauer höchstens 8 h", () => {
+    const base = { pxPerMin: PX, rangeStart: 0, startMin: 0, offsetPx: 99_999 };
+    // 00:00–08:00 Uhr sind am 25.10.2026 neun echte Stunden → auf 00:00–07:00 (8 h) begrenzt
+    expect(resizeOnDay({ ...base, dateIso: "2026-10-25" })).toEqual({ localMin: 420, realMin: 480 });
+    expect(resizeOnDay({ ...base, dateIso: "2026-03-29" })).toEqual({ localMin: 480, realMin: 420 });
+    expect(resizeOnDay({ ...base, dateIso: "2026-06-10", offsetPx: 45 * PX })).toEqual({ localMin: 45, realMin: 45 });
   });
 
   it("Monatsansicht: anderer Tag, gleiche Uhrzeit – auch über die Zeitumstellung", () => {

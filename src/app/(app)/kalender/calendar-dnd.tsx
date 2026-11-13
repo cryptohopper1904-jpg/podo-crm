@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, useTransition, type Re
 import { Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { berlinParts } from "@/lib/calendar-grid";
-import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration } from "@/lib/calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, resizeOnDay } from "@/lib/calendar-dnd";
 import { moveAppointmentAction, type MoveResult } from "./actions";
 
 /**
@@ -83,7 +83,9 @@ export function DndSurface({
   /** Speichern läuft (Doppelklick-Schutz für Dialog/Rückgängig) */
   const [saving, setSaving] = useState(false);
   /** Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt */
-  const [toastHold, setToastHold] = useState(false);
+  // an den jeweiligen Hinweis gebunden: ein neuer Hinweis (z. B. nach „Rückgängig“ per Tastatur, ohne blur) ist nie gehalten
+  const [toastHold, setToastHold] = useState<number | null>(null);
+  const held = toast !== null && toastHold === toast.key;
   const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -149,10 +151,10 @@ export function DndSurface({
 
   // Hinweis nach 10 s ausblenden (Fehler bleiben ebenso lange stehen)
   useEffect(() => {
-    if (!toast || toastHold) return;
+    if (!toast || held) return;
     const t = window.setTimeout(() => setToast((cur) => (cur?.key === toast.key ? null : cur)), TOAST_MS);
     return () => window.clearTimeout(t);
-  }, [toast, toastHold]);
+  }, [toast, held]);
 
   // ───── Zeiger ─────
   useEffect(() => {
@@ -197,8 +199,10 @@ export function DndSurface({
         const p = berlinParts(s.startsAt);
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
-        dur = resizeDuration({ offsetPx, pxPerMin, rangeStart, startMin });
-        realDur = realDuration(date, startMin, startMin + dur); // am Tag der Zeitumstellung echte Minuten
+        // am Tag der Zeitumstellung echte Minuten speichern (und auf 8 h begrenzen)
+        const r = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin });
+        dur = r.localMin;
+        realDur = r.realMin;
       } else {
         dur = durationMin;
         startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur });
@@ -456,10 +460,10 @@ export function DndSurface({
             toast.error ? "border-accent bg-accent-soft text-accent-soft-text" : "border-border bg-surface text-text"
           }`}
           data-dnd-toast
-          onPointerEnter={() => setToastHold(true)}
-          onPointerLeave={() => setToastHold(false)}
-          onFocus={() => setToastHold(true)}
-          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setToastHold(false)}
+          onPointerEnter={() => setToastHold(toast.key)}
+          onPointerLeave={() => setToastHold(null)}
+          onFocus={() => setToastHold(toast.key)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setToastHold(null)}
         >
           <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.undo ? (

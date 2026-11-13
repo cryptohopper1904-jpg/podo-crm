@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
+import type { TherapistColor } from "@/lib/therapist-colors";
+import { teamColors } from "@/server/therapist-colors";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { OnboardingCard } from "@/components/onboarding-card";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
@@ -40,7 +42,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const org = auth.organization.id;
   const today = berlinDateIso();
   const dayStart = berlinToUtc(today, "00:00");
-  const appts = auth.can("appointments.read") ? await listAppointments(auth, today, 1) : [];
+  const [appts, colors] = auth.can("appointments.read") ? await Promise.all([listAppointments(auth, today, 1), teamColors(auth)]) : [[], new Map<string, TherapistColor>()];
   const stats = await withOrg(org, async (tx) => {
     const [open] = auth.can("invoices.read")
       ? await tx.select({ n: count(), sum: sql<number>`coalesce(sum(${invoices.totalCents} - ${invoices.paidCents}),0)` }).from(invoices).where(and(eq(invoices.organizationId, org), inArray(invoices.status, ["issued", "partially_paid"])))
@@ -134,7 +136,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               <Link href="/einstellungen/kalender-abo" className="font-semibold underline">prüfen</Link>
             </p>
           ) : null}
-          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" />)}
+          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined} />)}
         </Card>
 
         {sideColumn ? (
