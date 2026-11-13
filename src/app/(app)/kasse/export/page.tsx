@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { ArrowLeft, FileDown } from "lucide-react";
+import { FileDown } from "lucide-react";
 import { Button, Card, CardTitle, Field, FormError, Input, PageHeader } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe } from "@/lib/format";
@@ -18,10 +17,7 @@ export default async function KasseExportPage(props: PageProps<"/kasse/export">)
   const href = parsed.success ? `/api/kasse/dsfinvk?from=${parsed.data.from}&to=${parsed.data.to}` : null;
   return (
     <div className="mx-auto max-w-3xl">
-      <Link href="/kasse" className="mb-4 inline-flex items-center gap-1 font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Kasse
-      </Link>
-      <PageHeader title="DSFinV-K-Export" subtitle="Kassendaten für Betriebsprüfung und Kassen-Nachschau (§ 146b AO)" />
+      <PageHeader back={{ href: "/kasse", label: "Kasse" }} title="DSFinV-K-Export" subtitle="Kassendaten für Betriebsprüfung und Kassen-Nachschau (§ 146b AO)" />
       <Card className="mb-6">
         <CardTitle>Zeitraum</CardTitle>
         <form className="flex flex-wrap items-end gap-3" method="get">

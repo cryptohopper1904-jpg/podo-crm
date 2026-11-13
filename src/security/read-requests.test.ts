@@ -14,12 +14,15 @@ import { read, ROOT } from "./app-files";
 const SUGGEST = "/api/patienten/vorschlaege";
 
 describe("Lese-POSTs: Klassifizierung", () => {
-  it("GET/HEAD lesen, sonst schreibend; fehlende Methode = schreibend", () => {
+  it("GET/HEAD lesen, sonst schreibend; fehlende Methode oder fehlender Pfad = schreibend", () => {
     expect(isMutatingRequest("GET", "/kunden")).toBe(false);
     expect(isMutatingRequest("head", "/kunden")).toBe(false);
     expect(isMutatingRequest("POST", "/kunden")).toBe(true);
     expect(isMutatingRequest(null, SUGGEST)).toBe(true);
     expect(isMutatingRequest(undefined, null)).toBe(true);
+    // ohne Proxy-Kennung (Pfad fehlt) auch GET schreibend – fail closed
+    expect(isMutatingRequest("GET", null)).toBe(true);
+    expect(isMutatingRequest("GET", "")).toBe(true);
   });
   it("nur POST auf den exakt gelisteten Pfad gilt als Lesen", () => {
     expect(isMutatingRequest("POST", SUGGEST)).toBe(false);

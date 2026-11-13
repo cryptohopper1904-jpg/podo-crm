@@ -1,8 +1,7 @@
 import { Fragment } from "react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, FileDown } from "lucide-react";
-import { Badge, Card, CardTitle, LinkButton, Table } from "@/components/ui";
+import { FileDown } from "lucide-react";
+import { Badge, Card, CardTitle, LinkButton, Table, BackLink } from "@/components/ui";
 import { PrintButton } from "@/components/print-button";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, money } from "@/lib/format";
@@ -41,9 +40,7 @@ export default async function ClosingPage(props: PageProps<"/kasse/abschluss/[id
     <div className="mx-auto max-w-4xl">
       <style>{PRINT_CSS}</style>
       <div className="no-print mb-4 flex flex-wrap items-center gap-3">
-        <Link href="/kasse" className="inline-flex items-center gap-1 font-semibold text-muted hover:text-text">
-          <ArrowLeft size={18} aria-hidden /> Kasse
-        </Link>
+        <BackLink href="/kasse" label="Kasse" />
         <span className="flex-1" />
         <PrintButton />
         <LinkButton href={`/api/kasse/z-bon/${z.id}?download=1`} variant="secondary" prefetch={false}>

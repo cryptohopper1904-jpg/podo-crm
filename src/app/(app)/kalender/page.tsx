@@ -13,7 +13,8 @@ import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { services } from "@/db/schema";
-import { listAppointments, therapists } from "@/server/appointments";
+import { billedAppointmentIds, listAppointments, therapists } from "@/server/appointments";
+import { teamColors } from "@/server/therapist-colors";
 import { calendarBoard, calendarModeOf, calendarOptionsOf } from "@/server/calendar-board";
 import { setCalendarModeAction } from "./actions";
 import { CalendarOptionsPanel } from "./calendar-options-panel";
@@ -110,7 +111,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const days = view === "woche" ? 7 : 1;
   const today = berlinDateIso();
   const end = addDays(start, days - 1);
-  const [allRows, board] = await Promise.all([listAppointments(auth, start, days), options.absences ? calendarBoard(auth, start, end) : null]);
+  const [allRows, board, colors] = await Promise.all([listAppointments(auth, start, days), options.absences ? calendarBoard(auth, start, end) : null, teamColors(auth)]);
   const rows = options.cancelled ? allRows : allRows.filter((r) => r.a.status !== "cancelled");
   const hiddenCancelled = allRows.length - rows.length;
   const overlaps = feedOverlapIds(rows);
@@ -183,7 +184,17 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
               {list.length === 0 ? (
                 <Empty title="Keine Termine" />
               ) : (
-                list.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)
+                list.map((r) => (
+                  <AppointmentRow
+                    key={r.a.id}
+                    row={r}
+                    canDoc={auth.can("medical.write")}
+                    canEdit={auth.can("appointments.write")}
+                    overlap={overlaps.has(r.a.id)}
+                    from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
+                    color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}
+                  />
+                ))
               )}
             </Card>
           );
@@ -230,6 +241,9 @@ async function FullPage({
   const end = addDays(start, days - 1);
   const [rows, board] = await Promise.all([listAppointments(auth, start, days), calendarBoard(auth, start, end)]);
   const overlaps = feedOverlapIds(rows);
+  // Ziehen zum Verschieben: nur mit Schreibrecht, nicht im Support- oder Nur-Lesen-Modus (Abo abgelaufen)
+  const canMove = auth.can("appointments.write") && !auth.support && !auth.readOnly;
+  const billed = canMove ? await billedAppointmentIds(auth, rows.map((r) => r.a.id)) : new Set<string>();
   const calHref = (p: { ansicht?: FullView; datum?: string }) => `/kalender?ansicht=${p.ansicht ?? view}&datum=${p.datum ?? day}${keep}`;
   const prev = view === "tag" ? addDays(day, -1) : view === "woche" ? addDays(day, -7) : shiftMonthIso(day, -1);
   const next = view === "tag" ? addDays(day, 1) : view === "woche" ? addDays(day, 7) : shiftMonthIso(day, 1);
@@ -275,6 +289,8 @@ async function FullPage({
         calHref={calHref}
         options={options}
         showWeekendHref={`/kalender?ansicht=${view}&datum=${day}${weekendKeep}`}
+        canMove={canMove}
+        billed={billed}
       />
     </div>
   );

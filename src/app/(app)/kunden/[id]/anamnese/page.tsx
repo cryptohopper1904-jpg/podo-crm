@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Badge, Button, Card, CardTitle, Empty, FormSuccess, LinkButton } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { anamnesisSummary, initialFromRiskFlags } from "@/lib/anamnesis";
@@ -27,9 +27,9 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
   return (
     <div className="mx-auto max-w-5xl">
       <header className="mb-6 flex flex-wrap items-end gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.patient)}</Link></p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">Anamnese</h1>
+        <div className={pageTitleBox}>
+          <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.patient)}`} />
+          <h1 className={pageTitleCls}>Anamnese</h1>
           <div className="mt-2"><RiskBadges flags={data.patient.riskFlags} /></div>
         </div>
         <div className="flex flex-wrap gap-2">

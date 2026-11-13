@@ -20,6 +20,14 @@ export const fixedCostInput = z.object({
 });
 export type FixedCostInput = z.infer<typeof fixedCostInput>;
 
+/**
+ * Belege (Alias `i`), deren Positionen als Umsatz nach Leistung/Produkt zählen – gemeinsam für financeOverview und
+ * die Statistik (src/server/stats.ts): ohne Entwürfe, Stornos, Gutschriften und Anzahlungen (die Sammelrechnung enthält
+ * die Leistungen), ohne auf eine Sammelrechnung angerechnete Quittungen (ihre Leistungen stehen dort noch einmal).
+ */
+export const countedInvoiceSql = sql`i.status not in ('draft', 'cancelled') and i.kind not in ('credit_note', 'deposit')
+  and not (i.kind = 'receipt' and i.collective_invoice_id is not null)`;
+
 type MonthRow = { y: number; m: number; v: number };
 const toMonths = (rows: MonthRow[], year: number) => {
   const out = Array.from({ length: 12 }, () => 0);
@@ -80,9 +88,7 @@ export async function financeOverview(auth: AuthContext, year: number) {
         join invoices i on i.id = l.invoice_id
         left join services s on s.id = l.service_id
         where l.organization_id = ${org} and i.organization_id = ${org}
-          and i.status not in ('draft', 'cancelled') and i.kind not in ('credit_note', 'deposit')
-          -- auf eine Sammelrechnung angerechnete Quittungen: ihre Leistungen stehen dort noch einmal (nicht doppelt zählen)
-          and not (i.kind = 'receipt' and i.collective_invoice_id is not null)
+          and ${countedInvoiceSql}
           and i.issued_at >= ${`${year}-01-01`} and i.issued_at < ${`${year + 1}-01-01`}
         group by 1
         order by 3 desc`)

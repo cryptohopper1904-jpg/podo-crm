@@ -14,6 +14,10 @@ export const ML = 50;
 export const MR = 50;
 export const TOP = 805;
 export const FOOTER_TOP = 125;
+/** Folgeseiten: Kopfzeile (Praxisname, Beleg und „Seite X von Y“) bei TOP, Inhalt beginnt darunter. */
+export const CONT_TOP = TOP - 26;
+/** Nutzbare Höhe einer Folgeseite – Blöcke bis zu dieser Höhe werden nie getrennt. */
+export const PAGE_BODY = CONT_TOP - FOOTER_TOP;
 export const CONTENT_WIDTH = A4[0] - ML - MR;
 export const RIGHT = ML + CONTENT_WIDTH;
 export const BLACK = rgb(0, 0, 0);
@@ -73,13 +77,35 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
     getPage().drawText(s, { x: xx, y: yy, size, font, color: opts.color ?? BLACK });
     return w;
   };
+  /**
+   * Längstes Präfix von s (mindestens 1 Zeichen), das mit `suffix` in maxW passt. Exponentielle und dann binäre
+   * Suche: O(k log k) Breitenmessungen-Zeichen je Zeile statt quadratisch in der Wortlänge (lange Eingaben ohne
+   * Leerzeichen blockieren sonst den Server).
+   * Annahme: Die Breite wächst monoton mit der Präfixlänge – gilt für die Standardschriften (WinAnsi, keine
+   * Ligaturen, keine negativen Breiten). Bei eingebetteten TTF-Schriften mit Ligaturen/Kerning neu prüfen.
+   */
+  const fitPrefix = (s: string, maxW: number, size: number, font: PDFFont, suffix = ""): number => {
+    const fits = (n: number) => font.widthOfTextAtSize(s.slice(0, n) + suffix, size) <= maxW;
+    let lo = 1;
+    let hi = 2;
+    while (hi <= s.length && fits(hi)) {
+      lo = hi;
+      hi *= 2;
+    }
+    hi = Math.min(hi, s.length + 1);
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (fits(mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  };
   /** Einzeilig auf maxW kürzen (mit „…“) */
   const clip = (t: string, maxW: number, size = 10, font = regular): string => {
-    const s = safe(t);
+    // wie text(): einzeilig – Zeilenumbrüche (safe macht \r/\t schon zu \n bzw. Leerzeichen) wären nicht kodierbar
+    const s = safe(t).replace(/[\r\n\t]/g, " ");
     if (font.widthOfTextAtSize(s, size) <= maxW) return s;
-    let out = s;
-    while (out.length > 1 && font.widthOfTextAtSize(out + "…", size) > maxW) out = out.slice(0, -1);
-    return out.trimEnd() + "…";
+    return s.slice(0, fitPrefix(s, maxW, size, font, "…")).trimEnd() + "…";
   };
   const wrap = (t: string, maxW: number, size = 10, font = regular): string[] => {
     const out: string[] = [];
@@ -92,11 +118,11 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
           continue;
         }
         if (line) out.push(line);
-        // sehr lange Wörter hart umbrechen
+        // sehr lange Wörter hart umbrechen (Trennstelle per Suche, siehe fitPrefix)
         let rest = word;
-        while (font.widthOfTextAtSize(rest, size) > maxW && rest.length > 1) {
-          let n = rest.length - 1;
-          while (n > 1 && font.widthOfTextAtSize(rest.slice(0, n), size) > maxW) n--;
+        while (rest.length > 1) {
+          const n = fitPrefix(rest, maxW, size, font);
+          if (n >= rest.length) break;
           out.push(rest.slice(0, n));
           rest = rest.slice(n);
         }
@@ -190,7 +216,8 @@ export function drawAddressBlock(
   const boxW = RIGHT - boxX;
   const slSize = 6.5;
   const slMax = boxX - ML - 16;
-  let slText = safe(opts.senderLine.replaceAll(" · ", " - "));
+  // einzeilig (mehrzeilige Praxisangaben wären für die Standardschrift nicht kodierbar)
+  let slText = safe(opts.senderLine.replaceAll(" · ", " - ")).replaceAll("\n", " ");
   while (regular.widthOfTextAtSize(slText, slSize) > slMax && slText.length > 10) slText = slText.slice(0, -2);
   const slW = w.text(slText, ML, y - 8, { size: slSize, color: GRAY });
   w.line(ML, y - 9.5, ML + slW, y - 9.5, 0.3, GRAY);
@@ -254,8 +281,12 @@ export function drawQrBlocks(w: Writer, fonts: Fonts, y: number, blocks: { title
   return y - (qrSize + 6);
 }
 
-/** Fußzeile auf jeder Seite: Praxis/Anschrift, Bank/Steuer, Telefon/Website, Berufsbezeichnung, Seitenzahl. */
-export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) => string, o: LetterOrg) {
+/**
+ * Fußzeile auf jeder Seite: Praxis/Anschrift, Bank/Steuer, Telefon/Website, Berufsbezeichnung.
+ * Bei mehr als einer Seite zusätzlich „Seite X von Y“ unten rechts und auf Folgeseiten eine Kopfzeile
+ * (Praxisname links, `runningHead` – Seite X von Y rechts). Bei nur einer Seite keine Seitenangabe.
+ */
+export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) => string, o: LetterOrg, runningHead?: string) {
   const pages = doc.getPages();
   const left = [o.name, o.legalName && o.legalName !== o.name ? o.legalName : null, o.street, [o.zip, o.city].filter(Boolean).join(" ") || null].filter((v): v is string => !!v);
   const right: [string, string][] = [];
@@ -279,10 +310,20 @@ export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) =>
     const cy = top - Math.max(Math.min(left.length, 5), Math.min(right.length, 6), 3) * 9 - 6;
     center.forEach((c, ci) => w.text(c, A4[0] / 2, cy - ci * 11, { size: 9, color: GRAY, align: "center" }));
     if (o.qualification) {
-      w.wrap(o.qualification, CONTENT_WIDTH, 7, fonts.italic)
+      // bei Seitenangabe unten rechts schmaler, damit sich beides nicht überlagert
+      w.wrap(o.qualification, pages.length > 1 ? CONTENT_WIDTH - 150 : CONTENT_WIDTH, 7, fonts.italic)
         .slice(0, 2)
         .forEach((q, qi) => w.text(q, A4[0] / 2, cy - center.length * 11 - 3 - qi * 9, { size: 7, font: fonts.italic, color: LIGHT, align: "center" }));
     }
-    if (pages.length > 1) w.text(`Seite ${i + 1} von ${pages.length}`, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
+    if (pages.length > 1) {
+      const mark = `Seite ${i + 1} von ${pages.length}`;
+      w.text(mark, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
+      if (i > 0) {
+        const head = runningHead ? `${runningHead} – ${mark}` : mark;
+        const hw = w.text(head, RIGHT, TOP, { size: 8, color: GRAY, align: "right" });
+        w.text(w.clip(o.name, CONTENT_WIDTH - hw - 16, 8, fonts.bold), ML, TOP, { size: 8, font: fonts.bold, color: GRAY });
+        w.line(ML, TOP - 5, RIGHT, TOP - 5, 0.4);
+      }
+    }
   });
 }

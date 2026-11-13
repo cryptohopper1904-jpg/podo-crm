@@ -4,6 +4,7 @@ import { SheetHeader } from "@/components/sheet-header";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { getPatient } from "@/server/patients";
+import { BackLink } from "@/components/ui";
 
 export const metadata = { title: "Akte drucken" };
 
@@ -16,7 +17,10 @@ export default async function PrintRecordPage(props: PageProps<"/kunden/[id]/akt
   const p = data.patient;
   return (
     <article className="mx-auto max-w-3xl bg-surface p-8 print:p-0">
-      <div className="mb-6 flex justify-end"><PrintButton /></div>
+      <div className="no-print mb-6 flex flex-wrap items-center justify-between gap-3">
+        <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(p)}`} />
+        <PrintButton />
+      </div>
       <SheetHeader
         organizationId={auth.organization.id}
         practiceName={auth.organization.name}

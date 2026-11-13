@@ -10,15 +10,13 @@ import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, ty
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { assignTherapistColors, byJoined } from "@/lib/therapist-colors";
+import { practiceHours } from "@/lib/opening-hours";
 import { therapists } from "./appointments";
 
 async function orgCalendarInfo(org: string) {
   const [o] = await db.select({ state: organizations.state, settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  const opening = (o?.settings as { opening?: { from?: string; to?: string } } | undefined)?.opening;
-  return {
-    state: (o?.state ?? "BB") as StateCode,
-    opening: { start: opening?.from ?? "08:00", end: opening?.to ?? "18:00" } satisfies TimeRange,
-  };
+  return { state: (o?.state ?? "BB") as StateCode, opening: practiceHours(o?.settings) };
 }
 
 /**
@@ -52,7 +50,9 @@ export async function calendarBoard(auth: AuthContext, fromIso: string, toIso: s
       holiday: holidayOn(dateIso, info.state),
       opening: info.opening,
     });
-  return { team: team.map((t) => ({ id: t.id, name: t.name, color: t.color })), absences: abs, availabilityOf, state: info.state };
+  // Kalenderfarbe je Behandler:in (gewählt oder automatisch nach Eintritt)
+  const colors = assignTherapistColors(byJoined(team));
+  return { team: team.map((t) => ({ id: t.id, name: t.name, color: colors.get(t.id)! })), absences: abs, availabilityOf, state: info.state };
 }
 
 export type SlotStatus = {

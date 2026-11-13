@@ -115,7 +115,7 @@ export default async function TeamPlanningPage() {
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-primary-soft" aria-hidden /> arbeitet</span>
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-accent-soft ring-1 ring-accent" aria-hidden /> abwesend</span>
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-surface-2" aria-hidden /> frei / Feiertag</span>
-              <span>Ohne gepflegte Arbeitszeiten gelten Mo–Fr die Öffnungszeiten.</span>
+              <span>Ohne gepflegte Arbeitszeiten gelten die Öffnungszeiten der Praxis.</span>
             </p>
           </div>
         )}

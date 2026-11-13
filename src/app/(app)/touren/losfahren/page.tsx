@@ -31,7 +31,7 @@ export default async function DeparturePage(props: PageProps<"/touren/losfahren"
 
   return (
     <div className="mx-auto max-w-lg">
-      <PageHeader title="Ich fahre los" subtitle={<Link href="/touren" className="hover:text-primary">← Touren</Link>} />
+      <PageHeader title="Ich fahre los" back={{ href: "/touren", label: "Touren" }} />
       <Card className="mb-4">
         <p className="text-sm text-muted">{dateTimeDe(a.startsAt)}–{timeDe(a.endsAt)} {a.homeVisit ? null : <Badge tone="warn">nicht als Hausbesuch markiert</Badge>}</p>
         <p className="mt-1 text-lg font-semibold">{p.name} <span className="text-sm font-normal text-muted">(K-{p.number})</span></p>

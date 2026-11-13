@@ -19,7 +19,7 @@ export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
 
 export const VIEW_LEVEL_HINTS: Record<ViewLevel, string> = {
   einfach: "Nur das Wichtigste für den Praxisalltag: Termine, Patient:innen, Behandlung, Rechnungen und Kasse. Startseite mit den heutigen Terminen, Schnellzugriff und offenen Aufgaben.",
-  kompakt: "Dazu Posteingang, Verordnungen, Touren, Gutscheine und Auswertung. Startseite ohne Nebenkarten.",
+  kompakt: "Dazu Posteingang, Verordnungen, Touren, Gutscheine und Auswertung (Finanzen, Termine, Leistungen & Produkte). Startseite ohne Nebenkarten.",
   komplex: "Alle Bereiche und die vollständige Startseite (wie bisher).",
 };
 
@@ -81,4 +81,13 @@ export function todaySections(level: ViewLevel): TodaySections {
     default:
       return { stats: true, quickActions: false, inbox: true, collective: true, tasks: "always", integrations: true };
   }
+}
+
+/**
+ * Auswertung (Reiter Termine / Leistungen & Produkte): Kennzahlen und Diagramme sehen alle gleich.
+ * Detailtabellen (Werte je Slot, Quellen, Lagerliste) sind nur in „Komplex“ aufgeklappt, sonst eingeklappt erreichbar.
+ * Die Auswertung selbst steht ab „Kompakt“ in der Navigation (in „Einfach“ unter „Mehr“).
+ */
+export function statsDetailsOpen(level: ViewLevel): boolean {
+  return level === "komplex";
 }

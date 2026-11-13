@@ -22,6 +22,7 @@ import { SERVICE_CATEGORIES } from "@/lib/catalog";
 import { codeTaken } from "@/server/products";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
+import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -35,24 +36,46 @@ export async function savePracticeAction(_: SettingsState, form: FormData): Prom
       state: z.string().length(2),
       smallBusiness: z.string().optional(),
       materialCost: z.string().optional(),
-      openingFrom: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-      openingTo: z.string().regex(/^\d{2}:\d{2}$/).optional(),
     })
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message };
-  const { smallBusiness, materialCost, openingFrom, openingTo, ...rest } = d.data;
+  const { smallBusiness, materialCost, ...rest } = d.data;
   const [org] = await db.select().from(organizations).where(eq(organizations.id, auth.organization.id));
   await db
     .update(organizations)
     .set({
       ...rest,
       smallBusiness: smallBusiness === "on",
-      settings: { ...org.settings, materialCostCents: parseMoney(materialCost ?? "") ?? 350, opening: { from: openingFrom ?? "08:00", to: openingTo ?? "18:00" } },
+      settings: { ...org.settings, materialCostCents: parseMoney(materialCost ?? "") ?? 350 },
     })
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.practice" });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };
+}
+
+/**
+ * Einstellungen → Öffnungszeiten: Zeitfenster je Wochentag (settings.practiceHours, eine Quelle der Wahrheit für
+ * Verfügbarkeit, Online-Buchung, KI-Telefon und Website). Der alte Mo–Fr-Bereich (settings.opening) entfällt dabei.
+ */
+export async function saveOpeningHoursAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(String(form.get("hours") ?? ""));
+  } catch {
+    return { error: "Öffnungszeiten konnten nicht gelesen werden." };
+  }
+  const v = validateWeek(raw);
+  if (v.error !== undefined) return { error: v.error };
+  const list = weekToList(v.week);
+  await db
+    .update(organizations)
+    .set({ settings: sql`(coalesce(${organizations.settings}, '{}'::jsonb) - 'opening') || ${JSON.stringify({ practiceHours: list })}::jsonb` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.opening_hours", meta: { hours: weekSummary(v.week) } });
+  revalidatePath("/einstellungen/oeffnungszeiten");
+  return { ok: isClosedWeek(v.week) ? "Gespeichert – die Praxis hat derzeit keine Öffnungszeiten." : "Gespeichert." };
 }
 
 export async function inviteMemberAction(_: SettingsState, form: FormData): Promise<SettingsState> {

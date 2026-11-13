@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE } from "@/lib/invoice-labels";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { listInvoices, type InvoiceFilter } from "@/server/invoices";
+import { returnPath, withReturn } from "@/lib/back-link";
 
 export const metadata = { title: "Rechnungen" };
 
@@ -14,6 +15,7 @@ export default async function InvoicesPage(props: PageProps<"/rechnungen">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const filter: InvoiceFilter = sp.filter === "paid" ? "paid" : sp.filter === "all" ? "all" : "open";
   const { rows, totals } = await listInvoices(auth, { filter, q });
+  const from = returnPath("/rechnungen", { q, filter: filter === "open" ? "" : filter }); // Rücksprung aus der Rechnung
   const today = berlinDateIso();
   const filters: { key: InvoiceFilter; label: string }[] = [
     { key: "open", label: "Offen" },
@@ -90,7 +92,7 @@ export default async function InvoicesPage(props: PageProps<"/rechnungen">) {
               return (
                 <tr key={i.id} className="hover:bg-surface-2">
                   <td>
-                    <Link href={`/rechnungen/${i.id}`} className="font-semibold tabular-nums hover:text-primary">{i.number}</Link>
+                    <Link href={withReturn(`/rechnungen/${i.id}`, from)} className="font-semibold tabular-nums hover:text-primary">{i.number}</Link>
                   </td>
                   <td className="text-sm tabular-nums">{dateDe(i.issuedAt)}</td>
                   <td>{i.name}</td>

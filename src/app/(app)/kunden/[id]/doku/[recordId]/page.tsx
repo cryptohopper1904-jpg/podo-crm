@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { media, patients, recordAddenda, treatmentRecords, users } from "@/db/schema";
-import { Badge, Button, Card, FormSuccess, LinkButton, Textarea } from "@/components/ui";
+import { Badge, Button, Card, FormSuccess, LinkButton, Textarea, BackLink } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { feature } from "@/lib/features";
@@ -54,8 +54,8 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
   const openDeposit = billing?.patient ? (billing.documents.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ?? null) : null;
   return (
     <div className="mx-auto max-w-4xl">
-      <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.p)}</Link></p>
-      <h1 className="mt-1 font-display text-3xl font-semibold">Behandlung vom {dateTimeDe(r.treatedAt)}</h1>
+      <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.p)}`} />
+      <h1 className="font-display text-3xl font-semibold wrap-break-word">Behandlung vom {dateTimeDe(r.treatedAt)}</h1>
       <p className="mt-1 flex flex-wrap gap-2 text-sm text-muted">
         dokumentiert von {data.author}
         {r.aiAssisted ? <Badge tone="info">KI-unterstützt, geprüft</Badge> : null}
