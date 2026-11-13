@@ -274,7 +274,22 @@ export type UserPrefs = {
   /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
   changelog?: { seenId?: string; mutedId?: string };
   /** Kalender: gewählte Ansicht („simple“ = einfache Liste, Standard; „full“ = Tag/Woche/Monat mit Zeitachse) */
-  calendar?: { mode?: "simple" | "full" };
+  calendar?: {
+    mode?: "simple" | "full";
+    /** Anzeige-Optionen (nur Abweichungen vom Standard; Prüfung/Auflösung in src/lib/calendar-options.ts) */
+    options?: {
+      holidays?: boolean;
+      schoolHolidays?: boolean;
+      absences?: boolean;
+      cancelledSimple?: boolean;
+      cancelledFull?: boolean;
+      weekend?: "auto" | "alle" | "keine";
+      workHours?: boolean;
+      weekNumbers?: boolean;
+      startHour?: number;
+      endHour?: number;
+    };
+  };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";
 };
