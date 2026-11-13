@@ -14,6 +14,9 @@ import { parseMoney } from "@/lib/format";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seatCounts, seatProblem } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
+import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-qr";
+import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS } from "@/lib/practice-documents";
+import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
@@ -24,7 +27,7 @@ export async function savePracticeAction(_: SettingsState, form: FormData): Prom
   const d = z
     .object({
       name: z.string().trim().min(2),
-      legalName: opt, street: opt, zip: opt, city: opt, phone: opt, email: opt, taxNumber: opt, vatId: opt, iban: opt,
+      legalName: opt, street: opt, zip: opt, city: opt, phone: opt, email: opt,
       state: z.string().length(2),
       smallBusiness: z.string().optional(),
       materialCost: z.string().optional(),
@@ -213,4 +216,91 @@ export async function saveBillingModeAction(_: SettingsState, form: FormData): P
   await setBillingMode(auth, mode, "settings");
   revalidatePath("/", "layout");
   return { ok: mode === "private_only" ? "Gespeichert – Kassen-Themen sind jetzt ausgeblendet." : "Gespeichert – Kassen-Themen sind wieder sichtbar." };
+}
+
+/** Bankverbindung und Steuerangaben für Rechnungen (Fußzeile, GiroCode) – nur settings.manage, protokolliert. */
+export async function saveBankTaxAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const d = z
+    .object({ accountHolder: opt, iban: opt, bic: opt, bankName: opt, taxNumber: opt, vatId: opt })
+    .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === "string")));
+  if (!d.success) return { error: d.error.issues[0]?.message };
+  const v = d.data;
+  if (v.iban && !isValidIban(v.iban)) return { error: "Die IBAN ist ungültig (Prüfziffer oder Länge stimmt nicht)." };
+  if (v.bic && !isValidBic(v.bic)) return { error: "Die BIC ist ungültig (8 oder 11 Zeichen, z. B. COBADEFFXXX)." };
+  const values = { ...v, iban: v.iban ? normalizeIban(v.iban) : null, bic: v.bic ? normalizeBic(v.bic) : null };
+  await db.update(organizations).set(values).where(eq(organizations.id, auth.organization.id));
+  // nur, WAS geändert wurde – keine Kontodaten im Protokoll
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.bank_tax", meta: { iban: !!values.iban, bic: !!values.bic, bankName: !!values.bankName, accountHolder: !!values.accountHolder, taxNumber: !!values.taxNumber, vatId: !!values.vatId } });
+  revalidatePath("/einstellungen/praxis");
+  return { ok: "Gespeichert." };
+}
+
+const httpUrl = z
+  .string()
+  .trim()
+  .max(DOC_LIMITS.url)
+  .optional()
+  .transform((v) => v || null)
+  .refine((v) => !v || /^https?:\/\/[^\s]+\.[^\s]+$/i.test(v), "Bitte einen vollständigen Link mit https:// angeben.");
+
+/** Belege: Website, Berufsbezeichnung (Fußzeile), WhatsApp-Hinweis, Buchungsweg auf Rechnungen. */
+export async function saveDocumentsAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const d = z
+    .object({
+      websiteUrl: httpUrl,
+      qualification: z.string().trim().max(DOC_LIMITS.qualification, "Berufsbezeichnung: höchstens 200 Zeichen").optional().transform((v) => v || null),
+      whatsapp: z.string().optional(),
+      bookingChannel: z.enum(BOOKING_CHANNELS).default("none"),
+      doctolibUrl: httpUrl,
+      customUrl: httpUrl,
+      customLabel: z.string().trim().max(DOC_LIMITS.bookingLabel, "Beschriftung: höchstens 60 Zeichen").optional().transform((v) => v || null),
+    })
+    .safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: d.error.issues[0]?.message };
+  const v = d.data;
+  if (v.bookingChannel === "doctolib" && !v.doctolibUrl) return { error: "Bitte den Doctolib-Link Ihrer Praxis angeben." };
+  if (v.bookingChannel === "custom" && !v.customUrl) return { error: "Bitte den Buchungslink angeben." };
+  const booking =
+    v.bookingChannel === "doctolib"
+      ? { channel: "doctolib", url: v.doctolibUrl }
+      : v.bookingChannel === "custom"
+        ? { channel: "custom", url: v.customUrl, ...(v.customLabel ? { label: v.customLabel } : {}) }
+        : { channel: v.bookingChannel };
+  const documents = { qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
+  await db
+    .update(organizations)
+    .set({
+      settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb, 'websiteUrl', ${v.websiteUrl}::text)`,
+    })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
+  revalidatePath("/einstellungen/praxis");
+  return { ok: "Gespeichert." };
+}
+
+/** Logo hochladen (kompakt oder vollständig) – PNG/JPEG bis 1 MB, verschlüsselt gespeichert. */
+export async function uploadLogoAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const kind = z.enum(LOGO_KINDS).safeParse(form.get("kind"));
+  const file = form.get("file");
+  if (!kind.success) return { error: "Ungültige Anfrage." };
+  if (!(file instanceof File) || !file.size) return { error: "Bitte eine Bilddatei auswählen." };
+  if (file.size > 1024 * 1024) return { error: "Das Logo ist zu groß (höchstens 1 MB)." };
+  try {
+    await uploadLogo(auth, kind.data, Buffer.from(await file.arrayBuffer()));
+  } catch (e) {
+    if (e instanceof LogoError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/einstellungen/praxis");
+  return { ok: "Logo gespeichert." };
+}
+
+export async function removeLogoAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const kind = z.enum(LOGO_KINDS).parse(form.get("kind"));
+  await removeLogo(auth, kind);
+  revalidatePath("/einstellungen/praxis");
 }

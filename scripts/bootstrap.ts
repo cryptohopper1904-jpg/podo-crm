@@ -23,7 +23,7 @@ async function main() {
   const pool = new Pool({ connectionString: url });
   try {
     const r = await runBootstrap(drizzle(pool, { schema }), env);
-    console.log(`Bootstrap: Plattform-Admin ${r.admin}, Praxis ${r.practice}${r.practiceSlug ? ` (${r.practiceSlug})` : ""}${r.billingMode ? `, Abrechnungsmodus ${r.billingMode === "set" ? "gesetzt" : "unverändert"}` : ""}, Demo-Praxis ${r.demo}.`);
+    console.log(`Bootstrap: Plattform-Admin ${r.admin}, Praxis ${r.practice}${r.practiceSlug ? ` (${r.practiceSlug})` : ""}${r.billingMode ? `, Abrechnungsmodus ${r.billingMode === "set" ? "gesetzt" : "unverändert"}` : ""}${r.documents ? `, Belege-Angaben ${r.documents === "set" ? "gesetzt" : "unverändert"}` : ""}, Demo-Praxis ${r.demo}.`);
     for (const w of r.warnings) console.warn(`Bootstrap-Hinweis: ${w}`);
   } finally {
     await pool.end();

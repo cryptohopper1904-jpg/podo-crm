@@ -80,6 +80,22 @@ export const practiceSpecSchema = z
     openingHours: z.array(z.object({ weekday: z.number().int().min(1).max(7), from: time, to: time })).max(21).default([]),
     homeVisitAreas: z.array(z.string().trim().min(1).max(LIMITS.area)).max(LIMITS.areas).default([]),
     websiteContent: z.object({ claim: z.string().max(LIMITS.claim).optional(), about: z.string().max(LIMITS.about).optional() }).optional(),
+    /**
+     * Belege (settings.documents, siehe src/lib/practice-documents.ts): Berufsbezeichnung für die Fußzeile,
+     * „auch WhatsApp“, Buchungsweg auf Rechnungen. Bankverbindung/Steuernummer NIE hier – nur in den Einstellungen.
+     */
+    documents: z
+      .object({
+        qualification: z.string().trim().max(200).optional(),
+        whatsapp: z.boolean().optional(),
+        booking: z
+          .object({ channel: z.enum(["podohero", "doctolib", "custom", "none"]), url: z.string().url().max(300).optional(), label: z.string().trim().max(60).optional() })
+          .strict()
+          .refine((b) => (b.channel === "doctolib" || b.channel === "custom" ? !!b.url : true), "booking.url fehlt")
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -91,6 +107,8 @@ export type BootstrapResult = {
   practiceSlug?: string;
   /** billingMode aus der Datei auf eine vorhandene Praxis angewendet (nur, wenn dort noch keiner gesetzt war) */
   billingMode?: "set" | "kept";
+  /** Belege-Angaben (documents) auf eine vorhandene Praxis angewendet (nur, wenn dort noch keine gesetzt waren) */
+  documents?: "set" | "kept";
   /** Demo-Praxis des Plattform-Admins: angelegt / vorhanden (Mitgliedschaft sichergestellt) / übersprungen */
   demo: "created" | "exists" | "skipped";
   warnings: string[];
@@ -177,7 +195,7 @@ async function bootstrapAdmin(db: Db, env: Env, warnings: string[]): Promise<Boo
   return "created";
 }
 
-async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<Pick<BootstrapResult, "practice" | "practiceSlug" | "billingMode">> {
+async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<Pick<BootstrapResult, "practice" | "practiceSlug" | "billingMode" | "documents">> {
   const value = env.BOOTSTRAP_PRACTICE_JSON;
   if (!value?.trim()) return { practice: "skipped" };
   const spec = loadPracticeSpec(value, env.BOOTSTRAP_CWD ?? process.cwd());
@@ -187,7 +205,8 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
   const [existingOrg] = await db.select({ id: schema.organizations.id }).from(schema.organizations).where(eq(schema.organizations.slug, slug));
   if (existingOrg) {
     const billingMode = spec.billingMode ? await ensureBillingMode(db, existingOrg.id, spec.billingMode) : undefined;
-    return { practice: "exists", practiceSlug: slug, ...(billingMode ? { billingMode } : {}) };
+    const documents = spec.documents ? await ensureDocuments(db, existingOrg.id, spec.documents) : undefined;
+    return { practice: "exists", practiceSlug: slug, ...(billingMode ? { billingMode } : {}), ...(documents ? { documents } : {}) };
   }
 
   const [existingUser] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, spec.owner.email));
@@ -233,6 +252,7 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
           ...(spec.openingDate ? { openingDate: spec.openingDate } : {}),
           ...(spec.practitioner ? { practitioner: spec.practitioner } : {}),
           ...(spec.billingMode ? { billingMode: spec.billingMode } : {}),
+          ...(spec.documents ? { documents: spec.documents } : {}),
           website: {
             enabled: false,
             claim: spec.websiteContent?.claim ?? "",
@@ -297,6 +317,18 @@ async function ensureBillingMode(db: Db, orgId: string, mode: BillingMode): Prom
     .returning({ id: schema.organizations.id });
   if (!updated.length) return "kept";
   await db.insert(schema.auditLog).values({ organizationId: orgId, action: "bootstrap.billing_mode", entity: "organization", entityId: orgId, meta: { to: mode } });
+  return "set";
+}
+
+/** documents idempotent auf eine vorhandene Praxis anwenden: nur, wenn settings.documents noch FEHLT. */
+async function ensureDocuments(db: Db, orgId: string, documents: NonNullable<PracticeSpec["documents"]>): Promise<"set" | "kept"> {
+  const updated = await db
+    .update(schema.organizations)
+    .set({ settings: sql`coalesce(${schema.organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb)` })
+    .where(and(eq(schema.organizations.id, orgId), sql`not (coalesce(${schema.organizations.settings}, '{}'::jsonb) ? 'documents')`))
+    .returning({ id: schema.organizations.id });
+  if (!updated.length) return "kept";
+  await db.insert(schema.auditLog).values({ organizationId: orgId, action: "bootstrap.documents", entity: "organization", entityId: orgId, meta: { bookingChannel: documents.booking?.channel ?? null } });
   return "set";
 }
 

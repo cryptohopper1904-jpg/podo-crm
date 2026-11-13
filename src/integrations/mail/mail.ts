@@ -24,12 +24,16 @@ export interface MailAttachment {
   filename: string;
   contentType: string;
   data: Uint8Array;
+  /** Inline-Bild (z. B. Praxis-Logo) – im HTML-Teil als „cid:<wert>“ referenziert */
+  cid?: string;
 }
 
 export interface MailMessage {
   to: string;
   subject: string;
   text: string;
+  /** optionaler HTML-Teil (z. B. mit Praxis-Logo); der Text-Teil bleibt immer erhalten */
+  html?: string;
   replyTo?: string | null;
   attachments?: MailAttachment[];
   /** Abweichender Absender („Name <adresse>“, mit formatFrom gebaut) – z. B. Vertriebsmails des Betreibers */
@@ -270,7 +274,8 @@ export class SmtpMailAdapter implements MailPort {
         replyTo: msg.replyTo ?? this.replyTo ?? undefined,
         subject: msg.subject.replace(/[\r\n]+/g, " ").slice(0, 300),
         text: msg.text,
-        attachments: (msg.attachments ?? []).map((a) => ({ filename: a.filename, contentType: a.contentType, content: Buffer.from(a.data) })),
+        ...(msg.html ? { html: msg.html } : {}),
+        attachments: (msg.attachments ?? []).map((a) => ({ filename: a.filename, contentType: a.contentType, content: Buffer.from(a.data), ...(a.cid ? { cid: a.cid, contentDisposition: "inline" as const } : {}) })),
         headers: safeExtraHeaders(msg.headers),
       });
       return { messageId: typeof info?.messageId === "string" && info.messageId ? info.messageId.slice(0, 250) : mockId("smtp", `${msg.to}|${msg.subject}`) };

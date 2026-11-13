@@ -56,6 +56,9 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row:
         {canDoc && patient && a.status !== "done" && !cancelled ? (
           <Link href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl bg-primary px-3 text-sm font-semibold text-on-primary hover:bg-primary-hover">Doku</Link>
         ) : null}
+        {canDoc && patient && a.status !== "done" && !cancelled ? (
+          <Link href={`/kunden/${patient.id}/anamnese/bogen?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2" title="Anamnesebogen am iPad – Datum und Name sind vorausgefüllt">Anamnese</Link>
+        ) : null}
         {canEdit && patient && (a.homeVisit || patient.homeVisit) && !cancelled && a.status !== "done" ? (
           <Link href={`/touren/losfahren?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Losfahren</Link>
         ) : null}

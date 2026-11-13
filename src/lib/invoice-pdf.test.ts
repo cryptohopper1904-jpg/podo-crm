@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { PDFDocument } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 
@@ -43,5 +45,22 @@ describe("PDF-Rechnung", () => {
     );
     const doc = await PDFDocument.load(bytes);
     expect(doc.getPageCount()).toBeGreaterThan(1);
+  });
+
+  it("mit Logos, GiroCode, Buchungs-QR und Fußzeilenangaben (auch mehrseitig); defektes Logo bricht nichts", async () => {
+    const png = readFileSync(path.join(__dirname, "../../docs/kunden/kiehne/logo-kiehne.png"));
+    const full = await renderInvoicePdf(
+      data({
+        organization: { ...data().organization, bic: "BYLADEM1001", bankName: "Beispielbank", accountHolder: "Erika Musterfrau", website: "https://www.example.org", qualification: "staatlich anerkannte Podologin", whatsapp: true },
+        logos: { full: { bytes: png, mime: "image/png" }, compact: { bytes: new Uint8Array([1, 2, 3]), mime: "image/png" } },
+        booking: { label: "Nächsten Termin online buchen:", url: "https://app.example.org/buchen/x", display: "app.example.org/buchen/x" },
+        serviceDates: ["2026-11-02"],
+      }),
+    );
+    expect((await PDFDocument.load(full)).getPageCount()).toBe(1);
+    for (const kind of ["receipt", "deposit", "credit_note", "no_show_fee"]) {
+      const bytes = await renderInvoicePdf(data({ invoice: { ...data().invoice, kind, status: "paid", paidCents: 9450 }, payments: [{ paidAt: "2026-11-02T10:00:00Z", method: "cash", amountCents: 9450 }], logos: { compact: { bytes: png, mime: "image/png" } } }));
+      expect((await PDFDocument.load(bytes)).getPageCount(), kind).toBe(1);
+    }
   });
 });

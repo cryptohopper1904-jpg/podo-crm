@@ -20,9 +20,11 @@ import type { MessagingPort, OutboundMessage } from "@/integrations/types";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
+import { brandedMailHtml, LOGO_CID } from "@/lib/mail-html";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { decryptSecret } from "@/lib/secrets";
 import { loadConnection, logSync } from "./integrations";
+import { loadLogo } from "./practice-logos";
 
 /**
  * E-Mail-Versand der Praxis über den MailPort (src/integrations/mail/mail.ts):
@@ -147,10 +149,29 @@ export async function mailMessagingPort(org: string, ctx: Omit<MailContext, "pur
     provider: "email_imap",
     isMock,
     async send(m: OutboundMessage) {
-      const r = await sendMail(org, { to: m.to.trim(), subject: m.subject ?? "", text: m.body, attachments: m.attachments }, { purpose: ctx.purpose ?? "message", ...ctx });
+      const branded = await brandedMailParts(org, m.body);
+      const r = await sendMail(
+        org,
+        { to: m.to.trim(), subject: m.subject ?? "", text: m.body, attachments: m.attachments, ...(branded ? { html: branded.html, attachments: [...(m.attachments ?? []), branded.logo] } : {}) },
+        { purpose: ctx.purpose ?? "message", ...ctx },
+      );
       return { externalId: r.messageId };
     },
     parseInbound: () => [],
+  };
+}
+
+/**
+ * HTML-Teil mit dem vollständigen Praxis-Logo (ersatzweise dem Zeichen) für E-Mails an Kund:innen
+ * (Termine, Erinnerungen, Rechnungen, Antworten). Ohne Logo bleibt es bei reinem Text wie bisher.
+ */
+export async function brandedMailParts(org: string, text: string) {
+  const logo = await loadLogo(org, "full", { fallback: true }).catch(() => null);
+  if (!logo) return null;
+  const { name } = await practiceOf(org);
+  return {
+    html: brandedMailHtml(text, { practiceName: name, logo }),
+    logo: { filename: logo.mime === "image/png" ? "logo.png" : "logo.jpg", contentType: logo.mime, data: logo.bytes, cid: LOGO_CID },
   };
 }
 

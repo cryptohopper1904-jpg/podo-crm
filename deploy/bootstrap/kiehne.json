@@ -12,6 +12,11 @@
   "billingMode": "private_only",
   "owner": { "email": "sven@podologie-kiehne.de", "name": "Sven Kiehne" },
   "practitioner": { "name": "Victoria Kiehne", "qualification": "staatlich anerkannte Podologin & Heilpraktikerin" },
+  "documents": {
+    "qualification": "staatlich anerkannte Podologin & Heilpraktikerin auf dem Gebiet der Podologie",
+    "whatsapp": true,
+    "booking": { "channel": "podohero" }
+  },
   "services": [
     { "code": "PK", "name": "Podologische Komplexbehandlung", "durationMin": 40, "priceCents": 6500, "vatRate": 0, "category": "treatment", "note": "Beispielpreis aus dem Standardkatalog – Preis bitte prüfen" },
     { "code": "NS", "name": "Nagelkorrekturspange", "durationMin": 30, "priceCents": 6000, "vatRate": 0, "category": "brace", "note": "Beispielpreis aus dem Standardkatalog – Preis bitte prüfen" },

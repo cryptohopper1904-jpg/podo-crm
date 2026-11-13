@@ -260,3 +260,31 @@ export function initialFromRiskFlags(flags: {
     allergies: flags.allergies || undefined,
   };
 }
+
+/** Papierfassung (leerer Bogen zum Ausdrucken): Ja/Nein-Fragen und Freitextfelder in der Reihenfolge des Formulars. */
+export const ANAMNESIS_PAPER: { section: string; yesNo: string[]; text: string[] }[] = [
+  {
+    section: "Allgemeine Gesundheit",
+    yesNo: [
+      "Diabetes mellitus (Typ: ____  seit: ______  Insulin: ja / nein)",
+      "pAVK / Durchblutungsstörung der Beine",
+      "Neuropathie (Taubheit, Kribbeln) bekannt",
+      "Blutverdünnende Medikamente (Präparat: ______________)",
+      "MRSA / multiresistente Erreger",
+      "Latexallergie",
+      "Allergie gegen Desinfektionsmittel",
+      "Dialyse / terminale Niereninsuffizienz",
+    ],
+    text: ["Weitere Allergien / Unverträglichkeiten", "Regelmäßige Medikamente", "Weitere Infektionen (z. B. Hepatitis)"],
+  },
+  {
+    section: "Fußbezogene Vorgeschichte",
+    yesNo: ["Offene Wunde / Ulkus am Fuß in der Vorgeschichte", "Amputation (Zeh/Fußteil)", "Fußfehlstellung (z. B. Hallux valgus, Hammerzehen, Charcot)", "Einlagen"],
+    text: ["Schuhe (Art, orthopädisch, diabetesadaptiert)"],
+  },
+  {
+    section: "Befund Praxis (Sensibilität, nur wenn getestet)",
+    yesNo: [],
+    text: ["Monofilament 10 g – links / rechts", "Stimmgabel 128 Hz (0–8) – links / rechts", "IWGDF-Risikoklasse (nur bei Diabetes)", "Notizen"],
+  },
+];

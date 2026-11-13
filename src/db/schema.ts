@@ -151,6 +151,11 @@ export const organizations = pgTable("organizations", {
   taxNumber: text("tax_number"),
   vatId: text("vat_id"),
   iban: text("iban"),
+  /** BIC (optional, für den GiroCode auf Rechnungen) */
+  bic: text("bic"),
+  bankName: text("bank_name"),
+  /** Kontoinhaber:in (Empfängername im GiroCode); leer = rechtlicher Name bzw. Praxisname */
+  accountHolder: text("account_holder"),
   /** § 19 UStG – Kleinunternehmerregelung */
   smallBusiness: boolean("small_business").notNull().default(false),
   /** Bundesland für Feiertage, z. B. "BB" */
@@ -172,6 +177,30 @@ export const organizations = pgTable("organizations", {
   deletionRequestedAt: timestamp("deletion_requested_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
+
+/**
+ * Praxis-Logos (Einstellungen → Praxisdaten): „compact“ = Zeichen (dezent auf Bögen/Quittungen),
+ * „full“ = vollständiges Logo (Rechnungskopf, E-Mails). Datei verschlüsselt in der Ablage (src/lib/storage.ts),
+ * nur PNG/JPEG (pdf-lib), je Praxis und Art höchstens eine Zeile.
+ */
+export const organizationLogos = pgTable(
+  "organization_logos",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** compact | full */
+    kind: text("kind").notNull(),
+    storageKey: text("storage_key").notNull(),
+    mime: text("mime").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    uploadedBy: uuid("uploaded_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("organization_logos_org_kind").on(t.organizationId, t.kind)],
+);
 
 /**
  * Support-Freigaben (Break-Glass): Plattform-Betreiber sehen Praxisdaten NUR mit zeitlich begrenzter,

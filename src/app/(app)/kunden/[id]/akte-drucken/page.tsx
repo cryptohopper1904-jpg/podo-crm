@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { PrintButton } from "@/components/print-button";
+import { SheetHeader } from "@/components/sheet-header";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { getPatient } from "@/server/patients";
@@ -16,10 +17,18 @@ export default async function PrintRecordPage(props: PageProps<"/kunden/[id]/akt
   return (
     <article className="mx-auto max-w-3xl bg-surface p-8 print:p-0">
       <div className="mb-6 flex justify-end"><PrintButton /></div>
-      <h1 className="font-display text-2xl font-semibold">Behandlungsdokumentation</h1>
-      <p className="text-sm text-muted">{auth.organization.name} · erstellt am {dateTimeDe(new Date())}</p>
-      <section className="mt-6 text-[15px]">
-        <p><strong>{fullName(p)}</strong> · geb. {dateDe(p.birthDate)} · Kunden-Nr. {p.number}</p>
+      <SheetHeader
+        organizationId={auth.organization.id}
+        practiceName={auth.organization.name}
+        title="Behandlungsdokumentation"
+        fields={[
+          ["Erstellt am", dateTimeDe(new Date())],
+          ["Patient:in", fullName(p)],
+          ["Patientennummer", String(p.number)],
+          ["Geburtsdatum", p.birthDate ? dateDe(p.birthDate) : null],
+        ]}
+      />
+      <section className="text-[15px]">
         <p>{[p.street, p.zip, p.city].filter(Boolean).join(", ")}</p>
       </section>
       <section className="mt-6 flex flex-col gap-4">
