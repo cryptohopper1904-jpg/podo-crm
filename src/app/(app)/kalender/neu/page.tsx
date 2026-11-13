@@ -28,7 +28,7 @@ export default async function NewAppointmentPage(props: PageProps<"/kalender/neu
         patients={pts}
         services={svc}
         team={team}
-        defaults={{ patientId: typeof sp.patient === "string" ? sp.patient : "", date: typeof sp.datum === "string" ? sp.datum : berlinDateIso(), therapistId: auth.user.id }}
+        defaults={{ patientId: typeof sp.patient === "string" ? sp.patient : "", date: typeof sp.datum === "string" ? sp.datum : berlinDateIso(), therapistId: team.some((t) => t.id === auth.user.id) ? auth.user.id : (team[0]?.id ?? "") }}
       />
     </div>
   );

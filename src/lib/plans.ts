@@ -9,12 +9,24 @@
  * auf ihre Aufbewahrungspflichten. Durchgesetzt in requireAuth()/getAuth() (src/lib/auth/session.ts).
  */
 
+import { hasOwnCalendar } from "./auth/permissions";
+import { moneyShort } from "./format";
+
 export const PRICES_PRELIMINARY = true;
 export const PRICES_NOTE = "Preise vorläufig – Platzhalter, Änderungen vorbehalten. Alle Preise netto zzgl. USt.";
 
 export const TRIAL_DAYS = 30;
 export const GRACE_DAYS = 14;
 export const EXTRA_SEAT_CENTS = 1500;
+/** Regelsteuersatz für die Brutto-Anzeige (B2B: Nettopreise bleiben maßgeblich, AGB schließt Verbraucher aus) */
+export const VAT_RATE_PERCENT = 19;
+
+/** Bruttobetrag in Cent (kaufmännisch gerundet) */
+export const grossCents = (netCents: number) => Math.round((netCents * (100 + VAT_RATE_PERCENT)) / 100);
+/** Bruttopreis als Text, z. B. „70,21 € inkl. USt.“ (0 € ohne USt-Angabe → null) */
+export const grossLabel = (netCents: number) => (netCents > 0 ? `${moneyShort(grossCents(netCents))} inkl. USt.` : null);
+/** Netto- und Bruttopreis, z. B. „59 € netto · 70,21 € inkl. USt.“; 0 € bleibt „0 €“ */
+export const netGrossLabel = (netCents: number) => (netCents > 0 ? `${moneyShort(netCents)} netto · ${grossLabel(netCents)}` : moneyShort(0));
 
 export const FEATURES = ["portal", "voice_agent", "website"] as const;
 export type Feature = (typeof FEATURES)[number];
@@ -35,7 +47,7 @@ export type PlanInfo = {
   label: string;
   /** Netto-Grundpreis pro Monat in Cent (vorläufig) */
   priceCents: number;
-  /** im Grundpreis enthaltene Behandler-/Team-Plätze */
+  /** im Grundpreis enthaltene Plätze (Personen mit eigenem Kalender; Empfang/Azubis/Steuerberatung kostenlos) */
   includedSeats: number;
   /** Obergrenze (null = unbegrenzt) */
   maxSeats: number | null;
@@ -60,7 +72,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: FEATURES,
     voiceMinutesIncluded: 30,
     maxPatients: null,
-    description: `${TRIAL_DAYS} Tage alle Funktionen, 2 Personen (auf Anfrage mehr)`,
+    description: `${TRIAL_DAYS} Tage alle Funktionen, 2 Behandler:innen (auf Anfrage mehr); Empfang und Azubis kostenlos`,
   },
   free: {
     label: "Kostenlos",
@@ -80,7 +92,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: [],
     voiceMinutesIncluded: 0,
     maxPatients: null,
-    description: "Für Einzelpraxen: 1 Person, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
+    description: "Für Einzelpraxen: 1 Behandler:in, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul; Empfang und Azubis kostenlos",
   },
   praxis: {
     label: "Praxis",
@@ -90,7 +102,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: ["portal", "website"],
     voiceMinutesIncluded: 0,
     maxPatients: null,
-    description: "Bis zu 5 Personen, alle Funktionen; KI-Telefon als Zusatzmodul",
+    description: "Bis zu 5 Behandler:innen, alle Funktionen; KI-Telefon als Zusatzmodul; Empfang und Azubis kostenlos",
   },
   plus: {
     label: "Plus",
@@ -100,7 +112,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     features: ["portal", "voice_agent", "website"],
     voiceMinutesIncluded: 300,
     maxPatients: null,
-    description: "Unbegrenzt viele Personen, inkl. KI-Telefonagent (300 Minuten/Monat)",
+    description: "Unbegrenzt viele Behandler:innen, inkl. KI-Telefonagent (300 Minuten/Monat); Empfang und Azubis kostenlos",
   },
   internal: {
     label: "Intern",
@@ -169,7 +181,7 @@ export type Entitlements = {
   plan: PlanId;
   planLabel: string;
   features: ReadonlySet<Feature>;
-  /** Anzahl erlaubter Team-Plätze (Steuerberatung zählt nicht), Infinity = unbegrenzt */
+  /** Anzahl erlaubter Plätze (nur Personen mit eigenem Kalender, siehe seatCounts), Infinity = unbegrenzt */
   seatLimit: number;
   access: AccessInfo;
   readOnly: boolean;
@@ -220,19 +232,27 @@ export function assertEntitled(org: OrgBilling, feature: Feature, now: Date = ne
   }
 }
 
-/** Rollen, die einen Platz belegen (die Steuerberatung ist kostenlos) */
-export const seatCounts = (role: string) => role !== "accountant";
+/** Hinweistext, wer keinen Platz belegt (Oberfläche, Fehlermeldungen) */
+export const SEAT_FREE_NOTE = "Empfang, Azubis und Steuerberatung belegen keinen Platz.";
 
 /**
- * Prüft, ob eine weitere Person mit `role` hinzukommen darf. `usedSeats` = aktive Mitgliedschaften
- * ohne Steuerberatung. Gibt eine Fehlermeldung zurück oder null.
+ * Belegt eine Person mit `role` einen Platz? Nur Personen mit eigener Kalenderspalte (Inhaber:in, Podolog:in,
+ * siehe CALENDAR_ROLES). Empfang, Azubis und Steuerberatung sind kostenlos. Ausnahme Kostenlos-Tarif: Er ist
+ * auf „1 Person“ begrenzt – dort zählt jede Person außer der Steuerberatung.
+ */
+export const seatCounts = (role: string, plan?: string) => (plan === "free" ? role !== "accountant" : hasOwnCalendar(role));
+
+/**
+ * Prüft, ob eine weitere Person mit `role` hinzukommen darf. `usedSeats` = aktive Mitgliedschaften, die laut
+ * seatCounts einen Platz belegen (src/server/billing.ts usedSeats). Gibt eine Fehlermeldung zurück oder null.
  */
 export function seatProblem(org: Pick<OrgBilling, "plan" | "seats">, usedSeats: number, role: string): string | null {
-  if (!seatCounts(role)) return null;
+  if (!seatCounts(role, org.plan)) return null;
   const limit = seatLimit(org);
   if (usedSeats + 1 <= limit) return null;
   const plan = isPlanId(org.plan) ? PLANS[org.plan].label : org.plan;
-  return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. (Die Steuerberatung belegt keinen Platz.)`;
+  const free = org.plan === "free" ? "Der kostenlose Tarif ist auf 1 Person begrenzt (die Steuerberatung zählt nicht)." : `(${SEAT_FREE_NOTE})`;
+  return `Alle ${limit} Plätze im Tarif „${plan}“ sind belegt. Unter Einstellungen → Abo & Tarif kannst du weitere Plätze buchen oder den Tarif wechseln. ${free}`;
 }
 
 // ───────────── Patienten-Grenze (Kostenlos-Tarif) ─────────────

@@ -82,13 +82,18 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await billing.processBillingEvent({ id: `evt_${sfx()}`, type: "invoice.payment_failed", created, data: { object: { customer: "cus_unbekannt" } } }, { prices })).toBe("unassigned");
   });
 
-  it("belegte Plätze: nur aktive Mitglieder, ohne Steuerberatung", async () => {
+  it("belegte Plätze: nur aktive Mitglieder mit eigenem Kalender (ohne Empfang, Azubi, Steuerberatung)", async () => {
     const org = await f.org();
-    for (const [role, active] of [["owner", true], ["therapist", true], ["accountant", true], ["reception", false]] as const) {
+    await f.pool.query("update organizations set plan = 'praxis' where id = $1", [org]);
+    for (const [role, active] of [["owner", true], ["therapist", true], ["therapist", false], ["accountant", true], ["reception", true], ["trainee", true], ["reception", false]] as const) {
       const u = await f.user();
       await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,$3,$4)", [org, u, role, active]);
     }
     expect(await billing.usedSeats(org)).toBe(2);
+    expect(await billing.activeTeamMembers(org)).toBe(4);
+    // Kostenlos-Tarif („1 Person“): dort zählen auch Empfang und Azubi, die Steuerberatung weiterhin nicht
+    await f.pool.query("update organizations set plan = 'free' where id = $1", [org]);
+    expect(await billing.usedSeats(org)).toBe(4);
   });
 
   it("Kostenlos: Wechsel nur bis 20 Patient:innen (archivierte zählen mit), Team wird deaktiviert, altes Abo überschreibt nicht", async () => {
@@ -96,7 +101,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const u = await f.user();
     const u2 = await f.user();
     const acc = await f.user();
-    await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,'owner',true),($1,$3,'therapist',true),($1,$4,'accountant',true)", [org, u, u2, acc]);
+    const rec = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,'owner',true),($1,$3,'therapist',true),($1,$4,'accountant',true),($1,$5,'reception',true)", [org, u, u2, acc, rec]);
     await f.pool.query("update organizations set stripe_customer_id = $2, stripe_subscription_id = 'sub_old', subscription_status = 'canceled', plan = 'praxis' where id = $1", [org, `cus_${sfx()}`]);
     const ids: string[] = [];
     for (let i = 0; i < 21; i++) ids.push(await f.patient(org, { lastName: `P${i}` }));
@@ -105,7 +111,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/höchstens 20/) });
     // gelöscht (Kontaktdaten gelöscht) zählt nicht
     await f.asOrg(org, (c) => c.query("update patients set contact_erased_at = now() where id = $1", [ids[0]]));
-    expect(await billing.switchToFreePlan(org, u)).toEqual({ ok: true, deactivated: [u2] });
+    // Kostenlos = 1 Person: auch der Empfang (in bezahlten Tarifen platzfrei) wird deaktiviert, die Steuerberatung bleibt
+    const sw = await billing.switchToFreePlan(org, u);
+    expect(sw).toMatchObject({ ok: true });
+    expect("deactivated" in sw && [...sw.deactivated].sort()).toEqual([u2, rec].sort());
     expect(await orgRow(org)).toMatchObject({ plan: "free", subscription_status: "none", seats: 1, stripe_subscription_id: null });
     expect(await billing.usedSeats(org)).toBe(1);
 

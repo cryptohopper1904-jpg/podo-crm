@@ -299,7 +299,8 @@ export default async function Landing() {
             <div key={p.id} className={`rounded-[var(--radius-card)] border p-5 ${p.highlight ? "border-primary bg-surface" : "border-border bg-surface"}`}>
               <p className="font-semibold">{p.name}</p>
               <p className="mt-2 font-display text-3xl font-bold">{p.price}</p>
-              <p className="text-sm text-muted">{p.period}</p>
+              <p className="text-sm text-muted">{p.gross ? `netto ${p.period}` : p.period}</p>
+              {p.gross ? <p className="text-xs text-muted">{p.gross}</p> : null}
               <p className="mt-3 text-sm">{p.therapists}</p>
             </div>
           ))}

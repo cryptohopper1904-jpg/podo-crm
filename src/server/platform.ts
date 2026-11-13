@@ -4,7 +4,7 @@ import { and, count, desc, eq, gt, gte, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { appointments, auditLog, memberships, organizations, patients, supportGrants, users } from "@/db/schema";
 import { getSession, requestMeta } from "@/lib/auth/session";
-import { isPlanId, PLANS, voiceAddonActive, type PlanId } from "@/lib/plans";
+import { isPlanId, PLANS, seatCounts, voiceAddonActive, type PlanId } from "@/lib/plans";
 import { websiteAddonActive } from "@/lib/website";
 import { isDemoPractice } from "@/lib/demo-practice";
 
@@ -78,7 +78,7 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       trialEndsAt: o.trialEndsAt,
       currentPeriodEnd: o.currentPeriodEnd,
       seats: o.seats,
-      usedSeats: seatRows.filter((r) => r.org === o.id && r.role !== "accountant").reduce((s, r) => s + Number(r.n), 0),
+      usedSeats: seatRows.filter((r) => r.org === o.id && seatCounts(r.role, o.plan)).reduce((s, r) => s + Number(r.n), 0),
       createdAt: o.createdAt,
       patients: c.patients,
       appointments30d: c.appointments30d,

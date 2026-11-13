@@ -1,7 +1,8 @@
 import "server-only";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db, withOrg, type Tx } from "@/db";
 import { memberships, organizations, users } from "@/db/schema";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import { berlinDateIso } from "@/lib/format";
 import type { CheckResult } from "@/lib/ops-health";
 import { checkMigrations, checkTimestamps } from "./ops-status";
@@ -230,7 +231,8 @@ async function loginStats(): Promise<Map<string, LoginRow>> {
   const rows = await db
     .select({
       org: memberships.organizationId,
-      seatsUsed: sql<number>`count(*) filter (where ${memberships.role} <> 'accountant')::int`,
+      // Plätze: nur Rollen mit eigenem Kalender (CALENDAR_ROLES); Empfang, Azubis, Steuerberatung kostenlos
+      seatsUsed: sql<number>`count(*) filter (where ${inArray(memberships.role, [...CALENDAR_ROLES])})::int`,
       active7d: sql<number>`count(*) filter (where ${users.lastLoginAt} >= now() - interval '7 days')::int`,
       active30d: sql<number>`count(*) filter (where ${users.lastLoginAt} >= now() - interval '30 days')::int`,
       lastLoginAt: sql<string | null>`max(${users.lastLoginAt})`,

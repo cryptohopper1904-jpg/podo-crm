@@ -82,7 +82,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
             <RescheduleForm
               id={a.id}
               team={team.map((t) => ({ id: t.id, name: t.name }))}
-              defaults={{ date, time: timeDe(a.startsAt), durationMin: durationMinutes(a.startsAt, a.endsAt), therapistId: a.therapistId ?? auth.user.id }}
+              defaults={{ date, time: timeDe(a.startsAt), durationMin: durationMinutes(a.startsAt, a.endsAt), therapistId: [a.therapistId, auth.user.id].find((id) => team.some((t) => t.id === id)) ?? team[0]?.id ?? "" }}
             />
           )}
         </Card>

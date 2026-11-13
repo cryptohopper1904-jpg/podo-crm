@@ -7,6 +7,7 @@ import { CalendarFeedError, feedUrlHint, fetchIcs, normalizeFeedUrl } from "@/in
 import type { Resolver } from "@/integrations/net-guard";
 import { describeError } from "@/integrations/test-connection";
 import { assertCan } from "@/lib/auth/assert";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
@@ -368,8 +369,8 @@ async function assertTherapist(tx: Tx, org: string, therapistId: string | null) 
   const [m] = await tx
     .select({ id: memberships.userId })
     .from(memberships)
-    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, therapistId), eq(memberships.active, true)));
-  if (!m) throw new CalendarFeedError("Behandler:in gehört nicht zur Praxis.");
+    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, therapistId), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+  if (!m) throw new CalendarFeedError("Behandler:in gehört nicht zur Praxis (Empfang und Azubis haben keinen eigenen Kalender).");
 }
 
 export async function createCalendarFeed(auth: AuthContext, input: { url: string; label: string; therapistId: string | null; source: FeedSource }) {

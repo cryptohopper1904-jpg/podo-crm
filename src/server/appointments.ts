@@ -1,11 +1,12 @@
 import "server-only";
-import { and, asc, eq, gte, isNull, lt, ne, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
+import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
@@ -35,6 +36,10 @@ export async function listAppointments(auth: AuthContext, fromIso: string, days:
   return rows.map(({ feedLabel, feedConflict, ...r }) => ({ ...r, feed: feedLabel !== null ? { label: feedLabel, conflict: feedConflict } : null }));
 }
 
+/**
+ * Wählbare Behandler:innen (eigene Kalenderspalte): nur Inhaber:in und Podolog:in (CALENDAR_ROLES).
+ * Empfang und Azubis haben keinen eigenen Kalender und belegen dafür keinen bezahlten Platz.
+ */
 export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
   const { db } = await import("@/db");
@@ -42,7 +47,16 @@ export async function therapists(auth: AuthContext) {
     .select({ id: users.id, name: users.name, role: memberships.role, color: memberships.color })
     .from(memberships)
     .innerJoin(users, eq(users.id, memberships.userId))
-    .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), ne(memberships.role, "accountant")));
+    .where(and(eq(memberships.organizationId, org), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+}
+
+/** Ist `userId` aktive Behandler:in der Praxis (Rolle mit eigenem Kalender)? */
+export async function isCalendarMember(tx: Tx, org: string, userId: string): Promise<boolean> {
+  const [m] = await tx
+    .select({ id: memberships.userId })
+    .from(memberships)
+    .where(and(eq(memberships.organizationId, org), eq(memberships.userId, userId), eq(memberships.active, true), inArray(memberships.role, [...CALENDAR_ROLES])));
+  return !!m;
 }
 
 /** Überschneidungen beim selben Behandler (ohne abgesagte Termine). */
@@ -105,9 +119,13 @@ export type InternalAppointmentInput = {
  * derselben Buchungssperre wie /buchen, Portal, Telefon und Warteliste (pg_advisory_xact_lock „book:<org>“).
  * `allowConflict` (bewusste Doppelbuchung nach Rückfrage) überspringt nur die Prüfung, nicht die Sperre.
  */
-export async function createInternalAppointments(org: string, input: InternalAppointmentInput): Promise<{ ok: true; ids: string[] } | { ok: false; conflict: true }> {
+export async function createInternalAppointments(
+  org: string,
+  input: InternalAppointmentInput,
+): Promise<{ ok: true; ids: string[] } | { ok: false; conflict: true } | { ok: false; conflict?: undefined; error: string }> {
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
+    if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
     if (!input.allowConflict) {
       for (const s of input.occurrences) {
         if ((await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000))).length) return { ok: false as const, conflict: true as const };
@@ -223,11 +241,8 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
       .limit(1);
     const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
-    const [member] = await tx
-      .select({ id: memberships.userId })
-      .from(memberships)
-      .where(and(eq(memberships.organizationId, org), eq(memberships.userId, input.therapistId), eq(memberships.active, true)));
-    if (!member) return { ok: false, error: "Behandler:in nicht gefunden." };
+    // Nur Rollen mit eigenem Kalender (Empfang/Azubis belegen keinen Platz und bekommen keine Termine)
+    if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false, error: "Behandler:in nicht gefunden." };
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
       if (clash.length) return { ok: false, conflict: true, error: "Zu dieser Zeit ist bereits ein Termin eingetragen." };

@@ -5,8 +5,8 @@ import { Badge, Card, CardTitle, Field, Input, Select, Table } from "@/component
 import { db } from "@/db";
 import { memberships, users } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
-import { ROLE_LABELS, ROLES, permissionsFor } from "@/lib/auth/permissions";
-import { seatLimit } from "@/lib/plans";
+import { hasOwnCalendar, ROLE_LABELS, ROLES, permissionsFor } from "@/lib/auth/permissions";
+import { SEAT_FREE_NOTE, seatLimit } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
 import { inviteMemberAction, updateMemberAction } from "../actions";
 
@@ -27,7 +27,7 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
       <div className={`flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-sm ${plaetze === "voll" || used >= limit ? "bg-warn-soft text-warn-soft-text" : "bg-surface-2"}`}>
         <span>
           {plaetze === "voll" ? "Änderung nicht gespeichert: Alle Plätze sind belegt. " : null}
-          Plätze belegt: <strong className="tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</strong> (Steuerberatung zählt nicht)
+          Plätze belegt: <strong className="tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</strong> {auth.billing.plan === "free" ? "(kostenloser Tarif: 1 Person, Steuerberatung zählt nicht)" : `– nur Personen mit eigenem Kalender. ${SEAT_FREE_NOTE}`}
         </span>
         {auth.role === "owner" && used >= limit ? <Link href="/einstellungen/abo" className="font-semibold text-primary">Weitere Plätze buchen / Tarif wechseln →</Link> : null}
       </div>
@@ -70,7 +70,7 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Name"><Input name="name" required /></Field>
             <Field label="E-Mail"><Input name="email" type="email" required /></Field>
-            <Field label="Rolle"><Select name="role" defaultValue="therapist">{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</Select></Field>
+            <Field label="Rolle" hint={auth.billing.plan === "free" ? undefined : "Empfang, Azubi und Steuerberatung: kein Platz, kein eigener Kalender"}><Select name="role" defaultValue="therapist">{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</Select></Field>
             <Field label="Startpasswort" hint="min. 12 Zeichen"><Input name="password" type="text" minLength={12} autoComplete="off" /></Field>
           </div>
         </ActionForm>
@@ -81,6 +81,7 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
           {ROLES.map((r) => (
             <div key={r} className="rounded-xl bg-surface-2 p-3 text-sm">
               <p className="font-semibold">{ROLE_LABELS[r]}</p>
+              <p className="text-xs text-muted">{hasOwnCalendar(r) ? "eigener Kalender, belegt einen Platz" : r !== "accountant" && auth.billing.plan === "free" ? "kein eigener Kalender; im kostenlosen Tarif zählt jede Person" : "kein eigener Kalender, kein Platz"}</p>
               <p className="mt-1 text-muted">{permissionsFor(r).join(", ")}</p>
             </div>
           ))}

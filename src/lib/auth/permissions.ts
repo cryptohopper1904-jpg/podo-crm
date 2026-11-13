@@ -13,6 +13,15 @@ export const ROLE_LABELS: Record<Role, string> = {
   accountant: "Steuerberatung",
 };
 
+/**
+ * Rollen mit eigener Kalenderspalte: nur sie können als Behandler:in eines Termins eingetragen werden
+ * (Terminanlage, Verschieben, Kalender-Abo) und belegen einen bezahlten Platz im Tarif (src/lib/plans.ts).
+ * Empfang und Azubis behandeln nicht eigenständig (Empfang ohne medizinische Inhalte, Azubis ohne
+ * Terminschreibrecht) und sind deshalb im Abo kostenlos.
+ */
+export const CALENDAR_ROLES = ["owner", "therapist"] as const satisfies readonly Role[];
+export const hasOwnCalendar = (role: string): boolean => (CALENDAR_ROLES as readonly string[]).includes(role);
+
 export const PERMISSIONS = [
   "patients.read",
   "patients.write",

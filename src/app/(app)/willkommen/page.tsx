@@ -102,7 +102,7 @@ export default async function WelcomePage({ searchParams }: PageProps<"/willkomm
         ) : step.key === "team" ? (
           <>
             <h2 className="mb-4 font-display text-xl font-semibold">Team einladen</h2>
-            <p className="mb-4 text-sm text-muted">Lege Kolleg:innen mit Rolle und Startpasswort an. Die Steuerberatung belegt keinen Platz. Weitere Personen jederzeit unter Einstellungen → Team.</p>
+            <p className="mb-4 text-sm text-muted">Lege Kolleg:innen mit Rolle und Startpasswort an. Nur Personen mit eigenem Kalender (Inhaber:in, Podolog:in) belegen einen Platz – Empfang, Azubis und Steuerberatung sind kostenlos. Weitere Personen jederzeit unter Einstellungen → Team.</p>
             <ActionForm action={inviteMemberAction} submit="Hinzufügen">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field label="Name"><Input name="name" required /></Field>

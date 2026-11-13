@@ -103,11 +103,12 @@ export async function updateMemberAction(form: FormData) {
   if (!m || m.userId === auth.user.id) return; // eigene Rolle nicht ändern (Aussperren verhindern)
   const nextRole = role ?? m.role;
   const nextActive = active !== null ? active === "1" : m.active;
-  // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen
-  const takesSeat = nextActive && seatCounts(nextRole) && !(m.active && seatCounts(m.role));
   const blocked = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${org}`}))`);
-    if (takesSeat && seatProblem(await currentSeatBilling(tx, org), await usedSeats(org, tx), nextRole)) return true;
+    // Belegt die Person danach (neu) einen Platz? Dann Tarif-Plätze prüfen (z. B. Empfang → Podolog:in)
+    const billing = await currentSeatBilling(tx, org);
+    const takesSeat = nextActive && seatCounts(nextRole, billing.plan) && !(m.active && seatCounts(m.role, billing.plan));
+    if (takesSeat && seatProblem(billing, await usedSeats(org, tx), nextRole)) return true;
     await tx
       .update(memberships)
       .set({ ...(role ? { role } : {}), ...(active !== null ? { active: active === "1" } : {}) })
