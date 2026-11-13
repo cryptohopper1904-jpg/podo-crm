@@ -82,10 +82,14 @@ export function DndSurface({
   const [announce, setAnnounce] = useState("");
   /** Speichern läuft (Doppelklick-Schutz für Dialog/Rückgängig) */
   const [saving, setSaving] = useState(false);
-  /** Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt */
-  // an den jeweiligen Hinweis gebunden: ein neuer Hinweis (z. B. nach „Rückgängig“ per Tastatur, ohne blur) ist nie gehalten
-  const [toastHold, setToastHold] = useState<number | null>(null);
-  const held = toast !== null && toastHold === toast.key;
+  /**
+   * Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt – je an den Hinweis (key) gebunden: ein neuer
+   * Hinweis (z. B. nach „Rückgängig“ per Tastatur, Button ohne blur deaktiviert) ist nicht per Fokus gehalten;
+   * die Maus hält ihn wieder, sobald sie sich darüber bewegt (pointermove).
+   */
+  const [hoverKey, setHoverKey] = useState<number | null>(null);
+  const [focusKey, setFocusKey] = useState<number | null>(null);
+  const held = toast !== null && (hoverKey === toast.key || focusKey === toast.key);
   const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -200,9 +204,9 @@ export function DndSurface({
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
         // am Tag der Zeitumstellung echte Minuten speichern (und auf 8 h begrenzen)
-        const r = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin });
-        dur = r.localMin;
-        realDur = r.realMin;
+        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, startsAt: s.startsAt });
+        dur = sized.localMin;
+        realDur = sized.realMin;
       } else {
         dur = durationMin;
         startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur });
@@ -460,10 +464,11 @@ export function DndSurface({
             toast.error ? "border-accent bg-accent-soft text-accent-soft-text" : "border-border bg-surface text-text"
           }`}
           data-dnd-toast
-          onPointerEnter={() => setToastHold(toast.key)}
-          onPointerLeave={() => setToastHold(null)}
-          onFocus={() => setToastHold(toast.key)}
-          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setToastHold(null)}
+          onPointerEnter={() => setHoverKey(toast.key)}
+          onPointerMove={() => hoverKey !== toast.key && setHoverKey(toast.key)}
+          onPointerLeave={() => setHoverKey(null)}
+          onFocus={() => setFocusKey(toast.key)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setFocusKey(null)}
         >
           <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.undo ? (

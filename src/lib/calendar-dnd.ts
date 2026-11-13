@@ -46,23 +46,40 @@ export function resizeDuration(p: { offsetPx: number; pxPerMin: number; rangeSta
  * Zeitumstellung weicht sie von der Differenz der Uhrzeiten ab (Sommerzeit −60, Winterzeit +60).
  * Liegt eine Uhrzeit in der Lücke der Sommerzeit-Umstellung, gilt die Differenz der Uhrzeiten.
  */
-export function realDuration(dateIso: string, startMin: number, endMin: number): number {
-  const s = localSlotToUtc(dateIso, startMin);
-  const e = endMin >= DAY_MIN ? null : localSlotToUtc(dateIso, endMin);
+export function realDuration(dateIso: string, startMin: number, endMin: number, startsAt?: Date): number {
+  // echter Beginn, wenn bekannt (in der doppelten Stunde der Winterzeit-Umstellung ist die Uhrzeit mehrdeutig)
+  const s = startsAt ?? localSlotToUtc(dateIso, startMin);
+  // Ende: frühester Zeitpunkt mit dieser Uhrzeit nach dem Beginn (auch das Ende kann in der doppelten Stunde liegen)
+  const e = s && endMin < DAY_MIN ? localSlotsAt(dateIso, endMin).find((x) => x > s) : undefined;
   return s && e ? durationOf(s, e) : endMin - startMin;
+}
+
+/** Alle Zeitpunkte mit dieser Berliner Uhrzeit an diesem Tag (0, 1 oder – in der doppelten Stunde – 2), aufsteigend */
+function localSlotsAt(dateIso: string, min: number): Date[] {
+  const d = localSlotToUtc(dateIso, min);
+  if (!d) return [];
+  return [-3_600_000, 0, 3_600_000]
+    .map((off) => new Date(d.getTime() + off))
+    .filter((x) => {
+      const b = berlinParts(x);
+      return b.dateIso === dateIso && b.min === min;
+    });
 }
 
 /**
  * Dauer ändern am unteren Rand an einem bestimmten Tag: Uhrzeit-Dauer fürs Geisterbild und echte Dauer zum Speichern.
  * Am Tag der Winterzeit-Umstellung ist die echte Dauer eine Stunde länger – auch sie bleibt ≤ 8 h (sonst nicht speicherbar).
  */
-export function resizeOnDay(p: { dateIso: string; offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; step?: number }): { localMin: number; realMin: number } {
+export function resizeOnDay(p: { dateIso: string; offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; startsAt?: Date; step?: number }): {
+  localMin: number;
+  realMin: number;
+} {
   const step = p.step ?? SLOT_MIN;
   let localMin = resizeDuration(p);
-  let realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin);
+  let realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
   while (realMin > MAX_DURATION_MIN && localMin > step) {
     localMin -= step;
-    realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin);
+    realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
   }
   return { localMin, realMin };
 }
