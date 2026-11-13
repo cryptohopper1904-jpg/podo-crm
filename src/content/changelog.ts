@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-m",
+    date: "2026-11-13",
+    title: "Patient:in als verstorben markieren",
+    items: [
+      { tag: "neu", text: "In der Akte: „Als verstorben markieren“ (Sterbedatum optional). Danach keine Erinnerungen, Rückholung, Warteliste, Portal- oder Anamnese-Links und keine neuen Termine mehr; künftige Termine werden nach Bestätigung abgesagt. Akte und Rechnungen bleiben erhalten. Bei Fehleingabe zurücknehmbar." },
+      { tag: "verbessert", text: "Im Rechnungsformular passen die Texte unten jetzt zur gewählten Belegart (Quittung, Sammelrechnung, Ausfallhonorar)." },
+    ],
+  },
+  {
     id: "2026-11-13-l",
     date: "2026-11-13",
     title: "Kalender: vollständige Ansicht und freie Termine finden",
