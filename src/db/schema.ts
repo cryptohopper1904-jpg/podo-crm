@@ -899,6 +899,49 @@ export const invoiceLines = pgTable(
   (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],
 );
 
+/**
+ * Mahnwesen: Zahlungserinnerung / 1. Mahnung / 2. Mahnung zu einer Rechnung (src/lib/dunning.ts).
+ * Unveränderbar (Trigger, drizzle/0034): nur der Versandvermerk (sent_*) darf genau einmal gesetzt werden.
+ * Die Mahngebühr gehört NICHT zur Rechnung (GoBD) – sie steht nur hier und im Schreiben.
+ * Das PDF wird bei Bedarf aus den gespeicherten Werten erzeugt (Text, Beträge, Fristen, Briefkopf sind eingefroren;
+ * nur die Logos werden aktuell geladen).
+ */
+export const invoiceDunnings = pgTable(
+  "invoice_dunnings",
+  {
+    id: id(),
+    organizationId: orgId(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    /** reminder | dunning1 | dunning2 */
+    stage: text("stage").notNull(),
+    letterDate: date("letter_date").notNull(),
+    /** neue Zahlungsfrist laut Schreiben */
+    payBy: date("pay_by").notNull(),
+    /** offener Rechnungsbetrag beim Erstellen (Gesamt − Zahlungen) */
+    openCents: integer("open_cents").notNull(),
+    /** Gebühr dieser Stufe (konkrete Kosten) */
+    feeCents: integer("fee_cents").notNull().default(0),
+    /** Summe aller Mahngebühren zu dieser Rechnung einschließlich dieser */
+    feesTotalCents: integer("fees_total_cents").notNull().default(0),
+    /** fertiger Brieftext (Platzhalter ersetzt) */
+    body: text("body").notNull(),
+    /** Briefkopf/Anschrift beim Erstellen (Praxis, Bankverbindung, Empfänger) – Nachdrucke entsprechen dem versendeten Schreiben (§ 147 AO) */
+    letterhead: jsonb("letterhead").$type<Record<string, unknown>>().notNull(),
+    /** email | post */
+    sentVia: text("sent_via"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentTo: text("sent_to"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("invoice_dunnings_invoice_stage").on(t.invoiceId, t.stage),
+    index("invoice_dunnings_org_invoice").on(t.organizationId, t.invoiceId),
+  ],
+);
+
 export const vouchers = pgTable(
   "vouchers",
   {

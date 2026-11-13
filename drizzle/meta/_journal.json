@@ -232,6 +232,20 @@
       "when": 1794598365954,
       "tag": "0032_lead_search",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794599678634,
+      "tag": "0033_mahnwesen",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794599680121,
+      "tag": "0034_mahnwesen_security",
+      "breakpoints": true
     }
   ]
 }
