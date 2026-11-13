@@ -25,6 +25,50 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-z",
+    date: "2026-11-13",
+    title: "Kalender: Termine ziehen, Farben je Behandler:in, Sperrzeiten",
+    items: [
+      { tag: "neu", text: "Termine per Ziehen verschieben: In der vollständigen Ansicht einen Termin auf eine andere Zeit, einen anderen Tag oder (in der Tagesansicht) zu einer anderen Behandler:in ziehen; am unteren Rand ziehen ändert die Dauer. Auf iPad und Handy kurz gedrückt halten. Nach dem Verschieben können Sie es mit „Rückgängig“ zurücknehmen.", href: "/kalender" },
+      { tag: "neu", text: "Jede Behandler:in hat eine eigene Farbe im Kalender. Festlegen unter Einstellungen → Team, die eigene Farbe auch unter Einstellungen → Ansicht.", href: "/einstellungen/team" },
+      { tag: "neu", text: "Sperrzeiten für Pausen, Schulungen, früheren Feierabend, Wartung oder Reinigung – einmalig oder wiederkehrend, für eine Person oder die ganze Praxis. Online-Buchung, Patientenportal und KI-Telefon bieten in dieser Zeit keine Termine an.", href: "/kalender/sperrzeit/neu" },
+      { tag: "behoben", text: "Terminserien behalten bei der Umstellung auf Sommer- oder Winterzeit ihre gewohnte Uhrzeit." },
+    ],
+  },
+  {
+    id: "2026-11-13-y",
+    date: "2026-11-13",
+    title: "Eine Quittung statt zwei, Belege im A4-Format",
+    items: [
+      { tag: "verbessert", text: "Am Termin und in der Doku gibt es nur noch „Rechnung erstellen“ und „Quittung“. Bezahlte Quittungen können Sie später in die Sammelrechnung übernehmen." },
+      { tag: "verbessert", text: "Eine Anzahlung ist jetzt eine Vorauszahlung für einen künftigen Termin. In der Sammelrechnung wird sie erst angerechnet, wenn der Termin stattgefunden hat." },
+      { tag: "neu", text: "„Anzahlung ohne Termin“ (z. B. für eine Nagelspange) direkt aus der Rechnungsliste oder der Patientenakte.", href: "/rechnungen/anzahlung" },
+      { tag: "verbessert", text: "Rechnungen und Mahnungen im A4-Format: lange Belege laufen sauber über mehrere Seiten mit „Seite X von Y“, Folgeseiten tragen oben die Belegnummer. Entwürfe sind beim Drucken als Entwurf gekennzeichnet." },
+    ],
+  },
+  {
+    id: "2026-11-13-x",
+    date: "2026-11-13",
+    title: "Öffnungszeiten je Wochentag und neue Auswertungen",
+    audience: "owner",
+    items: [
+      { tag: "neu", text: "Öffnungszeiten je Wochentag mit einem oder mehreren Zeitfenstern, z. B. mit Mittagspause. Sie gelten für Online-Buchung, KI-Telefon, Ihre Praxis-Website und für Teammitglieder ohne eigene Arbeitszeiten.", href: "/einstellungen/oeffnungszeiten" },
+      { tag: "neu", text: "Auswertung mit neuen Reitern zu Terminen sowie Leistungen & Produkten: welche Termine schnell ausgebucht sind, stärkste und schwächste Tage, meistverkaufte Produkte und gefragteste Leistungen.", href: "/auswertung/termine" },
+      { tag: "verbessert", text: "Die Tabellen in der Auswertung passen jetzt vollständig in ihre Karten – kein seitliches Scrollen mehr.", href: "/auswertung" },
+    ],
+  },
+  {
+    id: "2026-11-13-w",
+    date: "2026-11-13",
+    title: "Patientensuche mit Vorschlägen, übersichtlichere Bedienung",
+    items: [
+      { tag: "neu", text: "Patientensuche oben rechts: Schon nach wenigen Buchstaben erscheinen passende Patient:innen zum Antippen. Bei einem Tippfehler fragt PodoHero „Meinten Sie …?“." },
+      { tag: "verbessert", text: "Der Knopf zum Einklappen der Navigation bleibt beim Scrollen sichtbar." },
+      { tag: "verbessert", text: "In Terminlisten stehen die Knöpfe immer an derselben Stelle – so finden Sie sie schneller." },
+      { tag: "neu", text: "Detailseiten haben oben einen Zurück-Link. Er führt dorthin, wo Sie herkamen – etwa zu „Heute“, zur Doku oder zu Ihrer gefilterten Liste." },
+    ],
+  },
+  {
     id: "2026-11-13-v",
     date: "2026-11-13",
     title: "Vertrieb: Aktionscodes, Pipeline und Kampagnen",
