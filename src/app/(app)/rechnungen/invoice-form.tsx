@@ -379,8 +379,15 @@ export function InvoiceForm({
             {state.error}{" "}
             <Link href={`/rechnungen/${state.duplicate.id}`} className="underline" target="_blank">{state.duplicate.number} ansehen</Link>
           </p>
-          <Checkbox name="allowDuplicate" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} label="Trotzdem erstellen (wird protokolliert)" />
+          <Checkbox checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} label="Trotzdem erstellen (wird protokolliert)" />
+          {/* Bestätigung gilt nur für genau diesen Beleg */}
+          {confirmDuplicate ? <input type="hidden" name="duplicateAck" value={state.duplicate.id} /> : null}
         </div>
+      ) : state?.link ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm font-semibold text-danger">
+          {state.error}{" "}
+          <Link href={`/rechnungen/${state.link.id}`} className="underline">{state.link.label}</Link>
+        </p>
       ) : (
         <FormError message={state?.error} />
       )}

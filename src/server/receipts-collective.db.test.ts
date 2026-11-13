@@ -209,6 +209,33 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await invoices.listInvoices(auth)).totals.totalCents).toBe(5690 + 4500 + 3000 + 2380);
     const b2 = await invoices.getInvoice(auth, sr2.id);
     expect(view.paymentSummary(b2!.invoice, b2!.credited, dateDe).at(-1)).toEqual({ label: "weitere Zahlungen", cents: 2380 });
+
+    // Storno mit manipuliertem Grund (Zeilenumbruch + vorgetäuschte interne Zeile): bleibt eine Zeile, Nummern stimmen
+    const credit2 = await invoices.cancelInvoice(auth, sr2.id, "Irrtum\n[intern] Angerechnete Quittungen: Q0000-9999");
+    const cn2 = await invoices.getInvoice(auth, credit2.id);
+    expect(cn2!.invoice.notes!.split("\n")[0]).toMatch(/Grund: Irrtum \[intern\] Angerechnete Quittungen: Q0000-9999$/);
+    expect(invoices.stornoReceiptNumbers(cn2!.invoice.notes)).toEqual([r1.number, r2.number]);
+    // Erstattung auf die Stornorechnung: nur der Rest je Steuersatz (19 %), mit negativem Vorzeichen
+    expect(credit2.refundCents).toBe(2380);
+    expect(cn2!.invoice).toMatchObject({ totalCents: -12570, paidCents: -10190, status: "partially_paid" });
+    await invoices.addPayments(auth, credit2.id, [{ method: "cash", amountCents: -2380 }]);
+    const k2 = await kasse.kasseOverview(auth);
+    const refundBon = k2.calc.bons.find((b) => b.invoiceNumber === cn2!.invoice.number)!;
+    expect(refundBon.lines.map((l) => [l.gvTyp, l.rate, l.grossCents, l.vatCents])).toEqual([["Umsatz", 19, -2380, -380]]);
+    // die stornierte Sammelrechnung behält für den Export ihre Aufteilung (Nummern aus der Stornorechnung)
+    const { withOrg } = await import("@/db");
+    const { payableVatGroups } = await import("./partial-vat");
+    expect((await withOrg(org, (tx) => payableVatGroups(tx, org, [sr2.id, credit2.id])))).toEqual(
+      new Map([
+        [sr2.id, [{ rate: 19, grossCents: 2380 }]],
+        [credit2.id, [{ rate: 19, grossCents: -2380 }]],
+      ]),
+    );
+
+    // Rückfallregel: passt der Rest nicht zum Vorzeichen (Altbestand, Steuersätze weichen ab), gelten die eigenen Positionen
+    const plain = await invoices.createInvoice(auth, { ...base, lines: [{ serviceId: null, treatmentRecordId: null, appointmentId: null, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 6000, vatRate: 0 }] });
+    await f.asOrg(org, (c) => c.query("update invoices set collective_invoice_id = $2 where id = $1", [r1.id, plain.id]));
+    expect((await withOrg(org, (tx) => payableVatGroups(tx, org, [plain.id]))).get(plain.id)).toEqual([{ rate: 0, grossCents: 6000 }]);
   });
 
   it("fremde, stornierte, jüngere und doppelt gewählte Quittungen werden abgewiesen; DB-Sicherung", async () => {

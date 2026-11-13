@@ -50,6 +50,16 @@ export class InvoiceError extends Error {}
  * Leistung (Positionen ohne Termin-/Doku-Bezug). Kein harter Block – zwei gleiche Leistungen an einem Tag können
  * richtig sein –, aber erst nach ausdrücklicher Bestätigung (allowDuplicate).
  */
+/** Offene Anzahlung zur Behandlung, die dieser Beleg nicht anrechnen kann (Sackgasse) – Link auf die Anzahlung */
+export class OpenDepositError extends InvoiceError {
+  constructor(
+    message: string,
+    readonly deposit: { id: string; number: string | null },
+  ) {
+    super(message);
+  }
+}
+
 export class DuplicateInvoiceError extends InvoiceError {
   constructor(
     message: string,
@@ -106,14 +116,14 @@ export const invoiceInput = z.object({
   receiptIds: z.array(z.uuid()).max(400).default([]),
   /** Leistungsjahr der Sammelrechnung: nur Quittungen aus diesem Jahr sind anrechenbar (Standard: Jahr des Rechnungsdatums) */
   collectiveYear: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(2000).max(2100).optional()),
-  /** Bestätigung „Trotzdem erstellen“ nach dem Hinweis auf einen gleichen Beleg am selben Tag (DuplicateInvoiceError) */
-  allowDuplicate: z.boolean().default(false),
+  /** Bestätigung „Trotzdem erstellen“: ID genau des Belegs, auf den der Hinweis zeigte (DuplicateInvoiceError) */
+  duplicateAck: optUuid,
 });
 type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
-export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "allowDuplicate" | "lines"> & {
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "duplicateAck" | "lines"> & {
   collectiveYear?: number;
-  allowDuplicate?: boolean;
+  duplicateAck?: string | null;
   depositIds?: string[];
   receiptIds?: string[];
   lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
@@ -226,7 +236,7 @@ async function assertNotInvoiced(
   appointmentIds: string[],
   patientId: string | null,
   billingContactId: string | null,
-  opts: { creditedReceiptIds?: string[]; creditedDepositIds?: string[] } = {},
+  opts: { creditedReceiptIds?: string[]; creditedDepositIds?: string[]; /** kann dieser Beleg Anzahlungen anrechnen? */ canCreditDeposits?: boolean } = {},
 ) {
   await lockInvoiceRecords(tx, org);
   const creditedReceiptIds = opts.creditedReceiptIds ?? [];
@@ -297,7 +307,15 @@ async function assertNotInvoiced(
   const openDeposit = docs.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId && !creditedDepositIds.includes(d.id));
   if (openDeposit) {
     const day = when(openDeposit);
-    throw new InvoiceError(`Für ${day ? `die Behandlung vom ${day}` : "diesen Termin"} gibt es bereits die Anzahlung ${openDeposit.number} – bitte anrechnen statt neu zu kassieren.`);
+    const what = day ? `die Behandlung vom ${day}` : "diesen Termin";
+    if (opts.canCreditDeposits) {
+      throw new OpenDepositError(`Für ${what} gibt es bereits die Anzahlung ${openDeposit.number} – bitte anrechnen statt neu zu kassieren.`, openDeposit);
+    }
+    // Sackgasse: dieser Beleg kann die Anzahlung nicht anrechnen (z. B. Ausfallhonorar, Rechnung ohne Person, Pflegeheim)
+    throw new OpenDepositError(
+      `Für ${what} gibt es die offene Anzahlung ${openDeposit.number}. Bitte zuerst auf eine Rechnung der Person anrechnen oder die Anzahlung stornieren.`,
+      openDeposit,
+    );
   }
 }
 
@@ -549,34 +567,48 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null, {
         creditedReceiptIds: partials.receipts.map((r) => r.id),
         creditedDepositIds: partials.deposits.map((d) => d.id),
+        canCreditDeposits: (input.kind === "invoice" || input.kind === "collective") && !!input.patientId,
       });
     }
-    // weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleicher Tag
+    // Weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleiches
+    // Leistungsdatum. Leistungsdatum der neuen Position = Belegdatum (kein Bezug); bei vorhandenen Positionen das Datum
+    // des verknüpften Doku-Eintrags bzw. Termins, sonst deren Belegdatum.
     const freeServiceIds = [...new Set(lines.filter((l) => !l.treatmentRecordId && !l.appointmentId && l.serviceId).map((l) => l.serviceId!))];
     let duplicateOf: { id: string; number: string | null } | null = null;
     if (freeServiceIds.length && input.patientId) {
       await lockInvoiceRecords(tx, org);
-      const [dup] = await tx
-        .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, name: services.name })
+      const candidates = await tx
+        .select({
+          id: invoices.id,
+          number: invoices.number,
+          kind: invoices.kind,
+          issuedAt: invoices.issuedAt,
+          name: services.name,
+          treatedAt: treatmentRecords.treatedAt,
+          startsAt: appointments.startsAt,
+        })
         .from(invoiceLines)
         .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
         .innerJoin(services, eq(services.id, invoiceLines.serviceId))
+        .leftJoin(treatmentRecords, eq(treatmentRecords.id, invoiceLines.treatmentRecordId))
+        .leftJoin(appointments, eq(appointments.id, invoiceLines.appointmentId))
         .where(
           and(
             eq(invoiceLines.organizationId, org),
             inArray(invoiceLines.serviceId, freeServiceIds),
             eq(invoices.patientId, input.patientId),
-            eq(invoices.issuedAt, input.issuedAt),
             inArray(invoices.kind, ["invoice", "receipt", "collective", "no_show_fee"]),
             notInArray(invoices.status, ["cancelled", "draft"]),
             ...(receiptIds.length ? [notInArray(invoices.id, receiptIds)] : []),
           ),
         )
-        .orderBy(asc(invoices.number))
-        .limit(1);
+        .orderBy(asc(invoices.number));
+      const serviceDay = (c: (typeof candidates)[number]) => (c.treatedAt ? berlinDateIso(c.treatedAt) : c.startsAt ? berlinDateIso(c.startsAt) : c.issuedAt);
+      const dup = candidates.find((c) => serviceDay(c) === input.issuedAt);
       if (dup) {
         duplicateOf = { id: dup.id, number: dup.number };
-        if (!input.allowDuplicate) {
+        // Bestätigung gilt nur für genau den Beleg, auf den der Hinweis zeigte
+        if (input.duplicateAck !== dup.id) {
           throw new DuplicateInvoiceError(
             `„${dup.name}“ wurde für diese Person am ${dateDe(input.issuedAt)} bereits abgerechnet (${INVOICE_KIND_LABEL[dup.kind] ?? "Beleg"} ${dup.number}). Wirklich ein zweites Mal?`,
             duplicateOf,
@@ -737,7 +769,9 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     }
     // nie doppelt kassieren: Behandlung schon abgerechnet bzw. schon eine offene Anzahlung dazu → ablehnen
     if (input.appointmentId || input.treatmentRecordId) {
-      await assertNotInvoiced(tx, org, input.treatmentRecordId ? [input.treatmentRecordId] : [], input.appointmentId ? [input.appointmentId] : [], input.patientId, null);
+      await assertNotInvoiced(tx, org, input.treatmentRecordId ? [input.treatmentRecordId] : [], input.appointmentId ? [input.appointmentId] : [], input.patientId, null, {
+        canCreditDeposits: true,
+      });
     }
     const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
     const line = { totalCents: input.amountCents, vatRate };
@@ -838,8 +872,10 @@ async function deactivateProviderCheckout(org: string, checkoutRef: string) {
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
-export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string) {
+export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawReason: string) {
   assertCan(auth, "invoices.write");
+  // Grund steht in Zeile 1 der Notiz – ohne Zeilenumbrüche, damit er keine internen (System-)Zeilen vortäuschen kann
+  const reason = rawReason.replace(/[\r\n]+/g, " ").trim().slice(0, 300);
   const org = auth.organization.id;
   const today = berlinDateIso();
   const result = await withOrg(org, async (tx) => {

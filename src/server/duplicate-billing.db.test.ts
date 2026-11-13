@@ -87,8 +87,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const a2 = await appointment(`${year}-05-12 10:00+02`);
     const az = await deposit(a2);
     await expect(deposit(a2)).rejects.toThrow(new RegExp(`bereits die Anzahlung ${az.number} – bitte anrechnen`));
-    await expect(doc("receipt", [line({ appointmentId: a2 })])).rejects.toThrow(new RegExp(`bereits die Anzahlung ${az.number}`));
+    // Quittung kann keine Anzahlung anrechnen → Hinweis, zuerst anzurechnen oder zu stornieren
+    await expect(doc("receipt", [line({ appointmentId: a2 })])).rejects.toThrow(new RegExp(`offene Anzahlung ${az.number}\\. Bitte zuerst auf eine Rechnung`));
     await expect(doc("invoice", [line({ appointmentId: a2 })])).rejects.toThrow(/bitte anrechnen/);
+    // Sackgasse: Ausfallhonorar kann die Anzahlung nicht anrechnen → Hinweis mit Link auf die Anzahlung
+    const dead = await doc("invoice", [line({ appointmentId: a2 })], { kind: "no_show_fee" }).catch((e) => e);
+    expect(dead).toBeInstanceOf(invoices.OpenDepositError);
+    expect(dead.message).toBe(`Für die Behandlung vom 12.05.${year} gibt es die offene Anzahlung ${az.number}. Bitte zuerst auf eine Rechnung der Person anrechnen oder die Anzahlung stornieren.`);
+    expect(dead.deposit).toMatchObject({ id: az.id, number: az.number });
     const inv = await doc("invoice", [line({ appointmentId: a2 })], { depositIds: [az.id] });
     expect(inv).toMatchObject({ status: "paid", depositCents: 4500 });
     // danach ist die Behandlung abgerechnet
@@ -104,7 +110,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(err.duplicate).toEqual({ id: first.id, number: first.number });
     // Freitext ohne Leistung und andere Leistung: kein Hinweis
     await expect(doc("receipt", [line()])).resolves.toMatchObject({ status: "paid" });
-    const second = await doc("receipt", [line({ serviceId: service })], { allowDuplicate: true });
+    // Bestätigung gilt nur für genau den angezeigten Beleg
+    await expect(doc("receipt", [line({ serviceId: service })], { duplicateAck: "00000000-0000-4000-8000-000000000000" })).rejects.toBeInstanceOf(invoices.DuplicateInvoiceError);
+    const second = await doc("receipt", [line({ serviceId: service })], { duplicateAck: first.id });
     expect(second.duplicateOf).toEqual({ id: first.id, number: first.number });
     const logs = await f.asOrg(org, (c) => c.query("select meta from audit_log where entity_id = $1 and action = 'invoice.create'", [second.id]));
     expect(logs.rows[0].meta).toMatchObject({ duplicateOf: first.number });

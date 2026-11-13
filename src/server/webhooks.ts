@@ -1,5 +1,4 @@
 import "server-only";
-import { payableVatGroups } from "./partial-vat";
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
@@ -10,6 +9,7 @@ import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { adapterFor, logSync } from "./integrations";
 import { matchPatientByAddress } from "./messages";
+import { payableVatGroups } from "./partial-vat";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (v: string | null | undefined): v is string => !!v && UUID.test(v);

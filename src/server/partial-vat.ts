@@ -18,8 +18,15 @@ import { computeTotals, remainingVatGroups } from "@/lib/invoice-math";
 export const STORNO_RECEIPTS_NOTE = "Angerechnete Quittungen: ";
 export const STORNO_DEPOSITS_NOTE = "Angerechnete Anzahlungen: ";
 
+/**
+ * Nur die vom System geschriebenen Zeilen: Zeile 1 ist „Storno zu … Grund: …“ (Freitext, ohne Zeilenumbrüche – siehe
+ * cancelInvoice), die internen Zeilen folgen danach; maßgeblich ist die letzte passende Zeile.
+ */
 function numbersFrom(notes: string | null, label: string): string[] {
-  const line = (notes ?? "").split("\n").find((l) => l.startsWith(`${INTERNAL_NOTE_PREFIX}${label}`));
+  const line = (notes ?? "")
+    .split("\n")
+    .slice(1)
+    .findLast((l) => l.startsWith(`${INTERNAL_NOTE_PREFIX}${label}`));
   if (!line) return [];
   return line
     .slice(INTERNAL_NOTE_PREFIX.length + label.length)
