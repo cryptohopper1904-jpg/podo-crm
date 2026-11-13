@@ -19,16 +19,16 @@ export function ScreenshotFrame({
   className?: string;
   showCaption?: boolean;
 }) {
-  const loading = eager ? ("eager" as const) : ("lazy" as const);
-  const img = (src: string, extra?: string) => (
+  // Nur die Hellvariante (bzw. das einzige Bild) wird bei eager vorab geladen; die Dunkelvariante bleibt immer lazy.
+  const img = (src: string, extra?: string, priority = false) => (
     <Image
       src={src}
       alt={shot.alt}
       width={shot.width}
       height={shot.height}
       sizes={sizes}
-      loading={loading}
-      fetchPriority={eager ? "high" : undefined}
+      loading={priority ? "eager" : "lazy"}
+      fetchPriority={priority ? "high" : undefined}
       className={cx("block h-auto w-full", extra)}
     />
   );
@@ -51,11 +51,11 @@ export function ScreenshotFrame({
         <div className={shot.device === "desktop" ? "" : "overflow-hidden rounded-[15px]"}>
           {shot.darkSrc ? (
             <>
-              {img(shot.src, "dark:hidden")}
+              {img(shot.src, "dark:hidden", eager)}
               {img(shot.darkSrc, "hidden dark:block")}
             </>
           ) : (
-            img(shot.src)
+            img(shot.src, undefined, eager)
           )}
         </div>
       </div>

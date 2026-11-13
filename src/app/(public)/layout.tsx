@@ -1,24 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { connection } from "next/server";
 import { Menu } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkButton } from "@/components/ui";
-import { OG_IMAGE, siteUrl } from "./_content/site";
+import { publicSiteMetadata } from "./_content/site";
 
 /**
  * Öffentliche Website (ohne Anmeldung). Indexierung erst einschalten, wenn Impressum/AGB/AVV
- * ausgefüllt und anwaltlich geprüft sind: PUBLIC_SITE_INDEX=true.
+ * ausgefüllt und anwaltlich geprüft sind: PUBLIC_SITE_INDEX=true (und PUBLIC_URL gesetzt).
+ * Metadaten zur Laufzeit: PUBLIC_URL/PUBLIC_SITE_INDEX sind Server-Variablen, beim Docker-Build nicht gesetzt.
  */
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl()),
-  title: { default: "PodoHero – Praxissoftware für Podologie", template: "%s · PodoHero" },
-  description:
-    "Praxissoftware für Podologie: Patientenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
-  robots: process.env.PUBLIC_SITE_INDEX === "true" ? { index: true, follow: true } : { index: false, follow: false },
-  openGraph: { type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
-  twitter: { card: "summary_large_image" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  await connection();
+  return publicSiteMetadata();
+}
 
 const NAV = [
   ["/funktionen", "Funktionen"],

@@ -3,10 +3,9 @@ import { Badge, LinkButton } from "@/components/ui";
 import { Breadcrumbs, FaqList } from "../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../_content/json-ld";
 import { pageMeta } from "../_content/site";
-import { ScreenshotFrame } from "../_content/screenshot-frame";
+import { DemoDataNote, ScreenshotFrame } from "../_content/screenshot-frame";
 import { SHOTS } from "../_content/screenshots";
 
-export const dynamic = "force-static";
 
 export const metadata = pageMeta({
   title: "Wechseln zu PodoHero",
@@ -29,7 +28,7 @@ const PATHS = [
   {
     icon: CalendarSync,
     title: "Doctolib-Termine per Kalender-Abo",
-    text: "Doctolib bietet keine offene Schnittstelle. Mit einem Synchronisationsdienst wie Docal.io oder CalMedi landen Ihre Doctolib-Buchungen in einem Google-Kalender; PodoHero liest ihn über die private iCal-Adresse etwa alle 5 Minuten – nur lesend, Termine werden nie automatisch einer Akte zugeordnet. (Testmodus)",
+    text: "Eine öffentlich dokumentierte Schnittstelle von Doctolib für Drittanbieter ist uns nicht bekannt. Mit einem Synchronisationsdienst wie Docal.io oder CalMedi landen Ihre Doctolib-Buchungen in einem Google-Kalender; PodoHero liest ihn über die private iCal-Adresse etwa alle 5 Minuten – nur lesend, Termine werden nie automatisch einer Akte zugeordnet. (Testmodus) Prüfen Sie vorher Auftragsverarbeitungsverträge mit dem Synchronisationsdienst und Google sowie die Übermittlung in Drittländer.",
   },
 ] as const;
 
@@ -74,7 +73,7 @@ export default function SwitchPage() {
           <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">Wechseln zu PodoHero</h1>
           <p className="mt-4 text-lg text-muted">
             Von Excel-Listen, Doctolib oder einer anderen Praxissoftware: Importieren Sie Ihre Patient:innen mit Prüfbericht, übernehmen Sie
-            Doctolib-Termine automatisch und starten Sie ohne Risiko.
+            Doctolib-Termine automatisch und starten Sie unverbindlich.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">30 Tage kostenlos testen</LinkButton>
@@ -82,7 +81,10 @@ export default function SwitchPage() {
           </div>
           <p className="mt-3 text-sm text-muted">Keine Zahlungsdaten nötig · endet automatisch · monatlich kündbar</p>
         </header>
-        <ScreenshotFrame shot={SHOTS.akte} sizes="(min-width: 1024px) 560px, 100vw" eager />
+        <div>
+          <ScreenshotFrame shot={SHOTS.akte} sizes="(min-width: 1024px) 560px, 100vw" eager />
+          <DemoDataNote className="mt-2" />
+        </div>
       </div>
 
       <section aria-labelledby="wege" className="mt-14">
@@ -132,7 +134,7 @@ export default function SwitchPage() {
 
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
-          <h2 className="font-display text-2xl font-semibold">Jetzt wechseln – ohne Risiko</h2>
+          <h2 className="font-display text-2xl font-semibold">Jetzt unverbindlich wechseln</h2>
           <p className="mt-1 opacity-90">30 Tage alle Funktionen testen. Danach kostenlos weiter mit bis zu 20 Patient:innen oder Tarif wählen.</p>
         </div>
         <div className="flex flex-wrap gap-3">

@@ -6,7 +6,6 @@ import { Breadcrumbs, FaqList } from "../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../_content/json-ld";
 import { pageMeta } from "../_content/site";
 
-export const dynamic = "force-static";
 
 export const metadata = pageMeta({
   title: "Podologie-Software im Vergleich",

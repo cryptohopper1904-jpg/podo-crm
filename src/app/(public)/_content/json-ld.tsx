@@ -1,4 +1,4 @@
-import { absoluteUrl, OG_IMAGE, planOffers, SITE_NAME } from "./site";
+import { absoluteUrl, OG_IMAGE, SITE_NAME } from "./site";
 
 /**
  * Strukturierte Daten (schema.org) als <script type="application/ld+json">.
@@ -8,6 +8,7 @@ export function JsonLd({ data }: { data: Record<string, unknown> | Record<string
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data).replace(/</g, "\\u003c") }} />;
 }
 
+/** Ohne „offers“: Preise sind noch vorläufig und sollen nicht als verbindliche Angebote in Suchergebnissen erscheinen. */
 export function softwareApplicationLd() {
   return {
     "@context": "https://schema.org",
@@ -21,14 +22,6 @@ export function softwareApplicationLd() {
     image: absoluteUrl(OG_IMAGE.url),
     description:
       "Praxissoftware nur für Podologie: Patientenakte, Termine, Behandlungsdoku mit Fußschema und Fotos am iPad, Rechnungen, Sammelrechnung, Kasse, Verordnungen, Hygiene, Pflegeheime und Touren – gehostet in Deutschland.",
-    offers: planOffers().map((o) => ({
-      "@type": "Offer",
-      name: o.name,
-      price: o.price,
-      priceCurrency: "EUR",
-      description: `${o.note} (zzgl. USt., vorläufig)`,
-      url: absoluteUrl("/preise"),
-    })),
   };
 }
 

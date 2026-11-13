@@ -6,7 +6,6 @@ import { Breadcrumbs } from "../_content/faq-list";
 import { breadcrumbLd, JsonLd } from "../_content/json-ld";
 import { absoluteUrl, pageMeta } from "../_content/site";
 
-export const dynamic = "force-static";
 
 export const metadata = pageMeta({
   title: "Wissen für Podologie-Praxen",

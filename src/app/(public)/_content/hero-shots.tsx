@@ -15,7 +15,7 @@ export function HeroShots() {
       <div className="absolute -bottom-14 -right-3 hidden w-[24%] sm:block lg:-right-6">
         <ScreenshotFrame shot={PORTAL_PHONE} sizes="150px" showCaption={false} className="[&>div]:max-w-none" />
       </div>
-      <p className="sr-only">Bildschirmfotos aus PodoHero mit erfundenen Demodaten.</p>
+      <p className="mt-3 text-xs text-muted sm:mt-16">Echte Bildschirmfotos aus PodoHero mit erfundenen Demodaten.</p>
     </div>
   );
 }

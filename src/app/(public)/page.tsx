@@ -86,8 +86,8 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
   {
     group: "Abrechnung & Kasse",
     items: [
-      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "GoBD-feste Nummernkreise, Gutscheine, SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen" },
-      { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export, TSE-Signatur über fiskaly.", href: "/funktionen#rechnungen" },
+      { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine, SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen" },
+      { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export; TSE-Signatur über fiskaly (Testmodus)", href: "/funktionen#rechnungen", test: true },
       { icon: ClipboardList, title: "GKV-Verordnungen", text: "Fristen-Ampel, Einheiten, Export ans Abrechnungszentrum, KIM vorbereitet.", href: "/funktionen#verordnungen" },
     ],
   },
@@ -104,7 +104,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
 const DAY: { time: string; title: string; text: string }[] = [
   { time: "7:45", title: "Praxis öffnen", text: "Hygiene-Checkliste abhaken, Sterilgut-Charge freigeben. Der Tagesüberblick zeigt Termine und neue Nachrichten." },
   { time: "9:00", title: "Am Behandlungsstuhl", text: "Risiken sind sofort sichtbar. Leistungen antippen, Befund am Fuß markieren, Fotos aufnehmen – fertig dokumentiert." },
-  { time: "11:30", title: "Während Sie behandeln", text: "Der Telefonassistent nimmt Anrufe an und legt Terminwünsche zur Bestätigung ab. Eine Absage? Die Warteliste bietet den Termin automatisch an." },
+  { time: "11:30", title: "Während Sie behandeln", text: "Der Telefonassistent (Testmodus) nimmt Anrufe an und legt Terminwünsche zur Bestätigung ab. Eine Absage? Die Warteliste bietet den Termin automatisch an." },
   { time: "14:00", title: "Hausbesuch im Pflegeheim", text: "Bewohnerliste öffnen, Schnell-Doku je Person. Die Sammelrechnung entsteht am Monatsende von selbst." },
   { time: "17:30", title: "Abrechnen", text: "Rechnung mit Karte über SumUp bezahlen lassen, Verordnungen abrechnungsreif setzen und für das Abrechnungszentrum exportieren." },
   { time: "18:30", title: "Feierabend", text: "Tagesabschluss mit Z-Bon. Die Erinnerungen für morgen gehen automatisch raus – nur an Personen mit Einwilligung." },
@@ -120,17 +120,17 @@ const SECURITY = [
 ] as const;
 
 type Cell = true | false | string;
-const COMPARISON: { topic: string; podo: Cell; typical: Cell }[] = [
-  { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true, typical: "je nach Anbieter, oft per Upload" },
-  { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true, typical: "selten" },
-  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: true, typical: "teilweise" },
-  { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)", typical: "selten" },
-  { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true, typical: "teilweise" },
-  { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true, typical: "teilweise" },
-  { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true, typical: "selten" },
-  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export)", typical: "oft direkt integriert" },
-  { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten", typical: "oft vorhanden" },
-  { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)", typical: "teilweise vorhanden" },
+const COMPARISON: { topic: string; podo: Cell }[] = [
+  { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true },
+  { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true },
+  { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: true },
+  { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)" },
+  { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true },
+  { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true },
+  { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true },
+  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export)" },
+  { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten" },
+  { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)" },
 ];
 
 function CellView({ value }: { value: Cell }) {
@@ -170,7 +170,7 @@ export default async function Landing() {
               Ihre Praxis läuft.{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoHero dokumentiert am Behandlungsstuhl, nimmt Anrufe an, füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
+              PodoHero dokumentiert am Behandlungsstuhl, nimmt auf Wunsch Anrufe an (KI-Telefonassistent, Testmodus), füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
               die Kasse. Eine Software für die ganze Praxis – vom ersten Anruf bis zum Z-Bon.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -328,23 +328,19 @@ export default async function Landing() {
       {/* Vergleich */}
       <section aria-labelledby="vergleich" className="border-t border-border">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-          <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Anders als typische Podologie-Software</h2>
+          <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Wo PodoHero den Schwerpunkt setzt</h2>
           <p className="mt-2 max-w-3xl text-muted">
-            Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung
-            und Selbstzahler – und sagt offen, was noch fehlt. Allgemeine Einordnung, kein Vergleich mit einem bestimmten Produkt.
-          </p>
-          <p className="mt-2 text-muted">
-            Konkrete Gegenüberstellungen mit Quellen finden Sie unter{" "}
-            <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
+            PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung und Selbstzahler. Bei GKV-Abrechnung und Telematik gehen wir bewusst
+            einen anderen Weg: Abrechnung über ein Abrechnungszentrum per Export, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
+            Sie unter <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
           <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
             <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">
-              <caption className="sr-only">Funktionsvergleich PodoHero und typische Podologie-Software</caption>
+              <caption className="sr-only">Schwerpunkte und Funktionsumfang von PodoHero</caption>
               <thead>
                 <tr className="bg-surface-2 text-sm">
                   <th scope="col" className="px-4 py-3 font-semibold">Thema</th>
                   <th scope="col" className="px-4 py-3 font-semibold">PodoHero</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">Typische Podologie-Software</th>
                 </tr>
               </thead>
               <tbody>
@@ -352,7 +348,6 @@ export default async function Landing() {
                   <tr key={row.topic} className="border-t border-border">
                     <th scope="row" className="px-4 py-3 font-medium">{row.topic}</th>
                     <td className="px-4 py-3"><CellView value={row.podo} /></td>
-                    <td className="px-4 py-3"><CellView value={row.typical} /></td>
                   </tr>
                 ))}
               </tbody>

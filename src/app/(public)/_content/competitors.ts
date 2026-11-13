@@ -8,6 +8,8 @@
  * Vor jeder Änderung die Quellen erneut aufrufen und STAND anpassen.
  */
 export const COMPARISON_STAND = "November 2026";
+/** Tag des Abrufs der Herstellerseiten */
+export const COMPARISON_RETRIEVED = "13.11.2026";
 
 export type Source = { label: string; url: string };
 
@@ -49,7 +51,6 @@ export const PODO = {
   carehome: "Pflegeheim-Modus mit Besuchstag, Schnell-Doku und Sammelrechnung; Tourenplanung",
   free: "kostenloser Tarif: 1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit",
   trial: "30 Tage kostenlos, endet automatisch, keine Zahlungsdaten nötig",
-  price: "Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig)",
 } as const;
 
 export const COMPETITORS: Competitor[] = [
@@ -68,16 +69,15 @@ export const COMPETITORS: Competitor[] = [
       { topic: "Nutzung", podo: PODO.deployment, vendor: "im Browser ohne Installation; genannt werden iOS, macOS und Windows", source: 0 },
       { topic: "Serverstandort", podo: PODO.hosting, vendor: "Serverstandorte in der EU", source: 0 },
       { topic: "Fußdokumentation", podo: PODO.footDoc, vendor: "3D-Fuß-Dokumentation mit 98 Koordinatenpunkten, Fotos je Punkt", source: 0 },
-      { topic: "Online-Termine", podo: PODO.booking, vendor: "Online-Terminbuchung: Patient:innen können „Termine rund um die Uhr online anfragen“", source: 0 },
+      { topic: "Online-Termine", podo: PODO.booking, vendor: "Online-Terminbuchung: Patient:innen können „Termine rund um die Uhr online anfragen“; die Funktion „verbindet Ihren pododesk-Praxiskalender direkt mit einer Online-Buchung“", source: [0, 2] },
       { topic: "Kassenabrechnung (GKV)", podo: PODO.gkv, vendor: "Kassenabrechnung mit HVO-Check; „Pro Abrechnung fällt lediglich eine geringe Gebühr (ab 0,95 %) an.“ Krankenkassen-Schnittstelle ab Plan „small“ enthalten", source: [0, 1] },
       { topic: "Telematikinfrastruktur / KIM", podo: PODO.ti, vendor: "„Jetzt buchbar: Ihr TI-Zugang mit pododesk“; genannt werden ePA, eRezept und KIM", source: 0 },
       { topic: "Private Rechnungen", podo: PODO.invoices, vendor: "Rechnungsstellung; Anbindung an externe Buchhaltung (z. B. sevdesk)", source: 0 },
-      { topic: "Kasse", podo: PODO.kasse, vendor: "Kassenbuch und Kassenbericht; TSE nicht angegeben", source: 2 },
+      { topic: "Kasse", podo: PODO.kasse, vendor: "Kassenbuch und Kassenbericht inkl. Zählprotokoll; TSE nicht angegeben", source: 2 },
       { topic: "Hygiene", podo: PODO.hygiene, vendor: "Chargennummer der Sterilisation in der Behandlungsdoku; eigenes Hygienemodul nicht angegeben", source: 2 },
       { topic: "Pflegeheime / Hausbesuche", podo: PODO.carehome, vendor: "Hausbesuchspauschalen und Fahrstrecke in der Abrechnung genannt; Pflegeheim-Funktionen nicht angegeben", source: 2 },
       { topic: "Patientenportal", podo: "Termine, offene Rechnungen als PDF, Gutscheine (ab Tarif Praxis)", vendor: null },
       { topic: "Kostenloser Einstieg", podo: PODO.free, vendor: "Plan „free“: bis 20 Patient:innen, 1 Praxis", source: 1 },
-      { topic: "Preise", podo: PODO.price, vendor: "monatlich 19,90 € (calendar) bis 199,00 € (unlimited) netto; bei Jahreslaufzeit 14,90 € bis 159,00 € netto pro Monat", source: 1 },
     ],
     strengths: [
       "Laut Herstellerwebsite: Kassenabrechnung und TI-Anbindung aus einer Hand.",
@@ -109,12 +109,12 @@ export const COMPETITORS: Competitor[] = [
       { topic: "Kassenabrechnung (GKV)", podo: PODO.gkv, vendor: "Abrechnung nach § 302 SGB V direkt mit den Krankenkassen, „ohne Rechenzentrum, ohne prozentuale Gebühren“", source: 1 },
       { topic: "Telematikinfrastruktur / KIM", podo: PODO.ti, vendor: "KIM-Postfach und Verzeichnisdienst in der Software; TI-Anschluss über einen TI-Anbieter", source: 0 },
       { topic: "KI-Funktionen", podo: "Sprachbericht und Verordnung per Foto (Testmodus, Felder werden bestätigt)", vendor: "Therapieberichte mit KI", source: 0 },
-      { topic: "Kasse", podo: PODO.kasse, vendor: null },
+      { topic: "Kasse", podo: PODO.kasse, vendor: "integriertes Kassensystem für Verkäufe an der Theke „mit Steuersatz & Beleg“; TSE nicht angegeben", source: 1 },
       { topic: "Hygiene", podo: PODO.hygiene, vendor: null },
       { topic: "Pflegeheime / Hausbesuche", podo: PODO.carehome, vendor: null },
+      { topic: "Online-Buchung", podo: PODO.booking, vendor: "integrierte Online-Buchung: Patient:innen „reservieren … rund um die Uhr selbst“", source: 1 },
       { topic: "Patientenportal", podo: "Termine, offene Rechnungen als PDF, Gutscheine (ab Tarif Praxis)", vendor: null },
       { topic: "Test / kostenloser Einstieg", podo: `${PODO.trial}; ${PODO.free}`, vendor: "„14 Tage gratis. Keine Kreditkarte. Monatlich kündbar.“", source: 2 },
-      { topic: "Preise", podo: PODO.price, vendor: "Basispreis 79,90 € pro Monat inkl. 1 Mitarbeiter und 1 Standort; weiterer Mitarbeiter 9,90 €, weiterer Standort 59,90 € – „Bruttopreise (inkl. USt.)“", source: 2 },
     ],
     strengths: [
       "Laut Herstellerwebsite: GKV-Abrechnung nach § 302 SGB V direkt mit den Krankenkassen.",
@@ -123,7 +123,7 @@ export const COMPETITORS: Competitor[] = [
     podoDifferent: [
       "Ausschließlich für Podologie gebaut: Fußschema in 2D und 3D, Nagelspangen-Episoden mit Pflichtfoto-Assistent, Risiko-Ampel.",
       "Pflegeheim-Modus, Tourenplanung mit Fahrtenbuch-Hilfe und Hygiene mit Sterilgut-Rückverfolgung sind eingebaut.",
-      "Selbstzahler-Funktionen: Kasse mit Z-Bon, Gutscheine, Patientenportal, Praxis-Website.",
+      "Selbstzahler-Funktionen: Gutscheine, Patientenportal, Praxis-Website.",
       "GKV-Abrechnung über ein Abrechnungszentrum per Export statt Direktabrechnung.",
     ],
   },
@@ -147,8 +147,8 @@ export const COMPETITORS: Competitor[] = [
       { topic: "Online-Buchung / Patientenportal", podo: PODO.booking, vendor: null },
       { topic: "Kasse", podo: PODO.kasse, vendor: null },
       { topic: "Hygiene", podo: PODO.hygiene, vendor: null },
-      { topic: "Pflegeheime / Hausbesuche", podo: PODO.carehome, vendor: null },
-      { topic: "Preise / Test", podo: `${PODO.price}; ${PODO.trial}`, vendor: null },
+      { topic: "Pflegeheime / Hausbesuche", podo: PODO.carehome, vendor: "für die mobile Nutzung optimiert und laut Hersteller für Hausbesuche geeignet; Pflegeheim-Funktionen nicht angegeben", source: 0 },
+      { topic: "Test / Demo", podo: `${PODO.trial}; ${PODO.free}`, vendor: "Demo bzw. Termin für eine Softwareberatung auf Anfrage", source: [0, 1] },
     ],
     strengths: [
       "Laut Herstellerwebsite: Abrechnung mit allen Kostenträgern und automatische Verordnungsprüfung.",
@@ -156,7 +156,7 @@ export const COMPETITORS: Competitor[] = [
     ],
     podoDifferent: [
       "Ausschließlich für Podologie gebaut – mit Fußschema in 2D und 3D und Fotos direkt am iPad.",
-      "Öffentliche Preise, kostenloser Tarif und 30 Tage Test ohne Zahlungsdaten.",
+      "Kostenloser Tarif und 30 Tage Test ohne Zahlungsdaten.",
       "Patientenportal, Online-Buchung, Praxis-Website, Hygiene, Pflegeheim-Modus und Kasse sind eingebaut.",
       "GKV-Abrechnung über ein Abrechnungszentrum per Export statt Direktabrechnung.",
     ],

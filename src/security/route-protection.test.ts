@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import path from "node:path";
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
 import { appRoutes, read, SRC } from "./app-files";
 
 /** Bewusst öffentlich (ohne Sitzung) – jeweils mit eigener Absicherung. */
@@ -112,5 +112,16 @@ describe("Proxy: Routen-Schutz", () => {
       if (redirectsToLogin(await call(r.path))) blocked.push(`${r.path} (${r.file})`);
     }
     expect(blocked).toEqual([]);
+  });
+
+  it("Matcher: nur public/screenshots/* ist vom Proxy ausgenommen, ähnlich benannte Pfade nicht", () => {
+    // Next wertet den Matcher als Pfad-Regex aus; hier wie dort vollständig verankert
+    const runsProxy = (p: string) => config.matcher.some((m) => new RegExp(`^${m}$`).test(p));
+    expect(runsProxy("/screenshots/a.webp")).toBe(false);
+    expect(runsProxy("/screenshots/og-podohero.jpg")).toBe(false);
+    expect(runsProxy("/screenshotsx")).toBe(true);
+    expect(runsProxy("/screenshots")).toBe(true);
+    expect(runsProxy("/kunden")).toBe(true);
+    expect(runsProxy("/_next/static/chunk.js")).toBe(false);
   });
 });

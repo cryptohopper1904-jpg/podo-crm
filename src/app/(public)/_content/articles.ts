@@ -69,10 +69,17 @@ export const ARTICLES: Article[] = [
         ],
       },
       {
+        heading: "E-Rechnung und Schweigepflicht",
+        paragraphs: [
+          "Seit 2025 gilt für Rechnungen an andere Unternehmen – etwa an ein Pflegeheim als Rechnungsempfänger – schrittweise die Pflicht zur elektronischen Rechnung (E-Rechnung). Ausgenommen sind unter anderem Rechnungen über steuerfreie Leistungen nach § 4 Nr. 8 bis 29 UStG und Kleinbetragsrechnungen. Ob und ab wann das für Ihre Praxis gilt, lassen Sie bitte steuerlich prüfen.",
+          "Rechnungen enthalten Gesundheitsdaten (welche Behandlung, wann, bei wem). Sie unterliegen der Schweigepflicht (§ 203 StGB) und dem Datenschutz (DSGVO). Rechnungen an Dritte – Angehörige, Betreuer:innen oder ein Pflegeheim – nur mit Einwilligung der Patientin bzw. des Patienten oder mit nachgewiesener Vertretungsbefugnis (z. B. Betreuung mit passendem Aufgabenkreis).",
+        ],
+      },
+      {
         heading: "Nummernkreise, Storno und Aufbewahrung",
         paragraphs: [
           "Rechnungsnummern müssen einmalig sein; getrennte Nummernkreise (z. B. für Quittungen und Sammelrechnungen) sind zulässig. Ausgestellte Rechnungen werden nicht geändert, sondern mit einer Stornorechnung korrigiert.",
-          "Rechnungen sind Buchungsbelege. Für sie gilt nach § 147 Abs. 3 AO eine Aufbewahrungsfrist von acht Jahren (seit 2025; vorher zehn Jahre). Die Behandlungsdokumentation ist davon unabhängig nach § 630f Abs. 3 BGB zehn Jahre aufzubewahren.",
+          "Rechnungen sind Buchungsbelege. Für sie gilt nach § 147 Abs. 3 AO eine Aufbewahrungsfrist von acht Jahren (seit 2025; vorher zehn Jahre), umsatzsteuerlich ergänzt durch § 14b UStG. Die Frist beginnt mit dem Schluss des Kalenderjahres, in dem die Rechnung ausgestellt wurde (§ 147 Abs. 4 AO). Die Behandlungsdokumentation ist davon unabhängig nach § 630f Abs. 3 BGB zehn Jahre nach Abschluss der Behandlung aufzubewahren.",
         ],
       },
       {
@@ -87,7 +94,9 @@ export const ARTICLES: Article[] = [
       { label: "§ 31 UStDV – Angaben in der Rechnung", url: G("ustdv_1980/__31.html") },
       { label: "§ 33 UStDV – Rechnungen über Kleinbeträge", url: G("ustdv_1980/__33.html") },
       { label: "§ 147 AO – Ordnungsvorschriften für die Aufbewahrung von Unterlagen", url: G("ao_1977/__147.html") },
+      { label: "§ 14b UStG – Aufbewahrung von Rechnungen", url: G("ustg_1980/__14b.html") },
       { label: "§ 630f BGB – Dokumentation der Behandlung", url: G("bgb/__630f.html") },
+      { label: "§ 203 StGB – Verletzung von Privatgeheimnissen", url: G("stgb/__203.html") },
     ],
     feature: { href: "/funktionen#rechnungen", label: "Rechnungen, Kasse & Gutscheine in PodoHero" },
     legal: true,
@@ -106,7 +115,7 @@ export const ARTICLES: Article[] = [
       {
         heading: "Die Grundregel",
         paragraphs: [
-          "Nach § 4 Nr. 14 Buchst. a UStG sind Heilbehandlungen im Bereich der Humanmedizin steuerfrei, die im Rahmen der Ausübung eines Heilberufs oder einer ähnlichen heilberuflichen Tätigkeit durchgeführt werden. Podologinnen und Podologen mit Erlaubnis nach dem Podologengesetz üben eine solche Tätigkeit aus.",
+          "Nach § 4 Nr. 14 Buchst. a UStG sind Heilbehandlungen im Bereich der Humanmedizin steuerfrei, die im Rahmen der Ausübung eines Heilberufs oder einer ähnlichen heilberuflichen Tätigkeit durchgeführt werden. Podologinnen und Podologen mit Erlaubnis nach dem Podologengesetz üben eine solche Tätigkeit aus (Abschnitt 4.14.4 des Umsatzsteuer-Anwendungserlasses). Fußpflege ohne diese Erlaubnis – etwa kosmetische oder medizinische Fußpflege ohne Podologen-Erlaubnis – ist danach nicht befreit.",
           "Steuerfrei ist dabei nur die Heilbehandlung: Sie muss der Diagnose, Behandlung oder Vorbeugung von Krankheiten dienen. Ein Indiz ist eine ärztliche Verordnung; auch Selbstzahler-Leistungen können steuerfrei sein, wenn ein therapeutisches Ziel besteht und dokumentiert ist.",
         ],
       },
@@ -129,7 +138,7 @@ export const ARTICLES: Article[] = [
       {
         heading: "Kleinunternehmerregelung",
         paragraphs: [
-          "Wer nur geringe steuerpflichtige Umsätze hat, kann die Kleinunternehmerregelung nach § 19 UStG nutzen. Seit 2025 gelten als Grenzen 25.000 Euro Gesamtumsatz im Vorjahr und 100.000 Euro im laufenden Jahr. Bei der Berechnung des Gesamtumsatzes bleiben bestimmte steuerfreie Umsätze – darunter Heilbehandlungen nach § 4 Nr. 14 UStG – außer Betracht (§ 19 Abs. 2 UStG). Ob sich die Regelung lohnt, sollte die Steuerberatung beurteilen.",
+          "Wer nur geringe steuerpflichtige Umsätze hat, kann die Kleinunternehmerregelung nach § 19 UStG nutzen. Seit 2025 gelten als Grenzen 25.000 Euro Gesamtumsatz im Vorjahr und 100.000 Euro im laufenden Jahr. Bei der Berechnung des Gesamtumsatzes bleiben bestimmte steuerfreie Umsätze – darunter Heilbehandlungen nach § 4 Nr. 14 UStG – außer Betracht (§ 19 Abs. 2 UStG). Wird die 100.000-Euro-Grenze im laufenden Jahr überschritten, entfällt die Regelung ab diesem Umsatz. Ob sich die Regelung lohnt, sollte die Steuerberatung beurteilen.",
         ],
       },
       {
@@ -144,6 +153,7 @@ export const ARTICLES: Article[] = [
       { label: "§ 19 UStG – Besteuerung der Kleinunternehmer", url: G("ustg_1980/__19.html") },
       { label: "§ 3 UStG – Lieferung, sonstige Leistung (Gutscheine, Abs. 13–15)", url: G("ustg_1980/__3.html") },
       { label: "Podologengesetz (PodG)", url: G("podg/") },
+      { label: "Umsatzsteuer-Anwendungserlass (Abschnitt 4.14.4) – Bundesfinanzministerium", url: "https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Umsatzsteuer/Umsatzsteuer-Anwendungserlass/Umsatzsteuer-Anwendungserlass.html" },
     ],
     feature: { href: "/funktionen#rechnungen", label: "USt-Logik und Belege in PodoHero" },
     legal: true,
@@ -173,7 +183,7 @@ export const ARTICLES: Article[] = [
         heading: "Fristen im Blick behalten",
         list: [
           "Behandlungsbeginn: grundsätzlich innerhalb von 28 Kalendertagen nach Ausstellung, bei dringlichem Behandlungsbedarf innerhalb von 14 Kalendertagen.",
-          "Unterbrechungen: Längere Pausen ohne Begründung können die Verordnung ungültig machen. Für die Podologie gelten teils eigene Regeln – maßgeblich sind die aktuelle Heilmittel-Richtlinie und Ihr Vertrag nach § 125 SGB V.",
+          "Unterbrechungen: Grundsätzlich verliert eine Verordnung ihre Gültigkeit, wenn die Behandlung länger als 14 Kalendertage ohne angemessene Begründung unterbrochen wird (§ 16 Abs. 4 HeilM-RL). Für Maßnahmen der podologischen Therapie gilt das ausdrücklich nicht – Unterbrechungen machen die Verordnung hier nicht ungültig. Ergänzende Regeln können sich aus Ihrem Vertrag nach § 125 SGB V ergeben.",
           "Frequenz und Einheiten: verbrauchte und offene Einheiten je Position mitzählen; Hinweis rechtzeitig vor der letzten Einheit (Folgeverordnung).",
         ],
       },
@@ -197,6 +207,7 @@ export const ARTICLES: Article[] = [
       },
     ],
     sources: [
+      { label: "G-BA – Heilmittel-Richtlinie (aktuelle, konsolidierte Fassung)", url: "https://www.g-ba.de/richtlinien/12/" },
       { label: "G-BA – Verordnung von Heilmitteln", url: "https://www.g-ba.de/themen/veranlasste-leistungen/heilmittel/verordnung-heilmittel-vertragsaerzte/" },
       { label: "G-BA – Beschluss Podologische Therapie (NF/QF), 2020", url: "https://www.g-ba.de/downloads/39-261-4179/2020-02-20_HeilM-RL_Podologische-Therapie.pdf" },
       { label: "KVBW – FAQ Heilmittel", url: "https://www.kvbawue.de/praxis/verordnungen/heilmittel/faq" },
@@ -220,7 +231,7 @@ export const ARTICLES: Article[] = [
       {
         heading: "Rechtlicher Rahmen (Überblick)",
         paragraphs: [
-          "Die Aufbereitung von Medizinprodukten regelt die Medizinprodukte-Betreiberverordnung (MPBetreibV): Sie ist mit geeigneten validierten Verfahren durchzuführen. Eine ordnungsgemäße Aufbereitung wird vermutet, wenn die gemeinsame Empfehlung der Kommission für Krankenhaushygiene und Infektionsprävention (KRINKO) beim RKI und des BfArM „Anforderungen an die Hygiene bei der Aufbereitung von Medizinprodukten“ (2012) beachtet wird. Für den Arbeitsschutz gilt die TRBA 250. Viele Bundesländer haben zusätzlich eigene Hygieneverordnungen; die Überwachung liegt beim Gesundheitsamt.",
+          "Die Aufbereitung von Medizinprodukten regelt § 8 der Medizinprodukte-Betreiberverordnung (MPBetreibV): Sie ist mit geeigneten validierten Verfahren durchzuführen; wer aufbereitet, braucht die dafür nötige Sachkenntnis (§ 5 MPBetreibV). Eine ordnungsgemäße Aufbereitung wird vermutet, wenn die gemeinsame Empfehlung der Kommission für Krankenhaushygiene und Infektionsprävention (KRINKO) beim RKI und des BfArM „Anforderungen an die Hygiene bei der Aufbereitung von Medizinprodukten“ (2012) beachtet wird. Für den Arbeitsschutz gilt die TRBA 250. Viele Bundesländer haben zusätzlich eigene Hygieneverordnungen; die Überwachung liegt beim Gesundheitsamt.",
         ],
       },
       {
@@ -229,7 +240,7 @@ export const ARTICLES: Article[] = [
           "Flächendesinfektion des Behandlungsplatzes nach jeder Patientin bzw. jedem Patienten.",
           "Händehygiene: Desinfektionsmittel und Handschuhe aufgefüllt.",
           "Instrumente aufbereitet: Reinigung, Desinfektion, Verpackung, Sterilisation.",
-          "Sterilisator: Tagesprüfung (z. B. Vakuumtest, Bowie-Dick-Test) dokumentiert.",
+          "Sterilisator: Tagesprüfung dokumentiert – Vakuum-, Helix- bzw. Bowie-Dick-Test je nach Gerät und Herstellerangaben.",
           "Absaugung und Fräse gereinigt, Filter geprüft.",
           "Sterilgut-Charge erst nach Freigabe verwenden; Chargennummer in der Behandlungsdoku vermerken.",
         ],
@@ -266,6 +277,8 @@ export const ARTICLES: Article[] = [
       },
     ],
     sources: [
+      { label: "§ 8 MPBetreibV – Aufbereitung von Medizinprodukten", url: G("mpbetreibv_2025/__8.html") },
+      { label: "§ 5 MPBetreibV – Besondere Anforderungen (Sachkenntnis)", url: G("mpbetreibv_2025/__5.html") },
       { label: "RKI (edoc) – KRINKO/BfArM: Anforderungen an die Hygiene bei der Aufbereitung von Medizinprodukten (2012)", url: "https://edoc.rki.de/handle/176904/12400" },
       { label: "BAuA – TRBA 250", url: "https://www.baua.de/DE/Angebote/Regelwerk/TRBA/TRBA-250" },
     ],
@@ -296,7 +309,7 @@ export const ARTICLES: Article[] = [
         heading: "Tour planen",
         list: [
           "Hausbesuche eines Tages in eine sinnvolle Reihenfolge bringen – Fahrzeit und Behandlungszeit getrennt betrachten.",
-          "Startort festlegen (Praxis oder Zuhause) und Fahrten für das Fahrtenbuch festhalten – ohne Patientennamen im Ziel.",
+          "Startort festlegen (Praxis oder Zuhause) und Fahrten für das Fahrtenbuch festhalten – ohne Patientennamen im Ziel. Welche Angaben Ihr Fahrtenbuch enthalten muss und wie sich das mit der Schweigepflicht verträgt, klären Sie bitte mit Ihrer Steuerberatung.",
           "Material und Sterilgut für alle Besuche einpacken; Chargen notieren.",
         ],
       },
@@ -326,7 +339,7 @@ export const ARTICLES: Article[] = [
       { label: "§ 31 UStDV – Angaben in der Rechnung (Leistungszeitraum)", url: G("ustdv_1980/__31.html") },
     ],
     feature: { href: "/funktionen#praxis", label: "Pflegeheime & Touren in PodoHero" },
-    legal: false,
+    legal: true,
   },
 ];
 

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
-import { COMPARISON_STAND, competitorBySlug, COMPETITORS, type CompareRow, type Competitor } from "../../_content/competitors";
+import { COMPARISON_RETRIEVED, COMPARISON_STAND, competitorBySlug, COMPETITORS, type CompareRow, type Competitor } from "../../_content/competitors";
 import { Breadcrumbs, FaqList } from "../../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../../_content/json-ld";
 import { pageMeta } from "../../_content/site";
@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: PageProps<"/vergleich/[anbiet
   if (!c) return {};
   return pageMeta({
     title: `PodoHero und ${c.name} im Vergleich`,
-    description: `PodoHero und ${c.name} sachlich gegenübergestellt: Zielgruppe, Dokumentation, Abrechnung, TI, Kasse, Hygiene, Preise – mit Quellen von der Herstellerwebsite (Stand ${COMPARISON_STAND}).`,
+    description: `PodoHero und ${c.name} sachlich gegenübergestellt: Zielgruppe, Dokumentation, Abrechnung, TI, Kasse, Hygiene, Einstieg – mit Quellen von der Herstellerwebsite (Stand ${COMPARISON_STAND}).`,
     path: `/vergleich/${c.slug}`,
   });
 }
@@ -91,7 +91,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
         </div>
         <p className="mt-3 text-sm text-muted">
           „Nicht angegeben“: Auf den unten genannten Seiten von {c.name} fanden wir dazu keine Angabe – die Funktion kann trotzdem vorhanden sein.
-          Preise von PodoHero netto (zzgl. USt.); Preisangaben anderer Anbieter wie auf deren Website (netto bzw. brutto wie angegeben).
+          Preise vergleichen wir hier bewusst nicht; aktuelle Preise finden Sie beim jeweiligen Anbieter bzw. unter „Preise“.
         </p>
       </section>
 
@@ -135,7 +135,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
               <a href={s.url} rel="nofollow noopener noreferrer" target="_blank" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
                 {s.label} <ExternalLink size={14} aria-hidden />
               </a>{" "}
-              <span className="text-muted">– abgerufen {COMPARISON_STAND}</span>
+              <span className="text-muted">– abgerufen am {COMPARISON_RETRIEVED}</span>
             </li>
           ))}
         </ol>
