@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, useTransition, type Re
 import { Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { berlinParts } from "@/lib/calendar-grid";
-import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, resizeDuration } from "@/lib/calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration } from "@/lib/calendar-dnd";
 import { moveAppointmentAction, type MoveResult } from "./actions";
 
 /**
@@ -80,6 +80,10 @@ export function DndSurface({
   const [confirm, setConfirm] = useState<{ plan: Plan; undo: boolean; message: string; ghost: Ghost | null } | null>(null);
   const [toast, setToast] = useState<{ key: number; text: string; undo?: Plan; error?: boolean } | null>(null);
   const [announce, setAnnounce] = useState("");
+  /** Speichern läuft (Doppelklick-Schutz für Dialog/Rückgängig) */
+  const [saving, setSaving] = useState(false);
+  /** Hinweis nicht ausblenden, solange Maus oder Fokus darauf liegt */
+  const [toastHold, setToastHold] = useState(false);
   const [, startTransition] = useTransition();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -87,19 +91,32 @@ export function DndSurface({
   // ───── Speichern (optimistisch: Original ausblenden, Geisterbild am Ziel; bei Fehler zurück) ─────
   // nur stabile Setter/Refs → einmalig erzeugt
   const run = useCallback((plan: Plan, undo: boolean, allowConflict: boolean, g: Ghost | null) => {
+    if (busy.current) return;
     busy.current = true;
+    setSaving(true);
     setPending({ id: plan.id, ghost: g });
     setToast(undo ? { key: Date.now(), text: "Wird zurückgesetzt …" } : null);
     const to = plan.to;
     startTransition(async () => {
       let res: MoveResult;
       try {
-        res = await moveAppointmentAction({ id: plan.id, startsAt: to.startsAt.toISOString(), durationMin: to.durationMin, therapistId: to.therapistId, allowConflict });
+        res = await moveAppointmentAction({
+          id: plan.id,
+          startsAt: to.startsAt.toISOString(),
+          durationMin: to.durationMin,
+          therapistId: to.therapistId,
+          allowConflict,
+          // Versionsprüfung: so sah der Termin beim Ziehen aus (bei „Rückgängig“: nach dem Verschieben)
+          expectedStartsAt: plan.from.startsAt.toISOString(),
+          expectedDurationMin: plan.from.durationMin,
+          expectedTherapistId: plan.from.therapistId,
+        });
       } catch {
         res = { ok: false, error: "Keine Verbindung – der Termin wurde nicht verschoben." };
       }
       startTransition(() => {
         busy.current = false;
+        setSaving(false);
         const when = moveLabelLong(to.startsAt, endOf(to));
         if (res.ok) {
           setPending(null);
@@ -132,10 +149,10 @@ export function DndSurface({
 
   // Hinweis nach 10 s ausblenden (Fehler bleiben ebenso lange stehen)
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toastHold) return;
     const t = window.setTimeout(() => setToast((cur) => (cur?.key === toast.key ? null : cur)), TOAST_MS);
     return () => window.clearTimeout(t);
-  }, [toast]);
+  }, [toast, toastHold]);
 
   // ───── Zeiger ─────
   useEffect(() => {
@@ -175,11 +192,13 @@ export function DndSurface({
       const rangeEnd = Number(col.dataset.rangeEnd);
       const offsetPx = s.y - r.top;
       let startMin: number, dur: number;
+      let realDur: number | null = null;
       if (s.mode === "resize") {
         const p = berlinParts(s.startsAt);
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
         dur = resizeDuration({ offsetPx, pxPerMin, rangeStart, startMin });
+        realDur = realDuration(date, startMin, startMin + dur); // am Tag der Zeitumstellung echte Minuten
       } else {
         dur = durationMin;
         startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur });
@@ -190,7 +209,7 @@ export function DndSurface({
       const startsAt = s.mode === "resize" ? s.startsAt : localSlotToUtc(date, startMin);
       if (!startsAt) return { slot: null, ghost: { rect, label: "Uhrzeit gibt es an diesem Tag nicht (Zeitumstellung)", valid: false } };
       const therapistId = view === "tag" && col.dataset.therapist ? col.dataset.therapist : s.therapistId;
-      const slot = { startsAt, durationMin: dur, therapistId };
+      const slot = { startsAt, durationMin: realDur ?? dur, therapistId };
       return { slot, ghost: { rect, label: moveLabel(startsAt, endOf(slot)), valid: true } };
     };
 
@@ -437,10 +456,14 @@ export function DndSurface({
             toast.error ? "border-accent bg-accent-soft text-accent-soft-text" : "border-border bg-surface text-text"
           }`}
           data-dnd-toast
+          onPointerEnter={() => setToastHold(true)}
+          onPointerLeave={() => setToastHold(false)}
+          onFocus={() => setToastHold(true)}
+          onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setToastHold(false)}
         >
           <span className="min-w-0 flex-1">{toast.text}</span>
           {toast.undo ? (
-            <Button type="button" variant="secondary" className="shrink-0" onClick={() => toast.undo && !busy.current && run(toast.undo, true, false, null)}>
+            <Button type="button" variant="secondary" className="shrink-0" disabled={saving} onClick={() => toast.undo && run(toast.undo, true, false, null)}>
               <Undo2 size={16} aria-hidden /> Rückgängig
             </Button>
           ) : null}
@@ -470,9 +493,9 @@ export function DndSurface({
             </p>
             <p className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">{confirm.message}</p>
             <div className="flex flex-wrap justify-end gap-2">
-              <Button type="button" variant="secondary" onClick={abort} autoFocus>Abbrechen</Button>
-              <Button type="button" onClick={() => run(confirm.plan, confirm.undo, true, confirm.ghost)}>
-                {confirm.undo ? "Trotzdem zurücksetzen" : "Trotzdem verschieben"}
+              <Button type="button" variant="secondary" onClick={abort} disabled={saving} autoFocus>Abbrechen</Button>
+              <Button type="button" disabled={saving} onClick={() => run(confirm.plan, confirm.undo, true, confirm.ghost)}>
+                {saving ? "Wird gespeichert …" : confirm.undo ? "Trotzdem zurücksetzen" : "Trotzdem verschieben"}
               </Button>
             </div>
           </>
@@ -482,7 +505,7 @@ export function DndSurface({
   );
 
   function abort() {
-    if (!confirm) return;
+    if (!confirm || saving) return;
     const text = `${confirm.undo ? "Nicht zurückgesetzt" : "Nicht verschoben"} – ${confirm.plan.name} bleibt ${moveLabelLong(confirm.plan.from.startsAt, endOf(confirm.plan.from))}.`;
     setConfirm(null);
     setPending(null);

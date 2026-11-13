@@ -80,7 +80,7 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
                   <span className="inline-block size-3 rounded-full" style={dotStyle(colors.get(t.id)!)} aria-hidden />
                   {t.name}
                 </p>
-                {auth.support ? null : <TherapistColorForm userId={t.id} stored={t.color} effective={colors.get(t.id)!} legend={`Kalenderfarbe für ${t.name}`} />}
+                {auth.support || auth.readOnly ? null : <TherapistColorForm userId={t.id} stored={t.color} effective={colors.get(t.id)!} legend={`Kalenderfarbe für ${t.name}`} />}
               </li>
             ))}
           </ul>

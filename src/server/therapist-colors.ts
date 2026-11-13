@@ -22,7 +22,8 @@ export type ColorResult = { ok: true } | { ok: false; error: string };
  * (users.manage). Im Support-Modus nie. Nur Personen mit eigener Kalenderspalte (Inhaber:in, Podolog:in).
  */
 export async function setTherapistColor(auth: AuthContext, userId: string, color: string | null): Promise<ColorResult> {
-  if (auth.support) throw new ForbiddenError("users.manage");
+  // Support-Modus und Nur-Lesen-Modus (Abo abgelaufen): keine Änderungen
+  if (auth.support || auth.readOnly) throw new ForbiddenError("users.manage");
   if (userId !== auth.user.id) assertCan(auth, "users.manage");
   if (color !== null && !isTherapistColor(color)) return { ok: false, error: "Unbekannte Farbe." };
   const org = auth.organization.id;

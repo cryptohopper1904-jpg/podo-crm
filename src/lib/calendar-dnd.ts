@@ -11,6 +11,7 @@ import { berlinToUtc } from "./format";
 const DAY_MIN = 24 * 60;
 /** Gleiche Grenze wie beim Verschieben über das Formular (rescheduleAppointment) */
 export const MAX_DURATION_MIN = 480;
+export const MIN_DURATION_MIN = 5;
 const WD_SHORT = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
@@ -38,6 +39,17 @@ export function resizeDuration(p: { offsetPx: number; pxPerMin: number; rangeSta
   const step = p.step ?? SLOT_MIN;
   const end = snapMin(p.rangeStart + p.offsetPx / p.pxPerMin, step);
   return clamp(end - p.startMin, step, Math.min(MAX_DURATION_MIN, DAY_MIN - p.startMin));
+}
+
+/**
+ * Echte Dauer in Minuten zwischen zwei Uhrzeiten (Minuten ab Mitternacht) an einem Berliner Tag – am Tag der
+ * Zeitumstellung weicht sie von der Differenz der Uhrzeiten ab (Sommerzeit −60, Winterzeit +60).
+ * Liegt eine Uhrzeit in der Lücke der Sommerzeit-Umstellung, gilt die Differenz der Uhrzeiten.
+ */
+export function realDuration(dateIso: string, startMin: number, endMin: number): number {
+  const s = localSlotToUtc(dateIso, startMin);
+  const e = endMin >= DAY_MIN ? null : localSlotToUtc(dateIso, endMin);
+  return s && e ? durationOf(s, e) : endMin - startMin;
 }
 
 /** Spalte unter dem Zeiger (Spaltenwechsel Tag ↔ Tag bzw. Behandler:in ↔ Behandler:in); -1 = keine */
@@ -97,13 +109,16 @@ export type DragLockInput = {
  * Darf der Termin im Kalender gezogen werden? null = ja, sonst der Hinweis, warum nicht. (Ohne Schreibrecht,
  * im Support-Lesemodus und im Nur-Lesen-Modus gibt es gar keinen Griff – das prüft die Seite vorher.)
  * Grundlage ist dieselbe Sperre wie beim Formular (appointmentEditLock: Doctolib, Kalender-Abo, abgerechnet, abgesagt);
- * zusätzlich nicht per Ziehen: erledigte Termine, Termine ohne Behandler:in und sehr lange Termine (Formular „Ändern“).
+ * zusätzlich nicht per Ziehen (serverseitig ebenso gesperrt, forDrag): erledigte und nicht erschienene Termine,
+ * Termine ohne Behandler:in; außerdem sehr kurze (< 5 min) und sehr lange Termine (Formular „Ändern“).
  */
 export function dragLock(a: DragLockInput): string | null {
   const lock = appointmentEditLock(a, a.fromCalendarFeed, a.billed);
   if (lock) return lock.message;
   if (a.status === "done") return "Erledigte Termine werden nicht per Ziehen verschoben – bei Bedarf über „Termin öffnen → Datum und Uhrzeit ändern“.";
+  if (a.status === "no_show") return "Nicht erschienene Termine werden nicht per Ziehen verschoben – bitte einen neuen Termin anlegen.";
   if (!a.therapistId) return "Termin ohne Behandler:in – bitte über „Termin öffnen → Datum und Uhrzeit ändern“ zuordnen.";
+  if (durationOf(a.startsAt, a.endsAt) < MIN_DURATION_MIN) return "Sehr kurze Termine (unter 5 Minuten) bitte über „Termin öffnen → Datum und Uhrzeit ändern“ verschieben.";
   if (durationOf(a.startsAt, a.endsAt) > MAX_DURATION_MIN) return "Sehr lange Termine bitte über „Termin öffnen → Datum und Uhrzeit ändern“ verschieben.";
   return null;
 }

@@ -79,8 +79,10 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? (
               <>
                 {" · "}
-                {color ? <span className="mr-1 inline-block size-2.5 rounded-full align-[-1px]" style={dotStyle(color)} aria-hidden /> : null}
-                {row.therapist}
+                <span className="whitespace-nowrap">
+                  {color ? <span className="mr-1 inline-block size-2.5 rounded-full align-[-1px]" style={dotStyle(color)} aria-hidden /> : null}
+                  {row.therapist}
+                </span>
               </>
             ) : null}
           </p>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, resizeDuration, snapMin } from "./calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, snapMin } from "./calendar-dnd";
 import { berlinParts } from "./calendar-grid";
 import { berlinToUtc } from "./format";
 
@@ -73,6 +73,13 @@ describe("Zeitpunkte (Berliner Ortszeit, Sommer-/Winterzeit)", () => {
     expect(berlinParts(s)).toEqual({ dateIso: "2026-10-25", min: 600 });
   });
 
+  it("Dauer am Umstellungstag in echten Minuten (Ziehen am unteren Rand)", () => {
+    expect(realDuration("2026-03-29", 60, 240)).toBe(120); // 01:00–04:00 Sommerzeit-Beginn: 2 h
+    expect(realDuration("2026-10-25", 60, 240)).toBe(240); // 01:00–04:00 Winterzeit-Beginn: 4 h
+    expect(realDuration("2026-06-10", 600, 645)).toBe(45);
+    expect(realDuration("2026-03-29", 60, 150)).toBe(90); // Ende in der Lücke → Uhrzeit-Differenz
+  });
+
   it("Monatsansicht: anderer Tag, gleiche Uhrzeit – auch über die Zeitumstellung", () => {
     const winter = berlinToUtc("2026-03-27", "10:30"); // Fr, UTC+1
     const moved = moveToDay(winter, "2026-03-31")!; // Di, UTC+2
@@ -97,9 +104,12 @@ describe("Was darf gezogen werden?", () => {
     expect(dragLock(base)).toBeNull();
     expect(dragLock({ ...base, status: "confirmed" })).toBeNull();
   });
-  it("abgesagt, erledigt, abgerechnet, Doctolib/Kalender-Abo, ohne Behandler:in, sehr lang: nein (mit Hinweis)", () => {
+  it("abgesagt, erledigt, nicht erschienen, sehr kurz, abgerechnet, Doctolib/Kalender-Abo, ohne Behandler:in, sehr lang: nein (mit Hinweis)", () => {
     expect(dragLock({ ...base, status: "cancelled" })).toMatch(/Abgesagte/);
     expect(dragLock({ ...base, status: "done" })).toMatch(/Erledigte/);
+    expect(dragLock({ ...base, status: "no_show" })).toMatch(/Nicht erschienene/);
+    expect(dragLock({ ...base, endsAt: new Date("2026-11-17T09:04:00Z") })).toMatch(/kurze/);
+    expect(dragLock({ ...base, endsAt: new Date("2026-11-17T09:05:00Z") })).toBeNull();
     expect(dragLock({ ...base, billed: true })).toMatch(/abgerechnet/);
     expect(dragLock({ ...base, source: "doctolib" })).toMatch(/Doctolib/);
     expect(dragLock({ ...base, fromCalendarFeed: true })).toMatch(/Kalender-Abo/);

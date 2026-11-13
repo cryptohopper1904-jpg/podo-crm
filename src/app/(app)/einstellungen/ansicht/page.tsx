@@ -53,8 +53,8 @@ export default async function ViewSettings() {
           <p className="mb-4 text-sm text-muted">
             Deine Termine erscheinen im Kalender in dieser Farbe (getönte Fläche, farbiger Rand). Gilt für die ganze Praxis; „automatisch“ vergibt die nächste freie Farbe.
           </p>
-          {auth.support ? (
-            <p className="text-sm text-muted">Im Support-Modus nicht änderbar.</p>
+          {auth.support || auth.readOnly ? (
+            <p className="text-sm text-muted">Im Support- bzw. Nur-Lesen-Modus nicht änderbar.</p>
           ) : (
             <TherapistColorForm userId={auth.user.id} stored={own.color} effective={colors.get(auth.user.id)!} legend="Meine Kalenderfarbe" />
           )}
