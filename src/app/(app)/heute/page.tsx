@@ -131,7 +131,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
                 Sammelrechnungen {reminderYear}
               </CardTitle>
               <p className="mb-3 text-sm text-muted">
-                {openCollective.length === 1 ? "1 Kund:in hat" : `${openCollective.length} Kund:innen haben`} noch Behandlungen oder Quittungen aus {reminderYear} ohne Rechnung.
+                {openCollective.length === 1 ? "1 Patient:in hat" : `${openCollective.length} Patient:innen haben`} noch Behandlungen oder Quittungen aus {reminderYear} ohne Rechnung.
               </p>
               <ul className="flex flex-col gap-2 text-sm">
                 {openCollective.slice(0, 5).map((r) => (

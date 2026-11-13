@@ -40,7 +40,7 @@ const jsonElement = (row: unknown) => "  " + JSON.stringify(row, replacer, 2).sp
  * - tables/<tabelle>.json für jede Mandanten-Tabelle (über withOrg → RLS), ohne Geheimnisse,
  *   seitenweise gelesen (Keyset über id, je Seite eine kurze Transaktion) und als JSON-Array geschrieben
  * - tables/organizations.json, tables/users.json (nur Mitglieder, ohne Passwort-Hash/2FA)
- * - media/<Kundennummer>/<Datei> entschlüsselt – eine Datei nach der anderen, als Stream; jede Datei wird
+ * - media/<Patientennummer>/<Datei> entschlüsselt – eine Datei nach der anderen, als Stream; jede Datei wird
  *   vorab auf Echtheit (GCM) geprüft, damit eine defekte Datei nicht den ganzen Export abbricht
  * - README.txt mit Erläuterungen und Aufbewahrungshinweis (am Ende, mit den Zahlen)
  * Aufbau und Dateinamen sind identisch mit dem bisherigen (JSZip-)Export. ZIP64 bei > 4 GB automatisch.
@@ -133,7 +133,7 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     );
   }
 
-  /** Kundennummern für eine Seite von Medien (nur die benötigten). */
+  /** Patientennummern für eine Seite von Medien (nur die benötigten). */
   const numbersFor = async (patientIds: string[]) => {
     const ids = [...new Set(patientIds.filter(Boolean))];
     if (!ids.length) return new Map<string, number>();
@@ -250,7 +250,7 @@ function readme(p: { orgName: string; exportedBy: { name: string; email: string 
     "tables/<tabelle>.json  Alle Datensätze der Praxis je Tabelle (JSON, UTF-8). Datumswerte im ISO-Format (UTC).",
     "                       Geldbeträge in Cent. Verknüpfungen über die Spalten *_id.",
     "tables/users.json      Mitglieder der Praxis (ohne Passwort und 2FA-Geheimnis).",
-    "media/<Kundennummer>/  Fotos, Audio und Dokumente – entschlüsselt. Zuordnung über tables/media.json (Feld exportFile).",
+    "media/<Patientennummer>/  Fotos, Audio und Dokumente – entschlüsselt. Zuordnung über tables/media.json (Feld exportFile).",
     "                       Die Prüfsumme (sha256) in tables/media.json belegt die Unversehrtheit der Datei.",
     "",
     "Nicht enthalten: Passwort-Hashes, 2FA-Geheimnisse, Zugangsdaten zu Schnittstellen, Sitzungen, interne Speicherpfade.",

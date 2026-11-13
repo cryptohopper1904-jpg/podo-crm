@@ -78,7 +78,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
           <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.patient)}</Link></p>
           <h1 className="font-display text-3xl font-semibold tracking-tight">Verordnungen</h1>
           <p className="text-sm text-muted">
-            {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}` : "Hinweis: Kunde ist nicht als GKV-versichert hinterlegt."}
+            {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}` : "Hinweis: Patient ist nicht als GKV-versichert hinterlegt."}
           </p>
         </div>
         {canWrite && !showForm ? <LinkButton href={`/kunden/${id}/verordnungen?neu=1`}><Plus size={18} aria-hidden /> Neue Verordnung</LinkButton> : null}

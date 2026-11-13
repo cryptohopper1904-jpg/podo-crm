@@ -62,7 +62,7 @@ export default async function DataSettings() {
       <Card>
         <CardTitle>Vollständiger Datenexport</CardTitle>
         <p className="text-[15px] text-muted">
-          ZIP-Datei mit allen Daten Ihrer Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Kundennummer) und eine
+          ZIP-Datei mit allen Daten Ihrer Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Patientennummer) und eine
           Erläuterung (README.txt). Zugangsdaten, Passwörter und 2FA-Geheimnisse sind nicht enthalten. Der Export wird im Zugriffsprotokoll vermerkt.
         </p>
         <p className="mt-2 text-sm text-muted">Enthält Gesundheitsdaten – nur auf einem verschlüsselten, geschützten Gerät speichern. Höchstens ein Export alle 10 Minuten.</p>
@@ -79,7 +79,7 @@ export default async function DataSettings() {
         <Card>
           <CardTitle>Praxis kündigen & löschen</CardTitle>
           <p className="mb-4 text-[15px] text-muted">
-            Mit der Kündigung beantragen Sie die vollständige Löschung Ihrer Praxis: alle Kund:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
+            Mit der Kündigung beantragen Sie die vollständige Löschung Ihrer Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
             Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin können Sie den Antrag zurücknehmen. Ein laufendes Abo
             verwalten Sie unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>

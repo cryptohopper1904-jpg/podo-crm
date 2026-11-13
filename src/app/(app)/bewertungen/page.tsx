@@ -57,7 +57,7 @@ export default async function ReviewsPage() {
         )}
         <p className="mt-2 text-sm text-muted">
           Einen QR-Code für den Empfangstresen erhalten Sie im Google Unternehmensprofil unter „Bewertungen erhalten“. Keine Gegenleistungen für
-          Bewertungen anbieten (UWG, Google-Richtlinien) und nicht gezielt nur zufriedene Kund:innen fragen.
+          Bewertungen anbieten (UWG, Google-Richtlinien) und nicht gezielt nur zufriedene Patient:innen fragen.
         </p>
       </Card>
 

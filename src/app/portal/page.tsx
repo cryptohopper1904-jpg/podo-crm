@@ -9,12 +9,12 @@ import { currentPortalLink, loadPortalView, portalFailLimiter, portalLimiter } f
 import { CancelAppointmentButton } from "./cancel-button";
 import { PortalShell } from "./shell";
 
-export const metadata = { title: "Kundenportal", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
+export const metadata = { title: "Patientenportal", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
 
 const Shell = PortalShell;
 
 /**
- * Öffentliches Kundenportal. Zugang nur über die kurzlebige Sitzung (Cookie), die beim Öffnen des
+ * Öffentliches Patientenportal. Zugang nur über die kurzlebige Sitzung (Cookie), die beim Öffnen des
  * persönlichen Links /portal/<token> gesetzt wird. Zeigt nur Vorname, künftige Termine,
  * offene Rechnungen (PDF) und Gutscheinguthaben – keine Befunde/Doku.
  */

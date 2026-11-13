@@ -1,5 +1,5 @@
 /**
- * Warteliste & Kundenportal-Buchung gegen PostgreSQL:
+ * Warteliste & Patientenportal-Buchung gegen PostgreSQL:
  *  - Absage → passende Einträge bekommen ein Angebot (nur mit Einwilligung), ohne Einwilligung → Vorschlag im Posteingang
  *  - wer zuerst annimmt, bekommt den Termin (parallel: genau eine Annahme), alle anderen „schon vergeben“
  *  - Portal-Buchung hängt an die Akte der Person, parallele Buchungen derselben Zeit → genau eine
@@ -192,7 +192,7 @@ function futureWeekday(minDays: number) {
     // nicht freigegebene Zeit / außerhalb der Öffnungszeit
     expect((await pb.bookPortalAppointment(l1, { serviceId: pk, startsAt: berlinToUtc(day, "21:00").toISOString() })).ok).toBe(false);
     const inbox = (await f.asOrg(org, (c) => c.query("select subject from messages where organization_id=$1", [org]))).rows;
-    expect(inbox.map((m) => m.subject)).toContain("Neue Buchung über das Kundenportal");
+    expect(inbox.map((m) => m.subject)).toContain("Neue Buchung über das Patientenportal");
   });
 
   it("Tageslimit und Vorlaufzeit aus den Einstellungen", async () => {

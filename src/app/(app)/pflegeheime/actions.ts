@@ -26,7 +26,7 @@ export async function assignResidentAction(_: State, form: FormData): Promise<St
   const careHomeId = z.string().uuid().safeParse(form.get("careHomeId"));
   const patientId = z.string().uuid().safeParse(form.get("patientId"));
   if (!careHomeId.success) return { error: "Ungültige Anfrage." };
-  if (!patientId.success) return { error: "Bitte einen Kunden auswählen." };
+  if (!patientId.success) return { error: "Bitte einen Patienten auswählen." };
   const ok = await assignResident(auth, { careHomeId: careHomeId.data, patientId: patientId.data, billToHome: form.get("billToHome") === "on" });
   if (!ok) return { error: "Zuordnung nicht möglich." };
   revalidatePath(`/pflegeheime/${careHomeId.data}`);
@@ -61,7 +61,7 @@ export async function quickRecordAction(_: QuickRecordState, form: FormData): Pr
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
   if (!d.servicesText && !d.findings) return { error: "Bitte Leistung oder Befund eintragen." };
-  if (!(await isResident(auth, d.careHomeId, d.patientId))) return { error: "Kunde wohnt nicht in diesem Pflegeheim." };
+  if (!(await isResident(auth, d.careHomeId, d.patientId))) return { error: "Patient wohnt nicht in diesem Pflegeheim." };
   const res = await createTreatmentRecord(
     auth,
     { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null, servicesText: d.servicesText, findings: d.findings, structured: { mode: "care_home", careHomeId: d.careHomeId } },

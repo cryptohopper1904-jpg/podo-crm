@@ -37,7 +37,7 @@ const corr = (o: Partial<CorrectionRow>): CorrectionRow => ({
 });
 
 describe("Fahrtenbuch: Pseudonymisierung", () => {
-  it("Ziel nur als Kundennummer, nie mit Namen", () => {
+  it("Ziel nur als Patientennummer, nie mit Namen", () => {
     expect(tripTargetLabel(17)).toBe("Hausbesuch K-17");
     expect(tripTargetLabel(null)).toBe("Hausbesuch");
     expect(tripTargetLabel(0)).toBe("Hausbesuch");

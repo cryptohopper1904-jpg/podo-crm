@@ -71,7 +71,7 @@ describe("Risiko-Flags", () => {
 });
 
 import { initialFromRiskFlags } from "./anamnesis";
-describe("Vorbelegung aus Kundenakte", () => {
+describe("Vorbelegung aus Patientenakte", () => {
   it("übernimmt bekannte Risiken, damit sie nicht gelöscht werden", () => {
     const i = initialFromRiskFlags({ diabetes: true, diabetesType: "Typ 2", anticoagulation: true, allergies: "Latex" });
     expect(i.diabetes).toBe(true);

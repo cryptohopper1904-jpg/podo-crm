@@ -37,7 +37,7 @@ export type PracticeOverview = {
   websiteAddon: boolean;
   /** Demo-Praxis mit erfundenen Daten (organizations.settings.demo, Bootstrap) */
   demo: boolean;
-  /** Praxis-Inhaber:innen (Konto, kein Kundendatum) – für „Passwort-Reset senden“ */
+  /** Praxis-Inhaber:innen (Konto, kein Patientendatum) – für „Passwort-Reset senden“ */
   owners: { id: string; name: string; email: string }[];
 };
 

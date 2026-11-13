@@ -3,7 +3,7 @@
  * ohne Netz: Anfrage prüfen, Photon-URL bauen, GeoJSON-Antwort normalisieren.
  *
  * Datenschutz: An Photon geht ausschließlich der eingegebene Adresstext (bzw. die PLZ) – nie Namen,
- * IDs oder andere Daten der Kund:innen.
+ * IDs oder andere Daten der Patient:innen.
  */
 
 export type AddressSuggestion = {

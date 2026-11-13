@@ -7,7 +7,7 @@ import { dateDe, money } from "@/lib/format";
 import { STATUS_LABEL, type PatientStatus } from "@/lib/patient-status";
 import { listPatients } from "@/server/patients";
 
-export const metadata = { title: "Kunden" };
+export const metadata = { title: "Patienten" };
 
 const statusTone: Record<PatientStatus, "primary" | "info" | "warn" | "neutral"> = {
   new: "info",
@@ -32,7 +32,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
   return (
     <div className="mx-auto max-w-7xl">
       <PageHeader
-        title="Kunden"
+        title="Patienten"
         subtitle={`${rows.length} ${rows.length === 1 ? "Eintrag" : "Einträge"}`}
         actions={
           <>
@@ -40,7 +40,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
               <LinkButton href="/einstellungen/import" variant="secondary"><Upload size={18} aria-hidden /> Import</LinkButton>
             ) : null}
             {auth.can("patients.write") ? (
-              <LinkButton href="/kunden/neu"><Plus size={18} aria-hidden /> Neuer Kunde</LinkButton>
+              <LinkButton href="/kunden/neu"><Plus size={18} aria-hidden /> Neuer Patient</LinkButton>
             ) : null}
           </>
         }
@@ -67,8 +67,8 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
         </div>
       </form>
       {rows.length === 0 ? (
-        <Empty title={q ? "Keine Treffer" : "Noch keine Kunden"}>
-          {q ? "Andere Schreibweise versuchen." : "Lege den ersten Kunden an oder importiere deine Excel-Liste."}
+        <Empty title={q ? "Keine Treffer" : "Noch keine Patienten"}>
+          {q ? "Andere Schreibweise versuchen." : "Lege den ersten Patienten an oder importiere deine Excel-Liste."}
         </Empty>
       ) : (
         <Table>

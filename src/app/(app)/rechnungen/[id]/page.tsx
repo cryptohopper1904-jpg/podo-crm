@@ -145,7 +145,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
-              Zur Kundenakte
+              Zur Patientenakte
             </Link>
           ) : null}
         </div>

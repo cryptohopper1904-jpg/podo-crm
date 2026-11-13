@@ -1,7 +1,7 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
- * Login → Kunde anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → öffentliche Buchung →
- * Kundenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
+ * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → öffentliche Buchung →
+ * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
@@ -56,7 +56,7 @@ test("Login mit Demo-Zugang: Pflicht-2FA für Inhaber:innen wird eingerichtet", 
   await expect(page).toHaveURL(/\/heute/);
 });
 
-test("Kunde anlegen", async () => {
+test("Patient anlegen", async () => {
   await page.goto("/kunden/neu");
   await page.getByLabel("Vorname", { exact: true }).fill(firstName);
   await page.getByLabel("Nachname *", { exact: true }).fill(lastName);
@@ -137,9 +137,9 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await ctx.close();
 });
 
-test("Kundenportal: Link erzeugen, Termin buchen und verschieben", async ({ browser }) => {
+test("Patientenportal: Link erzeugen, Termin buchen und verschieben", async ({ browser }) => {
   await page.goto(patientUrl);
-  await page.getByRole("button", { name: /Kundenportal-Link/ }).click();
+  await page.getByRole("button", { name: /Patientenportal-Link/ }).click();
   const linkInput = page.locator("input[readonly]").first();
   await expect(linkInput).toHaveValue(/\/portal\/[A-Za-z0-9_-]{43}$/);
   const url = new URL((await linkInput.inputValue())!, page.url());
@@ -174,8 +174,8 @@ test("Kundenportal: Link erzeugen, Termin buchen und verschieben", async ({ brow
 
   // Praxis sieht beides im Posteingang
   await page.goto("/posteingang");
-  await expect(page.getByText("Neue Buchung über das Kundenportal").first()).toBeVisible();
-  await expect(page.getByText("Terminverschiebung über das Kundenportal").first()).toBeVisible();
+  await expect(page.getByText("Neue Buchung über das Patientenportal").first()).toBeVisible();
+  await expect(page.getByText("Terminverschiebung über das Patientenportal").first()).toBeVisible();
 });
 
 test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () => {

@@ -7,9 +7,9 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, timeDe } from "@/lib/format";
 import { AssignForm } from "./assign-form";
 
-export const metadata = { title: "Kund:in zuordnen" };
+export const metadata = { title: "Patient:in zuordnen" };
 
-/** Importierter Termin (Kalender-Abo) → Kund:in. Zuordnung nur manuell, nie automatisch. */
+/** Importierter Termin (Kalender-Abo) → Patient:in. Zuordnung nur manuell, nie automatisch. */
 export default async function AssignFeedAppointmentPage(props: PageProps<"/kalender/zuordnen/[id]">) {
   const auth = await requireAuth("appointments.write");
   const { id } = await props.params;
@@ -35,7 +35,7 @@ export default async function AssignFeedAppointmentPage(props: PageProps<"/kalen
   const { a } = data;
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Kund:in zuordnen" subtitle={`aus Kalender-Abo „${data.feedLabel}“`} actions={<LinkButton variant="secondary" href={`/kalender?datum=${berlinDateIso(a.startsAt)}`}>Zurück zum Kalender</LinkButton>} />
+      <PageHeader title="Patient:in zuordnen" subtitle={`aus Kalender-Abo „${data.feedLabel}“`} actions={<LinkButton variant="secondary" href={`/kalender?datum=${berlinDateIso(a.startsAt)}`}>Zurück zum Kalender</LinkButton>} />
       <Card className="mb-4">
         <CardTitle>{a.title ?? "(ohne Titel)"}</CardTitle>
         <p className="text-sm">{dateDe(a.startsAt)}, {timeDe(a.startsAt)}–{timeDe(a.endsAt)}</p>
@@ -44,7 +44,7 @@ export default async function AssignFeedAppointmentPage(props: PageProps<"/kalen
       <Card>
         <p className="mb-4 text-sm text-muted">
           PodoHero ordnet Termine aus dem Kalender-Abo <strong>nie automatisch</strong> zu – auch nicht bei gleichem Namen. Bitte die richtige
-          Kund:in prüfen (z. B. Geburtsdatum in Doctolib) und hier auswählen. Uhrzeit und Titel bleiben weiterhin mit dem Kalender abgeglichen.
+          Patient:in prüfen (z. B. Geburtsdatum in Doctolib) und hier auswählen. Uhrzeit und Titel bleiben weiterhin mit dem Kalender abgeglichen.
         </p>
         {a.patientId ? <p className="mb-4 text-sm font-semibold">Bereits zugeordnet – eine neue Auswahl ersetzt die Zuordnung.</p> : null}
         <AssignForm appointmentId={a.id} patients={data.pts} />

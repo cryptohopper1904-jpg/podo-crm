@@ -18,7 +18,7 @@ type ContactOpt = { id: string; name: string; kind: string };
 
 export type InvoicePreset = {
   kind: CreatableKind;
-  /** vorausgewählte Kund:in (Rechnung aus Termin/Behandlung, Sammelrechnung je Kund:in) */
+  /** vorausgewählte Patient:in (Rechnung aus Termin/Behandlung, Sammelrechnung je Patient:in) */
   patientId?: string | null;
   billingContactId?: string | null;
   notes?: string | null;
@@ -274,10 +274,10 @@ export function InvoiceForm({
         </div>
         {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl vier (Gesamt-Review M8) */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
-          <Field label="Kunde suchen">
+          <Field label="Patient suchen">
             <Input value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)} placeholder="Name oder Nummer" autoComplete="off" />
           </Field>
-          <Field label={kind === "collective" ? "Kunde (für die Jahres-Sammelrechnung)" : "Kunde *"}>
+          <Field label={kind === "collective" ? "Patient (für die Jahres-Sammelrechnung)" : "Patient *"}>
             <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective" || !billingContactId}>
               <option value="">– bitte wählen –</option>
               {filteredPatients.map((p) => (
@@ -287,7 +287,7 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <Field label={kind === "collective" ? "Rechnungsempfänger (z. B. Pflegeheim)" : "Abweichender Rechnungsempfänger"} hint={kind === "collective" ? "Kunde oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}>
+          <Field label={kind === "collective" ? "Rechnungsempfänger (z. B. Pflegeheim)" : "Abweichender Rechnungsempfänger"} hint={kind === "collective" ? "Patient oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}>
             <Select name="billingContactId" value={billingContactId} onChange={(e) => setBillingContactId(e.target.value)} required={kind === "collective" && !patientId}>
               <option value="">– keiner –</option>
               {billingContacts.map((c) => (

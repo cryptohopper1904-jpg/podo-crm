@@ -1,5 +1,5 @@
 /**
- * Terminbuchung im Kundenportal – reine Regeln (ohne DB, testbar).
+ * Terminbuchung im Patientenportal – reine Regeln (ohne DB, testbar).
  *
  * Unterschied zur anonymen Online-Buchung (/buchen): Die Identität ist über den persönlichen Portal-Link
  * nachgewiesen, deshalb wird der Termin direkt an die Akte DIESER Person gehängt (Status „geplant“).

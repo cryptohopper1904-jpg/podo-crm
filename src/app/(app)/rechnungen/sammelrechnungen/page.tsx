@@ -10,7 +10,7 @@ import { collectiveOverview } from "@/server/appointment-billing";
 export const metadata = { title: "Sammelrechnungen zum Jahresende" };
 
 /**
- * Jahresend-Übersicht: Kund:innen mit noch nicht abgerechneten Behandlungen bzw. noch nicht angerechneten
+ * Jahresend-Übersicht: Patient:innen mit noch nicht abgerechneten Behandlungen bzw. noch nicht angerechneten
  * Anzahlungen (Quittungen) – je Zeile direkt „Sammelrechnung erstellen“.
  */
 export default async function CollectiveOverviewPage(props: PageProps<"/rechnungen/sammelrechnungen">) {
@@ -39,7 +39,7 @@ export default async function CollectiveOverviewPage(props: PageProps<"/rechnung
         }
       />
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Stat label="Kund:innen ohne Sammelrechnung" value={rows.length} tone={rows.length ? "accent" : "primary"} />
+        <Stat label="Patient:innen ohne Sammelrechnung" value={rows.length} tone={rows.length ? "accent" : "primary"} />
         <Stat label="Geschätzter Betrag" value={money(sum)} sub="Katalogpreise der Termin-Leistungen" tone="info" />
         <Stat label="Anzahlungen (Quittungen)" value={money(deposits)} sub="werden angerechnet" tone="neutral" />
       </div>
@@ -49,7 +49,7 @@ export default async function CollectiveOverviewPage(props: PageProps<"/rechnung
         <Table>
           <thead>
             <tr>
-              <th>Kund:in</th>
+              <th>Patient:in</th>
               <th>Behandlungen</th>
               <th>Zeitraum</th>
               <th className="text-right">geschätzt</th>

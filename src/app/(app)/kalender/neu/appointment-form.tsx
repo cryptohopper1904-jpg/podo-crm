@@ -21,12 +21,12 @@ export function AppointmentForm({ patients, services, team, defaults }: { patien
       {state?.conflict ? <Checkbox name="allowConflict" value="1" label="Trotzdem eintragen (Doppelbelegung)" /> : null}
       <Card>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Kunde suchen">
+          <Field label="Patient suchen">
             <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Name oder Nummer" />
           </Field>
-          <Field label="Kunde">
+          <Field label="Patient">
             <Select name="patientId" defaultValue={defaults.patientId}>
-              <option value="">– kein Kunde (Blocker/Pause) –</option>
+              <option value="">– kein Patient (Blocker/Pause) –</option>
               {shown.map((p) => <option key={p.id} value={p.id}>{p.lastName}{p.firstName ? `, ${p.firstName}` : ""} (#{p.number})</option>)}
             </Select>
           </Field>

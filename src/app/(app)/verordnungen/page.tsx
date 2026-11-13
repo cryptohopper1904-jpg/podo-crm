@@ -54,11 +54,11 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
         ))}
       </nav>
       {rows.length === 0 ? (
-        <Empty title="Keine Verordnungen in dieser Ansicht">Neue Verordnungen werden in der Kundenakte unter „Verordnungen“ erfasst.</Empty>
+        <Empty title="Keine Verordnungen in dieser Ansicht">Neue Verordnungen werden in der Patientenakte unter „Verordnungen“ erfasst.</Empty>
       ) : (
         <Table>
           <thead>
-            <tr><th>Ampel</th><th>Kunde</th><th>VO</th><th>Beginn bis</th><th>Einheiten</th><th>Status</th><th>Hinweis</th></tr>
+            <tr><th>Ampel</th><th>Patient</th><th>VO</th><th>Beginn bis</th><th>Einheiten</th><th>Status</th><th>Hinweis</th></tr>
           </thead>
           <tbody>
             {rows.map(({ vo, p, evaluation: ev }) => (

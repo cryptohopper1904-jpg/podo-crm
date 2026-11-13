@@ -8,10 +8,10 @@ import { currentPortalLink, portalFailLimiter, portalLimiter } from "@/server/po
 import { PortalShell } from "../shell";
 import { PortalBookingForm } from "./booking-form";
 
-export const metadata = { title: "Termin buchen – Kundenportal", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
+export const metadata = { title: "Termin buchen – Patientenportal", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
 
 /**
- * Buchung bzw. Verschieben im Kundenportal (nur mit gültiger Portal-Sitzung).
+ * Buchung bzw. Verschieben im Patientenportal (nur mit gültiger Portal-Sitzung).
  * Freie Zeiten der nächsten 6 Wochen; Regeln in src/lib/portal-booking.ts.
  */
 export default async function PortalBookingPage(props: PageProps<"/portal/buchen">) {

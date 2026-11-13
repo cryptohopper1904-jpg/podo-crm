@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   const org = auth.organization.id;
   const d = parsed.data;
   const exists = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, d.patientId))));
-  if (!exists.length) return NextResponse.json({ error: "Kunde nicht gefunden" }, { status: 404 });
+  if (!exists.length) return NextResponse.json({ error: "Patient nicht gefunden" }, { status: 404 });
 
   const stored = await storeEncrypted(org, buf);
   let row: { id: string };

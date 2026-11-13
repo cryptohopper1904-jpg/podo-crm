@@ -6,7 +6,7 @@ import { timeDe } from "@/lib/format";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 
-export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Kundenportal", extern: "Extern" };
+export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Patientenportal", extern: "Extern" };
 export const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },
@@ -51,7 +51,7 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false }: { row:
       <Badge tone="neutral">{SOURCE[a.source] ?? a.source}</Badge>
       <Badge tone={st.tone}>{st.label}</Badge>
         {canEdit && feed && !patient && !cancelled ? (
-          <Link href={`/kalender/zuordnen/${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Kund:in zuordnen</Link>
+          <Link href={`/kalender/zuordnen/${a.id}`} className="inline-flex h-10 items-center rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">Patient:in zuordnen</Link>
         ) : null}
         {canDoc && patient && a.status !== "done" && !cancelled ? (
           <Link href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`} className="inline-flex h-10 items-center rounded-xl bg-primary px-3 text-sm font-semibold text-on-primary hover:bg-primary-hover">Doku</Link>

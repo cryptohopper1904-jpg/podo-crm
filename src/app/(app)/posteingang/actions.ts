@@ -36,16 +36,16 @@ export async function matchPatientAction(_: InboxState, form: FormData): Promise
   let patientId: string | null = null;
   if (numRaw) {
     const n = Number(numRaw);
-    if (!Number.isInteger(n)) return { error: "Bitte eine Kundennummer eingeben." };
+    if (!Number.isInteger(n)) return { error: "Bitte eine Patientennummer eingeben." };
     const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.number, n))));
-    if (!p) return { error: `Kundennummer ${n} nicht gefunden.` };
+    if (!p) return { error: `Patientennummer ${n} nicht gefunden.` };
     patientId = p.id;
   } else if (m.channel === "kim") {
-    // KIM: Absender ist eine Arztpraxis – nie über die Adresse zuordnen, nur bewusst per Kundennummer
-    return { error: "Bitte die Kundennummer angeben oder einen Vorschlag wählen." };
+    // KIM: Absender ist eine Arztpraxis – nie über die Adresse zuordnen, nur bewusst per Patientennummer
+    return { error: "Bitte die Patientennummer angeben oder einen Vorschlag wählen." };
   } else {
     patientId = await matchPatientByAddress(org, m.fromAddress);
-    if (!patientId) return { error: "Keine eindeutige Zuordnung über Absender möglich – bitte Kundennummer angeben." };
+    if (!patientId) return { error: "Keine eindeutige Zuordnung über Absender möglich – bitte Patientennummer angeben." };
   }
   await withOrg(org, (tx) => tx.update(messages).set({ patientId }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id))));
   await audit({ organizationId: org, userId: auth.user.id, action: "message.match", entity: "message", entityId: m.id, meta: { patientId } });

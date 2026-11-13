@@ -201,8 +201,8 @@ export async function cancelPortalAppointment(link: PortalLink, appointmentId: s
       patientId: link.patientId,
       channel: "none",
       direction: "inbound",
-      subject: "Terminabsage über das Kundenportal",
-      body: `Der Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde über das Kundenportal abgesagt (${new Date().toISOString()}).`,
+      subject: "Terminabsage über das Patientenportal",
+      body: `Der Termin am ${dateDe(a.startsAt)} um ${timeDe(a.startsAt)} Uhr wurde über das Patientenportal abgesagt (${new Date().toISOString()}).`,
       status: "new",
       threadKey: `portal:${link.patientId}`,
     });

@@ -284,7 +284,7 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
             source: "voice_agent",
             externalId,
             title: `Telefon: ${shortName(firstName, lastName)}`,
-            notes: `Unbestätigt (KI-Telefon) · ${service.name}. Kunde im Posteingang zuordnen und Termin bestätigen.`,
+            notes: `Unbestätigt (KI-Telefon) · ${service.name}. Patient im Posteingang zuordnen und Termin bestätigen.`,
           })
           .returning({ id: appointments.id });
         await tx.insert(appointmentServices).values({ organizationId: org, appointmentId: a.id, serviceId: svc.id });
@@ -299,7 +299,7 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
             `Terminwunsch per KI-Telefon: ${service.name} am ${new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", dateStyle: "full", timeStyle: "short" }).format(startsAt)} Uhr.`,
             `Name laut Anrufer: ${firstName} ${lastName}`,
             `Rückrufnummer: ${phone}`,
-            "Der Termin ist vorgemerkt, aber nicht bestätigt. Bitte Kunde zuordnen (bestehend oder neu) und Termin bestätigen oder absagen.",
+            "Der Termin ist vorgemerkt, aber nicht bestätigt. Bitte Patient zuordnen (bestehend oder neu) und Termin bestätigen oder absagen.",
           ].join("\n"),
           status: "new",
           threadKey: externalId,

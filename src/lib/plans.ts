@@ -20,7 +20,7 @@ export const FEATURES = ["portal", "voice_agent", "website"] as const;
 export type Feature = (typeof FEATURES)[number];
 
 export const FEATURE_LABELS: Record<Feature, string> = {
-  portal: "Kundenportal",
+  portal: "Patientenportal",
   voice_agent: "KI-Telefonagent",
   website: "Praxis-Website",
 };
@@ -63,7 +63,7 @@ export const PLANS: Record<PlanId, PlanInfo> = {
     maxSeats: 1,
     features: [],
     voiceMinutesIncluded: 0,
-    description: "Für Einzelpraxen: 1 Person, ohne Kundenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
+    description: "Für Einzelpraxen: 1 Person, ohne Patientenportal und KI-Telefon; Praxis-Website als Zusatzmodul",
   },
   praxis: {
     label: "Praxis",

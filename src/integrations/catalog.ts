@@ -144,7 +144,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     provider: "transcription",
     label: "Transkription (Sprachbericht)",
     description: "Wandelt diktierte Behandlungsberichte in Text um (Whisper-kompatibler Endpunkt).",
-    privacy: "Audio enthält Gesundheitsdaten: nur EU-Anbieter mit AVV und Zero Data Retention, kein Training auf Kundendaten.",
+    privacy: "Audio enthält Gesundheitsdaten: nur EU-Anbieter mit AVV und Zero Data Retention, kein Training auf Patientendaten.",
     secretFields: [{ name: "apiKey", label: "API-Schlüssel" }],
     configFields: [
       { name: "baseUrl", label: "Basis-URL", placeholder: "https://…/v1" },

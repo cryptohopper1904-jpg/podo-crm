@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 /**
- * Einmal-Links für Patienten (Online-Anamnese, später Kundenportal).
+ * Einmal-Links für Patienten (Online-Anamnese, später Patientenportal).
  * Der Klartext-Token (32 Zufallsbytes, base64url) steht NUR im Link; gespeichert wird der SHA-256-Hash.
  */
 export const LINK_TTL_DAYS = 7;

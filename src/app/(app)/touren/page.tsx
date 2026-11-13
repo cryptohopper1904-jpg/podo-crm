@@ -52,7 +52,7 @@ export default async function ToursPage(props: PageProps<"/touren">) {
             <Select name="start" defaultValue={startParam}>
               <option value="">Standard-Startort</option>
               {tour.startLocations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-              <option value="letzter">vom letzten Kunden (Resttour)</option>
+              <option value="letzter">vom letzten Patienten (Resttour)</option>
             </Select>
           </Field>
           <Field label="Rückfahrt">
@@ -76,7 +76,7 @@ export default async function ToursPage(props: PageProps<"/touren">) {
       </Card>
 
       {tour.visits.length === 0 ? (
-        <Empty title="Keine Hausbesuche an diesem Tag">Termine mit Kennzeichen „Hausbesuch“ (am Termin oder in der Kundenakte) erscheinen hier.</Empty>
+        <Empty title="Keine Hausbesuche an diesem Tag">Termine mit Kennzeichen „Hausbesuch“ (am Termin oder in der Patientenakte) erscheinen hier.</Empty>
       ) : (
         <>
           <div className="mb-6 grid gap-4 sm:grid-cols-3">

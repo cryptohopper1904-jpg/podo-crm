@@ -93,7 +93,7 @@ export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) 
               <tr>
                 <th>Datum</th>
                 <th>Rechnung</th>
-                <th>Kunde</th>
+                <th>Patient</th>
                 <th className="text-right">Betrag</th>
               </tr>
             </thead>

@@ -18,7 +18,7 @@ export async function saveAnamnesisAction(_: AnamnesisFormState, form: FormData)
   const parsed = parseAnamnesis(Object.fromEntries(form), "practice");
   if (!parsed.ok) return { error: parsed.error };
   const id = await saveAnamnesis(auth, patientId.data, parsed.data, { updateRiskFlags: form.get("updateRiskFlags") === "on" });
-  if (!id) return { error: "Kunde nicht gefunden." };
+  if (!id) return { error: "Patient nicht gefunden." };
   revalidatePath(`/kunden/${patientId.data}`);
   redirect(`/kunden/${patientId.data}/anamnese?gespeichert=1`);
 }

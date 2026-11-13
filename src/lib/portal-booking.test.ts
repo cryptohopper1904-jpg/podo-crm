@@ -6,7 +6,7 @@ const DAY = "2030-03-05"; // Dienstag
 const at = (t: string, d = DAY) => berlinToUtc(d, t);
 const hhmm = (d: Date) => new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit" }).format(d);
 
-describe("Kundenportal: Einstellungen & Leistungen", () => {
+describe("Patientenportal: Einstellungen & Leistungen", () => {
   it("liest Vorlaufzeit/Tageslimit, Standard 2 h ohne Limit", () => {
     expect(parseOnlineBookingSettings({})).toEqual({ enabled: true, serviceCodes: [], leadHours: 2, maxPerDay: null });
     expect(parseOnlineBookingSettings({ onlineBooking: { enabled: false, leadHours: 24, maxPerDay: 3, serviceCodes: ["PK", 4] } })).toEqual({ enabled: false, serviceCodes: ["PK"], leadHours: 24, maxPerDay: 3 });
@@ -26,7 +26,7 @@ describe("Kundenportal: Einstellungen & Leistungen", () => {
   });
 });
 
-describe("Kundenportal: Slot-Finder", () => {
+describe("Patientenportal: Slot-Finder", () => {
   const days = [{ dateIso: DAY, ranges: [{ start: "08:00", end: "12:00" }, { start: "13:00", end: "15:00" }] }];
   const base = { days, busy: [], durationMin: 60, earliest: new Date(0) };
 
@@ -62,7 +62,7 @@ describe("Kundenportal: Slot-Finder", () => {
   });
 });
 
-describe("Kundenportal: Verschieben bis 24 h vorher", () => {
+describe("Patientenportal: Verschieben bis 24 h vorher", () => {
   const now = at("09:00", "2030-03-04");
   it("erlaubt ≥ 24 h vor dem alten Termin", () => {
     expect(rescheduleCheck(at("09:00"), at("11:00"), { now })).toEqual({ ok: true });

@@ -8,10 +8,10 @@ export const metadata = {
 };
 
 const INCLUDED = [
-  "Kundenakte, Kalender, Behandlungsdoku mit Fotos",
+  "Patientenakte, Kalender, Behandlungsdoku mit Fotos",
   "Rechnungen, Quittungen, Gutscheine, Auswertungen",
   "Verordnungen mit Export für das Abrechnungszentrum",
-  "Erinnerungen, Kundenportal, Online-Buchung",
+  "Erinnerungen, Patientenportal, Online-Buchung",
   "Hygiene, Gerätebuch, Pflegeheime, Team",
   "Vollständiger Datenexport jederzeit",
   "Hosting bei Hetzner in Deutschland, tägliche verschlüsselte Datensicherung",

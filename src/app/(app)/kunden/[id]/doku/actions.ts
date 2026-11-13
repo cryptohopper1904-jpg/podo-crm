@@ -71,7 +71,7 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
       if (refError) return { error: refError } as const;
       if (d.braceEpisodeId) {
         const [b] = await tx.select({ id: braceEpisodes.id }).from(braceEpisodes).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, d.braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
-        if (!b) return { error: "Die Spangen-Episode gehört nicht zu diesem Kunden." } as const;
+        if (!b) return { error: "Die Spangen-Episode gehört nicht zu diesem Patienten." } as const;
       }
       const photos = mediaIds.length
         ? await tx.select({ id: media.id, purpose: media.purpose }).from(media).where(and(eq(media.organizationId, org), eq(media.patientId, d.patientId), inArray(media.id, mediaIds), isNull(media.recordId), eq(media.uploadedBy, auth.user.id)))

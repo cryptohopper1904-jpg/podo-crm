@@ -24,7 +24,7 @@ export default async function ReadOnlyPage({ searchParams }: PageProps<"/nur-les
               gesperrt.
             </p>
             <p className="mt-3 text-muted">
-              <strong>Alle Daten bleiben vollständig lesbar und exportierbar</strong> – Kundenakten, Dokumentation, Rechnungen und
+              <strong>Alle Daten bleiben vollständig lesbar und exportierbar</strong> – Patientenakten, Dokumentation, Rechnungen und
               Patientenexporte (§ 630g BGB, Art. 15/20 DSGVO). Nichts wird gelöscht.
             </p>
           </>

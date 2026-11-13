@@ -39,7 +39,7 @@ export default async function BillingPage() {
       </p>
       <Card className="mb-6">
         <CardTitle>Abrechnungsreif ({rows.length})</CardTitle>
-        {rows.length ? <BatchForm rows={rows} /> : <Empty title="Keine abrechnungsreifen Verordnungen">Abgeschlossene Verordnungen in der Kundenakte als „abrechnungsreif“ markieren.</Empty>}
+        {rows.length ? <BatchForm rows={rows} /> : <Empty title="Keine abrechnungsreifen Verordnungen">Abgeschlossene Verordnungen in der Patientenakte als „abrechnungsreif“ markieren.</Empty>}
       </Card>
       <Card>
         <CardTitle>Abrechnungsläufe</CardTitle>

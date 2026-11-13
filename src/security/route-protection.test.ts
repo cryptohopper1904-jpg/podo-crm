@@ -20,7 +20,7 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/kein-zugriff": "Hinweisseite ohne Daten",
   "/buchen": "Online-Buchung (Rate-Limit, nie Aktenzuordnung)",
   "/anamnese": "Anamnese-Link (Einmal-Token)",
-  "/portal": "Kundenportal (Token → signierte Cookie-Sitzung)",
+  "/portal": "Patientenportal (Token → signierte Cookie-Sitzung)",
   "/api/webhooks": "Webhooks (HMAC-Signatur bzw. Token je Praxis)",
   "/api/voice": "KI-Telefonagent (x-vapi-secret bzw. x-retell-signature je Praxis)",
   "/api/billing/webhook": "Stripe-Webhook (Stripe-Signature)",

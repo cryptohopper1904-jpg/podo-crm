@@ -25,6 +25,15 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-d",
+    date: "2026-11-13",
+    title: "Patient:innen statt Kund:innen",
+    audience: "all",
+    items: [
+      { tag: "verbessert", text: "PodoHero spricht jetzt überall von Patient:innen statt Kund:innen – in Menü, Patientenakte, Patientenportal, Suche und Hinweisen. Links und Lesezeichen funktionieren weiter wie bisher.", href: "/kunden" },
+    ],
+  },
+  {
     id: "2026-11-13-c",
     date: "2026-11-13",
     title: "Zahlungsziel nach Ihrer Gewohnheit",
@@ -40,10 +49,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Ihr Logo auf Rechnungen, QR-Code zum Bezahlen und Anamnese am iPad",
     items: [
       { tag: "neu", text: "Logos im Profil: Laden Sie Ihr vollständiges Logo und Ihr Zeichen hoch. Das Logo steht oben auf jeder Rechnung und in Ihren E-Mails, das Zeichen dezent auf Anamnesebögen, Ausdrucken und Quittungen.", href: "/einstellungen/praxis" },
-      { tag: "neu", text: "QR-Code zum Bezahlen: Auf offenen Rechnungen steht ein GiroCode. Ihre Kund:innen scannen ihn mit der Banking-App – Betrag, IBAN und Rechnungsnummer sind schon ausgefüllt. Bar bezahlte Quittungen bekommen keinen." },
+      { tag: "neu", text: "QR-Code zum Bezahlen: Auf offenen Rechnungen steht ein GiroCode. Ihre Patient:innen scannen ihn mit der Banking-App – Betrag, IBAN und Rechnungsnummer sind schon ausgefüllt. Bar bezahlte Quittungen bekommen keinen." },
       { tag: "neu", text: "Nächsten Termin buchen: Auf Wunsch zeigt jede Rechnung einen QR-Code zu Ihrer Online-Buchung – PodoHero, Doctolib oder ein eigener Link.", href: "/einstellungen/praxis" },
       { tag: "verbessert", text: "Neues Rechnungsdesign: Logo oben, Kasten mit Rechnungsnummer und Terminvereinbarung (auch WhatsApp), „Rechnung zur Behandlung am …“, Zahlungshinweis passend zur Zahlart und eine Fußzeile mit Bankverbindung, Steuernummer und Berufsbezeichnung." },
-      { tag: "neu", text: "Anamnesebogen am iPad: Datum, Name und Patientennummer sind schon ausgefüllt – direkt aus der Kundenakte oder über „Anamnese“ beim heutigen Termin. Große Felder zum Antippen, dazu eine Druckfassung mit gleichem Kopf.", href: "/heute" },
+      { tag: "neu", text: "Anamnesebogen am iPad: Datum, Name und Patientennummer sind schon ausgefüllt – direkt aus der Patientenakte oder über „Anamnese“ beim heutigen Termin. Große Felder zum Antippen, dazu eine Druckfassung mit gleichem Kopf.", href: "/heute" },
     ],
   },
   {
@@ -70,7 +79,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-09",
     title: "Touren & Fahrtenbuch",
     items: [
-      { tag: "neu", text: "Hausbesuche als Tour planen: PodoHero schlägt eine sinnvolle Reihenfolge vor und zeigt die Strecke – ab Praxis, Zuhause oder vom letzten Kunden.", href: "/touren" },
+      { tag: "neu", text: "Hausbesuche als Tour planen: PodoHero schlägt eine sinnvolle Reihenfolge vor und zeigt die Strecke – ab Praxis, Zuhause oder vom letzten Patienten.", href: "/touren" },
       { tag: "neu", text: "„Ich fahre los“: Ein Tipp genügt, die Kilometer werden automatisch ins Fahrtenbuch eingetragen – praktisch für die Steuer und fürs Wegegeld.", href: "/touren" },
       { tag: "neu", text: "Startorte, Fahrzeug und km-Satz legen Sie unter Einstellungen → Fahrten & Startorte fest." },
     ],
@@ -107,7 +116,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Für Betreiber: Plattform-Konsole",
     audience: "platform",
     items: [
-      { tag: "neu", text: "Die Plattform-Konsole zeigt, wie PodoHero genutzt wird – Praxen, Anmeldungen und Aktivität auf einen Blick, ohne Einsicht in Kundendaten.", href: "/plattform" },
+      { tag: "neu", text: "Die Plattform-Konsole zeigt, wie PodoHero genutzt wird – Praxen, Anmeldungen und Aktivität auf einen Blick, ohne Einsicht in Patientendaten.", href: "/plattform" },
       { tag: "neu", text: "Eine Demo-Praxis mit Beispieldaten lässt sich mit einem Klick anlegen und zurücksetzen – ideal für Vorführungen. Zwischen Praxis und Plattform wechseln Sie oben im Menü.", href: "/plattform" },
       { tag: "verbessert", text: "Testphase: Praxen können während des Tests jetzt bis zu 10 Plätze für ihr Team bekommen.", href: "/plattform" },
     ],
@@ -120,7 +129,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       { tag: "neu", text: "Eigene Praxis-Website als Zusatzmodul: Öffnungszeiten, Leistungen und Kontakt – fertig gestaltet und direkt mit Ihrer Online-Buchung verbunden.", href: "/einstellungen/website" },
       { tag: "verbessert", text: "Die Einstellungen sind jetzt in übersichtliche Gruppen sortiert – Sie finden schneller, was Sie suchen.", href: "/einstellungen" },
-      { tag: "neu", text: "Kund:innen löschen oder anonymisieren: Wünscht jemand die Löschung seiner Daten, erledigen Sie das direkt in der Kundenakte unter „Bearbeiten“ – gesetzliche Aufbewahrungsfristen werden dabei beachtet.", href: "/kunden" },
+      { tag: "neu", text: "Patient:innen löschen oder anonymisieren: Wünscht jemand die Löschung seiner Daten, erledigen Sie das direkt in der Patientenakte unter „Bearbeiten“ – gesetzliche Aufbewahrungsfristen werden dabei beachtet.", href: "/kunden" },
     ],
   },
   {
@@ -132,7 +141,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       { tag: "neu", text: "Neue Startseite: Auf unserer Website sehen Interessierte jetzt auf einen Blick, was PodoHero alles kann." },
       { tag: "neu", text: "Zwei-Faktor-Anmeldung: Einfach den QR-Code mit einer Authenticator-App scannen – Ihr Konto ist damit deutlich besser geschützt. Für Inhaber:innen ist sie Pflicht.", href: "/einstellungen/sicherheit" },
       { tag: "neu", text: "„Passwort vergessen“: Sie können Ihr Passwort jetzt selbst per E-Mail zurücksetzen – ohne beim Support anzurufen." },
-      { tag: "verbessert", text: "Online-Buchung: Kund:innen sehen nur noch Termine, die zu Ihren Arbeitszeiten passen – Urlaub und freie Tage werden automatisch berücksichtigt." },
+      { tag: "verbessert", text: "Online-Buchung: Patient:innen sehen nur noch Termine, die zu Ihren Arbeitszeiten passen – Urlaub und freie Tage werden automatisch berücksichtigt." },
       { tag: "neu", text: "Kasse mit Tagesabschluss: Am Ende des Tages zählen Sie die Kasse und schließen mit einem Klick ab – der Abschlussbericht ist sofort fertig.", href: "/kasse" },
     ],
   },

@@ -58,7 +58,7 @@ function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: 
           {!patient ? (
             <ActionForm action={matchPatientAction} submit="Zuordnen" className="flex flex-wrap items-end gap-2">
               <input type="hidden" name="id" value={m.id} />
-              <Field label={m.channel === "kim" ? "Kundennummer" : "Kundennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
+              <Field label={m.channel === "kim" ? "Patientennummer" : "Patientennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
             </ActionForm>
           ) : null}
           <ActionForm action={suggestReplyAction} submit={m.aiSuggestion ? "Neuen KI-Vorschlag erzeugen" : "KI-Vorschlag erzeugen"} className="flex flex-col gap-2">

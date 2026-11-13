@@ -13,7 +13,7 @@ import { currentConsents, getPatient } from "@/server/patients";
 import { recordConsentAction } from "../actions";
 import { WaitlistCard } from "./waitlist-card";
 
-export const metadata = { title: "Kundenakte" };
+export const metadata = { title: "Patientenakte" };
 
 const INSURANCE: Record<string, string> = { gkv: "GKV", pkv: "Privat", self: "Selbstzahler", beihilfe: "Beihilfe" };
 const APPT_STATUS: Record<string, string> = { planned: "geplant", confirmed: "bestätigt", done: "erledigt", cancelled: "abgesagt", no_show: "nicht erschienen" };
@@ -45,7 +45,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
       <header className="mb-6 flex flex-wrap items-start gap-4">
         <div className="min-w-0 flex-1">
           <p className="text-sm text-muted">
-            Kunde #{p.number} · {INSURANCE[p.insuranceType]}{p.insurerName ? ` (${p.insurerName})` : ""}{age !== null ? ` · ${age} Jahre` : ""}
+            Patient #{p.number} · {INSURANCE[p.insuranceType]}{p.insurerName ? ` (${p.insurerName})` : ""}{age !== null ? ` · ${age} Jahre` : ""}
           </p>
           <h1 className="font-display text-3xl font-semibold tracking-tight">{fullName(p)}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">

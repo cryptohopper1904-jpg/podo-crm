@@ -1,5 +1,5 @@
 /**
- * Kundenportal (light) – reine Hilfsfunktionen (testbar, ohne DB).
+ * Patientenportal (light) – reine Hilfsfunktionen (testbar, ohne DB).
  * Der Link ist ein zufälliges Token (32 Byte, base64url); gespeichert wird nur der SHA-256-Hash.
  * Gültig bis zum Ablauf (30 Tage), nicht einmalig; Widerruf über revoked_at.
  */

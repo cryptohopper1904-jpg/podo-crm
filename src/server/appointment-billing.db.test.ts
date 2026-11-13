@@ -28,7 +28,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await (db.$client as { end: () => Promise<void> }).end();
   });
 
-  /** Vorlage aus Termin/Behandlung (mit Kund:in) */
+  /** Vorlage aus Termin/Behandlung (mit Patient:in) */
   async function source(auth: never, src: { appointmentId?: string; recordId?: string }) {
     const r = await billing.billingFromSource(auth, src);
     if (!r?.patient) throw new Error("keine Vorlage");

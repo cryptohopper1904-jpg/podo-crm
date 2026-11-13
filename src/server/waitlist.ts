@@ -59,7 +59,7 @@ export type OfferDeps = {
 export type OfferSummary = { offered: number; manual: number; skipped?: string };
 
 /**
- * Ein Termin wurde abgesagt (Praxis, Kundenportal; beim KI-Telefon sagt die Praxis nach Prüfung ab):
+ * Ein Termin wurde abgesagt (Praxis, Patientenportal; beim KI-Telefon sagt die Praxis nach Prüfung ab):
  * passende Wartelisten-Einträge bekommen ein Einmal-Angebot – nur mit Einwilligung für den Kanal.
  * Personen ohne Einwilligung erscheinen im Posteingang als Vorschlag „bitte anrufen“.
  * Mehrfachaufruf für denselben Termin bietet niemandem doppelt an (Sperre je Termin + Protokoll).

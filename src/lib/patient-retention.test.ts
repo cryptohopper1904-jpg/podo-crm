@@ -4,7 +4,7 @@ import { retentionDecision } from "./patient-retention";
 const none = { lastTreatmentAt: null, lastAnamnesisAt: null, recordMediaCount: 0, lastInvoiceAt: null };
 const now = new Date("2026-11-09T12:00:00Z");
 
-describe("Aufbewahrung je Kund:in (Gesamt-Review H3)", () => {
+describe("Aufbewahrung je Patient:in (Gesamt-Review H3)", () => {
   it("ohne Dokumentation und Rechnungen: vollständige Löschung", () => {
     expect(retentionDecision(none, now).mode).toBe("delete");
   });

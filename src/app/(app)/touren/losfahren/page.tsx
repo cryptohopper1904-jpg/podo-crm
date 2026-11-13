@@ -25,7 +25,7 @@ export default async function DeparturePage(props: PageProps<"/touren/losfahren"
   const options = [
     { value: "here", label: "Aktueller Standort", sub: "Standort wird nur jetzt einmal abgefragt", icon: "here" as const },
     ...data.locations.map((l) => ({ value: `loc:${l.id}`, label: l.name, sub: l.geocoded ? (l.isDefault ? "Standard-Startort" : undefined) : "Adresse nicht gefunden", icon: "loc" as const, disabled: !l.geocoded })),
-    ...(data.previous ? [{ value: "last", label: `Vom letzten Kunden (${data.previous.label})`, sub: `Termin ${timeDe(data.previous.startsAt)}`, icon: "last" as const, disabled: !data.previous.hasAddress }] : []),
+    ...(data.previous ? [{ value: "last", label: `Vom letzten Patienten (${data.previous.label})`, sub: `Termin ${timeDe(data.previous.startsAt)}`, icon: "last" as const, disabled: !data.previous.hasAddress }] : []),
   ];
   const initial = data.previous?.hasAddress ? "last" : (options.find((o) => o.value.startsWith("loc:") && !("disabled" in o && o.disabled))?.value ?? "here");
 
@@ -35,7 +35,7 @@ export default async function DeparturePage(props: PageProps<"/touren/losfahren"
       <Card className="mb-4">
         <p className="text-sm text-muted">{dateTimeDe(a.startsAt)}–{timeDe(a.endsAt)} {a.homeVisit ? null : <Badge tone="warn">nicht als Hausbesuch markiert</Badge>}</p>
         <p className="mt-1 text-lg font-semibold">{p.name} <span className="text-sm font-normal text-muted">(K-{p.number})</span></p>
-        <p className="text-muted">{p.address || "Adresse fehlt in der Kundenakte"}</p>
+        <p className="text-muted">{p.address || "Adresse fehlt in der Patientenakte"}</p>
         <p className="mt-2 text-xs text-muted">Im Fahrtenbuch steht nur: „{data.label}“.</p>
       </Card>
 

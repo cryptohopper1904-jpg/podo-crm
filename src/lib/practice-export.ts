@@ -72,7 +72,7 @@ const EXT: Record<string, string> = {
   "application/pdf": "pdf",
 };
 
-/** Pfad im ZIP: media/<Kundennummer>/<Datum>_<Zweck>_<ID-Kurz>.<Endung> – ohne Namen, nur sichere Zeichen. */
+/** Pfad im ZIP: media/<Patientennummer>/<Datum>_<Zweck>_<ID-Kurz>.<Endung> – ohne Namen, nur sichere Zeichen. */
 export function mediaPath(m: { id: string; mime: string; purpose: string; takenAt: Date | string }, patientNumber: number | string | null | undefined): string {
   const safe = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
   const day = new Date(m.takenAt).toISOString().slice(0, 10);

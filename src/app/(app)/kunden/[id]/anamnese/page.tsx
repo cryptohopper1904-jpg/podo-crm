@@ -54,7 +54,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
         <div className="flex min-w-0 flex-[2_1_480px] flex-col gap-6">
           {latest ? (
             <Card>
-              <CardTitle action={<Badge tone={latestOnline ? "warn" : "primary"}>{latestOnline ? "online vom Kunden, ungeprüft" : "Praxis"}</Badge>}>
+              <CardTitle action={<Badge tone={latestOnline ? "warn" : "primary"}>{latestOnline ? "online vom Patienten, ungeprüft" : "Praxis"}</Badge>}>
                 Aktuell · {dateDe(latest.createdAt)}
               </CardTitle>
               {latest.data ? (
@@ -71,7 +71,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
               )}
             </Card>
           ) : !editing ? (
-            <Empty title="Noch keine Anamnese">Erfassen Sie die Anamnese in der Praxis oder schicken Sie dem Kunden einen Online-Link.</Empty>
+            <Empty title="Noch keine Anamnese">Erfassen Sie die Anamnese in der Praxis oder schicken Sie dem Patienten einen Online-Link.</Empty>
           ) : null}
 
           {data.versions.length > 1 ? (
@@ -83,7 +83,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
                     {v.data ? (
                       <details>
                         <summary className="cursor-pointer text-sm">
-                          <span className="font-semibold">{dateTimeDe(v.createdAt)}</span> · {v.source === "online" ? "online vom Kunden" : v.author ?? "Praxis"}{i === 0 ? " · aktuell" : ""}
+                          <span className="font-semibold">{dateTimeDe(v.createdAt)}</span> · {v.source === "online" ? "online vom Patienten" : v.author ?? "Praxis"}{i === 0 ? " · aktuell" : ""}
                         </summary>
                         <dl className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
                           {anamnesisSummary(v.data).map(([k, val]) => (
@@ -92,7 +92,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
                         </dl>
                       </details>
                     ) : (
-                      <p className="text-sm"><span className="font-semibold">{dateTimeDe(v.createdAt)}</span> · {v.source === "online" ? "online vom Kunden" : v.author ?? "Praxis"}</p>
+                      <p className="text-sm"><span className="font-semibold">{dateTimeDe(v.createdAt)}</span> · {v.source === "online" ? "online vom Patienten" : v.author ?? "Praxis"}</p>
                     )}
                   </li>
                 ))}
@@ -105,7 +105,7 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
           {auth.can("patients.write") ? (
             <Card>
               <CardTitle>Online-Anamnese</CardTitle>
-              <p className="mb-3 text-sm text-muted">Einmal-Link, 7 Tage gültig. Der Kunde sieht nur seinen Vornamen und den Fragebogen.</p>
+              <p className="mb-3 text-sm text-muted">Einmal-Link, 7 Tage gültig. Der Patient sieht nur seinen Vornamen und den Fragebogen.</p>
               <LinkPanel patientId={id} firstName={data.patient.firstName} practiceName={auth.organization.name} />
               {data.links.length ? (
                 <ul className="mt-4 flex flex-col gap-2 border-t border-border pt-3 text-sm">

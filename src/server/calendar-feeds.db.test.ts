@@ -72,7 +72,7 @@ const CANCELLED_NEW = vevent("c@google.com", "20261113T080000", "20261113T083000
       ).rows,
     );
 
-  it("legt Termine an, nie mit Kund:in verknüpft; wiederholter Abruf ändert nichts (auch per ETag)", async () => {
+  it("legt Termine an, nie mit Patient:in verknüpft; wiederholter Abruf ändert nichts (auch per ETag)", async () => {
     const { org, id, therapist } = await setup();
     await f.patient(org, { lastName: "Musterfrau", firstName: "Erika" });
     const state = { body: cal(A(), B(), SERIES, ALLDAY, CANCELLED_NEW), etag: '"v1"' };

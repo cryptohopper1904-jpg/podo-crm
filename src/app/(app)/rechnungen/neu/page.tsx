@@ -23,7 +23,7 @@ const str = (v: string | string[] | undefined) => (typeof v === "string" && v ? 
 /**
  * Neue Rechnung. Vorlagen über Suchparameter:
  *  - ?termin=<id> bzw. ?behandlung=<id>: Rechnung aus Termin/Doku-Eintrag (Leistungen vorausgefüllt)
- *  - ?sammel=<kunde>&jahr=2026: Sammelrechnung einer Kund:in über das Jahr (Anzahlungen werden angerechnet)
+ *  - ?sammel=<kunde>&jahr=2026: Sammelrechnung einer Patient:in über das Jahr (Anzahlungen werden angerechnet)
  *  - ?pflegeheim=<id>&monat=2026-10: Sammelrechnung Pflegeheim
  */
 export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">) {
@@ -108,7 +108,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
       {sammel ? (
         <Card className="mb-6">
           {!yearSug ? (
-            <p className="text-sm text-danger">Kund:in nicht gefunden.</p>
+            <p className="text-sm text-danger">Patient:in nicht gefunden.</p>
           ) : (
             <div className="flex flex-col gap-2 text-sm">
               <p className="flex items-center gap-2 font-display text-lg font-semibold">

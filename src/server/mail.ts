@@ -162,7 +162,7 @@ export async function mailMessagingPort(org: string, ctx: Omit<MailContext, "pur
 }
 
 /**
- * HTML-Teil mit dem vollständigen Praxis-Logo (ersatzweise dem Zeichen) für E-Mails an Kund:innen
+ * HTML-Teil mit dem vollständigen Praxis-Logo (ersatzweise dem Zeichen) für E-Mails an Patient:innen
  * (Termine, Erinnerungen, Rechnungen, Antworten). Ohne Logo bleibt es bei reinem Text wie bisher.
  */
 export async function brandedMailParts(org: string, text: string) {

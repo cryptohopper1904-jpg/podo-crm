@@ -32,7 +32,7 @@ export default async function ImportSettings() {
       {auth.can("patients.read") ? (
         <Card>
           <CardTitle>Export für Doctolib</CardTitle>
-          <p className="mb-4 text-sm text-muted">Alle aktiven Kund:innen im Doctolib-Importformat (CSV). Der Export wird protokolliert.</p>
+          <p className="mb-4 text-sm text-muted">Alle aktiven Patient:innen im Doctolib-Importformat (CSV). Der Export wird protokolliert.</p>
           <a
             href="/api/export/doctolib"
             className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"

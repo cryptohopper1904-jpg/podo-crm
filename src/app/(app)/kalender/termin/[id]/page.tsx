@@ -93,7 +93,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
           <CardTitle>Abrechnung</CardTitle>
           {billing.prescription ? (
             <p className="mb-3 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
-              Dieser Termin gehört zu einer Verordnung – die Leistung wird über die Krankenkasse abgerechnet (Verordnungen → Abrechnung). Eine Rechnung an die Kund:in nur für Zusatzleistungen.
+              Dieser Termin gehört zu einer Verordnung – die Leistung wird über die Krankenkasse abgerechnet (Verordnungen → Abrechnung). Eine Rechnung an die Patient:in nur für Zusatzleistungen.
             </p>
           ) : null}
           {billing.documents.length ? (

@@ -49,7 +49,7 @@ export default async function CareHomePage(props: PageProps<"/pflegeheime/[id]">
                       <td><Link href={`/kunden/${p.id}`} className="font-semibold hover:text-primary">{fullName(p)}</Link><div className="text-xs text-muted">#{p.number}</div></td>
                       <td>{dateDe(p.birthDate)}</td>
                       <td><RiskBadges flags={p.riskFlags} compact /></td>
-                      <td>{p.billingContactId === id ? <Badge tone="info">Pflegeheim</Badge> : <span className="text-sm text-muted">{p.billingContactId ? "anderer Empfänger" : "Kunde"}</span>}</td>
+                      <td>{p.billingContactId === id ? <Badge tone="info">Pflegeheim</Badge> : <span className="text-sm text-muted">{p.billingContactId ? "anderer Empfänger" : "Patient"}</span>}</td>
                       {canWrite ? (
                         <td className="text-right">
                           <form action={removeResidentAction}>
@@ -72,7 +72,7 @@ export default async function CareHomePage(props: PageProps<"/pflegeheime/[id]">
               <CardTitle>Bewohner:in zuordnen</CardTitle>
               <ActionForm action={assignResidentAction} submit="Zuordnen">
                 <input type="hidden" name="careHomeId" value={id} />
-                <Field label="Kunde">
+                <Field label="Patient">
                   <Select name="patientId" defaultValue="" required>
                     <option value="" disabled>Bitte wählen …</option>
                     {candidates.map((c) => <option key={c.id} value={c.id}>{c.lastName}{c.firstName ? `, ${c.firstName}` : ""} (#{c.number}{c.birthDate ? `, ${dateDe(c.birthDate)}` : ""})</option>)}

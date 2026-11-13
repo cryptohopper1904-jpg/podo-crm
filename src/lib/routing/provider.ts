@@ -1,6 +1,6 @@
 /**
  * Routing- und Geokodierungs-Dienste (serverseitig). An die Dienste gehen NUR Koordinaten (Routing) bzw. die
- * Adresse ohne Namen (Geokodierung) – nie Namen, Kundennummern oder Termindaten.
+ * Adresse ohne Namen (Geokodierung) – nie Namen, Patientennummern oder Termindaten.
  *
  * ROUTING_PROVIDER = osrm | ors | off
  *  - osrm: OSRM_URL (eigener Server). Ohne OSRM_URL nur in der Entwicklung der öffentliche Demo-Server

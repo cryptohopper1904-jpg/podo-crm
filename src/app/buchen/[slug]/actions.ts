@@ -65,7 +65,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
     const initials = `${d.firstName} ${d.lastName.slice(0, 1)}.`;
     const [a] = await tx
       .insert(appointments)
-      .values({ organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Kunde im Posteingang zuordnen und Termin bestätigen." })
+      .values({ organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Patient im Posteingang zuordnen und Termin bestätigen." })
       .returning({ id: appointments.id });
     await tx.insert(appointmentServices).values({ organizationId: org.id, appointmentId: a.id, serviceId: svc.id });
     await tx.insert(messages).values({
@@ -81,7 +81,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
         `Telefon: ${d.phone}${d.email ? ` · E-Mail: ${d.email}` : ""}`,
         `Datenschutzhinweise und Ausfallregelung bei der Buchung bestätigt (${new Date().toISOString()}).`,
         d.note ? `Notiz: ${d.note}` : null,
-        "Bitte Kunde zuordnen (bestehend oder neu) und Termin bestätigen.",
+        "Bitte Patient zuordnen (bestehend oder neu) und Termin bestätigen.",
       ].filter(Boolean).join("\n"),
       status: "new",
     });

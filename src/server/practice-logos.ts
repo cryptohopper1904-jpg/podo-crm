@@ -12,7 +12,7 @@ import { assertCan } from "./authz";
 /**
  * Praxis-Logos (Einstellungen → Praxisdaten):
  *  - „compact“ (Zeichen): dezent auf Anamnese-/Doku-Bögen und Quittungen
- *  - „full“ (vollständig): Rechnungskopf und E-Mails an Kund:innen
+ *  - „full“ (vollständig): Rechnungskopf und E-Mails an Patient:innen
  * Nur PNG/JPEG (für pdf-lib), höchstens 1 MB, verschlüsselt in der Ablage. Ändern nur mit settings.manage (Audit).
  */
 export const LOGO_KINDS = ["compact", "full"] as const;

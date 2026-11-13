@@ -37,7 +37,7 @@ describe("Entitlements", () => {
   });
   it("assertEntitled: fehlende Funktion und Nur-Lesen-Modus werfen", () => {
     expect(() => assertEntitled(org({ plan: "starter", subscriptionStatus: "active" }), "portal", now)).toThrow(EntitlementError);
-    expect(() => assertEntitled(org({ plan: "starter", subscriptionStatus: "active" }), "portal", now)).toThrow(/Kundenportal.*Starter/);
+    expect(() => assertEntitled(org({ plan: "starter", subscriptionStatus: "active" }), "portal", now)).toThrow(/Patientenportal.*Starter/);
     expect(() => assertEntitled(org({ trialEndsAt: new Date(now.getTime() - day) }), "portal", now)).toThrow(/Nur-Lesen/);
     expect(() => assertEntitled(org({ plan: "plus", subscriptionStatus: "active" }), "voice_agent", now)).not.toThrow();
   });

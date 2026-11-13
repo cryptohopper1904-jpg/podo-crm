@@ -287,9 +287,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   const today = berlinDateIso();
   if (input.issuedAt > today) throw new InvoiceError("Das Rechnungsdatum darf nicht in der Zukunft liegen.");
   if (input.kind === "collective" && !input.billingContactId && !input.patientId) {
-    throw new InvoiceError("Für eine Sammelrechnung bitte eine Kund:in oder einen Rechnungsempfänger (z. B. Pflegeheim) wählen.");
+    throw new InvoiceError("Für eine Sammelrechnung bitte eine Patient:in oder einen Rechnungsempfänger (z. B. Pflegeheim) wählen.");
   }
-  if (input.kind !== "collective" && !input.patientId) throw new InvoiceError("Bitte einen Kunden wählen.");
+  if (input.kind !== "collective" && !input.patientId) throw new InvoiceError("Bitte einen Patienten wählen.");
   const depositIds = input.depositIds ?? [];
   if (depositIds.length && input.kind !== "invoice" && input.kind !== "collective") {
     throw new InvoiceError("Anzahlungen können nur auf eine Rechnung oder Sammelrechnung angerechnet werden.");
@@ -301,7 +301,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     if (input.patientId) {
       const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
-      if (!p) throw new InvoiceError("Kunde nicht gefunden.");
+      if (!p) throw new InvoiceError("Patient nicht gefunden.");
     }
     if (input.billingContactId) {
       const [b] = await tx
@@ -436,7 +436,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 }
 
 export const depositInput = z.object({
-  patientId: z.uuid({ error: "Bitte eine Kund:in wählen." }),
+  patientId: z.uuid({ error: "Bitte eine Patient:in wählen." }),
   appointmentId: optUuid,
   treatmentRecordId: optUuid,
   description: z.string().trim().min(3, "Bitte einen Text für die Quittung angeben.").max(300),
@@ -461,7 +461,7 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
   const result = await withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
     const [p] = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
-    if (!p) throw new InvoiceError("Kunde nicht gefunden.");
+    if (!p) throw new InvoiceError("Patient nicht gefunden.");
     if (input.appointmentId) {
       const [a] = await tx.select({ patientId: appointments.patientId }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, input.appointmentId)));
       if (!a || a.patientId !== input.patientId) throw new InvoiceError("Termin nicht gefunden.");
