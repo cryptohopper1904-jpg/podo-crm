@@ -1,12 +1,28 @@
-/** Beschriftungen für Rechnungen/Zahlungen – auch im Browser nutzbar. */
+/**
+ * Beschriftungen für Rechnungen/Zahlungen in Listen, Badges und Buttons – auch im Browser nutzbar.
+ * Im Alltag gibt es nur eine Quittung (Q); die Anzahlung (AZ) ist der Sonderfall „Vorauszahlung vor der Behandlung“.
+ */
 export const INVOICE_KIND_LABEL: Record<string, string> = {
   invoice: "Rechnung",
   receipt: "Quittung",
   collective: "Sammelrechnung",
   no_show_fee: "Ausfallhonorar",
   credit_note: "Stornorechnung",
-  deposit: "Quittung (Anzahlung)",
+  deposit: "Anzahlung",
 };
+
+/**
+ * Bezeichnung auf dem Beleg selbst (PDF-Titel, Begleit-E-Mail, Patientenportal). Bleibt für ausgestellte Belege
+ * unverändert (GoBD) – eine Anzahlung wird als Quittung über die Anzahlung ausgestellt.
+ */
+export const INVOICE_DOC_LABEL: Record<string, string> = { ...INVOICE_KIND_LABEL, deposit: "Quittung (Anzahlung)" };
+
+/** Hinweis bei Quittungen: sie können später in die Sammelrechnung übernommen werden. */
+export const RECEIPT_COLLECTIVE_HINT = "Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.";
+/** Wofür eine Anzahlung (Vorauszahlung) gedacht ist. */
+export const DEPOSIT_PURPOSE_HINT = "Nur für Zahlungen vor der Behandlung, z. B. Nagelspange. Für erbrachte Behandlungen bitte eine Quittung erstellen.";
+/** Ablehnung einer Anzahlung für einen vergangenen/heutigen Termin bzw. eine dokumentierte Behandlung */
+export const DEPOSIT_PAST_ERROR = "Für erbrachte Behandlungen bitte eine Quittung erstellen.";
 
 export const INVOICE_STATUS_LABEL: Record<string, string> = {
   draft: "Entwurf",
@@ -36,7 +52,7 @@ export const PAYMENT_METHODS = ["cash", "card", "transfer", "voucher", "payment_
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 export const CREATABLE_KINDS = ["invoice", "receipt", "collective", "no_show_fee"] as const;
-/** Zahlarten für eine Anzahlungs-Quittung (sofort erhalten – kein Zahlungslink) */
+/** Zahlarten für eine Anzahlung (Vorauszahlung, sofort erhalten – kein Zahlungslink) */
 export const DEPOSIT_METHODS = ["cash", "card", "transfer"] as const;
 export type DepositMethod = (typeof DEPOSIT_METHODS)[number];
 export const NOTE_DEPOSIT = "Anzahlung – dieser Betrag wird auf Ihre Sammelrechnung angerechnet. Bitte bewahren Sie die Quittung auf.";

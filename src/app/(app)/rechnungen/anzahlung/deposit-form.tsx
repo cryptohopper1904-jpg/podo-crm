@@ -16,8 +16,19 @@ export type DepositDefaults = {
   vatRate: number;
 };
 
-/** Quittung über eine Anzahlung: Betrag jetzt annehmen, Anrechnung auf die Sammelrechnung zum Jahresende. */
-export function DepositForm({ defaults, smallBusiness, tseTestMode }: { defaults: DepositDefaults; smallBusiness: boolean; tseTestMode: boolean }) {
+/** Anzahlung (Vorauszahlung): Betrag jetzt annehmen und quittieren, Anrechnung auf die spätere Rechnung bzw. Sammelrechnung. */
+export function DepositForm({
+  defaults,
+  smallBusiness,
+  tseTestMode,
+  descriptionPlaceholder,
+}: {
+  defaults: DepositDefaults;
+  smallBusiness: boolean;
+  tseTestMode: boolean;
+  /** Anzahlung ohne Termin: Leistung selbst beschreiben (Pflichtfeld ohne Vorgabe) */
+  descriptionPlaceholder?: string;
+}) {
   const [state, action, pending] = useActionState(createDepositAction, undefined);
   const [method, setMethod] = useState<DepositMethod>("cash");
   return (
@@ -29,7 +40,7 @@ export function DepositForm({ defaults, smallBusiness, tseTestMode }: { defaults
       <Card>
         <div className="grid gap-4 sm:grid-cols-2 [&>*]:min-w-0">
           <Field label="Text auf der Quittung" className="sm:col-span-2" hint="keine Diagnosen">
-            <Input name="description" defaultValue={defaults.description} required minLength={3} maxLength={300} />
+            <Input name="description" defaultValue={defaults.description} placeholder={descriptionPlaceholder} required minLength={3} maxLength={300} />
           </Field>
           <Field label="Erhaltener Betrag (€)">
             <Input name="amount" inputMode="decimal" defaultValue={defaults.amount} placeholder="0,00" required />
@@ -65,10 +76,10 @@ export function DepositForm({ defaults, smallBusiness, tseTestMode }: { defaults
         ) : null}
       </Card>
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={pending}>{pending ? "Wird ausgestellt …" : "Quittung ausstellen"}</Button>
+        <Button type="submit" disabled={pending}>{pending ? "Wird ausgestellt …" : "Anzahlung quittieren"}</Button>
         <Link href="/rechnungen" className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>
         <p className="w-full text-xs text-muted">
-          Die Quittung bekommt eine eigene Nummer (AZ…) und ist danach unveränderbar. Der Betrag wird bei der Sammelrechnung automatisch angerechnet.
+          Die Anzahlung bekommt eine eigene Nummer (AZ…), die Patient:in erhält eine Quittung darüber. Danach unveränderbar. Der Betrag wird auf die spätere Rechnung bzw. Sammelrechnung angerechnet.
         </p>
       </div>
     </form>

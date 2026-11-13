@@ -6,7 +6,7 @@
  */
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, resetDemoTotp } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -113,6 +113,31 @@ test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", a
   } finally {
     await page.setViewportSize({ width: 1280, height: 720 });
   }
+});
+
+test("Terminseite: Rechnung/Quittung für erbrachte Behandlungen, nur Anzahlung für künftige Termine", async () => {
+  const pid = patientUrl.split("/").pop()!;
+  const past = await insertAppointment(pid, new Date(Date.now() - 3 * 86_400_000));
+  const future = await insertAppointment(pid, new Date(Date.now() + 5 * 86_400_000));
+  await page.goto(`/kalender/termin/${past}`);
+  await expect(page.getByRole("link", { name: "Quittung", exact: true })).toBeVisible();
+  await expect(page.getByText("Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Anzahlung|Sammelrechnung/ })).toHaveCount(0);
+  // künftiger Termin: nur die Anzahlung (Vorauszahlung) – Rechnung/Quittung erst nach der Behandlung
+  await page.goto(`/kalender/termin/${future}`);
+  await expect(page.getByRole("link", { name: "Anzahlung (Vorauszahlung)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Quittung", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Rechnung erstellen" })).toHaveCount(0);
+  // direkt aufgerufen: für den vergangenen Termin keine Anzahlung, sondern der Weg zur Quittung
+  await page.goto(`/rechnungen/anzahlung?termin=${past}`);
+  await expect(page.getByText(/Für erbrachte Behandlungen bitte eine Quittung erstellen\./).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Anzahlung quittieren" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Quittung erstellen" })).toBeVisible();
+  // Einstieg „Anzahlung ohne Termin“: Rechnungsliste und Patientenakte (mit Person)
+  await page.goto("/rechnungen");
+  await expect(page.getByRole("link", { name: "Anzahlung ohne Termin" })).toHaveAttribute("href", "/rechnungen/anzahlung");
+  await page.goto(patientUrl);
+  await expect(page.getByRole("link", { name: "Anzahlung (Vorauszahlung)" })).toHaveAttribute("href", `/rechnungen/anzahlung?patient=${pid}`);
 });
 
 test("öffentliche Online-Buchung", async ({ browser }) => {

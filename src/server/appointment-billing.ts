@@ -218,6 +218,8 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
     return {
       patient: { ...p, name: fullName(p) },
       appointmentId: item.appointmentId,
+      /** Status des Termins (abgesagt/versäumt → keine Anzahlung) */
+      appointmentStatus: appt?.status ?? null,
       recordId: item.recordId,
       at,
       lines,
@@ -332,5 +334,25 @@ export async function collectiveOverview(auth: AuthContext, year: number): Promi
       });
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name, "de"));
+  });
+}
+
+// ───────────── Anzahlung (Vorauszahlung) ohne Termin ─────────────
+
+/**
+ * Person für eine Anzahlung ohne Termin (Vorauszahlung, z. B. Nagelspange). Ausgewählt wird über die Live-Patientensuche
+ * (/api/patienten/vorschlaege); hier nur die gewählte Person laden – Praxis der Sitzung (RLS), nicht archiviert, keine
+ * gelöschten Kontaktdaten. Sonst null.
+ */
+export async function depositPatient(auth: AuthContext, patientId: string | null | undefined) {
+  assertCan(auth, "invoices.write");
+  if (!patientId || !z.uuid().safeParse(patientId).success) return null;
+  const org = auth.organization.id;
+  return withOrg(org, async (tx) => {
+    const [p] = await tx
+      .select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt), isNull(patients.contactErasedAt)));
+    return p ? { id: p.id, number: p.number, name: fullName(p) } : null;
   });
 }

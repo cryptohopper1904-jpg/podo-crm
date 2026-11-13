@@ -82,7 +82,7 @@ export async function openReceiptsAction(patientId: string, year: number) {
   return openReceiptsForPatient(auth, patientId, year);
 }
 
-/** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) – aus Termin oder Behandlung. */
+/** Anzahlung (Vorauszahlung vor der Behandlung) – aus einem künftigen Termin oder ohne Termin; wird später angerechnet. */
 export async function createDepositAction(_: InvoiceFormState, form: FormData): Promise<InvoiceFormState> {
   const auth = await requireAuth("invoices.write");
   const parsed = depositInput.safeParse({

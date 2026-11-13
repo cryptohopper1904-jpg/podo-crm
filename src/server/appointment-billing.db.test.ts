@@ -96,10 +96,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(invoices.createInvoice(auth, { ...base, patientId: other, lines: [{ ...lines[0], appointmentId: a1 }] })).rejects.toThrow(/gehört nicht/);
   });
 
-  it("Quittung (Anzahlung) → Sammelrechnung zum Jahresende rechnet sie an; Storno gibt sie wieder frei", async () => {
+  it("Anzahlung → Sammelrechnung zum Jahresende rechnet sie an; Storno gibt sie wieder frei", async () => {
     const { org, auth, appointment } = await setup();
     const patient = await f.patient(org, { lastName: "Sammel", firstName: "Sabine" });
-    const a1 = await appointment(patient, `${year}-03-12 09:00+01`);
+    // Anzahlung nur vor der Behandlung: Termin zunächst in der Zukunft, nach der Anzahlung auf den Behandlungstag gelegt
+    const a1 = await appointment(patient, `${year + 1}-03-12 09:00+01`);
     const a2 = await appointment(patient, `${year}-06-02 09:00+02`);
 
     const dep = await invoices.createDeposit(auth, {
@@ -112,6 +113,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       method: "cash",
       notes: null,
     });
+    await f.asOrg(org, (c) => c.query("update appointments set starts_at = $2::timestamptz, ends_at = $2::timestamptz + interval '45 minutes' where id = $1", [a1, `${year}-03-12 09:00+01`]));
     expect(dep.number).toMatch(new RegExp(`^AZ${year}-\\d{4}$`));
     expect(dep.status).toBe("paid");
     // Bar läuft über die Kasse/TSE: Zahlung mit Signatur

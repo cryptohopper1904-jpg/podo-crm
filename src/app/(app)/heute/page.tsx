@@ -166,7 +166,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
                 {openCollective.slice(0, 5).map((r) => (
                   <li key={r.patientId} className="flex flex-wrap items-center gap-2">
                     <span className="min-w-0 flex-1 truncate">{r.name}</span>
-                    <span className="text-muted tabular-nums">{r.items} Beh.{r.depositCount ? ` · ${r.depositCount} Quittung${r.depositCount > 1 ? "en" : ""}` : ""}</span>
+                    <span className="text-muted tabular-nums">{r.items} Beh.{r.receiptCount ? ` · ${r.receiptCount} Quittung${r.receiptCount > 1 ? "en" : ""}` : ""}{r.depositCount ? ` · ${r.depositCount} Anzahlung${r.depositCount > 1 ? "en" : ""}` : ""}</span>
                     <Link href={`/rechnungen/neu?sammel=${r.patientId}&jahr=${reminderYear}`} className="font-semibold text-primary">Erstellen</Link>
                   </li>
                 ))}
