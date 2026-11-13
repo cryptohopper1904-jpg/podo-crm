@@ -1,23 +1,56 @@
 -- Aktionscodes und Kampagnen (Plattform-Betreiber): plattformweite Tabellen wie sales_* (0028) – keine RLS-Mandantenregel,
 -- Zugriff nur über die App-Rolle (Grants aus scripts/migrate.ts) und nur über src/server/promo-codes.ts bzw. vertrieb.ts.
+-- Idempotent (mehrfach ausführbar): CHECKs nur, wenn sie fehlen; Trigger werden vorher entfernt.
 -- PUBLIC bekommt ausdrücklich nichts. Zweite Sicherung neben der App-Prüfung: Formate, Bereiche, Einlöse-Regeln per Trigger.
 REVOKE ALL ON promo_codes, promo_redemptions, sales_campaigns, sales_lead_events FROM PUBLIC;
 --> statement-breakpoint
-ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_code_check CHECK (code ~ '^[A-Z0-9][A-Z0-9-]{2,30}[A-Z0-9]$');
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_codes_code_check') THEN
+    ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_code_check CHECK (code ~ '^[A-Z0-9][A-Z0-9-]{2,30}[A-Z0-9]$');
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_label_check CHECK (length(btrim(label)) BETWEEN 1 AND 120);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_codes_label_check') THEN
+    ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_label_check CHECK (length(btrim(label)) BETWEEN 1 AND 120);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_trial_days_check CHECK (trial_days BETWEEN 1 AND 365);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_codes_trial_days_check') THEN
+    ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_trial_days_check CHECK (trial_days BETWEEN 1 AND 365);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_grant_plan_check CHECK (grant_plan IS NULL OR grant_plan IN ('starter', 'praxis', 'plus'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_codes_grant_plan_check') THEN
+    ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_grant_plan_check CHECK (grant_plan IS NULL OR grant_plan IN ('starter', 'praxis', 'plus'));
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_max_redemptions_check CHECK (max_redemptions IS NULL OR max_redemptions > 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_codes_max_redemptions_check') THEN
+    ALTER TABLE promo_codes ADD CONSTRAINT promo_codes_max_redemptions_check CHECK (max_redemptions IS NULL OR max_redemptions > 0);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE promo_redemptions ADD CONSTRAINT promo_redemptions_via_check CHECK (via IN ('signup', 'abo'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'promo_redemptions_via_check') THEN
+    ALTER TABLE promo_redemptions ADD CONSTRAINT promo_redemptions_via_check CHECK (via IN ('signup', 'abo'));
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE sales_campaigns ADD CONSTRAINT sales_campaigns_name_check CHECK (length(btrim(name)) BETWEEN 1 AND 120);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sales_campaigns_name_check') THEN
+    ALTER TABLE sales_campaigns ADD CONSTRAINT sales_campaigns_name_check CHECK (length(btrim(name)) BETWEEN 1 AND 120);
+  END IF;
+END $$;
 --> statement-breakpoint
-ALTER TABLE sales_lead_events ADD CONSTRAINT sales_lead_events_kind_check CHECK (kind IN ('note', 'status', 'reply', 'campaign'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sales_lead_events_kind_check') THEN
+    ALTER TABLE sales_lead_events ADD CONSTRAINT sales_lead_events_kind_check CHECK (kind IN ('note', 'status', 'reply', 'campaign'));
+  END IF;
+END $$;
 --> statement-breakpoint
 -- Code-Stammdaten bleiben fest: Code, Testtage und Tarif ändern sich nach dem Anlegen nicht (änderbar: aktiv, Bezeichnung, Grenzen, Kampagne).
 CREATE OR REPLACE FUNCTION podo_promo_code_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -27,6 +60,8 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS promo_codes_immutable ON promo_codes;
 --> statement-breakpoint
 CREATE TRIGGER promo_codes_immutable BEFORE UPDATE ON promo_codes FOR EACH ROW EXECUTE FUNCTION podo_promo_code_immutable();
 --> statement-breakpoint
@@ -50,6 +85,8 @@ BEGIN
   RETURN NEW;
 END $$;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS promo_redemptions_guard ON promo_redemptions;
+--> statement-breakpoint
 CREATE TRIGGER promo_redemptions_guard BEFORE INSERT ON promo_redemptions FOR EACH ROW EXECUTE FUNCTION podo_promo_redemption_guard();
 --> statement-breakpoint
 -- Einlösungen sind ein Nachweis (wer, wann, welche Testphase): nicht änderbar. Löschen nur mit der Praxis (Kaskade/Löschlauf).
@@ -57,5 +94,7 @@ CREATE OR REPLACE FUNCTION podo_promo_redemption_no_update() RETURNS trigger LAN
 BEGIN
   RAISE EXCEPTION 'Einlösungen von Aktionscodes sind unveränderbar';
 END $$;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS promo_redemptions_no_update ON promo_redemptions;
 --> statement-breakpoint
 CREATE TRIGGER promo_redemptions_no_update BEFORE UPDATE ON promo_redemptions FOR EACH ROW EXECUTE FUNCTION podo_promo_redemption_no_update();
