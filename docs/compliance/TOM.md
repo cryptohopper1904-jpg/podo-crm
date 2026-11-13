@@ -14,7 +14,7 @@ Anlage zum Auftragsverarbeitungsvertrag (`docs/legal/AVV.md`). Fassung: Entwurf,
 | Verschlüsselung at rest | Fotos/Audio/Dokumente AES-256-GCM vor dem Speichern; Zugangsdaten und 2FA-Secrets AES-256-GCM | `src/lib/storage.ts`, `src/lib/crypto.ts` |
 | Verschlüsselung in transit | HTTPS (Caddy, automatische Zertifikate), HSTS | `deploy/Caddyfile`, `next.config.ts` |
 | Datensparsamkeit Dritte | Routen: nur Adresse an Maps; lexoffice: keine medizinischen Daten; KI: Redaktion + Freigabeschalter; iCal ohne Namen | `src/integrations/*` |
-| Plattformbetreiber | Kein Dauerzugriff auf Patientendaten (Break-Glass vorgesehen, Phase 3) | Plan 14.4 |
+| Plattformbetreiber | Kein Dauerzugriff auf Patientendaten; Zugriff nur über zeitlich begrenzte, personengebundene Support-Freigabe der Praxis (Break-Glass, standardmäßig nur lesend), Erteilen/Widerrufen/Betreten und jede Seitenansicht im Audit-Log der Praxis | `src/server/support.ts` |
 
 ## Integrität
 | Maßnahme | Umsetzung |
@@ -32,7 +32,7 @@ Anlage zum Auftragsverarbeitungsvertrag (`docs/legal/AVV.md`). Fassung: Entwurf,
 | Monitoring | Healthcheck `/api/health`, Docker-Restart-Policy |
 
 ## Organisatorisch
-- Verpflichtung aller Mitarbeitenden auf Vertraulichkeit/Schweigepflicht
-- Nur Firmengeräte (MDM), Bildschirmsperre, keine Fotos in privater Mediathek
-- Regelmäßige Schulung; Prozess für Datenpannen (Art. 33/34): Meldung binnen 72 h
-- Rollen- und Rechteprüfung halbjährlich
+- Der Betreiber ist Einzelunternehmer; administrative Zugriffe auf Server und Plattform erfolgen nur durch ihn; Support-Freigaben können nur Plattform-Admin-Konten mit aktiver 2FA erhalten. Werden künftig Mitarbeitende oder Dienstleister eingesetzt, werden sie vorher auf Vertraulichkeit und § 203 StGB verpflichtet.
+<!-- TODO (Betreiber): Maßnahmen für eigene Arbeitsgeräte (Bildschirmsperre, Geräteverschlüsselung) ergänzen, sobald bestätigt. -->
+- Datenpannen: Meldung an die betroffene Praxis unverzüglich, spätestens binnen 24 h (AVV § 8 Abs. 3)
+- Prüfung der Plattform-Admin-Zugänge und Support-Freigaben halbjährlich

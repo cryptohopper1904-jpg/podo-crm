@@ -14,6 +14,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   let mod: typeof import("./patient-deceased");
   let rem: typeof import("./reminders");
   let ap: typeof import("./appointments");
+  let core: typeof import("./portal-core");
+  let ana: typeof import("./anamnesis");
   const sent: OutboundMessage[] = [];
   const port: MessagingPort = {
     provider: "sms",
@@ -30,6 +32,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     mod = await import("./patient-deceased");
     rem = await import("./reminders");
     ap = await import("./appointments");
+    core = await import("./portal-core");
+    ana = await import("./anamnesis");
   });
   afterAll(async () => {
     await f.end();
@@ -143,5 +147,43 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     });
     expect(await ap.createInternalAppointments(org, input(new Date(Date.now() + 7 * 86400_000)))).toEqual({ ok: false, deceased: true });
     expect((await ap.createInternalAppointments(org, input(new Date(Date.now() - 7 * 86400_000)))).ok).toBe(true);
+  });
+
+  it("Portal- und Anamnese-Link: für Verstorbene abgelehnt, nach Rücknahme wieder möglich", async () => {
+    const org = await f.org();
+    const user = await f.user();
+    const p = await f.patient(org);
+    const a = auth(org, user);
+    const activeLinks = async () => (await q<{ n: number }>(org, "select count(*)::int n from patient_links where patient_id = $1 and revoked_at is null", [p]))[0].n;
+
+    // vorher gültiger Portal-Link → beim Markieren widerrufen
+    await core.createPortalLink(a, p);
+    expect(await activeLinks()).toBe(1);
+    expect((await mod.markPatientDeceased(a, p, { cancelFuture: false })).ok).toBe(true);
+    expect(await activeLinks()).toBe(0);
+
+    await expect(core.createPortalLink(a, p)).rejects.toThrow("Patient:in ist als verstorben markiert.");
+    expect(await ana.createAnamnesisLink(a, p)).toEqual({ error: "Die Patient:in ist als verstorben markiert – kein neuer Link möglich." });
+    expect(await activeLinks()).toBe(0);
+
+    // Fehleingabe zurückgenommen → Links wieder möglich
+    expect((await mod.undoPatientDeceased(a, p)).ok).toBe(true);
+    await core.createPortalLink(a, p);
+    expect("token" in (await ana.createAnamnesisLink(a, p))).toBe(true);
+    expect(await activeLinks()).toBe(2);
+  });
+
+  it("Kontaktdaten löschen behält die Markierung „verstorben“", async () => {
+    const org = await f.org();
+    const user = await f.user();
+    const p = await f.patient(org, { email: "x@example.org" });
+    await q(org, `update patients set extra = extra || '{"no_reminders": true}'::jsonb where id = $1`, [p]);
+    await q(org, "insert into treatment_records (organization_id, patient_id, author_id, treated_at, prev_hash, hash) values ($1,$2,$3, now(), null, 'h')", [org, p, user]);
+    expect((await mod.markPatientDeceased(auth(org, user), p, { cancelFuture: false })).ok).toBe(true);
+    const del = await import("./patient-deletion");
+    const owner = { role: "owner", support: null, organization: { id: org }, user: { id: user }, can: () => true } as unknown as AuthContext;
+    await del.erasePatientContact(owner, p);
+    const extra = (await q<{ extra: Record<string, unknown> }>(org, "select extra from patients where id = $1", [p]))[0].extra;
+    expect(Object.keys(extra)).toEqual(["deceased"]);
   });
 });

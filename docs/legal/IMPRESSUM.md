@@ -6,15 +6,10 @@
 
 ## Angaben gemäß § 5 DDG
 
-Pitt Petruschke
+Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“
 Veltener Straße 33
 16540 Hohen Neuendorf
 Deutschland
-
-<!--
-TODO (Betreiber): Rechtsform/Firmierung ergänzen, falls PodoHero nicht als Einzelunternehmen von Pitt Petruschke
-betrieben wird (z. B. GmbH/UG mit Vertretungsberechtigten). „Vertreten durch“ entfällt bei einer natürlichen Person.
--->
 
 ## Kontakt
 

@@ -1,14 +1,12 @@
 # Vertrag zur Auftragsverarbeitung (AVV) nach Art. 28 DSGVO
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Verbleibende Platzhalter in eckigen Klammern sind vom Betreiber auszufüllen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
 > Version 0.2 · Stand 13.11.2026
 
 zwischen der Praxis des Kunden (nachfolgend **„Verantwortlicher“**)
 
-und Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend **„Auftragsverarbeiter“**).
-
-<!-- TODO (Betreiber): „vertreten durch …“ ergänzen, falls PodoHero über eine Gesellschaft betrieben wird; bei einer natürlichen Person entfällt die Angabe. -->
+und Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend **„Auftragsverarbeiter“**).
 
 ## § 1 Gegenstand und Dauer
 
@@ -62,14 +60,14 @@ Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn d
 
 ## § 9 Kontrollrechte
 
-1. Der Verantwortliche ist berechtigt, die Einhaltung dieses Vertrags zu überprüfen, insbesondere durch Einholung von Auskünften, Einsicht in Nachweise (z. B. Zertifikate, Prüfberichte, Penetrationstest-Zusammenfassungen) oder durch **Inspektionen** nach rechtzeitiger Anmeldung (in der Regel 14 Tage) zu den üblichen Geschäftszeiten (Art. 28 Abs. 3 lit. h DSGVO).
+1. Der Verantwortliche ist berechtigt, die Einhaltung dieses Vertrags zu überprüfen, insbesondere durch Einholung von Auskünften, Einsicht in Nachweise (z. B. Zertifikate, Prüfberichte, Penetrationstest-Zusammenfassungen) vorrangig durch Vorlage von Nachweisen oder Remote-Audit, oder durch **Inspektionen** nach rechtzeitiger Anmeldung (in der Regel 14 Tage) zu den üblichen Geschäftszeiten (Art. 28 Abs. 3 lit. h DSGVO).
 2. Der Auftragsverarbeiter stellt alle erforderlichen Informationen zum Nachweis der Einhaltung der Pflichten zur Verfügung. Inspektionen dürfen den Betrieb und die Vertraulichkeit anderer Kunden nicht beeinträchtigen.
 3. Für Inspektionen vor Ort kann der Auftragsverarbeiter eine angemessene Aufwandsentschädigung verlangen, sofern kein Anlass in einem Verstoß des Auftragsverarbeiters liegt.
 
 ## § 10 Löschung und Rückgabe nach Ende des Auftrags
 
 1. Der Verantwortliche kann jederzeit einen **vollständigen Datenexport** (JSON je Tabelle, entschlüsselte Fotos/Dokumente) in der Software erstellen. Dies gilt als Rückgabe der Daten.
-2. Nach Ende der Leistungserbringung bzw. nach dem Löschantrag des Verantwortlichen löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen nach einer **Karenzzeit von 30 Tagen** (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen laufen spätestens nach **[BACKUP-AUFBEWAHRUNG] (derzeit vorgesehen: 14 Tage)** aus.
+2. Nach Ende der Leistungserbringung bzw. nach dem Löschantrag des Verantwortlichen löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen nach einer **Karenzzeit von 30 Tagen** (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen laufen spätestens nach **spätestens nach 14 Tagen** aus.
 3. **Aufbewahrungspflichten des Verantwortlichen** (u. a. § 630f Abs. 3 BGB: 10 Jahre Behandlungsdokumentation; § 147 AO, § 14b UStG: 8 bzw. 10 Jahre für Belege und Bücher) bleiben unberührt. Der Verantwortliche stellt durch einen rechtzeitigen Export sicher, dass er diesen Pflichten nachkommen kann.
 4. Die Löschung wird protokolliert und dem Verantwortlichen auf Anfrage bestätigt.
 

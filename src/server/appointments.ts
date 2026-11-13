@@ -140,7 +140,7 @@ export async function createInternalAppointments(
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
-    if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId))) {
+    if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {
       return { ok: false as const, deceased: true as const };
     }
     if (!input.allowConflict) {
@@ -262,7 +262,7 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
       .limit(1);
     const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
-    if (a.patientId && input.startsAt > new Date() && (await patientIsDeceased(tx, org, a.patientId))) return { ok: false, error: DECEASED_BLOCKED_MSG };
+    if (a.patientId && input.startsAt > new Date() && (await patientIsDeceased(tx, org, a.patientId, { lock: true }))) return { ok: false, error: DECEASED_BLOCKED_MSG };
     const [member] = await tx
       .select({ id: memberships.userId })
       .from(memberships)

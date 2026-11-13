@@ -98,6 +98,7 @@ export async function assignFeedPatientAction(_: AssignState, form: FormData): P
   if (!id.success) return { error: "Termin fehlt." };
   if (!patient.success) return { error: "Bitte eine Patient:in wählen." };
   const ok = await assignFeedAppointmentPatient(auth, id.data, patient.data);
+  if (ok === "deceased") return { error: "Patient:in ist als verstorben markiert – ein künftiger Termin kann nicht zugeordnet werden." };
   if (!ok) return { error: "Zuordnung nicht möglich (Termin oder Patient:in nicht gefunden)." };
   revalidatePath("/kalender");
   revalidatePath("/heute");

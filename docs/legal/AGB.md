@@ -1,12 +1,12 @@
 # Allgemeine Geschäftsbedingungen (AGB) für PodoHero
 
-> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung. Verbleibende Platzhalter in eckigen Klammern sind vom Betreiber auszufüllen.
+> **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
 > Version 0.2 · Stand 13.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
-1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoHero“ (nachfolgend „Dienst“) zwischen Pitt Petruschke, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend „Anbieter“) und dem Kunden.
+1. Diese AGB gelten für alle Verträge über die Nutzung der Software „PodoHero“ (nachfolgend „Dienst“) zwischen Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener Straße 33, 16540 Hohen Neuendorf, Deutschland, E-Mail: [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com) (nachfolgend „Anbieter“) und dem Kunden.
 2. Der Dienst richtet sich ausschließlich an **Unternehmer** im Sinne des § 14 BGB, insbesondere podologische Praxen, Praxen für medizinische Fußpflege und vergleichbare Heilmittelerbringer. Verbraucher sind von der Nutzung ausgeschlossen.
 3. Abweichende Bedingungen des Kunden gelten nur, wenn der Anbieter ihnen ausdrücklich in Textform zustimmt.
 
@@ -35,7 +35,7 @@
 1. Es gelten die bei Vertragsschluss auf der Website angegebenen Preise. Alle Preise verstehen sich **zuzüglich der gesetzlichen Umsatzsteuer**.
 2. Die Vergütung wird monatlich im Voraus fällig, sofern nichts anderes vereinbart ist. Die Zahlung erfolgt über den angebotenen Zahlungsdienstleister.
 3. Zusätzliche Behandler-Zugänge werden nach dem jeweils gültigen Tarif berechnet.
-4. Preisänderungen kündigt der Anbieter mindestens sechs Wochen vor Wirksamwerden in Textform an. Der Kunde kann zum Zeitpunkt des Wirksamwerdens außerordentlich kündigen.
+4. Preisänderungen kündigt der Anbieter mindestens sechs Wochen vor Wirksamwerden in Textform an. Der Kunde kann zum Zeitpunkt des Wirksamwerdens außerordentlich kündigen; auf dieses Recht wird in der Ankündigung hingewiesen. Der Leistungsumfang wird nicht im Wege dieser Klausel geändert.
 
 ## § 5 Pflichten des Kunden
 
@@ -69,17 +69,17 @@
 ## § 10 Haftung
 
 1. Der Anbieter haftet unbeschränkt bei Vorsatz und grober Fahrlässigkeit, bei Verletzung von Leben, Körper oder Gesundheit sowie nach dem Produkthaftungsgesetz.
-2. Bei leicht fahrlässiger Verletzung wesentlicher Vertragspflichten ist die Haftung auf den vertragstypischen, vorhersehbaren Schaden begrenzt. Im Übrigen ist die Haftung für leichte Fahrlässigkeit ausgeschlossen.
+2. Bei leicht fahrlässiger Verletzung wesentlicher Vertragspflichten (Pflichten, deren Erfüllung die ordnungsgemäße Durchführung des Vertrags erst ermöglicht und auf deren Einhaltung der Kunde regelmäßig vertrauen darf) ist die Haftung auf den vertragstypischen, vorhersehbaren Schaden begrenzt. Im Übrigen ist die Haftung für leichte Fahrlässigkeit ausgeschlossen.
 3. Die Haftung für Datenverlust ist auf den Aufwand begrenzt, der bei ordnungsgemäßer Datensicherung durch den Kunden (z. B. regelmäßige Exporte) zur Wiederherstellung erforderlich wäre.
 
 ## § 11 Änderungen der AGB
 
-Der Anbieter kann diese AGB mit Wirkung für die Zukunft ändern, soweit dies für den Kunden zumutbar ist. Änderungen werden mindestens sechs Wochen vorher in Textform angekündigt. Widerspricht der Kunde nicht innerhalb dieser Frist, gelten die Änderungen als angenommen; auf diese Folge wird in der Ankündigung hingewiesen.
+Der Anbieter kann diese AGB mit Wirkung für die Zukunft ändern, soweit dies für den Kunden zumutbar ist. Änderungen werden mindestens sechs Wochen vorher in Textform angekündigt. Widerspricht der Kunde nicht innerhalb dieser Frist, gelten die Änderungen als angenommen; auf diese Folge wird in der Ankündigung hingewiesen. Im Fall einer Änderung kann der Kunde den Vertrag zum Zeitpunkt des Wirksamwerdens kündigen. Wesentliche Vertragspflichten (Leistungsumfang, Preis) werden nicht im Wege dieser Klausel geändert.
 
 ## § 12 Schlussbestimmungen
 
 1. Es gilt das Recht der Bundesrepublik Deutschland unter Ausschluss des UN-Kaufrechts.
-2. Ist der Kunde Kaufmann, juristische Person des öffentlichen Rechts oder öffentlich-rechtliches Sondervermögen, ist Gerichtsstand für alle Streitigkeiten aus diesem Vertrag der Sitz des Anbieters in Hohen Neuendorf (Amtsgericht Oranienburg bzw. Landgericht Neuruppin), soweit gesetzlich zulässig (§ 38 ZPO).
-
-<!-- TODO (Betreiber/Anwalt): Gerichtsstand bitte prüfen – Gerichtsstandsvereinbarungen sind nach § 38 Abs. 1 ZPO nur mit Kaufleuten u. Ä. wirksam; viele Praxen (Freiberufler) sind keine Kaufleute, dann gilt der gesetzliche Gerichtsstand. -->
+2. Ist der Kunde Kaufmann, juristische Person des öffentlichen Rechts oder öffentlich-rechtliches Sondervermögen oder hat er keinen allgemeinen Gerichtsstand im Inland, ist ausschließlicher Gerichtsstand für alle Streitigkeiten aus diesem Vertrag der Sitz des Anbieters. Der Anbieter ist berechtigt, auch am allgemeinen Gerichtsstand des Kunden zu klagen.
 3. Sollte eine Bestimmung unwirksam sein, bleibt die Wirksamkeit der übrigen Bestimmungen unberührt.
+
+<!-- Hinweis (Betreiber/Anwalt): Sitz des Anbieters ist Hohen Neuendorf (Amtsgericht Oranienburg / Landgericht Neuruppin) – bitte prüfen. Gerichtsstandsvereinbarungen wirken nach § 38 ZPO nur gegenüber Kaufleuten u. Ä.; viele Praxen sind Freiberufler, dann gilt der gesetzliche Gerichtsstand. -->

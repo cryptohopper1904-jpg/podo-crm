@@ -109,7 +109,8 @@ export async function createAnamnesisLink(auth: AuthContext, patientId: string) 
   let ok: boolean | "deceased" = false;
   try {
     ok = await withOrg(org, async (tx): Promise<boolean | "deceased"> => {
-    const [p] = await tx.select({ id: patients.id, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+    // FOR UPDATE: ein paralleles „verstorben markieren“ (sperrt dieselbe Zeile) wartet bzw. wird hier gesehen
+    const [p] = await tx.select({ id: patients.id, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId))).for("update");
     if (!p) return false;
     // verstorben: keine neuen Patienten-Links
     if (isDeceased(p.extra)) return "deceased" as const;

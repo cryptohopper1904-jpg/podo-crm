@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso } from "@/lib/format";
+import { lockBooking } from "./portal-booking";
 import { DECEASED_KEY, deceasedInfo, isDeceased, parseDeathDate, type DeceasedInfo } from "@/lib/patient-deceased";
 
 export * from "@/lib/patient-deceased";
@@ -15,8 +16,10 @@ export * from "@/lib/patient-deceased";
 export const notDeceased = () => sql`(${patients.extra} -> ${DECEASED_KEY}) is null`;
 
 /** Ist die Person (in dieser Transaktion) als verstorben markiert? Unbekannte Person → false. */
-export async function patientIsDeceased(tx: Tx, org: string, patientId: string): Promise<boolean> {
-  const [p] = await tx.select({ extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+export async function patientIsDeceased(tx: Tx, org: string, patientId: string, opts: { lock?: boolean } = {}): Promise<boolean> {
+  const q = tx.select({ extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+  // lock: Zeile bis zum Ende der Transaktion sperren → ein paralleles „verstorben markieren“ wartet bzw. wird gesehen
+  const [p] = opts.lock ? await q.for("update") : await q;
   return !!p && isDeceased(p.extra);
 }
 
@@ -66,6 +69,8 @@ export async function markPatientDeceased(
   const org = auth.organization.id;
   if (!z.uuid().safeParse(patientId).success) return { ok: false, error: "Patient:in nicht gefunden." };
   const res = await withOrg(org, async (tx): Promise<MarkDeceasedResult> => {
+    // dieselbe Buchungssperre wie Terminanlage/Portal/Warteliste → parallel angelegte künftige Termine werden gesehen und abgesagt
+    await lockBooking(tx, org);
     const [p] = await tx
       .select({ extra: patients.extra, birthDate: patients.birthDate })
       .from(patients)

@@ -24,7 +24,7 @@ export function DeceasedCard({ id, info, futureOwn, futureFeed }: { id: string; 
           <div className="mt-3">
             <ActionForm action={undoDeceasedAction} submit="Zurücknehmen">
               <input type="hidden" name="id" value={id} />
-              <Field label="Grund (optional)">
+              <Field label="Grund (optional)" hint="Wird protokolliert – bitte keine Namen oder Gesundheitsdaten eintragen.">
                 <Input name="reason" maxLength={200} autoComplete="off" />
               </Field>
               <label className="flex min-h-11 items-center gap-3 text-sm">
