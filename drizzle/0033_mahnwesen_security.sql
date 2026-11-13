@@ -24,6 +24,7 @@ DECLARE
   t_kind text;
   t_status text;
   prev text;
+  prev_pay_by date;
 BEGIN
   SELECT organization_id, kind::text, status::text INTO t_org, t_kind, t_status FROM invoices WHERE id = NEW.invoice_id;
   IF t_org IS NULL OR t_org <> NEW.organization_id THEN
@@ -36,8 +37,15 @@ BEGIN
     RAISE EXCEPTION 'Nur offene Rechnungen können gemahnt werden.' USING ERRCODE = 'P0001';
   END IF;
   prev := CASE NEW.stage WHEN 'dunning1' THEN 'reminder' WHEN 'dunning2' THEN 'dunning1' ELSE NULL END;
-  IF prev IS NOT NULL AND NOT EXISTS (SELECT 1 FROM invoice_dunnings d WHERE d.invoice_id = NEW.invoice_id AND d.stage = prev) THEN
-    RAISE EXCEPTION 'Mahnstufen nur der Reihe nach (Zahlungserinnerung → 1. Mahnung → 2. Mahnung).' USING ERRCODE = 'P0001';
+  IF prev IS NOT NULL THEN
+    SELECT d.pay_by INTO prev_pay_by FROM invoice_dunnings d WHERE d.invoice_id = NEW.invoice_id AND d.stage = prev;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Mahnstufen nur der Reihe nach (Zahlungserinnerung → 1. Mahnung → 2. Mahnung).' USING ERRCODE = 'P0001';
+    END IF;
+    -- nächste Stufe erst nach Ablauf der im vorigen Schreiben gesetzten Zahlungsfrist
+    IF NEW.letter_date <= prev_pay_by THEN
+      RAISE EXCEPTION 'Die Zahlungsfrist des vorigen Schreibens läuft noch.' USING ERRCODE = 'P0001';
+    END IF;
   END IF;
   RETURN NEW;
 END $$;
@@ -45,7 +53,7 @@ END $$;
 CREATE TRIGGER invoice_dunnings_insert_guard BEFORE INSERT ON invoice_dunnings
   FOR EACH ROW EXECUTE FUNCTION podo_invoice_dunning_insert_guard();
 --> statement-breakpoint
--- Erstellte Mahnungen sind unveränderbar; nur der Versandvermerk (sent_via/sent_at/sent_to) darf gesetzt werden.
+-- Erstellte Mahnungen sind unveränderbar; nur der Versandvermerk (sent_via/sent_at/sent_to) darf genau einmal gesetzt werden.
 CREATE OR REPLACE FUNCTION podo_invoice_dunning_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
@@ -54,8 +62,14 @@ BEGIN
   IF NEW.id <> OLD.id OR NEW.organization_id <> OLD.organization_id OR NEW.invoice_id <> OLD.invoice_id
      OR NEW.stage <> OLD.stage OR NEW.letter_date <> OLD.letter_date OR NEW.pay_by <> OLD.pay_by
      OR NEW.open_cents <> OLD.open_cents OR NEW.fee_cents <> OLD.fee_cents OR NEW.fees_total_cents <> OLD.fees_total_cents
-     OR NEW.body <> OLD.body OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at <> OLD.created_at THEN
+     OR NEW.body <> OLD.body OR NEW.letterhead IS DISTINCT FROM OLD.letterhead OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at <> OLD.created_at THEN
     RAISE EXCEPTION 'Mahnungen sind unveränderbar.' USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.sent_via IS NOT NULL AND (NEW.sent_via IS DISTINCT FROM OLD.sent_via OR NEW.sent_at IS DISTINCT FROM OLD.sent_at OR NEW.sent_to IS DISTINCT FROM OLD.sent_to) THEN
+    RAISE EXCEPTION 'Der Versandvermerk der Mahnung ist bereits gesetzt.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.sent_via IS NOT NULL AND NEW.sent_at IS NULL THEN
+    RAISE EXCEPTION 'Versandvermerk ohne Zeitpunkt.' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
 END $$;

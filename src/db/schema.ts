@@ -901,9 +901,10 @@ export const invoiceLines = pgTable(
 
 /**
  * Mahnwesen: Zahlungserinnerung / 1. Mahnung / 2. Mahnung zu einer Rechnung (src/lib/dunning.ts).
- * Unveränderbar (Trigger, drizzle/0033): nur der Versandvermerk (sent_*) darf einmalig gesetzt werden.
+ * Unveränderbar (Trigger, drizzle/0033): nur der Versandvermerk (sent_*) darf genau einmal gesetzt werden.
  * Die Mahngebühr gehört NICHT zur Rechnung (GoBD) – sie steht nur hier und im Schreiben.
- * Das PDF wird bei Bedarf aus den gespeicherten Werten erzeugt (Text, Beträge, Fristen sind eingefroren).
+ * Das PDF wird bei Bedarf aus den gespeicherten Werten erzeugt (Text, Beträge, Fristen, Briefkopf sind eingefroren;
+ * nur die Logos werden aktuell geladen).
  */
 export const invoiceDunnings = pgTable(
   "invoice_dunnings",
@@ -926,6 +927,8 @@ export const invoiceDunnings = pgTable(
     feesTotalCents: integer("fees_total_cents").notNull().default(0),
     /** fertiger Brieftext (Platzhalter ersetzt) */
     body: text("body").notNull(),
+    /** Briefkopf/Anschrift beim Erstellen (Praxis, Bankverbindung, Empfänger) – Nachdrucke entsprechen dem versendeten Schreiben (§ 147 AO) */
+    letterhead: jsonb("letterhead").$type<Record<string, unknown>>().notNull(),
     /** email | post */
     sentVia: text("sent_via"),
     sentAt: timestamp("sent_at", { withTimezone: true }),

@@ -1,6 +1,6 @@
 {
-  "id": "7d0d4c60-bf48-4d2b-b537-e9113a851b72",
-  "prevId": "175a10a9-f629-4846-8668-ea0aea75224c",
+  "id": "62d97364-534c-49d1-b721-3f50f6c9a732",
+  "prevId": "f6cb8b6b-3c5d-4eaa-9d0b-5f040399a318",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2625,6 +2625,12 @@
         "body": {
           "name": "body",
           "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "letterhead": {
+          "name": "letterhead",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true
         },

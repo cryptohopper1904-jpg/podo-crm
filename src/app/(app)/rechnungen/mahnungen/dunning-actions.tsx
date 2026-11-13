@@ -122,7 +122,7 @@ export function DunningOverviewTable({ items, canWrite }: { items: OverviewItem[
   );
 }
 
-/** PDF öffnen (Drucken), per E-Mail senden, „per Post versendet“ vermerken. */
+/** PDF öffnen (Drucken), per E-Mail senden oder „per Post versendet“ vermerken – der Versandvermerk ist einmalig. */
 export function DunningLetterActions({ dunningId, recipientEmail, canWrite, sent }: { dunningId: string; recipientEmail: string | null; canWrite: boolean; sent: boolean }) {
   const [mail, sendMail, mailPending] = useActionState(sendDunningEmailAction, undefined);
   const [post, markPost, postPending] = useActionState(markDunningPostedAction, undefined);
@@ -137,11 +137,11 @@ export function DunningLetterActions({ dunningId, recipientEmail, canWrite, sent
         >
           <FileDown size={18} aria-hidden /> PDF / Drucken
         </a>
-        {canWrite ? (
+        {canWrite && !sent ? (
           <>
             <form
               onSubmit={(e) => {
-                if (!recipientEmail || !window.confirm(`Schreiben als PDF an ${recipientEmail} senden?`)) return e.preventDefault();
+                if (!recipientEmail || !window.confirm(`Schreiben als PDF an ${recipientEmail} senden? Der Versandvermerk lässt sich danach nicht mehr ändern.`)) return e.preventDefault();
                 keepValues(sendMail)(e);
               }}
             >
@@ -150,14 +150,17 @@ export function DunningLetterActions({ dunningId, recipientEmail, canWrite, sent
                 <Mail size={18} aria-hidden /> {mailPending ? "Sende …" : "Per E-Mail senden"}
               </Button>
             </form>
-            {!sent ? (
-              <form onSubmit={keepValues(markPost)}>
-                <input type="hidden" name="dunningId" value={dunningId} />
-                <Button type="submit" variant="ghost" disabled={postPending}>
-                  <MailCheck size={18} aria-hidden /> Per Post versendet
-                </Button>
-              </form>
-            ) : null}
+            <form
+              onSubmit={(e) => {
+                if (!window.confirm("Vermerken, dass das Schreiben per Post versendet wurde? Der Versandvermerk lässt sich danach nicht mehr ändern.")) return e.preventDefault();
+                keepValues(markPost)(e);
+              }}
+            >
+              <input type="hidden" name="dunningId" value={dunningId} />
+              <Button type="submit" variant="ghost" disabled={postPending}>
+                <MailCheck size={18} aria-hidden /> Per Post versendet
+              </Button>
+            </form>
           </>
         ) : null}
       </div>

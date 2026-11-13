@@ -63,7 +63,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // DB-Schutz zusätzlich zur App-Prüfung: keine Mahnung zu Quittung oder bezahlter Rechnung
     for (const inv of [receipt, paid]) {
       await expect(
-        f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'reminder',current_date,current_date+10,6500,'x')", [orgA, inv])),
+        f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
       ).rejects.toThrow(/nicht gemahnt|Nur offene Rechnungen/);
     }
   });
@@ -104,28 +104,60 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const inv = await overdue(orgA, 40);
     // Mahnstufe überspringen geht auch direkt in der DB nicht
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
     ).rejects.toThrow(/der Reihe nach/);
     // Gebühr für die Zahlungserinnerung ist ausgeschlossen
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, fee_cents, fees_total_cents, body) values ($1,$2,'reminder',current_date,current_date+10,6500,100,100,'x')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, fee_cents, fees_total_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,100,100,'x','{}')", [orgA, inv])),
     ).rejects.toThrow(/amounts_check/);
     // Zahlungserinnerung vor 20 Tagen (Altbestand)
     await f.asOrg(orgA, (c) =>
-      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'reminder',current_date-20,current_date-10,6500,'alt')", [orgA, inv]),
+      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date-20,current_date-10,6500,'alt','{}')", [orgA, inv]),
     );
     const before = await f.asOrg(orgA, async (c) => (await c.query("select total_cents, net_cents, vat_cents, paid_cents, status from invoices where id = $1", [inv])).rows[0]);
     const r = await dunning.createDunnings(authFor(orgA), [inv]);
     expect(r.created.map((c) => c.stage)).toEqual(["dunning1"]);
     const rows = await dunningsOf(orgA, inv);
-    expect(rows[1]).toMatchObject({ stage: "dunning1", open_cents: 6500, fee_cents: 250, fees_total_cents: 250 });
-    expect(rows[1].body).toContain("67,50"); // Gesamtbetrag inkl. Gebühr
+    // Mahngebühren vorerst 0 € (kein Buchungsweg), auch wenn die Einstellung noch 2,50 € enthält
+    expect(rows[1]).toMatchObject({ stage: "dunning1", open_cents: 6500, fee_cents: 0, fees_total_cents: 0 });
+    expect(rows[1].body).toContain("Gesamtbetrag von 65,00");
     const after = await f.asOrg(orgA, async (c) => (await c.query("select total_cents, net_cents, vat_cents, paid_cents, status from invoices where id = $1", [inv])).rows[0]);
     expect(after).toEqual(before);
     // eindeutig je Stufe
     await expect(
-      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'reminder',current_date,current_date+10,6500,'x')", [orgA, inv])),
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
     ).rejects.toThrow(/invoice_dunnings_invoice_stage/);
+  });
+
+  it("nächste Stufe erst nach Ablauf der Frist des vorigen Schreibens (App und DB)", async () => {
+    const inv = await overdue(orgA, 60);
+    await f.asOrg(orgA, (c) =>
+      c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'reminder',current_date-20,current_date,6500,'alt','{}')", [orgA, inv]),
+    );
+    const r = await dunning.createDunnings(authFor(orgA), [inv]);
+    expect(r.created).toHaveLength(0);
+    expect(r.skipped[0].reason).toMatch(/1\. Mahnung ist erst ab/);
+    await expect(
+      f.asOrg(orgA, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
+    ).rejects.toThrow(/Zahlungsfrist des vorigen Schreibens läuft noch/);
+  });
+
+  it("Versandvermerk nur einmal; Briefkopf eingefroren", async () => {
+    const inv = await overdue(orgA, 30);
+    const id = (await dunning.createDunnings(authFor(orgA), [inv])).created[0].dunningId;
+    const [d] = await dunningsOf(orgA, inv);
+    expect(d.letterhead.organization).toMatchObject({ name: "Testpraxis Fuß", phone: "030 1234567" });
+    expect(d.letterhead.patient).toMatchObject({ lastName: "Muster", salutation: "Frau" });
+    await expect(f.asOrg(orgA, (c) => c.query(`update invoice_dunnings set letterhead = '{}' where id = $1`, [id]))).rejects.toThrow(/unveränderbar/);
+    await dunning.markDunningPosted(authFor(orgA), id);
+    await expect(dunning.markDunningPosted(authFor(orgA), id)).rejects.toThrow(/bereits als versendet/);
+    await expect(dunning.sendDunningEmail(authFor(orgA), id)).rejects.toThrow(/bereits als versendet/);
+    await expect(f.asOrg(orgA, (c) => c.query("update invoice_dunnings set sent_via = 'email', sent_to = 'x@example.org' where id = $1", [id]))).rejects.toThrow(/bereits gesetzt/);
+    // spätere Änderung der Praxisdaten ändert den Nachdruck nicht (Briefkopf aus dem Schnappschuss)
+    await f.asOrg(orgA, (c) => c.query("update organizations set phone = '099 999' where id = $1", [orgA]));
+    const again = await dunningsOf(orgA, inv);
+    expect(again[0].letterhead.organization.phone).toBe("030 1234567");
+    await f.asOrg(orgA, (c) => c.query("update organizations set phone = '030 1234567' where id = $1", [orgA]));
   });
 
   it("bezahlte Rechnung: keine weitere Stufe, kein Versand mehr", async () => {
@@ -154,10 +186,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(viaApp.created).toHaveLength(0);
     expect(viaApp.skipped[0].reason).toMatch(/nicht gefunden/);
     await expect(
-      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x')", [orgB, inv])),
+      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgB, inv])),
     ).rejects.toThrow(/nicht gefunden/);
     await expect(
-      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x')", [orgA, inv])),
+      f.asOrg(orgB, (c) => c.query("insert into invoice_dunnings (organization_id, invoice_id, stage, letter_date, pay_by, open_cents, body, letterhead) values ($1,$2,'dunning1',current_date,current_date+10,6500,'x','{}')", [orgA, inv])),
     ).rejects.toThrow();
     await expect(dunning.markDunningPosted(authFor(orgB), id)).rejects.toThrow(/nicht gefunden/);
     expect(await dunning.invoiceDunningList(authFor(orgB), inv)).toEqual([]);
@@ -179,7 +211,13 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(d).toMatchObject({ sent_via: "email", sent_to: "erika@example.org" });
   });
 
-  it("Einstellungen: Zahlungserinnerung bleibt gebührenfrei", async () => {
+  it("Einstellungen: Gebühren vorerst 0 € (Zahlungserinnerung immer)", async () => {
+    const parsed = dunning.dunningSettingsInput.safeParse({
+      payDays: 7,
+      stages: { reminder: { days: 5, feeCents: 0, text: "x".repeat(30) }, dunning1: { days: 10, feeCents: 150, text: "x".repeat(30) }, dunning2: { days: 10, feeCents: 0, text: "x".repeat(30) } },
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error!.issues[0].message).toMatch(/Mahngebühren folgen, sobald die Verbuchung eingebaut ist/);
     const s = await dunning.saveDunningSettings(authFor(orgB), {
       payDays: 7,
       stages: {
@@ -191,7 +229,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(s.stages.reminder.feeCents).toBe(0);
     const row = (await f.pool.query("select settings from organizations where id = $1", [orgB])).rows[0].settings;
     expect(row.dunning.stages.reminder.feeCents).toBe(0);
-    expect(row.dunning.stages.dunning1.feeCents).toBe(150);
+    expect(row.dunning.stages.dunning1.feeCents).toBe(0);
     expect(row.dunning.payDays).toBe(7);
   });
 });

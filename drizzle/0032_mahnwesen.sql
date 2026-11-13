@@ -9,6 +9,7 @@ CREATE TABLE "invoice_dunnings" (
 	"fee_cents" integer DEFAULT 0 NOT NULL,
 	"fees_total_cents" integer DEFAULT 0 NOT NULL,
 	"body" text NOT NULL,
+	"letterhead" jsonb NOT NULL,
 	"sent_via" text,
 	"sent_at" timestamp with time zone,
 	"sent_to" text,

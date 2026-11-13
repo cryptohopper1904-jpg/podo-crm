@@ -13,9 +13,11 @@
  *  - Unsere Rechnungen enthalten keinen Hinweis nach § 286 Abs. 3 BGB; Verzug tritt deshalb erst mit der ersten
  *    Mahnung ein – das ist hier bereits die „Zahlungserinnerung“ (eine eindeutige Zahlungsaufforderung nach Fälligkeit).
  *  - Kosten der verzugsbegründenden ersten Mahnung sind kein Verzugsschaden → Gebühr der Zahlungserinnerung immer 0 €.
- *  - Spätere Mahngebühren nur als konkrete, angemessene Kosten (keine Pauschalen) → Obergrenze MAX_FEE_CENTS.
+ *  - Spätere Mahngebühren nur als konkrete, angemessene Kosten (keine Pauschalen). Vorerst deaktiviert (MAX_FEE_CENTS = 0),
+ *    bis Gebühren-Zahlungen verbucht werden können.
  *  - Verzugszinsen (§ 288 Abs. 1 BGB: 5 Prozentpunkte über dem Basiszinssatz) werden nicht automatisch berechnet,
- *    die Standardtexte weisen nur darauf hin.
+ *    der Standardtext der 2. Mahnung weist nur darauf hin.
+ *  - Eine Stufe wird erst nach Ablauf der Frist des vorigen Schreibens fällig (Verzug ab Fristablauf).
  * Die Mahngebühr verändert die Rechnung nicht (GoBD): sie wird je Mahnung gespeichert und nur im Schreiben ausgewiesen.
  */
 import { addDaysIso } from "./invoice-math";
@@ -40,7 +42,14 @@ export const DUNNING_STAGE_TITLE: Record<DunningStage, string> = {
 export const DUNNABLE_KINDS = ["invoice", "collective", "no_show_fee"] as const;
 export const DUNNABLE_STATUSES = ["issued", "partially_paid"] as const;
 
-export const MAX_FEE_CENTS = 2500;
+/**
+ * Obergrenze der Mahngebühr in der App. Vorerst 0 €: Für Gebühren gibt es noch keinen Buchungsweg
+ * (Zahlung Rechnung + Gebühr wäre eine Überzahlung). Die DB erlaubt bereits bis 25 € (Schema vorbereitet).
+ */
+export const MAX_FEE_CENTS = 0;
+/** Obergrenze, sobald Gebühren verbucht werden können (entspricht der DB-Prüfung) */
+export const DB_MAX_FEE_CENTS = 2500;
+export const FEES_ENABLED = MAX_FEE_CENTS > 0;
 export const MAX_STAGE_DAYS = 90;
 export const MAX_PAY_DAYS = 60;
 export const MAX_TEXT = 2000;
@@ -61,29 +70,12 @@ export const DUNNING_PLACEHOLDERS: { key: string; label: string }[] = [
 ];
 
 export const DEFAULT_DUNNING_TEXT: Record<DunningStage, string> = {
-  reminder: [
-    "{anrede},",
-    "",
-    "sicher ist es Ihrer Aufmerksamkeit entgangen: Für unsere Rechnung {rechnungsnummer} vom {rechnungsdatum} (zahlbar bis {faellig_am}) konnten wir bisher keinen vollständigen Zahlungseingang feststellen. Offen ist noch ein Betrag von {offener_betrag}.",
-    "",
-    "Bitte überweisen Sie den Betrag bis zum {frist} unter Angabe der Rechnungsnummer. Sollten Sie inzwischen bezahlt haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.",
-  ].join("\n"),
-  dunning1: [
-    "{anrede},",
-    "",
-    "leider ist unsere Rechnung {rechnungsnummer} vom {rechnungsdatum} trotz unserer Zahlungserinnerung noch nicht vollständig beglichen. Offen ist ein Betrag von {offener_betrag}.",
-    "",
-    "Wir bitten Sie, den Gesamtbetrag von {gesamtbetrag} bis spätestens {frist} unter Angabe der Rechnungsnummer zu überweisen. Sollten Sie inzwischen bezahlt haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.",
-  ].join("\n"),
-  dunning2: [
-    "{anrede},",
-    "",
-    "trotz Zahlungserinnerung und Mahnung ist unsere Rechnung {rechnungsnummer} vom {rechnungsdatum} weiterhin nicht vollständig beglichen. Offen ist ein Betrag von {offener_betrag}.",
-    "",
-    "Wir fordern Sie hiermit letztmalig auf, den Gesamtbetrag von {gesamtbetrag} bis spätestens {frist} zu überweisen. Sollte bis dahin kein Zahlungseingang erfolgen, behalten wir uns vor, ohne weitere Ankündigung gerichtliche Schritte (gerichtliches Mahnverfahren) einzuleiten und Verzugszinsen in gesetzlicher Höhe (§ 288 BGB) zu verlangen. Die dadurch entstehenden Kosten gehen zu Ihren Lasten.",
-    "",
-    "Sollten Sie inzwischen bezahlt haben, betrachten Sie dieses Schreiben bitte als gegenstandslos.",
-  ].join("\n"),
+  reminder:
+    "{anrede},\n\nunsere Rechnung {rechnungsnummer} vom {rechnungsdatum} war am {faellig_am} zur Zahlung fällig. Bis heute konnten wir keinen vollständigen Zahlungseingang feststellen; offen ist noch ein Betrag von {offener_betrag}.\n\nBitte überweisen Sie diesen Betrag bis spätestens {frist} unter Angabe der Rechnungsnummer. Sollte sich Ihre Zahlung mit diesem Schreiben überschnitten haben, betrachten Sie es bitte als gegenstandslos.",
+  dunning1:
+    "{anrede},\n\nunsere Rechnung {rechnungsnummer} vom {rechnungsdatum} ist trotz unserer Zahlungserinnerung noch nicht vollständig beglichen. Offen ist ein Betrag von {offener_betrag}. Seit Ablauf der in der Zahlungserinnerung gesetzten Frist befinden Sie sich in Zahlungsverzug.\n\nBitte überweisen Sie den Gesamtbetrag von {gesamtbetrag} (Aufstellung unten) bis spätestens {frist} unter Angabe der Rechnungsnummer. Sollte sich Ihre Zahlung mit diesem Schreiben überschnitten haben, betrachten Sie es bitte als gegenstandslos.",
+  dunning2:
+    "{anrede},\n\ntrotz Zahlungserinnerung und Mahnung ist unsere Rechnung {rechnungsnummer} vom {rechnungsdatum} weiterhin nicht vollständig beglichen. Offen ist ein Betrag von {offener_betrag}.\n\nWir fordern Sie hiermit letztmalig auf, den Gesamtbetrag von {gesamtbetrag} (Aufstellung unten) bis spätestens {frist} unter Angabe der Rechnungsnummer zu überweisen. Geht bis dahin keine Zahlung ein, behalten wir uns vor, ohne weitere Ankündigung gerichtliche Schritte (z. B. ein gerichtliches Mahnverfahren) einzuleiten. Für die Dauer des Verzugs können wir zudem Verzugszinsen in Höhe von 5 Prozentpunkten über dem Basiszinssatz verlangen (§ 288 Abs. 1 BGB).\n\nSollte sich Ihre Zahlung mit diesem Schreiben überschnitten haben, betrachten Sie es bitte als gegenstandslos.",
 };
 
 export const DEFAULT_DUNNING_SETTINGS: DunningSettings = {
@@ -117,7 +109,7 @@ export function readDunningSettings(settings: Record<string, unknown> | null | u
 }
 
 export type DunnableInvoice = { kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number };
-export type PastDunning = { stage: string; letterDate: string };
+export type PastDunning = { stage: string; letterDate: string; payBy: string };
 
 /** Ganze Kalendertage von a bis b (YYYY-MM-DD). */
 export function daysBetween(a: string, b: string): number {
@@ -135,7 +127,8 @@ export type DunningState =
 
 /**
  * Nächste Mahnstufe einer Rechnung zum Stichtag `today` (YYYY-MM-DD, Berliner Kalendertag).
- * Zahlungserinnerung: `days` Tage nach dem Zahlungsziel; weitere Stufen: `days` Tage nach dem vorigen Schreiben.
+ * Zahlungserinnerung: `days` Tage nach dem Zahlungsziel; weitere Stufen: `days` Tage nach dem vorigen Schreiben,
+ * frühestens am Tag nach der dort gesetzten Zahlungsfrist (pay_by).
  * Feiertage/Wochenenden werden nicht berücksichtigt.
  */
 export function dunningState(inv: DunnableInvoice, past: PastDunning[], settings: DunningSettings, today: string): DunningState {
@@ -146,17 +139,24 @@ export function dunningState(inv: DunnableInvoice, past: PastDunning[], settings
   if (daysOverdue <= 0) return { state: "not_overdue", daysOverdue: 0 };
   let lastIdx = -1;
   let lastDate: string | null = null;
+  let lastPayBy: string | null = null;
   for (const p of past) {
     const i = DUNNING_STAGES.indexOf(p.stage as DunningStage);
     if (i > lastIdx) {
       lastIdx = i;
       lastDate = p.letterDate.slice(0, 10);
+      lastPayBy = p.payBy.slice(0, 10);
     }
   }
   const last = lastIdx >= 0 ? DUNNING_STAGES[lastIdx] : null;
   if (lastIdx >= DUNNING_STAGES.length - 1) return { state: "exhausted", daysOverdue, last: last! };
   const next = DUNNING_STAGES[lastIdx + 1];
-  const dueOn = addDaysIso(lastDate ?? inv.dueAt.slice(0, 10), settings.stages[next].days);
+  let dueOn = addDaysIso(lastDate ?? inv.dueAt.slice(0, 10), settings.stages[next].days);
+  // nie vor Ablauf der im vorigen Schreiben gesetzten Zahlungsfrist
+  if (lastPayBy) {
+    const afterDeadline = addDaysIso(lastPayBy, 1);
+    if (afterDeadline > dueOn) dueOn = afterDeadline;
+  }
   return { state: today >= dueOn ? "due" : "waiting", daysOverdue, next, dueOn, last };
 }
 

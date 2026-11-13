@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { billingContacts, invoiceDunnings, invoices, messages, organizations, patients } from "@/db/schema";
@@ -178,9 +178,9 @@ export async function createDunnings(auth: AuthContext, invoiceIds: string[]): P
           ? await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))).then((x) => x[0] ?? null)
           : null;
         const billing = inv.billingContactId
-          ? await tx.select({ name: billingContacts.name }).from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId))).then((x) => x[0] ?? null)
+          ? await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId))).then((x) => x[0] ?? null)
           : null;
-        const [o] = await tx.select({ name: organizations.name, legalName: organizations.legalName }).from(organizations).where(eq(organizations.id, org));
+        const [o] = await tx.select().from(organizations).where(eq(organizations.id, org));
         const openCents = inv.totalCents - inv.paidCents;
         const feeCents = settings.stages[stage].feeCents;
         const feesTotalCents = past.reduce((s, p) => s + p.feeCents, 0) + feeCents;
@@ -198,7 +198,7 @@ export async function createDunnings(auth: AuthContext, invoiceIds: string[]): P
         }).slice(0, MAX_TEXT * 2);
         const [row] = await tx
           .insert(invoiceDunnings)
-          .values({ organizationId: org, invoiceId, stage, letterDate: today, payBy, openCents, feeCents, feesTotalCents, body, createdBy: auth.user.id })
+          .values({ organizationId: org, invoiceId, stage, letterDate: today, payBy, openCents, feeCents, feesTotalCents, body, letterhead: letterheadSnapshot(o, patient, billing), createdBy: auth.user.id })
           .returning({ id: invoiceDunnings.id });
         await audit(
           { organizationId: org, userId: auth.user.id, action: "invoice.dunning_create", entity: "invoice", entityId: invoiceId, meta: { dunningId: row.id, stage, openCents, feeCents, feesTotalCents } },
@@ -218,6 +218,45 @@ export async function createDunnings(auth: AuthContext, invoiceIds: string[]): P
     }
   }
   return result;
+}
+
+type OrgRow = typeof organizations.$inferSelect;
+type PatientRow = typeof patients.$inferSelect;
+type BillingRow = typeof billingContacts.$inferSelect;
+export type DunningLetterhead = Pick<DunningPdfData, "organization" | "patient" | "billingContact">;
+
+/**
+ * Briefkopf, Bankverbindung und Empfängeranschrift beim Erstellen einfrieren – ein späterer Nachdruck
+ * entspricht so dem versendeten Schreiben (§ 147 AO), auch wenn sich Praxis- oder Patientendaten ändern.
+ */
+export function letterheadSnapshot(o: OrgRow, patient: PatientRow | null, billing: BillingRow | null): DunningLetterhead {
+  const settings = (o.settings ?? {}) as Record<string, unknown>;
+  const doc = readDocumentSettings(settings);
+  return {
+    organization: {
+      name: o.name,
+      legalName: o.legalName,
+      street: o.street,
+      zip: o.zip,
+      city: o.city,
+      phone: o.phone,
+      email: o.email,
+      taxNumber: o.taxNumber,
+      vatId: o.vatId,
+      iban: o.iban,
+      bic: o.bic,
+      bankName: o.bankName,
+      accountHolder: o.accountHolder,
+      smallBusiness: o.smallBusiness,
+      website: practiceWebsite(settings),
+      qualification: doc.qualification,
+      whatsapp: doc.whatsapp,
+    },
+    patient: patient
+      ? { number: patient.number, salutation: patient.salutation, title: patient.title, firstName: patient.firstName, lastName: patient.lastName, street: patient.street, zip: patient.zip, city: patient.city }
+      : null,
+    billingContact: billing ? { name: billing.name, street: billing.street, zip: billing.zip, city: billing.city } : null,
+  };
 }
 
 /** Mahnung + Rechnung + Praxisangaben für das PDF (innerhalb von withOrg). */
@@ -244,14 +283,13 @@ export async function dunningPdfForOrg(org: string, dunningId: string) {
   if (!z.uuid().safeParse(dunningId).success) return null;
   const b = await withOrg(org, (tx) => loadDunning(tx, org, dunningId));
   if (!b) return null;
-  const settings = (b.organization.settings ?? {}) as Record<string, unknown>;
-  const doc = readDocumentSettings(settings);
+  const snap = b.dunning.letterhead as unknown as DunningLetterhead;
   const data: DunningPdfData = {
     dunning: { ...b.dunning, stage: b.dunning.stage as DunningStage, fees: b.fees },
     invoice: b.invoice,
-    organization: { ...b.organization, website: practiceWebsite(settings), qualification: doc.qualification, whatsapp: doc.whatsapp },
-    patient: b.patient,
-    billingContact: b.billingContact,
+    organization: snap.organization,
+    patient: snap.patient,
+    billingContact: snap.billingContact,
     logos: await loadLogos(org),
   };
   const bytes = await renderDunningPdf(data);
@@ -277,6 +315,7 @@ export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
   const { bundle } = pdf;
   const inv = bundle.invoice;
   if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Die Rechnung ist inzwischen bezahlt oder storniert – die Mahnung wird nicht mehr versendet.");
+  if (bundle.dunning.sentVia) throw new InvoiceError("Dieses Schreiben ist bereits als versendet vermerkt.");
   const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
   if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
   if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
@@ -292,7 +331,10 @@ export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
     throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${e instanceof MailSendError || e instanceof MailNotConfiguredError ? e.message : "Details im Synchronisationsprotokoll."}`);
   }
   await withOrg(org, async (tx) => {
-    await tx.update(invoiceDunnings).set({ sentVia: "email", sentAt: new Date(), sentTo: to }).where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId)));
+    await tx
+      .update(invoiceDunnings)
+      .set({ sentVia: "email", sentAt: new Date(), sentTo: to })
+      .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId), isNull(invoiceDunnings.sentVia)));
     await tx.insert(messages).values({
       organizationId: org,
       patientId: inv.patientId,
@@ -320,11 +362,11 @@ export async function markDunningPosted(auth: AuthContext, dunningId: string) {
     const [d] = await tx
       .update(invoiceDunnings)
       .set({ sentVia: "post", sentAt: new Date(), sentTo: null })
-      .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId)))
+      .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId), isNull(invoiceDunnings.sentVia)))
       .returning({ invoiceId: invoiceDunnings.invoiceId, stage: invoiceDunnings.stage });
     return d ?? null;
   });
-  if (!row) throw new InvoiceError("Mahnung nicht gefunden.");
+  if (!row) throw new InvoiceError("Mahnung nicht gefunden oder bereits als versendet vermerkt.");
   await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_mark_posted", entity: "invoice", entityId: row.invoiceId, meta: { dunningId, stage: row.stage } });
   return row;
 }
@@ -333,7 +375,11 @@ export async function markDunningPosted(auth: AuthContext, dunningId: string) {
 
 const stageInput = z.object({
   days: z.coerce.number({ error: "Tage: bitte eine Zahl angeben." }).int("Tage: ganze Zahl").min(1, "Tage: mindestens 1").max(MAX_STAGE_DAYS, `Tage: höchstens ${MAX_STAGE_DAYS}`),
-  feeCents: z.number().int().min(0, "Gebühr: nicht negativ").max(MAX_FEE_CENTS, `Gebühr: höchstens ${money(MAX_FEE_CENTS)} (nur konkrete Kosten)`),
+  feeCents: z
+    .number()
+    .int()
+    .min(0, "Gebühr: nicht negativ")
+    .max(MAX_FEE_CENTS, MAX_FEE_CENTS > 0 ? `Gebühr: höchstens ${money(MAX_FEE_CENTS)} (nur konkrete Kosten)` : "Mahngebühren folgen, sobald die Verbuchung eingebaut ist."),
   text: z.string().trim().min(20, "Text: bitte einen Brieftext angeben.").max(MAX_TEXT, `Text: höchstens ${MAX_TEXT} Zeichen`),
 });
 export const dunningSettingsInput = z.object({
@@ -345,8 +391,17 @@ export type DunningSettingsInput = z.infer<typeof dunningSettingsInput>;
 export async function saveDunningSettings(auth: AuthContext, input: DunningSettingsInput) {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
-  // Zahlungserinnerung begründet erst den Verzug (§ 286 Abs. 1 BGB) → keine Gebühr
-  const value = { ...input, stages: { ...input.stages, reminder: { ...input.stages.reminder, feeCents: 0 } } };
+  // Zahlungserinnerung begründet erst den Verzug (§ 286 Abs. 1 BGB) → keine Gebühr;
+  // übrige Stufen höchstens MAX_FEE_CENTS (vorerst 0 €, bis Gebühren verbucht werden können)
+  const cap = (fee: number) => Math.min(Math.max(0, fee), MAX_FEE_CENTS);
+  const value = {
+    ...input,
+    stages: {
+      reminder: { ...input.stages.reminder, feeCents: 0 },
+      dunning1: { ...input.stages.dunning1, feeCents: cap(input.stages.dunning1.feeCents) },
+      dunning2: { ...input.stages.dunning2, feeCents: cap(input.stages.dunning2.feeCents) },
+    },
+  };
   await withOrg(org, (tx) =>
     tx
       .update(organizations)

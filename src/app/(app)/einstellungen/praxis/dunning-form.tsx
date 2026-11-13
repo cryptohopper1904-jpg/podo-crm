@@ -7,6 +7,7 @@ import {
   DUNNING_PLACEHOLDERS,
   DUNNING_STAGE_LABEL,
   DUNNING_STAGES,
+  FEES_ENABLED,
   MAX_FEE_CENTS,
   MAX_PAY_DAYS,
   MAX_STAGE_DAYS,
@@ -37,9 +38,13 @@ export function DunningForm({ settings }: { settings: DunningSettings }) {
                 <Field label="Gebühr (€)" hint="Die Zahlungserinnerung setzt den Verzug erst in Gang – dafür darf keine Gebühr verlangt werden.">
                   <Input value="0,00" disabled readOnly />
                 </Field>
-              ) : (
-                <Field label="Gebühr (€)" hint={`Nur tatsächliche Kosten (z. B. Porto, Papier), keine Pauschale. Höchstens ${euro(MAX_FEE_CENTS)} €. Wird nur im Schreiben ausgewiesen, nicht auf der Rechnung.`}>
+              ) : FEES_ENABLED ? (
+                <Field label="Gebühr (€)" hint={`Nur tatsächliche Kosten (z. B. Porto, Papier), keine Pauschale – üblich ca. 1–3 €. Höchstens ${euro(MAX_FEE_CENTS)} €. Wird nur im Schreiben ausgewiesen, nicht auf der Rechnung.`}>
                   <Input name={`${s}.fee`} inputMode="decimal" defaultValue={euro(st.feeCents)} />
+                </Field>
+              ) : (
+                <Field label="Gebühr (€)" hint="Mahngebühren folgen, sobald die Verbuchung eingebaut ist.">
+                  <Input value="0,00" disabled readOnly />
                 </Field>
               )}
             </div>

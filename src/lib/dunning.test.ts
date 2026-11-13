@@ -30,7 +30,7 @@ describe("Mahnwesen: Einstellungen", () => {
     expect(s.stages.dunning2.text).toBe(DEFAULT_DUNNING_TEXT.dunning2);
   });
 
-  it("ungültige Werte fallen auf Standard zurück, Zahlungserinnerung bleibt gebührenfrei", () => {
+  it("ungültige Werte fallen auf Standard zurück; Gebühren vorerst überall 0 €", () => {
     const s = readDunningSettings({
       dunning: { payDays: 0, stages: { reminder: { days: 3, feeCents: 500, text: "Hallo {anrede}" }, dunning1: { days: -1, feeCents: 99999 }, dunning2: { days: 21, feeCents: 250, text: " " } } },
     });
@@ -38,7 +38,8 @@ describe("Mahnwesen: Einstellungen", () => {
     expect(s.stages.reminder).toEqual({ days: 3, feeCents: 0, text: "Hallo {anrede}" });
     expect(s.stages.dunning1.days).toBe(14);
     expect(s.stages.dunning1.feeCents).toBe(0);
-    expect(s.stages.dunning2).toMatchObject({ days: 21, feeCents: 250, text: DEFAULT_DUNNING_TEXT.dunning2 });
+    // Mahngebühren erst mit Buchungsweg (MAX_FEE_CENTS = 0)
+    expect(s.stages.dunning2).toMatchObject({ days: 21, feeCents: 0, text: DEFAULT_DUNNING_TEXT.dunning2 });
   });
 });
 
@@ -61,13 +62,24 @@ describe("Mahnwesen: Stufenberechnung", () => {
   });
 
   it("weitere Stufen jeweils 14 Tage nach dem vorigen Schreiben, danach erschöpft", () => {
-    const r = [{ stage: "reminder", letterDate: "2026-11-10" }];
+    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-20" }];
     expect(dunningState(inv(), r, S, "2026-11-23")).toMatchObject({ state: "waiting", next: "dunning1", dueOn: "2026-11-24", last: "reminder" });
     expect(dunningState(inv(), r, S, "2026-11-24")).toMatchObject({ state: "due", next: "dunning1" });
-    const r2 = [...r, { stage: "dunning1", letterDate: "2026-11-30" }];
+    const r2 = [...r, { stage: "dunning1", letterDate: "2026-11-30", payBy: "2026-12-10" }];
     expect(dunningState(inv(), r2, S, "2026-12-14")).toMatchObject({ state: "due", next: "dunning2", dueOn: "2026-12-14" });
-    const r3 = [...r2, { stage: "dunning2", letterDate: "2026-12-20" }];
+    const r3 = [...r2, { stage: "dunning2", letterDate: "2026-12-20", payBy: "2026-12-30" }];
     expect(dunningState(inv(), r3, S, "2027-02-01")).toMatchObject({ state: "exhausted", last: "dunning2" });
+  });
+
+  it("nächste Stufe nie vor Ablauf der Zahlungsfrist des vorigen Schreibens", () => {
+    // Frist im Schreiben (30 Tage) länger als der Abstand der Stufen (14 Tage) → erst am Tag nach der Frist
+    const r = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-12-10" }];
+    expect(dunningState(inv(), r, S, "2026-11-24")).toMatchObject({ state: "waiting", next: "dunning1", dueOn: "2026-12-11" });
+    expect(dunningState(inv(), r, S, "2026-12-10").state).toBe("waiting");
+    expect(dunningState(inv(), r, S, "2026-12-11").state).toBe("due");
+    // kurze Frist: Abstand der Stufen gilt
+    const short = [{ stage: "reminder", letterDate: "2026-11-10", payBy: "2026-11-12" }];
+    expect(dunningState(inv(), short, S, "2026-11-23")).toMatchObject({ state: "waiting", dueOn: "2026-11-24" });
   });
 
   it("über Monats-/Jahresgrenzen und mit eigenen Fristen", () => {
