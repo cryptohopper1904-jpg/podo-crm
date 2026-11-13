@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { ChevronsLeft, ChevronsRight, Sparkles } from "lucide-react";
 import { SideNav, type NavKey } from "./app-nav";
 import { Logo, LogoMark } from "./logo";
 import { cx } from "./ui";
 import { NAV_COOKIE } from "@/lib/nav";
+import { VIEW_LEVEL_LABELS, VIEW_LEVELS, type ViewLevel } from "@/lib/view-level";
+import { setViewLevelAction } from "@/app/(app)/einstellungen/ansicht/actions";
 
 
 /**
@@ -20,14 +22,30 @@ export function Sidebar({
   badges,
   userName,
   userMeta,
+  level,
+  canChangeView,
 }: {
   initialCollapsed: boolean;
   allowed: NavKey[];
   badges?: Partial<Record<NavKey, number>>;
   userName: string;
   userMeta: string;
+  /** Ansicht der Person (src/lib/view-level.ts) */
+  level: ViewLevel;
+  /** Schnellumschalter zeigen (nicht im Support-Modus) */
+  canChangeView: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [shownLevel, setShownLevel] = useOptimistic(level);
+  const [, startTransition] = useTransition();
+  const [levelError, setLevelError] = useState<string | null>(null);
+  const chooseLevel = (l: ViewLevel) =>
+    startTransition(async () => {
+      setShownLevel(l);
+      setLevelError(null);
+      const res = await setViewLevelAction(l);
+      if (res && "error" in res && res.error) setLevelError(res.error);
+    });
   const toggle = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -63,7 +81,7 @@ export function Sidebar({
           {collapsed ? <ChevronsRight size={18} aria-hidden /> : <ChevronsLeft size={18} aria-hidden />}
         </button>
       </div>
-      <SideNav allowed={allowed} badges={badges} collapsed={collapsed} />
+      <SideNav allowed={allowed} badges={badges} collapsed={collapsed} level={shownLevel} />
       {collapsed ? (
         <div className="mt-auto flex flex-col items-center gap-2">
           <Link
@@ -85,6 +103,26 @@ export function Sidebar({
         <div className="mt-auto rounded-xl bg-surface-2 p-3 text-sm">
           <p className="font-semibold">{userName}</p>
           <p className="text-muted">{userMeta}</p>
+          {canChangeView ? (
+            <div role="group" aria-label="Ansicht" className="mt-2 flex rounded-lg border border-border bg-surface p-0.5">
+              {VIEW_LEVELS.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => chooseLevel(l)}
+                  aria-pressed={shownLevel === l}
+                  title={`Ansicht „${VIEW_LEVEL_LABELS[l]}“`}
+                  className={cx(
+                    "min-h-8 flex-1 rounded-md px-1 text-xs font-semibold",
+                    shownLevel === l ? "bg-primary text-on-primary" : "text-muted hover:bg-surface-2 hover:text-text",
+                  )}
+                >
+                  {VIEW_LEVEL_LABELS[l]}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {levelError ? <p role="alert" className="mt-1 text-xs font-medium text-danger">{levelError}</p> : null}
           <Link href="/neuigkeiten" className="mt-2 inline-flex min-h-8 items-center gap-1.5 font-semibold text-primary hover:underline">
             <Sparkles size={15} aria-hidden /> Neuigkeiten
           </Link>

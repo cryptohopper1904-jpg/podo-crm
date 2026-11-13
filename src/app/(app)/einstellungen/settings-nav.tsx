@@ -39,13 +39,17 @@ export const SETTINGS_GROUPS = [
     label: "Vertrag",
     tabs: [["abo", "Abo & Tarif"]],
   },
+  {
+    label: "Persönlich",
+    tabs: [["ansicht", "Ansicht"]],
+  },
 ] as const;
 
 /** `hidden`: ausgeblendete Tabs (z. B. „ti“/„ocr“ bei Praxen nur für Privat-/Selbstzahler, src/lib/features.ts) */
 export function SettingsNav({ hidden = [] }: { hidden?: readonly string[] } = {}) {
   const pathname = usePathname();
   return (
-    <nav aria-label="Einstellungen" className="mb-6 grid gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
+    <nav aria-label="Einstellungen" className="mb-6 grid gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       {SETTINGS_GROUPS.map((g) => (
         <div key={g.label} className="min-w-0">
           <div className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</div>
