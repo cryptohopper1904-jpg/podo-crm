@@ -112,6 +112,8 @@ export type MailContext = { purpose: string; userId?: string | null; entity?: st
  * innerhalb einer offenen Transaktion laufen, ohne eine weitere Pool-Verbindung zu belegen. Das Protokoll
  * (`failed`/`succeeded`: Audit + Sync-Protokoll) schreibt der Aufrufer danach, außerhalb der Transaktion.
  * Wirft (bei Drosselung/fehlender Einrichtung) MailSendError/MailNotConfiguredError – bereits protokolliert.
+ * Verbraucht ein Drossel-Kontingent: erst aufrufen, wenn die Nachricht fertig ist. Genau EIN `send` pro Vorbereitung
+ * (ein zweiter Aufruf wirft), danach genau einmal `failed` oder `succeeded`.
  */
 export async function prepareMail(org: string, ctx: MailContext, opts: { branded?: boolean } = {}) {
   const fail = async (err: Error) => {
@@ -128,11 +130,16 @@ export async function prepareMail(org: string, ctx: MailContext, opts: { branded
     throw await fail(e instanceof MailNotConfiguredError || e instanceof MailSendError ? e : toMailError(e));
   }
   const brand = opts.branded ? await brandingOf(org) : null;
+  let used = false;
+  let sentAttachments = 0;
   return {
     isMock: port.isMock,
     /** Nur Netzwerk (keine DB). Fehler kommen als MailSendError ohne Geheimnisse. */
     async send(msg: MailMessage): Promise<{ messageId: string }> {
+      if (used) throw new Error("prepareMail: send darf nur einmal aufgerufen werden – für jede Nachricht neu vorbereiten.");
+      used = true;
       const m = brand ? { ...msg, html: brandedMailHtml(msg.text, { practiceName: brand.name, logo: brand.logo }), attachments: [...(msg.attachments ?? []), brand.attachment] } : msg;
+      sentAttachments = m.attachments?.length ?? 0;
       try {
         return { messageId: (await port.send(m)).messageId };
       } catch (e) {
@@ -142,7 +149,7 @@ export async function prepareMail(org: string, ctx: MailContext, opts: { branded
     /** Fehlschlag protokollieren (Audit „mail.failed“ + Sync-Protokoll) */
     failed: (err: Error) => fail(err),
     /** Erfolg protokollieren: Testmodus im Audit, echter Versand als Zähler im Sync-Protokoll (nur Zweck) */
-    async succeeded(attachments = 0) {
+    async succeeded(attachments = sentAttachments) {
       if (port.isMock) {
         await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.mock", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, attachments } }).catch(() => undefined);
       } else {
@@ -151,6 +158,7 @@ export async function prepareMail(org: string, ctx: MailContext, opts: { branded
     },
   };
 }
+/** Vorbereiteter Versand: genau ein `send`, danach `failed` oder `succeeded` (Anhangszahl inkl. Logo wird mitgezählt). */
 export type PreparedMail = Awaited<ReturnType<typeof prepareMail>>;
 
 /**
@@ -161,7 +169,7 @@ export async function sendMail(org: string, msg: MailMessage, ctx: MailContext):
   const mail = await prepareMail(org, ctx);
   try {
     const res = await mail.send(msg);
-    await mail.succeeded(msg.attachments?.length ?? 0);
+    await mail.succeeded();
     return { messageId: res.messageId, mock: mail.isMock };
   } catch (e) {
     throw await mail.failed(toMailError(e));

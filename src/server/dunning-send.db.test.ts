@@ -1,27 +1,31 @@
 /** Mahnung per E-Mail mit „echtem“ (gestubbtem) Versand: kein Doppelversand, Rollback bei Fehler, Frist ab Versandtag. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-const mail = vi.hoisted(() => ({ calls: 0, fail: false, failedLogs: 0 }));
+const mail = vi.hoisted(() => ({ calls: 0, fail: false, failedLogs: 0, succeededLogs: 0, breakAfterSend: false }));
 vi.mock("./mail", async () => {
   const { MailSendError } = await import("@/integrations/mail/mail");
   return {
     // wie das Original: Versandweg vorab laden, `send` ohne DB-Zugriff, Protokoll danach
+    mailSettingsFor: async () => ({ kind: "smtp" }),
     prepareMail: async () => ({
       isMock: false,
       async send() {
         mail.calls++;
         await new Promise((r) => setTimeout(r, 50));
         if (mail.fail) throw new MailSendError("Server lehnt ab", "EENVELOPE");
-        return { messageId: `ext-${mail.calls}` };
+        return { messageId: mail.breakAfterSend ? "ext-break-after-send" : `ext-${mail.calls}` };
       },
       failed: async (e: Error) => {
         mail.failedLogs++;
         return e;
       },
-      succeeded: async () => undefined,
+      succeeded: async () => {
+        mail.succeededLogs++;
+      },
     }),
   };
 });
+import { Pool } from "pg";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("Mahnung per E-Mail (DB, Versand gestubbt)", () => {
@@ -82,5 +86,35 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(row.sent_via).toBeNull();
     mail.fail = false;
     await expect(dunning.sendDunningEmail(auth(), id)).resolves.toMatchObject({ mock: false });
+  });
+
+  it("Versand geklappt, Speichern danach gescheitert: als versendet protokolliert, kein Vermerk", async () => {
+    const ownerUrl = process.env.TEST_OWNER_DATABASE_URL;
+    if (!ownerUrl) return;
+    const owner = new Pool({ connectionString: ownerUrl, max: 1 });
+    // Nachricht mit dieser externen ID lässt sich nicht speichern → Transaktion scheitert NACH dem Versand
+    await owner.query(`create or replace function podo_test_break_message() returns trigger language plpgsql as $$
+      begin if new.external_id = 'ext-break-after-send' then raise exception 'Testfehler nach Versand'; end if; return new; end $$`);
+    await owner.query("drop trigger if exists podo_test_break_message on messages");
+    await owner.query("create trigger podo_test_break_message before insert on messages for each row execute function podo_test_break_message()");
+    try {
+      const inv = await overdueInvoice();
+      const id = (await dunning.createDunnings(auth(), [inv])).created[0].dunningId;
+      mail.breakAfterSend = true;
+      mail.succeededLogs = 0;
+      mail.failedLogs = 0;
+      await expect(dunning.sendDunningEmail(auth(), id)).rejects.toThrow(/versendet, der Versandvermerk konnte aber nicht gespeichert werden/);
+      expect(mail.succeededLogs).toBe(1);
+      expect(mail.failedLogs).toBe(0);
+      const row = await f.asOrg(org, async (c) => (await c.query("select sent_via from invoice_dunnings where id = $1", [id])).rows[0]);
+      expect(row.sent_via).toBeNull();
+      const hint = await f.asOrg(org, async (c) => (await c.query("select message from sync_log where organization_id = $1 and entity_id = $2 and ok = false", [org, inv])).rows);
+      expect(hint.map((h) => h.message)).toEqual([expect.stringMatching(/versendet, Vermerk nicht gespeichert/)]);
+    } finally {
+      mail.breakAfterSend = false;
+      await owner.query("drop trigger if exists podo_test_break_message on messages");
+      await owner.query("drop function if exists podo_test_break_message()");
+      await owner.end();
+    }
   });
 });
