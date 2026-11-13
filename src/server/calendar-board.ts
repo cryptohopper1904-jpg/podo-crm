@@ -10,15 +10,12 @@ import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, ty
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { practiceHours } from "@/lib/opening-hours";
 import { therapists } from "./appointments";
 
 async function orgCalendarInfo(org: string) {
   const [o] = await db.select({ state: organizations.state, settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  const opening = (o?.settings as { opening?: { from?: string; to?: string } } | undefined)?.opening;
-  return {
-    state: (o?.state ?? "BB") as StateCode,
-    opening: { start: opening?.from ?? "08:00", end: opening?.to ?? "18:00" } satisfies TimeRange,
-  };
+  return { state: (o?.state ?? "BB") as StateCode, opening: practiceHours(o?.settings) };
 }
 
 /**
