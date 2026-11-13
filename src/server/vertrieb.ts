@@ -10,6 +10,7 @@ import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibili
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
 import { promoLandingUrl } from "@/lib/promo-codes";
 import { usableCodesFor } from "./promo-codes";
+import { websiteHostKey } from "@/lib/vertrieb/lead-search";
 import { addLeadToBlocklist, addToBlocklist, assertBlocklistKey, blockedEmails, blocklistKeyProblem, blocklistMatcher, blocklistOverview, isBlocked } from "./blocklist";
 import { unsubscribeUrl, verifyUnsubscribeToken } from "@/lib/vertrieb/unsubscribe-token";
 import { platformMailPort } from "./mail";
@@ -167,8 +168,18 @@ export async function getLead(id: string): Promise<{ lead: Lead; sends: SalesSen
   return { lead, sends, suppressed };
 }
 
-/** Dubletten und Sperrliste. `previousEmail`: beim Bearbeiten – eine unveränderte (z. B. gesperrte Kunden-)Adresse ist erlaubt. */
-async function assertNoDuplicate(input: LeadInput, exceptId?: string, previousEmail?: string | null) {
+/**
+ * Dubletten und Sperrliste (Adresse, Website-Host, Name+PLZ; fail-closed bei falschem Sperrlisten-Schlüssel).
+ * `previous`: beim Bearbeiten – unveränderte Angaben (z. B. eines Kunden mit gesperrter Adresse) bleiben erlaubt.
+ */
+async function assertNoDuplicate(input: LeadInput, exceptId?: string, previous?: { email: string | null; website: string | null; name: string; zip: string | null }) {
+  await assertBlocklistKey();
+  const blocked = await blocklistMatcher();
+  const sameHost = previous && websiteHostKey(previous.website) === websiteHostKey(input.website);
+  if (!sameHost && blocked.hasHost(input.website)) throw new Error("Diese Website gehört zu einer Praxis auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
+  const sameNameZip = previous && nameZipKey(previous.name, previous.zip) === nameZipKey(input.name, input.zip);
+  if (!sameNameZip && blocked.hasNameZip(input.name, input.zip)) throw new Error("Diese Praxis (Name und PLZ) steht auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
+  const previousEmail = previous?.email;
   if (input.email) {
     const unchanged = previousEmail != null && normalizeEmail(previousEmail) === normalizeEmail(input.email);
     if (!unchanged && (await isBlocked(input.email))) throw new Error("Diese Adresse steht auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
@@ -188,9 +199,9 @@ export async function createLead(adminUserId: string, input: LeadInput): Promise
 }
 
 export async function updateLead(adminUserId: string, id: string, input: LeadInput) {
-  const [prev] = await db.select({ email: salesLeads.email }).from(salesLeads).where(eq(salesLeads.id, id));
+  const [prev] = await db.select({ email: salesLeads.email, website: salesLeads.website, name: salesLeads.name, zip: salesLeads.zip }).from(salesLeads).where(eq(salesLeads.id, id));
   if (!prev) throw new Error("Eintrag nicht gefunden.");
-  await assertNoDuplicate(input, id, prev.email);
+  await assertNoDuplicate(input, id, prev);
   const email = input.email ? normalizeEmail(input.email) : null;
   await db.transaction(async (tx) => {
     const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
@@ -246,8 +257,7 @@ async function setLeadConsent(adminUserId: string, ids: string[], note: string |
 async function deleteLeadsForOptOut(tx: Tx, ids: string[]) {
   if (!ids.length) return;
   await tx.update(salesSends).set({ messageId: null, error: null }).where(inArray(salesSends.leadId, ids));
-  // persönliche Aktionscodes: Bezeichnung kann den Praxisnamen enthalten
-  await tx.update(promoCodes).set({ label: "(gelöscht)" }).where(inArray(promoCodes.leadId, ids));
+  await anonymizeLeadCodes(tx, ids);
   await tx.delete(salesLeads).where(inArray(salesLeads.id, ids));
 }
 
@@ -272,8 +282,16 @@ export async function setLeadStatus(adminUserId: string, id: string, status: Lea
   });
 }
 
+/** Persönliche Aktionscodes gelöschter Leads: Bezeichnung kann den Praxisnamen enthalten → „(gelöscht)“ */
+async function anonymizeLeadCodes(tx: Tx, ids: string[]) {
+  if (ids.length) await tx.update(promoCodes).set({ label: "(gelöscht)" }).where(inArray(promoCodes.leadId, ids));
+}
+
 export async function deleteLead(adminUserId: string, id: string) {
-  const r = await db.delete(salesLeads).where(eq(salesLeads.id, id)).returning({ id: salesLeads.id, step: salesLeads.step });
+  const r = await db.transaction(async (tx) => {
+    await anonymizeLeadCodes(tx, [id]);
+    return tx.delete(salesLeads).where(eq(salesLeads.id, id)).returning({ id: salesLeads.id, step: salesLeads.step });
+  });
   if (!r.length) throw new Error("Eintrag nicht gefunden.");
   await audit({ userId: adminUserId, action: "vertrieb.lead_deleted", entity: "sales_lead", entityId: id, meta: { step: r[0].step } });
 }
@@ -513,16 +531,17 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
   const cutoffWithout = before(LEAD_RETENTION_MONTHS.withoutConsent);
   const cutoffWith = before(LEAD_RETENTION_MONTHS.withConsent);
   const cutoff = sql`(case when ${salesLeads.consentAt} is null then ${cutoffWithout}::timestamptz else ${cutoffWith}::timestamptz end)`;
-  const r = await db
-    .delete(salesLeads)
-    .where(
-      and(
-        sql`${salesLeads.status} <> 'kunde'`,
-        sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
-          coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
-      ),
-    )
-    .returning({ id: salesLeads.id });
+  const stale = and(
+    sql`${salesLeads.status} <> 'kunde'`,
+    sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
+      coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
+  );
+  const r = await db.transaction(async (tx) => {
+    const ids = (await tx.select({ id: salesLeads.id }).from(salesLeads).where(stale).for("update")).map((x) => x.id);
+    if (!ids.length) return [];
+    await anonymizeLeadCodes(tx, ids);
+    return tx.delete(salesLeads).where(inArray(salesLeads.id, ids)).returning({ id: salesLeads.id });
+  });
   if (r.length) await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.length, months: { ...LEAD_RETENTION_MONTHS } } });
   return r.length;
 }
