@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarPlus, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Stethoscope } from "lucide-react";
-import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { PortalLinkButton } from "@/components/portal-link-button";
 import { requireAuth } from "@/lib/auth/session";
@@ -15,6 +15,7 @@ import { WaitlistCard } from "./waitlist-card";
 import { DeceasedCard } from "./deceased-card";
 import { deceasedStatus } from "@/server/patient-deceased";
 import { DECEASED_LABEL } from "@/lib/patient-deceased";
+import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Patientenakte" };
 
@@ -24,6 +25,7 @@ const INVOICE_STATUS: Record<string, string> = { draft: "Entwurf", issued: "offe
 
 export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
   const { id } = await props.params;
+  const { von } = await props.searchParams;
   const auth = await requireAuth("patients.read");
   const data = await getPatient(auth, id);
   if (!data) notFound();
@@ -48,11 +50,12 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
   return (
     <div className="mx-auto max-w-7xl">
       <header className="mb-6 flex flex-wrap items-start gap-4">
-        <div className="min-w-0 flex-1">
+        <div className={pageTitleBox}>
+          <BackLink href={backHref("/kunden", von)} label="Patienten" />
           <p className="text-sm text-muted">
             Patient #{p.number} · {INSURANCE[p.insuranceType]}{p.insurerName ? ` (${p.insurerName})` : ""}{age !== null ? ` · ${age} Jahre` : ""}
           </p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">{fullName(p)}</h1>
+          <h1 className={pageTitleCls}>{fullName(p)}</h1>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {deceased ? (
               <Badge>{DECEASED_LABEL}{deceased.date ? ` am ${dateDe(deceased.date)}` : ""}</Badge>

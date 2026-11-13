@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
-import { Card, CardTitle, Empty, Field, Input, Select, Table, Textarea } from "@/components/ui";
+import { Card, CardTitle, Empty, Field, Input, Select, Table, Textarea, BackLink } from "@/components/ui";
 import { PrintButton } from "@/components/print-button";
 import { berlinDateIso, dateDe, dateTimeDe } from "@/lib/format";
 import {
@@ -37,7 +37,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm text-muted no-print"><Link href="/hygiene/geraete" className="underline">Geräte</Link></p>
+          <BackLink href="/hygiene/geraete" label="Geräte" />
           <h2 className="font-display text-2xl font-semibold">{device.name}</h2>
           <p className="text-sm text-muted">
             {DEVICE_KIND_LABELS[device.kind as DeviceKind] ?? device.kind}

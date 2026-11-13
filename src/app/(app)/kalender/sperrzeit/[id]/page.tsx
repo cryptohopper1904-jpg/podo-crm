@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Ban } from "lucide-react";
-import { Badge, Card, CardTitle } from "@/components/ui";
+import { Ban } from "lucide-react";
+import { BackLink, Badge, Card, CardTitle, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { BLOCK_KIND_LABELS, blockLabel, describeRepeat, occursOn, type BlockKind, type BlockRepeat } from "@/lib/calendar-blocks";
 import { isValidIsoDate } from "@/lib/iso-date";
@@ -31,13 +30,11 @@ export default async function BlockPage(props: PageProps<"/kalender/sperrzeit/[i
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link href={`/kalender?datum=${occurrence}`} className="mb-4 inline-flex h-11 items-center gap-2 text-sm font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Kalender
-      </Link>
       <header className="mb-6 flex flex-wrap items-end gap-3">
-        <div className="min-w-0 flex-1">
+        <div className={pageTitleBox}>
+          <BackLink href={`/kalender?datum=${occurrence}`} label="Kalender" />
           <p className="text-sm text-muted">Sperrzeit · {series ? `Vorkommen am ${de(occurrence)}` : de(b.startsOn)} · {time}</p>
-          <h1 className="flex items-center gap-2 font-display text-3xl font-semibold tracking-tight">
+          <h1 className={`flex items-center gap-2 ${pageTitleCls}`}>
             <Ban size={26} className="shrink-0 text-muted" aria-hidden /> {blockLabel(b)}
           </h1>
         </div>

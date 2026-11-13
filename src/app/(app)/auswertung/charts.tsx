@@ -7,7 +7,37 @@ import { cx } from "@/components/ui";
 import { heatLevel, type Heatmap, WEEKDAYS, WEEKDAYS_SHORT } from "@/lib/stats";
 import { CsvButton } from "./csv-button";
 
-const rowHeadCls = "text-[15px] font-normal";
+/**
+ * Auf-/Zuklappen der Wertetabellen: kein Rahmen beim Klick (Safari/iPad zeigt bei <summary> sonst den Fokusring
+ * auch nach Mausklick/Tippen), Fokusring nur bei Tastaturbedienung (focus-visible), eng anliegend.
+ */
+export const summaryCls =
+  "inline-flex min-h-11 w-fit cursor-pointer list-none items-center rounded-md text-sm font-semibold text-primary outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring [&::-webkit-details-marker]:hidden";
+
+/**
+ * Kompakte Tabelle für Karten (auch halbe Karten ab iPad-Breite): keine Mindestbreite, text-sm, wenig Innenabstand,
+ * Zahlen rechtsbündig ohne Umbruch (tabular-nums), Spaltenköpfe dürfen umbrechen. Nur wenn der Platz wirklich nicht
+ * reicht (Handy), scrollt die Tabelle in ihrem eigenen Rahmen waagerecht – nie die Karte oder Seite.
+ */
+export function CompactTable({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <div className="max-w-full overflow-x-auto rounded-xl border border-border bg-surface">
+      <table className="w-full border-collapse text-left text-sm [&_td]:border-t [&_td]:border-border [&_td]:px-2 [&_td]:py-2 [&_td]:whitespace-nowrap [&_td]:tabular-nums [&_tbody_th]:border-t [&_tbody_th]:border-border [&_tbody_th]:px-2 [&_tbody_th]:py-2 [&_tbody_th]:font-normal [&_thead_th]:bg-surface-2 [&_thead_th]:px-2 [&_thead_th]:py-2 [&_thead_th]:align-bottom [&_thead_th]:text-[11px] [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:leading-tight [&_thead_th]:text-muted">
+        <caption className="sr-only">{caption}</caption>
+        {children}
+      </table>
+    </div>
+  );
+}
+
+/** Wochentag kurz („Mo“), ausgeschrieben für Screenreader/Tooltip */
+export function Weekday({ index }: { index: number }) {
+  return (
+    <abbr title={WEEKDAYS[index]} className="no-underline">
+      {WEEKDAYS_SHORT[index]}
+    </abbr>
+  );
+}
 
 /** Werte-Tabelle zum Aufklappen (Text-Alternative jedes Diagramms), optional mit CSV-Export */
 export function ValuesTable({
@@ -22,23 +52,20 @@ export function ValuesTable({
   head: string[];
   /** erste Spalte = Zeilenkopf, weitere Spalten rechtsbündig */
   rows: ReactNode[][];
-  /** CSV-Export (null = nicht anbieten, z. B. im Support-Modus) */
-  csv?: { filename: string; rows: (string | number)[][] } | null;
+  /** CSV-Export (null = nicht anbieten, z. B. im Support-Modus); Spaltenköpfe wie `head`, sofern nicht `csv.head` */
+  csv?: { filename: string; rows: (string | number)[][]; head?: string[] } | null;
   open?: boolean;
   summary?: string;
 }) {
   return (
     <details className="mt-3" open={open}>
-      <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-primary">{summary}</summary>
+      <summary className={summaryCls}>{summary}</summary>
       {csv ? (
         <div className="flex justify-end">
-          <CsvButton filename={csv.filename} rows={[head, ...csv.rows]} />
+          <CsvButton filename={csv.filename} rows={[csv.head ?? head, ...csv.rows]} />
         </div>
       ) : null}
-      {/* eigene Tabelle ohne Mindestbreite: passt auch in halbe Karten (iPad); breite Tabellen scrollen waagerecht */}
-      <div className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
-        <table className="w-full border-collapse text-left text-[15px] [&_td]:border-t [&_td]:border-border [&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3 [&_tbody_th]:border-t [&_tbody_th]:border-border [&_tbody_th]:py-2.5 [&_thead_th]:bg-surface-2 [&_thead_th]:py-2 [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-wide [&_thead_th]:text-muted">
-        <caption className="sr-only">{caption}</caption>
+      <CompactTable caption={caption}>
         <thead>
           <tr>
             {head.map((h, i) => (
@@ -53,11 +80,11 @@ export function ValuesTable({
             <tr key={ri}>
               {r.map((c, ci) =>
                 ci === 0 ? (
-                  <th key={ci} scope="row" className={rowHeadCls}>
+                  <th key={ci} scope="row">
                     {c}
                   </th>
                 ) : (
-                  <td key={ci} className="text-right tabular-nums">
+                  <td key={ci} className="text-right">
                     {c}
                   </td>
                 ),
@@ -65,8 +92,7 @@ export function ValuesTable({
             </tr>
           ))}
         </tbody>
-        </table>
-      </div>
+      </CompactTable>
     </details>
   );
 }
@@ -102,15 +128,15 @@ export function Columns({ items, label, height = "h-44" }: { items: { label: str
   return (
     <figure>
       <figcaption className="sr-only">{`${label}: ${items.map((i) => `${i.label} ${i.display}`).join(", ")}`}</figcaption>
-      <div className={cx("flex items-end gap-1 overflow-x-auto sm:gap-2", height)} aria-hidden>
+      <div className={cx("flex items-end gap-0.5 sm:gap-1 xl:gap-2", height)} aria-hidden>
         {items.map((it) => (
-          <div key={it.label} className="flex h-full min-w-8 flex-1 flex-col items-center justify-end gap-1" title={`${it.label}: ${it.display}`}>
+          <div key={it.label} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1" title={`${it.label}: ${it.display}`}>
             {items.length <= 8 ? <span className="text-[11px] tabular-nums text-muted">{it.value ? it.display : ""}</span> : null}
             <div
               className={cx("w-full max-w-10 rounded-t", it.strong ? "bg-primary" : "bg-primary/55")}
               style={{ height: `${it.value ? Math.max(2, (it.value / max) * 80) : 0}%` }}
             />
-            <span className="text-[11px] text-muted">{it.label}</span>
+            <span className="text-center text-[10px] leading-tight text-muted sm:text-[11px]">{it.label}</span>
           </div>
         ))}
       </div>

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { Empty, PageHeader, Stat } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { DUNNING_STAGE_LABEL } from "@/lib/dunning";
@@ -53,10 +52,8 @@ export default async function DunningPage() {
 
   return (
     <div className="mx-auto max-w-7xl">
-      <Link href="/rechnungen" className="mb-4 inline-flex h-11 items-center gap-2 text-sm font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Alle Rechnungen
-      </Link>
       <PageHeader
+        back={{ href: "/rechnungen", label: "Rechnungen" }}
         title="Mahnungen"
         subtitle={`Überfällige Privatrechnungen · Stand ${dateDe(today)}`}
       />

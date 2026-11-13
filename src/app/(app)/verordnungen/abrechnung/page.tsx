@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Download } from "lucide-react";
-import { Badge, Card, CardTitle, Empty, Table } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, Table, BackLink } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { listBillingBatches, listRunningPrescriptions } from "@/server/prescriptions";
@@ -30,8 +29,8 @@ export default async function BillingPage() {
   });
   return (
     <div className="mx-auto max-w-6xl">
-      <p className="text-sm text-muted"><Link href="/verordnungen" className="hover:text-primary">← Verordnungen</Link></p>
-      <h1 className="mb-2 font-display text-3xl font-semibold tracking-tight">GKV-Abrechnung</h1>
+      <BackLink href="/verordnungen" label="Verordnungen" />
+      <h1 className="mb-2 font-display text-3xl font-semibold tracking-tight wrap-break-word">GKV-Abrechnung</h1>
       <p className="mb-6 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         Hier werden abrechnungsreife Verordnungen zu einem Abrechnungslauf zusammengefasst und als CSV (neutrales Format) exportiert.
         Die eigentliche Abrechnung nach § 302 SGB V (Datenübermittlung an die Krankenkassen) erfolgt über das Abrechnungszentrum (Partner).

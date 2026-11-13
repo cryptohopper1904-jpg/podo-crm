@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
-import { Card, CardTitle, Empty, LinkButton, Table } from "@/components/ui";
+import { Card, CardTitle, Empty, LinkButton, Table, BackLink } from "@/components/ui";
 import { PrintButton } from "@/components/print-button";
 import { berlinDateIso, dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { getBatchByCode, traceBatch } from "@/server/hygiene";
@@ -30,7 +30,7 @@ export default async function BatchTracePage(props: PageProps<"/hygiene/charge/[
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm text-muted no-print"><Link href="/hygiene/chargen" className="underline">Sterilgut-Chargen</Link></p>
+          <BackLink href="/hygiene/chargen" label="Sterilgut-Chargen" />
           <h2 className="font-mono text-2xl font-semibold">{code}</h2>
         </div>
         <div className="flex gap-2 no-print">

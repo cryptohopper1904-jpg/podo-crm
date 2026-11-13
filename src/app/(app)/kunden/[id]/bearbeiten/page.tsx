@@ -18,7 +18,7 @@ export default async function EditPatientPage(props: PageProps<"/kunden/[id]/bea
   const status = auth.role === "owner" && !auth.support ? await deletionStatus(auth, id) : null;
   return (
     <div className="mx-auto max-w-5xl">
-      <PageHeader title={fullName(data.patient)} subtitle={`Patient #${data.patient.number} bearbeiten`} />
+      <PageHeader title={fullName(data.patient)} subtitle={`Patient #${data.patient.number} bearbeiten`} back={{ href: `/kunden/${id}`, label: `Akte ${fullName(data.patient)}` }} />
       <PatientForm patient={data.patient} privateOnly={isPrivateOnly(auth.organization)} />
       {status ? <DeletePatientCard id={id} number={data.patient.number} status={status} /> : null}
     </div>

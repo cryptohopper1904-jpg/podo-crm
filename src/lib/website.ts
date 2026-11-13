@@ -3,12 +3,14 @@
  * Reine Logik (ohne DB/Request) – genutzt von Seite, Einstellungen, Bootstrap und Tests.
  *
  * Gespeichert in organizations.settings:
- *   website        – { enabled, claim, about, showPrices, imprint, privacy, serviceDescriptions }
+ *   website        – { enabled, claim, about, showPrices, imprint, privacy, serviceDescriptions, customHours }
  *   websiteUrl     – bestehende eigene Website der Praxis (nur Verweis)
- *   openingHours   – [{ weekday: 1 (Mo) … 7 (So), from: "08:00", to: "17:00" }]
+ *   openingHours   – abweichende Website-Zeiten [{ weekday: 1 (Mo) … 7 (So), from: "08:00", to: "17:00" }] – nur mit
+ *                    website.customHours; sonst zeigt die Website die Praxis-Öffnungszeiten (src/lib/opening-hours.ts)
  *   homeVisitAreas – ["Hohen Neuendorf", …]
  *   openingDate    – "2026-11-01" (Eröffnung, optional)
  */
+import { storedPracticeHours, weekFromList, weekToList } from "./opening-hours";
 import { entitlements, type OrgBilling, type PlanId } from "./plans";
 
 export type OpeningHour = { weekday: number; from: string; to: string };
@@ -24,13 +26,14 @@ export type WebsiteSettings = {
   privacy: string;
   /** Kurzbeschreibung je Leistungs-Code */
   serviceDescriptions: Record<string, string>;
+  /** true = eigene Website-Zeiten (settings.openingHours), false = wie Praxis-Öffnungszeiten */
+  customHours: boolean;
 };
 
 export const WEEKDAYS: Record<number, string> = { 1: "Montag", 2: "Dienstag", 3: "Mittwoch", 4: "Donnerstag", 5: "Freitag", 6: "Samstag", 7: "Sonntag" };
 
 export const LIMITS = { claim: 140, about: 2000, imprint: 3000, privacy: 20000, serviceDescription: 300, areas: 30, area: 60 } as const;
 
-const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
@@ -51,18 +54,24 @@ export function websiteSettings(settings: Record<string, unknown> | null | undef
     imprint: str(w.imprint, LIMITS.imprint),
     privacy: str(w.privacy, LIMITS.privacy),
     serviceDescriptions: desc,
+    // Altdaten ohne Schalter: bisherige Website-Zeiten sind zugleich die Praxis-Öffnungszeiten (storedPracticeHours)
+    customHours: w.customHours === true,
   };
 }
 
-/** Öffnungszeiten validiert und sortiert (ungültige Einträge werden verworfen). */
+/** Eigene Website-Zeiten (settings.openingHours) validiert, sortiert und ins 5-Minuten-Raster eingerastet (ungültige verworfen). */
 export function openingHours(settings: Record<string, unknown> | null | undefined): OpeningHour[] {
-  const raw = settings?.openingHours;
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((h) => h as Partial<OpeningHour>)
-    .filter((h): h is OpeningHour => Number.isInteger(h.weekday) && h.weekday! >= 1 && h.weekday! <= 7 && TIME.test(String(h.from)) && TIME.test(String(h.to)) && String(h.from) < String(h.to))
-    .map((h) => ({ weekday: h.weekday, from: h.from, to: h.to }))
-    .sort((a, b) => a.weekday - b.weekday || a.from.localeCompare(b.from));
+  return weekToList(weekFromList(settings?.openingHours));
+}
+
+/**
+ * Zeiten, die die Website zeigt: eigens gepflegte Website-Zeiten (customHours; leer = alle Tage geschlossen) oder die
+ * Praxis-Öffnungszeiten. Hat die Praxis keine gepflegt, zeigt die Website KEINE Zeiten (kein interner Standardwert).
+ */
+export function websiteOpeningHours(settings: Record<string, unknown> | null | undefined): OpeningHour[] {
+  if (websiteSettings(settings).customHours) return openingHours(settings);
+  const stored = storedPracticeHours(settings);
+  return stored ? weekToList(stored) : [];
 }
 
 export function homeVisitAreas(settings: Record<string, unknown> | null | undefined): string[] {

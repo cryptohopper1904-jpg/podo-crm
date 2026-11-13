@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { Card, CardTitle, LinkButton, PageHeader } from "@/components/ui";
+import { Card, CardTitle, PageHeader } from "@/components/ui";
 import { withOrg } from "@/db";
 import { appointments, calendarFeedEvents, calendarFeeds, patients } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
@@ -35,7 +35,7 @@ export default async function AssignFeedAppointmentPage(props: PageProps<"/kalen
   const { a } = data;
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Patient:in zuordnen" subtitle={`aus Kalender-Abo „${data.feedLabel}“`} actions={<LinkButton variant="secondary" href={`/kalender?datum=${berlinDateIso(a.startsAt)}`}>Zurück zum Kalender</LinkButton>} />
+      <PageHeader title="Patient:in zuordnen" subtitle={`aus Kalender-Abo „${data.feedLabel}“`} back={{ href: `/kalender?datum=${berlinDateIso(a.startsAt)}`, label: "Kalender" }} />
       <Card className="mb-4">
         <CardTitle>{a.title ?? "(ohne Titel)"}</CardTitle>
         <p className="text-sm">{dateDe(a.startsAt)}, {timeDe(a.startsAt)}–{timeDe(a.endsAt)}</p>

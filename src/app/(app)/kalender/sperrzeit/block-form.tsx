@@ -102,7 +102,7 @@ export function BlockForm({
           <Field label="Beginn">
             <Input type="time" name="startTime" step={300} defaultValue={defaults.startTime} disabled={allDay} required={!allDay} />
           </Field>
-          <Field label="Ende">
+          <Field label="Ende" hint="23:59 = bis Tagesende">
             <Input type="time" name="endTime" step={300} defaultValue={defaults.endTime} disabled={allDay} required={!allDay} />
           </Field>
           <FieldSlot spacer="hidden sm:block">

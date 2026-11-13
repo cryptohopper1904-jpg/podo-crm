@@ -1,9 +1,12 @@
 /**
  * Verfügbarkeit von Behandler:innen (rein, ohne DB): Arbeitszeiten je Wochentag minus
  * Abwesenheiten, Feiertage und Sperrzeiten (Pause, Schulung … – src/lib/calendar-blocks.ts). Genutzt von src/server/staff.ts (Kalender, Online-Buchung).
+ * Ohne gepflegte Arbeitszeiten gelten die Öffnungszeiten der Praxis je Wochentag (src/lib/opening-hours.ts).
  */
 
-export type TimeRange = { start: string; end: string };
+import { DEFAULT_WEEK, hoursOnWeekday, type TimeRange, type WeekHours } from "./opening-hours";
+
+export type { TimeRange };
 
 export const WEEKDAYS = [
   [1, "Montag"],
@@ -113,8 +116,8 @@ export function computeAvailability(input: {
   hours: { weekday: number; startTime: string; endTime: string }[];
   absences: { startsOn: string; endsOn: string; kind: string }[];
   holiday?: string | null;
-  /** Fallback, wenn für die Person gar keine Arbeitszeiten gepflegt sind: Mo–Fr Öffnungszeiten */
-  opening?: TimeRange;
+  /** Fallback, wenn für die Person gar keine Arbeitszeiten gepflegt sind: Öffnungszeiten der Praxis je Wochentag (practiceHours) */
+  opening?: WeekHours;
   /** Sperrzeiten an diesem Tag (eigene und ganze Praxis; Minuten Berliner Ortszeit, Ende bis 1440) */
   blocks?: readonly { startMin: number; endMin: number }[];
 }): Availability {
@@ -127,9 +130,7 @@ export function computeAvailability(input: {
   const wd = isoWeekday(dateIso);
   const ranges = configured
     ? mergeRanges(hours.filter((h) => h.weekday === wd).map((h) => ({ start: h.startTime, end: h.endTime })))
-    : wd <= 5
-      ? mergeRanges([input.opening ?? { start: "08:00", end: "18:00" }])
-      : [];
+    : mergeRanges(hoursOnWeekday(input.opening ?? DEFAULT_WEEK, wd));
   if (ranges.length === 0) return { available: false, ranges: [], reason: "no_hours", source };
   const free = input.blocks?.length ? subtractRanges(ranges, input.blocks) : ranges;
   if (free.length === 0) return { available: false, ranges: [], reason: "block", source, hoursRanges: ranges };

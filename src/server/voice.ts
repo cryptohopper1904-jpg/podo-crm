@@ -24,6 +24,7 @@ import { audit } from "@/lib/audit";
 import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availability";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { openingSpeech, openingSummary, practiceHours } from "@/lib/opening-hours";
 import { voiceEntitlement, type OrgBilling, type VoiceEntitlement } from "@/lib/plans";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { berlinMonth, monthBounds, recentMonths, voiceMonthReport, voiceUsage, type VoiceUsage } from "@/lib/voice-usage";
@@ -94,11 +95,6 @@ export async function voiceQuotaStatus(o: Pick<OrgRow, "id" | "settings" | "bill
   return { entitlement, usage, month, blocked: !entitlement.enabled || usage.exceeded };
 }
 
-const openingOf = (settings: Record<string, unknown>): TimeRange => {
-  const o = (settings.opening ?? {}) as { from?: string; to?: string };
-  return { start: o.from ?? "08:00", end: o.to ?? "18:00" };
-};
-
 export async function bookableServices(org: string, settings: Record<string, unknown>): Promise<BookableService[]> {
   const rows = await withOrg(org, (tx) =>
     tx
@@ -147,7 +143,7 @@ const dayList = (fromIso: string, toIso: string) => {
 
 /**
  * Freie Startzeiten: Verfügbarkeit des Teams (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage; ohne gepflegte
- * Arbeitszeiten Mo–Fr Öffnungszeiten) und – wie bei der Online-Buchung – praxisweit belegte Zeiten.
+ * Arbeitszeiten die Öffnungszeiten der Praxis je Wochentag) und – wie bei der Online-Buchung – praxisweit belegte Zeiten.
  */
 export async function findVoiceSlots(
   org: string,
@@ -155,7 +151,7 @@ export async function findVoiceSlots(
   input: { fromIso: string; toIso: string; durationMin: number; limit: number; earliest: Date; perDay?: number },
 ): Promise<Date[]> {
   const staff = await bookableStaff(org);
-  const opening = openingOf(o.settings);
+  const opening = practiceHours(o.settings);
   const days: { dateIso: string; ranges: TimeRange[] }[] = [];
   // ohne Behandler:innen: Öffnungszeiten minus Sperrzeiten der ganzen Praxis (mit Team: über availability)
   const praxisBlocks = staff.length ? [] : await withOrg(org, (tx) => loadBlockOccurrences(tx, org, [], input.fromIso, input.toIso));
@@ -329,13 +325,12 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
       });
     },
     async practiceInfo() {
-      const op = openingOf(o.settings);
       const address = [o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null;
       return {
         name: o.name,
         address,
         phone: o.phone,
-        openingText: `Montag bis Freitag ${op.start} bis ${op.end} Uhr, an Feiertagen geschlossen`,
+        openingText: openingSpeech(o.settings),
         billingNote: isPrivateOnly(o) ? PRIVATE_ONLY_VOICE_NOTE : null,
       };
     },
@@ -408,7 +403,7 @@ export async function voicePageInfo(auth: AuthContext) {
   if (!o) throw new Error("Praxis nicht gefunden");
   const services = await bookableServices(o.id, o.settings);
   const quota = await voiceQuotaStatus(o);
-  return { settings: readVoiceSettings(o.settings), opening: openingOf(o.settings), services, quota };
+  return { settings: readVoiceSettings(o.settings), opening: openingSummary(o.settings), services, quota };
 }
 
 /** Kontingent-Hinweis (z. B. Banner für Inhaber:innen) – ohne Rechteprüfung auf Inhalte, nur Zählwerte. */

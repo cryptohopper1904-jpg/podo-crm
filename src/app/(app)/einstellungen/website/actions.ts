@@ -7,11 +7,10 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { validateWeek, weekToList } from "@/lib/opening-hours";
 import { LIMITS, parseAreas, type OpeningHour, type WebsiteSettings } from "@/lib/website";
 
 type State = { error?: string; ok?: string } | undefined;
-
-const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 const schema = z.object({
   claim: z.string().trim().max(LIMITS.claim, `Claim: höchstens ${LIMITS.claim} Zeichen.`),
@@ -29,13 +28,19 @@ export async function saveWebsiteAction(_: State, form: FormData): Promise<State
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const d = parsed.data;
 
-  const hours: OpeningHour[] = [];
-  for (let wd = 1; wd <= 7; wd++) {
-    const from = s(`from${wd}`).trim();
-    const to = s(`to${wd}`).trim();
-    if (!from && !to) continue;
-    if (!time.safeParse(from).success || !time.safeParse(to).success || from >= to) return { error: `Praxiszeiten: bitte für Tag ${wd} „von“ und „bis“ (HH:MM, von vor bis) angeben oder beide leer lassen.` };
-    hours.push({ weekday: wd, from, to });
+  // Website-Zeiten: Standard = Praxis-Öffnungszeiten; abweichende Zeiten nur ohne Haken „wie Praxis-Öffnungszeiten“
+  const customHours = form.get("samePracticeHours") !== "on";
+  let hours: OpeningHour[] | undefined;
+  if (customHours) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(s("websiteHours"));
+    } catch {
+      return { error: "Website-Zeiten konnten nicht gelesen werden." };
+    }
+    const v = validateWeek(raw);
+    if (v.error !== undefined) return { error: `Website-Zeiten – ${v.error}` };
+    hours = weekToList(v.week);
   }
 
   // Kurzbeschreibungen nur für vorhandene Leistungen der eigenen Praxis
@@ -54,13 +59,15 @@ export async function saveWebsiteAction(_: State, form: FormData): Promise<State
     imprint: d.imprint,
     privacy: d.privacy,
     serviceDescriptions,
+    customHours,
   };
-  const patch = { website, openingHours: hours, homeVisitAreas: parseAreas(d.areas) };
+  // ohne eigene Zeiten bleiben früher gepflegte Website-Zeiten gespeichert (Schalter zurück → wieder da)
+  const patch = { website, ...(hours ? { openingHours: hours } : {}), homeVisitAreas: parseAreas(d.areas) };
   await db
     .update(organizations)
     .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
     .where(eq(organizations.id, auth.organization.id));
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.website", meta: { enabled: website.enabled, showPrices: website.showPrices } });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.website", meta: { enabled: website.enabled, showPrices: website.showPrices, customHours } });
   revalidatePath("/einstellungen/website");
   return { ok: website.enabled ? "Gespeichert – die Website ist eingeschaltet." : "Gespeichert." };
 }

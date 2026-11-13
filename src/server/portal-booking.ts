@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availability";
 import { berlinDateIso, berlinToUtc, dateDe, timeDe } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
+import { practiceHours } from "@/lib/opening-hours";
 import { assertEntitled, EntitlementError } from "@/lib/plans";
 import { canCancelOnline, type PortalLink } from "@/lib/portal";
 import {
@@ -54,21 +55,16 @@ async function loadOrg(org: string): Promise<OrgRow | null> {
   };
 }
 
-const openingOf = (settings: Record<string, unknown>): TimeRange => {
-  const o = (settings.opening ?? {}) as { from?: string; to?: string };
-  return { start: o.from ?? "08:00", end: o.to ?? "18:00" };
-};
-
 /**
  * Verfügbare Zeitfenster des Teams je Tag (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage; ohne gepflegte
- * Arbeitszeiten Mo–Fr Öffnungszeiten). Lädt alles in zwei Abfragen statt je Tag und Person.
+ * Arbeitszeiten die Öffnungszeiten der Praxis je Wochentag). Lädt alles in drei Abfragen statt je Tag und Person.
  */
 export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">, days: string[]): Promise<{ dateIso: string; ranges: TimeRange[] }[]> {
   if (!days.length) return [];
   const org = o.id;
   const staff = await bookableStaff(org);
   const ids = staff.map((s) => s.id);
-  const opening = openingOf(o.settings);
+  const opening = practiceHours(o.settings);
   const { hours, abs, blocks } = await withOrg(org, async (tx) => ({
     hours: ids.length
       ? await tx

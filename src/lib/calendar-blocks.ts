@@ -214,7 +214,8 @@ export const blockInput = z
   .transform((d) => ({
     ...d,
     startTime: d.allDay ? null : d.startTime,
-    endTime: d.allDay ? null : d.endTime,
+    // Zeitfelder im Browser kennen kein 24:00 – Ende 23:59 gilt als Tagesende (24:00, z. B. „früher Feierabend ab 15:00“)
+    endTime: d.allDay ? null : d.endTime === "23:59" ? "24:00" : d.endTime,
     endsOn: d.repeat === "none" ? null : d.endsOn,
     weekdays: d.repeat === "weekly" ? [...new Set(d.weekdays)].sort((a, b) => a - b) : [],
     intervalWeeks: d.repeat === "weekly" ? d.intervalWeeks : 1,

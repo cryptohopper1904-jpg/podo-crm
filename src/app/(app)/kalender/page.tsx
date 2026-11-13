@@ -187,7 +187,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
               {list.length === 0 ? (
                 <Empty title="Keine Termine" />
               ) : (
-                list.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)
+                list.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`} />)
               )}
             </Card>
           );

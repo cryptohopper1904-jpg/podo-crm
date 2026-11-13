@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Card, Checkbox, Field, Input, LinkButton, Stat, Textarea } from "@/components/ui";
+import { Badge, Card, Checkbox, Field, Input, LinkButton, Stat, Textarea, BackLink } from "@/components/ui";
 import { promoLandingUrl, trialDaysLabel } from "@/lib/promo-codes";
 import { PLACEHOLDERS, PLACEHOLDER_HELP } from "@/lib/vertrieb/constants";
 import { replyRate, STAGE_LABEL, STAGES } from "@/lib/vertrieb/pipeline";
@@ -28,7 +28,8 @@ export default async function CampaignPage({ params }: PageProps<"/plattform/ver
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex-1">
+        <div className="min-w-0 flex-[1_1_16rem]">
+          <BackLink href="/plattform/vertrieb/kampagnen" label="Kampagnen" />
           <h2 className="font-display text-2xl font-semibold">{c.name} {!c.active ? <Badge tone="neutral">beendet</Badge> : null}</h2>
           {c.notes ? <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{c.notes}</p> : null}
         </div>

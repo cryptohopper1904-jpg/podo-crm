@@ -134,5 +134,8 @@ describe("Sperrzeiten – Eingabe prüfen", () => {
     const r = blockInput.safeParse({ ...base, allDay: true, startTime: "", endTime: "", repeat: "weekly", weekdays: [5, 1, 5], intervalWeeks: 3 });
     expect(r.success && r.data).toMatchObject({ startTime: null, endTime: null, weekdays: [1, 5], intervalWeeks: 3 });
     expect(blockInput.safeParse({ ...base, endTime: "24:00" }).success).toBe(true);
+    // 23:59 aus dem Zeitfeld = Tagesende
+    const late = blockInput.safeParse({ ...base, startTime: "15:00", endTime: "23:59" });
+    expect(late.success && late.data.endTime).toBe("24:00");
   });
 });

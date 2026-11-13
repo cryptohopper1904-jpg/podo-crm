@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Gift } from "lucide-react";
-import { Badge, Card, CardTitle, Empty, Stat, Table } from "@/components/ui";
+import { Gift } from "lucide-react";
+import { Badge, Card, CardTitle, Empty, Stat, Table, BackLink, pageTitleCls } from "@/components/ui";
 import { PrintButton } from "@/components/print-button";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, money } from "@/lib/format";
 import { getOrganizationForPrint, getVoucher } from "@/server/vouchers";
+import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Gutschein" };
 
@@ -21,6 +22,7 @@ const PRINT_CSS = `
 
 export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) {
   const { id } = await props.params;
+  const { von } = await props.searchParams;
   const auth = await requireAuth("invoices.read");
   const [data, org] = await Promise.all([getVoucher(auth, id), getOrganizationForPrint(auth)]);
   if (!data) notFound();
@@ -29,11 +31,9 @@ export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) 
   return (
     <div className="voucher-page mx-auto flex max-w-4xl flex-col gap-6">
       <style>{PRINT_CSS}</style>
-      <Link href="/gutscheine" className="no-print inline-flex h-11 items-center gap-2 self-start text-sm font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Alle Gutscheine
-      </Link>
+      <BackLink href={backHref("/gutscheine", von)} label="Gutscheine" className="-mb-6 self-start" />
       <div className="no-print flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-3xl font-semibold tracking-tight">{v.code}</h1>
+        <h1 className={pageTitleCls}>{v.code}</h1>
         {data.expired ? <Badge>abgelaufen</Badge> : data.balanceCents > 0 ? <Badge tone="primary">gültig</Badge> : <Badge>eingelöst</Badge>}
         <div className="ml-auto"><PrintButton label="Gutschein drucken" /></div>
       </div>
