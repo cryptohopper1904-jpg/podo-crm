@@ -48,6 +48,24 @@ export function computeTotals(lines: { totalCents: number; vatRate: number }[]):
 }
 
 /**
+ * Bruttobeträge je Steuersatz nach Abzug angerechneter Teilrechnungen (Quittungen auf der Sammelrechnung):
+ * je Satz Sammelrechnung minus Summe der angerechneten Beträge. Sätze mit 0 € fallen weg. Negative Reste bleiben
+ * stehen (die Quittungen hatten dann einen anderen Steuersatz als die Positionen der Sammelrechnung).
+ */
+export function remainingVatGroups(
+  total: { rate: number; grossCents: number }[],
+  credited: { rate: number; grossCents: number }[],
+): { rate: number; grossCents: number }[] {
+  const byRate = new Map<number, number>();
+  for (const g of total) byRate.set(g.rate, (byRate.get(g.rate) ?? 0) + g.grossCents);
+  for (const g of credited) byRate.set(g.rate, (byRate.get(g.rate) ?? 0) - g.grossCents);
+  return [...byRate.entries()]
+    .filter(([, grossCents]) => grossCents !== 0)
+    .sort((a, b) => a[0] - b[0])
+    .map(([rate, grossCents]) => ({ rate, grossCents }));
+}
+
+/**
  * Steuersatz einer Position:
  * - Kleinunternehmer (§ 19 UStG) → immer 0 %.
  * - sonst der gewählte Satz (0/7/19).

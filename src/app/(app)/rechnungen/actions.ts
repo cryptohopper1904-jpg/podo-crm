@@ -11,8 +11,11 @@ import {
   createDeposit,
   createInvoice,
   depositInput,
+  DuplicateInvoiceError,
   InvoiceError,
+  OpenDepositError,
   invoiceInput,
+  openReceiptsForPatient,
   paymentInput,
   pushInvoiceToAccounting,
 } from "@/server/invoices";
@@ -21,7 +24,7 @@ import { sendInvoiceEmail } from "@/server/invoice-delivery";
 import { createDunnings, markDunningPosted, sendDunningEmail } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, type DunningStage } from "@/lib/dunning";
 
-export type InvoiceFormState = { error?: string } | undefined;
+export type InvoiceFormState = { error?: string; /** gleicher Beleg am selben Tag – „Trotzdem erstellen“ nötig */ duplicate?: { id: string; number: string | null }; /** Beleg zum Fehler (z. B. offene Anzahlung) */ link?: { id: string; label: string } } | undefined;
 export type SimpleState = { error?: string; success?: string } | undefined;
 
 function parseJson(raw: FormDataEntryValue | null): unknown {
@@ -54,17 +57,29 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     lines: parseJson(form.get("lines")),
     payments: parseJson(form.get("payments")),
     depositIds: parseJson(form.get("depositIds")),
+    receiptIds: parseJson(form.get("receiptIds")),
+    collectiveYear: form.get("collectiveYear") ?? undefined,
+    duplicateAck: form.get("duplicateAck"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;
   try {
     id = (await createInvoice(auth, parsed.data)).id;
   } catch (e) {
+    if (e instanceof DuplicateInvoiceError) return { error: e.message, duplicate: e.duplicate };
+    if (e instanceof OpenDepositError) return { error: e.message, link: { id: e.deposit.id, label: `Anzahlung ${e.deposit.number} öffnen` } };
     return { error: errorMessage(e) };
   }
   revalidatePath("/rechnungen");
   if (parsed.data.patientId) revalidatePath(`/kunden/${parsed.data.patientId}`);
   redirect(`/rechnungen/${id}`);
+}
+
+/** Offene (bezahlte, noch nicht angerechnete) Quittungen einer Person im Jahr – für die Sammelrechnung im Formular. */
+export async function openReceiptsAction(patientId: string, year: number) {
+  const auth = await requireAuth("invoices.write");
+  if (typeof patientId !== "string" || typeof year !== "number") return [];
+  return openReceiptsForPatient(auth, patientId, year);
 }
 
 /** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) – aus Termin oder Behandlung. */

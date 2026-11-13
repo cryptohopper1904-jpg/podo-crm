@@ -43,15 +43,18 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   const patient = presetPatient ?? str(sp.patient);
 
   const data = await invoiceFormData(auth, patient, year);
+  // offene Anzahlungen zum Termin (bezahlt, noch nicht angerechnet): werden bei einer Rechnung angerechnet
+  const openDeposits = (source?.documents ?? []).filter((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId);
   const homes = source || yearSug ? [] : await careHomes(auth);
   const travel = patient ? await travelSuggestions(auth, patient) : null;
 
   let preset: InvoicePreset | undefined;
   let presetKey = "plain";
   if (source?.patient) {
-    // Leistungsdatum steht über den Termin-/Doku-Bezug in der Überschrift („Rechnung zur Behandlung am …“)
-    preset = { kind: "invoice", patientId: source.patient.id, serviceDate: berlinDateIso(source.at), lines: source.lines };
-    presetKey = `src-${source.appointmentId ?? source.recordId}`;
+    // ?art=quittung: sofort bezahlte Quittung zum Termin (Positionen mit Terminbezug → später in die Sammelrechnung übernehmbar).
+    // Leistungsdatum steht über den Termin-/Doku-Bezug in der Überschrift („… zur Behandlung am …“), nicht im Hinweis.
+    preset = { kind: sp.art === "quittung" ? "receipt" : "invoice", patientId: source.patient.id, serviceDate: berlinDateIso(source.at), lines: source.lines };
+    presetKey = `src-${preset.kind}-${source.appointmentId ?? source.recordId}`;
   } else if (yearSug) {
     const first = yearSug.lines.length ? yearSug.lines[0].description.slice(0, 10) : null;
     const last = yearSug.lines.length ? yearSug.lines.at(-1)!.description.slice(0, 10) : null;
@@ -86,7 +89,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           ) : (
             <div className="flex flex-col gap-2 text-sm">
               <p className="flex items-center gap-2 font-display text-lg font-semibold">
-                <CalendarCheck size={20} aria-hidden /> Rechnung zur Behandlung am {dateDe(source.at)} – {source.patient.name}
+                <CalendarCheck size={20} aria-hidden /> {sp.art === "quittung" ? "Quittung" : "Rechnung"} zur Behandlung am {dateDe(source.at)} – {source.patient.name}
               </p>
               <p className="text-muted">
                 Mit den Leistungen des Termins vorausgefüllt. Weitere Positionen (z. B. Pflegeprodukte, Wegegeld) ergänzen Sie unten mit „+ Position“ – erst „ausstellen“ macht die Rechnung endgültig.
@@ -94,6 +97,14 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
               {source.billedBy.length ? (
                 <p className="font-semibold text-danger">
                   Bereits abgerechnet in {source.billedBy.map((d) => `${INVOICE_KIND_LABEL[d.kind]} ${d.number}`).join(", ")} – eine zweite Rechnung zu dieser Behandlung ist nicht möglich.
+                </p>
+              ) : null}
+              {openDeposits.length ? (
+                <p className="font-semibold text-warn-soft-text">
+                  Für diesen Termin gibt es bereits die Anzahlung {openDeposits.map((d) => d.number).join(", ")} –{" "}
+                  {sp.art === "quittung"
+                    ? "eine zweite Quittung ist nicht möglich. Bitte als Rechnung (die Anzahlung wird angerechnet) oder über die Sammelrechnung abrechnen."
+                    : "sie wird unten auf die Rechnung angerechnet."}
                 </p>
               ) : null}
               {source.prescription ? (
@@ -120,10 +131,13 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
                 {yearSug.skipped ? `, ${yearSug.skipped} bereits abgerechnet (übersprungen)` : ""}.
                 {yearSug.deposits.length
                   ? ` ${yearSug.deposits.length} Anzahlung(en) über ${money(yearSug.deposits.reduce((s, d) => s + d.totalCents, 0))} werden angerechnet.`
+                  : ""}
+                {yearSug.receipts.length
+                  ? ` ${yearSug.receipts.length} bezahlte Quittung(en) über ${money(yearSug.receipts.reduce((s, d) => s + d.totalCents, 0))} werden mit ihren Leistungen übernommen und als „bereits bezahlt“ angerechnet.`
                   : ""}{" "}
                 Bitte prüfen – Positionen ohne Preis ergänzen.
               </p>
-              {!yearSug.lines.length ? <p className="font-semibold">Keine offenen Behandlungen gefunden – bitte die Positionen selbst eintragen.</p> : null}
+              {!yearSug.lines.length && !yearSug.receipts.length && !yearSug.deposits.length ? <p className="font-semibold">Keine offenen Behandlungen gefunden – bitte die Positionen selbst eintragen.</p> : null}
               <Link href={`/rechnungen/sammelrechnungen?jahr=${year}`} className="self-start font-semibold text-primary">← Übersicht Sammelrechnungen {year}</Link>
             </div>
           )}
@@ -161,7 +175,15 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           </form>
         </Card>
       ) : null}
-      <InvoiceForm key={presetKey} {...data} preselectPatientId={patient} preset={preset} travel={travel} privateOnly={isPrivateOnly(auth.organization)} />
+      <InvoiceForm
+        key={presetKey}
+        {...data}
+        preselectPatientId={patient}
+        preset={preset}
+        travel={travel}
+        privateOnly={isPrivateOnly(auth.organization)}
+        alreadyBilled={(source?.billedBy ?? []).map((d) => ({ id: d.id, label: `${INVOICE_KIND_LABEL[d.kind]} ${d.number} vom ${dateDe(d.issuedAt)}` }))}
+      />
     </div>
   );
 }

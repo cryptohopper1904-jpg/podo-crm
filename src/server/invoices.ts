@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { MAX_DUE_DAYS, readDocumentSettings } from "@/lib/practice-documents";
 import { withOrg, type Tx } from "@/db";
@@ -24,6 +24,7 @@ import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
 import { fiscalRef } from "@/integrations/tse";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
+import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
 import { berlinDateIso, dateDe } from "@/lib/format";
 import { accountingServiceDate, serviceDays, serviceRange } from "@/lib/invoice-view";
 import { nextNumber } from "@/lib/numbering";
@@ -36,11 +37,13 @@ import {
   lineTotalCents,
   needsTherapeuticConfirmation,
   negateLines,
+  remainingVatGroups,
   statusFromPayments,
   validatePayments,
+  vatPortion,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 
@@ -55,6 +58,33 @@ async function asInvoiceError<T>(fn: () => Promise<T>): Promise<T> {
     throw e;
   }
 }
+
+
+/** Offene Anzahlung zur Behandlung, die dieser Beleg nicht anrechnen kann (Sackgasse) – Link auf die Anzahlung */
+export class OpenDepositError extends InvoiceError {
+  constructor(
+    message: string,
+    readonly deposit: { id: string; number: string | null },
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Weicher Doppel-Schutz: Für dieselbe Person gibt es am selben Leistungsdatum schon einen gültigen Beleg mit derselben
+ * Leistung (Positionen ohne Termin-/Doku-Bezug). Kein harter Block – zwei gleiche Leistungen an einem Tag können
+ * richtig sein –, aber erst nach ausdrücklicher Bestätigung genau dieses Belegs (duplicateAck).
+ */
+export class DuplicateInvoiceError extends InvoiceError {
+  constructor(
+    message: string,
+    readonly duplicate: { id: string; number: string | null },
+  ) {
+    super(message);
+  }
+}
+
+export { stornoReceiptNumbers } from "./partial-vat";
 
 /** leer → null; Zeilenumbrüche vereinheitlichen (Textarea sendet \r\n, im PDF sonst „?“; Länge zählt wie im Formular) */
 const emptyToNull = (v: unknown) => (typeof v === "string" ? (v.trim() === "" ? null : v.replace(/\r\n?/g, "\n")) : v);
@@ -111,13 +141,22 @@ export const invoiceInput = z.object({
   payments: z.array(paymentInput).max(10).default([]),
   /** Anzahlungen (Quittungen, kind = deposit) der Person, die auf diese Rechnung angerechnet werden */
   depositIds: z.array(z.uuid()).max(100).default([]),
+  /** bezahlte normale Quittungen (kind = receipt) der Person, die als Teilrechnungen auf die Sammelrechnung angerechnet werden */
+  receiptIds: z.array(z.uuid()).max(400).default([]),
+  /** Leistungsjahr der Sammelrechnung: nur Quittungen aus diesem Jahr sind anrechenbar (Standard: Jahr des Rechnungsdatums) */
+  collectiveYear: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(2000).max(2100).optional()),
+  /** Bestätigung „Trotzdem erstellen“: ID genau des Belegs, auf den der Hinweis zeigte (DuplicateInvoiceError) */
+  duplicateAck: optUuid,
 });
 type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
-export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "lines" | "serviceDate" | "serviceDateTo"> & {
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "duplicateAck" | "lines" | "serviceDate" | "serviceDateTo"> & {
   serviceDate?: string | null;
   serviceDateTo?: string | null;
+  collectiveYear?: number;
+  duplicateAck?: string | null;
   depositIds?: string[];
+  receiptIds?: string[];
   lines: (Omit<LineInput, "appointmentId" | "productId" | "inTreatment" | "treatmentLine"> & {
     appointmentId?: string | null;
     productId?: string | null;
@@ -223,9 +262,21 @@ async function applyPayments(
  * Termin und zugehöriger Doku-Eintrag gelten als dieselbe Leistung. Pro Praxis serialisiert (Advisory-Lock), damit
  * zwei gleichzeitige Rechnungen dieselbe Behandlung nicht beide abrechnen. Behandlung/Termin müssen zur Person bzw.
  * zum Pflegeheim gehören.
+ * `creditedReceiptIds`: normale Quittungen, die auf DIESE Sammelrechnung angerechnet werden (bereits gesperrt und
+ * geprüft) – ihre Behandlungen dürfen als Positionen übernommen werden; jede andere Rechnung/Quittung sperrt weiter.
  */
-async function assertNotInvoiced(tx: Tx, org: string, recordIds: string[], appointmentIds: string[], patientId: string | null, billingContactId: string | null) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
+async function assertNotInvoiced(
+  tx: Tx,
+  org: string,
+  recordIds: string[],
+  appointmentIds: string[],
+  patientId: string | null,
+  billingContactId: string | null,
+  opts: { creditedReceiptIds?: string[]; creditedDepositIds?: string[]; /** kann dieser Beleg Anzahlungen anrechnen? */ canCreditDeposits?: boolean } = {},
+) {
+  await lockInvoiceRecords(tx, org);
+  const creditedReceiptIds = opts.creditedReceiptIds ?? [];
+  const creditedDepositIds = opts.creditedDepositIds ?? [];
   const belongs = (p: string | null, careHomeId: string | null) => (patientId && p === patientId) || (billingContactId && careHomeId === billingContactId);
   const recs = recordIds.length
     ? await tx
@@ -262,20 +313,60 @@ async function assertNotInvoiced(tx: Tx, org: string, recordIds: string[], appoi
   if (allRecs.length) conds.push(inArray(invoiceLines.treatmentRecordId, allRecs));
   if (allAppts.length) conds.push(inArray(invoiceLines.appointmentId, allAppts));
   if (!conds.length) return;
-  const billed = await tx
-    .select({ recordId: invoiceLines.treatmentRecordId, appointmentId: invoiceLines.appointmentId, number: invoices.number })
+  const docs = await tx
+    .select({
+      id: invoices.id,
+      kind: invoices.kind,
+      status: invoices.status,
+      collectiveInvoiceId: invoices.collectiveInvoiceId,
+      recordId: invoiceLines.treatmentRecordId,
+      appointmentId: invoiceLines.appointmentId,
+      number: invoices.number,
+    })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(and(eq(invoiceLines.organizationId, org), or(...conds), notInArray(invoices.status, ["cancelled", "draft"]), ne(invoices.kind, "deposit")))
-    .limit(1);
-  if (billed[0]) {
-    const b = billed[0];
+    .where(and(eq(invoiceLines.organizationId, org), or(...conds), notInArray(invoices.status, ["cancelled", "draft"])))
+    .orderBy(asc(invoices.issuedAt), asc(invoices.number));
+  const when = (b: { recordId: string | null; appointmentId: string | null }) => {
     const recId = b.recordId && allRecs.includes(b.recordId) ? b.recordId : null;
     const r = recs.find((x) => x.id === recId || (b.appointmentId && x.appointmentId === b.appointmentId));
     const a = appts.find((x) => x.id === b.appointmentId || linkedRecs.some((l) => l.id === recId && l.appointmentId === x.id));
-    const when = r ? `Die Behandlung vom ${dateDe(r.treatedAt)}` : a ? `Der Termin vom ${dateDe(a.startsAt)}` : "Die Behandlung";
-    throw new InvoiceError(`${when} ist bereits in Rechnung ${b.number} abgerechnet.`);
+    return r ? dateDe(r.treatedAt) : a ? dateDe(a.startsAt) : null;
+  };
+  // 1) abgerechnet: jede gültige Rechnung/Quittung/Sammelrechnung (außer den Quittungen, die genau hier angerechnet werden)
+  const billed = docs.find((d) => d.kind !== "deposit" && d.kind !== "credit_note" && !creditedReceiptIds.includes(d.id));
+  if (billed) {
+    const day = when(billed);
+    throw new InvoiceError(`Für die Behandlung${day ? ` vom ${day}` : ""} wurde bereits ${DOC_WITH_ARTICLE[billed.kind] ?? "der Beleg"} ${billed.number} erstellt.`);
   }
+  // 2) offene Anzahlung (bezahlt, noch nicht angerechnet) zu dieser Behandlung: erst anrechnen – nie zweimal kassieren
+  const openDeposit = docs.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId && !creditedDepositIds.includes(d.id));
+  if (openDeposit) {
+    const day = when(openDeposit);
+    const what = day ? `die Behandlung vom ${day}` : "diesen Termin";
+    if (opts.canCreditDeposits) {
+      throw new OpenDepositError(`Für ${what} gibt es bereits die Anzahlung ${openDeposit.number} – bitte anrechnen statt neu zu kassieren.`, openDeposit);
+    }
+    // Sackgasse: dieser Beleg kann die Anzahlung nicht anrechnen (z. B. Ausfallhonorar, Rechnung ohne Person, Pflegeheim)
+    throw new OpenDepositError(
+      `Für ${what} gibt es die offene Anzahlung ${openDeposit.number}. Bitte zuerst auf eine Rechnung der Person anrechnen oder die Anzahlung stornieren.`,
+      openDeposit,
+    );
+  }
+}
+
+/** Belegart mit Artikel für Meldungen („… wurde bereits die Quittung Q2026-0004 erstellt.“) */
+const DOC_WITH_ARTICLE: Record<string, string> = {
+  receipt: "die Quittung",
+  invoice: "die Rechnung",
+  collective: "die Sammelrechnung",
+  no_show_fee: "das Ausfallhonorar",
+  deposit: "die Anzahlung",
+};
+
+/** Abrechnung von Behandlungen je Praxis serialisieren (zwei gleichzeitige Belege für dieselbe Behandlung → nur einer) */
+async function lockInvoiceRecords(tx: Tx, org: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
 }
 
 /** Anzahlungen der Person, die noch auf keine (gültige) Rechnung angerechnet sind. */
@@ -287,26 +378,151 @@ export async function openDepositsFor(tx: Tx, org: string, patientId: string) {
     .orderBy(asc(invoices.issuedAt), asc(invoices.number));
 }
 
-/** Anzahlungen anrechnen (gesperrt, nur offene der Person); liefert die Summe. */
-async function creditDeposits(tx: Tx, org: string, invoiceId: string, patientId: string | null, ids: string[], totalCents: number) {
-  if (!ids.length) return 0;
-  if (!patientId) throw new InvoiceError("Anzahlungen können nur auf die Rechnung einer Person angerechnet werden.");
-  const unique = [...new Set(ids)];
-  const deps = await tx
+/**
+ * Offene normale Quittungen der Person (bezahlt, nicht storniert, noch nicht angerechnet) mit Ausstellungsdatum im
+ * Jahr `year` – mit ihren Positionen (Leistungsdatum aus Termin/Doku-Eintrag) zur Übernahme in die Sammelrechnung.
+ */
+export async function openReceiptsFor(tx: Tx, org: string, patientId: string, year: number) {
+  const list = await tx
+    .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, vatCents: invoices.vatCents })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.organizationId, org),
+        eq(invoices.patientId, patientId),
+        eq(invoices.kind, "receipt"),
+        eq(invoices.status, "paid"),
+        isNull(invoices.collectiveInvoiceId),
+        sql`${invoices.issuedAt} >= ${`${year}-01-01`}`,
+        sql`${invoices.issuedAt} < ${`${year + 1}-01-01`}`,
+      ),
+    )
+    .orderBy(asc(invoices.issuedAt), asc(invoices.number));
+  if (!list.length) return [];
+  const lines = await tx
+    .select({
+      invoiceId: invoiceLines.invoiceId,
+      description: invoiceLines.description,
+      quantity: invoiceLines.quantity,
+      factor: invoiceLines.factor,
+      unitPriceCents: invoiceLines.unitPriceCents,
+      vatRate: invoiceLines.vatRate,
+      totalCents: invoiceLines.totalCents,
+      appointmentId: invoiceLines.appointmentId,
+      treatmentRecordId: invoiceLines.treatmentRecordId,
+    })
+    .from(invoiceLines)
+    .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, list.map((r) => r.id))))
+    .orderBy(asc(invoiceLines.position));
+  // Leistungsdatum (Berliner Kalendertag) je Termin/Doku-Eintrag
+  const apptIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
+  const recIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
+  const apptAt = apptIds.length
+    ? await tx.select({ id: appointments.id, at: appointments.startsAt }).from(appointments).where(and(eq(appointments.organizationId, org), inArray(appointments.id, apptIds)))
+    : [];
+  const recAt = recIds.length
+    ? await tx.select({ id: treatmentRecords.id, at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
+    : [];
+  const day = new Map([...apptAt, ...recAt].map((r) => [r.id, berlinDateIso(r.at)]));
+  return list.map((r) => ({
+    ...r,
+    patientId,
+    kind: "receipt" as const,
+    lines: lines
+      .filter((l) => l.invoiceId === r.id)
+      .map((l) => ({
+        description: l.description,
+        quantity: Number(l.quantity),
+        factor: Number(l.factor),
+        unitPriceCents: l.unitPriceCents,
+        vatRate: l.vatRate,
+        totalCents: l.totalCents,
+        appointmentId: l.appointmentId,
+        treatmentRecordId: l.treatmentRecordId,
+        serviceDate: (l.treatmentRecordId ? day.get(l.treatmentRecordId) : undefined) ?? (l.appointmentId ? day.get(l.appointmentId) : undefined) ?? r.issuedAt,
+      })),
+  }));
+}
+export type OpenReceipt = Awaited<ReturnType<typeof openReceiptsFor>>[number];
+
+/** Offene Quittungen der Person im Jahr (Sammelrechnungs-Formular: Nachladen beim Wechsel der Person). */
+export async function openReceiptsForPatient(auth: AuthContext, patientId: string, year: number) {
+  assertCan(auth, "invoices.write");
+  const org = auth.organization.id;
+  if (!z.uuid().safeParse(patientId).success || !Number.isInteger(year) || year < 2000 || year > 2100) return [];
+  return withOrg(org, (tx) => openReceiptsFor(tx, org, patientId, year));
+}
+
+type PartialRow = typeof invoices.$inferSelect;
+
+/**
+ * Anzurechnende Teilrechnungen sperren und prüfen: Anzahlungen (auf Rechnung oder Sammelrechnung) und normale
+ * Quittungen (nur auf eine Sammelrechnung) – jeweils bezahlt, von derselben Person, noch nicht angerechnet, Quittungen
+ * nicht jünger als die Sammelrechnung. Läuft vor der Doppelabrechnungs-Prüfung, damit nur wirklich angerechnete
+ * Quittungen ihre Behandlungen für diese Sammelrechnung freigeben.
+ *
+ * Sperr-Reihenfolge in createInvoice (immer gleich, gegen Verklemmungen): 1) Zeilen der angerechneten Belege
+ * (FOR UPDATE, hier) → 2) Advisory-Lock invoice-records (assertNotInvoiced bzw. weicher Doppel-Schutz, nur wenn
+ * Positionen mit Termin-/Doku-Bezug oder Katalogleistungen ohne Bezug vorkommen) → 3) Produkte (lockProducts,
+ * FOR NO KEY UPDATE, sortiert) → 4) Positionen einfügen. createDeposit nimmt nur 2).
+ */
+async function lockPartials(
+  tx: Tx,
+  org: string,
+  kind: string,
+  patientId: string | null,
+  issuedAt: string,
+  depositIds: string[],
+  receiptIds: string[],
+  year: number,
+): Promise<{ deposits: PartialRow[]; receipts: PartialRow[] }> {
+  if (!depositIds.length && !receiptIds.length) return { deposits: [], receipts: [] };
+  if (receiptIds.length && kind !== "collective") throw new InvoiceError("Quittungen können nur auf eine Sammelrechnung angerechnet werden.");
+  if (!patientId) throw new InvoiceError("Anzahlungen und Quittungen können nur auf die Rechnung einer Person angerechnet werden.");
+  const deps = [...new Set(depositIds)];
+  const recs = [...new Set(receiptIds)];
+  if (deps.some((id) => recs.includes(id))) throw new InvoiceError("Beleg doppelt ausgewählt.");
+  // nur Belege der passenden Art sperren (eine falsche ID sperrt keine fremde Rechnung mit)
+  const kindConds: SQL[] = [];
+  if (deps.length) kindConds.push(and(inArray(invoices.id, deps), eq(invoices.kind, "deposit"))!);
+  if (recs.length) kindConds.push(and(inArray(invoices.id, recs), eq(invoices.kind, "receipt"))!);
+  const rows = await tx
     .select()
     .from(invoices)
-    .where(and(eq(invoices.organizationId, org), inArray(invoices.id, unique)))
-    .orderBy(asc(invoices.issuedAt))
+    .where(and(eq(invoices.organizationId, org), or(...kindConds)))
+    .orderBy(asc(invoices.issuedAt), asc(invoices.number))
     .for("update");
-  if (deps.length !== unique.length) throw new InvoiceError("Anzahlung nicht gefunden.");
-  for (const d of deps) {
+  const deposits = rows.filter((r) => deps.includes(r.id));
+  const receipts = rows.filter((r) => recs.includes(r.id));
+  if (deposits.length !== deps.length) throw new InvoiceError("Anzahlung nicht gefunden.");
+  if (receipts.length !== recs.length) throw new InvoiceError("Quittung nicht gefunden.");
+  for (const d of deposits) {
     if (d.kind !== "deposit" || d.patientId !== patientId) throw new InvoiceError(`${d.number ?? "Beleg"} ist keine Anzahlung dieser Person.`);
     if (d.status !== "paid") throw new InvoiceError(`Die Anzahlung ${d.number} ist storniert oder nicht bezahlt.`);
     if (d.collectiveInvoiceId) throw new InvoiceError(`Die Anzahlung ${d.number} ist bereits auf eine andere Rechnung angerechnet.`);
   }
-  const sum = deps.reduce((s, d) => s + d.totalCents, 0);
-  if (sum > totalCents) throw new InvoiceError("Die angerechneten Anzahlungen übersteigen den Rechnungsbetrag.");
-  await tx.update(invoices).set({ collectiveInvoiceId: invoiceId }).where(and(eq(invoices.organizationId, org), inArray(invoices.id, unique)));
+  for (const r of receipts) {
+    if (r.kind !== "receipt" || r.patientId !== patientId) throw new InvoiceError(`${r.number ?? "Beleg"} ist keine Quittung dieser Person.`);
+    if (r.status !== "paid") throw new InvoiceError(`Die Quittung ${r.number} ist storniert oder nicht vollständig bezahlt.`);
+    if (r.collectiveInvoiceId) throw new InvoiceError(`Die Quittung ${r.number} ist bereits auf eine andere Sammelrechnung angerechnet.`);
+    if (r.issuedAt && r.issuedAt > issuedAt) throw new InvoiceError(`Die Quittung ${r.number} ist jünger als die Sammelrechnung.`);
+    if (!r.issuedAt || Number(r.issuedAt.slice(0, 4)) !== year) throw new InvoiceError(`Die Quittung ${r.number} stammt nicht aus dem Leistungsjahr ${year} der Sammelrechnung.`);
+  }
+  return { deposits, receipts };
+}
+
+/**
+ * Gesperrte Teilrechnungen auf die ausgestellte Rechnung anrechnen: kein neuer Zahlungseingang (das Geld kam schon mit
+ * der Quittung bzw. Anzahlung), nur paidCents/Status der Rechnung. Liefert die angerechnete Summe.
+ */
+async function creditPartials(tx: Tx, org: string, invoiceId: string, partials: PartialRow[], totalCents: number) {
+  if (!partials.length) return 0;
+  const sum = partials.reduce((s, d) => s + d.totalCents, 0);
+  if (sum > totalCents) throw new InvoiceError("Die angerechneten Quittungen/Anzahlungen übersteigen den Rechnungsbetrag.");
+  await tx
+    .update(invoices)
+    .set({ collectiveInvoiceId: invoiceId })
+    .where(and(eq(invoices.organizationId, org), inArray(invoices.id, partials.map((d) => d.id))));
   await tx
     .update(invoices)
     .set({ paidCents: sum, status: statusFromPayments(totalCents, sum) })
@@ -337,6 +553,12 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   if (depositIds.length && input.kind !== "invoice" && input.kind !== "collective") {
     throw new InvoiceError("Anzahlungen können nur auf eine Rechnung oder Sammelrechnung angerechnet werden.");
   }
+  const receiptIds = input.receiptIds ?? [];
+  if (receiptIds.length && input.kind !== "collective") throw new InvoiceError("Quittungen können nur auf eine Sammelrechnung angerechnet werden.");
+  // Leistungsjahr: Rechnungsjahr oder (Sammelrechnung im Januar) das Vorjahr
+  const issuedYear = Number(input.issuedAt.slice(0, 4));
+  const collectiveYear = input.collectiveYear ?? issuedYear;
+  if (receiptIds.length && (collectiveYear > issuedYear || collectiveYear < issuedYear - 1)) throw new InvoiceError(`Das Leistungsjahr ${collectiveYear} passt nicht zum Rechnungsdatum.`);
 
   const result = await withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
@@ -353,6 +575,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         .where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, input.billingContactId)));
       if (!b) throw new InvoiceError("Rechnungsempfänger nicht gefunden.");
     }
+
+    // anzurechnende Anzahlungen/Quittungen zuerst sperren und prüfen (gibt deren Behandlungen für diese Sammelrechnung frei)
+    const partials = await lockPartials(tx, org, input.kind, input.patientId ?? null, input.issuedAt, depositIds, receiptIds, collectiveYear);
 
     const serviceIds = [...new Set(input.lines.map((l) => l.serviceId).filter((x): x is string => !!x))];
     const svcRows = serviceIds.length
@@ -472,7 +697,13 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     const recordIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
     const appointmentIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
-    if (recordIds.length || appointmentIds.length) await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null);
+    if (recordIds.length || appointmentIds.length) {
+      await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null, {
+        creditedReceiptIds: partials.receipts.map((r) => r.id),
+        creditedDepositIds: partials.deposits.map((d) => d.id),
+        canCreditDeposits: (input.kind === "invoice" || input.kind === "collective") && !!input.patientId,
+      });
+    }
 
     // Leistungsdatum/-zeitraum festschreiben (GoBD: spätere Terminverschiebungen ändern den Beleg nicht):
     // Tage der verknüpften Termine/Behandlungen + bei Positionen ohne Bezug das Formular-Datum (Standard: Rechnungsdatum)
@@ -507,6 +738,25 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       const sum = input.payments.reduce((s, p) => s + p.amountCents, 0);
       if (sum !== totals.totalCents) throw new InvoiceError("Eine Quittung muss sofort vollständig bezahlt werden.");
     }
+    // Angerechnete Teilrechnungen je Steuersatz: die Rechnung muss je Satz mindestens so viel enthalten (sonst würde
+    // USt abgesetzt, die hier gar nicht entsteht). Der Rest je Satz ist die Grundlage für Restzahlungen (Kasse/TSE).
+    const partialIds = [...partials.deposits, ...partials.receipts].map((d) => d.id);
+    const partialLines = partialIds.length
+      ? await tx
+          .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, partialIds)))
+      : [];
+    const creditedGroups = computeTotals(partialLines).groups;
+    const payGroups = partialIds.length ? remainingVatGroups(totals.groups, creditedGroups) : totals.groups;
+    const short = payGroups.find((g) => g.grossCents < 0);
+    if (short) {
+      const has = totals.groups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      const want = creditedGroups.find((g) => g.rate === short.rate)?.grossCents ?? 0;
+      throw new InvoiceError(
+        `Die angerechneten Quittungen enthalten ${(want / 100).toFixed(2).replace(".", ",")} € mit ${short.rate} % USt, die ${input.kind === "collective" ? "Sammelrechnung" : "Rechnung"} nur ${(has / 100).toFixed(2).replace(".", ",")} €. Bitte Positionen bzw. Steuersätze prüfen.`,
+      );
+    }
 
     // „Aus Einstellung“ nur gelten lassen, wenn die Praxis-Einstellung gerade wirklich aktiv ist – sonst als manuell werten
     const fromSetting = input.therapeuticSource === "setting" && readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault;
@@ -518,6 +768,53 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
           ? `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – durch Praxis-Einstellung vorbelegt, von ${auth.user.name} am ${dateDe(new Date())} ohne Änderung übernommen.`
           : `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – bestätigt von ${auth.user.name} am ${dateDe(new Date())}.`,
       );
+    }
+
+    // Zuletzt (nach allen harten Prüfungen): weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleiches
+    // Leistungsdatum. Leistungsdatum der neuen Position = Belegdatum (kein Bezug); bei vorhandenen Positionen das Datum
+    // des verknüpften Doku-Eintrags bzw. Termins, sonst deren Belegdatum.
+    const freeServiceIds = [...new Set(lines.filter((l) => !l.treatmentRecordId && !l.appointmentId && l.serviceId).map((l) => l.serviceId!))];
+    let duplicateOf: { id: string; number: string | null } | null = null;
+    if (freeServiceIds.length && input.patientId) {
+      await lockInvoiceRecords(tx, org);
+      const candidates = await tx
+        .select({
+          id: invoices.id,
+          number: invoices.number,
+          kind: invoices.kind,
+          issuedAt: invoices.issuedAt,
+          name: services.name,
+          treatedAt: treatmentRecords.treatedAt,
+          startsAt: appointments.startsAt,
+        })
+        .from(invoiceLines)
+        .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+        .innerJoin(services, eq(services.id, invoiceLines.serviceId))
+        .leftJoin(treatmentRecords, eq(treatmentRecords.id, invoiceLines.treatmentRecordId))
+        .leftJoin(appointments, eq(appointments.id, invoiceLines.appointmentId))
+        .where(
+          and(
+            eq(invoiceLines.organizationId, org),
+            inArray(invoiceLines.serviceId, freeServiceIds),
+            eq(invoices.patientId, input.patientId),
+            inArray(invoices.kind, ["invoice", "receipt", "collective", "no_show_fee"]),
+            notInArray(invoices.status, ["cancelled", "draft"]),
+            ...(receiptIds.length ? [notInArray(invoices.id, receiptIds)] : []),
+          ),
+        )
+        .orderBy(asc(invoices.number));
+      const serviceDay = (c: (typeof candidates)[number]) => (c.treatedAt ? berlinDateIso(c.treatedAt) : c.startsAt ? berlinDateIso(c.startsAt) : c.issuedAt);
+      const dup = candidates.find((c) => serviceDay(c) === input.issuedAt);
+      if (dup) {
+        duplicateOf = { id: dup.id, number: dup.number };
+        // Bestätigung gilt nur für genau den Beleg, auf den der Hinweis zeigte
+        if (input.duplicateAck !== dup.id) {
+          throw new DuplicateInvoiceError(
+            `„${dup.name}“ wurde für diese Person am ${dateDe(input.issuedAt)} bereits abgerechnet (${INVOICE_KIND_LABEL[dup.kind] ?? "Beleg"} ${dup.number}). Wirklich ein zweites Mal?`,
+            duplicateOf,
+          );
+        }
+      }
     }
 
     // 1) Entwurf
@@ -577,17 +874,32 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
-    // Produkte mit Bestandsführung: Abgang mit dem Ausstellen
+    // Produkte mit Bestandsführung: Abgang mit dem Ausstellen (übernommene Quittungspositionen sind Freitext ohne
+    // Produkt – ihr Abgang wurde schon mit der Quittung gebucht)
     await asInvoiceError(() => bookSaleStock(tx, org, auth.user.id, draft.id, lines, input.issuedAt));
 
-    // 4) Anzahlungen (Quittungen) anrechnen – kein neuer Zahlungseingang, das Geld kam schon mit der Quittung
-    const depositCents = await creditDeposits(tx, org, draft.id, input.patientId ?? null, depositIds, totals.totalCents);
+    // 4) Anzahlungen und Quittungen (Teilrechnungen) anrechnen – kein neuer Zahlungseingang und kein neuer Kassenvorgang:
+    //    das Geld kam schon mit der Quittung (dort als Umsatz bzw. Anzahlung in Kasse/TSE gebucht)
+    const creditedCents = await creditPartials(tx, org, draft.id, [...partials.deposits, ...partials.receipts], totals.totalCents);
+    const depositCents = partials.deposits.reduce((s, d) => s + d.totalCents, 0);
+    const receiptCents = partials.receipts.reduce((s, d) => s + d.totalCents, 0);
 
     // 5) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: depositCents }, input.payments, today, totals.groups);
+    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
     const productLines = lines.filter((l) => l.productId).length;
     const productsInTreatment = lines.filter((l) => l.inTreatment).length;
-    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null, productLines, productsInTreatment };
+    return {
+      id: draft.id,
+      number,
+      totalCents: totals.totalCents,
+      depositCents,
+      receiptCents,
+      duplicateOf,
+      ...paid,
+      ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null,
+      productLines,
+      productsInTreatment,
+    };
   });
 
   await audit({
@@ -596,7 +908,20 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, ustWaechter: result.ustWaechter, productLines: result.productLines, productsInTreatment: result.productsInTreatment },
+    meta: {
+      number: result.number,
+      kind: input.kind,
+      totalCents: result.totalCents,
+      payments: input.payments.length,
+      deposits: depositIds.length,
+      depositCents: result.depositCents,
+      receipts: receiptIds.length,
+      receiptCents: result.receiptCents,
+      duplicateOf: result.duplicateOf?.number ?? null,
+      ustWaechter: result.ustWaechter,
+      productLines: result.productLines,
+      productsInTreatment: result.productsInTreatment,
+    },
   });
   return result;
 }
@@ -635,6 +960,12 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     if (input.treatmentRecordId) {
       const [r] = await tx.select({ patientId: treatmentRecords.patientId }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, input.treatmentRecordId)));
       if (!r || r.patientId !== input.patientId) throw new InvoiceError("Behandlung nicht gefunden.");
+    }
+    // nie doppelt kassieren: Behandlung schon abgerechnet bzw. schon eine offene Anzahlung dazu → ablehnen
+    if (input.appointmentId || input.treatmentRecordId) {
+      await assertNotInvoiced(tx, org, input.treatmentRecordId ? [input.treatmentRecordId] : [], input.appointmentId ? [input.appointmentId] : [], input.patientId, null, {
+        canCreditDeposits: true,
+      });
     }
     const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
     const line = { totalCents: input.amountCents, vatRate };
@@ -697,11 +1028,9 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
       .for("update");
     if (!inv) throw new InvoiceError("Rechnung nicht gefunden.");
     if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Für diese Rechnung kann keine Zahlung erfasst werden.");
-    const vatLines = await tx
-      .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
-      .from(invoiceLines)
-      .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, inv.id)));
-    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), computeTotals(vatLines).groups);
+    // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
+    const groups = (await payableVatGroups(tx, org, [inv.id])).get(inv.id) ?? [];
+    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
   });
   await audit({
     organizationId: org,
@@ -743,8 +1072,10 @@ async function deactivateProviderCheckout(org: string, checkoutRef: string) {
  * `restockLineIds`: Produktpositionen, deren Ware zurück ins Lager geht (Auswahl im Storno-Dialog);
  * fehlt = alle verkauften Produkte. In der Behandlung angewendete Produkte werden nie zurückgebucht.
  */
-export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string, opts: { restockLineIds?: string[] } = {}) {
+export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawReason: string, opts: { restockLineIds?: string[] } = {}) {
   assertCan(auth, "invoices.write");
+  // Grund steht in Zeile 1 der Notiz – ohne Zeilenumbrüche, damit er keine internen (System-)Zeilen vortäuschen kann
+  const reason = rawReason.replace(/[\r\n]+/g, " ").trim().slice(0, 300);
   const org = auth.organization.id;
   const today = berlinDateIso();
   const result = await withOrg(org, async (tx) => {
@@ -756,23 +1087,28 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     if (!orig) throw new InvoiceError("Rechnung nicht gefunden.");
     if (orig.kind === "credit_note") throw new InvoiceError("Eine Stornorechnung kann nicht storniert werden.");
     if (orig.status === "draft" || orig.status === "cancelled") throw new InvoiceError("Diese Rechnung kann nicht storniert werden.");
-    if (orig.kind === "deposit" && orig.collectiveInvoiceId) {
+    if ((orig.kind === "deposit" || orig.kind === "receipt") && orig.collectiveInvoiceId) {
       const [target] = await tx
         .select({ number: invoices.number, status: invoices.status })
         .from(invoices)
         .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.collectiveInvoiceId)));
       if (target && target.status !== "cancelled") {
-        throw new InvoiceError(`Die Anzahlung ist auf ${target.number} angerechnet. Bitte zuerst diese Rechnung stornieren.`);
+        const what = orig.kind === "receipt" ? "Die Quittung" : "Die Anzahlung";
+        throw new InvoiceError(`${what} ist auf ${target.number} angerechnet. Bitte zuerst diese Rechnung stornieren.`);
       }
     }
-    // angerechnete Anzahlungen: werden wieder frei (für eine neue Sammelrechnung) – nur echte Zahlungen sind zu erstatten
-    const credited = orig.kind === "deposit"
-      ? []
-      : await tx
-          .select({ id: invoices.id, number: invoices.number, totalCents: invoices.totalCents })
+    // angerechnete Anzahlungen und Quittungen: werden wieder frei (für eine neue Sammelrechnung) – nur echte Zahlungen
+    // auf die Rechnung selbst sind zu erstatten (die Quittungen bleiben gültig und bezahlt)
+    const credited = orig.kind === "invoice" || orig.kind === "collective"
+      ? await tx
+          .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, totalCents: invoices.totalCents })
           .from(invoices)
-          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, orig.id), eq(invoices.kind, "deposit")));
+          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, orig.id), inArray(invoices.kind, ["deposit", "receipt"])))
+          .orderBy(asc(invoices.issuedAt), asc(invoices.number))
+      : [];
     const creditedCents = credited.reduce((sum, d) => sum + d.totalCents, 0);
+    const creditedReceipts = credited.filter((d) => d.kind === "receipt");
+    const creditedDeposits = credited.filter((d) => d.kind === "deposit");
     const origLines = await tx
       .select()
       .from(invoiceLines)
@@ -795,9 +1131,17 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
         serviceDate: origDays[0] ?? null,
         serviceDateTo: origDays.length > 1 ? origDays.at(-1)! : null,
         serviceDateFixed: true,
-        notes: `Storno zu ${orig.number} vom ${dateDe(orig.issuedAt)}.${reason ? ` Grund: ${reason}` : ""}${
-          credited.length ? `\nAngerechnete Anzahlungen (${credited.map((d) => d.number).join(", ")}) bleiben gültig und werden auf die neue Rechnung angerechnet.` : ""
-        }`,
+        notes: [
+          `Storno zu ${orig.number} vom ${dateDe(orig.issuedAt)}.${reason ? ` Grund: ${reason}` : ""}`,
+          creditedDeposits.length ? `Angerechnete Anzahlungen (${creditedDeposits.map((d) => d.number).join(", ")}) bleiben gültig und werden auf die neue Rechnung angerechnet.` : null,
+          creditedReceipts.length ? `Angerechnete Quittungen (${creditedReceipts.map((d) => d.number).join(", ")}) bleiben gültig und bezahlt.` : null,
+          // für die Buchhaltungs-Übergabe: welche (schon einzeln gebuchten) Quittungen in der stornierten Sammelrechnung steckten
+          creditedReceipts.length ? `${INTERNAL_NOTE_PREFIX}${STORNO_RECEIPTS_NOTE}${creditedReceipts.map((d) => d.number).join(", ")}` : null,
+          // für Kasse/TSE: Erstattungen auf die Stornorechnung nur auf den Rest je Steuersatz (siehe payableVatGroups)
+          creditedDeposits.length ? `${INTERNAL_NOTE_PREFIX}${STORNO_DEPOSITS_NOTE}${creditedDeposits.map((d) => d.number).join(", ")}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         createdBy: auth.user.id,
       })
       .returning({ id: invoices.id });
@@ -852,7 +1196,16 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
         .set({ collectiveInvoiceId: null })
         .where(and(eq(invoices.organizationId, org), inArray(invoices.id, credited.map((d) => d.id))));
     }
-    return { id: draft.id, number, originalNumber: orig.number, refundCents: orig.paidCents - creditedCents, checkoutRef: orig.checkoutRef, releasedDeposits: credited.length, restoredProducts };
+    return {
+      id: draft.id,
+      number,
+      originalNumber: orig.number,
+      refundCents: orig.paidCents - creditedCents,
+      checkoutRef: orig.checkoutRef,
+      releasedDeposits: creditedDeposits.length,
+      releasedReceipts: creditedReceipts.length,
+      restoredProducts,
+    };
   });
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
@@ -861,7 +1214,14 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts },
+    meta: {
+      creditNoteId: result.id,
+      creditNoteNumber: result.number,
+      refundCents: result.refundCents,
+      releasedDeposits: result.releasedDeposits,
+      releasedReceipts: result.releasedReceipts,
+      restoredProducts: result.restoredProducts,
+    },
   });
   return result;
 }
@@ -892,6 +1252,8 @@ export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFi
       .select({
         invoice: invoices,
         cashCents: cash.cashCents,
+        // auf diese Sammelrechnung angerechnete normale Quittungen (schon als eigener Beleg gezählt)
+        receiptCreditCents: sql<number>`(select coalesce(sum(r.total_cents), 0)::int from invoices r where r.organization_id = ${org} and r.collective_invoice_id = ${invoices.id} and r.kind = 'receipt')`,
         patientFirst: patients.firstName,
         patientLast: patients.lastName,
         billingName: billingContacts.name,
@@ -906,17 +1268,19 @@ export async function listInvoices(auth: AuthContext, opts: { filter?: InvoiceFi
     const list = rows.map((r) => ({
       ...r.invoice,
       cashCents: Number(r.cashCents ?? 0),
+      receiptCreditCents: Number(r.receiptCreditCents ?? 0),
       name: r.billingName
         ? `${r.billingName}${r.patientLast ? ` (${[r.patientFirst, r.patientLast].filter(Boolean).join(" ")})` : ""}`
         : [r.patientFirst, r.patientLast].filter(Boolean).join(" ") || "–",
     }));
-    // Anzahlungen sind in der späteren Sammelrechnung enthalten – nicht doppelt als Rechnungsbetrag zählen
+    // Anzahlungen sind in der späteren Sammelrechnung enthalten – nicht doppelt als Rechnungsbetrag zählen. Angerechnete
+    // normale Quittungen sind dagegen eigene Belege (Umsatz bei Zahlung): bei der Sammelrechnung nur den Rest zählen.
     const active = list.filter((i) => i.status !== "cancelled" && i.kind !== "credit_note" && i.kind !== "deposit");
     return {
       rows: list,
       totals: {
         count: list.length,
-        totalCents: active.reduce((s, i) => s + i.totalCents, 0),
+        totalCents: active.reduce((s, i) => s + i.totalCents - i.receiptCreditCents, 0),
         /** tatsächliche Zahlungseingänge (abzgl. Erstattungen) der angezeigten Belege */
         paidCents: list.reduce((s, i) => s + i.cashCents, 0),
         openCents: list
@@ -959,17 +1323,28 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
         or(eq(invoices.cancelsInvoiceId, id), inv.cancelsInvoiceId ? eq(invoices.id, inv.cancelsInvoiceId) : sql`false`),
       ),
     );
-  // Anzahlungen: auf diese Rechnung angerechnete Quittungen bzw. (bei einer Anzahlung) die Rechnung, auf die sie angerechnet ist
-  const deposits =
+  // Teilrechnungen: auf diese Rechnung angerechnete Anzahlungen und Quittungen (mit USt je Satz für den Ausweis nach
+  // § 14 Abs. 5 UStG) bzw. (bei einer Anzahlung/Quittung) die Rechnung, auf die sie angerechnet ist
+  const creditedRows =
     inv.kind === "invoice" || inv.kind === "collective"
       ? await tx
-          .select({ id: invoices.id, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, netCents: invoices.netCents, vatCents: invoices.vatCents })
+          .select({ id: invoices.id, kind: invoices.kind, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, netCents: invoices.netCents, vatCents: invoices.vatCents })
           .from(invoices)
-          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, id), eq(invoices.kind, "deposit")))
+          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, id), inArray(invoices.kind, ["deposit", "receipt"])))
           .orderBy(asc(invoices.issuedAt), asc(invoices.number))
       : [];
+  const creditedLines = creditedRows.length
+    ? await tx
+        .select({ invoiceId: invoiceLines.invoiceId, totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+        .from(invoiceLines)
+        .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, creditedRows.map((d) => d.id))))
+    : [];
+  const credited = creditedRows.map((d) => ({
+    ...d,
+    vatGroups: computeTotals(creditedLines.filter((l) => l.invoiceId === d.id)).groups.map((g) => ({ rate: g.rate, grossCents: g.grossCents, netCents: g.netCents, vatCents: g.vatCents })),
+  }));
   const creditedTo =
-    inv.kind === "deposit" && inv.collectiveInvoiceId
+    (inv.kind === "deposit" || inv.kind === "receipt") && inv.collectiveInvoiceId
       ? await tx
           .select({ id: invoices.id, number: invoices.number, status: invoices.status })
           .from(invoices)
@@ -983,7 +1358,8 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   return {
     invoice: inv,
     lines,
-    deposits,
+    /** angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
+    credited,
     serviceDates,
     serviceLinked,
     creditedTo,
@@ -1027,8 +1403,11 @@ export async function getInvoice(auth: AuthContext, id: string) {
   return data;
 }
 
-/** Stammdaten für das Rechnungsformular. */
-/** `year`: Jahr der Sammelrechnung (Hinweis auf normale Quittungen dieses Jahres), Standard laufendes Jahr */
+/**
+ * Stammdaten für das Rechnungsformular.
+ * `year`: Jahr der Sammelrechnung – die offenen normalen Quittungen dieses Jahres (der vorausgewählten Person) werden
+ * zur Anrechnung angeboten; Standard laufendes Jahr. Für andere Personen lädt das Formular sie nach.
+ */
 export async function invoiceFormData(auth: AuthContext, preselectPatientId?: string | null, year?: number) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
@@ -1061,17 +1440,10 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       .from(invoices)
       .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
       .orderBy(asc(invoices.issuedAt));
-    // normale Quittungen (sofort bezahlt) des laufenden Jahres – schon abgerechnet, nur als Hinweis bei der Sammelrechnung
+    // offene normale Quittungen (Teilrechnungen) des Jahres – werden auf die Sammelrechnung angerechnet
     const receiptsYear = year ?? Number(berlinDateIso().slice(0, 4));
-    const yearStart = `${receiptsYear}-01-01`;
-    const yearEnd = `${receiptsYear + 1}-01-01`;
-    const receiptRows = await tx
-      .select({ patientId: invoices.patientId, n: sql<number>`count(*)::int`, cents: sql<number>`coalesce(sum(${invoices.totalCents}), 0)::int` })
-      .from(invoices)
-      .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "receipt"), ne(invoices.status, "cancelled"), ne(invoices.status, "draft"), sql`${invoices.issuedAt} >= ${yearStart}`, sql`${invoices.issuedAt} < ${yearEnd}`))
-      .groupBy(invoices.patientId);
-    const receiptsThisYear: Record<string, { count: number; cents: number }> = {};
-    for (const r of receiptRows) if (r.patientId) receiptsThisYear[r.patientId] = { count: r.n, cents: r.cents };
+    const validPreselect = !!preselectPatientId && z.uuid().safeParse(preselectPatientId).success;
+    const openReceipts = validPreselect ? await openReceiptsFor(tx, org, preselectPatientId!, receiptsYear) : [];
     // Leistung laut Quittung (eine Position je Quittung) – für die Übernahme in die Sammelrechnung
     const depLines = deposits.length
       ? await tx
@@ -1083,7 +1455,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
     const depLine = new Map<string, (typeof depLines)[number]>();
     for (const l of depLines) if (!depLine.has(l.invoiceId)) depLine.set(l.invoiceId, l);
     let list = recent;
-    if (preselectPatientId && z.uuid().safeParse(preselectPatientId).success && !recent.some((p) => p.id === preselectPatientId)) {
+    if (validPreselect && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));
       list = [...extra, ...recent];
     }
@@ -1105,8 +1477,8 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       defaultDueDays: docSettings.dueDays,
       therapeuticDefault: docSettings.therapeuticDefault,
       today: berlinDateIso(),
-      receiptsThisYear,
       receiptsYear,
+      openReceipts,
       openDeposits: deposits
         .filter((d): d is typeof d & { patientId: string } => !!d.patientId)
         .map((d) => {
@@ -1133,6 +1505,36 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
       .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
       .from(invoiceLines)
       .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, invoiceId)));
+    // Normale Quittungen sind eigene, schon einzeln zu übertragende Belege. Auf einer Sammelrechnung (bzw. deren
+    // Stornorechnung) angerechnet, wird nur der Rest übertragen – sonst stünde der Umsatz doppelt in der Buchhaltung.
+    let receiptIds: string[] = [];
+    let sign = 1;
+    if (inv.kind === "collective") {
+      receiptIds = (
+        await tx
+          .select({ id: invoices.id })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, inv.id), eq(invoices.kind, "receipt")))
+      ).map((r) => r.id);
+    } else if (inv.kind === "credit_note") {
+      const numbers = stornoReceiptNumbers(inv.notes);
+      sign = -1;
+      if (numbers.length) {
+        receiptIds = (
+          await tx
+            .select({ id: invoices.id })
+            .from(invoices)
+            .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "receipt"), inArray(invoices.number, numbers)))
+        ).map((r) => r.id);
+        if (receiptIds.length !== numbers.length) throw new InvoiceError("Angerechnete Quittungen der Stornorechnung nicht gefunden – bitte manuell buchen.");
+      }
+    }
+    const receiptLines = receiptIds.length
+      ? await tx
+          .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, receiptIds)))
+      : [];
     const [conn] = await tx
       .select()
       .from(integrationConnections)
@@ -1144,17 +1546,31 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
           .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.cancelsInvoiceId)))
           .then((r) => r[0] ?? null)
       : null;
-    return { inv, lines, conn: conn ?? null, original };
+    return { inv, lines, receiptLines, sign, conn: conn ?? null, original };
   });
-  const { inv, lines, conn, original } = prep;
+  const { inv, lines, receiptLines, sign, conn, original } = prep;
   const number = inv.number!;
+  const groups = remainingVatGroups(
+    computeTotals(lines).groups,
+    computeTotals(receiptLines).groups.map((g) => ({ rate: g.rate, grossCents: g.grossCents * sign })),
+  );
+  if (receiptLines.length && groups.some((g) => Math.sign(g.grossCents) !== sign)) {
+    throw new InvoiceError("Die angerechneten Quittungen passen nicht zu den Steuersätzen der Sammelrechnung – bitte manuell buchen.");
+  }
+  if (receiptLines.length && !groups.length) {
+    const message = "Vollständig durch Quittungen bezahlt (diese werden einzeln übertragen) – nichts zu übertragen.";
+    await withOrg(org, (tx) =>
+      tx.insert(syncLog).values({ organizationId: org, provider: "lexoffice", direction: "push", entity: "invoice", entityId: inv.id, ok: true, message: `${number}: ${message}`.slice(0, 500) }),
+    );
+    await audit({ organizationId: org, userId: auth.user.id, action: "invoice.push_accounting", entity: "invoice", entityId: invoiceId, meta: { number, ok: true, skipped: "covered_by_receipts" } });
+    return { ok: true, message };
+  }
 
   let ok = true;
   let message: string;
   let externalId: string | null = null;
   try {
     const adapter = getAdapter("lexoffice", conn ? { provider: "lexoffice", status: conn.status, config: conn.config, secretEnc: conn.secretEnc, organizationId: org } : { status: "mock" });
-    const totals = computeTotals(lines);
     const res = await adapter.pushVoucher({
       invoiceId: inv.id,
       number,
@@ -1162,10 +1578,10 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
       date: inv.issuedAt!,
       serviceDate: accountingServiceDate(inv, original),
       dueDate: inv.dueAt,
-      totalGrossCents: inv.totalCents,
-      totalTaxCents: inv.vatCents,
-      lines: totals.groups.map((g) => ({ grossCents: g.grossCents, vatRate: g.rate })),
-      remark: `${inv.kind === "credit_note" ? "Stornorechnung" : "Rechnung"} ${number}`,
+      totalGrossCents: groups.reduce((s, g) => s + g.grossCents, 0),
+      totalTaxCents: groups.reduce((s, g) => s + vatPortion(g.grossCents, g.rate), 0),
+      lines: groups.map((g) => ({ grossCents: g.grossCents, vatRate: g.rate })),
+      remark: `${inv.kind === "credit_note" ? "Stornorechnung" : "Rechnung"} ${number}${receiptLines.length ? " (abzgl. angerechneter Quittungen)" : ""}`,
       // TODO: Kontakt (upsertContact) und PDF-Belegbild übergeben, sobald PDF-Erzeugung vorhanden ist
     });
     externalId = res.externalId;

@@ -122,8 +122,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(inv.vat_cents).toBe(0);
     expect(inv.notes).toMatch(/USt-Wächter/);
 
-    // dieselbe Rechnung als „zum Mitnehmen“: 19 % auf das Produkt
-    const take = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1)] });
+    // dieselbe Rechnung als „zum Mitnehmen“: 19 % auf das Produkt (gleiche Leistung am selben Tag → bestätigter Doppel-Hinweis)
+    const take = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1)], duplicateAck: ok.id });
     const [t] = (await f.asOrg(org, (c) => c.query("select vat_cents from invoices where id = $1", [take.id]))).rows;
     expect(t.vat_cents).toBe(206);
 
@@ -137,6 +137,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const mixed = await invoices.createInvoice(auth, {
       ...base,
       kind: "invoice",
+      duplicateAck: ok.id,
       lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true }), prodLine(salbe, 2), prodLine(salbe, 3)],
     });
     expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6);
@@ -144,7 +145,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // nur Position 3 (2 Stück) zurück; Position 2 (angewendet) wird selbst bei Auswahl ignoriert
     await invoices.cancelInvoice(auth, mixed.id, "Test", { restockLineIds: [mixedLines[1], mixedLines[2]] });
     expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6 + 2);
-    const all = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true }), prodLine(salbe, 2)] });
+    const all = await invoices.createInvoice(auth, { ...base, kind: "invoice", duplicateAck: ok.id, lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true }), prodLine(salbe, 2)] });
     await invoices.cancelInvoice(auth, all.id, "Test"); // ohne Auswahl: alle verkauften, nie die angewendeten
     expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6 + 2 - 3 + 2);
 
@@ -167,7 +168,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     });
     expect((await linesOf(org, coll.id))[2]).toMatchObject({ in_treatment: true, treatment_position: 2, description: `Hornhautsalbe – in der Behandlung vom 12.01.${year} angewendet` });
     // Beschreibung kommt immer aus dem Katalog (kein Freitext auf Produktpositionen)
-    const free = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), { ...prodLine(salbe, 1), description: "Gratis-Probe" }] });
+    const free = await invoices.createInvoice(auth, { ...base, kind: "invoice", duplicateAck: ok.id, lines: [svcLine(svc.treat, 0, 6500), { ...prodLine(salbe, 1), description: "Gratis-Probe" }] });
     expect((await linesOf(org, free.id))[1]).toMatchObject({ description: "Hornhautsalbe", treatment_position: null });
 
     // archivierte Leistung: nicht mehr für neue Positionen
@@ -321,5 +322,22 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(
       f.asOrg(a.org, (c) => c.query("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1,$2,'sale',-1,current_date)", [a.org, a.salbe])),
     ).rejects.toThrow(/stock_movements_quantity_check/);
+  });
+
+  it("Quittung mit Produkt → Sammelrechnung: Bestand sinkt nur einmal (übernommene Position ist Freitext ohne Produkt)", async () => {
+    const { org, auth, patient, salbe, base, prodLine } = await setup();
+    await products.bookReceipt(auth, { productId: salbe, quantity: 10, occurredOn: today });
+    const q = await invoices.createInvoice(auth, { ...base, kind: "receipt", therapeuticConfirmed: false, lines: [prodLine(salbe, 2)], payments: [{ method: "cash", amountCents: 2580 }] });
+    expect(await stockOf(auth, salbe)).toBe(8);
+    const open = await invoices.openReceiptsForPatient(auth, patient, Number(today.slice(0, 4)));
+    expect(open.map((r) => r.id)).toEqual([q.id]);
+    const lines = open[0].lines.map((l) => ({ serviceId: null, treatmentRecordId: null, appointmentId: null, description: l.description, quantity: l.quantity, factor: l.factor, unitPriceCents: l.unitPriceCents, vatRate: l.vatRate }));
+    const sr = await invoices.createInvoice(auth, { ...base, kind: "collective", lines, receiptIds: [q.id] });
+    expect(sr).toMatchObject({ totalCents: 2580, paidCents: 2580, status: "paid", productLines: 0 });
+    expect(await linesOf(org, sr.id)).toEqual([expect.objectContaining({ product_id: null, vat_rate: 19, total_cents: 2580 })]);
+    expect(await stockOf(auth, salbe)).toBe(8);
+    // Storno der Sammelrechnung bucht nichts zurück (die Ware ging mit der Quittung)
+    await invoices.cancelInvoice(auth, sr.id, "neu");
+    expect(await stockOf(auth, salbe)).toBe(8);
   });
 });
