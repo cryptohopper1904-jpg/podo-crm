@@ -25,3 +25,10 @@ describe("Termin verschieben: welche Termine sind änderbar?", () => {
     expect(durationMinutes(new Date("2026-11-09T09:00:00Z"), new Date("2026-11-09T09:00:00Z"))).toBe(5);
   });
 });
+
+describe("abgerechnete Termine", () => {
+  it("sind gesperrt (Leistungsdatum steht auf der Rechnung)", () => {
+    expect(appointmentEditLock({ source: "manual", status: "done" }, false, true)?.reason).toBe("billed");
+    expect(appointmentEditLock({ source: "manual", status: "done" }, false, false)).toBeNull();
+  });
+});

@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, gte, isNull, lt, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, memberships, patients, services, users } from "@/db/schema";
+import { appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
@@ -166,15 +166,35 @@ export async function getAppointment(auth: AuthContext, id: string) {
       .innerJoin(services, eq(services.id, appointmentServices.serviceId))
       .where(and(eq(appointmentServices.organizationId, org), eq(appointmentServices.appointmentId, id)));
     const fromFeed = row.feedEventId !== null;
+    const billed = await isAppointmentBilled(tx, org, id);
     return {
       appointment: row.a,
       patient: row.patient?.id ? row.patient : null,
       therapist: row.therapist,
       services: svc.map((s) => ({ ...s, quantity: Number(s.quantity) || 1 })),
       feed: fromFeed ? { label: row.feedLabel ?? "Kalender-Abo" } : null,
-      lock: appointmentEditLock(row.a, fromFeed),
+      lock: appointmentEditLock(row.a, fromFeed, billed),
     };
   });
+}
+
+/** Steht der Termin auf einer ausgestellten (nicht stornierten, nicht Entwurf) Rechnung, Quittung o. Ä.? */
+async function isAppointmentBilled(tx: Tx, org: string, appointmentId: string): Promise<boolean> {
+  const [hit] = await tx
+    .select({ id: invoiceLines.id })
+    .from(invoiceLines)
+    .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+    .where(
+      and(
+        eq(invoiceLines.organizationId, org),
+        eq(invoiceLines.appointmentId, appointmentId),
+        ne(invoices.status, "cancelled"),
+        ne(invoices.status, "draft"),
+        ne(invoices.kind, "credit_note"),
+      ),
+    )
+    .limit(1);
+  return !!hit;
 }
 
 export type RescheduleInput = { startsAt: Date; durationMin: number; therapistId: string; allowConflict: boolean };
@@ -201,7 +221,7 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
       .from(calendarFeedEvents)
       .where(and(eq(calendarFeedEvents.organizationId, org), eq(calendarFeedEvents.appointmentId, id)))
       .limit(1);
-    const lock = appointmentEditLock(a, !!feed);
+    const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
     const [member] = await tx
       .select({ id: memberships.userId })

@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, FileDown } from "lucide-react";
+import QRCode from "qrcode";
 import { Badge, Card } from "@/components/ui";
 import { PortalLinkButton } from "@/components/portal-link-button";
+import { PracticeLogo } from "@/components/practice-logo";
 import { PrintButton } from "@/components/print-button";
 import { isMockMode } from "@/integrations/registry";
 import { fiscalIsTestMode } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, money } from "@/lib/format";
+import { invoicePaymentQr, isValidIban } from "@/lib/epc-qr";
 import { computeTotals } from "@/lib/invoice-math";
 import {
   INVOICE_KIND_LABEL,
@@ -23,8 +26,9 @@ import {
   formatIban,
   hasExemptNote,
   internalNotes as internalNoteLines,
+  invoiceHeading,
+  paymentNoteLines,
   invoiceRecipient,
-  invoiceTitle,
   isReceiptLike,
   paymentSummary,
   publicNotes as publicNoteText,
@@ -32,6 +36,7 @@ import {
   senderLine as senderLineOf,
   showsDueDate,
 } from "@/lib/invoice-view";
+import { invoiceBookingLink, practiceWebsite, readDocumentSettings, shortUrl } from "@/lib/practice-documents";
 import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
 import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
@@ -65,7 +70,19 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const internalNotes = internalNoteLines(inv.notes);
   const recipient = invoiceRecipient(p, b);
   const senderLine = senderLineOf(o);
-  const title = invoiceTitle(inv);
+  const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates, dateDe, data.cancels?.number);
+  const settings = (o.settings ?? {}) as Record<string, unknown>;
+  const docSettings = readDocumentSettings(settings);
+  const website = practiceWebsite(settings);
+  const giro = isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
+  const booking = inv.kind !== "credit_note" ? invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }) : null;
+  // qrcode erzeugt reines SVG aus Pfaden (keine Eingabe-Texte im Markup)
+  const qrSvg = (payload: string) => QRCode.toString(payload, { type: "svg", errorCorrectionLevel: "M", margin: 2 });
+  const qrBlocks = [
+    ...(giro ? [{ key: "giro", title: "Bezahlen per GiroCode", sub: [`${money(open)} an ${o.accountHolder || o.legalName || o.name}`, `Verwendungszweck: Rechnung ${inv.number}`], svg: await qrSvg(giro) }] : []),
+    ...(booking ? [{ key: "booking", title: booking.label, sub: [booking.display], svg: await qrSvg(booking.url) }] : []),
+  ];
+  const payNotes = paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro });
   const canWrite = auth.can("invoices.write");
   const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
   const sumupMock = canWrite && isOpen ? isMockMode(await loadConnection(o.id, "sumup")) : false;
@@ -143,6 +160,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
       </div>
 
       <article className="invoice-sheet mx-auto max-w-[210mm] rounded-[var(--radius-card)] border border-border bg-surface p-6 text-[14px] leading-relaxed sm:p-10">
+        <div className="mb-6 flex justify-center">
+          <PracticeLogo organizationId={o.id} kind={isReceiptLike(inv.kind) ? "compact" : "full"} alt={o.name} className={isReceiptLike(inv.kind) ? "h-14" : "h-24 max-w-[60%]"} />
+        </div>
         <header className="flex flex-wrap justify-between gap-6">
           <div className="min-w-0 flex-1">
             <p className="mb-2 text-[11px] text-muted underline">{senderLine}</p>
@@ -158,7 +178,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             {o.legalName && o.legalName !== o.name ? <p>{o.legalName}</p> : null}
             {o.street ? <p>{o.street}</p> : null}
             <p>{[o.zip, o.city].filter(Boolean).join(" ")}</p>
-            {o.phone ? <p>Tel. {o.phone}</p> : null}
+            {o.phone || o.email ? <p className="mt-2 text-xs text-muted underline">Terminvereinbarung</p> : null}
+            {o.phone ? <p>Tel. {o.phone}{docSettings.whatsapp ? " (auch WhatsApp)" : ""}</p> : null}
             {o.email ? <p>{o.email}</p> : null}
           </div>
         </header>
@@ -174,7 +195,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </div>
           {p ? (
             <div>
-              <dt className="text-xs text-muted">Kundennummer</dt>
+              <dt className="text-xs text-muted">Patientennummer</dt>
               <dd className="tabular-nums">{p.number}</dd>
             </div>
           ) : null}
@@ -186,16 +207,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
         </dl>
 
-        <h2 className="mt-8 font-display text-2xl font-semibold">{title}</h2>
-        {data.cancels ? <p className="text-muted">Storno der Rechnung {data.cancels.number}</p> : null}
-        <p className="mt-1 text-muted">Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben.</p>
+        <h2 className="mt-8 font-display text-2xl font-semibold">{heading}</h2>
+        {serviceDateNote ? <p className="mt-1 text-muted">{serviceDateNote}</p> : null}
 
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[520px] border-collapse text-left [&_td]:border-b [&_td]:border-border [&_td]:py-2 [&_td]:pr-3 [&_th]:border-b-2 [&_th]:border-border-strong [&_th]:py-2 [&_th]:pr-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted">
             <thead>
               <tr>
                 <th>Pos.</th>
-                <th>Leistung</th>
+                <th>Leistung / Heilmittel</th>
                 <th className="text-right">Menge</th>
                 <th className="text-right">Faktor</th>
                 <th className="text-right">Einzelpreis</th>
@@ -262,7 +282,6 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                 </li>
               ))}
             </ul>
-            {isReceiptLike(inv.kind) && inv.status === "paid" ? <p className="mt-2 font-semibold">Betrag dankend erhalten.</p> : null}
           </section>
         ) : null}
 
@@ -272,13 +291,23 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
-          {showsDueDate(inv) && o.iban ? (
-            <p>
-              Bitte überweisen Sie den Betrag bis zum <strong>{dateDe(inv.dueAt)}</strong> unter Angabe der Rechnungsnummer{" "}
-              <strong>{inv.number}</strong> auf das unten genannte Konto.
-            </p>
-          ) : null}
+          {payNotes.map((n) => <p key={n}>{n}</p>)}
+          {inv.kind !== "credit_note" && inv.status !== "cancelled" ? <p className="mt-2">Vielen Dank für Ihr Vertrauen</p> : null}
         </section>
+
+        {qrBlocks.length ? (
+          <section className="mt-6 grid gap-6 sm:grid-cols-2">
+            {qrBlocks.map((q) => (
+              <div key={q.key} className="flex items-center gap-3">
+                <div className="size-28 shrink-0 bg-white" dangerouslySetInnerHTML={{ __html: q.svg }} />
+                <div className="text-[13px]">
+                  <p className="font-semibold">{q.title}</p>
+                  {q.sub.map((x) => <p key={x} className="break-all text-muted">{x}</p>)}
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         <footer className="mt-10 grid gap-3 border-t border-border pt-4 text-[11px] text-muted sm:grid-cols-3">
           <div>
@@ -286,15 +315,19 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             <p>{o.street}</p>
             <p>{[o.zip, o.city].filter(Boolean).join(" ")}</p>
           </div>
-          <div>
+          <div className="text-center">
             {o.phone ? <p>Tel. {o.phone}</p> : null}
-            {o.email ? <p>{o.email}</p> : null}
+            {website ? <p>{shortUrl(website)}</p> : o.email ? <p>{o.email}</p> : null}
           </div>
           <div>
+            {o.iban ? <p>IBAN: {formatIban(o.iban)}</p> : null}
+            {o.bic ? <p>BIC: {o.bic}</p> : null}
+            {o.bankName ? <p>Bank: {o.bankName}</p> : null}
+            {o.iban && (o.accountHolder || o.legalName) ? <p>Kontoinhaber: {o.accountHolder || o.legalName}</p> : null}
             {o.taxNumber ? <p>Steuernummer: {o.taxNumber}</p> : null}
             {o.vatId ? <p>USt-IdNr.: {o.vatId}</p> : null}
-            {o.iban ? <p>IBAN: {formatIban(o.iban)}</p> : null}
           </div>
+          {docSettings.qualification ? <p className="text-center italic sm:col-span-3">{docSettings.qualification}</p> : null}
         </footer>
       </article>
 

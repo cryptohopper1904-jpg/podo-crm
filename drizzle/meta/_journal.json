@@ -204,6 +204,20 @@
       "when": 1794298977840,
       "tag": "0028_vertrieb_security",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794557230380,
+      "tag": "0029_belege_logo_qr",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794557235416,
+      "tag": "0030_belege_logo_qr_security",
+      "breakpoints": true
     }
   ]
 }

@@ -59,7 +59,7 @@ export function hasExemptNote(o: Org, inv: { kind: string }, lines: { vatRate: n
 
 /** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Anzahlung/Storno). */
 export function showsDueDate(inv: { kind: string; status: string }) {
-  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid";
+  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid" && inv.status !== "cancelled";
 }
 
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
@@ -82,3 +82,84 @@ export function paymentSummary(inv: { kind: string; paidCents: number }, deposit
 export const formatIban = (iban: string) => iban.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();
 
 export const qtyDe = (s: string | number) => Number(s).toLocaleString("de-DE", { maximumFractionDigits: 2 });
+
+/**
+ * Überschrift auf dem Beleg (z. B. „Rechnung zur Behandlung am 09.11.2026“). Leistungsdaten stammen aus den
+ * verknüpften Terminen/Doku-Einträgen; ohne Bezug gilt das Rechnungsdatum als Leistungsdatum.
+ * `serviceDateNote` ist der Hinweis, wenn die Überschrift kein Leistungsdatum nennt.
+ */
+export function invoiceHeading(
+  inv: { kind: string; number: string | null; issuedAt: string | null },
+  serviceDates: string[],
+  dateDe: (d: string | null) => string,
+  cancelsNumber?: string | null,
+): { heading: string; serviceDateNote: string | null } {
+  const days = [...new Set(serviceDates)].sort();
+  const span = days.length > 1 ? `vom ${dateDe(days[0])} bis ${dateDe(days.at(-1)!)}` : `am ${dateDe(days[0] ?? inv.issuedAt)}`;
+  const defaultNote = days.length ? null : "Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben.";
+  switch (inv.kind) {
+    // ohne verknüpften Termin/Doku-Eintrag kein ausdrückliches Datum behaupten – Vorbehaltshinweis wie bisher
+    case "invoice":
+      return days.length
+        ? { heading: `Rechnung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
+        : { heading: "Rechnung", serviceDateNote: defaultNote };
+    case "receipt":
+      return days.length
+        ? { heading: `Quittung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
+        : { heading: "Quittung", serviceDateNote: defaultNote };
+    case "collective":
+      if (days.length > 1) return { heading: `Sammelrechnung für den Zeitraum ${span}`, serviceDateNote: null };
+      if (days.length === 1) return { heading: `Sammelrechnung zur Behandlung ${span}`, serviceDateNote: null };
+      return { heading: "Sammelrechnung", serviceDateNote: defaultNote };
+    case "no_show_fee":
+      return { heading: days.length === 1 ? `Ausfallhonorar für den Termin am ${dateDe(days[0])}` : "Ausfallhonorar", serviceDateNote: null };
+    case "credit_note":
+      return { heading: cancelsNumber ? `Stornorechnung zur Rechnung ${cancelsNumber}` : "Stornorechnung", serviceDateNote: null };
+    case "deposit":
+      return { heading: "Quittung über eine Anzahlung", serviceDateNote: null };
+    default:
+      return { heading: invoiceTitle(inv), serviceDateNote: defaultNote };
+  }
+}
+
+const METHOD_PHRASE: Record<string, string> = {
+  cash: "in bar",
+  card: "per Karte",
+  transfer: "per Überweisung",
+  voucher: "per Gutschein",
+  payment_link: "online per Zahlungslink",
+};
+
+/**
+ * Zahlungshinweis nach tatsächlichem Stand: bezahlt (mit Zahlart) · offen (Überweisung bis …) · Erstattung.
+ * Gibt Zeilen zurück; leere Liste = kein Hinweis (z. B. Storno ohne Restbetrag).
+ */
+export function paymentNoteLines(
+  inv: { kind: string; status: string; number: string | null; dueAt: string | null; totalCents: number; paidCents: number; paymentLinkUrl?: string | null },
+  payments: { method: string; amountCents: number }[],
+  o: { iban: string | null },
+  fmt: { dateDe: (d: string | null) => string; money: (c: number) => string },
+  opts: { giroCode: boolean } = { giroCode: false },
+): string[] {
+  if (inv.status === "cancelled" || inv.status === "draft") return [];
+  const open = inv.totalCents - inv.paidCents;
+  const methods = [...new Set(payments.filter((p) => p.amountCents > 0).map((p) => METHOD_PHRASE[p.method] ?? p.method))];
+  const via = methods.length ? ` ${methods.join(" und ")}` : "";
+  if (inv.kind === "credit_note") return open < 0 ? [`Der Betrag von ${fmt.money(-open)} wird Ihnen erstattet bzw. verrechnet.`] : [];
+  if (open < 0) return [`Zu viel gezahlt: ${fmt.money(-open)} – wir erstatten Ihnen den Betrag.`];
+  if (open === 0) {
+    if (!inv.totalCents) return [];
+    return [isReceiptLike(inv.kind) ? `Zahlung${via} – Betrag dankend erhalten.` : `Der Rechnungsbetrag wurde${via} bezahlt – vielen Dank.`];
+  }
+  const lines: string[] = [];
+  if (inv.paidCents > 0) lines.push(`Bereits bezahlt${via}: ${fmt.money(inv.paidCents)}. Offen: ${fmt.money(open)}.`);
+  const due = inv.dueAt ? ` bis zum ${fmt.dateDe(inv.dueAt)}` : "";
+  if (o.iban) {
+    lines.push(`Zahlung per Überweisung: Bitte überweisen Sie ${inv.paidCents > 0 ? "den offenen Betrag" : "den Betrag"}${due} unter Angabe der Rechnungsnummer ${inv.number} auf das unten genannte Konto.`);
+    if (opts.giroCode) lines.push("Tipp: Scannen Sie den GiroCode mit Ihrer Banking-App – Empfänger, Betrag und Verwendungszweck sind dann schon ausgefüllt.");
+  } else {
+    lines.push(`Zahlbar${due} ohne Abzug.`);
+  }
+  if (inv.paymentLinkUrl) lines.push(`Oder bequem online bezahlen: ${inv.paymentLinkUrl}`);
+  return lines;
+}

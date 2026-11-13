@@ -32,7 +32,11 @@ export default async function AnamnesisPage(props: PageProps<"/kunden/[id]/anamn
           <h1 className="font-display text-3xl font-semibold tracking-tight">Anamnese</h1>
           <div className="mt-2"><RiskBadges flags={data.patient.riskFlags} /></div>
         </div>
-        {canEdit && !editing ? <LinkButton href={`/kunden/${id}/anamnese?neu=1`}>{latestOnline ? "Online-Angaben prüfen und übernehmen" : "Anamnese aktualisieren"}</LinkButton> : null}
+        <div className="flex flex-wrap gap-2">
+          {canEdit ? <LinkButton href={`/kunden/${id}/anamnese/bogen`} variant="secondary">Am iPad ausfüllen</LinkButton> : null}
+          {auth.can("medical.read") ? <LinkButton href={`/kunden/${id}/anamnese/drucken`} variant="secondary">Drucken / PDF</LinkButton> : null}
+          {canEdit && !editing ? <LinkButton href={`/kunden/${id}/anamnese?neu=1`}>{latestOnline ? "Online-Angaben prüfen und übernehmen" : "Anamnese aktualisieren"}</LinkButton> : null}
+        </div>
       </header>
       {sp.gespeichert ? <div className="mb-4"><FormSuccess message="Anamnese als neue Version gespeichert. Frühere Versionen bleiben erhalten." /></div> : null}
 

@@ -10,8 +10,10 @@ import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
-import { invoicePdfFilename, renderInvoicePdf } from "@/lib/invoice-pdf";
+import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { showsDueDate } from "@/lib/invoice-view";
+import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
+import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
 import { mailMessagingPort } from "./mail";
 import { InvoiceError, loadInvoiceBundle, type InvoiceBundle } from "./invoices";
@@ -25,8 +27,25 @@ export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { p
   const bundle = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, invoiceId));
   if (!bundle || bundle.invoice.status === "draft") return null;
   if (opts.patientId !== undefined && bundle.invoice.patientId !== opts.patientId) return null;
-  const bytes = await renderInvoicePdf(bundle);
+  const bytes = await renderInvoicePdf(await invoicePdfData(bundle));
   return { bytes, filename: invoicePdfFilename(bundle.invoice), bundle };
+}
+
+/**
+ * Belegdaten + Praxis-Angaben für das PDF: Logos, Website, Berufsbezeichnung, WhatsApp-Hinweis und
+ * Buchungshinweis (Einstellungen → Praxisdaten → Belege). Fehlt etwas, sieht der Beleg aus wie ohne.
+ */
+export async function invoicePdfData(bundle: InvoiceBundle): Promise<InvoicePdfData> {
+  const o = bundle.organization;
+  const settings = (o.settings ?? {}) as Record<string, unknown>;
+  const doc = readDocumentSettings(settings);
+  const logos = await loadLogos(o.id);
+  return {
+    ...bundle,
+    organization: { ...o, website: practiceWebsite(settings), qualification: doc.qualification, whatsapp: doc.whatsapp },
+    logos,
+    booking: invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }),
+  };
 }
 
 export function pdfResponseHeaders(filename: string, disposition: "inline" | "attachment" = "inline") {

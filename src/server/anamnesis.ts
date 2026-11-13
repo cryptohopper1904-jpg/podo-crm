@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { anamneses, auditLog, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
+import { anamneses, appointments, auditLog, consents, messages, organizations, patientLinks, patients, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { mergeRiskFlagsAdditive, riskFlagsFromAnamnesis, type AnamnesisData } from "@/lib/anamnesis";
@@ -40,6 +40,46 @@ export async function listAnamneses(auth: AuthContext, patientId: string) {
     };
   });
   if (res) await audit({ organizationId: org, userId: auth.user.id, action: medical ? "anamnesis.read" : "anamnesis.read_meta", entity: "patient", entityId: patientId });
+  return res;
+}
+
+/**
+ * Kopf- und Ausgangsdaten für den Anamnesebogen in der Praxis (iPad) bzw. die Druckfassung:
+ * Patient (Name, Nummer, Geburtsdatum), optional der Termin (nur derselben Person), letzte Anamnese.
+ * `mode`: "fill" (Bogen ausfüllen, medical.write) · "print" (Druck, medical.read).
+ */
+export async function anamnesisSheet(auth: AuthContext, patientId: string, opts: { mode: "fill" | "print"; appointmentId?: string | null }) {
+  assertCan(auth, opts.mode === "fill" ? "medical.write" : "medical.read");
+  const org = auth.organization.id;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuid.test(patientId)) return null;
+  const res = await withOrg(org, async (tx) => {
+    const [p] = await tx
+      .select({ id: patients.id, number: patients.number, salutation: patients.salutation, title: patients.title, firstName: patients.firstName, lastName: patients.lastName, birthDate: patients.birthDate, riskFlags: patients.riskFlags })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+    if (!p) return null;
+    const [appt] =
+      opts.appointmentId && uuid.test(opts.appointmentId)
+        ? await tx
+            .select({ id: appointments.id, startsAt: appointments.startsAt })
+            .from(appointments)
+            .where(and(eq(appointments.organizationId, org), eq(appointments.id, opts.appointmentId), eq(appointments.patientId, patientId)))
+        : [];
+    const [latest] = await tx
+      .select({ id: anamneses.id, createdAt: anamneses.createdAt, data: anamneses.data, author: users.name })
+      .from(anamneses)
+      .leftJoin(users, eq(users.id, anamneses.authorId))
+      .where(and(eq(anamneses.organizationId, org), eq(anamneses.patientId, patientId)))
+      .orderBy(desc(anamneses.createdAt))
+      .limit(1);
+    return {
+      patient: p,
+      appointment: appt ?? null,
+      latest: latest ? { ...latest, data: latest.data as AnamnesisData, source: (latest.data as { source?: string }).source ?? "practice" } : null,
+    };
+  });
+  if (res) await audit({ organizationId: org, userId: auth.user.id, action: opts.mode === "fill" ? "anamnesis.sheet_open" : "anamnesis.print", entity: "patient", entityId: patientId, meta: { appointmentId: res.appointment?.id ?? null } });
   return res;
 }
 

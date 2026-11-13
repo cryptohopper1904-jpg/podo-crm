@@ -789,10 +789,21 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
           .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.collectiveInvoiceId)))
           .then((r) => r[0] ?? null)
       : null;
+  // Leistungsdaten (Berliner Kalendertage) aus verknüpften Terminen bzw. Doku-Einträgen – für „Behandlung am …“
+  const apptIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
+  const recIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
+  const apptDays = apptIds.length
+    ? await tx.select({ at: appointments.startsAt }).from(appointments).where(and(eq(appointments.organizationId, org), inArray(appointments.id, apptIds)))
+    : [];
+  const recDays = recIds.length
+    ? await tx.select({ at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
+    : [];
+  const serviceDates = [...new Set([...apptDays, ...recDays].map((r) => berlinDateIso(r.at)))].sort();
   return {
     invoice: inv,
     lines,
     deposits,
+    serviceDates,
     creditedTo,
     payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
     organization: o,

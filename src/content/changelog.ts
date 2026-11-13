@@ -25,6 +25,18 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-b",
+    date: "2026-11-13",
+    title: "Ihr Logo auf Rechnungen, QR-Code zum Bezahlen und Anamnese am iPad",
+    items: [
+      { tag: "neu", text: "Logos im Profil: Laden Sie Ihr vollständiges Logo und Ihr Zeichen hoch. Das Logo steht oben auf jeder Rechnung und in Ihren E-Mails, das Zeichen dezent auf Anamnesebögen, Ausdrucken und Quittungen.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "QR-Code zum Bezahlen: Auf offenen Rechnungen steht ein GiroCode. Ihre Kund:innen scannen ihn mit der Banking-App – Betrag, IBAN und Rechnungsnummer sind schon ausgefüllt. Bar bezahlte Quittungen bekommen keinen." },
+      { tag: "neu", text: "Nächsten Termin buchen: Auf Wunsch zeigt jede Rechnung einen QR-Code zu Ihrer Online-Buchung – PodoHero, Doctolib oder ein eigener Link.", href: "/einstellungen/praxis" },
+      { tag: "verbessert", text: "Neues Rechnungsdesign: Logo oben, Kasten mit Rechnungsnummer und Terminvereinbarung (auch WhatsApp), „Rechnung zur Behandlung am …“, Zahlungshinweis passend zur Zahlart und eine Fußzeile mit Bankverbindung, Steuernummer und Berufsbezeichnung." },
+      { tag: "neu", text: "Anamnesebogen am iPad: Datum, Name und Patientennummer sind schon ausgefüllt – direkt aus der Kundenakte oder über „Anamnese“ beim heutigen Termin. Große Felder zum Antippen, dazu eine Druckfassung mit gleichem Kopf.", href: "/heute" },
+    ],
+  },
+  {
     id: "2026-11-13",
     date: "2026-11-13",
     title: "Rechnungen schneller schreiben",

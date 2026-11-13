@@ -83,6 +83,7 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     expect(org.settings.servicePriceNotes.NP).toMatch(/Preis bitte prüfen/);
     expect(org.settings.website.enabled).toBe(false);
     expect(org.settings.billingMode).toBe("private_only");
+    expect(org.settings.documents).toEqual({ qualification: "staatlich anerkannte Podologin & Heilpraktikerin auf dem Gebiet der Podologie", whatsapp: true, booking: { channel: "podohero" } });
 
     const owner = await pool.query("select u.password_hash, m.role from users u join memberships m on m.user_id = u.id where u.email = $1 and m.organization_id = $2", [ownerEmail, org.id]);
     expect(owner.rowCount).toBe(1);
@@ -123,6 +124,11 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     await pool.query("update organizations set settings = settings || '{\"billingMode\":\"with_gkv\"}'::jsonb where slug = $1", [slug]);
     expect((await runBootstrap(db, env)).billingMode).toBe("kept");
     expect(await mode()).toBe("with_gkv");
+    // Belege-Angaben: ebenfalls nur ergänzt, wenn sie fehlen
+    expect((await runBootstrap(db, env)).documents).toBe("kept");
+    await pool.query("update organizations set settings = settings - 'documents' where slug = $1", [slug]);
+    expect((await runBootstrap(db, env)).documents).toBe("set");
+    expect((await pool.query("select settings->'documents'->'booking'->>'channel' c from organizations where slug = $1", [slug])).rows[0].c).toBe("podohero");
     const orgId = (await pool.query("select id from organizations where slug = $1", [slug])).rows[0].id;
     const c = await pool.connect();
     try {
