@@ -31,6 +31,8 @@ import { assertCan } from "./authz";
 import { freeSlots } from "./appointments";
 import { loadConnection, logSync } from "./integrations";
 import { availability, bookableStaff } from "./staff";
+import { blocksFor } from "@/lib/calendar-blocks";
+import { loadBlockOccurrences } from "./calendar-blocks";
 import { isPrivateOnly, PRIVATE_ONLY_VOICE_NOTE } from "@/lib/features";
 
 /**
@@ -144,7 +146,7 @@ const dayList = (fromIso: string, toIso: string) => {
 };
 
 /**
- * Freie Startzeiten: Verfügbarkeit des Teams (Arbeitszeiten, Abwesenheiten, Feiertage; ohne gepflegte
+ * Freie Startzeiten: Verfügbarkeit des Teams (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage; ohne gepflegte
  * Arbeitszeiten Mo–Fr Öffnungszeiten) und – wie bei der Online-Buchung – praxisweit belegte Zeiten.
  */
 export async function findVoiceSlots(
@@ -155,10 +157,12 @@ export async function findVoiceSlots(
   const staff = await bookableStaff(org);
   const opening = openingOf(o.settings);
   const days: { dateIso: string; ranges: TimeRange[] }[] = [];
+  // ohne Behandler:innen: Öffnungszeiten minus Sperrzeiten der ganzen Praxis (mit Team: über availability)
+  const praxisBlocks = staff.length ? [] : await withOrg(org, (tx) => loadBlockOccurrences(tx, org, [], input.fromIso, input.toIso));
   for (const d of dayList(input.fromIso, input.toIso)) {
     const ranges = staff.length
       ? mergeRanges((await Promise.all(staff.map((s) => availability(org, s.id, d)))).flatMap((a) => a.ranges))
-      : computeAvailability({ dateIso: d, hours: [], absences: [], holiday: holidayOn(d, o.state as StateCode), opening }).ranges;
+      : computeAvailability({ dateIso: d, hours: [], absences: [], holiday: holidayOn(d, o.state as StateCode), opening, blocks: blocksFor(praxisBlocks, null, d) }).ranges;
     if (ranges.length) days.push({ dateIso: d, ranges });
   }
   if (!days.length) return [];

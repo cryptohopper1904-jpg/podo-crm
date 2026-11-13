@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { Ban, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { AppointmentRow } from "@/components/appointment-row";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { Badge, Card, Empty, LinkButton, PageHeader } from "@/components/ui";
@@ -19,6 +19,8 @@ import { setCalendarModeAction } from "./actions";
 import { CalendarOptionsPanel } from "./calendar-options-panel";
 import { FreeSlotFinder } from "./free-slot-finder";
 import { FullCalendar } from "./full-calendar";
+import { DayBlockLine } from "./calendar-blocks-view";
+import { canCreateBlocks } from "@/server/calendar-blocks";
 
 export const metadata = { title: "Kalender" };
 
@@ -110,7 +112,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const days = view === "woche" ? 7 : 1;
   const today = berlinDateIso();
   const end = addDays(start, days - 1);
-  const [allRows, board] = await Promise.all([listAppointments(auth, start, days), options.absences ? calendarBoard(auth, start, end) : null]);
+  const [allRows, board] = await Promise.all([listAppointments(auth, start, days), options.absences || options.blocks ? calendarBoard(auth, start, end) : null]);
   const rows = options.cancelled ? allRows : allRows.filter((r) => r.a.status !== "cancelled");
   const hiddenCancelled = allRows.length - rows.length;
   const overlaps = feedOverlapIds(rows);
@@ -121,7 +123,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const hiddenWeekend = allDates.filter((d) => !dates.includes(d)).reduce((n, d) => n + byDay(d).length, 0);
   const schoolUncovered = options.schoolHolidays && allDates.some((d) => !schoolHolidaysCovered(d));
   const absentNames = (iso: string) =>
-    board ? board.team.filter((t) => board.absences.some((a) => a.userId === t.id && a.startsOn <= iso && iso <= a.endsOn)).map((t) => t.name) : [];
+    board && options.absences ? board.team.filter((t) => board.absences.some((a) => a.userId === t.id && a.startsOn <= iso && iso <= a.endsOn)).map((t) => t.name) : [];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -139,6 +141,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
             <LinkButton variant="secondary" href={`/kalender?datum=${addDays(day, -step)}${view === "woche" ? "&ansicht=woche" : ""}${keep}`} aria-label="Zurück"><ChevronLeft size={18} aria-hidden /></LinkButton>
             <LinkButton variant="secondary" href={view === "woche" ? `/kalender?ansicht=woche${keep}` : keep ? `/kalender?${keep.slice(1)}` : "/kalender"}>Heute</LinkButton>
             <LinkButton variant="secondary" href={`/kalender?datum=${addDays(day, step)}${view === "woche" ? "&ansicht=woche" : ""}${keep}`} aria-label="Weiter"><ChevronRight size={18} aria-hidden /></LinkButton>
+            {canCreateBlocks(auth) ? <LinkButton variant="secondary" href={`/kalender/sperrzeit/neu?datum=${day}`} title="Sperrzeit eintragen: Pause, Schulung, früher Feierabend, Wartung, Reinigung …" aria-label="Sperrzeit eintragen"><Ban size={18} aria-hidden /><span className="max-2xl:sr-only">Sperrzeit</span></LinkButton> : null}
             {auth.can("appointments.write") ? <LinkButton href={`/kalender/neu?datum=${day}`}><Plus size={18} aria-hidden /> Termin</LinkButton> : null}
           </>
         }
@@ -173,11 +176,12 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
                   <span className="text-sm text-muted">{list.filter((r) => r.a.status !== "cancelled").length} Termine</span>
                 </div>
               ) : null}
-              {holiday || school || absent.length ? (
+              {holiday || school || absent.length || (board && options.blocks && board.blocks.some((b) => b.dateIso === iso)) ? (
                 <p className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                   {holiday ? <Badge tone="warn">Feiertag: {holiday}</Badge> : null}
                   {school ? <span className="text-xs text-info-soft-text"><span className="rounded bg-info-soft px-1.5 py-0.5">Schulferien</span> {school}</span> : null}
                   {absent.length ? <span className="text-xs text-muted">Abwesend: {absent.join(", ")}</span> : null}
+                  {board && options.blocks ? <DayBlockLine board={board} dateIso={iso} /> : null}
                 </p>
               ) : null}
               {list.length === 0 ? (
@@ -257,6 +261,7 @@ async function FullPage({
             <LinkButton variant="secondary" href={calHref({ datum: prev })} aria-label="Zurück"><ChevronLeft size={18} aria-hidden /></LinkButton>
             <LinkButton variant="secondary" href={calHref({ datum: today })}>Heute</LinkButton>
             <LinkButton variant="secondary" href={calHref({ datum: next })} aria-label="Weiter"><ChevronRight size={18} aria-hidden /></LinkButton>
+            {canCreateBlocks(auth) ? <LinkButton variant="secondary" href={`/kalender/sperrzeit/neu?datum=${day}`} title="Sperrzeit eintragen: Pause, Schulung, früher Feierabend, Wartung, Reinigung …" aria-label="Sperrzeit eintragen"><Ban size={18} aria-hidden /><span className="max-2xl:sr-only">Sperrzeit</span></LinkButton> : null}
             {canWrite ? <LinkButton href={`/kalender/neu?datum=${day}`}><Plus size={18} aria-hidden /> Termin</LinkButton> : null}
           </>
         }

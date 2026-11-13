@@ -8,6 +8,8 @@ import { therapists } from "@/server/appointments";
 import { sequential } from "@/lib/seq";
 import { parseHhmm } from "@/lib/calendar-grid";
 import { AppointmentForm } from "./appointment-form";
+import { NewEntrySwitch } from "../calendar-blocks-view";
+import { canCreateBlocks } from "@/server/calendar-blocks";
 
 export const metadata = { title: "Neuer Termin" };
 
@@ -25,6 +27,16 @@ export default async function NewAppointmentPage(props: PageProps<"/kalender/neu
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Neuer Termin" />
+      {canCreateBlocks(auth) ? (
+        <NewEntrySwitch
+          active="termin"
+          prefill={{
+            datum: typeof sp.datum === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.datum) ? sp.datum : undefined,
+            zeit: parseHhmm(sp.zeit) ?? undefined,
+            behandler: typeof sp.behandler === "string" && team.some((t) => t.id === sp.behandler) ? sp.behandler : undefined,
+          }}
+        />
+      ) : null}
       <AppointmentForm
         patients={pts}
         services={svc}

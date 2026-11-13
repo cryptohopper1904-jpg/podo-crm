@@ -281,6 +281,7 @@ export type UserPrefs = {
       holidays?: boolean;
       schoolHolidays?: boolean;
       absences?: boolean;
+      blocks?: boolean;
       cancelledSimple?: boolean;
       cancelledFull?: boolean;
       weekend?: "auto" | "alle" | "keine";
@@ -745,6 +746,42 @@ export const absences = pgTable("absences", {
   note: text("note"),
   createdAt: createdAt(),
 });
+
+/**
+ * Sperrzeiten im Kalender (Pause, Schulung, früher Feierabend, Wartung, Reinigung …): machen die Person
+ * (user_id) bzw. die ganze Praxis (user_id NULL) in dieser Zeit „nicht verfügbar“. Zeiten in Berliner Ortszeit
+ * (HH:MM, Ende bis 24:00); Wiederholung und Ausnahmen werden in src/lib/calendar-blocks.ts expandiert.
+ */
+export const calendarBlocks = pgTable(
+  "calendar_blocks",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** NULL = ganze Praxis (alle Behandler:innen) */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    /** pause | schulung | feierabend | wartung | reinigung | sonstiges */
+    kind: text("kind").notNull().default("pause"),
+    title: text("title"),
+    /** erstes Vorkommen (bzw. Datum bei „einmalig“) */
+    startsOn: date("starts_on").notNull(),
+    /** letztes mögliches Vorkommen (inklusive); NULL = ohne Ende */
+    endsOn: date("ends_on"),
+    allDay: boolean("all_day").notNull().default(false),
+    startTime: text("start_time"),
+    endTime: text("end_time"),
+    /** none | daily (Mo–Fr) | weekly (an `weekdays`, alle `interval_weeks` Wochen) */
+    repeat: text("repeat").notNull().default("none"),
+    weekdays: smallint("weekdays").array().notNull().default(sql`'{}'::smallint[]`),
+    intervalWeeks: smallint("interval_weeks").notNull().default(1),
+    /** einzeln gelöschte Vorkommen einer Serie */
+    exceptions: date("exceptions").array().notNull().default(sql`'{}'::date[]`),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("calendar_blocks_org_start").on(t.organizationId, t.startsOn)],
+);
 
 /** Markierung am Fuß. pos3d: optionale Position am 3D-Modell (Modellkoordinaten, normiert -1..1). */
 export type FootPoint = { side: "left" | "right"; point: string; label?: string; note?: string; pos3d?: [number, number, number] };

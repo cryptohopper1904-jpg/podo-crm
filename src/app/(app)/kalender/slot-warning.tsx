@@ -7,6 +7,8 @@ type Status = {
   clashes: { start: string; end: string; unassigned: boolean }[];
   absent: boolean;
   outsideHours: boolean;
+  /** überschneidende Sperrzeiten, z. B. „Pause 12:00–12:30“ (ältere Antworten ohne Feld → leer) */
+  blocks?: string[];
   hours: { start: string; end: string }[];
   holiday: string | null;
 };
@@ -28,7 +30,7 @@ export function slotQueryFromForm(form: HTMLFormElement, fallbackDuration: numbe
 
 /**
  * Hinweis „belegt – nicht verfügbar“ im Terminformular: fragt die Belegung der gewählten Behandler:in ab
- * (andere Termine, Abwesenheit, Arbeitszeit). Gespeichert wird trotzdem nur nach der serverseitigen Prüfung.
+ * (andere Termine, Abwesenheit, Sperrzeiten, Arbeitszeit). Gespeichert wird trotzdem nur nach der serverseitigen Prüfung.
  */
 export function SlotWarning({ query, override = "Trotzdem eintragen" }: { query: SlotQuery; override?: string }) {
   const [status, setStatus] = useState<{ key: string; data: Status } | null>(null);
@@ -57,7 +59,8 @@ export function SlotWarning({ query, override = "Trotzdem eintragen" }: { query:
 
   const s = status?.key === key ? status.data : null;
   if (!s) return null;
-  const blocked = s.clashes.length > 0 || s.absent;
+  const blocks = s.blocks ?? [];
+  const blocked = s.clashes.length > 0 || s.absent || blocks.length > 0;
   if (!blocked && !s.outsideHours) return null;
   return (
     <div role="status" aria-live="polite" className={`flex gap-2 rounded-xl p-3 text-sm ${blocked ? "bg-accent-soft text-accent-soft-text" : "bg-warn-soft text-warn-soft-text"}`}>
@@ -68,6 +71,11 @@ export function SlotWarning({ query, override = "Trotzdem eintragen" }: { query:
           <p>
             <strong>Belegt – nicht verfügbar:</strong> Die Behandler:in hat zu dieser Zeit bereits {s.clashes.length === 1 ? "einen Termin" : `${s.clashes.length} Termine`}:{" "}
             {s.clashes.map((c) => `${c.start}–${c.end} Uhr${c.unassigned ? " (ohne Behandler:in-Zuordnung)" : ""}`).join(", ")}.
+          </p>
+        ) : null}
+        {blocks.length ? (
+          <p>
+            <strong>Sperrzeit – nicht verfügbar:</strong> {blocks.join(", ")}.
           </p>
         ) : null}
         {!s.absent && s.outsideHours ? (

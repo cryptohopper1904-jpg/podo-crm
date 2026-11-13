@@ -7,6 +7,7 @@ import { holidayOn, type StateCode } from "@/lib/holidays";
 import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import type { listAppointments } from "@/server/appointments";
 import type { calendarBoard } from "@/server/calendar-board";
+import { BLOCK_HATCH, BlockOverlays, MonthBlockHints } from "./calendar-blocks-view";
 
 type Row = Awaited<ReturnType<typeof listAppointments>>[number];
 type Board = Awaited<ReturnType<typeof calendarBoard>>;
@@ -105,9 +106,10 @@ export function FullCalendar(props: FullCalendarProps) {
       ) : null}
       {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} />}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin</span> : null}
+        {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin oder Sperrzeit</span> : null}
         <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border" style={HATCH} aria-hidden /> belegt/abwesend – nicht verfügbar</span>
         {props.options.workHours ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-border bg-surface-2" aria-hidden /> außerhalb der Arbeitszeit</span> : null}
+        {props.options.blocks ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-5 rounded-sm border border-dashed border-border-strong bg-surface-2" style={BLOCK_HATCH} aria-hidden /> Sperrzeit (Pause, Schulung …) – nicht verfügbar</span> : null}
         {props.options.schoolHolidays ? <span className="inline-flex items-center gap-1.5"><span className="inline-block h-1.5 w-5 rounded-sm bg-info-soft-text/60" aria-hidden /> Schulferien</span> : null}
         {props.options.cancelled ? <span className="inline-flex items-center gap-1.5"><span className="line-through">abgesagt</span> = abgesagter Termin</span> : null}
         {cancelled ? <span>{cancelled} abgesagte{cancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</span> : null}
@@ -311,6 +313,8 @@ function TimeGridView({ view, day, today, now, rows, board, state, overlaps, can
                     );
                   })
                 )}
+                {/* Sperrzeiten (Pause, Schulung …) */}
+                {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
                   <Block key={b.row.a.id} b={b} rangeStart={range.startMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={validColor(board.team.find((t) => t.id === b.row.a.therapistId)?.color)} />
@@ -436,6 +440,7 @@ function MonthView({ day, today, rows, board, state, canWrite, calHref, options 
                   </div>
                   {holiday ? <span className="truncate text-[10px] font-semibold text-warn-soft-text" title={`Feiertag: ${holiday}`}>{holiday}</span> : null}
                   {school ? <span className="truncate text-[10px] text-info-soft-text" title={`Schulferien: ${school}`}>{school}</span> : null}
+                  {options.blocks ? <MonthBlockHints board={board} dateIso={iso} dayHref={calHref({ ansicht: "tag", datum: iso })} /> : null}
                   {list.slice(0, 3).map((r) => (
                     <Link
                       key={r.a.id}

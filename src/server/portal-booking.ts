@@ -23,6 +23,8 @@ import {
 } from "@/lib/portal-booking";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { bookableStaff } from "./staff";
+import { blocksFor } from "@/lib/calendar-blocks";
+import { loadBlockOccurrences } from "./calendar-blocks";
 import { isDeceased } from "@/lib/patient-deceased";
 
 /** Drosselung je Person (zusätzlich zur IP-Drosselung des Portals): Buchen/Verschieben. */
@@ -58,7 +60,7 @@ const openingOf = (settings: Record<string, unknown>): TimeRange => {
 };
 
 /**
- * Verfügbare Zeitfenster des Teams je Tag (Arbeitszeiten, Abwesenheiten, Feiertage; ohne gepflegte
+ * Verfügbare Zeitfenster des Teams je Tag (Arbeitszeiten, Abwesenheiten, Sperrzeiten, Feiertage; ohne gepflegte
  * Arbeitszeiten Mo–Fr Öffnungszeiten). Lädt alles in zwei Abfragen statt je Tag und Person.
  */
 export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">, days: string[]): Promise<{ dateIso: string; ranges: TimeRange[] }[]> {
@@ -67,7 +69,7 @@ export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">
   const staff = await bookableStaff(org);
   const ids = staff.map((s) => s.id);
   const opening = openingOf(o.settings);
-  const { hours, abs } = await withOrg(org, async (tx) => ({
+  const { hours, abs, blocks } = await withOrg(org, async (tx) => ({
     hours: ids.length
       ? await tx
           .select({ userId: workingHours.userId, weekday: workingHours.weekday, startTime: workingHours.startTime, endTime: workingHours.endTime })
@@ -80,6 +82,8 @@ export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">
           .from(absences)
           .where(and(eq(absences.organizationId, org), inArray(absences.userId, ids), lte(absences.startsOn, days[days.length - 1]), gte(absences.endsOn, days[0])))
       : [],
+    // Sperrzeiten (Pause, Schulung …) der Personen und der ganzen Praxis
+    blocks: await loadBlockOccurrences(tx, org, ids, days[0], days[days.length - 1]),
   }));
   return days
     .map((d) => {
@@ -88,10 +92,17 @@ export async function teamDayRanges(o: Pick<OrgRow, "id" | "state" | "settings">
         ? mergeRanges(
             staff.flatMap(
               (s) =>
-                computeAvailability({ dateIso: d, hours: hours.filter((h) => h.userId === s.id), absences: abs.filter((a) => a.userId === s.id), holiday, opening }).ranges,
+                computeAvailability({
+                  dateIso: d,
+                  hours: hours.filter((h) => h.userId === s.id),
+                  absences: abs.filter((a) => a.userId === s.id),
+                  holiday,
+                  opening,
+                  blocks: blocksFor(blocks, s.id, d),
+                }).ranges,
             ),
           )
-        : computeAvailability({ dateIso: d, hours: [], absences: [], holiday, opening }).ranges;
+        : computeAvailability({ dateIso: d, hours: [], absences: [], holiday, opening, blocks: blocksFor(blocks, null, d) }).ranges;
       return { dateIso: d, ranges };
     })
     .filter((d) => d.ranges.length > 0);

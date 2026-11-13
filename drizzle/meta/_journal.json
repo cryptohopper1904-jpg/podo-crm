@@ -323,6 +323,13 @@
       "when": 1794606487820,
       "tag": "0045_auswertung_indizes",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794607330520,
+      "tag": "0046_kalender_sperrzeiten",
+      "breakpoints": true
     }
   ]
 }

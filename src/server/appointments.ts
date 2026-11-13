@@ -11,6 +11,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
 import { lockBooking } from "./portal-booking";
+import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
+import { blockClashesInTx } from "./calendar-blocks";
 import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
 
 export async function listAppointments(auth: AuthContext, fromIso: string, days: number) {
@@ -116,15 +118,19 @@ async function absentDaysInTx(tx: Tx, org: string, therapistId: string, days: st
 }
 
 export type SlotClash = { startsAt: Date; endsAt: Date };
-export type SlotConflict = { ok: false; conflict: true; clashes: SlotClash[]; absentDays: string[] };
+export type SlotConflict = { ok: false; conflict: true; clashes: SlotClash[]; absentDays: string[]; blocks: BlockOccurrence[] };
 
-/** Fehlertext für belegte Zeiten / Abwesenheit (Terminanlage und Verschieben). */
-export function conflictMessage(c: Pick<SlotConflict, "clashes" | "absentDays">): string {
+/** Fehlertext für belegte Zeiten / Abwesenheit / Sperrzeiten (Terminanlage und Verschieben). */
+export function conflictMessage(c: Pick<SlotConflict, "clashes" | "absentDays"> & { blocks?: readonly BlockOccurrence[] }): string {
   const parts: string[] = [];
   if (c.clashes.length) parts.push(`Zu dieser Zeit ist bereits ein Termin eingetragen – belegt, nicht verfügbar (${describeClashes(c.clashes.slice(0, 5))}${c.clashes.length > 5 ? " …" : ""}).`);
   if (c.absentDays.length) {
     const days = c.absentDays.map((d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}`).join(", ");
     parts.push(`Die Behandler:in ist laut Team-Planung abwesend – nicht verfügbar (${days}).`);
+  }
+  if (c.blocks?.length) {
+    const list = describeBlockConflicts(c.blocks.slice(0, 5), new Set(c.blocks.map((b) => b.dateIso)).size > 1);
+    parts.push(`Sperrzeit im Kalender – nicht verfügbar: ${list}${c.blocks.length > 5 ? " …" : ""}.`);
   }
   return parts.join(" ") || "Zu dieser Zeit ist bereits ein Termin eingetragen.";
 }
@@ -166,7 +172,8 @@ export async function createInternalAppointments(
         clashes.push(...found.map((c) => ({ startsAt: c.startsAt, endsAt: c.endsAt })));
       }
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, input.occurrences.map((s) => berlinParts(s).dateIso));
-      if (clashes.length || absentDays.length) return { ok: false as const, conflict: true as const, clashes, absentDays };
+      const blocks = await blockClashesInTx(tx, org, input.therapistId, input.occurrences.map((s) => ({ start: s, end: new Date(s.getTime() + input.durationMin * 60_000) })));
+      if (clashes.length || absentDays.length || blocks.length) return { ok: false as const, conflict: true as const, clashes, absentDays, blocks };
     }
     const ids: string[] = [];
     for (const s of input.occurrences) {
@@ -284,7 +291,8 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, [berlinParts(input.startsAt).dateIso]);
-      if (clash.length || absentDays.length) return { ok: false, conflict: true, error: conflictMessage({ clashes: clash, absentDays }) };
+      const blocks = await blockClashesInTx(tx, org, input.therapistId, [{ start: input.startsAt, end }]);
+      if (clash.length || absentDays.length || blocks.length) return { ok: false, conflict: true, error: conflictMessage({ clashes: clash, absentDays, blocks }) };
     }
     await tx
       .update(appointments)

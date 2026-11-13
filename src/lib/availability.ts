@@ -1,6 +1,6 @@
 /**
  * Verfügbarkeit von Behandler:innen (rein, ohne DB): Arbeitszeiten je Wochentag minus
- * Abwesenheiten und Feiertage. Genutzt von src/server/staff.ts (Kalender, Online-Buchung).
+ * Abwesenheiten, Feiertage und Sperrzeiten (Pause, Schulung … – src/lib/calendar-blocks.ts). Genutzt von src/server/staff.ts (Kalender, Online-Buchung).
  */
 
 export type TimeRange = { start: string; end: string };
@@ -75,7 +75,26 @@ export function parseRanges(text: string): { ranges: TimeRange[]; error?: string
 
 export const formatRanges = (r: TimeRange[]) => r.map((x) => `${x.start}-${x.end}`).join(", ");
 
-export type AvailabilityReason = "absence" | "holiday" | "no_hours" | null;
+/**
+ * Zieht Zeitfenster in Minuten (z. B. Sperrzeiten) von verfügbaren Bereichen ab. Ergebnis sortiert;
+ * Reststücke kürzer als eine Minute entfallen.
+ */
+export function subtractRanges(ranges: TimeRange[], cuts: readonly { startMin: number; endMin: number }[]): TimeRange[] {
+  let cur = mergeRanges(ranges).map((r) => [toMin(r.start), toMin(r.end)] as [number, number]);
+  for (const c of cuts) {
+    if (!(c.endMin > c.startMin)) continue;
+    cur = cur.flatMap(([s, e]): [number, number][] => {
+      if (c.endMin <= s || c.startMin >= e) return [[s, e]];
+      const parts: [number, number][] = [];
+      if (c.startMin > s) parts.push([s, c.startMin]);
+      if (c.endMin < e) parts.push([c.endMin, e]);
+      return parts;
+    });
+  }
+  return cur.filter(([s, e]) => e > s).map(([s, e]) => ({ start: toHhmm(s), end: toHhmm(e) }));
+}
+
+export type AvailabilityReason = "absence" | "holiday" | "no_hours" | "block" | null;
 export type Availability = {
   available: boolean;
   ranges: TimeRange[];
@@ -84,6 +103,8 @@ export type Availability = {
   source: "working_hours" | "opening_hours";
   absenceKind?: string;
   holiday?: string;
+  /** Arbeitszeit ohne Abzug der Sperrzeiten (für „außerhalb der Arbeitszeit“ vs. „Sperrzeit“) */
+  hoursRanges?: TimeRange[];
 };
 
 export function computeAvailability(input: {
@@ -94,6 +115,8 @@ export function computeAvailability(input: {
   holiday?: string | null;
   /** Fallback, wenn für die Person gar keine Arbeitszeiten gepflegt sind: Mo–Fr Öffnungszeiten */
   opening?: TimeRange;
+  /** Sperrzeiten an diesem Tag (eigene und ganze Praxis; Minuten Berliner Ortszeit, Ende bis 1440) */
+  blocks?: readonly { startMin: number; endMin: number }[];
 }): Availability {
   const { dateIso, hours, absences } = input;
   const configured = hours.length > 0;
@@ -108,7 +131,9 @@ export function computeAvailability(input: {
       ? mergeRanges([input.opening ?? { start: "08:00", end: "18:00" }])
       : [];
   if (ranges.length === 0) return { available: false, ranges: [], reason: "no_hours", source };
-  return { available: true, ranges, reason: null, source };
+  const free = input.blocks?.length ? subtractRanges(ranges, input.blocks) : ranges;
+  if (free.length === 0) return { available: false, ranges: [], reason: "block", source, hoursRanges: ranges };
+  return { available: true, ranges: free, reason: null, source, hoursRanges: ranges };
 }
 
 /** Liegt ein Zeitfenster (HH:MM) vollständig in den verfügbaren Bereichen? */
