@@ -61,7 +61,12 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
     // Testphase per Aktionscode (kein aktuelles Stripe-Abo): Events eines alten (beendeten) Abos ändern nichts –
     // weder Rechnungs-Events noch Abo-Events, die kein neues aktives Abo melden (sonst fiele die Praxis z. B. auf „past_due“).
     const codeTrial = org.subscriptionStatus === "trialing" && !org.stripeSubscriptionId;
-    if (codeTrial && ev.type.startsWith("invoice.")) return done("ignored", org.id, "Aktionscode-Testphase: Rechnung eines alten Abos");
+    // Rechnungs-Events nur zum aktuellen Abo: fremde/alte Abo-ID → ignorieren; ohne Abo-ID nur, wenn die Praxis gar kein
+    // Abo hat (Code-Testphase) – dann kann die Rechnung zu keinem laufenden Abo gehören.
+    if (ev.type.startsWith("invoice.")) {
+      const invSub = invoiceSubscriptionId(ev);
+      if (invSub ? invSub !== org.stripeSubscriptionId : codeTrial) return done("ignored", org.id, "Rechnung eines alten/fremden Abos");
+    }
     if (codeTrial && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
       return done("ignored", org.id, "Aktionscode-Testphase: altes Abo");
     }
@@ -87,6 +92,14 @@ async function findOrg(tx: Tx, organizationId: string | null, customerId: string
     if (o) return o;
   }
   return null;
+}
+
+/** Abo-ID einer Rechnung (ältere API: invoice.subscription, neuere: invoice.parent.subscription_details.subscription) */
+function invoiceSubscriptionId(ev: StripeEvent): string | null {
+  const o = (ev.data?.object ?? {}) as Record<string, unknown>;
+  const id = (v: unknown) => (typeof v === "string" && v ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : null);
+  const parent = (o.parent ?? {}) as { subscription_details?: { subscription?: unknown } };
+  return id(o.subscription) ?? id(parent.subscription_details?.subscription);
 }
 
 /** Nur die Abo-Felder setzen; settings wird per jsonb-Merge ergänzt (keine parallelen Einstellungsänderungen überschreiben). */
@@ -253,9 +266,10 @@ export const promoReturnFreePending = (settings: Record<string, unknown> | null 
  * Kostenlos-Tarif (AGB § 3 Abs. 4), wenn die Bedingungen erfüllt sind (höchstens 20 Patient:innen, kein Stripe-Abo).
  * Weitere Personen werden deaktiviert; es bleibt die einlösende Inhaber:in (bzw. die am längsten aktive Inhaber:in).
  * Sonst bleibt die Praxis wie bisher nur lesbar und der Merker wird entfernt (kein erneuter Versuch je Anfrage).
- * Aufruf: lazy beim Laden der Praxis (src/lib/auth/session.ts), nur wenn Merker gesetzt und die Testphase abgelaufen ist.
+ * Aufruf: nächtlicher Cron (runPromoTrialReturns in src/server/promo-codes.ts, /api/cron/lead-search). Bis dahin kann
+ * die Inhaber:in sofort „Kostenlos weiter nutzen“ wählen (Abo-Seite, auch im Nur-Lesen-Modus).
  */
-export async function returnPromoTrialToFree(organizationId: string, now = new Date()): Promise<"switched" | "kept" | "not_due"> {
+export async function returnPromoTrialToFree(organizationId: string, now = new Date()): Promise<{ status: "switched" | "kept" | "not_due"; deactivated: string[] }> {
   return withOrg(organizationId, async (tx) => {
     const [cur] = await tx
       .select({ subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, stripeSubscriptionId: organizations.stripeSubscriptionId, settings: organizations.settings })
@@ -263,7 +277,7 @@ export async function returnPromoTrialToFree(organizationId: string, now = new D
       .where(eq(organizations.id, organizationId));
     const isDue = (o: { subscriptionStatus: string; trialEndsAt: Date | null; stripeSubscriptionId: string | null; settings: Record<string, unknown> | null }) =>
       promoReturnFreePending(o.settings) && o.subscriptionStatus === "trialing" && !o.stripeSubscriptionId && !!o.trialEndsAt && o.trialEndsAt.getTime() <= now.getTime();
-    if (!cur || !isDue(cur)) return "not_due" as const;
+    if (!cur || !isDue(cur)) return { status: "not_due" as const, deactivated: [] };
     const owners = await tx
       .select({ userId: memberships.userId, createdAt: memberships.createdAt })
       .from(memberships)
@@ -278,14 +292,14 @@ export async function returnPromoTrialToFree(organizationId: string, now = new D
       return notDue ? "nicht fällig" : null;
     };
     const r = keep ? await freeSwitchTx(tx, organizationId, keep, { auditUserId: null, action: "promo.return_free", check: due }) : { error: "keine aktive Inhaber:in" };
-    if ("ok" in r) return "switched" as const;
-    if (notDue) return "not_due" as const;
+    if ("ok" in r) return { status: "switched" as const, deactivated: r.deactivated };
+    if (notDue) return { status: "not_due" as const, deactivated: [] };
     // Bedingungen nicht erfüllt (z. B. mehr als 20 Patient:innen): Merker entfernen, Praxis bleibt nur lesbar
     await tx
       .update(organizations)
       .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) - 'promoReturnFree'` })
       .where(eq(organizations.id, organizationId));
     await tx.insert(auditLog).values({ organizationId, userId: null, action: "promo.return_free_skipped", meta: { reason: r.error.slice(0, 200) } });
-    return "kept" as const;
+    return { status: "kept" as const, deactivated: [] };
   });
 }

@@ -97,7 +97,7 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
             </select>
             <Button type="submit" variant="secondary" className="h-10">Setzen</Button>
           </form>
-          <p className="mt-2 text-xs text-muted">„Antwort erhalten“ beendet die Sequenz (Status „Geantwortet“). „Interessiert“, „Kein Interesse“, „Abgemeldet“ und „Kunde“ beenden sie ebenfalls. „Abgemeldet“ sperrt die Adresse dauerhaft.</p>
+          <p className="mt-2 text-xs text-muted">„Antwort erhalten“ beendet die Sequenz (Status „Geantwortet“). „Interessiert“, „Kein Interesse“, „Abgemeldet“ und „Kunde“ beenden sie ebenfalls. „Abgemeldet“ sperrt die Adresse dauerhaft und löscht diesen Eintrag samt Verlauf (Widerspruch).</p>
         </Card>
         <Card>
           <h2 className="font-display text-lg font-semibold">Einwilligung (§ 7 Abs. 2 Nr. 2 UWG)</h2>
@@ -116,8 +116,12 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
               {lead.email ? (
                 <ActionForm action={consentAction} submit="Einwilligung dokumentieren" className="mt-3 flex flex-col gap-2">
                   <input type="hidden" name="id" value={lead.id} />
-                  <label className="text-sm font-medium" htmlFor="consentNote">Wie und wann erteilt? *</label>
-                  <Textarea id="consentNote" name="note" required minLength={3} maxLength={500} rows={2} placeholder="z. B. Anfrage per E-Mail vom 12.11.2026, Messe XY mit unterschriebenem Formular" />
+                  <label className="text-sm font-medium" htmlFor="consentNote">Wortlaut, Kanal und Datum der Einwilligung *</label>
+                  <Textarea id="consentNote" name="note" required minLength={3} maxLength={500} rows={3} placeholder="z. B. E-Mail vom 12.11.2026: „Bitte schicken Sie mir weitere Infos per E-Mail.“ / Messe XY 10.11.2026, unterschriebenes Formular „Ja, ich möchte Informationen per E-Mail“" />
+                  <p className="text-xs text-muted">
+                    Nötig ist eine ausdrückliche Einwilligung in Informationen per E-Mail (z. B. Anfrage mit Wunsch nach weiteren Infos per E-Mail,
+                    Messe mit dokumentierter Zustimmung). Eine bloße Anfrage oder eine öffentliche Adresse genügt nicht.
+                  </p>
                 </ActionForm>
               ) : (
                 <p className="mt-1 text-xs text-muted">Zuerst eine E-Mail-Adresse eintragen.</p>

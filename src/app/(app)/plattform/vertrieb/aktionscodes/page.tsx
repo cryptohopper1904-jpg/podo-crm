@@ -99,7 +99,6 @@ export default async function PromoCodesPage({ searchParams }: PageProps<"/platt
           <Field label="Code *" hint={`A–Z, 0–9, Bindestrich. Der zufällige Vorschlag ist schwer zu erraten. Selbst gewählte Codes: mindestens ${PROMO_OWN_MIN_LENGTH} Zeichen und Höchstzahl oder Ablaufdatum Pflicht.`}>
             <Input name="code" required maxLength={32} defaultValue={suggested} className="font-mono" autoComplete="off" spellCheck={false} />
           </Field>
-          <input type="hidden" name="suggested" value={suggested} />
           <Field label="Bezeichnung (intern) *"><Input name="label" required maxLength={120} placeholder="z. B. Herbstkampagne Brandenburg" /></Field>
           <Field label="Testphase (Tage) *" hint="90 Tage ≈ 3 Monate. Eine längere laufende Testphase wird nie verkürzt.">
             <Input name="trialDays" type="number" min={1} max={365} required defaultValue={PROMO_DEFAULT_TRIAL_DAYS} />

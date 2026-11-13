@@ -17,6 +17,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 const day = 86_400_000;
 const sfx = Math.random().toString(36).slice(2, 7).toUpperCase();
 const C = (name: string) => `T${sfx}-${name}`;
+/** selbst gewählte Codes brauchen Höchstzahl oder Ablaufdatum */
+const soon = new Date(Date.now() + 30 * day);
 
 (TEST_DB ? describe : describe.skip)("Aktionscodes (DB)", () => {
   const f = fixtures(TEST_DB!);
@@ -40,7 +42,7 @@ const C = (name: string) => `T${sfx}-${name}`;
   };
   const orgRow = async (id: string) => (await f.pool.query("select plan, subscription_status, trial_ends_at, seats from organizations where id = $1", [id])).rows[0];
   const code = (name: string, x: Partial<import("./promo-codes").PromoCodeInput> = {}) =>
-    p.createPromoCode(admin, { code: C(name), label: `Test ${name}`, trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: null, generated: true, ...x });
+    p.createPromoCode(admin, { code: C(name), label: `Test ${name}`, trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: soon, campaignId: null, ...x });
 
   beforeAll(async () => {
     process.env.DATABASE_URL = TEST_DB;
@@ -61,14 +63,20 @@ const C = (name: string) => `T${sfx}-${name}`;
   });
 
   it("Anlegen normalisiert den Code und lehnt Dubletten/ungültige Eingaben ab", async () => {
-    const id = await p.createPromoCode(admin, { code: ` t${sfx.toLowerCase()}-herbst `, label: "Herbst", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: null, generated: true });
+    const id = await p.createPromoCode(admin, { code: ` t${sfx.toLowerCase()}-herbst `, label: "Herbst", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: soon, campaignId: null });
     expect((await f.pool.query("select code from promo_codes where id = $1", [id])).rows[0].code).toBe(C("HERBST"));
     await expect(code("HERBST")).rejects.toThrow(/bereits/);
     await expect(p.createPromoCode(admin, { code: "a!", label: "x", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: null })).rejects.toThrow(/Code/);
     await expect(code("NULL", { trialDays: 0 })).rejects.toThrow(/Testphase/);
     await expect(code("ALT", { validUntil: new Date(Date.now() - day) })).rejects.toThrow(/Vergangenheit/);
     expect(auditCalls().some((a) => a.action === "promo.code_created")).toBe(true);
-    expect(await p.lookupPromoCode(C("herbst"))).toEqual({ code: C("HERBST"), trialDays: 90, grantPlan: null, validUntil: null, limited: false });
+    expect(await p.lookupPromoCode(C("herbst"))).toEqual({ code: C("HERBST"), trialDays: 90, grantPlan: null, validUntil: soon, limited: false });
+    // Zufallscode (Format serverseitig erkannt): ohne Begrenzung erlaubt
+    const { generatePromoCode } = await import("@/lib/promo-codes");
+    const gen = generatePromoCode();
+    await p.createPromoCode(admin, { code: gen, label: "Zufall", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: null });
+    expect(await p.lookupPromoCode(gen)).toMatchObject({ validUntil: null, limited: false });
+    await owner.query("delete from promo_codes where code = $1", [gen]);
     // selbst gewählte Codes: mindestens 6 Zeichen und Höchstzahl ODER Ablaufdatum
     await expect(p.createPromoCode(admin, { code: C("OWN"), label: "x", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: null })).rejects.toThrow(/Höchstzahl an Einlösungen oder ein Ablaufdatum/);
     await expect(p.createPromoCode(admin, { code: "ABCDE", label: "x", trialDays: 90, grantPlan: null, maxRedemptions: 5, validUntil: null, campaignId: null })).rejects.toThrow(/mindestens 6/);
@@ -222,23 +230,29 @@ const C = (name: string) => `T${sfx}-${name}`;
     const o = await make();
     await p.redeemPromoCodeForOrganization(o, ownerUser, C("FREI"));
     expect((await f.pool.query("select previous_plan from promo_redemptions where organization_id = $1", [o])).rows[0].previous_plan).toBe("free");
-    expect(await billing.returnPromoTrialToFree(o)).toBe("not_due");
+    expect((await billing.returnPromoTrialToFree(o)).status).toBe("not_due");
     await f.pool.query("update organizations set trial_ends_at = now() - interval '1 minute' where id = $1", [o]);
-    expect(await billing.returnPromoTrialToFree(o)).toBe("switched");
+    const sid = `t-${sfx}-${Math.random().toString(36).slice(2)}`;
+    await f.pool.query("insert into sessions (id, user_id, organization_id, verified, expires_at) values ($1, $2, $3, true, now() + interval '1 hour')", [sid, team, o]);
+    // echter Pfad: nächtlicher Cron-Schritt
+    const run = await p.runPromoTrialReturns();
+    expect(run.switched).toBeGreaterThanOrEqual(1);
+    expect(run.failed).toBe(0);
+    expect((await f.pool.query("select 1 from sessions where id = $1", [sid])).rowCount).toBe(0);
     expect(await orgRow(o)).toMatchObject({ plan: "free", subscription_status: "none", seats: 1 });
     expect((await f.pool.query("select user_id, active from memberships where organization_id = $1 order by active desc", [o])).rows).toEqual([
       { user_id: ownerUser, active: true },
       { user_id: team, active: false },
     ]);
     expect((await f.pool.query("select settings->'promoReturnFree' as x from organizations where id = $1", [o])).rows[0].x).toBeNull();
-    expect(await billing.returnPromoTrialToFree(o)).toBe("not_due");
+    expect((await billing.returnPromoTrialToFree(o)).status).toBe("not_due");
 
     // mehr als 20 Patient:innen: bleibt nur lesbar, Merker wird entfernt
     const big = await make();
     await p.redeemPromoCodeForOrganization(big, ownerUser, C("FREI"));
     for (let i = 0; i < 21; i++) await f.patient(big, { lastName: `P${i}` });
     await f.pool.query("update organizations set trial_ends_at = now() - interval '1 minute' where id = $1", [big]);
-    expect(await billing.returnPromoTrialToFree(big)).toBe("kept");
+    expect((await p.runPromoTrialReturns()).kept).toBeGreaterThanOrEqual(1);
     expect(await orgRow(big)).toMatchObject({ plan: "trial", subscription_status: "trialing" });
     expect((await f.pool.query("select settings->'promoReturnFree' as x from organizations where id = $1", [big])).rows[0].x).toBeNull();
 
@@ -246,6 +260,7 @@ const C = (name: string) => `T${sfx}-${name}`;
     const t = await org();
     await p.redeemPromoCodeForOrganization(t, ownerUser, C("FREI"));
     await f.pool.query("update organizations set trial_ends_at = now() - interval '1 minute' where id = $1", [t]);
-    expect(await billing.returnPromoTrialToFree(t)).toBe("not_due");
+    expect((await billing.returnPromoTrialToFree(t)).status).toBe("not_due");
+    expect(await orgRow(t)).toMatchObject({ subscription_status: "trialing" });
   });
 });

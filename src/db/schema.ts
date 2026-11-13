@@ -1593,7 +1593,17 @@ export const salesSends = pgTable(
   (t) => [index("sales_sends_lead").on(t.leadId), index("sales_sends_sent_at").on(t.sentAt)],
 );
 
-/** Sperrliste: an diese Adressen (kleingeschrieben) geht nie wieder eine Vertriebsmail – auch nach Löschen/Neu-Import. */
+/**
+ * Sperrliste (Abmeldung/Widerspruch) als Prüfwert: HMAC der kleingeschriebenen Adresse (src/lib/vertrieb/blocklist.ts),
+ * keine Klartext-Adressen. An gesperrte Adressen geht nie wieder eine Vertriebsmail – auch nach Löschen/Neu-Import.
+ */
+export const salesBlocklist = pgTable("sales_blocklist", {
+  hash: text("hash").primaryKey(),
+  reason: text("reason").notNull(),
+  createdAt: createdAt(),
+});
+
+/** ALTBESTAND (bis 0038): Klartext-Sperrliste – wird beim ersten Zugriff in sales_blocklist überführt und geleert (src/server/blocklist.ts). */
 export const salesSuppressions = pgTable("sales_suppressions", {
   email: text("email").primaryKey(),
   reason: text("reason").notNull(),

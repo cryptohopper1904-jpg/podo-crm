@@ -4,6 +4,7 @@ import {
   cheapestPaidCents,
   endOfDayBerlin,
   generatePromoCode,
+  isGeneratedPromoCode,
   ownCodeProblem,
   promoTermsText,
   isPayingOrg,
@@ -41,6 +42,11 @@ describe("Aktionscodes: Normalisierung", () => {
       expect(c.slice(5)).not.toMatch(/[01OIL]/);
     }
     expect(generatePromoCode("herbst", () => 0)).toBe("HERBST-AAAA-AAAA");
+    // „generiert“ nur im Standardformat PODO-XXXX-XXXX mit dem Zufallsalphabet (sonst gelten Regeln für eigene Codes)
+    expect(isGeneratedPromoCode(generatePromoCode())).toBe(true);
+    expect(isGeneratedPromoCode("PODO-AB0O-CDEF")).toBe(false);
+    expect(isGeneratedPromoCode("HERBST-AAAA-AAAA")).toBe(false);
+    expect(isGeneratedPromoCode("PODO-AAAA")).toBe(false);
     expect(generatePromoCode("!!", () => 0)).toBe("PODO-AAAA-AAAA");
   });
 });
@@ -122,6 +128,7 @@ describe("Aktionscodes: Links und Texte", () => {
     expect(t).toContain(`ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.`);
     expect(t).toContain("bis 20 Patient:innen, 1 Person, ohne Patientenportal, KI-Telefonagent und Praxis-Website");
     expect(t).toMatch(/Es gelten die AGB\.$/);
+    expect(t).toContain("im kostenlosen Tarif eingelöst haben, kehren danach automatisch in diesen zurück (spätestens in der folgenden Nacht");
     expect(promoTermsText({ validUntil: null, limited: false })).toContain("Einlösbar bis auf Widerruf. Je Praxis");
   });
 });

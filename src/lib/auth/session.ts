@@ -7,7 +7,6 @@ import { and, eq, gt, isNotNull, isNull, ne } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { auditLog, memberships, organizations, sessions, supportGrants, users } from "@/db/schema";
 import { accessMode, type AccessInfo, type OrgBilling } from "@/lib/plans";
-import { promoReturnFreePending, returnPromoTrialToFree } from "@/server/billing";
 import { billingModeOf, type BillingMode } from "@/lib/features";
 import { effectiveCan, isReadPermission, mutationAllowedWithoutPermission, pickActiveGrant, type SupportContext } from "./access";
 import { can, type Permission, type Role } from "./permissions";
@@ -334,10 +333,6 @@ async function loadOwn(row: SessionRow, orgId: string, req: { mutating: boolean 
     .where(and(eq(memberships.userId, row.user.id), eq(memberships.organizationId, orgId), eq(memberships.active, true)))
     .limit(1);
   if (!m) return NONE;
-  // Aktionscode-Testphase aus dem Kostenlos-Tarif abgelaufen → automatisch zurück (AGB § 3 Abs. 4), dann neu laden
-  if (promoReturnFreePending(m.org.settings) && accessMode(billingOf(m.org)).reason === "trial_expired") {
-    if ((await returnPromoTrialToFree(orgId).catch(() => "kept")) === "switched") return loadOwn(row, orgId, req);
-  }
   if (twoFactorPending({ totpEnabled: row.user.totpEnabled, role: m.membership.role as Role, isPlatformAdmin: row.user.isPlatformAdmin, orgSettings: m.org.settings })) return PENDING_2FA;
   return { auth: build(row, m.org, m.membership.role as Role, null, req.mutating), twoFactorSetupRequired: false };
 }

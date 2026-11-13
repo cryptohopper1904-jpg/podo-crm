@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, count, desc, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings, salesSuppressions } from "@/db/schema";
+import { salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings } from "@/db/schema";
 import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
@@ -10,6 +10,7 @@ import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibili
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
 import { promoLandingUrl } from "@/lib/promo-codes";
 import { usableCodesFor } from "./promo-codes";
+import { addToBlocklist, blockedEmails, blocklistOverview, isBlocked } from "./blocklist";
 import { unsubscribeUrl, verifyUnsubscribeToken } from "@/lib/vertrieb/unsubscribe-token";
 import { platformMailPort } from "./mail";
 
@@ -23,6 +24,9 @@ import { platformMailPort } from "./mail";
  *   List-Unsubscribe-Kopfzeilen und Sperrliste. Keine Automatik/Cron (nur die Praxissuche läuft nachts, ohne Versand).
  * - Kampagnen (sales_campaigns): eigene Vorlagen-Variante und Aktionscode für {{code}}/{{link}}; ohne gültigen Code
  *   wird ein Lead mit solcher Vorlage übersprungen (nie eine Mail mit leerem Code).
+ * - Abmeldung/Widerspruch (Link, Status „abgemeldet“, Sperrliste): Lead samt Verlauf wird GELÖSCHT, nur der Prüfwert
+ *   der Adresse bleibt auf der Sperrliste (src/server/blocklist.ts); Versandzeilen bleiben ohne Bezug und ohne Mailangaben
+ *   (Tageslimit).
  * - Audit: Import, Versand, Statuswechsel, Einstellungen, Löschen, Abmeldung (ohne Mailinhalte).
  */
 
@@ -136,12 +140,13 @@ export async function listLeads(opts: { status?: string | null; q?: string | nul
     where.push(or(ilike(salesLeads.name, pat), ilike(salesLeads.email, pat), ilike(salesLeads.city, pat), ilike(salesLeads.zip, pat), ilike(salesLeads.contactPerson, pat))!);
   }
   const rows = await db
-    .select({ lead: salesLeads, suppressed: sql<boolean>`exists (select 1 from ${salesSuppressions} s where s.email = lower(${salesLeads.email}))` })
+    .select()
     .from(salesLeads)
     .where(where.length ? and(...where) : undefined)
     .orderBy(sql`${salesLeads.distanceKm} asc nulls last`, asc(salesLeads.name))
     .limit(1000);
-  return rows.map((r) => ({ ...r.lead, suppressed: Boolean(r.suppressed) }));
+  const blocked = await blockedEmails(rows.flatMap((r) => (r.email ? [r.email] : [])));
+  return rows.map((r) => ({ ...r, suppressed: !!r.email && blocked.has(normalizeEmail(r.email)) }));
 }
 
 export async function statusCounts(): Promise<Record<string, number>> {
@@ -153,12 +158,13 @@ export async function getLead(id: string): Promise<{ lead: Lead; sends: SalesSen
   const [lead] = await db.select().from(salesLeads).where(eq(salesLeads.id, id));
   if (!lead) return null;
   const sends = await db.select().from(salesSends).where(eq(salesSends.leadId, id)).orderBy(asc(salesSends.sentAt));
-  const suppressed = lead.email ? (await db.select({ e: salesSuppressions.email }).from(salesSuppressions).where(eq(salesSuppressions.email, normalizeEmail(lead.email)))).length > 0 : false;
+  const suppressed = lead.email ? await isBlocked(lead.email) : false;
   return { lead, sends, suppressed };
 }
 
 async function assertNoDuplicate(input: LeadInput, exceptId?: string) {
   if (input.email) {
+    if (await isBlocked(input.email)) throw new Error("Diese Adresse steht auf der Sperrliste (Abmeldung/Widerspruch) und kann nicht eingetragen werden.");
     const dup = await db
       .select({ id: salesLeads.id })
       .from(salesLeads)
@@ -214,18 +220,34 @@ export async function setLeadConsent(adminUserId: string, ids: string[], note: s
   });
 }
 
-/** Status setzen. „abgemeldet“ trägt die Adresse zusätzlich in die Sperrliste ein. */
-export async function setLeadStatus(adminUserId: string, id: string, status: LeadStatus) {
+/**
+ * Lead nach Abmeldung/Widerspruch löschen (Verlauf/Notizen per Kaskade). Versandzeilen bleiben für das Tageslimit,
+ * aber ohne Bezug, Message-ID und Fehlertext. Die Adresse muss vorher auf die Sperrliste.
+ */
+async function deleteLeadsForOptOut(tx: Tx, ids: string[]) {
+  if (!ids.length) return;
+  await tx.update(salesSends).set({ messageId: null, error: null }).where(inArray(salesSends.leadId, ids));
+  await tx.delete(salesLeads).where(inArray(salesLeads.id, ids));
+}
+
+/**
+ * Status setzen. „abgemeldet“: Adresse als Prüfwert auf die Sperrliste und Lead löschen (Rückgabe „deleted“).
+ */
+export async function setLeadStatus(adminUserId: string, id: string, status: LeadStatus): Promise<"updated" | "deleted"> {
   if (!isLeadStatus(status)) throw new Error("Status ungültig.");
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [before] = await tx.select().from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!before) throw new Error("Eintrag nicht gefunden.");
-    if (status === "abgemeldet" && before.email) {
-      await tx.insert(salesSuppressions).values({ email: normalizeEmail(before.email), reason: "manuell" }).onConflictDoNothing();
+    if (status === "abgemeldet") {
+      if (before.email) await addToBlocklist(tx, before.email, "manuell");
+      await deleteLeadsForOptOut(tx, [id]);
+      await audit({ userId: adminUserId, action: "vertrieb.opt_out", entity: "sales_lead", entityId: id, meta: { from: before.status, via: "status", blocked: !!before.email } }, tx);
+      return "deleted" as const;
     }
     await tx.update(salesLeads).set({ status, updatedAt: new Date() }).where(eq(salesLeads.id, id));
     if (before.status !== status) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "status", meta: { from: before.status, to: status }, createdBy: adminUserId });
     await audit({ userId: adminUserId, action: "vertrieb.status", entity: "sales_lead", entityId: id, meta: { from: before.status, to: status } }, tx);
+    return "updated" as const;
   });
 }
 
@@ -237,26 +259,22 @@ export async function deleteLead(adminUserId: string, id: string) {
 
 // ───────────── Sperrliste ─────────────
 
-export async function listSuppressions() {
-  return db.select().from(salesSuppressions).orderBy(desc(salesSuppressions.createdAt)).limit(500);
-}
+/** Sperrliste für die Konsole: nur Anzahl, Grund und Datum (Adressen sind nicht gespeichert). */
+export const listSuppressions = blocklistOverview;
 
+/** Adresse manuell sperren (Widerspruch per Mail/Telefon): Prüfwert speichern, passende Leads (außer Kunden) löschen. */
 export async function addSuppression(adminUserId: string, email: string) {
   const e = normalizeEmail(email);
   if (!isEmail(e)) throw new Error("Bitte eine gültige E-Mail-Adresse angeben.");
   await db.transaction(async (tx) => {
-    await tx.insert(salesSuppressions).values({ email: e, reason: "manuell" }).onConflictDoNothing();
-    await tx.update(salesLeads).set({ status: "abgemeldet", updatedAt: new Date() }).where(and(sql`lower(${salesLeads.email}) = ${e}`, sql`${salesLeads.status} <> 'kunde'`));
-    await audit({ userId: adminUserId, action: "vertrieb.suppression_added", entity: "sales_suppression" }, tx);
+    await addToBlocklist(tx, e, "widerspruch");
+    const leads = await tx.select({ id: salesLeads.id }).from(salesLeads).where(and(sql`lower(${salesLeads.email}) = ${e}`, sql`${salesLeads.status} <> 'kunde'`)).for("update");
+    await deleteLeadsForOptOut(tx, leads.map((l) => l.id));
+    await audit({ userId: adminUserId, action: "vertrieb.suppression_added", entity: "sales_suppression", meta: { leadsDeleted: leads.length } }, tx);
   });
 }
 
-async function suppressedSet(emails: string[]): Promise<Set<string>> {
-  const list = [...new Set(emails.map(normalizeEmail))];
-  if (!list.length) return new Set();
-  const rows = await db.select({ e: salesSuppressions.email }).from(salesSuppressions).where(inArray(salesSuppressions.email, list));
-  return new Set(rows.map((r) => r.e));
-}
+const suppressedSet = (emails: string[]) => blockedEmails(emails);
 
 // ───────────── CSV-Import ─────────────
 
@@ -276,15 +294,21 @@ export async function previewImport(csv: string): Promise<ImportPreview> {
   return { decisions, newCount, skippedCount: decisions.length - newCount };
 }
 
-export async function importLeads(adminUserId: string, csv: string): Promise<{ imported: number; skipped: number; error?: string }> {
+/**
+ * Import mit Pflichtangabe „Quelle der Daten“ (z. B. „Messe XY 2026, Kontaktformular“ – Art. 14 DSGVO);
+ * sie wird an jedem importierten Lead gespeichert (vor einer evtl. Quellen-Spalte der Datei).
+ */
+export async function importLeads(adminUserId: string, csv: string, source: string): Promise<{ imported: number; skipped: number; error?: string }> {
+  const src = source.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
+  if (src.length < 3) return { imported: 0, skipped: 0, error: "Bitte die Quelle der Daten angeben." };
   return db.transaction(async (tx) => {
     // Parallele Importe nacheinander (Dublettenprüfung gegen den Bestand bleibt gültig)
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('podo:vertrieb:import'))`);
     const p = await previewImport(csv);
     if (p.error) return { imported: 0, skipped: 0, error: p.error };
     const rows = p.decisions.flatMap((d) => (d.action === "neu" ? [d.lead] : []));
-    if (rows.length) await tx.insert(salesLeads).values(rows.map((l) => ({ ...l, source: l.source ?? "CSV-Import" })));
-    await audit({ userId: adminUserId, action: "vertrieb.import", entity: "sales_lead", meta: { imported: rows.length, skipped: p.skippedCount } }, tx);
+    if (rows.length) await tx.insert(salesLeads).values(rows.map((l) => ({ ...l, source: (l.source ? `${src} – ${l.source}` : src).slice(0, 200) })));
+    await audit({ userId: adminUserId, action: "vertrieb.import", entity: "sales_lead", meta: { imported: rows.length, skipped: p.skippedCount, source: src } }, tx);
     return { imported: rows.length, skipped: p.skippedCount };
   });
 }
@@ -398,8 +422,8 @@ export async function sendNextMails(
     const leads = list.length ? await tx.select().from(salesLeads).where(inArray(salesLeads.id, list)).for("update") : [];
     const ordered = list.flatMap((id) => leads.filter((l) => l.id === id));
     const emails = ordered.flatMap((l) => (l.email ? [normalizeEmail(l.email)] : []));
-    const supp = emails.length ? await tx.select({ e: salesSuppressions.email }).from(salesSuppressions).where(inArray(salesSuppressions.email, [...new Set(emails)])) : [];
-    const plan = planBatch(ordered, { now: now(), delays: s.delays, suppressed: new Set(supp.map((r) => r.e)), sentLast24h: await sentLast24h(now(), tx) });
+    const supp = await blockedEmails(emails, tx);
+    const plan = planBatch(ordered, { now: now(), delays: s.delays, suppressed: supp, sentLast24h: await sentLast24h(now(), tx) });
     const out: SendResult = { sent: 0, failed: [], skipped: plan.skipped.length, mock: port.isMock };
     const ctx = await mailContext(ordered, s, env, tx, now());
     const sentLeads: { id: string; step: number }[] = [];
@@ -483,12 +507,10 @@ export async function unsubscribeByToken(token: string): Promise<boolean> {
   await db.transaction(async (tx) => {
     const [lead] = await tx.select({ email: salesLeads.email, status: salesLeads.status }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!lead) return;
-    if (lead.email) await tx.insert(salesSuppressions).values({ email: normalizeEmail(lead.email), reason: "abgemeldet" }).onConflictDoNothing();
-    if (lead.status !== "abgemeldet") {
-      await tx.update(salesLeads).set({ status: "abgemeldet", updatedAt: new Date() }).where(eq(salesLeads.id, id));
-      await tx.insert(salesLeadEvents).values({ leadId: id, kind: "status", meta: { from: lead.status, to: "abgemeldet", via: "link" } });
-      await audit({ action: "vertrieb.unsubscribe", entity: "sales_lead", entityId: id, meta: { from: lead.status } }, tx);
-    }
+    // Abmeldung = Widerspruch: Prüfwert auf die Sperrliste, Lead samt Verlauf löschen
+    if (lead.email) await addToBlocklist(tx, lead.email, "abgemeldet");
+    await deleteLeadsForOptOut(tx, [id]);
+    await audit({ action: "vertrieb.unsubscribe", entity: "sales_lead", entityId: id, meta: { from: lead.status } }, tx);
   });
   return true;
 }

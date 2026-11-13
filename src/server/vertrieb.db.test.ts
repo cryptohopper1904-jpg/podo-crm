@@ -32,7 +32,7 @@ const day = 86_400_000;
     v = await import("./vertrieb");
     const { audit } = await import("@/lib/audit");
     auditCalls = () => vi.mocked(audit).mock.calls.map((c) => c[0] as { action: string; entityId?: string; meta?: Record<string, unknown> });
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings; delete from sales_campaigns");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
     admin = await f.user();
   });
   afterAll(async () => {
@@ -42,7 +42,7 @@ const day = 86_400_000;
     await owner.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
     await owner.query("delete from promo_codes where code like 'TPIPE%'");
     await owner.end();
-    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings; delete from sales_campaigns");
+    await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_blocklist; delete from sales_settings; delete from sales_campaigns");
     await f.end();
     const { db } = await import("@/db");
     await (db.$client as { end: () => Promise<void> }).end();
@@ -53,6 +53,7 @@ const day = 86_400_000;
   });
 
   it("Import mit Dubletten und Sperrliste", async () => {
+    // Altbestand (Klartext, bis 0038) wird beim ersten Zugriff in Prüfwerte überführt und gelöscht
     await f.pool.query("insert into sales_suppressions (email, reason) values ('gesperrt@praxis.example', 'abgemeldet')");
     await v.saveSalesSettings(admin, {
       senderName: "Max Betreiber",
@@ -71,10 +72,18 @@ const day = 86_400_000;
     ].join("\n");
     const p = await v.previewImport(csv);
     expect(p.newCount).toBe(2);
-    const r = await v.importLeads(admin, csv);
+    expect(await v.importLeads(admin, csv, " ")).toMatchObject({ imported: 0, error: expect.stringMatching(/Quelle/) });
+    const r = await v.importLeads(admin, csv, "Messe Test 2026");
     expect(r).toEqual({ imported: 2, skipped: 2 });
-    expect((await v.importLeads(admin, csv)).imported).toBe(0);
-    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([{ imported: 2, skipped: 2 }, { imported: 0, skipped: 4 }]);
+    expect((await v.importLeads(admin, csv, "Messe Test 2026")).imported).toBe(0);
+    expect((await leadByName("Podologie Eins")).source).toBe("Messe Test 2026");
+    // Altbestand überführt: kein Klartext mehr, nur Prüfwert
+    expect((await f.pool.query("select count(*)::int as n from sales_suppressions")).rows[0].n).toBe(0);
+    expect((await f.pool.query("select hash, reason from sales_blocklist where reason = 'abgemeldet'")).rows.every((r: { hash: string }) => /^v1:[0-9a-f]{64}$/.test(r.hash))).toBe(true);
+    const bl = await import("./blocklist");
+    expect(await bl.isBlocked(" Gesperrt@Praxis.example")).toBe(true);
+    await expect(v.createLead(admin, { name: "Gesperrt neu", contactPerson: null, email: "gesperrt@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/Sperrliste/);
+    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([{ imported: 2, skipped: 2, source: "Messe Test 2026" }, { imported: 0, skipped: 4, source: "Messe Test 2026" }]);
     expect(auditCalls().some((a) => a.action === "vertrieb.settings")).toBe(true);
   });
 
@@ -156,15 +165,16 @@ const day = 86_400_000;
     expect(await v.unsubscribeByToken(token)).toBe(true);
     expect(await v.unsubscribeByToken(token)).toBe(true);
     expect(r.sent).toBe(1);
-    expect(await leadByName("Podologie Eins")).toMatchObject({ status: "abgemeldet", step: 3 });
-    expect((await f.pool.query("select reason from sales_suppressions where email = 'eins@praxis.example'")).rows).toEqual([{ reason: "abgemeldet" }]);
-    // auch nach Statuswechsel zurück auf „neu“ bleibt die Adresse gesperrt (DB-Trigger)
-    await f.pool.query("update sales_leads set status = 'neu', step = 0 where id = $1", [eins.id]);
-    expect(await leadByName("Podologie Eins")).toMatchObject({ status: "abgemeldet" });
+    // Abmeldung = Widerspruch: Lead samt Verlauf gelöscht, Versandzeilen ohne Bezug/Mailangaben, nur Prüfwert bleibt
+    expect(await leadByName("Podologie Eins")).toBeUndefined();
+    expect((await f.pool.query("select count(*)::int as n from sales_lead_events where lead_id = $1", [eins.id])).rows[0].n).toBe(0);
+    expect((await f.pool.query("select count(*)::int as n from sales_sends where lead_id = $1", [eins.id])).rows[0].n).toBe(0);
+    expect((await f.pool.query("select count(*)::int as n from sales_sends where lead_id is null and message_id is not null and sent_at = $1", [new Date(t0.getTime() + 30 * day)])).rows[0].n).toBe(0);
+    const bl = await import("./blocklist");
+    expect(await bl.isBlocked("eins@praxis.example")).toBe(true);
+    expect((await f.pool.query("select count(*)::int as n from sales_blocklist where hash like '%eins%' or reason like '%@%'")).rows[0].n).toBe(0);
     expect(auditCalls().some((a) => a.action === "vertrieb.unsubscribe" && a.entityId === eins.id)).toBe(true);
-    await v.deleteLead(admin, eins.id);
-    expect(auditCalls().some((a) => a.action === "vertrieb.lead_deleted" && a.entityId === eins.id)).toBe(true);
-    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n");
+    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n", "Messe Test 2026");
     expect(again).toEqual({ imported: 0, skipped: 1 });
   });
 
@@ -199,11 +209,18 @@ const day = 86_400_000;
     expect((await v.listLeads({ q: "100%_" })).length).toBe(0);
     expect((await v.listLeads({ status: "geantwortet" })).map((l) => l.name)).toEqual(["Podologie Zwei"]);
     await expect(v.updateLead(admin, id, { name: "X", contactPerson: null, email: "zwei@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/bereits/);
+    const before = (await v.listSuppressions()).count;
     await v.addSuppression(admin, " FEHLER@praxis.example ");
-    const [row] = await v.listLeads({ q: "Fehlerpraxis" });
-    expect(row).toMatchObject({ suppressed: true, status: "abgemeldet" });
-    expect((await v.statusCounts()).abgemeldet).toBeGreaterThanOrEqual(1);
-    expect((await v.listSuppressions()).map((x) => x.email)).toContain("fehler@praxis.example");
+    // Widerspruch: Eintrag gelöscht, nur Prüfwert (die Konsole zeigt keine Adressen)
+    expect(await v.listLeads({ q: "Fehlerpraxis" })).toEqual([]);
+    const ov = await v.listSuppressions();
+    expect(ov.count).toBe(before + 1);
+    expect(ov.recent[0]).toMatchObject({ reason: "widerspruch" });
+    // manuell „abgemeldet“ löscht ebenfalls
+    const ab = await v.createLead(admin, { name: "Abmelde-Test", contactPerson: null, email: "ab@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
+    expect(await v.setLeadStatus(admin, ab, "abgemeldet")).toBe("deleted");
+    expect(await v.getLead(ab)).toBeNull();
+    expect(await (await import("./blocklist")).isBlocked("ab@praxis.example")).toBe(true);
     expect(auditCalls().map((a) => a.action)).toEqual(expect.arrayContaining(["vertrieb.lead_updated", "vertrieb.suppression_added"]));
   });
   // ───────────── Praxissuche (OpenStreetMap, nachts) – gemocktes Netz, keine echten Abrufe ─────────────
@@ -255,7 +272,9 @@ const day = 86_400_000;
 
     beforeAll(async () => {
       ls = await import("./lead-search");
-      await f.pool.query("insert into sales_suppressions (email, reason) values ('info@gesperrt-podo.example', 'abgemeldet') on conflict do nothing");
+      const bl = await import("./blocklist");
+      const { db } = await import("@/db");
+      await bl.addToBlocklist(db, "info@gesperrt-podo.example", "abgemeldet");
       await f.pool.query("insert into sales_leads (name, email, source) values ('Praxis Bestand', 'info@bestand-podo.example', 'manuell')");
     });
 
@@ -393,7 +412,7 @@ const day = 86_400_000;
       const orgDom = await ownerOrg(`anna@pipe2-${sfx}.example`);
       await ownerOrg(`chef@pipe3-${sfx}.example`, { plan: "praxis", status: "active" });
       const orgCode = await ownerOrg(`irgendwer-${sfx}@gmx.de`);
-      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode, generated: true });
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode });
       await promo.redeemPromoCodeForOrganization(orgCode, admin, `TPIPE${sfx.toUpperCase()}-L`);
       expect(await item(dom)).toMatchObject({ stage: "test", org: { id: orgDom, via: "domain" } });
       expect(await item(web)).toMatchObject({ stage: "kunde", org: { via: "domain", converted: true } });
@@ -416,9 +435,10 @@ const day = 86_400_000;
       expect(pl.filterPipeline(all, { stage: "neu", q: "Pipe Bulk" })).toHaveLength(2);
       expect(await pl.bulkSetStatus(admin, [a], "kein_interesse")).toBe(1);
       expect((await item(a)).stage).toBe("aus");
-      expect(await pl.bulkSetStatus(admin, [b, "00000000-0000-4000-8000-000000000000"], "abgemeldet")).toBe(1);
-      expect((await f.pool.query("select 1 from sales_suppressions where email = $1", [`b@pipe4-${sfx}.example`])).rowCount).toBe(1);
       expect((await pl.leadTimeline((await v.getLead(b))!.lead)).some((e) => e.kind === "campaign")).toBe(true);
+      expect(await pl.bulkSetStatus(admin, [b, "00000000-0000-4000-8000-000000000000"], "abgemeldet")).toBe(1);
+      expect(await v.getLead(b)).toBeNull();
+      expect(await (await import("./blocklist")).isBlocked(`b@pipe4-${sfx}.example`)).toBe(true);
     });
 
     it("Kampagne mit {{code}}/{{link}}: ohne gültigen Code übersprungen, mit Code im Text", async () => {
@@ -437,7 +457,7 @@ const day = 86_400_000;
       const port = new MockMailAdapter();
       expect(await v.sendNextMails(admin, [id], { port, now: () => later, env })).toMatchObject({ sent: 0, skipped: 1 });
       const code = `TPIPE${sfx.toUpperCase()}-K`;
-      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: camp, generated: true });
+      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: new Date(Date.now() + 90 * day), campaignId: camp });
       const pre2 = await v.previewSend([id], { now: later, env });
       expect(pre2.first).toMatchObject({ subject: `3 Monate gratis: ${code}` });
       expect(pre2.first!.text).toContain(`https://podo.example/aktion/${code}`);

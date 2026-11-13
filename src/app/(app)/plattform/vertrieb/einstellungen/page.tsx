@@ -24,16 +24,20 @@ export default async function SettingsPage() {
       </Card>
       <Card>
         <h2 className="font-display text-xl font-semibold">Sperrliste</h2>
-        <p className="mt-1 text-sm text-muted">An diese Adressen geht nie wieder eine Vertriebsmail – auch nach Löschen oder erneutem Import. Abmeldungen per Link landen automatisch hier.</p>
+        <p className="mt-1 text-sm text-muted">
+          An diese Adressen geht nie wieder eine Vertriebsmail – auch nach Löschen oder erneutem Import. Abmeldungen per Link landen automatisch hier;
+          der Eintrag der Praxis wird dabei gelöscht. Gespeichert ist nur ein nicht umkehrbarer Prüfwert der Adresse, keine Adresse.
+        </p>
         <div className="mt-4"><SuppressionForm action={addSuppressionAction} /></div>
-        <ul className="mt-4 flex flex-col gap-1 text-sm">
-          {supp.map((x) => (
-            <li key={x.email} className="flex justify-between gap-2 border-t border-border pt-1">
-              <span className="break-all">{x.email}</span>
-              <span className="shrink-0 text-muted">{x.reason} · {dateDe(x.createdAt)}</span>
+        <p className="mt-4 text-sm"><strong className="tabular-nums">{supp.count}</strong> gesperrte Adressen</p>
+        <ul className="mt-2 flex flex-col gap-1 text-sm">
+          {supp.recent.map((x, i) => (
+            <li key={i} className="flex justify-between gap-2 border-t border-border pt-1">
+              <span>{x.reason === "abgemeldet" ? "Abmeldelink" : x.reason === "widerspruch" ? "Widerspruch (manuell)" : "manuell"}</span>
+              <span className="shrink-0 text-muted">{dateDe(x.createdAt)}</span>
             </li>
           ))}
-          {supp.length === 0 ? <li className="text-muted">Noch keine Einträge.</li> : null}
+          {supp.count === 0 ? <li className="text-muted">Noch keine Einträge.</li> : null}
         </ul>
       </Card>
       <Card className="lg:col-start-1">

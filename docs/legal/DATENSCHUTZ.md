@@ -57,18 +57,20 @@ Wenn Sie uns per E-Mail kontaktieren, verarbeiten wir Ihre Angaben zur Bearbeitu
 
 ## 6a. Vertrieb / Kontaktaufnahme mit Praxen {#vertrieb}
 
-Wir sprechen podologische Praxen und Praxen für medizinische Fußpflege auf PodoHero an.
+Wir sprechen podologische Praxen und Praxen für medizinische Fußpflege auf PodoHero an. Verantwortlich ist der in Abschnitt 1 Genannte.
 
-- **Quellen:** öffentlich zugängliche Geschäftsangaben, insbesondere Praxis-Websites und deren Impressum sowie OpenStreetMap, oder Ihre eigene Anfrage an uns.
-- **Daten:** Name der Praxis, geschäftliche E-Mail-Adresse, Website, Postleitzahl, Ort und Entfernung zu unserem Standort; ggf. Notizen zum Kontakt und die Dokumentation Ihrer Einwilligung. Praxisnamen von Einzelpraxen können den Namen der Inhaberin bzw. des Inhabers enthalten. Ansprechpartner und Telefonnummern erheben wir aus diesen Quellen nicht.
-- **Zweck:** Kontaktaufnahme per E-Mail zu PodoHero. Werbe-E-Mails senden wir nur, wenn Sie vorher ausdrücklich eingewilligt haben (z. B. durch Ihre Anfrage oder eine dokumentierte Einwilligung auf einer Messe).
+- **Quellen:** öffentlich zugängliche Geschäftsangaben, insbesondere Praxis-Websites und deren Impressum sowie OpenStreetMap; außerdem Ihre Anfrage an uns, ein persönlicher Kontakt (z. B. auf einer Messe) oder ein Import aus solchen Quellen – die Quelle speichern wir zu jedem Eintrag.
+- **Daten:** Name der Praxis, geschäftliche E-Mail-Adresse, Website, Anschrift (Straße, Postleitzahl, Ort) und Entfernung zu unserem Standort; ggf. Telefonnummer und Ansprechpartner:in (nur aus Ihrer Anfrage, aus manueller Erfassung oder aus einem Import mit Quellenangabe); Versand- und Antwortverlauf, Notizen zum Kontakt und der Vermerk über Ihre Einwilligung (Wortlaut, Kanal, Datum). Praxisnamen von Einzelpraxen können den Namen der Inhaberin bzw. des Inhabers enthalten. Unsere automatische Suche (OpenStreetMap, Praxis-Websites) übernimmt keine Ansprechpartner:innen und keine Telefonnummern.
+- **Zweck:** Kontaktaufnahme per E-Mail zu PodoHero. Werbe-E-Mails senden wir nur, wenn Sie vorher ausdrücklich in Informationen per E-Mail eingewilligt haben (z. B. durch eine Anfrage mit dem Wunsch nach weiteren Informationen per E-Mail oder durch eine dokumentierte Zustimmung auf einer Messe).
 - **Rechtsgrundlage:** für die E-Mail-Ansprache Ihre Einwilligung (Art. 6 Abs. 1 lit. a DSGVO, § 7 Abs. 2 Nr. 2 UWG); für die reine Speicherung der öffentlich zugänglichen Geschäftsangaben bis zu einer Anfrage bzw. Einwilligung unser berechtigtes Interesse an der Gewinnung von Kundinnen und Kunden (Art. 6 Abs. 1 lit. f DSGVO).
-- **Speicherdauer:** Einträge ohne Kontakt löschen wir spätestens nach 24 Monaten. Bei Widerspruch oder Abmeldung löschen wir die Kontaktdaten bzw. sperren die Adresse: Damit wir Sie nicht erneut ansprechen, bleibt nur die E-Mail-Adresse mit dem Vermerk „abgemeldet“ auf unserer Sperrliste (Art. 6 Abs. 1 lit. c bzw. f DSGVO).
+- **Speicherdauer:** Einträge ohne Kontakt löschen wir spätestens nach 24 Monaten. Melden Sie sich ab oder widersprechen Sie, löschen wir Ihren Eintrag samt Verlauf und Notizen sofort.
+- **Sperrliste:** Damit wir Sie danach nicht erneut ansprechen, speichern wir Ihre E-Mail-Adresse nur als nicht umkehrbaren Prüfwert (kein Klartext) mit Datum und Anlass. Rechtsgrundlage ist unser berechtigtes Interesse, Ihren Widerspruch dauerhaft zu beachten (Art. 6 Abs. 1 lit. f DSGVO). Die Sperrliste speichern wir, solange wir Vertriebs-E-Mails versenden; danach wird sie gelöscht.
+- **Empfänger:** Für den Versand der E-Mails setzen wir einen E-Mail-Versanddienstleister als Auftragsverarbeiter ein (siehe Abschnitt 7 und [Unterauftragnehmer](/unterauftragnehmer)).
 - **Ihre Rechte:** Sie können der Verarbeitung jederzeit widersprechen (Art. 21 DSGVO) und eine Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen – über den Abmeldelink in jeder E-Mail, durch Antwort mit „Abmelden“ oder per E-Mail an die oben genannte Adresse. Die übrigen Rechte nach Abschnitt 8 gelten entsprechend.
 
 ## 7. Empfänger
 
-Wir setzen sorgfältig ausgewählte Dienstleister ein, die Daten nur nach unserer Weisung verarbeiten. Die aktuelle Liste finden Sie unter [Unterauftragnehmer](/unterauftragnehmer). Eine Verwendung von Daten zum Training von KI-Modellen findet nicht statt.
+Wir setzen sorgfältig ausgewählte Dienstleister ein, die Daten nur nach unserer Weisung verarbeiten, darunter einen E-Mail-Versanddienstleister für System- und Vertriebs-E-Mails. Die aktuelle Liste finden Sie unter [Unterauftragnehmer](/unterauftragnehmer). Eine Verwendung von Daten zum Training von KI-Modellen findet nicht statt.
 
 ## 8. Ihre Rechte
 

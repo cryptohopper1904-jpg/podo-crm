@@ -66,10 +66,10 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
       setError(null);
       setOk(null);
       const [op, value = ""] = bulk.split(":");
-      if (op === "abmelden" && !window.confirm(`${ids.length} Einträge abmelden? Die Adressen kommen dauerhaft auf die Sperrliste.`)) return;
+      if (op === "abmelden" && !window.confirm(`${ids.length} Einträge abmelden? Die Adressen kommen dauerhaft auf die Sperrliste, die Einträge werden samt Verlauf gelöscht.`)) return;
       let note = "";
       if (op === "einwilligung") {
-        note = window.prompt(`Einwilligung für ${ids.length} Einträge dokumentieren.\nWie und wann wurde sie erteilt? (Pflicht, z. B. „Messe XY 10.11.2026, Formular“)`)?.trim() ?? "";
+        note = window.prompt(`Einwilligung für ${ids.length} Einträge dokumentieren.\nWortlaut, Kanal und Datum der ausdrücklichen Einwilligung in Infos per E-Mail (Pflicht, z. B. „Messe XY 10.11.2026, Formular: Ja, Infos per E-Mail“)`)?.trim() ?? "";
         if (!note) return;
       }
       const input = op === "status" ? { op, status: value } : op === "kampagne" ? { op, campaignId: value } : op === "einwilligung" ? { op, note } : { op };
@@ -136,7 +136,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
               <option value="einwilligung">Einwilligung dokumentieren …</option>
               <option value="einwilligung_entfernen">Einwilligung entfernen</option>
             </optgroup>
-            <option value="abmelden">Abmelden (Sperrliste)</option>
+            <option value="abmelden">Abmelden (Sperrliste, Einträge löschen)</option>
           </select>
           <Button variant="secondary" className="h-10" onClick={runBulk} disabled={pending || !bulk || ids.length === 0 || !!preview}>Ausführen</Button>
         </span>

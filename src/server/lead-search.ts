@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db";
-import { salesLeads, salesSettings, salesSuppressions } from "@/db/schema";
+import { salesLeads, salesSettings } from "@/db/schema";
 import { OpenAiCompatibleLlm } from "@/integrations/llm/openai-compatible";
 import { findWebsiteEmails, PoliteFetcher, queryOverpass, type FetchImpl } from "@/integrations/lead-search/web";
 import type { Resolver } from "@/integrations/net-guard";
@@ -27,6 +27,7 @@ import {
   type LeadSearch,
 } from "@/lib/vertrieb/lead-search";
 import { addressProvider, geocodePlace } from "./address-suggest";
+import { blocklistMatcher } from "./blocklist";
 
 /**
  * Nächtliche Praxissuche für den Vertrieb (Plattform-Betreiber).
@@ -290,11 +291,11 @@ export async function runLeadSearch(opts: { trigger: "cron" | "manual"; adminUse
   let completed = false;
   try {
     const existing = await db.select({ email: salesLeads.email, website: salesLeads.website, name: salesLeads.name, zip: salesLeads.zip, city: salesLeads.city, notes: salesLeads.notes }).from(salesLeads);
-    const supp = await db.select({ e: salesSuppressions.email }).from(salesSuppressions);
+    const blocked = await blocklistMatcher();
     const c: RunCtx = {
       s,
       run,
-      keys: buildDedupeKeys(existing, supp.map((r) => r.e)),
+      keys: buildDedupeKeys(existing, blocked),
       fetcher: new PoliteFetcher({ fetchImpl: deps.webFetch, resolver: deps.resolver, sleep: deps.sleep }),
       llm: deps.llm === undefined ? llmPickerFromEnv() : deps.llm,
       now,

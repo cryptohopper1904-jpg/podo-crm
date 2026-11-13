@@ -61,6 +61,11 @@ export function ipKey(ip: string): string {
   const fill = parts.length === 2 ? Array(Math.max(0, 8 - head.length - tail.length)).fill("0") : [];
   const groups = [...head, ...fill, ...tail];
   if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return v;
+  // IPv4-gemappt in Hex-Form (::ffff:c000:201) → 192.0.2.1
+  if (groups.slice(0, 5).every((g) => /^0+$/.test(g)) && groups[5] === "ffff") {
+    const n = groups.slice(6).map((g) => parseInt(g, 16));
+    return [n[0] >> 8, n[0] & 255, n[1] >> 8, n[1] & 255].join(".");
+  }
   return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
 }
 

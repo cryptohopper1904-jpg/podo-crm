@@ -5,6 +5,7 @@ import { organizations, promoCodes, promoRedemptions, salesCampaigns, salesLeads
 import { audit } from "@/lib/audit";
 import { PLANS, type PaidPlan } from "@/lib/plans";
 import {
+  isGeneratedPromoCode,
   isPayingOrg,
   normalizePromoCode,
   ownCodeProblem,
@@ -16,6 +17,9 @@ import {
   promoTrialEnd,
 } from "@/lib/promo-codes";
 import { createRateLimiter } from "@/lib/rate-limit";
+import { log } from "@/lib/log";
+import { revokeUserSessions } from "@/lib/auth/session";
+import { returnPromoTrialToFree } from "./billing";
 
 /**
  * Aktionscodes für eine verlängerte Testphase (Plattform-Betreiber). Regeln in src/lib/promo-codes.ts.
@@ -51,14 +55,14 @@ export type PromoCodeInput = {
   validUntil: Date | null;
   campaignId: string | null;
   leadId?: string | null;
-  /** true = Zufallscode aus generatePromoCode (Formular-Vorschlag unverändert übernommen); sonst gelten ownCodeProblem-Regeln */
-  generated?: boolean;
+
 };
 
 export async function createPromoCode(adminUserId: string, input: PromoCodeInput): Promise<string> {
   const code = normalizePromoCode(input.code);
   if (!code) throw new Error("Code: 4 bis 32 Zeichen, nur Buchstaben A–Z, Ziffern und Bindestrich (nicht am Anfang/Ende).");
-  if (!input.generated) {
+  // Zufallscode-Format (serverseitig erkannt) oder selbst gewählt → dann Mindestlänge und Begrenzung Pflicht
+  if (!isGeneratedPromoCode(code)) {
     const own = ownCodeProblem(code, input.maxRedemptions, input.validUntil);
     if (own) throw new Error(own);
   }
@@ -301,4 +305,31 @@ export async function usableCodesFor(opts: { campaignIds: string[]; leadIds: str
     if (c.campaignId && !c.leadId && !byCampaign.has(c.campaignId)) byCampaign.set(c.campaignId, c.code);
   }
   return { byCampaign, byLead };
+}
+
+/**
+ * Nächtlicher Schritt (/api/cron/lead-search): Praxen, die einen Code im Kostenlos-Tarif eingelöst haben und deren
+ * Testphase abgelaufen ist, zurück in den Kostenlos-Tarif (returnPromoTrialToFree: Sperren, Patientengrenze, Audit).
+ * Deaktivierten Personen werden die Sitzungen in dieser Praxis beendet. Fehler je Praxis werden geloggt, der Lauf geht weiter.
+ */
+export async function runPromoTrialReturns(now = new Date()): Promise<{ checked: number; switched: number; kept: number; failed: number }> {
+  const due = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(sql`${organizations.settings}->>'promoReturnFree' = 'true' and ${organizations.subscriptionStatus} = 'trialing' and ${organizations.trialEndsAt} <= ${now}`)
+    .limit(500);
+  const out = { checked: due.length, switched: 0, kept: 0, failed: 0 };
+  for (const { id } of due) {
+    try {
+      const r = await returnPromoTrialToFree(id, now);
+      if (r.status === "switched") {
+        out.switched++;
+        for (const u of r.deactivated) await revokeUserSessions(u, { organizationId: id });
+      } else if (r.status === "kept") out.kept++;
+    } catch (e) {
+      out.failed++;
+      log.error("cron.promo_return_free.failed", { organizationId: id, error: e });
+    }
+  }
+  return out;
 }

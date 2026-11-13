@@ -29,7 +29,7 @@ import {
 } from "@/server/vertrieb";
 import { addLeadNote, bulkSetStatus, createCampaign, markReplied, saveCampaignTemplates, setLeadsCampaign, updateCampaign } from "@/server/vertrieb-pipeline";
 import { createPromoCode, setPromoCodeActive } from "@/server/promo-codes";
-import { endOfDayBerlin, normalizePromoCode, PROMO_GRANT_PLANS } from "@/lib/promo-codes";
+import { endOfDayBerlin, PROMO_GRANT_PLANS } from "@/lib/promo-codes";
 import { BULK_STATUSES } from "@/lib/vertrieb/pipeline";
 
 /**
@@ -112,9 +112,10 @@ export async function setStatusAction(form: FormData) {
   const row = await requirePlatformAdmin();
   const d = z.object({ id: z.uuid(), status: z.enum(LEAD_STATUSES) }).safeParse(Object.fromEntries(form));
   if (!d.success) redirect(`${BASE}?fehler=eingabe`);
-  await setLeadStatus(row.user.id, d.data.id, d.data.status);
-  revalidatePath(BASE);
-  revalidatePath(`${BASE}/${d.data.id}`);
+  const r = await setLeadStatus(row.user.id, d.data.id, d.data.status);
+  revalidatePath(BASE, "layout");
+  // „abgemeldet“ löscht den Eintrag (nur der Prüfwert bleibt auf der Sperrliste)
+  if (r === "deleted") redirect(`${BASE}?hinweis=abgemeldet`);
 }
 
 export async function deleteLeadAction(form: FormData) {
@@ -137,11 +138,13 @@ export async function previewImportAction(csv: string): Promise<ImportPreview> {
   return previewImport(d.data);
 }
 
-export async function importAction(csv: string): Promise<{ imported: number; skipped: number; error?: string }> {
+export async function importAction(csv: string, source: string): Promise<{ imported: number; skipped: number; error?: string }> {
   const row = await requirePlatformAdmin();
   const d = csvSchema.safeParse(csv);
   if (!d.success) return { imported: 0, skipped: 0, error: d.error.issues[0]?.message };
-  const r = await importLeads(row.user.id, d.data);
+  const src = z.string().trim().min(3, "Bitte die Quelle der Daten angeben (z. B. „Messe XY 2026, Kontaktformular“).").max(120).safeParse(source);
+  if (!src.success) return { imported: 0, skipped: 0, error: src.error.issues[0]?.message };
+  const r = await importLeads(row.user.id, d.data, src.data);
   revalidatePath(BASE);
   return r;
 }
@@ -337,7 +340,7 @@ export async function bulkAction(ids: string[], input: unknown): Promise<{ ok: s
     if (d.data.op === "status") text = `${await bulkSetStatus(row.user.id, list.data, d.data.status as (typeof LEAD_STATUSES)[number])} Einträge geändert.`;
     else if (d.data.op === "einwilligung") text = `Einwilligung für ${await setLeadConsent(row.user.id, list.data, d.data.note)} Einträge dokumentiert (nur Einträge mit E-Mail).`;
     else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung bei ${await setLeadConsent(row.user.id, list.data, null)} Einträgen entfernt.`;
-    else if (d.data.op === "abmelden") text = `${await bulkSetStatus(row.user.id, list.data, "abgemeldet")} Einträge abgemeldet und gesperrt.`;
+    else if (d.data.op === "abmelden") text = `${await bulkSetStatus(row.user.id, list.data, "abgemeldet")} Einträge abgemeldet: Adressen gesperrt, Einträge gelöscht.`;
     else text = `${await setLeadsCampaign(row.user.id, list.data, d.data.campaignId || null)} Einträge ${d.data.campaignId ? "der Kampagne zugeordnet" : "aus der Kampagne entfernt"}.`;
     revalidatePath(BASE, "layout");
     return { ok: text };
@@ -419,7 +422,6 @@ const promoSchema = z.object({
     .transform((v) => (v?.trim() ? v.trim() : null))
     .refine((v) => v === null || endOfDayBerlin(v) !== null, "Datum ungültig."),
   campaignId: z.union([z.uuid(), z.literal("")]).optional(),
-  suggested: z.string().max(40).optional(),
 });
 
 export async function createPromoCodeAction(_s: State, form: FormData): Promise<State> {
@@ -436,8 +438,6 @@ export async function createPromoCodeAction(_s: State, form: FormData): Promise<
       // „gültig bis“ einschließlich: 23:59:59 deutscher Zeit (Sommer-/Winterzeit)
       validUntil: d.data.validUntil ? endOfDayBerlin(d.data.validUntil) : null,
       campaignId: d.data.campaignId || null,
-      // Vorschlag unverändert übernommen = Zufallscode; sonst gelten die Regeln für selbst gewählte Codes
-      generated: !!d.data.suggested && normalizePromoCode(d.data.suggested) === normalizePromoCode(d.data.code),
     });
   } catch (e) {
     return { error: msg(e) };

@@ -101,7 +101,7 @@ export function footer(impressum: string, unsubscribeUrl: string, privacyUrl: st
     "-- ",
     imp,
     "",
-    "Ihre geschäftlichen Kontaktdaten stammen aus öffentlich zugänglichen Quellen (Praxis-Website/Impressum) bzw. aus Ihrer Anfrage. Zweck, Rechtsgrundlage, Speicherdauer und Ihre Rechte, insbesondere Ihr Widerspruchsrecht nach Art. 21 DSGVO:",
+    "Ihre geschäftlichen Kontaktdaten stammen aus öffentlich zugänglichen Quellen (Praxis-Website/Impressum, OpenStreetMap) bzw. aus Ihrer Anfrage oder einem persönlichen Kontakt (z. B. Messe). Zweck, Rechtsgrundlage, Speicherdauer und Ihre Rechte, insbesondere Ihr Widerspruchsrecht nach Art. 21 DSGVO:",
     privacyUrl,
     "",
     "Sie möchten keine weiteren E-Mails von uns erhalten? Mit einem Klick abmelden:",

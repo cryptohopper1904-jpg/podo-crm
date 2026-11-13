@@ -72,6 +72,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
 
   return (
     <div className="flex flex-col gap-5">
+      {sp.hinweis === "abgemeldet" ? <p role="status" className="rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">Abgemeldet: Die Adresse steht auf der Sperrliste, der Eintrag wurde samt Verlauf gelöscht.</p> : null}
       <section aria-label="Kennzahlen" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat tone="neutral" label="Leads gesamt" value={dash.leads} sub={`${dash.newThisWeek} neu diese Woche (${dash.newFromSearch} aus der Praxissuche) · ${dash.withEmail} mit E-Mail · ${dash.withConsent} mit Einwilligung`} />
         <Stat tone="info" label="Mails gesendet" value={dash.mailsSent} sub={`${dash.mailsFailed} fehlgeschlagen${dash.mailsMock ? ` · ${dash.mailsMock} im Testmodus` : ""} · ${stats.sentLast24h}/${MAX_PER_DAY} in 24 h`} />

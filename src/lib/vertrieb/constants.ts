@@ -57,7 +57,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
     body: [
       "{{anrede}},",
       "",
-      "mein Name ist {{absender}}. Ich habe PodoHero entwickelt, eine Praxissoftware speziell für podologische Praxen – entstanden gemeinsam mit einer Podologie-Praxis aus Ihrer Region.",
+      "mein Name ist {{absender}}. Ich habe PodoHero entwickelt, eine Praxissoftware speziell für podologische Praxen.",
       "",
       "PodoHero bündelt Terminkalender, Behandlungsdokumentation, Verordnungen, Rechnungen und Hausbesuchs-Touren an einem Ort und läuft im Browser sowie auf dem Tablet.",
       "",
@@ -74,7 +74,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
     body: [
       "{{anrede}},",
       "",
-      "ich wollte kurz an meine letzte Nachricht erinnern. Ein Punkt, den Praxen an PodoHero besonders schätzen: Termine aus Doctolib werden automatisch übernommen, und aus einem Termin wird mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende.",
+      "ich wollte kurz an meine letzte Nachricht erinnern. Ein Punkt, den Praxen an PodoHero besonders schätzen: Termine aus Doctolib lassen sich per Kalender-Abo (iCal) übernehmen, und aus einem Termin wird mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende.",
       "",
       "Wenn Sie mögen, zeige ich Ihnen das in 30 Minuten kostenlos. Eine kurze Antwort mit einem Terminvorschlag genügt.",
       "",
@@ -100,7 +100,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
 ];
 
 export const UWG_NOTE =
-  "Werbe-E-Mails sind auch an Praxen (B2B) nur mit vorheriger ausdrücklicher Einwilligung zulässig (§ 7 Abs. 2 Nr. 2 UWG). Ohne Einwilligung drohen Abmahnung und Unterlassungsklage, unabhängig von Menge, Impressum oder Abmeldelink. Nur an Kontakte senden, die eingewilligt haben (z. B. Anfrage, Messe mit dokumentierter Einwilligung).";
+  "Werbe-E-Mails sind auch an Praxen (B2B) nur mit vorheriger ausdrücklicher Einwilligung zulässig (§ 7 Abs. 2 Nr. 2 UWG). Ohne Einwilligung drohen Abmahnung und Unterlassungsklage, unabhängig von Menge, Impressum oder Abmeldelink. Nur an Kontakte senden, die ausdrücklich in Informationen per E-Mail eingewilligt haben (z. B. Anfrage mit Wunsch nach weiteren Infos per E-Mail, Messe mit dokumentierter Zustimmung).";
 
 /** Grund beim Überspringen ohne dokumentierte Einwilligung (Vorschau, Versand) */
 export const NO_CONSENT = "keine dokumentierte Einwilligung";

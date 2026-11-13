@@ -42,6 +42,8 @@ describe("Drosselung: IPv6 je /64", () => {
     expect(ipKey("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
     expect(ipKey("::1")).toBe("0:0:0:0::/64");
     expect(ipKey("::ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(ipKey("::ffff:cb00:7105")).toBe("203.0.113.5");
+    expect(ipKey("0:0:0:0:0:ffff:c000:201")).toBe("192.0.2.1");
     expect(ipKey("203.0.113.5")).toBe("203.0.113.5");
     expect(ipKey("kaputt:::x")).toBe("kaputt:::x");
     expect(clientKey({ ip: "2001:db8:1:2::7" })).toBe(clientKey({ ip: "2001:db8:1:2:ffff::9" }));

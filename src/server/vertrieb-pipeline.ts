@@ -1,12 +1,13 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { memberships, organizations, promoCodes, promoRedemptions, salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSuppressions, users } from "@/db/schema";
+import { memberships, organizations, promoCodes, promoRedemptions, salesCampaigns, salesLeadEvents, salesLeads, salesSends, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { normalizeEmail } from "@/lib/vertrieb/eligibility";
 import { deriveStage, emailDomain, isFreemail, matchLeadsToOrgs, STAGES, websiteDomain, type MatchedOrg, type Stage } from "@/lib/vertrieb/pipeline";
 import { validateTemplate } from "@/lib/vertrieb/template";
+import { blockedEmails, isBlocked } from "./blocklist";
 import { NAMED_NOTE } from "./lead-search";
 import { listRedemptions } from "./promo-codes";
 import { setLeadStatus, validTemplates, type Lead } from "./vertrieb";
@@ -35,7 +36,7 @@ export type Campaign = typeof salesCampaigns.$inferSelect;
 /** Alle Leads mit Stufe, zugeordneter Praxis (falls registriert), Kampagne und Versandzählern. */
 export async function loadPipeline(): Promise<PipelineItem[]> {
   const rows = await db
-    .select({ lead: salesLeads, suppressed: sql<boolean>`exists (select 1 from ${salesSuppressions} s where s.email = lower(${salesLeads.email}))`, campaignName: salesCampaigns.name })
+    .select({ lead: salesLeads, campaignName: salesCampaigns.name })
     .from(salesLeads)
     .leftJoin(salesCampaigns, eq(salesCampaigns.id, salesLeads.campaignId))
     .orderBy(sql`${salesLeads.distanceKm} asc nulls last`, asc(salesLeads.name))
@@ -52,10 +53,12 @@ export async function loadPipeline(): Promise<PipelineItem[]> {
     else m.failed += Number(s.n);
     sendMap.set(s.leadId!, m);
   }
-  const matches = await matchOrgs(rows.map((r) => ({ ...r.lead, suppressed: Boolean(r.suppressed) })));
-  return rows.map(({ lead, suppressed, campaignName }) => {
+  const blocked = await blockedEmails(rows.flatMap((r) => (r.lead.email ? [r.lead.email] : [])));
+  const isSup = (l: Lead) => !!l.email && blocked.has(normalizeEmail(l.email));
+  const matches = await matchOrgs(rows.map((r) => ({ ...r.lead, suppressed: isSup(r.lead) })));
+  return rows.map(({ lead, campaignName }) => {
     const org = matches.get(lead.id) ?? null;
-    const sup = Boolean(suppressed);
+    const sup = isSup(lead);
     return {
       ...lead,
       suppressed: sup,
@@ -224,7 +227,7 @@ export async function leadTimeline(lead: Lead): Promise<TimelineEntry[]> {
 
 /** Zugeordnete Praxis eines Leads (falls registriert) */
 export async function leadOrg(lead: Lead): Promise<MatchedOrg | null> {
-  const suppressed = lead.email ? (await db.select({ e: salesSuppressions.email }).from(salesSuppressions).where(eq(salesSuppressions.email, normalizeEmail(lead.email)))).length > 0 : false;
+  const suppressed = lead.email ? await isBlocked(lead.email) : false;
   return (await matchOrgs([{ ...lead, suppressed }])).get(lead.id) ?? null;
 }
 

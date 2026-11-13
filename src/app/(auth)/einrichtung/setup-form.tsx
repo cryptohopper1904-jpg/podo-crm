@@ -56,7 +56,7 @@ export function SetupForm({ needsToken = false, saas = false, code = "", trialTe
             required
             label={<>Ich schließe den <a href="/avv" target="_blank" rel="noreferrer" className="font-semibold text-primary underline">Auftragsverarbeitungsvertrag (AVV)</a> nach Art. 28 DSGVO (Version {LEGAL_VERSIONS.avv}) ab.</>}
           />
-          <p className="text-xs text-muted">{trialText ?? "30 Tage kostenlos testen, alle Funktionen"}, keine Zahlungsdaten nötig. Danach Tarif wählen – sonst bleibt die Praxis nur lesbar (Daten bleiben exportierbar).</p>
+          <p className="text-xs text-muted">{trialText ?? "30 Tage kostenlos testen, alle Funktionen"}, keine Zahlungsdaten nötig. Danach einen Tarif buchen oder in den kostenlosen Tarif wechseln (bis 20 Patient:innen, 1 Person) – ohne Wahl bleibt die Praxis nur lesbar (Daten bleiben exportierbar).</p>
         </>
       ) : null}
       <Button type="submit" disabled={pending} className="mt-2">
