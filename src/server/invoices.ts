@@ -42,7 +42,8 @@ import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS
 
 export class InvoiceError extends Error {}
 
-const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
+/** leer → null; Zeilenumbrüche vereinheitlichen (Textarea sendet \r\n, im PDF sonst „?“; Länge zählt wie im Formular) */
+const emptyToNull = (v: unknown) => (typeof v === "string" ? (v.trim() === "" ? null : v.replace(/\r\n?/g, "\n")) : v);
 const optUuid = z.preprocess(emptyToNull, z.uuid().nullable().optional());
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum ungültig");
 
