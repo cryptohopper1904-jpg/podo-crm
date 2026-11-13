@@ -32,7 +32,7 @@ describe("Vorlagen: Platzhalter", () => {
     expect(templateUsesPromo({ subject: "x", body: "Ihr Link: {{ link }}" })).toBe(true);
     expect(templateUsesPromo({ subject: "{{Code}}", body: "x" })).toBe(true);
     expect(templateUsesPromo(DEFAULT_TEMPLATES[0])).toBe(false);
-    const m = composeMail({ template: { subject: "Code {{code}}", body: "{{link}}" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", promo: { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12\nBcc: x" } });
+    const m = composeMail({ template: { subject: "Code {{code}}", body: "{{link}}" }, lead: { name: "P" }, senderName: "Max", impressum: "Impressum", unsubscribeUrl: "https://u", privacyUrl: "https://p/datenschutz#vertrieb", promo: { code: "PODO-AB12", link: "https://podo.example/aktion/PODO-AB12\nBcc: x" } });
     expect(m.subject).toBe("Code PODO-AB12");
     expect(m.text.split("\n")[0]).toBe("https://podo.example/aktion/PODO-AB12 Bcc: x");
   });
@@ -65,6 +65,7 @@ describe("composeMail", () => {
     senderName: "Max",
     impressum: "Muster GmbH\nMusterstr. 1, 12345 Musterstadt\nkontakt@podo.example",
     unsubscribeUrl: "https://podo.example/abmelden/abc.def",
+    privacyUrl: "https://podo.example/datenschutz#vertrieb",
     unsubscribeMailto: "max@podo.example",
   });
 
@@ -72,6 +73,7 @@ describe("composeMail", () => {
     expect(m.subject).toBe("Hallo Praxis X Bcc: x@y.de");
     expect(m.text.startsWith("Guten Tag,\n\nText.\n\n-- \nMuster GmbH")).toBe(true);
     expect(m.text).toContain("https://podo.example/abmelden/abc.def");
+    expect(m.text).toContain("Widerspruchsrecht nach Art. 21 DSGVO:\nhttps://podo.example/datenschutz#vertrieb");
     expect(m.text).toMatch(/abmelden/i);
     expect(m.text).not.toContain("\r");
   });

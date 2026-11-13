@@ -26,8 +26,9 @@ export default async function SetupPage({ searchParams }: PageProps<"/einrichtun
       <h1 className="font-display text-2xl font-semibold">{n === 0 ? "Praxis einrichten" : "Neue Praxis registrieren"}</h1>
       {offer ? (
         <p role="status" className="mt-3 rounded-xl bg-primary-soft px-4 py-3 text-sm font-semibold text-primary-soft-text">
-          {trialDaysLabel(offer.trialDays)} kostenlos testen mit Code {offer.code}
-          {offer.grantPlan ? ` (Umfang Tarif „${PLANS[offer.grantPlan].label}“)` : " – alle Funktionen"}. Keine Zahlungsdaten nötig, endet automatisch.
+          {trialDaysLabel(offer.trialDays)} kostenlos testen mit Code {offer.code} ({offer.grantPlan ? `Umfang Tarif „${PLANS[offer.grantPlan].label}“` : "alle Funktionen"}).
+          Keine Zahlungsdaten nötig, endet automatisch ohne Kosten.{" "}
+          <a href={`/aktion/${encodeURIComponent(offer.code)}#bedingungen`} target="_blank" rel="noreferrer" className="underline">Aktionsbedingungen</a>
         </p>
       ) : null}
       <p className="mt-1 text-sm text-muted">

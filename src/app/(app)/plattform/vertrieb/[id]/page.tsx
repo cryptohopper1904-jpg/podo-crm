@@ -10,7 +10,7 @@ import { deriveStage, stageLabel, statusLabel } from "@/lib/vertrieb/pipeline";
 import { requirePlatformAdmin } from "@/server/platform";
 import { getLead, getSalesSettings } from "@/server/vertrieb";
 import { leadOrg, leadTimeline, listCampaigns, type TimelineEntry } from "@/server/vertrieb-pipeline";
-import { addNoteAction, deleteLeadAction, markRepliedAction, setLeadCampaignAction, setStatusAction, updateLeadAction } from "../actions";
+import { addNoteAction, consentAction, deleteLeadAction, markRepliedAction, removeConsentAction, setLeadCampaignAction, setStatusAction, updateLeadAction } from "../actions";
 import { LeadForm } from "../lead-form";
 
 export const metadata = { title: "Praxis · Vertrieb" };
@@ -29,6 +29,8 @@ function describe(e: TimelineEntry): { title: string; detail?: string | null; to
       return { title: "Status geändert", detail: `${statusLabel(String(e.meta?.from ?? ""))} → ${statusLabel(String(e.meta?.to ?? ""))}${e.meta?.via === "link" ? " (Abmeldelink)" : ""}` };
     case "campaign":
       return { title: e.text ? `Kampagne „${e.text}“` : "Aus Kampagne entfernt" };
+    case "consent":
+      return e.meta?.removed ? { title: "Einwilligung entfernt", detail: e.meta.reason ? String(e.meta.reason) : null } : { title: "Einwilligung dokumentiert", detail: e.text };
   }
 }
 
@@ -98,12 +100,39 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
           <p className="mt-2 text-xs text-muted">„Antwort erhalten“ beendet die Sequenz (Status „Geantwortet“). „Interessiert“, „Kein Interesse“, „Abgemeldet“ und „Kunde“ beenden sie ebenfalls. „Abgemeldet“ sperrt die Adresse dauerhaft.</p>
         </Card>
         <Card>
+          <h2 className="font-display text-lg font-semibold">Einwilligung (§ 7 Abs. 2 Nr. 2 UWG)</h2>
+          {lead.consentAt ? (
+            <>
+              <p className="mt-2 text-sm"><Badge tone="primary">dokumentiert {dateDe(lead.consentAt)}</Badge></p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{lead.consentNote}</p>
+              <form action={removeConsentAction} className="mt-2">
+                <input type="hidden" name="id" value={lead.id} />
+                <button className="text-sm font-semibold text-danger">Einwilligung entfernen</button>
+              </form>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-sm"><Badge tone="accent">keine Einwilligung</Badge> – an diese Praxis wird keine Mail gesendet.</p>
+              {lead.email ? (
+                <ActionForm action={consentAction} submit="Einwilligung dokumentieren" className="mt-3 flex flex-col gap-2">
+                  <input type="hidden" name="id" value={lead.id} />
+                  <label className="text-sm font-medium" htmlFor="consentNote">Wie und wann erteilt? *</label>
+                  <Textarea id="consentNote" name="note" required minLength={3} maxLength={500} rows={2} placeholder="z. B. Anfrage per E-Mail vom 12.11.2026, Messe XY mit unterschriebenem Formular" />
+                </ActionForm>
+              ) : (
+                <p className="mt-1 text-xs text-muted">Zuerst eine E-Mail-Adresse eintragen.</p>
+              )}
+            </>
+          )}
+          <p className="mt-2 text-xs text-muted">Gilt für die eingetragene Adresse; ändert sich die E-Mail, wird die Einwilligung entfernt.</p>
+        </Card>
+        <Card>
           <h2 className="font-display text-lg font-semibold">Registrierte Praxis</h2>
           {org ? (
             <div className="mt-2 text-sm">
               <p>
                 <Link href={`/plattform#praxis-${org.id}`} className="font-semibold text-primary">{org.name}</Link>{" "}
-                <span className="text-muted">({org.via === "code" ? "persönlicher Aktionscode" : org.via === "email" ? "gleiche E-Mail" : "gleiche Domain"})</span>
+                {org.via === "domain" ? <Badge tone="warn">unsicher (Domain)</Badge> : <span className="text-muted">({org.via === "code" ? "persönlicher Aktionscode" : "gleiche E-Mail"})</span>}
               </p>
               <p className="mt-1">
                 Tarif {isPlanId(org.plan) ? PLANS[org.plan].label : org.plan} · {org.converted ? "zahlt" : org.subscriptionStatus === "trialing" ? `Test bis ${dateDe(org.trialEndsAt)}` : org.subscriptionStatus} · registriert {dateDe(org.createdAt)}

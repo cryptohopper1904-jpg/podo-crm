@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.2 · Stand 13.11.2026
+> Version 0.3 · Stand 13.11.2026
 
 Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
@@ -54,6 +54,17 @@ Für die Abrechnung des Abonnements setzen wir den Zahlungsdienstleister Stripe 
 ## 6. Kontaktaufnahme
 
 Wenn Sie uns per E-Mail kontaktieren, verarbeiten wir Ihre Angaben zur Bearbeitung der Anfrage (Art. 6 Abs. 1 lit. b bzw. f DSGVO) und löschen sie, wenn die Anfrage erledigt ist und keine Aufbewahrungspflichten bestehen.
+
+## 6a. Vertrieb / Kontaktaufnahme mit Praxen {#vertrieb}
+
+Wir sprechen podologische Praxen und Praxen für medizinische Fußpflege auf PodoHero an.
+
+- **Quellen:** öffentlich zugängliche Geschäftsangaben, insbesondere Praxis-Websites und deren Impressum sowie OpenStreetMap, oder Ihre eigene Anfrage an uns.
+- **Daten:** Name der Praxis, geschäftliche E-Mail-Adresse, Website, Postleitzahl, Ort und Entfernung zu unserem Standort; ggf. Notizen zum Kontakt und die Dokumentation Ihrer Einwilligung. Praxisnamen von Einzelpraxen können den Namen der Inhaberin bzw. des Inhabers enthalten. Ansprechpartner und Telefonnummern erheben wir aus diesen Quellen nicht.
+- **Zweck:** Kontaktaufnahme per E-Mail zu PodoHero. Werbe-E-Mails senden wir nur, wenn Sie vorher ausdrücklich eingewilligt haben (z. B. durch Ihre Anfrage oder eine dokumentierte Einwilligung auf einer Messe).
+- **Rechtsgrundlage:** für die E-Mail-Ansprache Ihre Einwilligung (Art. 6 Abs. 1 lit. a DSGVO, § 7 Abs. 2 Nr. 2 UWG); für die reine Speicherung der öffentlich zugänglichen Geschäftsangaben bis zu einer Anfrage bzw. Einwilligung unser berechtigtes Interesse an der Gewinnung von Kundinnen und Kunden (Art. 6 Abs. 1 lit. f DSGVO).
+- **Speicherdauer:** Einträge ohne Kontakt löschen wir spätestens nach 24 Monaten. Bei Widerspruch oder Abmeldung löschen wir die Kontaktdaten bzw. sperren die Adresse: Damit wir Sie nicht erneut ansprechen, bleibt nur die E-Mail-Adresse mit dem Vermerk „abgemeldet“ auf unserer Sperrliste (Art. 6 Abs. 1 lit. c bzw. f DSGVO).
+- **Ihre Rechte:** Sie können der Verarbeitung jederzeit widersprechen (Art. 21 DSGVO) und eine Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen – über den Abmeldelink in jeder E-Mail, durch Antwort mit „Abmelden“ oder per E-Mail an die oben genannte Adresse. Die übrigen Rechte nach Abschnitt 8 gelten entsprechend.
 
 ## 7. Empfänger
 

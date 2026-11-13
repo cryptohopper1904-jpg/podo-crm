@@ -26,6 +26,8 @@ export type LeadRow = {
   campaignName?: string | null;
   /** registrierte Praxis (zugeordnet über Code/E-Mail/Domain) */
   orgName?: string | null;
+  /** dokumentierte Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) – ohne sie wird nicht gesendet */
+  consent?: boolean;
 };
 
 const stageTone = (s?: Stage) => (s === "kunde" ? "primary" : s === "test" ? "info" : s === "geantwortet" ? "warn" : s === "aus" ? "accent" : "neutral");
@@ -46,7 +48,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
 
   // Auswahl „alle“ nur für Einträge, die grundsätzlich noch eine Mail bekommen können
   const selectable = useMemo(
-    () => leads.filter((l) => l.email && !l.suppressed && l.step < 3 && !(isLeadStatus(l.status) && STOP_STATUSES.includes(l.status))).map((l) => l.id),
+    () => leads.filter((l) => l.email && l.consent && !l.suppressed && l.step < 3 && !(isLeadStatus(l.status) && STOP_STATUSES.includes(l.status))).map((l) => l.id),
     [leads],
   );
   const toggle = (id: string) =>
@@ -65,7 +67,12 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
       setOk(null);
       const [op, value = ""] = bulk.split(":");
       if (op === "abmelden" && !window.confirm(`${ids.length} Einträge abmelden? Die Adressen kommen dauerhaft auf die Sperrliste.`)) return;
-      const input = op === "status" ? { op, status: value } : op === "kampagne" ? { op, campaignId: value } : { op };
+      let note = "";
+      if (op === "einwilligung") {
+        note = window.prompt(`Einwilligung für ${ids.length} Einträge dokumentieren.\nWie und wann wurde sie erteilt? (Pflicht, z. B. „Messe XY 10.11.2026, Formular“)`)?.trim() ?? "";
+        if (!note) return;
+      }
+      const input = op === "status" ? { op, status: value } : op === "kampagne" ? { op, campaignId: value } : op === "einwilligung" ? { op, note } : { op };
       const r = await bulkAction(ids, input);
       if ("error" in r) setError(r.error);
       else {
@@ -125,6 +132,10 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
               {campaigns.map((c) => <option key={c.id} value={`kampagne:${c.id}`}>zu „{c.name}“ hinzufügen</option>)}
               <option value="kampagne:">aus Kampagne entfernen</option>
             </optgroup>
+            <optgroup label="Einwilligung">
+              <option value="einwilligung">Einwilligung dokumentieren …</option>
+              <option value="einwilligung_entfernen">Einwilligung entfernen</option>
+            </optgroup>
             <option value="abmelden">Abmelden (Sperrliste)</option>
           </select>
           <Button variant="secondary" className="h-10" onClick={runBulk} disabled={pending || !bulk || ids.length === 0 || !!preview}>Ausführen</Button>
@@ -174,7 +185,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
             <th>
               <input
                 type="checkbox"
-                aria-label="Alle sendbaren auswählen"
+                aria-label="Alle sendbaren auswählen (mit Einwilligung)"
                 className="size-5 accent-[var(--primary)]"
                 checked={selectable.length > 0 && selectable.every((id) => selected.has(id))}
                 onChange={(e) => setSelected(e.target.checked ? new Set(selectable) : new Set())}
@@ -203,7 +214,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
                 {l.campaignName ? <p className="text-xs text-muted">Kampagne: {l.campaignName}</p> : null}
                 {l.orgName ? <p className="text-xs text-muted">registriert als „{l.orgName}“</p> : null}
               </td>
-              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}</td>
+              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}{l.email && l.consent === false ? <> <Badge tone="neutral">ohne Einwilligung</Badge></> : null}{l.consent ? <> <Badge tone="primary">Einwilligung</Badge></> : null}</td>
               <td className="text-sm">{l.city ?? "–"}</td>
               <td className="tabular-nums text-sm">{l.distanceKm ?? "–"}</td>
               <td>{l.stage ? <Badge tone={stageTone(l.stage)}>{l.stageLabel}</Badge> : "–"}</td>

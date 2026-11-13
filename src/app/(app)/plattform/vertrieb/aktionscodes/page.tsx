@@ -2,7 +2,7 @@ import { ActionForm } from "@/components/action-form";
 import { Badge, Button, Card, Empty, Field, Input, Select, Table } from "@/components/ui";
 import { dateDe, dateTimeDe } from "@/lib/format";
 import { isPlanId, PLANS } from "@/lib/plans";
-import { generatePromoCode, PROMO_DEFAULT_TRIAL_DAYS, PROMO_GRANT_PLANS, promoLandingUrl, promoSignupUrl, trialDaysLabel } from "@/lib/promo-codes";
+import { generatePromoCode, PROMO_DEFAULT_TRIAL_DAYS, PROMO_OWN_MIN_LENGTH, PROMO_GRANT_PLANS, promoLandingUrl, promoSignupUrl, trialDaysLabel } from "@/lib/promo-codes";
 import { requirePlatformAdmin } from "@/server/platform";
 import { listPromoCodes, listRedemptions } from "@/server/promo-codes";
 import { listCampaigns } from "@/server/vertrieb-pipeline";
@@ -17,6 +17,7 @@ export default async function PromoCodesPage({ searchParams }: PageProps<"/platt
   const preCampaign = typeof sp.kampagne === "string" && /^[0-9a-f-]{36}$/i.test(sp.kampagne) ? sp.kampagne : "";
   const [codes, reds, campaigns] = await Promise.all([listPromoCodes(), listRedemptions(), listCampaigns()]);
   const base = process.env.PUBLIC_URL;
+  const suggested = generatePromoCode();
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
@@ -95,11 +96,12 @@ export default async function PromoCodesPage({ searchParams }: PageProps<"/platt
       <Card>
         <h2 className="mb-3 font-display text-xl font-semibold">Neuer Aktionscode</h2>
         <ActionForm action={createPromoCodeAction} submit="Code anlegen">
-          <Field label="Code *" hint="4–32 Zeichen: A–Z, 0–9, Bindestrich. Zufälliger Vorschlag ist schwer zu erraten.">
-            <Input name="code" required maxLength={32} defaultValue={generatePromoCode()} className="font-mono" autoComplete="off" spellCheck={false} />
+          <Field label="Code *" hint={`A–Z, 0–9, Bindestrich. Der zufällige Vorschlag ist schwer zu erraten. Selbst gewählte Codes: mindestens ${PROMO_OWN_MIN_LENGTH} Zeichen und Höchstzahl oder Ablaufdatum Pflicht.`}>
+            <Input name="code" required maxLength={32} defaultValue={suggested} className="font-mono" autoComplete="off" spellCheck={false} />
           </Field>
+          <input type="hidden" name="suggested" value={suggested} />
           <Field label="Bezeichnung (intern) *"><Input name="label" required maxLength={120} placeholder="z. B. Herbstkampagne Brandenburg" /></Field>
-          <Field label="Testphase (Tage) *" hint="90 = 3 Monate. Eine längere laufende Testphase wird nie verkürzt.">
+          <Field label="Testphase (Tage) *" hint="90 Tage ≈ 3 Monate. Eine längere laufende Testphase wird nie verkürzt.">
             <Input name="trialDays" type="number" min={1} max={365} required defaultValue={PROMO_DEFAULT_TRIAL_DAYS} />
           </Field>
           <Field label="Umfang während der Testphase">

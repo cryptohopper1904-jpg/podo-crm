@@ -260,6 +260,13 @@
       "when": 1794602243214,
       "tag": "0036_aktionscodes_security",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794602698076,
+      "tag": "0037_aktionscodes_einwilligung",
+      "breakpoints": true
     }
   ]
 }

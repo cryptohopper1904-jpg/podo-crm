@@ -7,7 +7,7 @@ import { withOrg } from "@/db";
 import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { activeTeamMembers, loadOrgBilling, usedSeats } from "@/server/billing";
 import { countedPatients } from "@/server/patient-limit";
-import { promoRedemptionProblem } from "@/lib/promo-codes";
+import { PROMO_FREE_RETURN_NOTE, PROMO_FREE_RETURN_NOTE_BEFORE, promoRedemptionProblem, trialDaysLabel } from "@/lib/promo-codes";
 import { redemptionForOrganization } from "@/server/promo-codes";
 import { FreePlanForm } from "./free-form";
 import { PromoForm } from "./promo-form";
@@ -108,15 +108,22 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
       {redemption ? (
         <Card>
           <CardTitle>Aktionscode</CardTitle>
-          <p className="text-sm">Code <span className="font-mono font-semibold">{redemption.code}</span> eingelöst am {dateDe(redemption.redeemedAt)} ({redemption.trialDays} Tage Testphase). Je Praxis ist ein Aktionscode möglich.</p>
+          <p className="text-sm">
+            Code <span className="font-mono font-semibold">{redemption.code}</span> eingelöst am {dateDe(redemption.redeemedAt)} ({trialDaysLabel(redemption.trialDays)}).
+            Die Testphase läuft bis <strong>{dateDe(redemption.trialEndsAfter)}</strong>. Je Praxis ist ein Aktionscode möglich.
+          </p>
+          {redemption.previousPlan === "free" && org?.subscriptionStatus === "trialing" ? (
+            <p className="mt-2 text-sm text-muted">{PROMO_FREE_RETURN_NOTE}</p>
+          ) : null}
         </Card>
       ) : !promoProblem ? (
         <Card>
           <CardTitle>Aktionscode einlösen</CardTitle>
           <p className="mb-3 text-sm text-muted">
-            Mit einem Aktionscode verlängert sich die Testphase (z. B. auf 3 Monate ab heute; eine längere laufende Testphase wird nie verkürzt).
+            Mit einem Aktionscode verlängert sich die Testphase (z. B. auf 90 Tage ab heute; eine längere laufende Testphase wird nie verkürzt).
             Auch nach Ablauf der Testphase möglich – je Praxis einmal, nicht bei laufendem Abo.
           </p>
+          {org?.plan === "free" ? <p className="mb-3 rounded-xl bg-info-soft px-4 py-3 text-sm text-info-soft-text">{PROMO_FREE_RETURN_NOTE_BEFORE}</p> : null}
           <PromoForm />
         </Card>
       ) : null}

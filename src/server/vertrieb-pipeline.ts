@@ -5,7 +5,7 @@ import { memberships, organizations, promoCodes, promoRedemptions, salesCampaign
 import { audit } from "@/lib/audit";
 import { SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { normalizeEmail } from "@/lib/vertrieb/eligibility";
-import { deriveStage, emailDomain, FREEMAIL_DOMAINS, matchLeadsToOrgs, STAGES, websiteDomain, type MatchedOrg, type Stage } from "@/lib/vertrieb/pipeline";
+import { deriveStage, emailDomain, isFreemail, matchLeadsToOrgs, STAGES, websiteDomain, type MatchedOrg, type Stage } from "@/lib/vertrieb/pipeline";
 import { validateTemplate } from "@/lib/vertrieb/template";
 import { NAMED_NOTE } from "./lead-search";
 import { listRedemptions } from "./promo-codes";
@@ -75,7 +75,7 @@ export async function loadPipeline(): Promise<PipelineItem[]> {
  */
 async function matchOrgs(leads: (Lead & { suppressed: boolean })[]) {
   const emails = [...new Set(leads.flatMap((l) => (l.email ? [l.email.trim().toLowerCase()] : [])))];
-  const domains = [...new Set(leads.flatMap((l) => [emailDomain(l.email), websiteDomain(l.website)]).filter((d): d is string => !!d && !FREEMAIL_DOMAINS.has(d)))];
+  const domains = [...new Set(leads.flatMap((l) => [emailDomain(l.email), websiteDomain(l.website)]).filter((d): d is string => !!d && !isFreemail(d)))];
   const codeRed = await db
     .select({ leadId: promoCodes.leadId, organizationId: promoRedemptions.organizationId })
     .from(promoRedemptions)
@@ -122,6 +122,8 @@ export type PipelineFilter = {
   source?: string | null;
   email?: "mit" | "ohne" | null;
   named?: boolean;
+  /** dokumentierte Einwilligung vorhanden? */
+  consent?: "mit" | "ohne" | null;
   maxKm?: number | null;
   /** Kampagnen-ID oder „ohne“ */
   campaign?: string | null;
@@ -136,6 +138,8 @@ export function filterPipeline(items: PipelineItem[], f: PipelineFilter): Pipeli
     if (f.email === "mit" && !l.email) return false;
     if (f.email === "ohne" && l.email) return false;
     if (f.named && !l.named) return false;
+    if (f.consent === "mit" && !l.consentAt) return false;
+    if (f.consent === "ohne" && l.consentAt) return false;
     if (f.maxKm != null && (l.distanceKm == null || l.distanceKm > f.maxKm)) return false;
     if (f.campaign === "ohne" ? l.campaignId : f.campaign && l.campaignId !== f.campaign) return false;
     if (q && ![l.name, l.email, l.city, l.zip, l.contactPerson].some((v) => v?.toLowerCase().includes(q))) return false;
@@ -156,6 +160,7 @@ export type Dashboard = {
   newThisWeek: number;
   newFromSearch: number;
   withEmail: number;
+  withConsent: number;
   mailsSent: number;
   mailsMock: number;
   mailsFailed: number;
@@ -182,6 +187,7 @@ export async function salesDashboard(items: PipelineItem[], now = new Date()): P
     newThisWeek: fresh.length,
     newFromSearch: fresh.filter((l) => (l.source ?? "").startsWith("osm")).length,
     withEmail: items.filter((l) => l.email).length,
+    withConsent: items.filter((l) => l.consentAt).length,
     mailsSent: Number(s?.ok ?? 0),
     mailsMock: Number(s?.mock ?? 0),
     mailsFailed: Number(s?.failed ?? 0),
@@ -200,7 +206,7 @@ export const leadSources = (items: PipelineItem[]) => [...new Set(items.map((l) 
 
 export type TimelineEntry =
   | { at: Date; kind: "send"; step: number; ok: boolean; mock: boolean; error: string | null }
-  | { at: Date; kind: "note" | "status" | "reply" | "campaign"; text: string | null; meta: Record<string, unknown> | null }
+  | { at: Date; kind: "note" | "status" | "reply" | "campaign" | "consent"; text: string | null; meta: Record<string, unknown> | null }
   | { at: Date; kind: "created" };
 
 export async function leadTimeline(lead: Lead): Promise<TimelineEntry[]> {
@@ -211,7 +217,7 @@ export async function leadTimeline(lead: Lead): Promise<TimelineEntry[]> {
   const out: TimelineEntry[] = [
     { at: lead.createdAt, kind: "created" },
     ...sends.map((s) => ({ at: s.sentAt, kind: "send" as const, step: s.step, ok: s.ok, mock: s.mock, error: s.error })),
-    ...events.map((e) => ({ at: e.createdAt, kind: e.kind as "note" | "status" | "reply" | "campaign", text: e.text, meta: e.meta })),
+    ...events.map((e) => ({ at: e.createdAt, kind: e.kind as "note" | "status" | "reply" | "campaign" | "consent", text: e.text, meta: e.meta })),
   ];
   return out.sort((a, b) => b.at.getTime() - a.at.getTime());
 }

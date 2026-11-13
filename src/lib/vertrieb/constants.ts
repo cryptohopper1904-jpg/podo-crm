@@ -100,4 +100,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
 ];
 
 export const UWG_NOTE =
-  "Werbe-E-Mails ohne Einwilligung können nach § 7 UWG abgemahnt werden. Nur kleine, gezielte Mengen senden; Abmeldungen werden automatisch beachtet.";
+  "Werbe-E-Mails sind auch an Praxen (B2B) nur mit vorheriger ausdrücklicher Einwilligung zulässig (§ 7 Abs. 2 Nr. 2 UWG). Ohne Einwilligung drohen Abmahnung und Unterlassungsklage, unabhängig von Menge, Impressum oder Abmeldelink. Nur an Kontakte senden, die eingewilligt haben (z. B. Anfrage, Messe mit dokumentierter Einwilligung).";
+
+/** Grund beim Überspringen ohne dokumentierte Einwilligung (Vorschau, Versand) */
+export const NO_CONSENT = "keine dokumentierte Einwilligung";

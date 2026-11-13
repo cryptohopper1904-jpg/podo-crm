@@ -7,6 +7,7 @@ import { PLANS, type PaidPlan } from "@/lib/plans";
 import {
   isPayingOrg,
   normalizePromoCode,
+  ownCodeProblem,
   PROMO_GRANT_PLANS,
   PROMO_INVALID,
   PROMO_MAX_TRIAL_DAYS,
@@ -50,11 +51,17 @@ export type PromoCodeInput = {
   validUntil: Date | null;
   campaignId: string | null;
   leadId?: string | null;
+  /** true = Zufallscode aus generatePromoCode (Formular-Vorschlag unverändert übernommen); sonst gelten ownCodeProblem-Regeln */
+  generated?: boolean;
 };
 
 export async function createPromoCode(adminUserId: string, input: PromoCodeInput): Promise<string> {
   const code = normalizePromoCode(input.code);
   if (!code) throw new Error("Code: 4 bis 32 Zeichen, nur Buchstaben A–Z, Ziffern und Bindestrich (nicht am Anfang/Ende).");
+  if (!input.generated) {
+    const own = ownCodeProblem(code, input.maxRedemptions, input.validUntil);
+    if (own) throw new Error(own);
+  }
   const label = input.label.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
   if (!label) throw new Error("Bitte eine Bezeichnung angeben (nur intern sichtbar).");
   if (!Number.isInteger(input.trialDays) || input.trialDays < 1 || input.trialDays > PROMO_MAX_TRIAL_DAYS) throw new Error(`Testphase: 1 bis ${PROMO_MAX_TRIAL_DAYS} Tage.`);
@@ -163,7 +170,7 @@ export async function listRedemptions(codeIds?: string[]): Promise<RedemptionRow
 
 // ───────────── Prüfen (öffentlich, ohne Hinweise) ─────────────
 
-export type PromoOffer = { code: string; trialDays: number; grantPlan: PaidPlan | null };
+export type PromoOffer = { code: string; trialDays: number; grantPlan: PaidPlan | null; validUntil: Date | null; limited: boolean };
 
 /** Gültiges Angebot zu einem Code oder null (nie ein Grund). Nur Code, Testtage und Tarif – keine internen Angaben. */
 export async function lookupPromoCode(input: unknown, now = new Date()): Promise<PromoOffer | null> {
@@ -173,7 +180,7 @@ export async function lookupPromoCode(input: unknown, now = new Date()): Promise
   if (!c) return null;
   const [{ n }] = await db.select({ n: count() }).from(promoRedemptions).where(eq(promoRedemptions.codeId, c.id));
   if (!promoCodeUsable({ ...c, redemptions: Number(n) }, now)) return null;
-  return { code: c.code, trialDays: c.trialDays, grantPlan: (c.grantPlan as PaidPlan | null) ?? null };
+  return { code: c.code, trialDays: c.trialDays, grantPlan: (c.grantPlan as PaidPlan | null) ?? null, validUntil: c.validUntil, limited: c.maxRedemptions !== null };
 }
 
 // ───────────── Einlösen ─────────────
@@ -223,14 +230,30 @@ export async function redeemPromoCodeTx(
   const info = PLANS[plan];
   const seats = Math.min(Math.max(org.seats, info.includedSeats), info.maxSeats ?? Number.MAX_SAFE_INTEGER);
   try {
-    await tx.insert(promoRedemptions).values({ codeId: c.id, organizationId: org.id, redeemedBy: opts.userId, via: opts.via, trialEndsBefore: org.trialEndsAt, trialEndsAfter: trialEndsAt, redeemedAt: now });
+    await tx
+      .insert(promoRedemptions)
+      .values({ codeId: c.id, organizationId: org.id, redeemedBy: opts.userId, via: opts.via, previousPlan: org.plan, trialEndsBefore: org.trialEndsAt, trialEndsAfter: trialEndsAt, redeemedAt: now });
   } catch (e) {
     const m = pgMessage(e);
     if (/promo_redemptions_org|23505/.test(m)) throw new PromoCodeError(ALREADY);
     if (/promo_code_unavailable/.test(m)) throw new PromoCodeError();
     throw e;
   }
-  await tx.update(organizations).set({ plan, subscriptionStatus: "trialing", trialEndsAt, seats }).where(eq(organizations.id, org.id));
+  // Kein laufendes Abo (promoRedemptionProblem): eine alte, beendete Stripe-Abo-ID wird entfernt (wie switchToFreePlan),
+  // damit Checkout/Kostenlos-Wechsel danach gehen und Events des alten Abos nichts mehr ändern (billing.ts).
+  // Aus dem Kostenlos-Tarif eingelöst → nach Ablauf automatisch zurück (returnPromoTrialToFree, Merker in settings).
+  const fromFree = org.plan === "free";
+  await tx
+    .update(organizations)
+    .set({
+      plan,
+      subscriptionStatus: "trialing",
+      trialEndsAt,
+      seats,
+      stripeSubscriptionId: null,
+      settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('promoReturnFree', ${fromFree}::boolean)`,
+    })
+    .where(eq(organizations.id, org.id));
   await audit(
     {
       organizationId: org.id,
@@ -253,7 +276,7 @@ export async function redeemPromoCodeForOrganization(organizationId: string, use
 /** Einlösung der Praxis (für die Abo-Seite), null = noch keine */
 export async function redemptionForOrganization(organizationId: string) {
   const [r] = await db
-    .select({ code: promoCodes.code, trialDays: promoCodes.trialDays, redeemedAt: promoRedemptions.redeemedAt })
+    .select({ code: promoCodes.code, trialDays: promoCodes.trialDays, redeemedAt: promoRedemptions.redeemedAt, trialEndsAfter: promoRedemptions.trialEndsAfter, previousPlan: promoRedemptions.previousPlan })
     .from(promoRedemptions)
     .innerJoin(promoCodes, eq(promoCodes.id, promoRedemptions.codeId))
     .where(and(eq(promoRedemptions.organizationId, organizationId)));

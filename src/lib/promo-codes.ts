@@ -9,7 +9,8 @@
  * - Fehlermeldung nach außen immer gleich (PROMO_INVALID): kein Hinweis, ob ein Code existiert, abgelaufen oder aufgebraucht ist.
  */
 import { randomInt } from "node:crypto";
-import { isPaidPlan, PAID_PLANS, type PaidPlan } from "./plans";
+import { dateDe, moneyShort } from "./format";
+import { FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, isPaidPlan, PAID_PLANS, PLANS, seatSummary, type PaidPlan } from "./plans";
 
 export const PROMO_INVALID = "Code ungültig oder abgelaufen.";
 export const PROMO_CODE_RE = /^[A-Z0-9][A-Z0-9-]{2,30}[A-Z0-9]$/;
@@ -60,13 +61,15 @@ export type PromoOrg = { plan: string; subscriptionStatus: string; stripeSubscri
 
 /**
  * Darf diese Praxis (später, auf der Abo-Seite) einen Code einlösen? Erlaubt in der Testphase, nach Ablauf der
- * Testphase (Nur-Lesen), im Kostenlos-Tarif und nach beendetem Abo. Nicht bei laufendem bezahlten Abo und nicht
- * für interne Praxen. null = erlaubt, sonst Grund (bezieht sich nur auf die eigene Praxis, nicht auf den Code).
+ * Testphase (Nur-Lesen), im Kostenlos-Tarif und nach beendetem Abo. Nicht bei laufendem Abo und nicht für interne Praxen.
+ * „Laufendes Abo“ = Stripe-Abo-ID gesetzt und Status nicht „canceled“ (auch z. B. „none“ während einer SEPA-Zahlung)
+ * oder ein vom Betreiber aktiv gesetzter bezahlter Tarif. null = erlaubt, sonst Grund (betrifft nur die eigene Praxis).
  */
 export function promoRedemptionProblem(org: PromoOrg): string | null {
   if (org.plan === "internal") return "Interne Praxen brauchen keinen Aktionscode.";
-  const running = ["active", "past_due", "paused"].includes(org.subscriptionStatus) || (org.subscriptionStatus === "trialing" && !!org.stripeSubscriptionId);
-  if (running && org.plan !== "free") return "Bei einem laufenden Abo kann kein Aktionscode eingelöst werden.";
+  const stripeRunning = !!org.stripeSubscriptionId && org.subscriptionStatus !== "canceled";
+  const manualPaid = isPaidPlan(org.plan) && ["active", "past_due", "paused"].includes(org.subscriptionStatus);
+  if (stripeRunning || manualPaid) return "Bei einem laufenden Abo kann kein Aktionscode eingelöst werden.";
   return null;
 }
 
@@ -85,10 +88,73 @@ export function promoLandingUrl(publicUrl: string | undefined, code: string): st
   return `${base}/aktion/${encodeURIComponent(code)}`;
 }
 
-/** „3 Monate“ / „45 Tage“ / „1 Jahr“ für Texte */
+/** Laufzeit als Text – immer in Tagen (verbindlich), bei vollen 30-Tage-Blöcken mit Monaten als Orientierung: „90 Tage (ca. 3 Monate)“ */
 export function trialDaysLabel(days: number): string {
-  if (days === 365) return "1 Jahr";
-  if (days % 30 === 0 && days >= 60) return `${days / 30} Monate`;
-  if (days === 30) return "1 Monat";
-  return `${days} Tage`;
+  if (days % 30 === 0 && days >= 60) return `${days} Tage (ca. ${days / 30} Monate)`;
+  if (days === 365) return "365 Tage (ca. 1 Jahr)";
+  return days === 1 ? "1 Tag" : `${days} Tage`;
 }
+
+/** Mindestlänge selbst gewählter Codes (Zufallscodes aus generatePromoCode sind länger) */
+export const PROMO_OWN_MIN_LENGTH = 6;
+
+/**
+ * Regeln für selbst gewählte (nicht zufällig erzeugte) Codes: mindestens 6 Zeichen und begrenzt –
+ * Höchstzahl Einlösungen ODER Ablaufdatum Pflicht (leicht zu erratende Codes dürfen nicht unbegrenzt gelten).
+ */
+export function ownCodeProblem(code: string, maxRedemptions: number | null, validUntil: Date | null): string | null {
+  if (code.length < PROMO_OWN_MIN_LENGTH) return `Selbst gewählte Codes brauchen mindestens ${PROMO_OWN_MIN_LENGTH} Zeichen.`;
+  if (maxRedemptions === null && !validUntil) return "Selbst gewählte Codes brauchen eine Höchstzahl an Einlösungen oder ein Ablaufdatum.";
+  return null;
+}
+
+/**
+ * Ende des Tages `yyyy-mm-dd` (23:59:59) in Europe/Berlin als Zeitpunkt – mit Sommer-/Winterzeit.
+ * null bei ungültigem Datum.
+ */
+export function endOfDayBerlin(ymd: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+  if (!m) return null;
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  for (const off of ["+02:00", "+01:00"]) {
+    const d = new Date(`${ymd}T23:59:59${off}`);
+    if (Number.isNaN(d.getTime())) return null;
+    const p = Object.fromEntries(fmt.formatToParts(d).map((x) => [x.type, x.value]));
+    if (`${p.year}-${p.month}-${p.day}` === ymd && p.hour === "23" && p.minute === "59") return d;
+  }
+  return null;
+}
+
+/** Günstigster bezahlter Tarif (netto/Monat, aus plans.ts) */
+export const cheapestPaidCents = () => Math.min(...PAID_PLANS.map((p) => PLANS[p].priceCents));
+
+/** Was der kostenlose Tarif nicht enthält, z. B. „Patientenportal, KI-Telefonagent und Praxis-Website“ (aus plans.ts) */
+function freeMissing(): string {
+  const missing = FEATURES.filter((f) => !PLANS.free.features.includes(f)).map((f) => FEATURE_LABELS[f]);
+  return missing.length > 1 ? `${missing.slice(0, -1).join(", ")} und ${missing[missing.length - 1]}` : (missing[0] ?? "");
+}
+
+/**
+ * Aktionsbedingungen (Aktionsseite, id="bedingungen"). Preise und Umfang des kostenlosen Tarifs aus plans.ts.
+ * `validUntil`/`limited` aus lookupPromoCode – keine Angabe, wie viele Einlösungen übrig sind.
+ */
+export function promoTermsText(o: { validUntil: Date | null; limited: boolean }): string {
+  const until = o.validUntil ? `bis ${dateDe(o.validUntil)}` : "bis auf Widerruf";
+  const missing = freeMissing();
+  return [
+    "Aktionsbedingungen: Nur für Unternehmer:innen (Praxen).",
+    `Einlösbar ${until}${o.limited ? ", nur in begrenzter Anzahl" : ""}.`,
+    "Je Praxis ein Aktionscode, nicht bei einem laufenden bezahlten Abo.",
+    "Eine längere laufende Testphase wird nicht verkürzt.",
+    "Keine Barauszahlung, nicht mit anderen Aktionen kombinierbar.",
+    "Die Testphase endet automatisch, es wird nichts berechnet und kein Abo abgeschlossen.",
+    `Danach können Sie einen Tarif buchen (ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.) oder in den kostenlosen Tarif wechseln (bis ${FREE_MAX_PATIENTS} Patient:innen, ${seatSummary("free")}${missing ? `, ohne ${missing}` : ""}).`,
+    "Ohne Wahl bleibt die Praxis nur lesbar, alle Daten bleiben exportierbar.",
+    "Es gelten die AGB.",
+  ].join(" ");
+}
+
+/** Abo-Seite, Kostenlos-Tarif vor dem Einlösen (Rückkehr umgesetzt in returnPromoTrialToFree, src/server/billing.ts) */
+export const PROMO_FREE_RETURN_NOTE_BEFORE = `Ihre Praxis nutzt den kostenlosen Tarif. Mit dem Code wechselt sie in die Testphase. Danach kehrt sie automatisch in den kostenlosen Tarif zurück, wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen hat – sonst ist sie bis zur Buchung eines Tarifs nur lesbar. Weitere Personen werden dann deaktiviert.`;
+/** Abo-Seite, während einer aus dem Kostenlos-Tarif begonnenen Code-Testphase */
+export const PROMO_FREE_RETURN_NOTE = `Nach dem Ende der Testphase kehrt die Praxis automatisch in den kostenlosen Tarif zurück, wenn sie höchstens ${FREE_MAX_PATIENTS} Patient:innen hat (sonst nur lesbar bis zur Buchung eines Tarifs). Weitere Personen werden dann deaktiviert.`;

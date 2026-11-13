@@ -159,7 +159,7 @@ export async function logoutAction() {
 
 const setupSchema = z.object({
   practiceName: z.string().trim().min(2, "Bitte den Praxisnamen angeben."),
-  name: z.string().trim().min(2, "Bitte deinen Namen angeben."),
+  name: z.string().trim().min(2, "Bitte Ihren Namen angeben."),
   email: z.string().trim().toLowerCase().email("Bitte eine gültige E-Mail angeben."),
   password: z.string(),
   state: z.string().length(2).default("BB"),

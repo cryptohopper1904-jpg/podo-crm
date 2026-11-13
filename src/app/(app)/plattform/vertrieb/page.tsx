@@ -42,6 +42,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
     source: str(sp.quelle, 120) || null,
     email: sp.email === "mit" || sp.email === "ohne" ? sp.email : null,
     named: sp.namen === "1",
+    consent: sp.einwilligung === "mit" || sp.einwilligung === "ohne" ? sp.einwilligung : null,
     maxKm: /^\d{1,4}$/.test(str(sp.km)) ? Number(sp.km) : null,
     campaign: sp.kampagne === "ohne" || /^[0-9a-f-]{36}$/i.test(str(sp.kampagne)) ? str(sp.kampagne) : null,
   };
@@ -72,7 +73,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
   return (
     <div className="flex flex-col gap-5">
       <section aria-label="Kennzahlen" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Stat tone="neutral" label="Leads gesamt" value={dash.leads} sub={`${dash.newThisWeek} neu diese Woche (${dash.newFromSearch} aus der Praxissuche) · ${dash.withEmail} mit E-Mail`} />
+        <Stat tone="neutral" label="Leads gesamt" value={dash.leads} sub={`${dash.newThisWeek} neu diese Woche (${dash.newFromSearch} aus der Praxissuche) · ${dash.withEmail} mit E-Mail · ${dash.withConsent} mit Einwilligung`} />
         <Stat tone="info" label="Mails gesendet" value={dash.mailsSent} sub={`${dash.mailsFailed} fehlgeschlagen${dash.mailsMock ? ` · ${dash.mailsMock} im Testmodus` : ""} · ${stats.sentLast24h}/${MAX_PER_DAY} in 24 h`} />
         <Stat tone="warn" label="Antwortquote" value={rate === null ? "–" : `${rate} %`} sub={`${dash.replied} von ${dash.contacted} angeschriebenen Praxen`} />
         <Stat tone="info" label="Tests" value={dash.tests} sub={`gestartete Tests aus der Pipeline · ${dash.redemptions} Aktionscodes eingelöst`} />
@@ -127,6 +128,14 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium">
+          Einwilligung
+          <select name="einwilligung" defaultValue={filter.consent ?? ""} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm">
+            <option value="">egal</option>
+            <option value="mit">dokumentiert</option>
+            <option value="ohne">fehlt</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm font-medium">
           Kampagne
           <select name="kampagne" defaultValue={filter.campaign ?? ""} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm">
             <option value="">alle</option>
@@ -154,7 +163,8 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
       <Card className="text-sm">
         <p>
           Versand: {mail} · In den letzten 24 Stunden gesendet: <strong className="tabular-nums">{stats.sentLast24h}</strong> von {MAX_PER_DAY} · höchstens {MAX_PER_CLICK} je Klick.
-          Abstände: Mail 2 nach {settings.delays.delay2Days} Tagen, Mail 3 nach weiteren {settings.delays.delay3Days} Tagen. Es wird nie automatisch gesendet.
+          Abstände: Mail 2 nach {settings.delays.delay2Days} Tagen, Mail 3 nach weiteren {settings.delays.delay3Days} Tagen. Es wird nie automatisch gesendet –
+          und nur an Praxen mit dokumentierter Einwilligung (Praxissuche und Import sammeln nur Kontaktdaten).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
           <p className="flex-1">{searchLine}</p>
@@ -188,7 +198,8 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
             stage: l.stage,
             stageLabel: stageLabel(l.stage, l.step),
             campaignName: l.campaignName,
-            orgName: l.org?.name ?? null,
+            consent: !!l.consentAt,
+            orgName: l.org ? `${l.org.name}${l.org.via === "domain" ? " – Zuordnung unsicher (Domain)" : ""}` : null,
           }))}
         />
       )}
@@ -213,7 +224,7 @@ function Board({ items, filterStage, sp }: { items: PipelineItem[]; filterStage:
               <Link key={l.id} href={`/plattform/vertrieb/${l.id}`} className="rounded-xl border border-border bg-surface px-3 py-2 text-sm hover:border-primary">
                 <p className="truncate font-semibold">{l.name}</p>
                 <p className="truncate text-xs text-muted">
-                  {[l.city, l.distanceKm != null ? `${l.distanceKm} km` : null, s === "angeschrieben" ? `Mail ${l.step}` : null, l.org ? `Praxis: ${l.org.name}` : null].filter(Boolean).join(" · ") || "–"}
+                  {[l.city, l.distanceKm != null ? `${l.distanceKm} km` : null, s === "angeschrieben" ? `Mail ${l.step}` : null, l.org ? `Praxis: ${l.org.name}${l.org.via === "domain" ? " (unsicher, Domain)" : ""}` : null].filter(Boolean).join(" · ") || "–"}
                 </p>
                 {l.campaignName ? <p className="truncate text-xs text-muted">Kampagne: {l.campaignName}</p> : null}
               </Link>

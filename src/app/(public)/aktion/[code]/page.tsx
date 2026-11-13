@@ -2,8 +2,8 @@ import { Check } from "lucide-react";
 import { connection } from "next/server";
 import { LinkButton } from "@/components/ui";
 import { requestMeta } from "@/lib/auth/session";
-import { PLANS } from "@/lib/plans";
-import { normalizePromoCode, trialDaysLabel } from "@/lib/promo-codes";
+import { PLANS, TRIAL_DAYS } from "@/lib/plans";
+import { normalizePromoCode, promoTermsText, trialDaysLabel } from "@/lib/promo-codes";
 import { clientKey } from "@/lib/rate-limit";
 import { lookupPromoCode, promoLookupLimiter } from "@/server/promo-codes";
 
@@ -54,7 +54,8 @@ export default async function PromoLandingPage({ params }: PageProps<"/aktion/[c
       <h1 className="mt-2 font-display text-4xl font-bold tracking-tight sm:text-5xl">PodoHero {span} kostenlos testen</h1>
       <p className="mt-4 text-lg text-muted">
         Mit dem Code <strong className="font-mono text-text">{offer.code}</strong> testen Sie die Praxissoftware für Podologie {span} lang
-        {offer.grantPlan ? ` im Umfang des Tarifs „${PLANS[offer.grantPlan].label}“` : " mit allen Funktionen"} – statt der üblichen 30 Tage.
+        {offer.grantPlan ? ` im Umfang des Tarifs „${PLANS[offer.grantPlan].label}“` : " mit allen Funktionen"}
+        {offer.trialDays > TRIAL_DAYS && !offer.grantPlan ? ` – statt der üblichen ${TRIAL_DAYS} Tage` : ""}.
       </p>
       <ul className="mt-8 flex flex-col gap-3">
         {POINTS.map((p) => (
@@ -67,11 +68,16 @@ export default async function PromoLandingPage({ params }: PageProps<"/aktion/[c
       <div className="mt-10 flex flex-wrap gap-3">
         <LinkButton href={`/einrichtung?code=${encodeURIComponent(offer.code)}`} variant="accent">Jetzt {span} kostenlos testen</LinkButton>
         <LinkButton href="/funktionen" variant="secondary">Funktionen ansehen</LinkButton>
+        <LinkButton href="/preise" variant="ghost">Preise</LinkButton>
       </div>
-      <p className="mt-6 text-sm text-muted">
-        Nur für Unternehmer:innen (Praxen). Nach der Testphase entscheiden Sie selbst: Tarif buchen oder kostenlos mit bis zu 20 Patient:innen weitermachen.
-        Ohne Buchung wird nichts berechnet. Bereits registriert? Den Code können Inhaber:innen unter Einstellungen → Abo &amp; Tarif einlösen.
-      </p>
+      <section id="bedingungen" aria-labelledby="bedingungen-titel" className="mt-10 scroll-mt-24 rounded-[var(--radius-card)] border border-border bg-surface p-5 text-sm">
+        <h2 id="bedingungen-titel" className="font-display text-lg font-semibold">Aktionsbedingungen</h2>
+        <p className="mt-2 text-muted">{promoTermsText({ validUntil: offer.validUntil, limited: offer.limited }).replace(/^Aktionsbedingungen: /, "")}</p>
+        <p className="mt-2 text-muted">
+          <a href="/agb" className="font-semibold text-primary underline">AGB</a> · <a href="/preise" className="font-semibold text-primary underline">Preise</a>.
+          Bereits registriert? Den Code können Inhaber:innen unter Einstellungen → Abo &amp; Tarif einlösen.
+        </p>
+      </section>
     </div>
   );
 }

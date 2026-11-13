@@ -27,7 +27,7 @@ export function SetupForm({ needsToken = false, saas = false, code = "", trialTe
           ))}
         </Select>
       </Field>
-      <Field label="Dein Name">
+      <Field label="Ihr Name">
         <Input name="name" required autoComplete="name" />
       </Field>
       <Field label="E-Mail">
@@ -43,7 +43,7 @@ export function SetupForm({ needsToken = false, saas = false, code = "", trialTe
       />
       {saas ? (
         <>
-          <Field label="Aktionscode (optional)" hint="Falls du einen Code für eine längere Testphase bekommen hast.">
+          <Field label="Aktionscode (optional)" hint="Falls Sie einen Code für eine längere Testphase erhalten haben.">
             <Input name="code" defaultValue={code} maxLength={32} autoComplete="off" autoCapitalize="characters" spellCheck={false} />
           </Field>
           <Checkbox

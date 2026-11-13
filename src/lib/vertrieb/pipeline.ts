@@ -4,6 +4,7 @@
  *   1. einen persönlichen Aktionscode des Leads (promo_codes.lead_id), der von der Praxis eingelöst wurde,
  *   2. gleiche E-Mail-Adresse von Lead und Inhaber:in,
  *   3. gleiche Domain (E-Mail oder Website des Leads ↔ E-Mail der Inhaber:in), außer Freemail-Domains (gmx.de, web.de …).
+ *      Domain-Treffer sind unsicher (z. B. Praxisgemeinschaft, Agentur-Domain) und werden in der Konsole so markiert.
  * Nur eindeutige Domain-Treffer zählen. Interne Praxen werden nie zugeordnet.
  */
 import { isLeadStatus, STATUS_LABEL, type LeadStatus } from "./constants";
@@ -39,10 +40,15 @@ export type MatchedOrg = PipelineOrg & { via: "code" | "email" | "domain"; conve
 
 /** Häufige Freemail-/Provider-Domains: gleiche Domain sagt hier nichts über dieselbe Praxis aus */
 export const FREEMAIL_DOMAINS = new Set([
-  "gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.at", "gmx.ch", "web.de", "t-online.de", "freenet.de", "outlook.com", "outlook.de",
-  "hotmail.com", "hotmail.de", "live.de", "live.com", "yahoo.com", "yahoo.de", "icloud.com", "me.com", "mac.com", "aol.com", "aol.de",
-  "posteo.de", "mailbox.org", "mail.de", "arcor.de", "online.de", "email.de", "vodafone.de", "kabelmail.de", "magenta.de", "ionos.de", "proton.me", "protonmail.com",
+  "gmail.com", "googlemail.com", "gmx.de", "gmx.net", "gmx.com", "gmx.at", "gmx.ch", "web.de", "t-online.de", "freenet.de",
+  "icloud.com", "me.com", "mac.com", "posteo.de", "posteo.net", "mailbox.org", "mail.de", "arcor.de", "online.de", "email.de",
+  "vodafone.de", "kabelmail.de", "magenta.de", "ionos.de", "proton.me", "protonmail.com", "pm.me", "tutanota.com", "tutanota.de",
+  "tuta.io", "zoho.com", "mail.com", "unitybox.de", "1und1.de",
 ]);
+/** Familien mit vielen Länder-Domains (yahoo.*, outlook.*, hotmail.*, aol.*, live.*, msn.*, ymail.*) */
+const FREEMAIL_FAMILY = /^(yahoo|ymail|outlook|hotmail|live|msn|aol|gmx)\.[a-z]{2,3}(\.[a-z]{2})?$/;
+
+export const isFreemail = (domain: string) => FREEMAIL_DOMAINS.has(domain) || FREEMAIL_FAMILY.test(domain);
 
 export function emailDomain(email: string | null | undefined): string | null {
   const m = /@([^@\s]+)$/.exec((email ?? "").trim().toLowerCase());
@@ -75,7 +81,7 @@ export function matchLeadsToOrgs(leads: PipelineLead[], orgs: PipelineOrg[], cod
       const email = e.trim().toLowerCase();
       if (!byEmail.has(email)) byEmail.set(email, o);
       const d = emailDomain(email);
-      if (d && !FREEMAIL_DOMAINS.has(d)) {
+      if (d && !isFreemail(d)) {
         const list = byDomain.get(d) ?? [];
         if (!list.includes(o)) list.push(o);
         byDomain.set(d, list);
@@ -97,7 +103,7 @@ export function matchLeadsToOrgs(leads: PipelineLead[], orgs: PipelineOrg[], cod
       continue;
     }
     for (const d of [emailDomain(l.email), websiteDomain(l.website)]) {
-      if (!d || FREEMAIL_DOMAINS.has(d)) continue;
+      if (!d || isFreemail(d)) continue;
       const list = byDomain.get(d);
       if (list?.length === 1) {
         put(l.id, list[0], "domain");

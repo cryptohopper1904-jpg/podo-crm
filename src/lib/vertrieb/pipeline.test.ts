@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveStage, emailDomain, matchLeadsToOrgs, replyRate, stageLabel, websiteDomain, type PipelineLead, type PipelineOrg } from "./pipeline";
+import { deriveStage, emailDomain, isFreemail, matchLeadsToOrgs, replyRate, stageLabel, websiteDomain, type PipelineLead, type PipelineOrg } from "./pipeline";
 
 const lead = (x: Partial<PipelineLead> = {}): PipelineLead => ({ id: "l1", status: "neu", step: 0, repliedAt: null, email: null, website: null, ...x });
 const org = (x: Partial<PipelineOrg> = {}): PipelineOrg => ({ id: "o1", name: "Praxis", plan: "trial", subscriptionStatus: "trialing", trialEndsAt: null, createdAt: new Date(), ownerEmails: [], ...x });
@@ -32,6 +32,13 @@ describe("Pipeline: Stufe", () => {
 });
 
 describe("Pipeline: Zuordnung registrierter Praxen", () => {
+  it("Freemail-Domains (auch Länder-Varianten)", () => {
+    for (const d of ["gmx.com", "gmx.net", "yahoo.de", "yahoo.co.uk", "outlook.de", "hotmail.fr", "icloud.com", "me.com", "aol.de", "proton.me", "protonmail.com", "t-online.de", "web.de", "freenet.de", "posteo.de", "mailbox.org"]) {
+      expect(isFreemail(d), d).toBe(true);
+    }
+    expect(isFreemail("praxis-muster.de")).toBe(false);
+    expect(isFreemail("outlook-praxis.de")).toBe(false);
+  });
   it("Domains", () => {
     expect(emailDomain("Info@Praxis-Muster.DE")).toBe("praxis-muster.de");
     expect(emailDomain("kaputt")).toBeNull();

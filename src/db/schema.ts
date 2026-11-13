@@ -1527,6 +1527,12 @@ export const salesLeads = pgTable(
     campaignId: uuid("campaign_id").references((): AnyPgColumn => salesCampaigns.id, { onDelete: "set null" }),
     /** Zeitpunkt der zuletzt manuell erfassten Antwort („Antwort erhalten“) */
     repliedAt: timestamp("replied_at", { withTimezone: true }),
+    /**
+     * Dokumentierte Einwilligung in Werbe-E-Mails (§ 7 Abs. 2 Nr. 2 UWG, auch B2B): ohne consent_at wird NIE gesendet.
+     * consent_note = wie/wann erteilt (Pflicht, CHECK in 0037). Wird beim Ändern der E-Mail-Adresse entfernt.
+     */
+    consentAt: timestamp("consent_at", { withTimezone: true }),
+    consentNote: text("consent_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1560,7 +1566,7 @@ export const salesLeadEvents = pgTable(
     leadId: uuid("lead_id")
       .notNull()
       .references(() => salesLeads.id, { onDelete: "cascade" }),
-    /** note | status | reply | campaign */
+    /** note | status | reply | campaign | consent */
     kind: text("kind").notNull(),
     text: text("text"),
     meta: jsonb("meta").$type<Record<string, unknown>>(),
@@ -1657,6 +1663,8 @@ export const promoRedemptions = pgTable(
     redeemedBy: uuid("redeemed_by").references(() => users.id, { onDelete: "set null" }),
     /** signup | abo */
     via: text("via").notNull(),
+    /** Tarif vor dem Einlösen (z. B. „free“: nach Ablauf automatisch zurück in den kostenlosen Tarif) */
+    previousPlan: text("previous_plan"),
     trialEndsBefore: timestamp("trial_ends_before", { withTimezone: true }),
     trialEndsAfter: timestamp("trial_ends_after", { withTimezone: true }).notNull(),
     redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),

@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.2 · Stand 13.11.2026
+> Version 0.3 · Stand 13.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
@@ -22,6 +22,7 @@
 1. Der Kunde kann den Dienst nach Registrierung **30 Tage kostenlos testen**. Die Testphase endet automatisch; sie verlängert sich nicht ohne aktive Buchung eines kostenpflichtigen Tarifs.
 2. Ein kostenpflichtiger Vertrag kommt zustande, wenn der Kunde einen Tarif bucht und der Anbieter die Buchung bestätigt.
 3. Der Kunde versichert, dass seine Angaben bei der Registrierung richtig und vollständig sind.
+4. Der Anbieter kann Aktionscodes ausgeben, die die Testphase verlängern oder ihren Umfang festlegen. Die Bedingungen (insbesondere Dauer, Umfang, Einlösefrist, Anzahl) werden mit dem Angebot genannt. Je Kunde kann nur ein Aktionscode eingelöst werden, nicht während eines laufenden kostenpflichtigen Vertrags. Ein Anspruch auf Barauszahlung besteht nicht. Nach Ende der Testphase ist der Dienst bis zur Buchung eines Tarifs oder zum Wechsel in den kostenlosen Tarif (§ 3a) nur lesend nutzbar, ein Datenexport bleibt möglich (§ 9); hat der Kunde den Aktionscode im kostenlosen Tarif eingelöst, kehrt er unter den Voraussetzungen des § 3a automatisch in diesen zurück. Der Anbieter kann nicht eingelöste Codes jederzeit deaktivieren, bereits eingelöste bleiben unberührt.
 
 ## § 3a Kostenloser Tarif
 

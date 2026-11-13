@@ -36,8 +36,12 @@ const day = 86_400_000;
     admin = await f.user();
   });
   afterAll(async () => {
-    await f.pool.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
-    await f.pool.query("delete from promo_codes where code like 'TPIPE%'");
+    // Einlösungen darf die App-Rolle nicht löschen → als Eigentümer aufräumen
+    const { Pool } = await import("pg");
+    const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? TEST_DB, max: 1 });
+    await owner.query("delete from promo_redemptions where code_id in (select id from promo_codes where code like 'TPIPE%')");
+    await owner.query("delete from promo_codes where code like 'TPIPE%'");
+    await owner.end();
     await f.pool.query("delete from sales_sends; delete from sales_leads; delete from sales_suppressions; delete from sales_settings; delete from sales_campaigns");
     await f.end();
     const { db } = await import("@/db");
@@ -77,6 +81,17 @@ const day = 86_400_000;
   it("Vorschau zeigt genau die erste Mail; Senden protokolliert, setzt Schritt/Status, Kopfzeilen und Abmeldelink", async () => {
     const eins = await leadByName("Podologie Eins");
     const zwei = await leadByName("Podologie Zwei");
+    // ohne dokumentierte Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) wird nie gesendet – auch nicht serverseitig
+    const none = await v.previewSend([eins.id, zwei.id], { now: t0, env });
+    expect(none.count).toBe(0);
+    expect(none.skipped.map((x) => x.reason)).toEqual(["keine dokumentierte Einwilligung", "keine dokumentierte Einwilligung"]);
+    const noPort = new MockMailAdapter();
+    expect(await v.sendNextMails(admin, [eins.id], { port: noPort, now: () => t0, env })).toMatchObject({ sent: 0, skipped: 1 });
+    expect(noPort.sent).toHaveLength(0);
+    await expect(v.setLeadConsent(admin, [eins.id], " x ")).rejects.toThrow(/wie und wann/);
+    expect(await v.setLeadConsent(admin, [eins.id, zwei.id], "Anfrage per E-Mail vom 01.11.2026")).toBe(2);
+    expect(await leadByName("Podologie Eins")).toMatchObject({ consent_note: "Anfrage per E-Mail vom 01.11.2026" });
+    await expect(f.pool.query("update sales_leads set consent_note = null where id = $1", [eins.id])).rejects.toThrow(/sales_leads_consent_check/);
     const pre = await v.previewSend([eins.id, zwei.id], { now: t0, env });
     expect(pre.problems).toEqual([]);
     expect(pre.count).toBe(2);
@@ -91,6 +106,7 @@ const day = 86_400_000;
     expect(m).toMatchObject({ to: "eins@praxis.example", from: '"Max Betreiber" <max@podo.example>', replyTo: "max@podo.example", subject: pre.first!.subject });
     expect(m.text).toBe(pre.first!.text);
     expect(m.text).toContain("AlgoVerdict GmbH");
+    expect(m.text).toContain("Widerspruchsrecht nach Art. 21 DSGVO:\nhttps://podo.example/datenschutz#vertrieb");
     const link = /https:\/\/podo\.example\/abmelden\/(\S+)/.exec(m.text)![1];
     expect(verifyUnsubscribeToken(link)).toBe(eins.id);
     expect(m.text).not.toContain(eins.id);
@@ -103,7 +119,7 @@ const day = 86_400_000;
     const sends = await f.pool.query("select step, ok, mock, sent_by from sales_sends where lead_id = $1", [eins.id]);
     expect(sends.rows).toEqual([{ step: 1, ok: true, mock: true, sent_by: admin }]);
     expect((await v.getLead(eins.id))!.sends).toHaveLength(1);
-    expect(auditCalls().find((a) => a.action === "vertrieb.send")?.meta).toMatchObject({ sent: 2, failed: 0, skipped: 0, mock: true });
+    expect(auditCalls().filter((a) => a.action === "vertrieb.send").at(-1)?.meta).toMatchObject({ sent: 2, failed: 0, skipped: 0, mock: true });
   });
 
   it("Mail 2 erst nach dem Abstand; Doppelklick sendet nicht doppelt", async () => {
@@ -154,6 +170,7 @@ const day = 86_400_000;
 
   it("Versandfehler wird protokolliert, Schritt bleibt", async () => {
     const id = await v.createLead(admin, { name: "Fehlerpraxis", contactPerson: null, email: "fehler@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
+    await v.setLeadConsent(admin, [id], "Messe Test, Formular");
     const failing: MailPort = { kind: "smtp", isMock: false, source: "platform", send: async (_m: MailMessage) => Promise.reject(new MailSendError("SMTP-Server nicht erreichbar.", "ECONNECTION")) };
     const r = await v.sendNextMails(admin, [id], { port: failing, now: () => t0, env });
     expect(r.sent).toBe(0);
@@ -177,7 +194,7 @@ const day = 86_400_000;
   it("Liste mit Filter/Suche, Zähler, manuelle Sperre und Bearbeiten", async () => {
     const id = (await leadByName("Fehlerpraxis")).id;
     await v.updateLead(admin, id, { name: "Fehlerpraxis", contactPerson: "Herr Test", email: "Fehler@Praxis.example", phone: null, website: null, street: null, zip: "99999", city: "Teststadt", distanceKm: 4.2, source: "OpenStreetMap", notes: null });
-    expect(await leadByName("Fehlerpraxis")).toMatchObject({ email: "fehler@praxis.example", city: "Teststadt" });
+    expect(await leadByName("Fehlerpraxis")).toMatchObject({ email: "fehler@praxis.example", city: "Teststadt", consent_note: "Messe Test, Formular" });
     expect((await v.listLeads({ q: "teststadt" })).map((l) => l.name)).toEqual(["Fehlerpraxis"]);
     expect((await v.listLeads({ q: "100%_" })).length).toBe(0);
     expect((await v.listLeads({ status: "geantwortet" })).map((l) => l.name)).toEqual(["Podologie Zwei"]);
@@ -331,8 +348,11 @@ const day = 86_400_000;
     let promo: typeof import("./promo-codes");
     const sfx = Math.random().toString(36).slice(2, 7);
     const later = new Date(Date.now() + 3 * day); // außerhalb des Tageslimits der vorigen Tests
-    const mk = (name: string, email: string | null, website: string | null = null) =>
-      v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+    const mk = async (name: string, email: string | null, website: string | null = null) => {
+      const id = await v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      if (email) await v.setLeadConsent(admin, [id], "Anfrage über das Kontaktformular");
+      return id;
+    };
     const ownerOrg = async (email: string, patch: { plan?: string; status?: string } = {}) => {
       const org = await f.org();
       const u = (await f.pool.query("insert into users (email, name, password_hash) values ($1, 'Inhaberin', 'x') returning id", [email])).rows[0].id;
@@ -373,7 +393,7 @@ const day = 86_400_000;
       const orgDom = await ownerOrg(`anna@pipe2-${sfx}.example`);
       await ownerOrg(`chef@pipe3-${sfx}.example`, { plan: "praxis", status: "active" });
       const orgCode = await ownerOrg(`irgendwer-${sfx}@gmx.de`);
-      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode });
+      await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode, generated: true });
       await promo.redeemPromoCodeForOrganization(orgCode, admin, `TPIPE${sfx.toUpperCase()}-L`);
       expect(await item(dom)).toMatchObject({ stage: "test", org: { id: orgDom, via: "domain" } });
       expect(await item(web)).toMatchObject({ stage: "kunde", org: { via: "domain", converted: true } });
@@ -417,7 +437,7 @@ const day = 86_400_000;
       const port = new MockMailAdapter();
       expect(await v.sendNextMails(admin, [id], { port, now: () => later, env })).toMatchObject({ sent: 0, skipped: 1 });
       const code = `TPIPE${sfx.toUpperCase()}-K`;
-      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: camp });
+      await promo.createPromoCode(admin, { code, label: "Kampagne", trialDays: 90, grantPlan: null, maxRedemptions: null, validUntil: null, campaignId: camp, generated: true });
       const pre2 = await v.previewSend([id], { now: later, env });
       expect(pre2.first).toMatchObject({ subject: `3 Monate gratis: ${code}` });
       expect(pre2.first!.text).toContain(`https://podo.example/aktion/${code}`);
@@ -429,9 +449,27 @@ const day = 86_400_000;
       const o = await ownerOrg(`x-${sfx}@gmx.de`);
       await promo.redeemPromoCodeForOrganization(o, admin, code);
       expect((await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)).toMatchObject({ tests: 1, converted: 0 });
+      // Einwilligung gilt für die Adresse: neue E-Mail → Einwilligung weg, Versand übersprungen
+      await v.updateLead(admin, id, { name: "Pipe Kampagne", contactPerson: null, email: `neu@pipe5-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      const after = (await v.getLead(id))!.lead;
+      expect(after).toMatchObject({ consentAt: null, consentNote: null });
+      expect((await pl.leadTimeline(after)).some((e) => e.kind === "consent")).toBe(true);
       // zurück auf Standardvorlagen
       await pl.saveCampaignTemplates(admin, camp, null);
       expect(pl.campaignTemplates((await pl.getCampaign(camp))!)).toBeNull();
     });
-  });
+  
+    it("Speicherdauer: Leads ohne Kontakt seit 24 Monaten werden gelöscht, Kunden und aktive bleiben", async () => {
+      const stale = await mk("Pipe Alt", `alt@pipe6-${sfx}.example`);
+      const fresh = await mk("Pipe Frisch", `frisch@pipe6-${sfx}.example`);
+      const kunde = await mk("Pipe Kunde", `kunde@pipe6-${sfx}.example`);
+      await f.pool.query("update sales_leads set status = 'kunde' where id = $1", [kunde]);
+      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[stale, kunde]]);
+      await f.pool.query("update sales_leads set created_at = now() - interval '25 months', updated_at = now() - interval '25 months', consent_at = now() - interval '25 months' where id = any($1)", [[stale, kunde]]);
+      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(1);
+      expect(await v.getLead(stale)).toBeNull();
+      expect(await v.getLead(fresh)).not.toBeNull();
+      expect(await v.getLead(kunde)).not.toBeNull();
+    });
+});
 });

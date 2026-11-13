@@ -17,6 +17,9 @@ async function main() {
     await pool.query(`grant usage on schema public to ${appRole}`);
     await pool.query(`grant select, insert, update, delete on all tables in schema public to ${appRole}`);
     await pool.query(`grant usage, select on all sequences in schema public to ${appRole}`);
+    // Einlösungen von Aktionscodes sind ein Nachweis: die App-Rolle darf sie nur anlegen und lesen.
+    // Gelöscht werden sie nur mit der Praxis (FK-Kaskade bzw. Löschlauf als Eigentümer, src/server/purge-organization.ts).
+    await pool.query(`revoke update, delete on promo_redemptions from ${appRole}`);
     // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);

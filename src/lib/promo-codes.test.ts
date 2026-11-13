@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { moneyShort } from "./format";
 import {
+  cheapestPaidCents,
+  endOfDayBerlin,
   generatePromoCode,
+  ownCodeProblem,
+  promoTermsText,
   isPayingOrg,
   normalizePromoCode,
   PROMO_CODE_RE,
@@ -66,6 +71,10 @@ describe("Aktionscodes: Testphase", () => {
     expect(promoRedemptionProblem({ plan: "trial", subscriptionStatus: "none" })).toBeNull();
     expect(promoRedemptionProblem({ plan: "free", subscriptionStatus: "none" })).toBeNull();
     expect(promoRedemptionProblem({ plan: "praxis", subscriptionStatus: "canceled" })).toBeNull();
+    expect(promoRedemptionProblem({ plan: "praxis", subscriptionStatus: "canceled", stripeSubscriptionId: "sub_alt" })).toBeNull();
+    // SEPA: Abo angelegt, Status noch „none“ → laufend
+    expect(promoRedemptionProblem({ plan: "praxis", subscriptionStatus: "none", stripeSubscriptionId: "sub_1" })).toMatch(/laufenden Abo/);
+    expect(promoRedemptionProblem({ plan: "trial", subscriptionStatus: "trialing", stripeSubscriptionId: "sub_1" })).toMatch(/laufenden Abo/);
     expect(promoRedemptionProblem({ plan: "praxis", subscriptionStatus: "trialing" })).toBeNull(); // Code-Testphase mit Tarif-Umfang
     expect(promoRedemptionProblem({ plan: "praxis", subscriptionStatus: "active" })).toMatch(/laufenden Abo/);
     expect(promoRedemptionProblem({ plan: "plus", subscriptionStatus: "past_due" })).toMatch(/laufenden Abo/);
@@ -87,9 +96,32 @@ describe("Aktionscodes: Links und Texte", () => {
     expect(promoSignupUrl(undefined, "X1-Y2")).toBe("/einrichtung?code=X1-Y2");
   });
   it("Zeitraum als Text", () => {
-    expect(trialDaysLabel(90)).toBe("3 Monate");
-    expect(trialDaysLabel(30)).toBe("1 Monat");
+    expect(trialDaysLabel(90)).toBe("90 Tage (ca. 3 Monate)");
+    expect(trialDaysLabel(30)).toBe("30 Tage");
     expect(trialDaysLabel(45)).toBe("45 Tage");
-    expect(trialDaysLabel(365)).toBe("1 Jahr");
+    expect(trialDaysLabel(365)).toBe("365 Tage (ca. 1 Jahr)");
+    expect(trialDaysLabel(1)).toBe("1 Tag");
+  });
+  it("„gültig bis“ = 23:59:59 deutscher Zeit (Sommer-/Winterzeit)", () => {
+    expect(endOfDayBerlin("2026-07-15")!.toISOString()).toBe("2026-07-15T21:59:59.000Z");
+    expect(endOfDayBerlin("2026-12-15")!.toISOString()).toBe("2026-12-15T22:59:59.000Z");
+    expect(endOfDayBerlin("2026-03-29")!.toISOString()).toBe("2026-03-29T21:59:59.000Z"); // Tag der Umstellung
+    expect(endOfDayBerlin("2026-10-25")!.toISOString()).toBe("2026-10-25T22:59:59.000Z");
+    expect(endOfDayBerlin("2026-02-30")).toBeNull();
+    expect(endOfDayBerlin("15.07.2026")).toBeNull();
+  });
+  it("selbst gewählte Codes: mindestens 6 Zeichen, Höchstzahl oder Ablaufdatum", () => {
+    expect(ownCodeProblem("ABCDE", 5, null)).toMatch(/mindestens 6/);
+    expect(ownCodeProblem("HERBST", null, null)).toMatch(/Höchstzahl/);
+    expect(ownCodeProblem("HERBST", 10, null)).toBeNull();
+    expect(ownCodeProblem("HERBST", null, new Date())).toBeNull();
+  });
+  it("Aktionsbedingungen: Frist, Begrenzung, Preise aus plans.ts", () => {
+    const t = promoTermsText({ validUntil: new Date("2026-12-31T22:59:59Z"), limited: true });
+    expect(t).toMatch(/^Aktionsbedingungen: Nur für Unternehmer:innen \(Praxen\)\. Einlösbar bis 31\.12\.2026, nur in begrenzter Anzahl\./);
+    expect(t).toContain(`ab ${moneyShort(cheapestPaidCents())} netto/Monat zzgl. USt.`);
+    expect(t).toContain("bis 20 Patient:innen, 1 Person, ohne Patientenportal, KI-Telefonagent und Praxis-Website");
+    expect(t).toMatch(/Es gelten die AGB\.$/);
+    expect(promoTermsText({ validUntil: null, limited: false })).toContain("Einlösbar bis auf Widerruf. Je Praxis");
   });
 });

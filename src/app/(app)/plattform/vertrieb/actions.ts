@@ -20,6 +20,7 @@ import {
   saveSalesSettings,
   saveSalesTemplates,
   sendNextMails,
+  setLeadConsent,
   setLeadStatus,
   updateLead,
   type ImportPreview,
@@ -28,7 +29,7 @@ import {
 } from "@/server/vertrieb";
 import { addLeadNote, bulkSetStatus, createCampaign, markReplied, saveCampaignTemplates, setLeadsCampaign, updateCampaign } from "@/server/vertrieb-pipeline";
 import { createPromoCode, setPromoCodeActive } from "@/server/promo-codes";
-import { PROMO_GRANT_PLANS } from "@/lib/promo-codes";
+import { endOfDayBerlin, normalizePromoCode, PROMO_GRANT_PLANS } from "@/lib/promo-codes";
 import { BULK_STATUSES } from "@/lib/vertrieb/pipeline";
 
 /**
@@ -295,10 +296,33 @@ export async function setLeadCampaignAction(form: FormData) {
   revalidatePath(BASE, "layout");
 }
 
+export async function consentAction(_s: State, form: FormData): Promise<State> {
+  const row = await requirePlatformAdmin();
+  const d = z.object({ id: z.uuid(), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }).safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
+  try {
+    if (!(await setLeadConsent(row.user.id, [d.data.id], d.data.note))) return { error: "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." };
+  } catch (e) {
+    return { error: msg(e) };
+  }
+  revalidatePath(BASE, "layout");
+  return { ok: "Einwilligung dokumentiert." };
+}
+
+export async function removeConsentAction(form: FormData) {
+  const row = await requirePlatformAdmin();
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) redirect(`${BASE}?fehler=eingabe`);
+  await setLeadConsent(row.user.id, [id.data], null);
+  revalidatePath(BASE, "layout");
+}
+
 const bulkSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("status"), status: z.enum(BULK_STATUSES as [string, ...string[]]) }),
   z.object({ op: z.literal("kampagne"), campaignId: z.union([z.uuid(), z.literal("")]) }),
   z.object({ op: z.literal("abmelden") }),
+  z.object({ op: z.literal("einwilligung"), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }),
+  z.object({ op: z.literal("einwilligung_entfernen") }),
 ]);
 
 /** Sammelaktion für die ausgewählten Leads: Status setzen, Kampagne zuordnen oder abmelden (Sperrliste). */
@@ -307,10 +331,12 @@ export async function bulkAction(ids: string[], input: unknown): Promise<{ ok: s
   const list = idsSchema.safeParse(ids);
   if (!list.success) return { error: list.error.issues[0]?.message ?? "Auswahl ungültig." };
   const d = bulkSchema.safeParse(input);
-  if (!d.success) return { error: "Aktion ungültig." };
+  if (!d.success) return { error: d.error.issues.find((i) => i.path[0] === "note")?.message ?? "Aktion ungültig." };
   try {
     let text: string;
     if (d.data.op === "status") text = `${await bulkSetStatus(row.user.id, list.data, d.data.status as (typeof LEAD_STATUSES)[number])} Einträge geändert.`;
+    else if (d.data.op === "einwilligung") text = `Einwilligung für ${await setLeadConsent(row.user.id, list.data, d.data.note)} Einträge dokumentiert (nur Einträge mit E-Mail).`;
+    else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung bei ${await setLeadConsent(row.user.id, list.data, null)} Einträgen entfernt.`;
     else if (d.data.op === "abmelden") text = `${await bulkSetStatus(row.user.id, list.data, "abgemeldet")} Einträge abgemeldet und gesperrt.`;
     else text = `${await setLeadsCampaign(row.user.id, list.data, d.data.campaignId || null)} Einträge ${d.data.campaignId ? "der Kampagne zugeordnet" : "aus der Kampagne entfernt"}.`;
     revalidatePath(BASE, "layout");
@@ -391,8 +417,9 @@ const promoSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v?.trim() ? v.trim() : null))
-    .refine((v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(v), "Datum ungültig."),
+    .refine((v) => v === null || endOfDayBerlin(v) !== null, "Datum ungültig."),
   campaignId: z.union([z.uuid(), z.literal("")]).optional(),
+  suggested: z.string().max(40).optional(),
 });
 
 export async function createPromoCodeAction(_s: State, form: FormData): Promise<State> {
@@ -406,9 +433,11 @@ export async function createPromoCodeAction(_s: State, form: FormData): Promise<
       trialDays: d.data.trialDays,
       grantPlan: (d.data.grantPlan || null) as (typeof PROMO_GRANT_PLANS)[number] | null,
       maxRedemptions: d.data.maxRedemptions,
-      // „gültig bis“ einschließlich: Ende des Tages (deutsche Zeit, vereinfacht 23:59:59 MEZ/MESZ über UTC+1)
-      validUntil: d.data.validUntil ? new Date(`${d.data.validUntil}T23:59:59+01:00`) : null,
+      // „gültig bis“ einschließlich: 23:59:59 deutscher Zeit (Sommer-/Winterzeit)
+      validUntil: d.data.validUntil ? endOfDayBerlin(d.data.validUntil) : null,
       campaignId: d.data.campaignId || null,
+      // Vorschlag unverändert übernommen = Zufallscode; sonst gelten die Regeln für selbst gewählte Codes
+      generated: !!d.data.suggested && normalizePromoCode(d.data.suggested) === normalizePromoCode(d.data.code),
     });
   } catch (e) {
     return { error: msg(e) };

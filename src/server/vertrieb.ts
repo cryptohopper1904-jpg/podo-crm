@@ -17,6 +17,8 @@ import { platformMailPort } from "./mail";
  * Vertrieb des Plattform-Betreibers (kleines CRM für die Ansprache von Praxen per E-Mail-Sequenz).
  * - Kein Mandantenbezug: Tabellen sales_* ohne organization_id/RLS, Zugriff NUR über diese Datei.
  *   Aufrufer (Server Actions/Seiten unter /plattform/vertrieb) prüfen vorher requirePlatformAdmin() (Admin + 2FA).
+ * - § 7 Abs. 2 Nr. 2 UWG: gesendet wird NUR an Leads mit dokumentierter Einwilligung (consent_at + Vermerk), geprüft in
+ *   eligibility() unter der Versandsperre. Die Einwilligung gilt für die Adresse: ändert sich die E-Mail, wird sie entfernt.
  * - Versand nur manuell, in kleinen Mengen (MAX_PER_CLICK, MAX_PER_DAY), mit Vorschau, Abmeldelink,
  *   List-Unsubscribe-Kopfzeilen und Sperrliste. Keine Automatik/Cron (nur die Praxissuche läuft nachts, ohne Versand).
  * - Kampagnen (sales_campaigns): eigene Vorlagen-Variante und Aktionscode für {{code}}/{{link}}; ohne gültigen Code
@@ -174,13 +176,42 @@ export async function createLead(adminUserId: string, input: LeadInput): Promise
 
 export async function updateLead(adminUserId: string, id: string, input: LeadInput) {
   await assertNoDuplicate(input, id);
-  const r = await db
-    .update(salesLeads)
-    .set({ ...input, email: input.email ? normalizeEmail(input.email) : null, updatedAt: new Date() })
-    .where(eq(salesLeads.id, id))
-    .returning({ id: salesLeads.id });
-  if (!r.length) throw new Error("Eintrag nicht gefunden.");
-  await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id });
+  const email = input.email ? normalizeEmail(input.email) : null;
+  await db.transaction(async (tx) => {
+    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
+    if (!before) throw new Error("Eintrag nicht gefunden.");
+    // Einwilligung gilt für die bisherige Adresse – bei neuer Adresse entfernen
+    const consentLost = !!before.consentAt && (before.email ? normalizeEmail(before.email) : null) !== email;
+    await tx
+      .update(salesLeads)
+      .set({ ...input, email, ...(consentLost ? { consentAt: null, consentNote: null } : {}), updatedAt: new Date() })
+      .where(eq(salesLeads.id, id));
+    if (consentLost) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "consent", text: null, meta: { removed: true, reason: "E-Mail geändert" }, createdBy: adminUserId });
+    await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id, meta: consentLost ? { consentRemoved: true } : undefined }, tx);
+  });
+}
+
+/**
+ * Einwilligung in Werbe-E-Mails dokumentieren (`note` = wie/wann erteilt, Pflicht) oder entfernen (note = null).
+ * Für mehrere Leads möglich; nur Leads mit E-Mail-Adresse. Gibt die Anzahl geänderter Leads zurück.
+ */
+export async function setLeadConsent(adminUserId: string, ids: string[], note: string | null, now = new Date()): Promise<number> {
+  const list = [...new Set(ids)].slice(0, 500);
+  if (!list.length) return 0;
+  const clean = note === null ? null : note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
+  if (clean !== null && clean.length < 3) throw new Error("Bitte angeben, wie und wann die Einwilligung erteilt wurde.");
+  return db.transaction(async (tx) => {
+    const changed = await tx
+      .update(salesLeads)
+      .set(clean === null ? { consentAt: null, consentNote: null, updatedAt: now } : { consentAt: now, consentNote: clean, updatedAt: now })
+      .where(and(inArray(salesLeads.id, list), clean === null ? sql`${salesLeads.consentAt} is not null` : sql`${salesLeads.email} is not null`))
+      .returning({ id: salesLeads.id });
+    if (changed.length) {
+      await tx.insert(salesLeadEvents).values(changed.map((c) => ({ leadId: c.id, kind: "consent", text: clean, meta: clean === null ? { removed: true } : null, createdBy: adminUserId, createdAt: now })));
+    }
+    await audit({ userId: adminUserId, action: clean === null ? "vertrieb.consent_removed" : "vertrieb.consent_recorded", entity: "sales_lead", meta: { leads: changed.map((c) => c.id) } }, tx);
+    return changed.length;
+  });
 }
 
 /** Status setzen. „abgemeldet“ trägt die Adresse zusätzlich in die Sperrliste ein. */
@@ -309,6 +340,7 @@ function mailFor(lead: Lead, step: number, s: SalesSettings, env: Record<string,
     unsubscribeUrl: unsubscribeUrl(lead.id, env.PUBLIC_URL),
     unsubscribeMailto: isEmail(replyTo) ? replyTo : null,
     promo: c.promo,
+    privacyUrl: `${(env.PUBLIC_URL ?? "").replace(/\/+$/, "")}/datenschutz#vertrieb`,
   });
 }
 
@@ -404,6 +436,33 @@ export async function sendNextMails(
 
 export async function sendStats(now = new Date()) {
   return { sentLast24h: await sentLast24h(now), maxPerDay: MAX_PER_DAY, maxPerClick: MAX_PER_CLICK };
+}
+
+// ───────────── Speicherdauer ─────────────
+
+/** Speicherdauer laut Datenschutzerklärung (Abschnitt „Vertrieb“): Einträge ohne Kontakt höchstens 24 Monate */
+export const LEAD_RETENTION_MONTHS = 24;
+
+/**
+ * Löscht Leads ohne Kontakt seit LEAD_RETENTION_MONTHS: letzte Aktivität (angelegt, geändert, Mail, Antwort,
+ * Einwilligung, Verlauf) älter als die Frist, Status nicht „Kunde“. Die Sperrliste bleibt (Abmeldungen weiter beachten).
+ * Aufruf: nächtlicher Cron /api/cron/lead-search. Gibt die Anzahl gelöschter Einträge zurück.
+ */
+export async function purgeStaleLeads(now = new Date()): Promise<number> {
+  const cutoff = new Date(now);
+  cutoff.setMonth(cutoff.getMonth() - LEAD_RETENTION_MONTHS);
+  const r = await db
+    .delete(salesLeads)
+    .where(
+      and(
+        sql`${salesLeads.status} <> 'kunde'`,
+        sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
+          coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
+      ),
+    )
+    .returning({ id: salesLeads.id });
+  if (r.length) await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.length, months: LEAD_RETENTION_MONTHS } });
+  return r.length;
 }
 
 // ───────────── Abmeldung (öffentlich, per signiertem Token) ─────────────

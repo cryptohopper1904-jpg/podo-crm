@@ -83,12 +83,14 @@ export type ComposeInput = {
   unsubscribeUrl: string;
   /** Aktionscode/-link für {{code}}/{{link}} */
   promo?: PromoValues | null;
+  /** Datenschutzhinweis (Art. 14 DSGVO), z. B. https://…/datenschutz#vertrieb */
+  privacyUrl: string;
   /** mailto-Abmeldung (Antwortadresse), zusätzlich zum Link */
   unsubscribeMailto?: string | null;
 };
 
-/** Fußzeile mit Absenderangaben und Abmeldung – wird an jede Mail angehängt. */
-export function footer(impressum: string, unsubscribeUrl: string): string {
+/** Fußzeile mit Absenderangaben, Datenschutzhinweis (Art. 14 DSGVO) und Abmeldung – wird an jede Mail angehängt. */
+export function footer(impressum: string, unsubscribeUrl: string, privacyUrl: string): string {
   const imp = impressum
     .replace(/\r\n?/g, "\n")
     .split("\n")
@@ -98,6 +100,9 @@ export function footer(impressum: string, unsubscribeUrl: string): string {
   return [
     "-- ",
     imp,
+    "",
+    "Ihre geschäftlichen Kontaktdaten stammen aus öffentlich zugänglichen Quellen (Praxis-Website/Impressum) bzw. aus Ihrer Anfrage. Zweck, Rechtsgrundlage, Speicherdauer und Ihre Rechte, insbesondere Ihr Widerspruchsrecht nach Art. 21 DSGVO:",
+    privacyUrl,
     "",
     "Sie möchten keine weiteren E-Mails von uns erhalten? Mit einem Klick abmelden:",
     unsubscribeUrl,
@@ -109,7 +114,7 @@ export function composeMail(input: ComposeInput): { subject: string; text: strin
   const values = placeholderValues(input.lead, input.senderName, input.promo);
   const subject = cleanValue(renderText(input.template.subject, values), 200);
   const body = renderText(input.template.body.replace(/\r\n?/g, "\n"), values).trim();
-  const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl)}\n`;
+  const text = `${body}\n\n${footer(input.impressum, input.unsubscribeUrl, input.privacyUrl)}\n`;
   const unsub = [`<${input.unsubscribeUrl}>`];
   if (input.unsubscribeMailto) unsub.push(`<mailto:${input.unsubscribeMailto}?subject=Abmelden>`);
   return {
