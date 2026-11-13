@@ -7,14 +7,16 @@ const fmt = { dateDe, money };
 const iban = { iban: "DE02120300000000202051" };
 
 describe("Überschrift mit Leistungsdatum", () => {
-  it("Rechnung: Behandlungstag aus dem Termin, sonst Rechnungsdatum; mehrere Tage als Zeitraum", () => {
+  it("Rechnung: Behandlungstag aus dem Termin; ohne Bezug kein behauptetes Datum, sondern Vorbehaltshinweis; mehrere Tage als Zeitraum", () => {
     expect(invoiceHeading(inv, ["2026-11-09"], dateDe).heading).toBe("Rechnung zur Behandlung am 09.11.2026");
-    expect(invoiceHeading(inv, [], dateDe).heading).toBe("Rechnung zur Behandlung am 13.11.2026");
+    expect(invoiceHeading(inv, [], dateDe)).toEqual({ heading: "Rechnung", serviceDateNote: expect.stringMatching(/Leistungsdatum entspricht dem Rechnungsdatum/) });
     expect(invoiceHeading(inv, ["2026-11-10", "2026-11-03"], dateDe).heading).toBe("Rechnung zur Behandlung im Zeitraum vom 03.11.2026 bis 10.11.2026");
   });
   it("andere Belegarten", () => {
     expect(invoiceHeading({ ...inv, kind: "receipt" }, ["2026-11-09"], dateDe).heading).toBe("Quittung zur Behandlung am 09.11.2026");
     expect(invoiceHeading({ ...inv, kind: "credit_note" }, [], dateDe, "R2026-0040").heading).toBe("Stornorechnung zur Rechnung R2026-0040");
+    expect(invoiceHeading({ ...inv, kind: "collective" }, ["2026-11-09"], dateDe)).toEqual({ heading: "Sammelrechnung zur Behandlung am 09.11.2026", serviceDateNote: null });
+    expect(invoiceHeading({ ...inv, kind: "receipt" }, [], dateDe).heading).toBe("Quittung");
     expect(invoiceHeading({ ...inv, kind: "collective" }, [], dateDe)).toEqual({ heading: "Sammelrechnung", serviceDateNote: expect.stringMatching(/Leistungsdatum/) });
     expect(invoiceHeading({ ...inv, kind: "deposit" }, [], dateDe).heading).toBe("Quittung über eine Anzahlung");
   });

@@ -59,7 +59,7 @@ export function hasExemptNote(o: Org, inv: { kind: string }, lines: { vatRate: n
 
 /** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Anzahlung/Storno). */
 export function showsDueDate(inv: { kind: string; status: string }) {
-  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid";
+  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid" && inv.status !== "cancelled";
 }
 
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
@@ -98,12 +98,19 @@ export function invoiceHeading(
   const span = days.length > 1 ? `vom ${dateDe(days[0])} bis ${dateDe(days.at(-1)!)}` : `am ${dateDe(days[0] ?? inv.issuedAt)}`;
   const defaultNote = days.length ? null : "Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben.";
   switch (inv.kind) {
+    // ohne verknüpften Termin/Doku-Eintrag kein ausdrückliches Datum behaupten – Vorbehaltshinweis wie bisher
     case "invoice":
-      return { heading: `Rechnung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null };
+      return days.length
+        ? { heading: `Rechnung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
+        : { heading: "Rechnung", serviceDateNote: defaultNote };
     case "receipt":
-      return { heading: `Quittung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null };
+      return days.length
+        ? { heading: `Quittung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
+        : { heading: "Quittung", serviceDateNote: defaultNote };
     case "collective":
-      return { heading: days.length > 1 ? `Sammelrechnung für den Zeitraum ${span}` : "Sammelrechnung", serviceDateNote: days.length > 1 ? null : defaultNote };
+      if (days.length > 1) return { heading: `Sammelrechnung für den Zeitraum ${span}`, serviceDateNote: null };
+      if (days.length === 1) return { heading: `Sammelrechnung zur Behandlung ${span}`, serviceDateNote: null };
+      return { heading: "Sammelrechnung", serviceDateNote: defaultNote };
     case "no_show_fee":
       return { heading: days.length === 1 ? `Ausfallhonorar für den Termin am ${dateDe(days[0])}` : "Ausfallhonorar", serviceDateNote: null };
     case "credit_note":

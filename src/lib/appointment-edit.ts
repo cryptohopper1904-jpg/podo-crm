@@ -9,9 +9,10 @@
 
 export const SYNCED_SOURCES = ["doctolib", "extern"] as const;
 
-export type AppointmentLock = { reason: "doctolib" | "extern" | "cancelled"; message: string };
+export type AppointmentLock = { reason: "doctolib" | "extern" | "cancelled" | "billed"; message: string };
 
-export function appointmentEditLock(a: { source: string; status: string }, fromCalendarFeed = false): AppointmentLock | null {
+/** billed: Termin steht auf einer ausgestellten, nicht stornierten Rechnung/Quittung (Leistungsdatum ist dort festgeschrieben). */
+export function appointmentEditLock(a: { source: string; status: string }, fromCalendarFeed = false, billed = false): AppointmentLock | null {
   if (a.source === "doctolib") {
     return {
       reason: "doctolib",
@@ -23,6 +24,12 @@ export function appointmentEditLock(a: { source: string; status: string }, fromC
       reason: "extern",
       message:
         "Dieser Termin kommt aus dem Kalender-Abo (z. B. Google-Kalender). Bitte dort ändern – die Änderung kommt mit dem nächsten Abgleich automatisch hierher.",
+    };
+  }
+  if (billed) {
+    return {
+      reason: "billed",
+      message: "Dieser Termin ist bereits abgerechnet – das Leistungsdatum steht auf der Rechnung. Zum Verschieben die Rechnung zuerst stornieren.",
     };
   }
   if (a.status === "cancelled") {
