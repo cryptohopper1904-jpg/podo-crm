@@ -12,6 +12,7 @@ import { dateDe, money } from "./format";
 import { invoiceRecipient, senderLine } from "./invoice-view";
 import {
   A4,
+  CONT_TOP,
   CONTENT_WIDTH,
   drawAddressBlock,
   drawFooters,
@@ -23,6 +24,7 @@ import {
   makeSafe,
   makeWriter,
   ML,
+  PAGE_BODY,
   RIGHT,
   TOP,
   type LetterOrg,
@@ -64,12 +66,15 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
   let page: PDFPage = doc.addPage(A4);
   let y = TOP;
   const w = makeWriter(() => page, fonts, safe);
+  // Folgeseiten beginnen unter der Kopfzeile (Praxisname, Mahnung, „Seite X von Y“ – drawFooters)
   const ensure = (h: number) => {
     if (y - h < FOOTER_TOP) {
       page = doc.addPage(A4);
-      y = TOP;
+      y = CONT_TOP;
     }
   };
+  /** Block zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt */
+  const keep = (h: number) => ensure(Math.min(h, PAGE_BODY));
 
   y = drawLogoHead(w, fonts, y, { full: await embedImage(doc, data.logos?.full), compact: await embedImage(doc, data.logos?.compact), orgName: o.name });
 
@@ -109,7 +114,7 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
   if (paid > 0 || d.feesTotalCents > 0) rows.push({ l: "offener Rechnungsbetrag", v: d.openCents });
   for (const f of d.fees.filter((x) => x.feeCents > 0)) rows.push({ l: `Mahngebühr ${DUNNING_STAGE_LABEL[f.stage]}`, v: f.feeCents });
   rows.push({ l: "zu zahlen", v: total, strong: true });
-  ensure(rows.length * 14 + 10);
+  keep(rows.length * 14 + 10);
   const labelX = ML + CONTENT_WIDTH * 0.45;
   for (const row of rows) {
     if (row.strong) w.box(labelX, y, RIGHT - labelX, 14);
@@ -128,9 +133,10 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
   if (o.iban) notes.push(`Bitte überweisen Sie ${money(total)} bis zum ${dateDe(d.payBy)} unter Angabe der Rechnungsnummer ${inv.number ?? ""} auf das unten genannte Konto.`);
   else notes.push(`Bitte zahlen Sie ${money(total)} bis zum ${dateDe(d.payBy)}.`);
   if (giro) notes.push("Tipp: Scannen Sie den GiroCode mit Ihrer Banking-App – Empfänger, Betrag und Verwendungszweck sind dann schon ausgefüllt.");
+  keep(notes.reduce((h, n) => h + w.wrap(n, CONTENT_WIDTH, 9.5).length * 12.5 + 2, 0));
   for (const n of notes) {
     const wl = w.wrap(n, CONTENT_WIDTH, 9.5);
-    ensure(wl.length * 12.5 + 2);
+    keep(wl.length * 12.5 + 2);
     for (const l of wl) {
       w.text(l, ML, y, { size: 9.5 });
       y -= 12.5;
@@ -151,7 +157,7 @@ export async function renderDunningPdf(data: DunningPdfData): Promise<Uint8Array
     y = drawQrBlocks(w, fonts, y, [{ title: "Bezahlen per GiroCode", sub: [`${money(total)} an ${holder}`, `Verwendungszweck: Rechnung ${inv.number ?? ""}`], payload: giro }]);
   }
 
-  drawFooters(doc, fonts, safe, o);
+  drawFooters(doc, fonts, safe, o, dunningTitle(d, inv));
   return doc.save();
 }
 

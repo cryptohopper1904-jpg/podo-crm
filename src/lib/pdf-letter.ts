@@ -14,6 +14,10 @@ export const ML = 50;
 export const MR = 50;
 export const TOP = 805;
 export const FOOTER_TOP = 125;
+/** Folgeseiten: Kopfzeile (Praxisname, Beleg und „Seite X von Y“) bei TOP, Inhalt beginnt darunter. */
+export const CONT_TOP = TOP - 26;
+/** Nutzbare Höhe einer Folgeseite – Blöcke bis zu dieser Höhe werden nie getrennt. */
+export const PAGE_BODY = CONT_TOP - FOOTER_TOP;
 export const CONTENT_WIDTH = A4[0] - ML - MR;
 export const RIGHT = ML + CONTENT_WIDTH;
 export const BLACK = rgb(0, 0, 0);
@@ -254,8 +258,12 @@ export function drawQrBlocks(w: Writer, fonts: Fonts, y: number, blocks: { title
   return y - (qrSize + 6);
 }
 
-/** Fußzeile auf jeder Seite: Praxis/Anschrift, Bank/Steuer, Telefon/Website, Berufsbezeichnung, Seitenzahl. */
-export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) => string, o: LetterOrg) {
+/**
+ * Fußzeile auf jeder Seite: Praxis/Anschrift, Bank/Steuer, Telefon/Website, Berufsbezeichnung.
+ * Bei mehr als einer Seite zusätzlich „Seite X von Y“ unten rechts und auf Folgeseiten eine Kopfzeile
+ * (Praxisname links, `runningHead` – Seite X von Y rechts). Bei nur einer Seite keine Seitenangabe.
+ */
+export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) => string, o: LetterOrg, runningHead?: string) {
   const pages = doc.getPages();
   const left = [o.name, o.legalName && o.legalName !== o.name ? o.legalName : null, o.street, [o.zip, o.city].filter(Boolean).join(" ") || null].filter((v): v is string => !!v);
   const right: [string, string][] = [];
@@ -279,10 +287,20 @@ export function drawFooters(doc: PDFDocument, fonts: Fonts, safe: (s: string) =>
     const cy = top - Math.max(Math.min(left.length, 5), Math.min(right.length, 6), 3) * 9 - 6;
     center.forEach((c, ci) => w.text(c, A4[0] / 2, cy - ci * 11, { size: 9, color: GRAY, align: "center" }));
     if (o.qualification) {
-      w.wrap(o.qualification, CONTENT_WIDTH, 7, fonts.italic)
+      // bei Seitenangabe unten rechts schmaler, damit sich beides nicht überlagert
+      w.wrap(o.qualification, pages.length > 1 ? CONTENT_WIDTH - 150 : CONTENT_WIDTH, 7, fonts.italic)
         .slice(0, 2)
         .forEach((q, qi) => w.text(q, A4[0] / 2, cy - center.length * 11 - 3 - qi * 9, { size: 7, font: fonts.italic, color: LIGHT, align: "center" }));
     }
-    if (pages.length > 1) w.text(`Seite ${i + 1} von ${pages.length}`, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
+    if (pages.length > 1) {
+      const mark = `Seite ${i + 1} von ${pages.length}`;
+      w.text(mark, RIGHT, 18, { size: 7, color: LIGHT, align: "right" });
+      if (i > 0) {
+        const head = runningHead ? `${runningHead} – ${mark}` : mark;
+        const hw = w.text(head, RIGHT, TOP, { size: 8, color: GRAY, align: "right" });
+        w.text(w.clip(o.name, CONTENT_WIDTH - hw - 16, 8, fonts.bold), ML, TOP, { size: 8, font: fonts.bold, color: GRAY });
+        w.line(ML, TOP - 5, RIGHT, TOP - 5, 0.4);
+      }
+    }
   });
 }

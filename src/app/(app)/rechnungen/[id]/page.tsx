@@ -54,13 +54,26 @@ export const metadata = { title: "Rechnung" };
 
 const qty = qtyDe;
 
-/** Druck: A4, Papierfarben unabhängig vom Dunkelmodus. */
+/**
+ * Druck: immer DIN A4 mit festen Rändern, Papierfarben unabhängig vom Dunkelmodus. Mehrseitig: Tabellenkopf
+ * wiederholt sich, Zeilen sowie Summen-, Quittungs-, Zahlungs- und Hinweisblock werden nicht getrennt;
+ * Seitenzahl unten rechts über Seitenrand-Boxen (Chromium ab 131; andere Browser lassen sie weg – das PDF hat sie immer).
+ */
 const PRINT_CSS = `
-@page { size: A4; margin: 14mm 16mm; }
+@page {
+  size: A4;
+  margin: 15mm 17mm 18mm 20mm;
+  @bottom-right { content: "Seite " counter(page) " von " counter(pages); font: 7.5pt Helvetica, Arial, sans-serif; color: #666; }
+}
 @media print {
   main { padding: 0 !important; }
-  .invoice-sheet { border: 0 !important; padding: 0 !important; max-width: none !important; }
+  .invoice-sheet { border: 0 !important; border-radius: 0 !important; padding: 0 !important; max-width: none !important; width: auto !important; }
   .invoice-sheet, .invoice-sheet * { color: #000 !important; background: transparent !important; border-color: #bbb !important; }
+  .invoice-sheet .print-table-wrap { overflow: visible !important; }
+  .invoice-sheet table { min-width: 0 !important; }
+  .invoice-sheet thead { display: table-header-group; }
+  .invoice-sheet tr, .invoice-sheet .print-keep { break-inside: avoid; page-break-inside: avoid; }
+  .invoice-sheet h2 { break-after: avoid; page-break-after: avoid; }
 }`;
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
@@ -254,7 +267,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         <h2 className="mt-8 font-display text-2xl font-semibold">{heading}</h2>
         {serviceDateNote ? <p className="mt-1 text-muted">{serviceDateNote}</p> : null}
 
-        <div className="mt-4 overflow-x-auto">
+        <div className="print-table-wrap mt-4 overflow-x-auto">
           <table className="w-full min-w-[520px] border-collapse text-left [&_td]:border-b [&_td]:border-border [&_td]:py-2 [&_td]:pr-3 [&_th]:border-b-2 [&_th]:border-border-strong [&_th]:py-2 [&_th]:pr-3 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-muted">
             <thead>
               <tr>
@@ -283,7 +296,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </table>
         </div>
 
-        <dl className="mt-4 ml-auto grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1">
+        <dl className="print-keep mt-4 ml-auto grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1">
           {totals.groups.map((g) => (
             <div key={g.rate} className="contents">
               <dt>Netto {g.rate} %</dt>
@@ -313,7 +326,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         </dl>
 
         {receiptBlock.rows.length ? (
-          <section className="mt-6">
+          <section className="print-keep mt-6">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Bereits bezahlt (Quittungen)</h3>
             <table className="mt-1 w-full max-w-xl text-sm">
               <thead>
@@ -349,7 +362,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         ) : null}
 
         {data.payments.length ? (
-          <section className="mt-6">
+          <section className="print-keep mt-6">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Zahlungen</h3>
             <ul className="mt-1">
               {data.payments.map((pay) => (
@@ -365,7 +378,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </section>
         ) : null}
 
-        <section className="mt-6 flex flex-col gap-2 text-[13px]">
+        <section className="print-keep mt-6 flex flex-col gap-2 text-[13px]">
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
           {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
@@ -377,7 +390,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         </section>
 
         {qrBlocks.length ? (
-          <section className="mt-6 grid gap-6 sm:grid-cols-2">
+          <section className="print-keep mt-6 grid gap-6 sm:grid-cols-2">
             {qrBlocks.map((q) => (
               <div key={q.key} className="flex items-center gap-3">
                 <div className="size-28 shrink-0 bg-white" dangerouslySetInnerHTML={{ __html: q.svg }} />
@@ -390,7 +403,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </section>
         ) : null}
 
-        <footer className="mt-10 grid gap-3 border-t border-border pt-4 text-[11px] text-muted sm:grid-cols-3">
+        <footer className="print-keep mt-10 grid gap-3 border-t border-border pt-4 text-[11px] text-muted sm:grid-cols-3">
           <div>
             <p className="font-semibold">{o.legalName ?? o.name}</p>
             <p>{o.street}</p>
