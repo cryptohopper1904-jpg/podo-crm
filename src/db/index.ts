@@ -8,7 +8,12 @@ const globalForDb = globalThis as unknown as { pool?: Pool };
 
 const pool =
   globalForDb.pool ??
-  new Pool({ connectionString: process.env.DATABASE_URL, max: Number(process.env.DB_POOL_MAX ?? 10) });
+  new Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: Number(process.env.DB_POOL_MAX ?? 10),
+    // ist der Pool erschöpft, nach 10 s mit Fehler abbrechen statt unbegrenzt zu warten
+    connectionTimeoutMillis: 10_000,
+  });
 if (process.env.NODE_ENV !== "production") globalForDb.pool = pool;
 
 export const db = drizzle(pool, { schema });

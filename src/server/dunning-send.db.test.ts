@@ -1,20 +1,24 @@
 /** Mahnung per E-Mail mit „echtem“ (gestubbtem) Versand: kein Doppelversand, Rollback bei Fehler, Frist ab Versandtag. */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-const mail = vi.hoisted(() => ({ calls: 0, fail: false }));
+const mail = vi.hoisted(() => ({ calls: 0, fail: false, failedLogs: 0 }));
 vi.mock("./mail", async () => {
   const { MailSendError } = await import("@/integrations/mail/mail");
   return {
-    mailMessagingPort: async () => ({
-      provider: "email_imap",
+    // wie das Original: Versandweg vorab laden, `send` ohne DB-Zugriff, Protokoll danach
+    prepareMail: async () => ({
       isMock: false,
       async send() {
         mail.calls++;
         await new Promise((r) => setTimeout(r, 50));
         if (mail.fail) throw new MailSendError("Server lehnt ab", "EENVELOPE");
-        return { externalId: `ext-${mail.calls}` };
+        return { messageId: `ext-${mail.calls}` };
       },
-      parseInbound: () => [],
+      failed: async (e: Error) => {
+        mail.failedLogs++;
+        return e;
+      },
+      succeeded: async () => undefined,
     }),
   };
 });
@@ -37,6 +41,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   beforeAll(async () => {
     process.env.DATABASE_URL = TEST_DB;
+    // Pool mit EINER Verbindung: holt der Versand innerhalb der Transaktion eine zweite, läuft er in den Pool-Timeout
+    process.env.DB_POOL_MAX = "1";
     dunning = await import("./dunning");
     org = await f.org({ settings: { dunning: { payDays: 12 } } });
     user = await f.user();
@@ -67,7 +73,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const inv = await overdueInvoice();
     const id = (await dunning.createDunnings(auth(), [inv])).created[0].dunningId;
     mail.fail = true;
+    mail.failedLogs = 0;
     await expect(dunning.sendDunningEmail(auth(), id)).rejects.toThrow(/E-Mail-Versand fehlgeschlagen: Server lehnt ab/);
+    expect(mail.failedLogs).toBe(1); // genau ein Fehlerprotokoll
+    const syncErrors = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from sync_log where organization_id = $1 and ok = false", [org])).rows[0].n);
+    expect(syncErrors).toBe(0); // dunning.ts schreibt keinen zusätzlichen Eintrag (der kommt nur aus mail.failed)
     const row = await f.asOrg(org, async (c) => (await c.query("select sent_via from invoice_dunnings where id = $1", [id])).rows[0]);
     expect(row.sent_via).toBeNull();
     mail.fail = false;

@@ -107,10 +107,13 @@ export function platformMailPort(env: Record<string, string | undefined> = proce
 export type MailContext = { purpose: string; userId?: string | null; entity?: string; entityId?: string };
 
 /**
- * Sendet eine E-Mail für eine Praxis. Wirft MailSendError/MailNotConfiguredError (sichere Meldung).
- * Fehler werden immer protokolliert (Audit + Sync-Protokoll), nie mit Passwort oder Server-Antwort.
+ * Bereitet einen Versand vor: Drosselung, Versandweg (Verbindung/Zugangsdaten) und – mit `branded` – Logo/Praxisname
+ * werden JETZT aus der DB geladen. `send` greift danach nicht mehr auf die DB zu (nur Netzwerk) und kann daher
+ * innerhalb einer offenen Transaktion laufen, ohne eine weitere Pool-Verbindung zu belegen. Das Protokoll
+ * (`failed`/`succeeded`: Audit + Sync-Protokoll) schreibt der Aufrufer danach, außerhalb der Transaktion.
+ * Wirft (bei Drosselung/fehlender Einrichtung) MailSendError/MailNotConfiguredError – bereits protokolliert.
  */
-export async function sendMail(org: string, msg: MailMessage, ctx: MailContext): Promise<{ messageId: string; mock: boolean }> {
+export async function prepareMail(org: string, ctx: MailContext, opts: { branded?: boolean } = {}) {
   const fail = async (err: Error) => {
     const message = err.message.slice(0, 300);
     await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.failed", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, error: message, code: (err as MailSendError).code ?? null } }).catch(() => undefined);
@@ -124,17 +127,44 @@ export async function sendMail(org: string, msg: MailMessage, ctx: MailContext):
   } catch (e) {
     throw await fail(e instanceof MailNotConfiguredError || e instanceof MailSendError ? e : toMailError(e));
   }
+  const brand = opts.branded ? await brandingOf(org) : null;
+  return {
+    isMock: port.isMock,
+    /** Nur Netzwerk (keine DB). Fehler kommen als MailSendError ohne Geheimnisse. */
+    async send(msg: MailMessage): Promise<{ messageId: string }> {
+      const m = brand ? { ...msg, html: brandedMailHtml(msg.text, { practiceName: brand.name, logo: brand.logo }), attachments: [...(msg.attachments ?? []), brand.attachment] } : msg;
+      try {
+        return { messageId: (await port.send(m)).messageId };
+      } catch (e) {
+        throw toMailError(e);
+      }
+    },
+    /** Fehlschlag protokollieren (Audit „mail.failed“ + Sync-Protokoll) */
+    failed: (err: Error) => fail(err),
+    /** Erfolg protokollieren: Testmodus im Audit, echter Versand als Zähler im Sync-Protokoll (nur Zweck) */
+    async succeeded(attachments = 0) {
+      if (port.isMock) {
+        await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.mock", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, attachments } }).catch(() => undefined);
+      } else {
+        await logSync(org, "email_imap", { direction: "out", ok: true, message: `E-Mail (${ctx.purpose}) versendet` }).catch(() => undefined);
+      }
+    },
+  };
+}
+export type PreparedMail = Awaited<ReturnType<typeof prepareMail>>;
+
+/**
+ * Sendet eine E-Mail für eine Praxis. Wirft MailSendError/MailNotConfiguredError (sichere Meldung).
+ * Fehler werden immer protokolliert (Audit + Sync-Protokoll), nie mit Passwort oder Server-Antwort.
+ */
+export async function sendMail(org: string, msg: MailMessage, ctx: MailContext): Promise<{ messageId: string; mock: boolean }> {
+  const mail = await prepareMail(org, ctx);
   try {
-    const res = await port.send(msg);
-    if (port.isMock) {
-      await audit({ organizationId: org, userId: ctx.userId ?? null, action: "mail.mock", entity: ctx.entity, entityId: ctx.entityId, meta: { purpose: ctx.purpose, attachments: msg.attachments?.length ?? 0 } }).catch(() => undefined);
-    } else {
-      // Zähler für die Nutzungsstatistik (Plattform-Konsole): nur Zweck, nie Empfänger oder Inhalt
-      await logSync(org, "email_imap", { direction: "out", ok: true, message: `E-Mail (${ctx.purpose}) versendet` }).catch(() => undefined);
-    }
-    return { messageId: res.messageId, mock: port.isMock };
+    const res = await mail.send(msg);
+    await mail.succeeded(msg.attachments?.length ?? 0);
+    return { messageId: res.messageId, mock: mail.isMock };
   } catch (e) {
-    throw await fail(toMailError(e));
+    throw await mail.failed(toMailError(e));
   }
 }
 
@@ -166,13 +196,17 @@ export async function mailMessagingPort(org: string, ctx: Omit<MailContext, "pur
  * (Termine, Erinnerungen, Rechnungen, Antworten). Ohne Logo bleibt es bei reinem Text wie bisher.
  */
 export async function brandedMailParts(org: string, text: string) {
+  const brand = await brandingOf(org);
+  if (!brand) return null;
+  return { html: brandedMailHtml(text, { practiceName: brand.name, logo: brand.logo }), logo: brand.attachment };
+}
+
+/** Logo + Praxisname für gebrandete E-Mails (ohne Logo: null → reiner Text). */
+async function brandingOf(org: string) {
   const logo = await loadLogo(org, "full", { fallback: true }).catch(() => null);
   if (!logo) return null;
   const { name } = await practiceOf(org);
-  return {
-    html: brandedMailHtml(text, { practiceName: name, logo }),
-    logo: { filename: logo.mime === "image/png" ? "logo.png" : "logo.jpg", contentType: logo.mime, data: logo.bytes, cid: LOGO_CID },
-  };
+  return { name, logo, attachment: { filename: logo.mime === "image/png" ? "logo.png" : "logo.jpg", contentType: logo.mime, data: logo.bytes, cid: LOGO_CID } };
 }
 
 // ───────────── Einstellungen (Schnittstellen-Seite) ─────────────
