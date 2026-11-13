@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, isNull, max, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import {
@@ -16,6 +16,7 @@ import { audit } from "@/lib/audit";
 import { patientStatus } from "@/lib/patient-status";
 import { deceasedInfo, isDeceased } from "@/lib/patient-deceased";
 import { sequential } from "@/lib/seq";
+import { queryTokens } from "@/lib/patient-search";
 
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
 const optText = z.preprocess(emptyToNull, z.string().trim().max(500).nullable().optional());
@@ -66,24 +67,51 @@ export function toPatientValues(d: PatientInput) {
   };
 }
 
+/** `%`/`_`/`\\` im Suchtext wörtlich nehmen */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/**
+ * Suchbedingung der Patientenliste und der Live-Suche (Kopfzeile): Jedes Suchwort muss in Nachname, Vorname,
+ * E-Mail, Mobilnummer oder Ort vorkommen oder der Patientennummer entsprechen (TT.MM.JJJJ: Geburtsdatum).
+ * „Erika Muster“ und „Muster, Erika“ finden dieselbe Person; ein einzelnes Wort verhält sich wie bisher.
+ */
+export function patientSearchCondition(q: string): SQL | undefined {
+  const tokens = queryTokens(q);
+  if (!tokens.length) return undefined;
+  const parts = tokens.map((t) => {
+    const like = `%${likeEscape(t)}%`;
+    const conds: SQL[] = [
+      ilike(patients.lastName, like),
+      ilike(patients.firstName, like),
+      ilike(patients.email, like),
+      ilike(patients.phoneMobile, like),
+      ilike(patients.city, like),
+      sql`${patients.number}::text = ${t}`,
+    ];
+    const iso = isoDate(t);
+    if (iso) conds.push(eq(patients.birthDate, iso));
+    return or(...conds)!;
+  });
+  return parts.length === 1 ? parts[0] : and(...parts);
+}
+
+/** „TT.MM.JJJJ“ → „JJJJ-MM-TT“ (nur gültige Kalenderdaten) */
+function isoDate(t: string): string | null {
+  const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(t);
+  if (!m) return null;
+  const [d, mo, y] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
 export async function listPatients(auth: AuthContext, opts: { q?: string; status?: string; limit?: number } = {}) {
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const q = opts.q?.trim();
     const where = [eq(patients.organizationId, org), isNull(patients.archivedAt)];
-    if (q) {
-      const like = `%${q}%`;
-      where.push(
-        or(
-          ilike(patients.lastName, like),
-          ilike(patients.firstName, like),
-          ilike(patients.email, like),
-          ilike(patients.phoneMobile, like),
-          ilike(patients.city, like),
-          sql`${patients.number}::text = ${q}`,
-        )!,
-      );
-    }
+    const match = q ? patientSearchCondition(q) : null;
+    if (match) where.push(match);
     const lastVisit = tx
       .select({ patientId: appointments.patientId, last: max(appointments.startsAt).as("last") })
       .from(appointments)

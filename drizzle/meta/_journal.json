@@ -309,6 +309,13 @@
       "when": 1794605475781,
       "tag": "0043_sperrliste_schluessel_fix",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794606140751,
+      "tag": "0044_patientensuche_trgm",
+      "breakpoints": true
     }
   ]
 }
