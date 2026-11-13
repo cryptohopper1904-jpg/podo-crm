@@ -849,6 +849,11 @@ export const invoices = pgTable(
     status: invoiceStatusEnum("status").notNull().default("draft"),
     issuedAt: date("issued_at"),
     dueAt: date("due_at"),
+    /**
+     * Ausdrückliches Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG) für Belege ohne verknüpften Termin/Doku-Eintrag –
+     * im Formular gesetzt (Standard: Rechnungsdatum). Verknüpfte Termine/Behandlungen haben Vorrang (src/lib/invoice-view.ts).
+     */
+    serviceDate: date("service_date"),
     netCents: integer("net_cents").notNull().default(0),
     vatCents: integer("vat_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),

@@ -2,7 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import { useActionState, useMemo, useRef, useState } from "react";
-import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FieldSlot, FormError, Input, Select, Textarea } from "@/components/ui";
 import { createAppointmentAction } from "../actions";
 import { FreeSlotFinder, type PickedSlot } from "../free-slot-finder";
 import { SlotWarning, slotQueryFromForm, type SlotQuery } from "../slot-warning";
@@ -73,7 +73,7 @@ export function AppointmentForm({ patients, services, team, defaults }: { patien
         <div className="mt-4 grid gap-4 sm:grid-cols-4">
           <Field label="Datum"><Input type="date" name="date" defaultValue={defaults.date} required /></Field>
           <Field label="Uhrzeit"><Input type="time" name="time" step={300} defaultValue={defaults.time} required /></Field>
-          <Field label="Dauer (Min)"><Input type="number" name="durationMin" key={duration} defaultValue={duration} min={5} max={480} /></Field>
+          <Field label="Dauer"><Input suffix="Min" type="number" name="durationMin" key={duration} defaultValue={duration} min={5} max={480} /></Field>
           <Field label="Behandler:in">
             <Select name="therapistId" defaultValue={defaults.therapistId}>{team.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</Select>
           </Field>
@@ -82,9 +82,9 @@ export function AppointmentForm({ patients, services, team, defaults }: { patien
               <option value="phone">Telefon</option><option value="manual">Praxis</option><option value="whatsapp">WhatsApp</option><option value="email">E-Mail</option><option value="doctolib">Doctolib</option><option value="online">Online</option>
             </Select>
           </Field>
-          <Field label="Wiederholen alle … Wochen"><Input type="number" name="repeatWeeks" min={0} max={26} defaultValue={0} /></Field>
+          <Field label="Wiederholen alle" hint="0 = einmaliger Termin"><Input suffix="Wochen" type="number" name="repeatWeeks" min={0} max={26} defaultValue={0} /></Field>
           <Field label="Anzahl Termine"><Input type="number" name="repeatCount" min={1} max={12} defaultValue={1} /></Field>
-          <div className="flex items-end"><Checkbox name="homeVisit" label="Hausbesuch" /></div>
+          <FieldSlot spacer="hidden sm:block"><Checkbox name="homeVisit" label="Hausbesuch" /></FieldSlot>
         </div>
         <div className="mt-4"><SlotWarning query={{ ...slot, durationMin: slotDuration }} /></div>
         <Field label="Notiz" className="mt-4"><Textarea name="notes" rows={2} /></Field>

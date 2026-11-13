@@ -6,19 +6,57 @@ const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt:
 const fmt = { dateDe, money };
 const iban = { iban: "DE02120300000000202051" };
 
-describe("Überschrift mit Leistungsdatum", () => {
-  it("Rechnung: Behandlungstag aus dem Termin; ohne Bezug kein behauptetes Datum, sondern Vorbehaltshinweis; mehrere Tage als Zeitraum", () => {
-    expect(invoiceHeading(inv, ["2026-11-09"], dateDe).heading).toBe("Rechnung zur Behandlung am 09.11.2026");
-    expect(invoiceHeading(inv, [], dateDe)).toEqual({ heading: "Rechnung", serviceDateNote: expect.stringMatching(/Leistungsdatum entspricht dem Rechnungsdatum/) });
-    expect(invoiceHeading(inv, ["2026-11-10", "2026-11-03"], dateDe).heading).toBe("Rechnung zur Behandlung im Zeitraum vom 03.11.2026 bis 10.11.2026");
+describe("Überschrift mit Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG)", () => {
+  const h = (patch: Partial<typeof inv> & { serviceDate?: string | null }, dates: string[] = [], cancels?: string) => invoiceHeading({ ...inv, ...patch }, dates, dateDe, cancels);
+
+  it("Rechnung mit verknüpftem Termin: Behandlungstag in der Überschrift, kein Zusatzhinweis – auch wenn Rechnungsdatum abweicht", () => {
+    expect(h({}, ["2026-11-09"])).toEqual({ heading: "Rechnung zur Behandlung am 09.11.2026", serviceDateNote: null });
+    expect(h({}, ["2026-11-10", "2026-11-03", "2026-11-10"]).heading).toBe("Rechnung zur Behandlung im Zeitraum vom 03.11.2026 bis 10.11.2026");
   });
-  it("andere Belegarten", () => {
-    expect(invoiceHeading({ ...inv, kind: "receipt" }, ["2026-11-09"], dateDe).heading).toBe("Quittung zur Behandlung am 09.11.2026");
-    expect(invoiceHeading({ ...inv, kind: "credit_note" }, [], dateDe, "R2026-0040").heading).toBe("Stornorechnung zur Rechnung R2026-0040");
-    expect(invoiceHeading({ ...inv, kind: "collective" }, ["2026-11-09"], dateDe)).toEqual({ heading: "Sammelrechnung zur Behandlung am 09.11.2026", serviceDateNote: null });
-    expect(invoiceHeading({ ...inv, kind: "receipt" }, [], dateDe).heading).toBe("Quittung");
-    expect(invoiceHeading({ ...inv, kind: "collective" }, [], dateDe)).toEqual({ heading: "Sammelrechnung", serviceDateNote: expect.stringMatching(/Leistungsdatum/) });
-    expect(invoiceHeading({ ...inv, kind: "deposit" }, [], dateDe).heading).toBe("Quittung über eine Anzahlung");
+  it("verknüpfte Termine haben Vorrang vor einem gespeicherten Leistungsdatum", () => {
+    expect(h({ serviceDate: "2026-11-13" }, ["2026-11-09"])).toEqual({ heading: "Rechnung zur Behandlung am 09.11.2026", serviceDateNote: null });
+  });
+  it("Rechnung ohne Bezug mit Leistungsdatum aus dem Formular: neutrale Überschrift + ausdrückliches Datum, kein Vorbehalt", () => {
+    expect(h({ serviceDate: "2026-11-12" })).toEqual({ heading: "Rechnung", serviceDateNote: "Leistungsdatum: 12.11.2026" });
+    // gleicher Tag wie das Rechnungsdatum: trotzdem ausdrücklich
+    expect(h({ serviceDate: "2026-11-13" }).serviceDateNote).toBe("Leistungsdatum: 13.11.2026");
+  });
+  it("Altbestand ohne Bezug und ohne gespeichertes Leistungsdatum: unveränderter Hinweis wie beim Ausstellen gedruckt", () => {
+    expect(h({})).toEqual({ heading: "Rechnung", serviceDateNote: "Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben." });
+    expect(h({ kind: "receipt" }).serviceDateNote).toMatch(/Leistungsdatum entspricht dem Rechnungsdatum/);
+  });
+  it("Quittung aus einem Termin an einem anderen Tag: Termin-Datum, nicht das Quittungsdatum", () => {
+    expect(h({ kind: "receipt", issuedAt: "2026-11-13" }, ["2026-03-12"])).toEqual({ heading: "Quittung zur Behandlung am 12.03.2026", serviceDateNote: null });
+  });
+  it("Quittung am selben Tag (Termin heute bzw. ohne Termin mit Standard-Leistungsdatum)", () => {
+    expect(h({ kind: "receipt" }, ["2026-11-13"]).heading).toBe("Quittung zur Behandlung am 13.11.2026");
+    expect(h({ kind: "receipt", serviceDate: "2026-11-13" })).toEqual({ heading: "Quittung", serviceDateNote: "Leistungsdatum: 13.11.2026" });
+  });
+  it("Sammelrechnung: Zeitraum aus den Terminen, ein Tag, ohne Bezug mit Leistungsdatum", () => {
+    expect(h({ kind: "collective" }, ["2026-01-15", "2026-12-02", "2026-06-30"])).toEqual({ heading: "Sammelrechnung für den Zeitraum vom 15.01.2026 bis 02.12.2026", serviceDateNote: null });
+    expect(h({ kind: "collective" }, ["2026-11-09"])).toEqual({ heading: "Sammelrechnung zur Behandlung am 09.11.2026", serviceDateNote: null });
+    expect(h({ kind: "collective", serviceDate: "2026-10-31" })).toEqual({ heading: "Sammelrechnung", serviceDateNote: "Leistungsdatum: 31.10.2026" });
+  });
+  it("Ausfallhonorar: Datum des versäumten Termins (verknüpft oder eingetragen), kein Leistungsdatum", () => {
+    expect(h({ kind: "no_show_fee" }, ["2026-11-09"])).toEqual({ heading: "Ausfallhonorar für den Termin am 09.11.2026", serviceDateNote: null });
+    expect(h({ kind: "no_show_fee", serviceDate: "2026-11-10" })).toEqual({ heading: "Ausfallhonorar für den Termin am 10.11.2026", serviceDateNote: null });
+    expect(h({ kind: "no_show_fee" })).toEqual({ heading: "Ausfallhonorar", serviceDateNote: null });
+  });
+  it("Anzahlung: Tag der Zahlung statt Leistungsdatum; künftige Behandlung = Leistung noch nicht erbracht", () => {
+    expect(h({ kind: "deposit", issuedAt: "2026-11-13" }, ["2026-11-20"])).toEqual({
+      heading: "Quittung über eine Anzahlung",
+      serviceDateNote: "Anzahlung erhalten am 13.11.2026 für die Behandlung am 20.11.2026 – Leistung noch nicht erbracht.",
+    });
+    expect(h({ kind: "deposit", issuedAt: "2026-11-13" }, ["2026-11-13"]).serviceDateNote).toBe("Anzahlung erhalten am 13.11.2026 für die Behandlung am 13.11.2026.");
+    expect(h({ kind: "deposit", issuedAt: "2026-11-13" }, ["2026-11-02"]).serviceDateNote).toBe("Anzahlung erhalten am 13.11.2026 für die Behandlung am 02.11.2026.");
+    const none = h({ kind: "deposit", issuedAt: "2026-11-13" });
+    expect(none.serviceDateNote).toMatch(/^Anzahlung erhalten am 13\.11\.2026\. .*Leistungsdatum steht dort/);
+    expect(none.serviceDateNote).not.toMatch(/entspricht dem Rechnungsdatum/);
+  });
+  it("Stornorechnung: Bezug zur Rechnung, Leistungsdatum der stornierten Rechnung (sofern bekannt)", () => {
+    expect(h({ kind: "credit_note" }, [], "R2026-0040")).toEqual({ heading: "Stornorechnung zur Rechnung R2026-0040", serviceDateNote: null });
+    expect(h({ kind: "credit_note" }, ["2026-11-09"], "R2026-0040").serviceDateNote).toBe("Leistungsdatum der stornierten Rechnung: 09.11.2026");
+    expect(h({ kind: "credit_note" }, ["2026-11-03", "2026-11-09"], "R2026-0040").serviceDateNote).toBe("Leistungsdatum der stornierten Rechnung: 03.11.2026 bis 09.11.2026");
   });
 });
 

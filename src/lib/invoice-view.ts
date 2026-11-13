@@ -102,41 +102,60 @@ export const formatIban = (iban: string) => iban.replace(/\s/g, "").replace(/(.{
 export const qtyDe = (s: string | number) => Number(s).toLocaleString("de-DE", { maximumFractionDigits: 2 });
 
 /**
- * Überschrift auf dem Beleg (z. B. „Rechnung zur Behandlung am 09.11.2026“). Leistungsdaten stammen aus den
- * verknüpften Terminen/Doku-Einträgen; ohne Bezug gilt das Rechnungsdatum als Leistungsdatum.
- * `serviceDateNote` ist der Hinweis, wenn die Überschrift kein Leistungsdatum nennt.
+ * Überschrift und Leistungsdatum auf dem Beleg (§ 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung bzw. bei Anzahlungen
+ * der Vereinnahmung). Quellen, in dieser Reihenfolge:
+ *  1. `serviceDates` – Tage der verknüpften Termine/Doku-Einträge (bei Storno: die der stornierten Rechnung)
+ *     → „Rechnung zur Behandlung am 12.03.2026“ bzw. Zeitraum bei mehreren Tagen (Sammelrechnung)
+ *  2. `inv.serviceDate` – im Formular ausdrücklich gesetztes Leistungsdatum (Positionen ohne Bezug, Standard =
+ *     Rechnungsdatum) → neutrale Überschrift + „Leistungsdatum: …“ (kein „Behandlung“ behaupten, z. B. Produktverkauf)
+ *  3. nichts (Altbestand vor dem Leistungsdatum-Feld) → der damals gedruckte Vorbehaltshinweis, unverändert
+ * Anzahlung: kein Leistungsdatum, sondern Tag der Zahlung und – falls verknüpft – für welche Behandlung; liegt sie
+ * nach dem Belegdatum, ist die Leistung noch nicht erbracht.
  */
 export function invoiceHeading(
-  inv: { kind: string; number: string | null; issuedAt: string | null },
+  inv: { kind: string; number: string | null; issuedAt: string | null; serviceDate?: string | null },
   serviceDates: string[],
   dateDe: (d: string | null) => string,
   cancelsNumber?: string | null,
 ): { heading: string; serviceDateNote: string | null } {
-  const days = [...new Set(serviceDates)].sort();
-  const span = days.length > 1 ? `vom ${dateDe(days[0])} bis ${dateDe(days.at(-1)!)}` : `am ${dateDe(days[0] ?? inv.issuedAt)}`;
-  const defaultNote = days.length ? null : "Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben.";
+  const linked = [...new Set(serviceDates)].sort();
+  const explicit = !linked.length && inv.serviceDate ? inv.serviceDate : null;
+  const days = linked.length ? linked : explicit ? [explicit] : [];
+  const when = (d: string[]) => (d.length > 1 ? `vom ${dateDe(d[0])} bis ${dateDe(d.at(-1)!)}` : `am ${dateDe(d[0])}`);
+  const plain = (d: string[]) => (d.length > 1 ? `${dateDe(d[0])} bis ${dateDe(d.at(-1)!)}` : dateDe(d[0]));
+  const legacyNote = "Leistungsdatum entspricht dem Rechnungsdatum, sofern nicht anders angegeben.";
+  /** Rechnung/Quittung/Sammelrechnung: Überschrift mit Behandlungsdatum (verknüpft), sonst neutral + Leistungsdatum */
+  const treatment = (title: string, rangeTitle: string) => {
+    if (linked.length) return { heading: linked.length > 1 ? `${rangeTitle} ${when(linked)}` : `${title} zur Behandlung ${when(linked)}`, serviceDateNote: null };
+    if (explicit) return { heading: title, serviceDateNote: `Leistungsdatum: ${dateDe(explicit)}` };
+    return { heading: title, serviceDateNote: legacyNote };
+  };
   switch (inv.kind) {
-    // ohne verknüpften Termin/Doku-Eintrag kein ausdrückliches Datum behaupten – Vorbehaltshinweis wie bisher
     case "invoice":
-      return days.length
-        ? { heading: `Rechnung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
-        : { heading: "Rechnung", serviceDateNote: defaultNote };
+      return treatment("Rechnung", "Rechnung zur Behandlung im Zeitraum");
     case "receipt":
-      return days.length
-        ? { heading: `Quittung zur Behandlung ${days.length > 1 ? `im Zeitraum ${span}` : span}`, serviceDateNote: null }
-        : { heading: "Quittung", serviceDateNote: defaultNote };
+      return treatment("Quittung", "Quittung zur Behandlung im Zeitraum");
     case "collective":
-      if (days.length > 1) return { heading: `Sammelrechnung für den Zeitraum ${span}`, serviceDateNote: null };
-      if (days.length === 1) return { heading: `Sammelrechnung zur Behandlung ${span}`, serviceDateNote: null };
-      return { heading: "Sammelrechnung", serviceDateNote: defaultNote };
+      return treatment("Sammelrechnung", "Sammelrechnung für den Zeitraum");
     case "no_show_fee":
+      // keine Leistung, sondern Entschädigung für den versäumten Termin – dessen Datum nennen
       return { heading: days.length === 1 ? `Ausfallhonorar für den Termin am ${dateDe(days[0])}` : "Ausfallhonorar", serviceDateNote: null };
     case "credit_note":
-      return { heading: cancelsNumber ? `Stornorechnung zur Rechnung ${cancelsNumber}` : "Stornorechnung", serviceDateNote: null };
-    case "deposit":
-      return { heading: "Quittung über eine Anzahlung", serviceDateNote: null };
+      return {
+        heading: cancelsNumber ? `Stornorechnung zur Rechnung ${cancelsNumber}` : "Stornorechnung",
+        serviceDateNote: days.length ? `Leistungsdatum der stornierten Rechnung: ${plain(days)}` : null,
+      };
+    case "deposit": {
+      const paid = `Anzahlung erhalten am ${dateDe(inv.issuedAt)}`;
+      if (!days.length) return { heading: "Quittung über eine Anzahlung", serviceDateNote: `${paid}. Die Leistung wird mit der Rechnung abgerechnet; das Leistungsdatum steht dort.` };
+      const future = !!inv.issuedAt && days[0] > inv.issuedAt.slice(0, 10);
+      return {
+        heading: "Quittung über eine Anzahlung",
+        serviceDateNote: `${paid} für die Behandlung ${when(days)}${future ? " – Leistung noch nicht erbracht" : ""}.`,
+      };
+    }
     default:
-      return { heading: invoiceTitle(inv), serviceDateNote: defaultNote };
+      return { heading: invoiceTitle(inv), serviceDateNote: days.length ? `Leistungsdatum: ${plain(days)}` : legacyNote };
   }
 }
 

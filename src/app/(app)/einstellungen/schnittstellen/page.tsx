@@ -101,12 +101,12 @@ export default async function IntegrationsSettings() {
                   </Select>
                 </Field>
                 {info.secretFields.map((f) => (
-                  <Field key={f.name} label={f.label} hint={storedKeys.includes(f.name) ? "hinterlegt – leer lassen, um beizubehalten" : "nicht hinterlegt"}>
+                  <Field key={f.name} label={f.label} hint={[f.hint, storedKeys.includes(f.name) ? "hinterlegt – leer lassen, um beizubehalten" : "nicht hinterlegt"].filter(Boolean).join(" · ")}>
                     <Input name={`secret_${f.name}`} type="password" autoComplete="off" placeholder={storedKeys.includes(f.name) ? "••••••••" : ""} />
                   </Field>
                 ))}
                 {info.configFields.map((f) => (
-                  <Field key={f.name} label={f.label}>
+                  <Field key={f.name} label={f.label} hint={f.hint}>
                     <Input name={`config_${f.name}`} defaultValue={typeof cfg[f.name] === "string" ? (cfg[f.name] as string) : ""} placeholder={f.placeholder} />
                   </Field>
                 ))}

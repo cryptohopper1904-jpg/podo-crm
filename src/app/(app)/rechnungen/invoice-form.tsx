@@ -4,7 +4,7 @@ import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { useActionState, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
-import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FieldSlot, fieldLabelCls, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
@@ -173,6 +173,9 @@ export function InvoiceForm({
     return k === "collective" && pid ? syncDepositLines(start, openDeposits.filter((d) => d.patientId === pid)) : start;
   });
   const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [issuedAt, setIssuedAt] = useState(today);
+  /** Leistungsdatum ohne Termin-/Doku-Bezug; null = folgt dem Rechnungsdatum, bis es geändert wird */
+  const [serviceDate, setServiceDate] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
@@ -197,6 +200,8 @@ export function InvoiceForm({
     };
   }).map((l) => (l.blank ? { ...l, needsConfirm: false } : l));
   const totals = computeTotals(computed.filter((l) => !l.blank));
+  /** Positionen mit Termin/Doku-Eintrag: das Leistungsdatum kommt von dort (Überschrift „… zur Behandlung am …“) */
+  const linkedService = computed.some((l) => !l.blank && (!!l.appointmentId || !!l.treatmentRecordId));
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
@@ -355,12 +360,13 @@ export function InvoiceForm({
             </button>
           ))}
         </div>
-        {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl vier (Gesamt-Review M8) */}
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+        {/* iPad (1024 px, mit Seitenleiste ~700 px Inhalt): zwei Spalten, erst ab xl drei (Gesamt-Review M8). Beschriftungen
+            einzeilig, Hinweise unter dem Feld – die Eingaben einer Zeile stehen immer auf derselben Höhe. */}
+        <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Field label="Patient suchen">
             <Input value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)} placeholder="Name oder Nummer" autoComplete="off" />
           </Field>
-          <Field label={kind === "collective" ? "Patient (für die Jahres-Sammelrechnung)" : "Patient *"}>
+          <Field label={kind === "collective" ? "Patient" : "Patient *"} hint={kind === "collective" ? "für die Jahres-Sammelrechnung" : undefined}>
             <Select name="patientId" value={patientId} onChange={(e) => choosePatient(e.target.value)} required={kind !== "collective" || !billingContactId}>
               <option value="">– bitte wählen –</option>
               {filteredPatients.map((p) => (
@@ -370,7 +376,10 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <Field label={kind === "collective" ? "Rechnungsempfänger (z. B. Pflegeheim)" : "Abweichender Rechnungsempfänger"} hint={kind === "collective" ? "Patient oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}>
+          <Field
+            label={kind === "collective" ? "Rechnungsempfänger" : "Abweichender Rechnungsempfänger"}
+            hint={kind === "collective" ? "z. B. Pflegeheim – Patient oder Rechnungsempfänger angeben" : "z. B. Pflegeheim, Betreuer:in, Angehörige"}
+          >
             <Select name="billingContactId" value={billingContactId} onChange={(e) => setBillingContactId(e.target.value)} required={kind === "collective" && !patientId}>
               <option value="">– keiner –</option>
               {billingContacts.map((c) => (
@@ -378,14 +387,22 @@ export function InvoiceForm({
               ))}
             </Select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Datum">
-              <Input type="date" name="issuedAt" defaultValue={today} max={today} required />
+          <Field label="Datum">
+            <Input type="date" name="issuedAt" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} max={today} required />
+          </Field>
+          {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Mit Termin-/Doku-Bezug steht er in der Überschrift. */}
+          {linkedService ? (
+            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint="aus dem verknüpften Termin bzw. der Behandlung">
+              <Input value="laut Termin/Behandlung" disabled readOnly />
             </Field>
-            <Field label="Zahlungsziel (Tage)" hint="0 = sofort">
-              <Input type="number" name="dueDays" min={0} max={120} defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
+          ) : (
+            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : "Tag der Behandlung bzw. Lieferung"}>
+              <Input type="date" name="serviceDate" value={serviceDate ?? issuedAt} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
             </Field>
-          </div>
+          )}
+          <Field label="Zahlungsziel" hint={kind === "receipt" ? "Quittung: sofort bezahlt" : "in Tagen, 0 = sofort"}>
+            <Input type="number" name="dueDays" min={0} max={120} suffix="Tage" defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
+          </Field>
         </div>
       </Card>
 
@@ -447,10 +464,10 @@ export function InvoiceForm({
             return (
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
-              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
+              <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-start 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
                 <div role="group" aria-labelledby={`pos-${i}-label`} className="flex flex-col gap-1.5 md:col-span-3 2xl:col-span-1">
-                  <span id={`pos-${i}-label`} className="text-sm font-medium">{`Pos. ${i + 1}: Leistung`}</span>
-                  <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+                  <span id={`pos-${i}-label`} className={fieldLabelCls}>{`Pos. ${i + 1}: Leistung`}</span>
+                  <div className="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
                     <Input
                       ref={(el) => {
                         if (!el) return void codeRefs.current.delete(l.key);
@@ -469,7 +486,7 @@ export function InvoiceForm({
                       autoCapitalize="characters"
                       spellCheck={false}
                       maxLength={10}
-                      className="uppercase"
+                      className="uppercase placeholder:normal-case"
                       value={l.codeInput ?? s?.code ?? ""}
                       onChange={(e) => typeCode(l.key, e.target.value)}
                       onKeyDown={(e) => codeKeyDown(e, l.key)}
@@ -495,8 +512,8 @@ export function InvoiceForm({
                 <Field label="Faktor">
                   <Input inputMode="decimal" value={l.factor} onChange={(e) => update(l.key, { factor: e.target.value })} />
                 </Field>
-                <Field label="Preis (€)" hint={s ? "aus Katalog" : undefined}>
-                  <Input inputMode="decimal" value={l.price} disabled={!!s} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
+                <Field label="Preis" hint={s ? "aus Katalog" : undefined}>
+                  <Input inputMode="decimal" suffix="€" value={l.price} disabled={!!s} onChange={(e) => update(l.key, { price: e.target.value })} placeholder="0,00" />
                 </Field>
                 <Field label="USt">
                   {smallBusiness ? (
@@ -509,22 +526,25 @@ export function InvoiceForm({
                     </Select>
                   )}
                 </Field>
-                <div className="flex items-center justify-between gap-2 md:col-span-2 md:justify-end 2xl:col-span-1 2xl:flex-col 2xl:items-end">
-                  <span className="font-semibold tabular-nums">{money(l.totalCents)}</span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={`Position ${i + 1} entfernen`}
-                    disabled={lines.length === 1}
-                    onClick={() => {
-                      // Position aus einer Quittung entfernt → Quittung auch nicht mehr anrechnen
-                      if (l.depositIds?.length) setDepositSel((x) => ({ ...x, ...Object.fromEntries(l.depositIds!.map((id) => [id, false])) }));
-                      setLines((ls) => ls.filter((x) => x.key !== l.key));
-                    }}
-                  >
-                    <Trash2 size={18} aria-hidden />
-                  </Button>
-                </div>
+                {/* Zeilensumme + Löschen auf der Linie der Eingaben (Platzhalter in Höhe der Beschriftung) */}
+                <FieldSlot spacer="hidden md:block" className="md:col-span-2 2xl:col-span-1">
+                  <div className="flex w-full items-center justify-between gap-2 md:justify-end">
+                    <span className="font-semibold whitespace-nowrap tabular-nums">{money(l.totalCents)}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-label={`Position ${i + 1} entfernen`}
+                      disabled={lines.length === 1}
+                      onClick={() => {
+                        // Position aus einer Quittung entfernt → Quittung auch nicht mehr anrechnen
+                        if (l.depositIds?.length) setDepositSel((x) => ({ ...x, ...Object.fromEntries(l.depositIds!.map((id) => [id, false])) }));
+                        setLines((ls) => ls.filter((x) => x.key !== l.key));
+                      }}
+                    >
+                      <Trash2 size={18} aria-hidden />
+                    </Button>
+                  </div>
+                </FieldSlot>
               </div>
             );
           })}

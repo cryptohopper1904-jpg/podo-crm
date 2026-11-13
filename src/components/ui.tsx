@@ -82,18 +82,58 @@ export function Stat({ label, value, sub, tone = "primary" }: { label: string; v
 const inputCls =
   "w-full rounded-xl border border-border bg-surface px-3.5 h-11 text-[15px] text-text placeholder:text-muted focus:border-primary focus:outline-none";
 
+/**
+ * Beschriftung über Eingabefeldern: immer genau eine Zeile (lange Texte werden mit „…“ gekürzt, voller Text als Tooltip).
+ * So beginnen Eingaben in einer Formularzeile auf derselben Höhe – auch wenn die Spalten schmal werden (iPad).
+ * Für eigene Beschriftungen außerhalb von <Field> dieselbe Klasse verwenden.
+ */
+export const fieldLabelCls = "block h-5 truncate text-sm font-medium leading-5";
+
+/**
+ * Feld = Beschriftung (eine Zeile) · Eingabe · optionaler Hinweis darunter. Der Hinweis steht unter der Eingabe und
+ * verschiebt daher keine Nachbarfelder, solange die Zeile oben ausgerichtet ist (Grid/Flex mit items-start, nicht items-end).
+ * min-w-0: die einzeilige Beschriftung darf eine Grid-Spalte nicht aufweiten.
+ */
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <label className={cx("flex flex-col gap-1.5", className)}>
-      <span className="text-sm font-medium">{label}</span>
+    <label className={cx("flex min-w-0 flex-col gap-1.5", className)}>
+      <span className={fieldLabelCls} title={label}>
+        {label}
+      </span>
       {children}
       {hint ? <span className="text-xs text-muted">{hint}</span> : null}
     </label>
   );
 }
 
-export function Input({ className, ...props }: ComponentProps<"input">) {
-  return <input className={cx(inputCls, className)} {...props} />;
+/**
+ * Platz neben Feldern für Buttons oder Werte (z. B. Zeilensumme, Löschen): oben ein Leerraum in Höhe der Beschriftung,
+ * darunter eine Zeile in Eingabehöhe – steht damit auf derselben Linie wie die Eingaben der Nachbarfelder.
+ * `spacer`: Leerraum nur ab dieser Breite (einspaltig auf dem Handy nicht nötig), z. B. "hidden md:block".
+ */
+export function FieldSlot({ children, className, spacer = "block" }: { children: ReactNode; className?: string; spacer?: string }) {
+  return (
+    <div className={cx("flex min-w-0 flex-col gap-1.5", className)}>
+      <span aria-hidden className={cx("h-5", spacer)} />
+      <div className="flex min-h-11 flex-wrap items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Eingabe; `suffix` zeigt eine Einheit im Feld rechts (z. B. „Tage“, „€“) – so bleibt die Beschriftung kurz und einzeilig.
+ * Die Einheit ist aria-hidden; die Beschriftung bzw. der Hinweis nennt sie für Screenreader.
+ */
+export function Input({ className, suffix, ...props }: ComponentProps<"input"> & { suffix?: ReactNode }) {
+  if (suffix == null) return <input className={cx(inputCls, className)} {...props} />;
+  return (
+    <span className="relative block w-full">
+      <input className={cx(inputCls, "pr-14", className)} {...props} />
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-sm text-muted">
+        {suffix}
+      </span>
+    </span>
+  );
 }
 
 export function Select({ className, ...props }: ComponentProps<"select">) {

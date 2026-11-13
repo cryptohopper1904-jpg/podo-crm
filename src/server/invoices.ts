@@ -73,6 +73,11 @@ export const invoiceInput = z.object({
   patientId: optUuid,
   billingContactId: optUuid,
   issuedAt: isoDate,
+  /**
+   * Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG) für Positionen ohne Termin-/Doku-Bezug; leer → Rechnungsdatum.
+   * Bei verknüpften Terminen/Behandlungen ignoriert – deren Datum gilt.
+   */
+  serviceDate: z.preprocess((v) => (v === "" || v === null ? undefined : v), isoDate.optional()),
   /** leer → Standard-Zahlungsziel der Praxis (Einstellungen → Belege) */
   dueDays: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(0).max(MAX_DUE_DAYS).optional()),
   therapeuticConfirmed: z.boolean().default(false),
@@ -86,7 +91,8 @@ export const invoiceInput = z.object({
 });
 type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
-export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "lines"> & {
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "lines" | "serviceDate"> & {
+  serviceDate?: string | null;
   depositIds?: string[];
   lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
 };
@@ -288,6 +294,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (input.issuedAt > today) throw new InvoiceError("Das Rechnungsdatum darf nicht in der Zukunft liegen.");
+  if (input.serviceDate && input.serviceDate > today) {
+    throw new InvoiceError("Das Leistungsdatum darf nicht in der Zukunft liegen – für eine Vorauszahlung bitte eine Anzahlung ausstellen.");
+  }
   if (input.kind === "collective" && !input.billingContactId && !input.patientId) {
     throw new InvoiceError("Für eine Sammelrechnung bitte eine Patient:in oder einen Rechnungsempfänger (z. B. Pflegeheim) wählen.");
   }
@@ -350,6 +359,9 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     const appointmentIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
     if (recordIds.length || appointmentIds.length) await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null);
 
+    // Leistungsdatum: verknüpfte Termine/Behandlungen haben Vorrang (Datum steht dort); sonst ausdrücklich gesetzt bzw. Rechnungsdatum
+    const serviceDate = recordIds.length || appointmentIds.length ? null : (input.serviceDate ?? input.issuedAt);
+
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
     if (needsConfirm && !input.therapeuticConfirmed) {
       throw new InvoiceError(
@@ -385,6 +397,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         billingContactId: input.billingContactId ?? null,
         kind: input.kind,
         status: "draft",
+        serviceDate,
         notes: noteParts.join("\n") || null,
         createdBy: auth.user.id,
       })
@@ -808,7 +821,11 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   const recDays = recIds.length
     ? await tx.select({ at: treatmentRecords.treatedAt }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.id, recIds)))
     : [];
-  const serviceDates = [...new Set([...apptDays, ...recDays].map((r) => berlinDateIso(r.at)))].sort();
+  let serviceDates = [...new Set([...apptDays, ...recDays].map((r) => berlinDateIso(r.at)))].sort();
+  // Stornorechnung: Positionen tragen keinen Termin-Bezug → Leistungsdatum der stornierten Rechnung
+  if (inv.kind === "credit_note" && inv.cancelsInvoiceId) {
+    serviceDates = await originalServiceDates(tx, org, inv.cancelsInvoiceId);
+  }
   return {
     invoice: inv,
     lines,
@@ -823,6 +840,24 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
     cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
   };
 }
+/** Leistungsdaten eines Belegs: verknüpfte Termine/Doku-Einträge (Berliner Kalendertage), sonst das gespeicherte Leistungsdatum. */
+async function originalServiceDates(tx: Tx, org: string, invoiceId: string): Promise<string[]> {
+  const [orig] = await tx.select({ serviceDate: invoices.serviceDate }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
+  if (!orig) return [];
+  const appts = await tx
+    .select({ at: appointments.startsAt })
+    .from(invoiceLines)
+    .innerJoin(appointments, and(eq(appointments.organizationId, org), eq(appointments.id, invoiceLines.appointmentId)))
+    .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, invoiceId)));
+  const recs = await tx
+    .select({ at: treatmentRecords.treatedAt })
+    .from(invoiceLines)
+    .innerJoin(treatmentRecords, and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, invoiceLines.treatmentRecordId)))
+    .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, invoiceId)));
+  const days = [...new Set([...appts, ...recs].map((r) => berlinDateIso(r.at)))].sort();
+  return days.length ? days : orig.serviceDate ? [orig.serviceDate] : [];
+}
+
 export type InvoiceBundle = NonNullable<Awaited<ReturnType<typeof loadInvoiceBundle>>>;
 
 export async function getInvoice(auth: AuthContext, id: string) {

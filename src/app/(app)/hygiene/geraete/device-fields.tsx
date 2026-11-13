@@ -1,4 +1,4 @@
-import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui";
+import { Checkbox, Field, FieldSlot, Input, Select, Textarea } from "@/components/ui";
 import { DEVICE_KINDS, DEVICE_KIND_LABELS } from "@/lib/hygiene-rules";
 import type { devices } from "@/db/schema";
 
@@ -39,9 +39,9 @@ export function DeviceFields({ device }: { device?: Device }) {
         <Textarea name="notes" defaultValue={device?.notes ?? ""} maxLength={1000} rows={2} />
       </Field>
       {device ? (
-        <div className="flex items-end">
+        <FieldSlot spacer="hidden sm:block">
           <Checkbox name="active" defaultChecked={device.active} label="in Betrieb" />
-        </div>
+        </FieldSlot>
       ) : null}
     </div>
   );

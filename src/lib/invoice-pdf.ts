@@ -47,6 +47,8 @@ export type InvoicePdfData = {
     status: string;
     issuedAt: string | null;
     dueAt: string | null;
+    /** ausdrückliches Leistungsdatum (Belege ohne Termin-/Doku-Bezug) */
+    serviceDate?: string | null;
     totalCents: number;
     paidCents: number;
     notes: string | null;
@@ -80,7 +82,7 @@ export type InvoicePdfData = {
   patient: { number: number; salutation?: string | null; title?: string | null; firstName?: string | null; lastName: string; street?: string | null; zip?: string | null; city?: string | null } | null;
   billingContact: { name: string; street: string | null; zip: string | null; city: string | null } | null;
   cancels?: { number: string | null } | null;
-  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen */
+  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen (Storno: die der stornierten Rechnung) */
   serviceDates?: string[];
   /** Praxis-Logos (PNG/JPEG); ohne Logo erscheint der Praxisname */
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
@@ -291,8 +293,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     text(hl, ML, y, { size: 12.5, font: bold });
     y -= 16;
   }
-  if (serviceDateNote) {
-    text(serviceDateNote, ML, y, { size: 8.5, color: GRAY });
+  for (const nl of serviceDateNote ? wrap(serviceDateNote, width, 8.5) : []) {
+    text(nl, ML, y, { size: 8.5, color: GRAY });
     y -= 12;
   }
   y -= 6;
