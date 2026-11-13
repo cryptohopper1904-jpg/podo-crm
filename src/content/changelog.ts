@@ -25,6 +25,16 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-r",
+    date: "2026-11-13",
+    title: "Produkte und kleine Warenwirtschaft",
+    items: [
+      { tag: "neu", text: "Neuer Bereich Produkte (z. B. Salben): in der Rechnung auswählbar. In der Behandlung angewendete Produkte werden einer Behandlung zugeordnet und ohne USt. berechnet, Verkauf ohne Behandlung mit regulärem Satz. Bitte die steuerliche Einordnung mit Ihrer Steuerberatung abstimmen.", href: "/produkte" },
+      { tag: "neu", text: "Kleine Warenwirtschaft: Bestand, Wareneingang, Inventur, Nachbestellliste und Lieferanten. Verkäufe buchen den Bestand automatisch ab; beim Storno wählen Sie je Produkt, ob es zurück ins Lager geht.", href: "/produkte/bestand" },
+      { tag: "verbessert", text: "Leistungen wahlweise als Kacheln, Liste oder kompakt anzeigen; nicht mehr benötigte Leistungen archivieren und bei Bedarf wiederherstellen.", href: "/einstellungen/leistungen" },
+    ],
+  },
+  {
     id: "2026-11-13-q",
     date: "2026-11-13",
     title: "Vertrieb: nächtliche Praxissuche",
