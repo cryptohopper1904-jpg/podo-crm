@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui";
 import { weekSummary, type WeekHours } from "@/lib/opening-hours";
 
 /** Website-Zeiten: Standard = Praxis-Öffnungszeiten; optional abweichend gepflegt (settings.openingHours). */
-export function WebsiteHours({ custom, practice, own }: { custom: boolean; practice: WeekHours; own: WeekHours }) {
+export function WebsiteHours({ custom, practice, own }: { custom: boolean; practice: WeekHours | null; own: WeekHours }) {
   const [same, setSame] = useState(!custom);
   return (
     <fieldset className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4">
@@ -15,7 +15,7 @@ export function WebsiteHours({ custom, practice, own }: { custom: boolean; pract
       <Checkbox name="samePracticeHours" checked={same} onChange={(e) => setSame(e.target.checked)} label="wie Praxis-Öffnungszeiten" />
       {same ? (
         <p className="text-sm text-muted">
-          {weekSummary(practice)} – ändern unter{" "}
+          {practice ? weekSummary(practice) : "Noch keine Öffnungszeiten gespeichert – die Website zeigt keine Zeiten"} – {practice ? "ändern" : "pflegen"} unter{" "}
           <Link className="font-semibold text-primary underline" href="/einstellungen/oeffnungszeiten">Einstellungen → Öffnungszeiten</Link>.
         </p>
       ) : (

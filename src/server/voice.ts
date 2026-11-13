@@ -24,7 +24,7 @@ import { audit } from "@/lib/audit";
 import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availability";
 import { berlinToUtc } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
-import { practiceHours, weekSpeech } from "@/lib/opening-hours";
+import { openingSpeech, openingSummary, practiceHours } from "@/lib/opening-hours";
 import { voiceEntitlement, type OrgBilling, type VoiceEntitlement } from "@/lib/plans";
 import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { berlinMonth, monthBounds, recentMonths, voiceMonthReport, voiceUsage, type VoiceUsage } from "@/lib/voice-usage";
@@ -326,7 +326,7 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
         name: o.name,
         address,
         phone: o.phone,
-        openingText: `${weekSpeech(practiceHours(o.settings))}; an gesetzlichen Feiertagen geschlossen`,
+        openingText: openingSpeech(o.settings),
         billingNote: isPrivateOnly(o) ? PRIVATE_ONLY_VOICE_NOTE : null,
       };
     },
@@ -399,7 +399,7 @@ export async function voicePageInfo(auth: AuthContext) {
   if (!o) throw new Error("Praxis nicht gefunden");
   const services = await bookableServices(o.id, o.settings);
   const quota = await voiceQuotaStatus(o);
-  return { settings: readVoiceSettings(o.settings), opening: practiceHours(o.settings), services, quota };
+  return { settings: readVoiceSettings(o.settings), opening: openingSummary(o.settings), services, quota };
 }
 
 /** Kontingent-Hinweis (z. B. Banner für Inhaber:innen) – ohne Rechteprüfung auf Inhalte, nur Zählwerte. */

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, count, eq, ne, notInArray, or, sql } from "drizzle-orm";
 import { db, withOrg, type Db, type Tx } from "@/db";
-import { auditLog, billingEvents, memberships, organizations } from "@/db/schema";
+import { auditLog, billingEvents, memberships, organizations, promoRedemptions } from "@/db/schema";
 import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/stripe/events";
 import { priceIdsFromEnv, type PriceIds } from "@/integrations/stripe/stripe";
 import type { StripeEvent } from "@/integrations/stripe/types";
@@ -58,6 +58,18 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
     if (org.plan === "free" && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
       return done("ignored", org.id, "Kostenlos-Tarif: altes Abo");
     }
+    // Testphase per Aktionscode (kein aktuelles Stripe-Abo): Events eines alten (beendeten) Abos ändern nichts –
+    // weder Rechnungs-Events noch Abo-Events, die kein neues aktives Abo melden (sonst fiele die Praxis z. B. auf „past_due“).
+    const codeTrial = org.subscriptionStatus === "trialing" && !org.stripeSubscriptionId;
+    // Rechnungs-Events nur zum aktuellen Abo: fremde/alte Abo-ID → ignorieren; ohne Abo-ID nur, wenn die Praxis gar kein
+    // Abo hat (Code-Testphase) – dann kann die Rechnung zu keinem laufenden Abo gehören.
+    if (ev.type.startsWith("invoice.")) {
+      const invSub = invoiceSubscriptionId(ev);
+      if (invSub ? invSub !== org.stripeSubscriptionId : codeTrial) return done("ignored", org.id, "Rechnung eines alten/fremden Abos");
+    }
+    if (codeTrial && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
+      return done("ignored", org.id, "Aktionscode-Testphase: altes Abo");
+    }
     await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created));
     await tx.insert(auditLog).values({
       organizationId: org.id,
@@ -80,6 +92,14 @@ async function findOrg(tx: Tx, organizationId: string | null, customerId: string
     if (o) return o;
   }
   return null;
+}
+
+/** Abo-ID einer Rechnung (ältere API: invoice.subscription, neuere: invoice.parent.subscription_details.subscription) */
+function invoiceSubscriptionId(ev: StripeEvent): string | null {
+  const o = (ev.data?.object ?? {}) as Record<string, unknown>;
+  const id = (v: unknown) => (typeof v === "string" && v ? v : v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : null);
+  const parent = (o.parent ?? {}) as { subscription_details?: { subscription?: unknown } };
+  return id(o.subscription) ?? id(parent.subscription_details?.subscription);
 }
 
 /** Nur die Abo-Felder setzen; settings wird per jsonb-Merge ergänzt (keine parallelen Einstellungsänderungen überschreiben). */
@@ -163,6 +183,7 @@ export async function loadOrgBilling(organizationId: string) {
       currentPeriodEnd: organizations.currentPeriodEnd,
       seats: organizations.seats,
       stripeCustomerId: organizations.stripeCustomerId,
+      stripeSubscriptionId: organizations.stripeSubscriptionId,
     })
     .from(organizations)
     .where(eq(organizations.id, organizationId));
@@ -178,47 +199,107 @@ export async function loadOrgBilling(organizationId: string) {
  * überschreiben den Tarif nicht mehr (siehe processBillingEvent).
  */
 export async function switchToFreePlan(organizationId: string, userId: string): Promise<{ error: string } | { ok: true; deactivated: string[] }> {
-  const res = await withOrg(organizationId, async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${organizationId}`}))`);
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
-    const [o] = await tx
-      .select({
-        plan: organizations.plan,
-        subscriptionStatus: organizations.subscriptionStatus,
-        trialEndsAt: organizations.trialEndsAt,
-        currentPeriodEnd: organizations.currentPeriodEnd,
-        seats: organizations.seats,
-        stripeSubscriptionId: organizations.stripeSubscriptionId,
-      })
+  return withOrg(organizationId, (tx) => freeSwitchTx(tx, organizationId, userId, { auditUserId: userId, action: "billing.switch_free" }));
+}
+
+/**
+ * Wechsel in den Kostenlos-Tarif in einer Transaktion mit gesetztem app.org_id: prüft freeSwitchProblem (u. a. höchstens
+ * 20 Patient:innen), deaktiviert alle weiteren Personen außer `keepUserId` und der Steuerberatung, schreibt das Audit.
+ * `check` = zusätzliche Bedingung auf der gesperrten Praxis-Zeile (z. B. „Aktionscode-Testphase abgelaufen“).
+ */
+async function freeSwitchTx(
+  tx: Tx,
+  organizationId: string,
+  keepUserId: string,
+  opts: { auditUserId: string | null; action: string; meta?: Record<string, unknown>; check?: (o: { plan: string; subscriptionStatus: string; trialEndsAt: Date | null; stripeSubscriptionId: string | null; settings: Record<string, unknown> }) => string | null },
+): Promise<{ error: string } | { ok: true; deactivated: string[] }> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`seats:${organizationId}`}))`);
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
+  const [o] = await tx
+    .select({
+      plan: organizations.plan,
+      subscriptionStatus: organizations.subscriptionStatus,
+      trialEndsAt: organizations.trialEndsAt,
+      currentPeriodEnd: organizations.currentPeriodEnd,
+      seats: organizations.seats,
+      stripeSubscriptionId: organizations.stripeSubscriptionId,
+      settings: organizations.settings,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, organizationId))
+    .for("update");
+  if (!o) return { error: "Praxis nicht gefunden." };
+  const pre = opts.check?.({ ...o, settings: (o.settings ?? {}) as Record<string, unknown> });
+  if (pre) return { error: pre };
+  const problem = freeSwitchProblem(o, await countedPatients(tx, organizationId));
+  if (problem) return { error: problem };
+  const off = await tx
+    .update(memberships)
+    .set({ active: false })
+    .where(and(eq(memberships.organizationId, organizationId), eq(memberships.active, true), ne(memberships.userId, keepUserId), ne(memberships.role, "accountant")))
+    .returning({ userId: memberships.userId });
+  const nowSec = Math.floor(Date.now() / 1000);
+  await tx
+    .update(organizations)
+    .set({
+      plan: "free",
+      seats: 1,
+      subscriptionStatus: "none",
+      stripeSubscriptionId: null,
+      settings: sql`(coalesce(${organizations.settings}, '{}'::jsonb) - 'promoReturnFree') || jsonb_build_object('billingLastEventAt', greatest(coalesce((${organizations.settings}->>'billingLastEventAt')::bigint, 0), ${nowSec}::bigint))`,
+    })
+    .where(eq(organizations.id, organizationId));
+  await tx.insert(auditLog).values({
+    organizationId,
+    userId: opts.auditUserId,
+    action: opts.action,
+    meta: { from: o.plan, status: o.subscriptionStatus, deactivatedMembers: off.length, ...opts.meta },
+  });
+  return { ok: true as const, deactivated: off.map((m) => m.userId) };
+}
+
+/** Praxis hat einen Aktionscode im Kostenlos-Tarif eingelöst (Merker beim Einlösen, src/server/promo-codes.ts) */
+export const promoReturnFreePending = (settings: Record<string, unknown> | null | undefined) => settings?.promoReturnFree === true;
+
+/**
+ * Nach Ablauf einer Aktionscode-Testphase, die im Kostenlos-Tarif begonnen wurde: automatisch zurück in den
+ * Kostenlos-Tarif (AGB § 3 Abs. 4), wenn die Bedingungen erfüllt sind (höchstens 20 Patient:innen, kein Stripe-Abo).
+ * Weitere Personen werden deaktiviert; es bleibt die einlösende Inhaber:in (bzw. die am längsten aktive Inhaber:in).
+ * Sonst bleibt die Praxis wie bisher nur lesbar und der Merker wird entfernt (kein erneuter Versuch je Anfrage).
+ * Aufruf: nächtlicher Cron (runPromoTrialReturns in src/server/promo-codes.ts, /api/cron/lead-search). Bis dahin kann
+ * die Inhaber:in sofort „Kostenlos weiter nutzen“ wählen (Abo-Seite, auch im Nur-Lesen-Modus).
+ */
+export async function returnPromoTrialToFree(organizationId: string, now = new Date()): Promise<{ status: "switched" | "kept" | "not_due"; deactivated: string[] }> {
+  return withOrg(organizationId, async (tx) => {
+    const [cur] = await tx
+      .select({ subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, stripeSubscriptionId: organizations.stripeSubscriptionId, settings: organizations.settings })
       .from(organizations)
-      .where(eq(organizations.id, organizationId))
-      .for("update");
-    if (!o) return { error: "Praxis nicht gefunden." };
-    const problem = freeSwitchProblem(o, await countedPatients(tx, organizationId));
-    if (problem) return { error: problem };
-    const off = await tx
-      .update(memberships)
-      .set({ active: false })
-      .where(and(eq(memberships.organizationId, organizationId), eq(memberships.active, true), ne(memberships.userId, userId), ne(memberships.role, "accountant")))
-      .returning({ userId: memberships.userId });
-    const nowSec = Math.floor(Date.now() / 1000);
+      .where(eq(organizations.id, organizationId));
+    const isDue = (o: { subscriptionStatus: string; trialEndsAt: Date | null; stripeSubscriptionId: string | null; settings: Record<string, unknown> | null }) =>
+      promoReturnFreePending(o.settings) && o.subscriptionStatus === "trialing" && !o.stripeSubscriptionId && !!o.trialEndsAt && o.trialEndsAt.getTime() <= now.getTime();
+    if (!cur || !isDue(cur)) return { status: "not_due" as const, deactivated: [] };
+    const owners = await tx
+      .select({ userId: memberships.userId, createdAt: memberships.createdAt })
+      .from(memberships)
+      .where(and(eq(memberships.organizationId, organizationId), eq(memberships.active, true), eq(memberships.role, "owner")))
+      .orderBy(memberships.createdAt);
+    const [red] = await tx.select({ by: promoRedemptions.redeemedBy }).from(promoRedemptions).where(eq(promoRedemptions.organizationId, organizationId));
+    const keep = owners.find((o) => o.userId === red?.by)?.userId ?? owners[0]?.userId;
+    let notDue = false;
+    // erneut unter der Zeilensperre prüfen (parallele Anfragen)
+    const due = (o: { subscriptionStatus: string; trialEndsAt: Date | null; stripeSubscriptionId: string | null; settings: Record<string, unknown> }) => {
+      notDue = !isDue(o);
+      return notDue ? "nicht fällig" : null;
+    };
+    const r = keep ? await freeSwitchTx(tx, organizationId, keep, { auditUserId: null, action: "promo.return_free", check: due }) : { error: "keine aktive Inhaber:in" };
+    if ("ok" in r) return { status: "switched" as const, deactivated: r.deactivated };
+    if (notDue) return { status: "not_due" as const, deactivated: [] };
+    // Bedingungen nicht erfüllt (z. B. mehr als 20 Patient:innen): Merker entfernen, Praxis bleibt nur lesbar
     await tx
       .update(organizations)
-      .set({
-        plan: "free",
-        seats: 1,
-        subscriptionStatus: "none",
-        stripeSubscriptionId: null,
-        settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingLastEventAt', greatest(coalesce((${organizations.settings}->>'billingLastEventAt')::bigint, 0), ${nowSec}::bigint))`,
-      })
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) - 'promoReturnFree'` })
       .where(eq(organizations.id, organizationId));
-    await tx.insert(auditLog).values({
-      organizationId,
-      userId,
-      action: "billing.switch_free",
-      meta: { from: o.plan, status: o.subscriptionStatus, deactivatedMembers: off.length },
-    });
-    return { ok: true as const, deactivated: off.map((m) => m.userId) };
+    await tx.insert(auditLog).values({ organizationId, userId: null, action: "promo.return_free_skipped", meta: { reason: r.error.slice(0, 200) } });
+    return { status: "kept" as const, deactivated: [] };
   });
-  return res;
 }

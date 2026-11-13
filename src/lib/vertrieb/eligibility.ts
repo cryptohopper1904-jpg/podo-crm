@@ -1,9 +1,10 @@
 /**
  * Wer bekommt beim Klick auf „Nächste Mail senden“ welche Mail? Rein und testbar.
- * Gesendet wird nur, wenn: E-Mail vorhanden und gültig, nicht auf der Sperrliste, Status nicht beendet,
+ * Gesendet wird nur, wenn: E-Mail vorhanden und gültig, nicht auf der Sperrliste, Einwilligung dokumentiert
+ * (§ 7 Abs. 2 Nr. 2 UWG – serverseitig erzwungen, auch für Kampagnen), Status nicht beendet,
  * Sequenz nicht abgeschlossen und der Abstand zur vorigen Mail abgelaufen ist. Dazu Obergrenzen je Klick und je 24 h.
  */
-import { MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, STOP_STATUSES, STATUS_LABEL, isLeadStatus } from "./constants";
+import { MAX_PER_CLICK, MAX_PER_DAY, NO_CONSENT, SEQUENCE_STEPS, STOP_STATUSES, STATUS_LABEL, isLeadStatus } from "./constants";
 
 const EMAIL_RE = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
 
@@ -13,6 +14,8 @@ export type LeadForSend = {
   status: string;
   step: number;
   lastSentAt: Date | null;
+  /** dokumentierte Einwilligung (sales_leads.consent_at) – ohne sie wird nie gesendet */
+  consentAt: Date | null;
 };
 
 export type Delays = { delay2Days: number; delay3Days: number };
@@ -28,6 +31,7 @@ export function eligibility(lead: LeadForSend, opts: { now: Date; delays: Delays
   const email = lead.email?.trim() ?? "";
   if (!email || !EMAIL_RE.test(email)) return { ok: false, reason: "Keine gültige E-Mail-Adresse" };
   if (opts.suppressed.has(normalizeEmail(email))) return { ok: false, reason: "Auf der Sperrliste (abgemeldet)" };
+  if (!lead.consentAt) return { ok: false, reason: NO_CONSENT };
   if (!isLeadStatus(lead.status)) return { ok: false, reason: "Unbekannter Status" };
   if (STOP_STATUSES.includes(lead.status)) return { ok: false, reason: `Status „${STATUS_LABEL[lead.status]}“ – Sequenz beendet` };
   if (lead.step >= SEQUENCE_STEPS) return { ok: false, reason: "Alle 3 Mails versendet" };

@@ -5,7 +5,7 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { money } from "@/lib/format";
-import { practiceHours, weekFromList } from "@/lib/opening-hours";
+import { emptyWeek, storedPracticeHours, weekFromList } from "@/lib/opening-hours";
 import { defaultServiceDescription, homeVisitAreas, LIMITS, openingHours, WEBSITE_ADDON_CENTS, websiteEntitlement, websiteSettings } from "@/lib/website";
 import { saveWebsiteAction } from "./actions";
 import { WebsiteHours } from "./website-hours";
@@ -18,8 +18,7 @@ export default async function WebsiteSettingsPage() {
   const settings = o.settings ?? {};
   const w = websiteSettings(settings);
   const ent = websiteEntitlement(auth.billing, settings);
-  const ownHours = openingHours(settings);
-  const practice = practiceHours(settings);
+  const practice = storedPracticeHours(settings);
   const svc = await withOrg(o.id, (tx) =>
     tx.select({ code: services.code, name: services.name, active: services.active, category: services.category }).from(services).where(eq(services.organizationId, o.id)).orderBy(services.name),
   );
@@ -71,7 +70,7 @@ export default async function WebsiteSettingsPage() {
           </Field>
           <Checkbox name="showPrices" defaultChecked={w.showPrices} label="Preise anzeigen (Leistungen mit 0 € erscheinen als „auf Anfrage“)" />
 
-          <WebsiteHours custom={w.customHours} practice={practice} own={ownHours.length ? weekFromList(ownHours) : practice} />
+          <WebsiteHours custom={w.customHours} practice={practice} own={w.customHours ? weekFromList(openingHours(settings)) : (practice ?? emptyWeek())} />
 
           <Field label="Hausbesuche in" hint="Orte durch Komma oder Zeilenumbruch trennen">
             <Textarea name="areas" defaultValue={homeVisitAreas(settings).join(", ")} rows={2} />

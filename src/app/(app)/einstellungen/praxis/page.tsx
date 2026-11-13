@@ -10,7 +10,7 @@ import { STATES } from "@/lib/holidays";
 import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
 import { readDunningSettings } from "@/lib/dunning";
 import { formatIban } from "@/lib/invoice-view";
-import { practiceHours, weekSummary } from "@/lib/opening-hours";
+import { NO_HOURS_NOTE, openingSummary } from "@/lib/opening-hours";
 import { parseOnlineBookingSettings } from "@/lib/portal-booking";
 import { practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
@@ -65,7 +65,7 @@ export default async function PracticeSettings() {
           <Field label="Materialkosten" hint="je Behandlung"><Input suffix="€" name="materialCost" defaultValue={((s.materialCostCents ?? 350) / 100).toFixed(2).replace(".", ",")} /></Field>
         </div>
         <p className="text-sm text-muted">
-          Öffnungszeiten ({weekSummary(practiceHours(o.settings))}) je Wochentag unter{" "}
+          Öffnungszeiten ({openingSummary(o.settings) ?? NO_HOURS_NOTE}) je Wochentag unter{" "}
           <Link className="font-semibold text-primary underline" href="/einstellungen/oeffnungszeiten">Einstellungen → Öffnungszeiten</Link>.
         </p>
         <Checkbox name="smallBusiness" defaultChecked={o.smallBusiness} label="Kleinunternehmer nach § 19 UStG (keine Umsatzsteuer auf Rechnungen)" />

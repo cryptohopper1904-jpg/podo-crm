@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 import { cx } from "@/components/ui";
 
 const TABS = [
-  { href: "/plattform/vertrieb", label: "Praxen" },
+  { href: "/plattform/vertrieb", label: "Pipeline" },
+  { href: "/plattform/vertrieb/kampagnen", label: "Kampagnen" },
+  { href: "/plattform/vertrieb/aktionscodes", label: "Aktionscodes" },
   { href: "/plattform/vertrieb/import", label: "CSV-Import" },
   { href: "/plattform/vertrieb/vorlagen", label: "Vorlagen" },
   { href: "/plattform/vertrieb/einstellungen", label: "Einstellungen & Sperrliste" },

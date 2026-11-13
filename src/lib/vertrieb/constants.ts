@@ -32,15 +32,19 @@ export const MAX_PER_DAY = 50;
 
 export const DEFAULT_DELAYS = { delay2Days: 5, delay3Days: 10 } as const;
 
-export const PLACEHOLDERS = ["praxis", "ansprechpartner", "anrede", "ort", "absender"] as const;
+export const PLACEHOLDERS = ["praxis", "ansprechpartner", "anrede", "ort", "absender", "code", "link"] as const;
+/** Platzhalter, die einen gültigen Aktionscode (Kampagne oder Lead) voraussetzen – sonst wird der Lead beim Versand übersprungen */
+export const PROMO_PLACEHOLDERS = ["code", "link"] as const;
 export type Placeholder = (typeof PLACEHOLDERS)[number];
 
 export const PLACEHOLDER_HELP: Record<Placeholder, string> = {
   praxis: "Name der Praxis",
   ansprechpartner: "Ansprechpartner:in (kann leer sein)",
   anrede: "„Guten Tag Frau Muster“ bzw. „Guten Tag“ ohne Ansprechpartner:in",
-  ort: "Ort der Praxis",
+  ort: "Ort der Praxis (ohne Ort entfällt z. B. „in {{ort}}“ ganz)",
   absender: "Absendername aus den Einstellungen",
+  code: "Aktionscode der Kampagne (bzw. persönlicher Code des Leads), z. B. für 3 Monate kostenlos testen",
+  link: "Aktionslink …/aktion/CODE (öffentliche Seite mit Registrierung und vorausgefülltem Code)",
 };
 
 export const PRODUCT_URL = "https://podo.algoverdict.com";
@@ -53,7 +57,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
     body: [
       "{{anrede}},",
       "",
-      "mein Name ist {{absender}}. Ich habe PodoHero entwickelt, eine Praxissoftware speziell für podologische Praxen – entstanden gemeinsam mit einer Podologie-Praxis aus Ihrer Region.",
+      "mein Name ist {{absender}}. Ich habe PodoHero entwickelt, eine Praxissoftware speziell für podologische Praxen.",
       "",
       "PodoHero bündelt Terminkalender, Behandlungsdokumentation, Verordnungen, Rechnungen und Hausbesuchs-Touren an einem Ort und läuft im Browser sowie auf dem Tablet.",
       "",
@@ -70,7 +74,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
     body: [
       "{{anrede}},",
       "",
-      "ich wollte kurz an meine letzte Nachricht erinnern. Ein Punkt, den Praxen an PodoHero besonders schätzen: Termine aus Doctolib werden automatisch übernommen, und aus einem Termin wird mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende.",
+      "ich wollte kurz an meine letzte Nachricht erinnern. Aus einem Termin wird in PodoHero mit einem Klick die Rechnung – auf Wunsch gesammelt als Sammelrechnung zum Monats- oder Jahresende. Außerdem: Doctolib-Termine lassen sich über Ihren Google-Kalender (z. B. mit Docal.io/CalMedi) übernehmen – diese Funktion ist derzeit im Testbetrieb.",
       "",
       "Wenn Sie mögen, zeige ich Ihnen das in 30 Minuten kostenlos. Eine kurze Antwort mit einem Terminvorschlag genügt.",
       "",
@@ -96,4 +100,7 @@ export const DEFAULT_TEMPLATES: readonly Template[] = [
 ];
 
 export const UWG_NOTE =
-  "Werbe-E-Mails ohne Einwilligung können nach § 7 UWG abgemahnt werden. Nur kleine, gezielte Mengen senden; Abmeldungen werden automatisch beachtet.";
+  "Werbe-E-Mails sind auch an Praxen (B2B) nur mit vorheriger ausdrücklicher Einwilligung zulässig (§ 7 Abs. 2 Nr. 2 UWG). Ohne Einwilligung drohen Abmahnung und Unterlassungsklage, unabhängig von Menge, Impressum oder Abmeldelink. Nur an Kontakte senden, die ausdrücklich in Informationen per E-Mail eingewilligt haben (z. B. Anfrage mit Wunsch nach weiteren Infos per E-Mail, Messe mit dokumentierter Zustimmung).";
+
+/** Grund beim Überspringen ohne dokumentierte Einwilligung (Vorschau, Versand) */
+export const NO_CONSENT = "keine dokumentierte Einwilligung";

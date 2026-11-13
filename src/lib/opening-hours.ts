@@ -7,7 +7,8 @@
  *   [{ weekday: 1 (Mo) … 7 (So), from: "08:00", to: "12:00" }, { weekday: 1, from: "13:00", to: "18:00" }, …]
  * Ein Tag ohne Eintrag ist geschlossen; mehrere Einträge je Tag = mehrere Zeitfenster (z. B. Mittagspause).
  *
- * Altdaten (vor Migration 0039): settings.opening = { from, to } galt Mo–Fr; fehlt beides, Mo–Fr 08:00–18:00.
+ * Altdaten (vor Migration 0046): Website-Zeiten settings.openingHours bzw. settings.opening = { from, to } für Mo–Fr.
+ * Ohne jede Angabe gilt intern Mo–Fr 08:00–18:00 (nur Verfügbarkeit, nie öffentlich angezeigt).
  * Gesetzliche Feiertage regelt weiterhin das Bundesland (src/lib/holidays.ts) – keine eigenen Ausnahmetage hier.
  */
 
@@ -44,9 +45,27 @@ export function weekdaysWeek(range: TimeRange): WeekHours {
 
 export const DEFAULT_WEEK: WeekHours = weekdaysWeek(DEFAULT_RANGE);
 
-/** Je Tag sortieren und überlappende/angrenzende Fenster verschmelzen; Ungültiges verwerfen. */
+const toHhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+const LAST_MINUTE = 23 * 60 + 55;
+
+/**
+ * Altzeiten außerhalb des 5-Minuten-Rasters (z. B. 08:03) tolerant einrasten: „von“ nach unten, „bis“ nach oben
+ * (höchstens 23:55) – so lässt sich alles ohne Fehlermeldung wieder speichern. Ungültiges bleibt ungültig.
+ */
+function snap(r: TimeRange): TimeRange {
+  if (!HHMM.test(r.start) || !HHMM.test(r.end)) return r;
+  const start = Math.floor(toMin(r.start) / GRID_MINUTES) * GRID_MINUTES;
+  const end = Math.min(Math.ceil(toMin(r.end) / GRID_MINUTES) * GRID_MINUTES, LAST_MINUTE);
+  return { start: toHhmm(start), end: toHhmm(end) };
+}
+
+/** Je Tag ins Raster einrasten, sortieren und überlappende/angrenzende Fenster verschmelzen; Ungültiges verwerfen. */
 function normalizeDay(ranges: TimeRange[]): TimeRange[] {
-  const valid = ranges.filter((r) => HHMM.test(r.start) && HHMM.test(r.end) && toMin(r.end) > toMin(r.start)).sort((a, b) => toMin(a.start) - toMin(b.start));
+  const valid = ranges
+    .filter((r) => HHMM.test(r.start) && HHMM.test(r.end) && toMin(r.end) > toMin(r.start))
+    .map(snap)
+    .filter((r) => toMin(r.end) > toMin(r.start))
+    .sort((a, b) => toMin(a.start) - toMin(b.start));
   const out: TimeRange[] = [];
   for (const r of valid) {
     const last = out[out.length - 1];
@@ -57,7 +76,7 @@ function normalizeDay(ranges: TimeRange[]): TimeRange[] {
   return out;
 }
 
-/** Gespeicherte Liste → Woche (tolerant: ungültige Einträge werden verworfen). */
+/** Gespeicherte Liste → Woche (tolerant: ungültige Einträge verworfen, Zeiten ins 5-Minuten-Raster eingerastet). */
 export function weekFromList(raw: unknown): WeekHours {
   const w = emptyWeek();
   if (!Array.isArray(raw)) return w;
@@ -75,11 +94,14 @@ export function weekToList(week: WeekHours): StoredOpeningHour[] {
 }
 
 /**
- * Öffnungszeiten der Praxis aus organizations.settings. Rückwärtskompatibel: ohne practiceHours gilt der
- * alte Mo–Fr-Bereich settings.opening, ohne beides Mo–Fr 08:00–18:00.
+ * Von der Praxis gepflegte Öffnungszeiten – oder null, wenn es keine gibt (dann keine Zeiten öffentlich zeigen).
+ * Rückwärtskompatibel (wie Migration 0046): ohne practiceHours gelten die bisherigen Website-Zeiten
+ * (settings.openingHours, z. B. aus dem Bootstrap), sonst der alte Mo–Fr-Bereich settings.opening.
  */
-export function practiceHours(settings: Record<string, unknown> | null | undefined): WeekHours {
+export function storedPracticeHours(settings: Record<string, unknown> | null | undefined): WeekHours | null {
   if (Array.isArray(settings?.practiceHours)) return weekFromList(settings.practiceHours);
+  const site = weekFromList(settings?.openingHours);
+  if (!isClosedWeek(site)) return site;
   const o = settings?.opening;
   if (o && typeof o === "object") {
     const { from, to } = o as { from?: unknown; to?: unknown };
@@ -87,7 +109,15 @@ export function practiceHours(settings: Record<string, unknown> | null | undefin
     const day = normalizeDay([range]);
     return day.length ? weekdaysWeek(day[0]) : emptyWeek();
   }
-  return weekdaysWeek(DEFAULT_RANGE);
+  return null;
+}
+
+/**
+ * Öffnungszeiten für die Verfügbarkeit (intern): gepflegte Zeiten, ohne Angaben Mo–Fr 08:00–18:00.
+ * Öffentlich (Website, Telefon-Ansage) stattdessen storedPracticeHours verwenden – keine erfundenen Zeiten.
+ */
+export function practiceHours(settings: Record<string, unknown> | null | undefined): WeekHours {
+  return storedPracticeHours(settings) ?? weekdaysWeek(DEFAULT_RANGE);
 }
 
 /** Zeitfenster der Praxis an einem Wochentag (1 = Mo … 7 = So) */
@@ -158,4 +188,19 @@ export function weekSpeech(week: WeekHours): string {
   return groupWeek(week)
     .map((g) => `${dayRangeLabel(g, WEEKDAY_LONG, " bis ")} ${g.ranges.length ? g.ranges.map((r) => `${r.start} bis ${r.end} Uhr`).join(" und ") : "geschlossen"}`)
     .join("; ");
+}
+
+export const NO_HOURS_NOTE = "Noch keine Öffnungszeiten gespeichert – intern gelten Mo–Fr 8–18 Uhr";
+
+/** Ansage für den KI-Telefonassistenten – ohne gepflegte Zeiten nichts erfinden (auch keinen Feiertagssatz). */
+export function openingSpeech(settings: Record<string, unknown> | null | undefined): string {
+  const stored = storedPracticeHours(settings);
+  if (!stored || isClosedWeek(stored)) return "Feste Öffnungszeiten sind derzeit nicht hinterlegt.";
+  return `${weekSpeech(stored)}; an gesetzlichen Feiertagen geschlossen`;
+}
+
+/** Kurzform für Einstellungs-/Telefonseite; null = keine Zeiten gepflegt (dann NO_HOURS_NOTE zeigen) */
+export function openingSummary(settings: Record<string, unknown> | null | undefined): string | null {
+  const stored = storedPracticeHours(settings);
+  return stored ? weekSummary(stored) : null;
 }

@@ -3,7 +3,10 @@ import {
   DEFAULT_WEEK,
   emptyWeek,
   groupWeek,
+  openingSpeech,
+  openingSummary,
   practiceHours,
+  storedPracticeHours,
   sameWeek,
   validateWeek,
   weekFromList,
@@ -12,7 +15,7 @@ import {
   weekToList,
   weekdaysWeek,
 } from "./opening-hours";
-import { websiteOpeningHours, websiteSettings } from "./website";
+import { openingHours, websiteOpeningHours, websiteSettings } from "./website";
 
 const h = (weekday: number, from: string, to: string) => ({ weekday, from, to });
 
@@ -95,11 +98,35 @@ describe("Website-Zeiten: Standard = Praxis-Öffnungszeiten", () => {
     expect(websiteOpeningHours(s)).toEqual([h(2, "08:00", "12:00"), h(2, "13:00", "17:00")]);
     expect(websiteOpeningHours({ opening: { from: "09:00", to: "17:00" } })).toHaveLength(5);
   });
-  it("Altdaten mit eigenen Website-Zeiten bleiben abweichend; Schalter entscheidet", () => {
+  it("Praxis ohne gepflegte Zeiten: Website zeigt KEINE Zeiten (intern Mo–Fr 08–18)", () => {
+    expect(storedPracticeHours({})).toBeNull();
+    expect(websiteOpeningHours({})).toEqual([]);
+    expect(websiteOpeningHours({ website: { enabled: true } })).toEqual([]);
+    expect(practiceHours({})).toEqual(DEFAULT_WEEK);
+  });
+  it("Altdaten: Website-Zeiten (Bootstrap) sind die Praxis-Öffnungszeiten, nicht opening auf Mo–Fr gespreizt", () => {
+    const s = { opening: { from: "08:00", to: "17:00" }, openingHours: [h(2, "08:00", "17:00"), h(3, "08:00", "17:00")] };
+    expect(websiteSettings(s).customHours).toBe(false);
+    expect(weekToList(practiceHours(s))).toEqual(s.openingHours);
+    expect(websiteOpeningHours(s)).toEqual(s.openingHours);
+  });
+  it("eigene Website-Zeiten mit Schalter; leere eigene Woche = alle Tage geschlossen", () => {
     const own = [h(3, "08:00", "17:00")];
-    expect(websiteSettings({ openingHours: own }).customHours).toBe(true);
-    expect(websiteOpeningHours({ openingHours: own, practiceHours: [h(1, "08:00", "18:00")] })).toEqual(own);
+    expect(websiteOpeningHours({ openingHours: own, practiceHours: [h(1, "08:00", "18:00")], website: { customHours: true } })).toEqual(own);
     expect(websiteOpeningHours({ openingHours: own, practiceHours: [h(1, "08:00", "18:00")], website: { customHours: false } })).toEqual([h(1, "08:00", "18:00")]);
-    expect(websiteOpeningHours({ practiceHours: [], website: { customHours: true } })).toEqual([]);
+    expect(websiteOpeningHours({ openingHours: [], practiceHours: [h(1, "08:00", "18:00")], website: { customHours: true } })).toEqual([]);
+  });
+  it("Altzeiten außerhalb des 5-Minuten-Rasters werden eingerastet (von ab-, bis aufgerundet)", () => {
+    const s = { openingHours: [h(1, "08:03", "12:01"), h(2, "07:59", "23:58")] };
+    expect(openingHours(s)).toEqual([h(1, "08:00", "12:05"), h(2, "07:55", "23:55")]);
+    expect(weekToList(practiceHours(s))).toEqual([h(1, "08:00", "12:05"), h(2, "07:55", "23:55")]);
+    expect(validateWeek(weekToList(practiceHours(s))).error).toBeUndefined();
+    expect(practiceHours({ opening: { from: "07:32", to: "16:58" } })[1]).toEqual([{ start: "07:30", end: "17:00" }]);
+  });
+  it("Telefon-Ansage ohne Zeiten erfindet nichts", () => {
+    expect(openingSpeech({})).toBe("Feste Öffnungszeiten sind derzeit nicht hinterlegt.");
+    expect(openingSpeech({ practiceHours: [] })).toBe("Feste Öffnungszeiten sind derzeit nicht hinterlegt.");
+    expect(openingSpeech({ practiceHours: [h(1, "08:00", "12:00")] })).toBe("Montag 08:00 bis 12:00 Uhr; Dienstag bis Sonntag geschlossen; an gesetzlichen Feiertagen geschlossen");
+    expect(openingSummary({})).toBeNull();
   });
 });

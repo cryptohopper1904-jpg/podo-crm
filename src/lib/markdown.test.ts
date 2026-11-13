@@ -35,6 +35,11 @@ describe("Markdown (Rechtstexte)", () => {
     expect(blocks[4]).toMatchObject({ head: [[{ value: "A" }], [{ value: "B" }]], rows: [[[{ value: "1" }], [{ value: "2" }]]] });
   });
 
+  it("fester Anker per {#id}", () => {
+    const blocks = parseMarkdown("## 6a. Vertrieb / Kontaktaufnahme {#vertrieb}");
+    expect(blocks[0]).toMatchObject({ id: "vertrieb", children: [{ value: "6a. Vertrieb / Kontaktaufnahme" }] });
+  });
+
   it("vergibt eindeutige Anker", () => {
     const blocks = parseMarkdown("## Löschung\n\n## Löschung");
     expect(blocks.map((b) => (b.type === "heading" ? b.id : ""))).toEqual(["loeschung", "loeschung-2"]);
