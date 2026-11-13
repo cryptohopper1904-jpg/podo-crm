@@ -13,6 +13,7 @@ import { ROLE_LABELS } from "@/lib/auth/permissions";
 import { navAllowed, navBadges } from "@/server/nav";
 import { currentViewLevel } from "@/server/view-level";
 import { OrgSwitcher } from "@/components/org-switcher";
+import { PatientSearch } from "@/components/patient-search";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
@@ -105,16 +106,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           <Link href="/heute" className="lg:hidden">
             <Logo />
           </Link>
-          <form action="/kunden" className="ml-auto hidden max-w-sm flex-1 md:block">
-            <label className="sr-only" htmlFor="q">Suche</label>
-            <input
-              id="q"
-              name="q"
-              placeholder="Patient suchen …"
-              className="h-11 w-full rounded-xl border border-border bg-bg px-3.5 text-[15px] placeholder:text-muted focus:border-primary focus:outline-none"
-            />
-          </form>
-          <div className="ml-auto flex items-center gap-2 md:ml-0">
+          {auth.can("patients.read") ? <PatientSearch /> : null}
+          <div className={`flex items-center gap-2 ${auth.can("patients.read") ? "" : "ml-auto"}`}>
             <OrgSwitcher model={switcher} />
             <NewsLink />
             <ThemeToggle />

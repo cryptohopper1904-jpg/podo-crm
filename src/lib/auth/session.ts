@@ -13,6 +13,7 @@ import { can, type Permission, type Role } from "./permissions";
 import { clientIpFrom } from "./client-ip";
 import { acceptedSessionCookieNames, readSessionToken, sessionCookieName, sessionCookieOptions } from "./cookie";
 import { createSupportViewLog } from "./support-view";
+import { isMutatingRequest } from "./read-requests";
 import { TWO_FACTOR_SETUP_PATH, twoFactorPending } from "./two-factor";
 
 /** Name des Sitzungs-Cookies in dieser Umgebung (Produktion: __Host-podo_session), siehe ./cookie.ts */
@@ -162,7 +163,7 @@ export type AuthContext = {
   readOnly: boolean;
   /** gesetzt, wenn ein Plattform-Admin per Support-Freigabe (Break-Glass) in der Praxis ist */
   support: SupportContext | null;
-  /** aktuelle Anfrage ist schreibend (alles außer GET/HEAD) */
+  /** aktuelle Anfrage ist schreibend (alles außer GET/HEAD und den Lese-POSTs in ./read-requests.ts) */
   mutating: boolean;
   role: Role;
   can: (p: Permission) => boolean;
@@ -175,8 +176,9 @@ export type AuthContext = {
 async function requestInfo() {
   try {
     const h = await headers();
-    const method = h.get("x-podo-method")?.toUpperCase() ?? null;
-    return { mutating: method !== "GET" && method !== "HEAD", path: h.get("x-podo-path")?.slice(0, 300) ?? null };
+    const path = h.get("x-podo-path")?.slice(0, 300) ?? null;
+    // GET/HEAD und ausdrücklich gelistete Lese-POSTs (./read-requests.ts) sind nicht schreibend
+    return { mutating: isMutatingRequest(h.get("x-podo-method"), path), path };
   } catch {
     return { mutating: true, path: null };
   }

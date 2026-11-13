@@ -313,7 +313,14 @@
     {
       "idx": 44,
       "version": "7",
-      "when": 1794606221108,
+      "when": 1794606140751,
+      "tag": "0044_patientensuche_trgm",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794606490840,
       "tag": "0046_oeffnungszeiten_tage",
       "breakpoints": true
     }
