@@ -25,6 +25,27 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-l",
+    date: "2026-11-13",
+    title: "Kalender: vollständige Ansicht und freie Termine finden",
+    items: [
+      { tag: "neu", text: "Im Kalender können Sie zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Ihre Wahl wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
+      { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
+      { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
+    ],
+  },
+  {
+    id: "2026-11-13-k",
+    date: "2026-11-13",
+    title: "Ansicht: Einfach, Kompakt oder Komplex",
+    items: [
+      { tag: "neu", text: "Unter Einstellungen → Ansicht (oder direkt unten links in der Navigation) wählen Sie, wie viel Sie sehen: „Einfach“ zeigt nur Heute, Kalender, Patienten, Behandlung, Rechnungen und Kasse, „Kompakt“ zusätzlich Posteingang, Verordnungen, Touren, Gutscheine und Auswertung, „Komplex“ alles wie bisher. Die Einstellung gilt nur für Ihr Konto.", href: "/einstellungen/ansicht" },
+      { tag: "neu", text: "Ausgeblendete Bereiche bleiben erreichbar: unten in der Navigation unter „Mehr“ oder über „Alle Bereiche“ – auf dem Handy über „Mehr“ in der unteren Leiste.", href: "/bereiche" },
+      { tag: "verbessert", text: "Die Startseite „Heute“ passt sich an: „Einfach“ zeigt die heutigen Termine, einen Schnellzugriff und offene Aufgaben, „Kompakt“ verzichtet auf die Karte „Schnittstellen“." },
+    ],
+  },
+  {
     id: "2026-11-13-j",
     date: "2026-11-13",
     title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",

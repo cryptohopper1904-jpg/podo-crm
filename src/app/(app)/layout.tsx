@@ -1,19 +1,17 @@
 import Link from "next/link";
 import { LogOut, Sparkles } from "lucide-react";
-import { and, count, eq } from "drizzle-orm";
 import { AccessBanner } from "@/components/access-banner";
 import { cookies } from "next/headers";
-import { BottomNav, type NavKey } from "@/components/app-nav";
+import { BottomNav } from "@/components/app-nav";
 import { Sidebar } from "@/components/sidebar";
 import { NAV_COOKIE } from "@/lib/nav";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LoginChangelog } from "@/components/login-changelog";
-import { withOrg } from "@/db";
-import { messages } from "@/db/schema";
 import { getAuth, getSession, requireAuth } from "@/lib/auth/session";
 import { ROLE_LABELS } from "@/lib/auth/permissions";
-import { removeHiddenNav } from "@/lib/features";
+import { navAllowed, navBadges } from "@/server/nav";
+import { currentViewLevel } from "@/server/view-level";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
@@ -76,20 +74,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     }
   }
   const auth = await requireAuth();
-  const allowed: NavKey[] = ["heute"];
-  if (auth.can("appointments.read")) allowed.push("kalender", "touren");
-  if (auth.can("patients.read")) allowed.push("kunden", "verordnungen", "pflegeheime");
-  if (auth.can("medical.write")) allowed.push("doku");
-  if (auth.can("messages.read")) allowed.push("posteingang", "telefon", "bewertungen");
-  if (auth.can("invoices.read")) allowed.push("rechnungen", "gutscheine");
-  if (auth.can("cash.read")) allowed.push("kasse");
-  if (auth.can("medical.read") || auth.can("patients.write")) allowed.push("hygiene");
-  if (auth.role !== "accountant") allowed.push("team");
-  allowed.push("news");
-  if (auth.can("finance.read")) allowed.push("auswertung");
-  if (auth.can("settings.manage")) allowed.push("einstellungen");
-  if (auth.user.isPlatformAdmin && auth.user.totpEnabled && !auth.support) allowed.push("plattform");
-  removeHiddenNav(auth.organization, allowed); // Kassen-Themen bei „nur Privat-/Selbstzahler“ (src/lib/features.ts)
+  const allowed = navAllowed(auth); // Rechte + Praxis-Schalter (src/server/nav.ts)
 
   const switcher = await loadSwitcherModel({
     userId: auth.user.id,
@@ -99,16 +84,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     support: !!auth.support,
   });
 
-  let unread = 0;
-  if (auth.can("messages.read")) {
-    const [r] = await withOrg(auth.organization.id, (tx) =>
-      tx
-        .select({ n: count() })
-        .from(messages)
-        .where(and(eq(messages.organizationId, auth.organization.id), eq(messages.status, "new"))),
-    );
-    unread = r?.n ?? 0;
-  }
+  const badges = await navBadges(auth);
+  const level = await currentViewLevel(); // persönliche Ansicht (src/lib/view-level.ts)
 
   const navCollapsed = (await cookies()).get(NAV_COOKIE)?.value === "collapsed";
 
@@ -117,9 +94,11 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       <Sidebar
         initialCollapsed={navCollapsed}
         allowed={allowed}
-        badges={{ posteingang: unread }}
+        badges={badges}
         userName={auth.user.name}
         userMeta={`${ROLE_LABELS[auth.role]} · ${auth.organization.name}`}
+        level={level}
+        canChangeView={!auth.support}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="no-print sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur lg:px-8">
@@ -154,7 +133,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         <AccessBanner auth={auth} />
         <main className="flex-1 px-4 pb-28 pt-6 lg:px-8 lg:pb-10">{children}</main>
       </div>
-      <BottomNav allowed={allowed} />
+      <BottomNav allowed={allowed} level={level} badges={badges} />
       {auth.support ? null : <LoginChangelog />}
     </div>
   );
