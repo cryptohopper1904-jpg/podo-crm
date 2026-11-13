@@ -17,7 +17,7 @@ import { PDFDocument, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
+import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
@@ -40,6 +40,7 @@ import {
 import { type InvoiceBookingLink } from "./practice-documents";
 import {
   A4,
+  CONT_TOP,
   CONTENT_WIDTH,
   drawAddressBlock,
   drawLogoHead,
@@ -53,6 +54,7 @@ import {
   makeSafe,
   makeWriter,
   ML,
+  PAGE_BODY,
   RIGHT,
   TOP,
   type PdfImage,
@@ -134,9 +136,10 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   let y = TOP;
   const writer = makeWriter(() => page, fonts, safe);
   const { text, wrap, line, box } = writer;
+  // Folgeseiten beginnen unter der Kopfzeile (Praxisname, Beleg, „Seite X von Y“ – drawFooters)
   const newPage = () => {
     page = doc.addPage(A4);
-    y = TOP;
+    y = CONT_TOP;
   };
   const ensure = (h: number) => {
     if (y - h < FOOTER_TOP) {
@@ -145,6 +148,11 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
     return false;
   };
+  /**
+   * Block der Höhe h zusammenhalten (ggf. komplett auf die nächste Seite), sofern er auf eine Seite passt.
+   * Höhere Blöcke beginnen sofort und werden zeilenweise umbrochen (jede Zeile prüft selbst mit ensure).
+   */
+  const keep = (h: number) => (h <= PAGE_BODY ? ensure(h) : false);
 
   // ── Kopf: Logo bzw. Praxisname ──
   y = drawLogoHead(writer, fonts, y, { full: fullLogo, compact: compactLogo, receiptLike, orgName: o.name });
@@ -205,22 +213,49 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     text("Summe", cx.total + colW.total / 2, ty, { ...s, align: "center" });
     y -= h;
   };
+  const ROW_LINE = 10.5;
+  const ROW_PAD = 3.5;
+  const HEAD_H = 14;
+  const rowHeight = (n: number) => n * ROW_LINE + ROW_PAD;
+  const rowLinesOf = (l: { description: string }) => wrap(l.description, descW - 8, 8.5);
+  // Tabellenkopf nicht allein am Seitenende: Kopf und erste Zeile (höchstens 3 Textzeilen davon) zusammen
+  ensure(HEAD_H + (lines[0] ? rowHeight(Math.min(rowLinesOf(lines[0]).length, 3)) : 0));
   tableHeader();
   lines.forEach((l, i) => {
-    const d = wrap(l.description, descW - 8, 8.5);
-    const h = d.length * 10.5 + 3.5;
-    if (ensure(h + 18)) tableHeader();
-    box(ML, y, width, h);
-    rowLines(y, h);
-    const ty = y - 9.5;
-    text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
-    text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
-    d.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * 10.5, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
-    text(Number(l.factor).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), cx.factor + colW.factor - 4, ty, { size: 8.5, align: "right" });
-    text(money(l.unitPriceCents), cx.unit + colW.unit - 4, ty, { size: 8.5, align: "right" });
-    if (showVat) text(`${l.vatRate} %`, cx.vat + colW.vat - 4, ty, { size: 8.5, align: "right" });
-    text(money(l.totalCents), RIGHT - 4, ty, { size: 8.5, align: "right" });
-    y -= h;
+    const d = rowLinesOf(l);
+    // Zeilen werden nicht getrennt, sofern sie auf eine Seite passen; auf jeder Folgeseite wiederholter Tabellenkopf.
+    // Höhere Positionen beginnen sofort und brechen innerhalb der Beschreibung um (kein Text geht verloren).
+    if (rowHeight(d.length) <= PAGE_BODY - HEAD_H) {
+      if (ensure(rowHeight(d.length))) tableHeader();
+    } else if (ensure(rowHeight(1))) tableHeader();
+    let rest = d;
+    let first = true;
+    while (rest.length) {
+      const fit = Math.max(1, Math.floor((y - FOOTER_TOP - ROW_PAD) / ROW_LINE));
+      const part = rest.slice(0, fit);
+      rest = rest.slice(fit);
+      const h = rowHeight(part.length);
+      box(ML, y, width, h);
+      rowLines(y, h);
+      const ty = y - 9.5;
+      if (first) {
+        text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
+        text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
+      }
+      part.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * ROW_LINE, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
+      if (first) {
+        text(Number(l.factor).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }), cx.factor + colW.factor - 4, ty, { size: 8.5, align: "right" });
+        text(money(l.unitPriceCents), cx.unit + colW.unit - 4, ty, { size: 8.5, align: "right" });
+        if (showVat) text(`${l.vatRate} %`, cx.vat + colW.vat - 4, ty, { size: 8.5, align: "right" });
+        text(money(l.totalCents), RIGHT - 4, ty, { size: 8.5, align: "right" });
+      }
+      y -= h;
+      first = false;
+      if (rest.length) {
+        newPage();
+        tableHeader();
+      }
+    }
   });
 
   // ── Summen ──
@@ -236,10 +271,12 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   sumRows.push({ l: "Gesamt", v: money(inv.totalCents), strong: true });
   for (const r of paymentSummary(inv, data.credited ?? [], dateDe, totals.groups)) sumRows.push({ l: r.label, v: money(r.cents) });
   if (inv.status !== "cancelled" && open !== 0 && (inv.paidCents !== 0 || open < 0)) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
-  ensure(sumRows.length * 14 + 4);
+  // Summenblock mit USt-Ausweis und Anrechnungen nicht trennen
+  keep(sumRows.length * 14 + 4);
   const sumLabelX = cx.unit;
   for (const r of sumRows) {
     const h = 14;
+    ensure(h);
     if (r.strong) {
       box(sumLabelX, y, RIGHT - sumLabelX, h);
       line(cx.total, y, cx.total, y - h);
@@ -257,23 +294,28 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     const colDate = ML + 120;
     const colAmount = ML + 300;
     const colVat = ML + 390;
-    ensure(34 + 12);
+    const colHead = () => {
+      text("Nummer", colNo, y, { size: 8 });
+      text("Datum", colDate, y, { size: 8 });
+      text("Betrag", colAmount, y, { size: 8, align: "right" });
+      text("darin USt", colVat, y, { size: 8, align: "right" });
+      y -= 11;
+    };
+    // ganzer Block (Überschrift, Quittungen, Summe, Restbetrag) auf einer Seite, sofern er passt
+    keep(12 + 11 + rb.rows.length * 12 + 24 + 8);
+    ensure(12 + 11 + 12);
     text("Bereits bezahlt (Quittungen)", ML, y, { size: 8.5, font: bold });
     y -= 12;
-    text("Nummer", colNo, y, { size: 8 });
-    text("Datum", colDate, y, { size: 8 });
-    text("Betrag", colAmount, y, { size: 8, align: "right" });
-    text("darin USt", colVat, y, { size: 8, align: "right" });
-    y -= 11;
-    for (const r of rb.rows) {
-      ensure(12);
+    colHead();
+    for (const [ri, r] of rb.rows.entries()) {
+      // nur bei sehr vielen Quittungen: Umbruch mit wiederholtem Spaltenkopf, Summe nicht allein
+      if (ensure(ri === rb.rows.length - 1 ? 12 + 24 + 8 : 12)) colHead();
       text(r.number, colNo, y, { size: 8.5 });
       text(dateDe(r.issuedAt), colDate, y, { size: 8.5 });
       text(money(r.totalCents), colAmount, y, { size: 8.5, align: "right" });
       text(money(r.vatCents), colVat, y, { size: 8.5, align: "right" });
       y -= 12;
     }
-    ensure(26);
     text(`Summe (${rb.rows.length} Quittung${rb.rows.length === 1 ? "" : "en"})`, colNo, y, { size: 8.5, font: bold });
     text(money(rb.totalCents), colAmount, y, { size: 8.5, font: bold, align: "right" });
     text(money(rb.vatCents), colVat, y, { size: 8.5, font: bold, align: "right" });
@@ -285,7 +327,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
   // ── Zahlungen ──
   if (data.payments.length) {
-    ensure(20 + data.payments.length * 12);
+    keep(12 + data.payments.length * 12 + 8);
+    ensure(24);
     text("Zahlungen", ML, y, { size: 8.5, font: bold });
     y -= 12;
     for (const pay of data.payments) {
@@ -309,11 +352,16 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   if (pub) notes.push({ t: pub });
   for (const n of paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro })) notes.push({ t: n });
   if (inv.kind !== "credit_note" && inv.status !== "cancelled") notes.push({ t: "Vielen Dank für Ihr Vertrauen" });
+  // Hinweise (Steuer-/Zahlungshinweise) als Ganzes halten; passt das nicht auf eine Seite, jeden Absatz für sich
+  const thanks = (i: number) => i === notes.length - 1 && notes[i].t.startsWith("Vielen Dank");
+  keep(notes.reduce((h, n, i) => h + wrap(n.t, width, 10).length * 13 + 1 + (thanks(i) ? 10 : 0), 0) + 1);
   for (const [i, n] of notes.entries()) {
     const wl = wrap(n.t, width, 10);
-    if (i === notes.length - 1 && n.t.startsWith("Vielen Dank")) y -= 10;
-    ensure(wl.length * 13 + 2);
+    if (thanks(i)) y -= 10;
+    keep(wl.length * 13 + 2);
     for (const l of wl) {
+      // nur bei Absätzen über eine Seite wirksam: zeilenweise umbrechen statt in die Fußzeile zu schreiben
+      ensure(13);
       text(l, ML, y, { size: 10, font: n.strong ? bold : regular });
       y -= 13;
     }
@@ -335,7 +383,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   }
 
   // ── Fußzeile (jede Seite) ──
-  drawFooters(doc, fonts, safe, o);
+  const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} (Entwurf)`);
 
   return doc.save();
 }
