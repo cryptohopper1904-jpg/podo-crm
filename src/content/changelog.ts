@@ -25,6 +25,33 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-q",
+    date: "2026-11-13",
+    title: "Vertrieb: nächtliche Praxissuche",
+    audience: "platform",
+    items: [
+      { tag: "neu", text: "Optional jede Nacht: Suche nach Podologie-Praxen im wachsenden Umkreis (öffentliche Kartendaten, robots.txt beachtet). Übernommen werden nur Praxisname und öffentliche Geschäfts-E-Mail – keine Ansprechpersonen. Standardmäßig aus.", href: "/plattform/vertrieb/einstellungen" },
+    ],
+  },
+  {
+    id: "2026-11-13-p",
+    date: "2026-11-13",
+    title: "Kalender: Anzeige nach Wunsch",
+    items: [
+      { tag: "neu", text: "Im Kalender unter „Anzeige“ ein- und ausschalten: Feiertage, Schulferien (alle Bundesländer), Abwesenheiten, abgesagte Termine, Wochenende, Arbeitszeiten, Kalenderwoche und Zeitachse. Ihre Einstellung wird gemerkt.", href: "/kalender" },
+      { tag: "verbessert", text: "Ausgeblendete Wochenend-Termine werden mit Hinweis angezeigt, damit nichts übersehen wird. Sonntag erscheint automatisch, wenn dort Termine liegen." },
+    ],
+  },
+  {
+    id: "2026-11-13-o",
+    date: "2026-11-13",
+    title: "Mahnwesen",
+    items: [
+      { tag: "neu", text: "Offene Rechnungen im Blick: Zahlungserinnerung, 1. und 2. Mahnung als PDF oder per E-Mail. Die nächste Stufe ist erst möglich, wenn die vorige verschickt und ihre Frist abgelaufen ist. Mahngebühren sind standardmäßig 0 €.", href: "/rechnungen/mahnungen" },
+      { tag: "neu", text: "Texte, Fristen und Gebühren der Mahnstufen lassen sich unter Einstellungen → Praxis anpassen.", href: "/einstellungen/praxis" },
+    ],
+  },
+  {
     id: "2026-11-13-n",
     date: "2026-11-13",
     title: "Empfang belegt keinen bezahlten Platz mehr",
