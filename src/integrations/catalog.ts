@@ -4,7 +4,10 @@ import type { ProviderId } from "./types";
 
 export interface ProviderField {
   name: string;
+  /** einzeilige Beschriftung (lange Erklärungen in `hint`) */
   label: string;
+  /** Zusatz unter dem Feld */
+  hint?: string;
   placeholder?: string;
 }
 
@@ -39,7 +42,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     privacy: "AVV/Zahlungsdienstvertrag mit SumUp. Als Beschreibung nur Rechnungsnummer, keine Leistungsdetails.",
     docs: "https://developer.sumup.com/api",
     secretFields: [
-      { name: "apiKey", label: "API-Schlüssel oder Access-Token" },
+      { name: "apiKey", label: "API-Schlüssel", hint: "oder Access-Token" },
       { name: "webhookSecret", label: "Webhook-Geheimnis" },
     ],
     configFields: [
@@ -67,7 +70,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     configFields: [
       { name: "accountId", label: "Konto-ID" },
       { name: "locationId", label: "Standort-ID" },
-      { name: "placeId", label: "Place-ID (für den Bewertungslink)" },
+      { name: "placeId", label: "Place-ID", hint: "für den Bewertungslink" },
     ],
   },
   {
@@ -78,8 +81,8 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     secretFields: [{ name: "password", label: "Passwort / App-Passwort" }],
     configFields: [
       { name: "smtpHost", label: "SMTP-Server" },
-      { name: "smtpPort", label: "SMTP-Port (587 STARTTLS / 465 TLS)", placeholder: "587" },
-      { name: "fromAddress", label: "Absenderadresse (sonst Benutzername)", placeholder: "praxis@example.de" },
+      { name: "smtpPort", label: "SMTP-Port", hint: "587 STARTTLS / 465 TLS", placeholder: "587" },
+      { name: "fromAddress", label: "Absenderadresse", hint: "leer = Benutzername", placeholder: "praxis@example.de" },
       { name: "imapHost", label: "IMAP-Server" },
       { name: "user", label: "Benutzername" },
     ],
@@ -96,10 +99,10 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     secretFields: [{ name: "password", label: "Passwort (KIM-Konto)" }],
     configFields: [
       { name: "address", label: "KIM-Adresse der Praxis", placeholder: "praxis@anbieter.kim.telematik" },
-      { name: "user", label: "Benutzername (Format laut KIM-Anbieter)" },
-      { name: "pop3Host", label: "POP3S-Host (Clientmodul/Gateway)" },
+      { name: "user", label: "Benutzername", hint: "Format laut KIM-Anbieter" },
+      { name: "pop3Host", label: "POP3S-Host", hint: "Clientmodul/Gateway" },
       { name: "pop3Port", label: "POP3S-Port", placeholder: "995" },
-      { name: "smtpHost", label: "SMTPS-Host (Clientmodul/Gateway)" },
+      { name: "smtpHost", label: "SMTPS-Host", hint: "Clientmodul/Gateway" },
       { name: "smtpPort", label: "SMTPS-Port", placeholder: "465" },
       { name: "deleteAfterFetch", label: "Nach Abruf löschen (ja/nein)", placeholder: "nein" },
     ],
@@ -113,7 +116,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     docs: "https://developers.facebook.com/docs/whatsapp/cloud-api",
     secretFields: [
       { name: "accessToken", label: "Access-Token" },
-      { name: "appSecret", label: "App-Secret (Webhook-Signatur)" },
+      { name: "appSecret", label: "App-Secret", hint: "für die Webhook-Signatur" },
     ],
     configFields: [
       { name: "phoneNumberId", label: "Phone-Number-ID" },
@@ -135,8 +138,8 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     description: "Anrufe annehmen, freie Termine nennen, Terminwünsche, Absagewünsche und Rückrufbitten in den Posteingang (Vapi oder Retell AI). Einrichtung mit Assistent unter „Telefon“.",
     privacy: "KI-Hinweis zu Gesprächsbeginn (AI Act Art. 50), Transkript nur mit Ansage und Einstellung, EU-Verarbeitung und AVV.",
     secretFields: [
-      { name: "vapiSecret", label: "Vapi: Server-URL-Secret (optional – sonst gilt das Webhook-Token)" },
-      { name: "retellApiKey", label: "Retell: API-Schlüssel (prüft x-retell-signature)" },
+      { name: "vapiSecret", label: "Vapi: Server-URL-Secret", hint: "optional – sonst gilt das Webhook-Token" },
+      { name: "retellApiKey", label: "Retell: API-Schlüssel", hint: "prüft x-retell-signature" },
     ],
     configFields: [{ name: "vendor", label: "Anbieter (vapi oder retell)", placeholder: "vapi" }],
   },

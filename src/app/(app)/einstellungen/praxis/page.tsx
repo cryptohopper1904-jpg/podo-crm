@@ -60,7 +60,7 @@ export default async function PracticeSettings() {
           <Field label="Ort"><Input name="city" defaultValue={o.city ?? ""} /></Field>
           <Field label="Telefon"><Input name="phone" defaultValue={o.phone ?? ""} /></Field>
           <Field label="E-Mail"><Input name="email" type="email" defaultValue={o.email ?? ""} /></Field>
-          <Field label="Materialkosten je Behandlung (€)"><Input name="materialCost" defaultValue={((s.materialCostCents ?? 350) / 100).toFixed(2).replace(".", ",")} /></Field>
+          <Field label="Materialkosten" hint="je Behandlung"><Input suffix="€" name="materialCost" defaultValue={((s.materialCostCents ?? 350) / 100).toFixed(2).replace(".", ",")} /></Field>
           <Field label="Öffnung von"><Input type="time" name="openingFrom" defaultValue={s.opening?.from ?? "08:00"} /></Field>
           <Field label="Öffnung bis"><Input type="time" name="openingTo" defaultValue={s.opening?.to ?? "18:00"} /></Field>
         </div>
@@ -74,7 +74,8 @@ export default async function PracticeSettings() {
         {LOGO_KINDS.map((kind) => {
           const l = logos[kind];
           return (
-            <div key={kind} className="flex flex-col gap-3 rounded-xl border border-border p-4">
+            // Subgrid: Beschreibung · Vorschau · Upload teilen sich die Zeilen beider Spalten → Upload-Felder auf einer Linie
+            <div key={kind} className="flex flex-col gap-3 rounded-xl border border-border p-4 lg:row-span-3 lg:grid lg:grid-rows-subgrid">
               <p className="text-sm text-muted">{LOGO_HINT[kind]}</p>
               {l ? (
                 <div className="flex items-center gap-4">
@@ -88,7 +89,9 @@ export default async function PracticeSettings() {
                     </form>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="hidden lg:block" />
+              )}
               <LogoUpload kind={kind} label={l ? `${LOGO_LABEL[kind]} ersetzen` : LOGO_LABEL[kind]} />
             </div>
           );

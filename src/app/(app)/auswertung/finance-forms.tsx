@@ -3,7 +3,7 @@
 import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import Link from "next/link";
-import { Button, Checkbox, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
+import { Button, Checkbox, Field, FieldSlot, FormError, FormSuccess, Input, Select } from "@/components/ui";
 import { saveFixedCostAction, saveMaterialCostAction } from "./actions";
 
 const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
@@ -37,9 +37,9 @@ export function FixedCostForm({ cost, today, cancelHref }: { cost?: Cost; today:
         <Field label="Notiz" className="sm:col-span-2 lg:col-span-3">
           <Input name="note" defaultValue={cost?.note ?? ""} />
         </Field>
-        <div className="flex items-end">
+        <FieldSlot spacer="hidden sm:block">
           <Checkbox name="active" defaultChecked={cost?.active ?? true} label="aktiv" />
-        </div>
+        </FieldSlot>
       </div>
       <div className="flex gap-3">
         <Button type="submit" disabled={pending}>{pending ? "Speichern …" : cost ? "Änderung speichern" : "Fixkosten hinzufügen"}</Button>
@@ -53,8 +53,8 @@ export function MaterialCostForm({ cents }: { cents: number }) {
   const [state, action, pending] = useActionState(saveMaterialCostAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="flex flex-wrap items-end gap-3">
-      <Field label="Materialkosten je Behandlung (€)">
-        <Input name="materialCost" inputMode="decimal" defaultValue={euro(cents)} className="w-36" />
+      <Field label="Materialkosten je Behandlung">
+        <span className="block w-36"><Input name="materialCost" suffix="€" inputMode="decimal" defaultValue={euro(cents)} /></span>
       </Field>
       <Button type="submit" variant="secondary" disabled={pending}>Speichern</Button>
       <div className="w-full">

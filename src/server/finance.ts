@@ -81,6 +81,8 @@ export async function financeOverview(auth: AuthContext, year: number) {
         left join services s on s.id = l.service_id
         where l.organization_id = ${org} and i.organization_id = ${org}
           and i.status not in ('draft', 'cancelled') and i.kind not in ('credit_note', 'deposit')
+          -- auf eine Sammelrechnung angerechnete Quittungen: ihre Leistungen stehen dort noch einmal (nicht doppelt zählen)
+          and not (i.kind = 'receipt' and i.collective_invoice_id is not null)
           and i.issued_at >= ${`${year}-01-01`} and i.issued_at < ${`${year + 1}-01-01`}
         group by 1
         order by 3 desc`)

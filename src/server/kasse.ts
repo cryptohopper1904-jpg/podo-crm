@@ -4,12 +4,12 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm"
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
+import { payableVatGroups } from "./partial-vat";
 import {
   cashClosingRegistrations,
   cashClosings,
   cashMovements,
   fiscalTransactions,
-  invoiceLines,
   invoices,
   organizations,
   payments,
@@ -139,13 +139,8 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
     .orderBy(asc(cashMovements.occurredAt), asc(cashMovements.id));
 
   const invoiceIds = [...new Set(payRows.map((r) => r.p.invoiceId))];
-  const vatRows = invoiceIds.length
-    ? await tx
-        .select({ invoiceId: invoiceLines.invoiceId, rate: invoiceLines.vatRate, gross: sql<number>`coalesce(sum(${invoiceLines.totalCents}), 0)::int` })
-        .from(invoiceLines)
-        .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, invoiceIds)))
-        .groupBy(invoiceLines.invoiceId, invoiceLines.vatRate)
-    : [];
+  // Steuersätze je Rechnung; bei angerechneten Quittungen/Anzahlungen nur der Rest (Restzahlung auf die Sammelrechnung)
+  const vatByInvoice = await payableVatGroups(tx, org, invoiceIds);
   const sold = invoiceIds.length
     ? await tx
         .select({ invoiceId: vouchers.soldInvoiceId, code: vouchers.code, purpose: vouchers.purpose })
@@ -170,7 +165,7 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
     amountCents: r.p.amountCents,
     paidAt: r.p.paidAt,
     invoiceNumber: r.invoiceNumber,
-    vatGroups: vatRows.filter((v) => v.invoiceId === r.p.invoiceId).map((v) => ({ rate: v.rate, grossCents: Number(v.gross) })),
+    vatGroups: vatByInvoice.get(r.p.invoiceId) ?? [],
     voucher: r.voucherCode ? { code: r.voucherCode, purpose: r.voucherPurpose ?? "multi" } : null,
     soldVoucher: soldFor(r.p.invoiceId),
     deposit: r.invoiceKind === "deposit" || r.cancelsKind === "deposit",

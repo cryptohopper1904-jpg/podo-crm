@@ -3,7 +3,7 @@
  * Nicht zu verwechseln mit den Gutscheinen der Praxis für Patient:innen (/gutscheine).
  *
  * - Code: 4–32 Zeichen, nur A–Z, 0–9 und „-“ (nicht am Anfang/Ende). Eingaben werden normalisiert
- *   (Groß-/Kleinschreibung egal, Leerzeichen entfernt). Gleiches Format prüft die DB (CHECK, 0036).
+ *   (Groß-/Kleinschreibung egal, Leerzeichen entfernt). Gleiches Format prüft die DB (CHECK, 0040).
  * - Testphase: neues Ende = max(bisheriges Ende, jetzt + Testtage) – ein Code verkürzt nie eine laufende Testphase.
  * - Je Praxis höchstens EIN Code (unique in promo_redemptions), nicht bei laufendem bezahlten Abo.
  * - Fehlermeldung nach außen immer gleich (PROMO_INVALID): kein Hinweis, ob ein Code existiert, abgelaufen oder aufgebraucht ist.

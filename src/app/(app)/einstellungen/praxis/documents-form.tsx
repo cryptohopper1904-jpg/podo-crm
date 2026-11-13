@@ -19,8 +19,8 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
           <Input name="qualification" defaultValue={doc.qualification ?? ""} maxLength={LIMITS.qualification} />
         </Field>
       </div>
-      <Field label="Standard-Zahlungsziel für neue Rechnungen (Tage)" hint="0 = sofort fällig („Zahlbar sofort“). Lässt sich auf jeder Rechnung noch ändern." className="sm:max-w-xs">
-        <Input name="dueDays" type="number" inputMode="numeric" min={0} max={120} defaultValue={doc.dueDays} required />
+      <Field label="Standard-Zahlungsziel" hint="für neue Rechnungen; 0 = sofort fällig („Zahlbar sofort“). Lässt sich auf jeder Rechnung noch ändern." className="sm:max-w-xs">
+        <Input name="dueDays" suffix="Tage" type="number" inputMode="numeric" min={0} max={120} defaultValue={doc.dueDays} required />
       </Field>
       <div className="flex flex-col gap-1">
         <Checkbox

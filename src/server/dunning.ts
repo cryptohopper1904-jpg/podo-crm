@@ -4,7 +4,6 @@ import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { billingContacts, invoiceDunnings, invoices, messages, organizations, patients } from "@/db/schema";
 import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
-import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
@@ -32,7 +31,7 @@ import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { addDaysIso } from "@/lib/invoice-math";
 import { practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { logSync } from "./integrations";
-import { mailMessagingPort } from "./mail";
+import { mailSettingsFor, prepareMail, type PreparedMail } from "./mail";
 import { InvoiceError } from "./invoices";
 import { loadLogos } from "./practice-logos";
 
@@ -321,20 +320,58 @@ export function dunningEmailText(b: { dunning: Pick<DunningRow, "stage" | "body"
 /**
  * Mahnung per E-Mail (PDF-Anhang) an Rechnungsempfänger bzw. Person – nicht mehr, wenn die Rechnung inzwischen
  * bezahlt/storniert ist oder das Schreiben schon einen Versandvermerk hat.
- * Ablauf in EINER Transaktion: Zeile sperren (FOR UPDATE, verhindert Doppelversand), Rechnung FOR SHARE prüfen,
- * Frist ab Versandtag neu setzen, PDF erzeugen, senden, Versandvermerk + Nachricht speichern. Scheitert der Versand,
- * wird alles zurückgerollt. Testmodus: kein Versandvermerk (es wurde nichts versendet).
+ *
+ * 1. VOR der Transaktion: Mahnung/Empfänger lesen, Versandweg + Logo (prepareMail) laden, PDF und Text erzeugen.
+ * 2. Transaktion: Zeile sperren (FOR UPDATE, kein Doppelversand), Rechnung FOR SHARE prüfen, senden (nur Netzwerk –
+ *    keine weitere Pool-Verbindung), Versandvermerk + neue Frist (ab Versandtag) und Nachricht speichern.
+ *    Scheitert der Versand, wird alles zurückgerollt.
+ * 3. Danach: Protokoll (Sync-Protokoll/Audit). Testmodus: kein Versandvermerk (es wurde nichts versendet).
  */
 export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(dunningId).success) throw new InvoiceError("Mahnung nicht gefunden.");
   const today = berlinDateIso();
-  let failed: { invoiceId: string; number: string | null; error: unknown } | null = null;
+
+  // ── 1. Vorbereitung (eigene, kurze Lese-Transaktion) ──
+  const bundle = await withOrg(org, (tx) => loadDunning(tx, org, dunningId));
+  if (!bundle) throw new InvoiceError("Mahnung nicht gefunden.");
+  const inv = bundle.invoice;
+  if (bundle.dunning.sentVia) throw new InvoiceError("Dieses Schreiben ist bereits als versendet vermerkt.");
+  if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Die Rechnung ist inzwischen bezahlt oder storniert – die Mahnung wird nicht mehr versendet.");
+  const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
+  if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
+  if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
+  // Frist ab Versandtag (nie kürzer als im erstellten Schreiben); im Testmodus bleibt alles unverändert.
+  // PDF und Text VOR prepareMail erzeugen: die Drosselung zählt erst, wenn die Nachricht fertig ist.
+  const settings = readDunningSettings((bundle.organization.settings ?? {}) as Record<string, unknown>);
+  const sendPayBy = addDaysIso(today, settings.payDays);
+  const payByFor = (mock: boolean) => (!mock && sendPayBy > bundle.dunning.payBy ? sendPayBy : bundle.dunning.payBy);
+  const prepareLetter = async (mock: boolean) => {
+    const payBy = payByFor(mock);
+    const pdf = await buildDunningPdf(org, bundle, payBy);
+    return { payBy, pdf, ...dunningEmailText({ ...bundle, dunning: { ...bundle.dunning, payBy } }) };
+  };
+  let letter = await prepareLetter((await mailSettingsFor(org)).kind === "mock");
+  const mailCtx = { purpose: "dunning", userId: auth.user.id, entity: "invoice", entityId: inv.id };
+  let mail: PreparedMail;
   try {
-    const r = await withOrg(org, async (tx) => {
+    mail = await prepareMail(org, mailCtx, { branded: true });
+  } catch (e) {
+    // bereits in prepareMail protokolliert
+    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${e instanceof MailSendError || e instanceof MailNotConfiguredError ? e.message : "Details im Synchronisationsprotokoll."}`);
+  }
+  // Versandweg hat sich zwischenzeitlich geändert (Testmodus ↔ echt) → Frist/PDF passend neu erzeugen
+  if (letter.payBy !== payByFor(mail.isMock)) letter = await prepareLetter(mail.isMock);
+  const { payBy, pdf, subject, body } = letter;
+
+  // ── 2. Versand-Transaktion: keine weiteren DB-Verbindungen ──
+  let sendError: Error | null = null;
+  let sent = false;
+  try {
+    await withOrg(org, async (tx) => {
       const [claim] = await tx
-        .select()
+        .select({ sentVia: invoiceDunnings.sentVia })
         .from(invoiceDunnings)
         .where(and(eq(invoiceDunnings.organizationId, org), eq(invoiceDunnings.id, dunningId)))
         .for("update");
@@ -343,31 +380,19 @@ export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
       const [lock] = await tx
         .select({ status: invoices.status })
         .from(invoices)
-        .where(and(eq(invoices.organizationId, org), eq(invoices.id, claim.invoiceId)))
+        .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.id)))
         .for("share");
       if (!lock || (lock.status !== "issued" && lock.status !== "partially_paid"))
         throw new InvoiceError("Die Rechnung ist inzwischen bezahlt oder storniert – die Mahnung wird nicht mehr versendet.");
-      const bundle = (await loadDunning(tx, org, dunningId))!;
-      const inv = bundle.invoice;
-      const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
-      if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
-      if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");
-      const port = await mailMessagingPort(org, { purpose: "dunning", userId: auth.user.id, entity: "invoice", entityId: inv.id });
-      const mock = port.isMock;
-      // Frist ab Versandtag (nie kürzer als im erstellten Schreiben); im Testmodus bleibt alles unverändert
-      const settings = readDunningSettings((bundle.organization.settings ?? {}) as Record<string, unknown>);
-      const sendPayBy = addDaysIso(today, settings.payDays);
-      const payBy = !mock && sendPayBy > claim.payBy ? sendPayBy : claim.payBy;
-      const pdf = await buildDunningPdf(org, bundle, payBy);
-      const { subject, body } = dunningEmailText({ ...bundle, dunning: { ...bundle.dunning, payBy } });
       let externalId: string;
       try {
-        externalId = (await port.send({ to, subject, body, attachments: [{ filename: pdf.filename, contentType: "application/pdf", data: pdf.bytes }] })).externalId;
+        externalId = (await mail.send({ to, subject, text: body, attachments: [{ filename: pdf.filename, contentType: "application/pdf", data: pdf.bytes }] })).messageId;
+        sent = true;
       } catch (e) {
-        failed = { invoiceId: inv.id, number: inv.number, error: e };
+        sendError = e as Error;
         throw e;
       }
-      if (!mock) {
+      if (!mail.isMock) {
         const done = await tx
           .update(invoiceDunnings)
           .set({ sentVia: "email", sentAt: new Date(), sentTo: to, payBy })
@@ -387,17 +412,27 @@ export async function sendDunningEmail(auth: AuthContext, dunningId: string) {
         externalId,
         threadKey: to,
       });
-      return { to, mock, invoiceId: inv.id, number: inv.number, stage: bundle.dunning.stage, payBy };
     });
-    await logSync(org, "email_imap", { direction: "out", ok: true, message: `Mahnung ${r.number}: ${r.mock ? "Testmodus – nicht wirklich versendet" : "versendet"}`, entity: "invoice", entityId: r.invoiceId });
-    await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_send_email", entity: "invoice", entityId: r.invoiceId, meta: { dunningId, stage: r.stage, mock: r.mock, payBy: r.payBy } });
-    return { to: r.to, mock: r.mock, invoiceId: r.invoiceId };
   } catch (e) {
-    if (!failed) throw e;
-    const f = failed as { invoiceId: string; number: string | null; error: unknown };
-    await logSync(org, "email_imap", { direction: "out", ok: false, message: `Mahnung ${f.number}: ${describeError(f.error)}`, entity: "invoice", entityId: f.invoiceId });
-    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${f.error instanceof MailSendError || f.error instanceof MailNotConfiguredError ? f.error.message : "Details im Synchronisationsprotokoll."}`);
+    if (sent && !sendError) {
+      // Die E-Mail ist raus, aber Vermerk/Nachricht wurden nicht gespeichert (Transaktion danach gescheitert)
+      await mail.succeeded();
+      await logSync(org, "email_imap", { direction: "out", ok: false, message: `Mahnung ${inv.number}: versendet, Vermerk nicht gespeichert`, entity: "invoice", entityId: inv.id });
+      await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_send_email", entity: "invoice", entityId: inv.id, meta: { dunningId, stage: bundle.dunning.stage, mock: mail.isMock, payBy, noteSaved: false } });
+      throw new InvoiceError(
+        "Die E-Mail wurde versendet, der Versandvermerk konnte aber nicht gespeichert werden. Bitte nicht erneut senden – der Vorgang ist im Synchronisationsprotokoll vermerkt.",
+      );
+    }
+    if (!sendError) throw e;
+    // ── 3a. Fehlschlag: genau ein Protokolleintrag (Audit „mail.failed“ + Sync-Protokoll) ──
+    const err = await mail.failed(sendError);
+    throw new InvoiceError(`E-Mail-Versand fehlgeschlagen: ${err instanceof MailSendError || err instanceof MailNotConfiguredError ? err.message : "Details im Synchronisationsprotokoll."}`);
   }
+  // ── 3b. Erfolg ──
+  await mail.succeeded();
+  await logSync(org, "email_imap", { direction: "out", ok: true, message: `Mahnung ${inv.number}: ${mail.isMock ? "Testmodus – nicht wirklich versendet" : "versendet"}`, entity: "invoice", entityId: inv.id });
+  await audit({ organizationId: org, userId: auth.user.id, action: "invoice.dunning_send_email", entity: "invoice", entityId: inv.id, meta: { dunningId, stage: bundle.dunning.stage, mock: mail.isMock, payBy } });
+  return { to, mock: mail.isMock, invoiceId: inv.id };
 }
 
 /** Versandvermerk „per Post“ (Ausdruck verschickt). */

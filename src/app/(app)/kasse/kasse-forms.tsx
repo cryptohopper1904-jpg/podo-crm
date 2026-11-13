@@ -13,10 +13,11 @@ const fmt = (c: number) => eur.format(c / 100);
 export function MovementForm() {
   const [state, action, pending] = useActionState(addMovementAction, undefined);
   return (
-    <form onSubmit={keepValues(action)} className="flex flex-col gap-4">
+    <form onSubmit={keepValues(action)} className="@container flex flex-col gap-4">
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
-      <div className="grid gap-4 sm:grid-cols-3">
+      {/* Breite nach Karte (steht auf dem iPad halb breit neben dem Kassenbestand), nicht nach Bildschirm */}
+      <div className="grid items-start gap-4 @sm:grid-cols-2 @2xl:grid-cols-3">
         <Field label="Art">
           <Select name="kind" defaultValue="payout">
             {MOVEMENT_KINDS.map((k) => (
@@ -27,7 +28,7 @@ export function MovementForm() {
         <Field label="Betrag (€)" hint="immer positiv – Einlage/Entnahme ergibt sich aus der Art">
           <Input name="amount" inputMode="decimal" placeholder="20,00" required />
         </Field>
-        <Field label="Grund / Beleg *" hint="steht unveränderbar im Z-Bon – keine Namen oder Gesundheitsdaten">
+        <Field label="Grund / Beleg *" className="@sm:col-span-2 @2xl:col-span-1" hint="steht unveränderbar im Z-Bon – keine Namen oder Gesundheitsdaten">
           <Input name="reason" maxLength={300} placeholder="z. B. Briefmarken, Beleg Nr. 12" required />
         </Field>
       </div>

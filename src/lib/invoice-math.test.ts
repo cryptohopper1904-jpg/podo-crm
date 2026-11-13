@@ -12,6 +12,7 @@ import {
   negateLines,
   negateTotals,
   percentChange,
+  remainingVatGroups,
   statusFromPayments,
   validatePayments,
   vatPortion,
@@ -133,6 +134,14 @@ describe("Praxisfinanzen", () => {
     expect(breakEvenTreatments(300000, 5000, 350)).toBe(65); // 300000 / 4650 = 64,5
     expect(breakEvenTreatments(300000, 300, 350)).toBeNull();
     expect(breakEvenTreatments(0, 5000)).toBe(0);
+  });
+
+  it("Sammelrechnung: Rest je Steuersatz nach angerechneten Quittungen (Buchhaltungs-Übergabe)", () => {
+    expect(remainingVatGroups([{ rate: 0, grossCents: 11000 }, { rate: 19, grossCents: 1190 }], [{ rate: 0, grossCents: 9000 }, { rate: 19, grossCents: 1190 }])).toEqual([{ rate: 0, grossCents: 2000 }]);
+    expect(remainingVatGroups([{ rate: 0, grossCents: 4500 }], [{ rate: 0, grossCents: 4500 }])).toEqual([]);
+    // Stornorechnung (negativ) minus negierte Quittungen
+    expect(remainingVatGroups([{ rate: 0, grossCents: -11000 }], [{ rate: 0, grossCents: -9000 }])).toEqual([{ rate: 0, grossCents: -2000 }]);
+    expect(remainingVatGroups([{ rate: 0, grossCents: 4500 }], [{ rate: 7, grossCents: 1000 }])).toEqual([{ rate: 0, grossCents: 4500 }, { rate: 7, grossCents: -1000 }]);
   });
 
   it("Datum und Veränderung", () => {

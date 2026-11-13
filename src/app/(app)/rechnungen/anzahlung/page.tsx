@@ -58,6 +58,13 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
               <p className="mt-2 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">Behandlung auf Verordnung – die Leistung selbst wird mit der Krankenkasse abgerechnet.</p>
             ) : null}
           </Card>
+          {src.billedBy.length || src.documents.some((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ? (
+            <Card>
+              <p className="text-sm font-semibold">
+                Für diese Behandlung wurde bereits eine Quittung bzw. Rechnung erstellt (siehe oben) – eine zweite Quittung ist nicht möglich.
+              </p>
+            </Card>
+          ) : (
           <DepositForm
             smallBusiness={smallBusiness}
             tseTestMode={fiscalIsTestMode()}
@@ -72,6 +79,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
               vatRate: src.lines[0]?.vatRate ?? 0,
             }}
           />
+          )}
         </>
       )}
     </div>

@@ -25,6 +25,37 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-t",
+    date: "2026-11-13",
+    title: "Leistungsdatum, aufgeräumte Formulare und neue Einstellungen",
+    items: [
+      { tag: "verbessert", text: "Belege nennen das richtige Leistungsdatum bzw. den Leistungszeitraum – aus Terminen, Behandlungen und übernommenen Quittungen. Es wird beim Ausstellen fest gespeichert und ändert sich später nicht mehr. Sammelrechnungen ohne Termine können einen Zeitraum „von – bis“ angeben.", href: "/rechnungen/neu" },
+      { tag: "verbessert", text: "Rechnungen für Termine in der Zukunft sind nicht mehr möglich (dafür gibt es die Anzahlung). Beim Ausfallhonorar muss das Datum des versäumten Termins angegeben werden." },
+      { tag: "verbessert", text: "Alle Formularfelder sind einheitlich ausgerichtet; lange Beschriftungen werden nicht mehr abgeschnitten." },
+      { tag: "neu", text: "Einstellungen mit neuer Navigation: am großen Bildschirm links nach Gruppen sortiert, auf iPad und Handy als Auswahlliste. Es erscheinen nur Bereiche, die Sie auch öffnen dürfen.", href: "/einstellungen" },
+    ],
+  },
+  {
+    id: "2026-11-13-s",
+    date: "2026-11-13",
+    title: "Quittungen in die Sammelrechnung, Schutz vor Doppelabrechnung",
+    items: [
+      { tag: "neu", text: "Bezahlte Quittungen (Q) können jetzt – wie Anzahlungen (AZ) – in die Sammelrechnung des Jahres übernommen werden. Die Sammelrechnung listet jede Quittung mit Nummer auf, rechnet die bezahlten Beträge an und weist die verbleibende USt. je Steuersatz aus.", href: "/rechnungen/neu" },
+      { tag: "neu", text: "Eine Behandlung oder ein Termin kann nicht mehr doppelt abgerechnet werden: PodoHero zeigt den vorhandenen Beleg mit Link („bereits mit Quittung Q… abgerechnet“). Bei gleicher Leistung am selben Tag ohne Terminbezug gibt es einen Hinweis, den Sie bewusst bestätigen können." },
+      { tag: "verbessert", text: "Gibt es zu einem Termin eine offene Anzahlung, weist PodoHero beim Abrechnen darauf hin und schlägt sie zur Anrechnung vor." },
+    ],
+  },
+  {
+    id: "2026-11-13-r",
+    date: "2026-11-13",
+    title: "Produkte und kleine Warenwirtschaft",
+    items: [
+      { tag: "neu", text: "Neuer Bereich Produkte (z. B. Salben): in der Rechnung auswählbar. In der Behandlung angewendete Produkte werden einer Behandlung zugeordnet und ohne USt. berechnet, Verkauf ohne Behandlung mit regulärem Satz. Bitte die steuerliche Einordnung mit Ihrer Steuerberatung abstimmen.", href: "/produkte" },
+      { tag: "neu", text: "Kleine Warenwirtschaft: Bestand, Wareneingang, Inventur, Nachbestellliste und Lieferanten. Verkäufe buchen den Bestand automatisch ab; beim Storno wählen Sie je Produkt, ob es zurück ins Lager geht.", href: "/produkte/bestand" },
+      { tag: "verbessert", text: "Leistungen wahlweise als Kacheln, Liste oder kompakt anzeigen; nicht mehr benötigte Leistungen archivieren und bei Bedarf wiederherstellen.", href: "/einstellungen/leistungen" },
+    ],
+  },
+  {
     id: "2026-11-13-q",
     date: "2026-11-13",
     title: "Vertrieb: nächtliche Praxissuche",

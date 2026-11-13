@@ -55,7 +55,7 @@ export default async function TripSettingsPage() {
             <Field label="Wegegeld je km (€)" hint="Selbst festlegen (Preisliste/Vereinbarung) – es gibt hier keinen voreingestellten Satz.">
               <Input name="rate" defaultValue={euro(settings.rateCents)} placeholder="z. B. 0,30" inputMode="decimal" />
             </Field>
-            <Field label="Wegegeld berechnen für">
+            <Field label="Wegegeld für">
               <Select name="billing" defaultValue={settings.billing}>
                 <option value="oneway">nur Hinweg</option>
                 <option value="roundtrip">Hin- und Rückweg (× 2)</option>

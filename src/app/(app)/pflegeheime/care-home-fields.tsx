@@ -13,7 +13,7 @@ export function CareHomeFields({ home }: { home?: { id: string; name: string; st
           <Field label="Ort"><Input name="city" defaultValue={home?.city ?? ""} /></Field>
         </div>
         <Field label="Ansprechpartner / Telefon"><Input name="phone" defaultValue={home?.phone ?? ""} placeholder="z. B. Wohnbereichsleitung, 0331 …" /></Field>
-        <Field label="E-Mail (für Sammelrechnungen)"><Input name="email" type="email" defaultValue={home?.email ?? ""} /></Field>
+        <Field label="E-Mail" hint="für Sammelrechnungen"><Input name="email" type="email" defaultValue={home?.email ?? ""} /></Field>
       </div>
     </>
   );

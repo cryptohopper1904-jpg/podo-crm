@@ -19,14 +19,18 @@ import {
   NOTE_DEPOSIT,
   NOTE_NO_SHOW,
   NOTE_SMALL_BUSINESS,
-  NOTE_VAT_EXEMPT,
+  vatExemptNote,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
 import {
+  creditedReceiptsBlock,
+  creditedReceiptsNote,
+  serviceYear,
   formatIban,
   hasExemptNote,
   internalNotes as internalNoteLines,
   invoiceHeading,
+  invoiceService,
   paymentNoteLines,
   invoiceRecipient,
   isReceiptLike,
@@ -75,7 +79,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const internalNotes = internalNoteLines(inv.notes);
   const recipient = invoiceRecipient(p, b);
   const senderLine = senderLineOf(o);
-  const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates, dateDe, data.cancels?.number);
+  const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
   const settings = (o.settings ?? {}) as Record<string, unknown>;
   const docSettings = readDocumentSettings(settings);
   const website = practiceWebsite(settings);
@@ -88,6 +92,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
     ...(booking ? [{ key: "booking", title: booking.label, sub: [], svg: await qrSvg(booking.url) }] : []),
   ];
   const payNotes = paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro });
+  const receiptBlock = creditedReceiptsBlock(data.credited);
   const canWrite = auth.can("invoices.write");
   const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
   const sumupMock = canWrite && isOpen ? isMockMode(await loadConnection(o.id, "sumup")) : false;
@@ -127,6 +132,11 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <Badge tone="warn">noch nicht auf eine Sammelrechnung angerechnet</Badge>
             ) : null
           ) : null}
+          {inv.kind === "receipt" && data.creditedTo && data.creditedTo.status !== "cancelled" ? (
+            <Link href={`/rechnungen/${data.creditedTo.id}`} className="text-sm font-semibold text-primary underline">
+              angerechnet auf Sammelrechnung {data.creditedTo.number}
+            </Link>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <PrintButton />
@@ -145,7 +155,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
           {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
           {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
@@ -288,7 +298,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ))}
           <dt className="border-t border-border-strong pt-1 font-semibold">Gesamtbetrag</dt>
           <dd className="border-t border-border-strong pt-1 text-right font-display text-lg font-bold tabular-nums">{money(inv.totalCents)}</dd>
-          {paymentSummary(inv, data.deposits, dateDe).map((r) => (
+          {paymentSummary(inv, data.credited, dateDe, totals.groups).map((r) => (
             <div key={r.label} className="contents">
               <dt>{r.label}</dt>
               <dd className="text-right tabular-nums">{money(r.cents)}</dd>
@@ -301,6 +311,42 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             </>
           ) : null}
         </dl>
+
+        {receiptBlock.rows.length ? (
+          <section className="mt-6">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Bereits bezahlt (Quittungen)</h3>
+            <table className="mt-1 w-full max-w-xl text-sm">
+              <thead>
+                <tr className="text-left text-muted">
+                  <th className="py-1 font-medium">Nummer</th>
+                  <th className="py-1 font-medium">Datum</th>
+                  <th className="py-1 text-right font-medium">Betrag</th>
+                  <th className="py-1 text-right font-medium">darin USt</th>
+                </tr>
+              </thead>
+              <tbody className="tabular-nums">
+                {receiptBlock.rows.map((r) => (
+                  <tr key={r.number}>
+                    <td className="py-0.5">{r.number}</td>
+                    <td className="py-0.5">{dateDe(r.issuedAt)}</td>
+                    <td className="py-0.5 text-right">{money(r.totalCents)}</td>
+                    <td className="py-0.5 text-right">{money(r.vatCents)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-border font-semibold">
+                  <td className="py-0.5" colSpan={2}>Summe ({receiptBlock.rows.length})</td>
+                  <td className="py-0.5 text-right">{money(receiptBlock.totalCents)}</td>
+                  <td className="py-0.5 text-right">{money(receiptBlock.vatCents)}</td>
+                </tr>
+                <tr>
+                  <td className="py-0.5" colSpan={2}>Offener Restbetrag</td>
+                  <td className="py-0.5 text-right">{money(inv.status === "cancelled" ? 0 : inv.totalCents - inv.paidCents)}</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        ) : null}
 
         {data.payments.length ? (
           <section className="mt-6">
@@ -321,9 +367,10 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
         <section className="mt-6 flex flex-col gap-2 text-[13px]">
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
-          {hasExempt ? <p>{NOTE_VAT_EXEMPT}</p> : null}
+          {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
+          {receiptBlock.rows.length ? <p>{creditedReceiptsNote(serviceYear(data.serviceDates, inv.issuedAt))}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
           {payNotes.map((n) => <p key={n}>{n}</p>)}
           {inv.kind !== "credit_note" && inv.status !== "cancelled" ? <p className="mt-2">Vielen Dank für Ihr Vertrauen</p> : null}

@@ -1,77 +1,78 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronDown } from "lucide-react";
+import { cx, fieldLabelCls } from "@/components/ui";
+import type { SettingsGroup } from "@/lib/settings-tabs";
 
-/** Einstellungs-Navigation in Gruppen – bricht um statt seitlich zu scrollen. */
-export const SETTINGS_GROUPS = [
-  {
-    label: "Praxis",
-    tabs: [
-      ["praxis", "Praxisdaten"],
-      ["team", "Team & Rollen"],
-      ["leistungen", "Leistungen"],
-      ["erinnerungen", "Erinnerungen"],
-      ["fahrten", "Fahrten & Startorte"],
-      ["website", "Website"],
-    ],
-  },
-  {
-    label: "Verbindungen",
-    tabs: [
-      ["schnittstellen", "Schnittstellen"],
-      ["kalender-abo", "Kalender-Abo"],
-      ["ti", "TI & KIM"],
-      ["ocr", "Verordnungs-OCR"],
-      ["import", "Import"],
-    ],
-  },
-  {
-    label: "Sicherheit & Daten",
-    tabs: [
-      ["sicherheit", "Sicherheit"],
-      ["protokoll", "Zugriffsprotokoll"],
-      ["support", "Support-Zugriff"],
-      ["daten", "Daten & Kündigung"],
-    ],
-  },
-  {
-    label: "Vertrag",
-    tabs: [["abo", "Abo & Tarif"]],
-  },
-  {
-    label: "Persönlich",
-    tabs: [["ansicht", "Ansicht"]],
-  },
-] as const;
+const urlOf = (href: string) => `/einstellungen/${href}`;
 
-/** `hidden`: ausgeblendete Tabs (z. B. „ti“/„ocr“ bei Praxen nur für Privat-/Selbstzahler, src/lib/features.ts) */
-export function SettingsNav({ hidden = [] }: { hidden?: readonly string[] } = {}) {
+/**
+ * Einstellungs-Navigation. Desktop (ab xl): linke Leiste mit Gruppenüberschriften, alle Einträge gleich hoch und
+ * linksbündig, aktiver Eintrag mit Akzentbalken + zarter Fläche. iPad/Handy: kompakte Auswahlliste (mit Gruppen).
+ * `groups` kommt bereits gefiltert vom Server (nur Bereiche, die die Rolle öffnen darf – settingsGroupsFor).
+ */
+export function SettingsNav({ groups }: { groups: SettingsGroup[] }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const isActive = (href: string) => pathname === urlOf(href) || pathname.startsWith(urlOf(href) + "/");
+  const current = groups.flatMap((g) => g.tabs).find((t) => isActive(t.href));
+
   return (
-    <nav aria-label="Einstellungen" className="mb-6 grid gap-3 rounded-xl border border-border bg-surface p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-      {SETTINGS_GROUPS.map((g) => (
-        <div key={g.label} className="min-w-0">
-          <div className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted">{g.label}</div>
-          <ul className="flex flex-wrap gap-1">
-            {g.tabs.filter(([href]) => !hidden.includes(href)).map(([href, label]) => {
-              const url = `/einstellungen/${href}`;
-              const active = pathname === url || pathname.startsWith(url + "/");
-              return (
-                <li key={href}>
-                  <Link
-                    href={url}
-                    aria-current={active ? "page" : undefined}
-                    className={`inline-block rounded-lg px-3 py-2 text-sm font-semibold ${active ? "bg-primary text-on-primary" : "hover:bg-surface-2"}`}
-                  >
-                    {label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+    <>
+      {/* iPad/Handy */}
+      <label className="mb-6 flex flex-col gap-1.5 xl:hidden">
+        <span className={fieldLabelCls}>Bereich</span>
+        <span className="relative block">
+          <select
+            value={current?.href ?? ""}
+            onChange={(e) => router.push(urlOf(e.target.value))}
+            className="h-11 w-full appearance-none rounded-xl border border-border bg-surface pr-10 pl-3.5 text-[15px] font-semibold text-text focus:border-primary focus:outline-none"
+          >
+            {current ? null : <option value="">– Bereich wählen –</option>}
+            {groups.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.tabs.map((t) => (
+                  <option key={t.href} value={t.href}>{t.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <ChevronDown size={18} aria-hidden className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-muted" />
+        </span>
+      </label>
+
+      {/* Desktop */}
+      <nav aria-label="Einstellungen" className="hidden xl:sticky xl:top-4 xl:block xl:self-start">
+        <div className="flex flex-col gap-5">
+          {groups.map((g) => (
+            <div key={g.label}>
+              <p className="mb-1 h-5 px-3 text-xs leading-5 font-semibold tracking-wide text-muted uppercase">{g.label}</p>
+              <ul className="flex flex-col gap-0.5">
+                {g.tabs.map((t) => {
+                  const active = isActive(t.href);
+                  return (
+                    <li key={t.href}>
+                      <Link
+                        href={urlOf(t.href)}
+                        aria-current={active ? "page" : undefined}
+                        className={cx(
+                          "relative flex h-10 items-center rounded-lg px-3 text-sm font-medium transition-colors",
+                          active ? "bg-primary-soft font-semibold text-primary-soft-text" : "text-text hover:bg-surface-2",
+                        )}
+                      >
+                        {active ? <span aria-hidden className="absolute inset-y-2 left-0 w-1 rounded-full bg-primary" /> : null}
+                        <span className="truncate">{t.label}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </div>
-      ))}
-    </nav>
+      </nav>
+    </>
   );
 }

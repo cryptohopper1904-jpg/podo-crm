@@ -8,7 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import path from "node:path";
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
 import { appRoutes, read, SRC } from "./app-files";
 
 /** Bewusst öffentlich (ohne Sitzung) – jeweils mit eigener Absicherung. */
@@ -39,6 +39,11 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/funktionen": "Website",
   "/sicherheit": "Website",
   "/unterauftragnehmer": "Website",
+  "/vergleich": "Website: Software-Vergleich (statisch)",
+  "/wechseln": "Website: Wechsel-Ratgeber (statisch)",
+  "/wissen": "Website: Wissensartikel (statisch)",
+  "/robots.txt": "robots.txt (keine Daten)",
+  "/sitemap.xml": "Sitemap der öffentlichen Website (keine Praxisdaten)",
 };
 
 const isIntendedPublic = (p: string) => p === "/" || Object.keys(INTENDED_PUBLIC).some((x) => p === x || p.startsWith(x + "/"));
@@ -78,7 +83,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
@@ -108,5 +113,16 @@ describe("Proxy: Routen-Schutz", () => {
       if (redirectsToLogin(await call(r.path))) blocked.push(`${r.path} (${r.file})`);
     }
     expect(blocked).toEqual([]);
+  });
+
+  it("Matcher: nur public/screenshots/* ist vom Proxy ausgenommen, ähnlich benannte Pfade nicht", () => {
+    // Next wertet den Matcher als Pfad-Regex aus; hier wie dort vollständig verankert
+    const runsProxy = (p: string) => config.matcher.some((m) => new RegExp(`^${m}$`).test(p));
+    expect(runsProxy("/screenshots/a.webp")).toBe(false);
+    expect(runsProxy("/screenshots/og-podohero.jpg")).toBe(false);
+    expect(runsProxy("/screenshotsx")).toBe(true);
+    expect(runsProxy("/screenshots")).toBe(true);
+    expect(runsProxy("/kunden")).toBe(true);
+    expect(runsProxy("/_next/static/chunk.js")).toBe(false);
   });
 });

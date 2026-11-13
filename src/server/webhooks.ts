@@ -2,13 +2,14 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
-import { invoiceLines, invoices, messages, organizations, payments, webhookEvents } from "@/db/schema";
+import { invoices, messages, organizations, payments, webhookEvents } from "@/db/schema";
 import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWhatsAppWebhook } from "@/integrations/webhooks";
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { adapterFor, logSync } from "./integrations";
 import { matchPatientByAddress } from "./messages";
+import { payableVatGroups } from "./partial-vat";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isUuid = (v: string | null | undefined): v is string => !!v && UUID.test(v);
@@ -293,13 +294,10 @@ export async function recordProviderPayment(organizationId: string, input: Provi
     let signed: SignedPayment | null = null;
     let signFailed = false;
     if (needsSignature(input.method)) {
-      const vat = await t
-        .select({ rate: invoiceLines.vatRate, gross: sql<number>`coalesce(sum(${invoiceLines.totalCents}), 0)::int` })
-        .from(invoiceLines)
-        .where(and(eq(invoiceLines.organizationId, organizationId), eq(invoiceLines.invoiceId, inv.id)))
-        .groupBy(invoiceLines.vatRate);
+      // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
+      const vatGroups = (await payableVatGroups(t, organizationId, [inv.id])).get(inv.id) ?? [];
       try {
-        signed = await signRegisterPayment({ reference: inv.number ?? inv.id, method: input.method, amountCents: input.amountCents, vatGroups: vat.map((v) => ({ rate: v.rate, grossCents: Number(v.gross) })) });
+        signed = await signRegisterPayment({ reference: inv.number ?? inv.id, method: input.method, amountCents: input.amountCents, vatGroups });
       } catch (e) {
         if (!(e instanceof FiscalSignError)) throw e;
         signFailed = true;

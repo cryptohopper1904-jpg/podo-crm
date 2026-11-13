@@ -13,7 +13,11 @@ const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/
   // Aktionsseite für Vertriebskampagnen (/aktion/[code]): nur Angebot gültiger Codes, neutral bei ungültigen, gedrosselt
   "/aktion",
   // öffentliche Website/Rechtstexte (src/app/(public)) – u. a. aus der Registrierung verlinkt
-  "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer"];
+  "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer",
+  // Vergleich, Wechsel-Ratgeber und Wissensbereich (statisch, ohne Praxisdaten)
+  "/vergleich", "/wechseln", "/wissen",
+  // SEO-Dateien der Website (src/app/robots.ts, src/app/sitemap.ts)
+  "/robots.txt", "/sitemap.xml"];
 
 /** Methode/Pfad für requireAuth (Nur-Lesen-/Support-Modus, Audit) – überschreibt vom Client gesendete Werte. */
 function next(request: NextRequest) {
@@ -39,5 +43,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|manifest.webmanifest|sw.js).*)"],
+  // screenshots: Bildschirmfotos der Website mit Demodaten (public/screenshots) – statisch, ohne Sitzung
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|screenshots/|manifest.webmanifest|sw.js).*)"],
 };

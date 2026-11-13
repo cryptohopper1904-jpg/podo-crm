@@ -169,3 +169,15 @@ body {
     color: #000;
   }
 }
+
+/*
+ * Formularzeilen (src/components/ui.tsx Field/FieldSlot): Felder belegen im Eltern-Grid zwei Zeilen (Beschriftung ·
+ * Eingabe + Hinweis) als Subgrid – umbrechende Beschriftungen machen die Beschriftungszeile für alle Felder der Reihe
+ * höher, die Eingaben bleiben auf einer Linie. Andere Kinder solcher Grids (Checkbox, Platzhalter) belegen ebenfalls
+ * zwei Zeilen, damit die automatische Platzierung nicht verrutscht. Ohne Spezifität → Utilities (row-span-…) gehen vor.
+ */
+@layer base {
+  :where(:has(> .podo-field)) > :where(:not(.podo-field)) {
+    grid-row: span 2;
+  }
+}

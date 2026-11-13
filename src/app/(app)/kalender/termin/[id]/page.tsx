@@ -22,6 +22,8 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   const canMove = auth.can("appointments.write") && !lock;
   const team = canMove ? await therapists(auth) : [];
   const billing = auth.can("invoices.write") && patient ? await billingFromSource(auth, { appointmentId: a.id }) : null;
+  // offene Anzahlung zum Termin (bezahlt, noch nicht angerechnet): keine zweite Quittung, bei der Rechnung anrechnen
+  const openDeposit = billing?.patient ? (billing.documents.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId) ?? null) : null;
   const st = STATUS[a.status];
   const date = berlinDateIso(a.startsAt);
 
@@ -103,7 +105,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                   <Link href={`/rechnungen/${d.id}`} className="font-semibold text-primary hover:underline">{INVOICE_KIND_LABEL[d.kind]} {d.number}</Link>
                   <span className="text-muted">vom {dateDe(d.issuedAt)} · {money(d.totalCents)}</span>
                   <Badge tone={INVOICE_STATUS_TONE[d.status]}>{INVOICE_STATUS_LABEL[d.status]}</Badge>
-                  {d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId ? <Badge tone="warn">wird auf die Sammelrechnung angerechnet</Badge> : null}
+                  {(d.kind === "deposit" || d.kind === "receipt") && d.status === "paid" && !d.collectiveInvoiceId ? (
+                    <Badge tone="warn">kann in die Sammelrechnung übernommen werden</Badge>
+                  ) : null}
+                  {(d.kind === "deposit" || d.kind === "receipt") && d.collectiveInvoiceId && d.status !== "cancelled" ? <Badge tone="info">auf Sammelrechnung angerechnet</Badge> : null}
                 </li>
               ))}
             </ul>
@@ -112,11 +117,31 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
           )}
           <div className="flex flex-wrap gap-2">
             {billing.billedBy.length ? (
-              <p className="w-full text-sm text-muted">Die Leistung ist bereits abgerechnet.</p>
+              <p className="w-full text-sm font-semibold">
+                abgerechnet:{" "}
+                {billing.billedBy.map((d, i) => (
+                  <span key={d.id}>
+                    {i ? ", " : ""}
+                    <Link href={`/rechnungen/${d.id}`} className="text-primary hover:underline">{INVOICE_KIND_LABEL[d.kind]} {d.number}</Link>
+                  </span>
+                ))}
+              </p>
+            ) : openDeposit ? (
+              <>
+                <p className="w-full text-sm text-muted">
+                  Bezahlt mit Anzahlung {openDeposit.number} – wird auf die Rechnung bzw. Sammelrechnung angerechnet (keine zweite Quittung).
+                </p>
+                <LinkButton href={`/rechnungen/neu?termin=${a.id}`}>
+                  <FileText size={18} aria-hidden /> Rechnung erstellen (Anzahlung anrechnen)
+                </LinkButton>
+              </>
             ) : (
               <>
                 <LinkButton href={`/rechnungen/neu?termin=${a.id}`}>
                   <FileText size={18} aria-hidden /> Rechnung erstellen
+                </LinkButton>
+                <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} variant="secondary">
+                  <Receipt size={18} aria-hidden /> Quittung (sofort bezahlt)
                 </LinkButton>
                 <LinkButton href={`/rechnungen/anzahlung?termin=${a.id}`} variant="secondary">
                   <Receipt size={18} aria-hidden /> Quittung für Sammelrechnung
@@ -124,10 +149,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
               </>
             )}
           </div>
-          {!billing.billedBy.length ? (
+          {!billing.billedBy.length && !openDeposit ? (
             <p className="mt-3 text-xs text-muted">
-              Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen, der Betrag wird
-              auf die Sammelrechnung zum Jahresende angerechnet.
+              Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung (sofort bezahlt) und Quittung für
+              Sammelrechnung: Zahlung jetzt annehmen. Kann später in die Sammelrechnung übernommen werden – der Betrag wird dort als „bereits bezahlt“ angerechnet.
             </p>
           ) : null}
         </Card>

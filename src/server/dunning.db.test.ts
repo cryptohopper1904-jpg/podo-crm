@@ -225,6 +225,13 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(dunning.dunningOverview(authFor(orgA, () => false))).rejects.toThrow();
   });
 
+  it("vorbereiteter Versand: genau ein send", async () => {
+    const { prepareMail } = await import("./mail");
+    const m = await prepareMail(orgA, { purpose: "test" });
+    await m.send({ to: "erika@example.org", subject: "Test", text: "Hallo" });
+    await expect(m.send({ to: "erika@example.org", subject: "Test", text: "Hallo" })).rejects.toThrow(/nur einmal/);
+  });
+
   it("E-Mail-Versand im Testmodus setzt KEINEN Versandvermerk", async () => {
     const inv = await overdue(orgA, 30);
     const r = await dunning.createDunnings(authFor(orgA), [inv]);

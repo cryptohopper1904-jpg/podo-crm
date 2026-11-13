@@ -292,6 +292,8 @@ export type UserPrefs = {
   };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";
+  /** Darstellung der Kataloge (Einstellungen → Leistungen, Produkte): Kacheln, Liste oder Kompakt (src/lib/catalog.ts) */
+  catalog?: { services?: "kacheln" | "liste" | "kompakt"; products?: "kacheln" | "liste" | "kompakt" };
 };
 
 export const memberships = pgTable(
@@ -864,6 +866,19 @@ export const invoices = pgTable(
     status: invoiceStatusEnum("status").notNull().default("draft"),
     issuedAt: date("issued_at"),
     dueAt: date("due_at"),
+    /**
+     * Leistungsdatum bzw. erster Tag des Leistungszeitraums (§ 14 Abs. 4 Nr. 6 UStG, § 31 Abs. 4 UStDV) – beim Ausstellen
+     * aus verknüpften Terminen/Doku-Einträgen und dem Formular-Datum festgeschrieben (danach per Trigger unveränderbar,
+     * spätere Terminverschiebungen ändern den Beleg nicht). Anzahlung: Tag der verknüpften Behandlung. NULL = Altbeleg.
+     */
+    serviceDate: date("service_date"),
+    /** letzter Tag des Leistungszeitraums; NULL = ein einzelner Tag */
+    serviceDateTo: date("service_date_to"),
+    /**
+     * Leistungsangabe beim Ausstellen festgeschrieben (true für alle Belege ab Einführung, auch ohne Datum wie eine
+     * Anzahlung ohne Terminbezug). false = Altbeleg (Bestand vor Migration 0037) → Neudruck exakt wie früher.
+     */
+    serviceDateFixed: boolean("service_date_fixed").notNull().default(true),
     netCents: integer("net_cents").notNull().default(0),
     vatCents: integer("vat_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),
@@ -909,9 +924,100 @@ export const invoiceLines = pgTable(
     treatmentRecordId: uuid("treatment_record_id").references(() => treatmentRecords.id),
     /** Bezug zum Termin (Rechnung aus dem Termin ohne Doku-Eintrag): verhindert Doppelabrechnung, Jahresend-Erinnerung */
     appointmentId: uuid("appointment_id").references(() => appointments.id),
+    /** Art der Position: „service“ (Leistung oder Freitext, Altbestand) | „product“ (Produktverkauf, product_id gesetzt) */
+    lineKind: text("line_kind").notNull().default("service"),
+    productId: uuid("product_id").references(() => products.id),
+    /** Produkt in der Behandlung angewendet/verbraucht → Nebenleistung der Heilbehandlung (0 %), siehe src/lib/product-vat.ts */
+    inTreatment: boolean("in_treatment").notNull().default(false),
+    /** angewendetes Produkt: Position (invoice_lines.position) der zugehörigen Behandlung auf demselben Beleg */
+    treatmentPosition: integer("treatment_position"),
     position: integer("position").notNull().default(0),
   },
   (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],
+);
+
+// ───────────────────────── Produkte & Warenwirtschaft ─────────────────────────
+/** Lieferanten für Produkte (nur Geschäftsdaten) */
+export const suppliers = pgTable(
+  "suppliers",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    /** unsere Kundennummer beim Lieferanten */
+    customerNumber: text("customer_number"),
+    email: text("email"),
+    website: text("website"),
+    phone: text("phone"),
+    note: text("note"),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("suppliers_org").on(t.organizationId)],
+);
+
+/**
+ * Verkaufsprodukte (Salben, Cremes, Pflegeprodukte, Hilfsmittel). Preise brutto in Cent.
+ * Bestand = Summe der Lagerbewegungen (stock_movements), kein eigenes Bestandsfeld.
+ * Verbrauchsmaterial der Praxis (Hygiene) bleibt in `materials`.
+ */
+export const products = pgTable(
+  "products",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    /** Kürzel für die Schnelleingabe in Rechnungspositionen (optional) */
+    code: text("code"),
+    /** Artikelnummer (optional) */
+    sku: text("sku"),
+    ean: text("ean"),
+    /** salbe | creme | pflege | hilfsmittel | sonstiges */
+    category: text("category").notNull().default("sonstiges"),
+    priceCents: integer("price_cents").notNull(),
+    purchasePriceCents: integer("purchase_price_cents"),
+    /** regulärer Steuersatz beim Verkauf (19 %, ggf. 7 %); 0 % nur als Nebenleistung in der Behandlung */
+    vatRate: integer("vat_rate").notNull().default(19),
+    unit: text("unit").notNull().default("Stück"),
+    trackStock: boolean("track_stock").notNull().default(false),
+    minStock: integer("min_stock").notNull().default(0),
+    supplierId: uuid("supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("products_org_code").on(t.organizationId, t.code), index("products_org").on(t.organizationId)],
+);
+
+/**
+ * Lagerbewegungen (append-only): Wareneingang, Verkauf, Storno, Inventur, Bruch, Eigenverbrauch.
+ * Menge mit Vorzeichen (+ Zugang, − Abgang). Unveränderbar per DB-Trigger; Korrekturen als neue Bewegung.
+ */
+export const stockMovements = pgTable(
+  "stock_movements",
+  {
+    id: id(),
+    organizationId: orgId(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    /** receipt | sale | storno | inventory | breakage | own_use */
+    kind: text("kind").notNull(),
+    quantity: integer("quantity").notNull(),
+    occurredOn: date("occurred_on").notNull(),
+    /** Einkaufspreis je Einheit (Wareneingang, optional) */
+    unitCostCents: integer("unit_cost_cents"),
+    /** Lieferscheinnummer (Wareneingang, optional) */
+    deliveryNote: text("delivery_note"),
+    /** Lieferant beim Wareneingang (Lieferanten werden nur archiviert, nie gelöscht) */
+    supplierId: uuid("supplier_id").references(() => suppliers.id),
+    /** Verkauf/Storno: zugehöriger Beleg */
+    invoiceId: uuid("invoice_id").references(() => invoices.id),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("stock_movements_product").on(t.organizationId, t.productId), index("stock_movements_invoice").on(t.organizationId, t.invoiceId)],
 );
 
 /**
@@ -940,7 +1046,7 @@ export const invoiceDunnings = pgTable(
     feeCents: integer("fee_cents").notNull().default(0),
     /** Summe aller Mahngebühren zu dieser Rechnung einschließlich dieser */
     feesTotalCents: integer("fees_total_cents").notNull().default(0),
-    /** fertiger Brieftext (Platzhalter ersetzt) */
+    /** Brieftext mit ersetzten Platzhaltern – außer {frist}: die wird erst beim Erzeugen von PDF/E-Mail aus pay_by eingesetzt */
     body: text("body").notNull(),
     /** Briefkopf/Anschrift beim Erstellen (Praxis, Bankverbindung, Empfänger) – Nachdrucke entsprechen dem versendeten Schreiben (§ 147 AO) */
     letterhead: jsonb("letterhead").$type<Record<string, unknown>>().notNull(),
@@ -1529,7 +1635,7 @@ export const salesLeads = pgTable(
     repliedAt: timestamp("replied_at", { withTimezone: true }),
     /**
      * Dokumentierte Einwilligung in Werbe-E-Mails (§ 7 Abs. 2 Nr. 2 UWG, auch B2B): ohne consent_at wird NIE gesendet.
-     * consent_note = wie/wann erteilt (Pflicht, CHECK in 0037). Wird beim Ändern der E-Mail-Adresse entfernt.
+     * consent_note = wie/wann erteilt (Pflicht, CHECK in 0041). Wird beim Ändern der E-Mail-Adresse entfernt.
      */
     consentAt: timestamp("consent_at", { withTimezone: true }),
     consentNote: text("consent_note"),
@@ -1605,7 +1711,7 @@ export const salesBlocklist = pgTable("sales_blocklist", {
   createdAt: createdAt(),
 });
 
-/** ALTBESTAND (bis 0038): Klartext-Sperrliste – wird beim ersten Zugriff in sales_blocklist überführt und geleert (src/server/blocklist.ts). */
+/** ALTBESTAND (bis 0042): Klartext-Sperrliste – wird beim ersten Zugriff in sales_blocklist überführt und geleert (src/server/blocklist.ts). */
 export const salesSuppressions = pgTable("sales_suppressions", {
   email: text("email").primaryKey(),
   reason: text("reason").notNull(),
@@ -1643,7 +1749,7 @@ export const salesSettings = pgTable("sales_settings", {
 /**
  * Aktionscodes für eine verlängerte Testphase (z. B. 90 Tage) – NICHT die Gutscheine der Praxis (/gutscheine).
  * Plattformweit wie sales_*: keine RLS, Zugriff nur über src/server/promo-codes.ts (Konsole: Plattform-Admin + 2FA;
- * Einlösen: Registrierung bzw. Inhaber:in auf der Abo-Seite). Code normalisiert (A–Z, 0–9, „-“), per CHECK erzwungen (0036).
+ * Einlösen: Registrierung bzw. Inhaber:in auf der Abo-Seite). Code normalisiert (A–Z, 0–9, „-“), per CHECK erzwungen (0040).
  * grant_plan: null = Testphase mit allen Funktionen, sonst Tarif-Umfang während der Testphase (starter|praxis|plus).
  */
 export const promoCodes = pgTable(
@@ -1665,7 +1771,7 @@ export const promoCodes = pgTable(
   (t) => [uniqueIndex("promo_codes_code").on(t.code), index("promo_codes_campaign").on(t.campaignId)],
 );
 
-/** Einlösungen: je Praxis höchstens EINE (unique), unveränderbar (Trigger, 0036); Obergrenze je Code per Trigger. */
+/** Einlösungen: je Praxis höchstens EINE (unique), unveränderbar (Trigger, 0040); Obergrenze je Code per Trigger. */
 export const promoRedemptions = pgTable(
   "promo_redemptions",
   {

@@ -132,7 +132,11 @@ async function monthlyFor(tx: Tx, org: string): Promise<MonthlyUsage[]> {
     select 'invoicesIssued', to_char(issued_at, 'YYYY-MM'), count(*)::float8 from invoices
       where organization_id = ${org} and issued_at >= ${startLocal}::date and status <> 'draft' group by 2
     union all
-    select 'revenueCents', to_char(issued_at, 'YYYY-MM'), coalesce(sum(total_cents), 0)::float8 from invoices
+    select 'revenueCents', to_char(issued_at, 'YYYY-MM'), coalesce(sum(total_cents - (
+        -- auf eine Sammelrechnung angerechnete Quittungen zählen schon als eigener Beleg (nicht doppelt)
+        select coalesce(sum(r.total_cents), 0) from invoices r
+        where r.organization_id = invoices.organization_id and r.collective_invoice_id = invoices.id and r.kind = 'receipt'
+      )), 0)::float8 from invoices
       where organization_id = ${org} and issued_at >= ${startLocal}::date and status not in ('draft', 'cancelled')
         and kind not in ('credit_note', 'deposit') and cancels_invoice_id is null group by 2
     union all

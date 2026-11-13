@@ -17,10 +17,14 @@ import { PDFDocument, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
+import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
 import {
+  creditedReceiptsBlock,
+  creditedReceiptsNote,
+  serviceYear,
   hasExemptNote,
   invoiceHeading,
+  invoiceService,
   invoiceRecipient,
   invoiceTitle,
   isReceiptLike,
@@ -31,7 +35,7 @@ import {
   qtyDe,
   senderLine,
   showsDueDate,
-  type CreditedDeposit,
+  type CreditedPartial,
 } from "./invoice-view";
 import { type InvoiceBookingLink } from "./practice-documents";
 import {
@@ -64,15 +68,17 @@ export type InvoicePdfData = {
     status: string;
     issuedAt: string | null;
     dueAt: string | null;
+    /** Leistungsangabe festgeschrieben (false = Altbeleg, Darstellung wie früher) */
+    serviceDateFixed?: boolean | null;
     totalCents: number;
     paidCents: number;
     notes: string | null;
     paymentLinkUrl?: string | null;
   };
-  lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number }[];
+  lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number; inTreatment?: boolean | null }[];
   payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
-  /** auf diese Rechnung angerechnete Anzahlungen (Quittungen) */
-  deposits?: CreditedDeposit[];
+  /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
+  credited?: CreditedPartial[];
   organization: {
     name: string;
     legalName: string | null;
@@ -96,9 +102,11 @@ export type InvoicePdfData = {
   };
   patient: { number: number; salutation?: string | null; title?: string | null; firstName?: string | null; lastName: string; street?: string | null; zip?: string | null; city?: string | null } | null;
   billingContact: { name: string; street: string | null; zip: string | null; city: string | null } | null;
-  cancels?: { number: string | null } | null;
-  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen */
+  cancels?: { number: string | null; kind?: string; issuedAt?: string | null } | null;
+  /** Leistungsdaten (YYYY-MM-DD) aus verknüpften Terminen/Doku-Einträgen (Storno: die der stornierten Rechnung) */
   serviceDates?: string[];
+  /** Positionen mit Termin-/Doku-Bezug („… zur Behandlung am …“) */
+  serviceLinked?: boolean;
   /** Praxis-Logos (PNG/JPEG); ohne Logo erscheint der Praxisname */
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
   /** Buchungshinweis mit QR-Code (Einstellungen → Praxisdaten → Belege) */
@@ -156,13 +164,13 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   });
 
   // ── Überschrift ──
-  const { heading, serviceDateNote } = invoiceHeading(inv, data.serviceDates ?? [], dateDe, data.cancels?.number);
+  const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
   for (const hl of wrap(heading, width, 12.5, bold)) {
     text(hl, ML, y, { size: 12.5, font: bold });
     y -= 16;
   }
-  if (serviceDateNote) {
-    text(serviceDateNote, ML, y, { size: 8.5, color: GRAY });
+  for (const nl of serviceDateNote ? wrap(serviceDateNote, width, 8.5) : []) {
+    text(nl, ML, y, { size: 8.5, color: GRAY });
     y -= 12;
   }
   y -= 6;
@@ -226,7 +234,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
   }
   sumRows.push({ l: "Gesamt", v: money(inv.totalCents), strong: true });
-  for (const r of paymentSummary(inv, data.deposits ?? [], dateDe)) sumRows.push({ l: r.label, v: money(r.cents) });
+  for (const r of paymentSummary(inv, data.credited ?? [], dateDe, totals.groups)) sumRows.push({ l: r.label, v: money(r.cents) });
   if (inv.status !== "cancelled" && open !== 0 && (inv.paidCents !== 0 || open < 0)) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
   ensure(sumRows.length * 14 + 4);
   const sumLabelX = cx.unit;
@@ -241,6 +249,39 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     y -= h;
   }
   y -= 18;
+
+  // ── Bereits bezahlt (Quittungen): alle angerechneten normalen Quittungen der Sammelrechnung ──
+  const rb = creditedReceiptsBlock(data.credited ?? []);
+  if (rb.rows.length) {
+    const colNo = ML;
+    const colDate = ML + 120;
+    const colAmount = ML + 300;
+    const colVat = ML + 390;
+    ensure(34 + 12);
+    text("Bereits bezahlt (Quittungen)", ML, y, { size: 8.5, font: bold });
+    y -= 12;
+    text("Nummer", colNo, y, { size: 8 });
+    text("Datum", colDate, y, { size: 8 });
+    text("Betrag", colAmount, y, { size: 8, align: "right" });
+    text("darin USt", colVat, y, { size: 8, align: "right" });
+    y -= 11;
+    for (const r of rb.rows) {
+      ensure(12);
+      text(r.number, colNo, y, { size: 8.5 });
+      text(dateDe(r.issuedAt), colDate, y, { size: 8.5 });
+      text(money(r.totalCents), colAmount, y, { size: 8.5, align: "right" });
+      text(money(r.vatCents), colVat, y, { size: 8.5, align: "right" });
+      y -= 12;
+    }
+    ensure(26);
+    text(`Summe (${rb.rows.length} Quittung${rb.rows.length === 1 ? "" : "en"})`, colNo, y, { size: 8.5, font: bold });
+    text(money(rb.totalCents), colAmount, y, { size: 8.5, font: bold, align: "right" });
+    text(money(rb.vatCents), colVat, y, { size: 8.5, font: bold, align: "right" });
+    y -= 12;
+    text("Offener Restbetrag", colNo, y, { size: 8.5, font: bold });
+    text(money(inv.status === "cancelled" ? 0 : open), colAmount, y, { size: 8.5, font: bold, align: "right" });
+    y -= 20;
+  }
 
   // ── Zahlungen ──
   if (data.payments.length) {
@@ -260,9 +301,10 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   const giro = isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
   if (o.smallBusiness) notes.push({ t: NOTE_SMALL_BUSINESS });
-  if (hasExemptNote(o, inv, lines)) notes.push({ t: NOTE_VAT_EXEMPT });
+  if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });
+  if (rb.rows.length) notes.push({ t: creditedReceiptsNote(serviceYear(data.serviceDates ?? [], inv.issuedAt)) });
   const pub = publicNotes(inv.notes);
   if (pub) notes.push({ t: pub });
   for (const n of paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro })) notes.push({ t: n });

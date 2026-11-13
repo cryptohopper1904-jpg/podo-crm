@@ -61,7 +61,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(s2!.lines.map((l) => l.treatmentRecordId)).toEqual([recs[1]]);
     expect(s2!.skipped).toBe(1);
 
-    await expect(invoices.createInvoice(auth, { ...base, lines: [line(recs[0])] })).rejects.toThrow(/bereits in Rechnung/);
+    await expect(invoices.createInvoice(auth, { ...base, lines: [line(recs[0])] })).rejects.toThrow(/Für die Behandlung vom .* wurde bereits die Sammelrechnung SR.* erstellt/);
     // parallel: dieselbe Behandlung zweimal gleichzeitig → nur eine Rechnung
     const both = await Promise.allSettled([invoices.createInvoice(auth, { ...base, lines: [line(recs[1])] }), invoices.createInvoice(auth, { ...base, lines: [line(recs[1])] })]);
     expect(both.filter((r) => r.status === "fulfilled")).toHaveLength(1);
