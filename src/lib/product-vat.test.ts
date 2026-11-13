@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeClosing, ustKey, type KassePayment } from "./kasse/model";
 import { computeTotals, needsTherapeuticConfirmation } from "./invoice-math";
+import { NOTE_VAT_EXEMPT, vatExemptNote } from "./invoice-labels";
 import { inTreatmentSuffix, isTreatmentLine, productVatHint, resolveProductVat, type VatRuleLine } from "./product-vat";
 
 const treatment: VatRuleLine = { kind: "service", vatRate: 0, therapeutic: true };
@@ -71,6 +72,11 @@ describe("Produkte: Umsatzsteuer je Position", () => {
     expect(productVatHint([7, 19, 19])).toMatch(/19 % bzw\. 7 %/);
     expect(inTreatmentSuffix("03.02.2026")).toBe(" – in der Behandlung vom 03.02.2026 angewendet");
     expect(inTreatmentSuffix(null)).toBe(" – in der Behandlung angewendet");
+  });
+
+  it("Steuerbefreiungs-Hinweis nennt angewendete Produkte als Nebenleistung", () => {
+    expect(vatExemptNote([{ inTreatment: false }, {}])).toBe(NOTE_VAT_EXEMPT);
+    expect(vatExemptNote([{}, { inTreatment: true }])).toMatch(/einschließlich der in der Behandlung angewendeten Produkte \(Nebenleistung\)/);
   });
 
   it("0-%-Produktposition zählt für den USt-Wächter, 19 % nicht", () => {

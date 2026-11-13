@@ -427,18 +427,39 @@ export async function bookSaleStock(tx: Tx, org: string, userId: string, invoice
   );
 }
 
-/** Storno: genau die beim Verkauf gebuchten Mengen wieder zugehen lassen (Bezug: Stornorechnung) */
-export async function restoreSaleStock(tx: Tx, org: string, userId: string, originalInvoiceId: string, creditNoteId: string, date: string) {
+/**
+ * Storno: verkaufte Ware wieder zugehen lassen (Bezug: Stornorechnung).
+ * - Positionen „in der Behandlung angewendet“ werden NIE zurückgebucht (Ware ist verbraucht).
+ * - `lineIds`: nur diese Produktpositionen zurückbuchen (Auswahl im Storno-Dialog); undefined = alle übrigen.
+ * - Höchstens die beim Verkauf tatsächlich abgebuchte Menge (Produkte ohne Bestandsführung beim Verkauf: nichts).
+ */
+export async function restoreSaleStock(
+  tx: Tx,
+  org: string,
+  userId: string,
+  originalInvoiceId: string,
+  creditNoteId: string,
+  date: string,
+  lines: { id: string; productId: string | null; quantity: string | number; inTreatment: boolean }[],
+  lineIds?: readonly string[],
+) {
+  const want = new Map<string, number>();
+  for (const l of lines) {
+    if (!l.productId || l.inTreatment) continue;
+    if (lineIds && !lineIds.includes(l.id)) continue;
+    want.set(l.productId, (want.get(l.productId) ?? 0) + Number(l.quantity));
+  }
+  if (!want.size) return 0;
   const sold = await tx
     .select({ productId: stockMovements.productId, n: sql<number>`sum(${stockMovements.quantity})::bigint`.mapWith(Number) })
     .from(stockMovements)
-    .where(and(eq(stockMovements.organizationId, org), eq(stockMovements.invoiceId, originalInvoiceId), eq(stockMovements.kind, "sale")))
+    .where(and(eq(stockMovements.organizationId, org), eq(stockMovements.invoiceId, originalInvoiceId), eq(stockMovements.kind, "sale"), inArray(stockMovements.productId, [...want.keys()])))
     .groupBy(stockMovements.productId);
-  const rows = sold.filter((s) => s.n < 0);
+  const rows = sold.map((s) => ({ productId: s.productId, qty: Math.min(-s.n, want.get(s.productId) ?? 0) })).filter((r) => r.qty > 0);
   if (!rows.length) return 0;
   await lockProducts(tx, org, rows.map((r) => r.productId));
   await tx.insert(stockMovements).values(
-    rows.map((s) => ({ organizationId: org, productId: s.productId, kind: "storno", quantity: -s.n, occurredOn: date, invoiceId: creditNoteId, note: "Storno – Ware zurück ins Lager", createdBy: userId })),
+    rows.map((r) => ({ organizationId: org, productId: r.productId, kind: "storno", quantity: r.qty, occurredOn: date, invoiceId: creditNoteId, note: "Storno – Ware zurück ins Lager", createdBy: userId })),
   );
   return rows.length;
 }

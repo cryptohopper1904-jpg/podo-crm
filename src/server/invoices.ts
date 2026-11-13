@@ -685,9 +685,11 @@ async function deactivateProviderCheckout(org: string, checkoutRef: string) {
  * Storno: erzeugt eine Stornorechnung (Gutschrift) mit negativen Beträgen und setzt die
  * Originalrechnung auf „storniert“ (nur der Status ändert sich – GoBD-konform).
  */
-/** `restock`: verkaufte Produkte wieder ins Lager buchen (Standard ja; nein z. B. wenn die Ware verbraucht/beschädigt ist) */
-export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string, opts: { restock?: boolean } = {}) {
-  const restock = opts.restock ?? true;
+/**
+ * `restockLineIds`: Produktpositionen, deren Ware zurück ins Lager geht (Auswahl im Storno-Dialog);
+ * fehlt = alle verkauften Produkte. In der Behandlung angewendete Produkte werden nie zurückgebucht.
+ */
+export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason: string, opts: { restockLineIds?: string[] } = {}) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   const today = berlinDateIso();
@@ -782,7 +784,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
     // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
-    const restoredProducts = restock ? await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today) : 0;
+    const restoredProducts = await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today, origLines, opts.restockLineIds);
     if (credited.length) {
       await tx
         .update(invoices)
@@ -798,7 +800,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
     action: "invoice.cancel",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts, restock },
+    meta: { creditNoteId: result.id, creditNoteNumber: result.number, refundCents: result.refundCents, releasedDeposits: result.releasedDeposits, restoredProducts: result.restoredProducts },
   });
   return result;
 }

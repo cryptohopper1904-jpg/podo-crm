@@ -79,7 +79,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // Storno ohne Rückbuchung (Ware verbraucht/beim Kunden): Bestand bleibt
     const inv2 = await invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(salbe, 2)] });
     expect(await stockOf(auth, salbe)).toBe(8);
-    await invoices.cancelInvoice(auth, inv2.id, "verbraucht", { restock: false });
+    await invoices.cancelInvoice(auth, inv2.id, "verbraucht", { restockLineIds: [] });
     expect(await stockOf(auth, salbe)).toBe(8);
     await products.correctStock(auth, { productId: salbe, kind: "inventory", amount: 10 });
     // Gutschrift trägt die Produktposition ebenfalls (negativ), Bewegungen verweisen auf die Belege
@@ -131,6 +131,23 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(
       invoices.createInvoice(auth, { ...base, kind: "collective", lines: [svcLine(svc.treat, 0, 6500), svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true })] }),
     ).rejects.toThrow(/zuordnen/);
+    // Storno: in der Behandlung verbrauchte Ware wird nie zurückgebucht, verkaufte nur nach Auswahl je Position
+    await products.bookReceipt(auth, { productId: salbe, quantity: 20, occurredOn: today });
+    const start = (await products.getProduct(auth, salbe))!.stock;
+    const mixed = await invoices.createInvoice(auth, {
+      ...base,
+      kind: "invoice",
+      lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true }), prodLine(salbe, 2), prodLine(salbe, 3)],
+    });
+    expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6);
+    const mixedLines = (await f.asOrg(org, (c) => c.query("select id from invoice_lines where invoice_id = $1 order by position", [mixed.id]))).rows.map((r) => r.id as string);
+    // nur Position 3 (2 Stück) zurück; Position 2 (angewendet) wird selbst bei Auswahl ignoriert
+    await invoices.cancelInvoice(auth, mixed.id, "Test", { restockLineIds: [mixedLines[1], mixedLines[2]] });
+    expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6 + 2);
+    const all = await invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [svcLine(svc.treat, 0, 6500), prodLine(salbe, 1, { inTreatment: true }), prodLine(salbe, 2)] });
+    await invoices.cancelInvoice(auth, all.id, "Test"); // ohne Auswahl: alle verkauften, nie die angewendeten
+    expect((await products.getProduct(auth, salbe))!.stock).toBe(start - 6 + 2 - 3 + 2);
+
     // Sammelrechnung: Bezug (Position) und Datum der Behandlung stehen an der Produktposition
     const year = today.slice(0, 4);
     const rec = (day: string, prev: string | null, hash: string) =>

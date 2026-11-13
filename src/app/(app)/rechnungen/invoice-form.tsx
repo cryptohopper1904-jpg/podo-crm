@@ -605,6 +605,11 @@ export function InvoiceForm({
                     {!otherTreatments.length ? (
                       <span className="text-xs text-muted">Nur möglich, wenn der Beleg auch eine Heilbehandlung (0 %) enthält – sonst {prod.vatRate} %.</span>
                     ) : null}
+                    {l.inTreatment && num(l.quantity) >= 2 ? (
+                      <span role="status" className="text-xs font-medium text-warn-soft-text">
+                        Wirklich {l.quantity} Stück in der Behandlung verbraucht? Mitgegebene Ware ist eine Lieferung mit regulärem Satz ({prod.vatRate} %) – dann bitte eine eigene Position ohne Haken.
+                      </span>
+                    ) : null}
                     {l.inTreatment && otherTreatments.length > 1 ? (
                       <Field label="Angewendet bei Behandlung">
                         <Select value={l.treatmentKey ?? ""} onChange={(e) => update(l.key, { treatmentKey: e.target.value || undefined })}>
