@@ -2,10 +2,10 @@ import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Field, Input } from "@/components/ui";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { organizations } from "@/db/schema";
+import { organizations, users } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { securitySettingsOf, twoFactorRequired } from "@/lib/auth/two-factor";
-import { changePasswordAction, saveSecurityPolicyAction } from "../actions";
+import { changePasswordAction, saveSecurityPolicyAction, setUnlockPinAction } from "../actions";
 import { TotpSetup } from "./totp-setup";
 
 export const metadata = { title: "Sicherheit" };
@@ -14,6 +14,7 @@ export default async function SecuritySettings() {
   const auth = await requireAuth();
   const [org] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
   const policy = securitySettingsOf(org?.settings);
+  const [me] = await db.select({ pin: users.unlockPinHash }).from(users).where(eq(users.id, auth.user.id));
   const mandatory = twoFactorRequired({ role: auth.role, isPlatformAdmin: auth.user.isPlatformAdmin, orgSettings: org?.settings });
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +38,28 @@ export default async function SecuritySettings() {
           </ActionForm>
         </Card>
       ) : null}
+      <Card>
+        <CardTitle>PIN für die Übergabe an Patient:innen {me?.pin ? <Badge tone="primary">eingerichtet</Badge> : <Badge tone="warn">keine</Badge>}</CardTitle>
+        <p className="mb-4 text-sm text-muted">
+          Mit „An Patient:in übergeben“ (Akte → Anamnese) zeigt das Gerät nur noch den Anamnesebogen mit Datenschutz-Einwilligungen. Zurück in die Praxisdaten geht es nur mit
+          dieser PIN oder deinem Passwort. Nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig.
+        </p>
+        <ActionForm action={setUnlockPinAction} submit={me?.pin ? "PIN ändern" : "PIN speichern"}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Neue PIN" hint="4–8 Ziffern, nicht 1234 o. Ä."><Input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4,8}" required autoComplete="off" /></Field>
+            <Field label="Dein Passwort zur Bestätigung"><Input name="current" type="password" required autoComplete="current-password" /></Field>
+          </div>
+        </ActionForm>
+        {me?.pin ? (
+          <details className="mt-4 text-sm">
+            <summary className="cursor-pointer font-semibold text-muted">PIN entfernen</summary>
+            <ActionForm action={setUnlockPinAction} submit="PIN entfernen">
+              <input type="hidden" name="remove" value="1" />
+              <Field label="Dein Passwort zur Bestätigung"><Input name="current" type="password" required autoComplete="current-password" /></Field>
+            </ActionForm>
+          </details>
+        ) : null}
+      </Card>
       <Card>
         <CardTitle>Passwort ändern</CardTitle>
         <ActionForm action={changePasswordAction} submit="Passwort ändern">

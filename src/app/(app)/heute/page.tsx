@@ -17,6 +17,8 @@ import { listAppointments } from "@/server/appointments";
 import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
+import { todaySections } from "@/lib/view-level";
+import { currentViewLevel } from "@/server/view-level";
 
 export const metadata = { title: "Heute" };
 
@@ -70,6 +72,18 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];
+  // Persönliche Ansicht (Einstellungen → Ansicht): blendet nur Karten aus, die Daten bleiben unverändert
+  const show = todaySections(await currentViewLevel());
+  const quickActions = [
+    auth.can("patients.read") ? { href: "/kunden", label: "Patient:in suchen" } : null,
+    auth.can("patients.write") ? { href: "/kunden/neu", label: "Neue Patient:in" } : null,
+    auth.can("medical.write") ? { href: "/doku", label: "Behandlung dokumentieren" } : null,
+    auth.can("invoices.write") ? { href: "/rechnungen/neu", label: "Rechnung schreiben" } : null,
+    auth.can("cash.read") ? { href: "/kasse", label: "Kasse" } : null,
+  ].filter((a) => a !== null);
+  const hasTasks = stats.openTasks.length > 0 || stats.countersign > 0;
+  const showTasks = show.tasks === "always" || hasTasks;
+  const sideColumn = (show.inbox && stats.recent.length > 0) || (show.collective && !!reminderYear && openCollective.length > 0) || showTasks || show.integrations;
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -85,16 +99,30 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       <OnboardingCard auth={auth} />
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
 
-      <section aria-label="Kennzahlen" className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Termine heute" value={active.length} sub={homeVisits ? `davon ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : "keine Hausbesuche"} tone="primary" />
-        <Stat label="Eingenommen heute" value={money(Number(stats.paidToday.sum))} sub="alle Zahlarten" tone="info" />
-        <Stat label="Offene Posten" value={stats.open.n} sub={money(Number(stats.open.sum))} tone="accent" />
-        <Stat label="Neue Nachrichten" value={stats.newMsgs.n} sub="mit KI-Antwortvorschlag" tone="warn" />
-      </section>
+      {show.stats ? (
+        <section aria-label="Kennzahlen" className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat label="Termine heute" value={active.length} sub={homeVisits ? `davon ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : "keine Hausbesuche"} tone="primary" />
+          <Stat label="Eingenommen heute" value={money(Number(stats.paidToday.sum))} sub="alle Zahlarten" tone="info" />
+          <Stat label="Offene Posten" value={stats.open.n} sub={money(Number(stats.open.sum))} tone="accent" />
+          <Stat label="Neue Nachrichten" value={stats.newMsgs.n} sub="mit KI-Antwortvorschlag" tone="warn" />
+        </section>
+      ) : null}
+
+      {show.quickActions && quickActions.length ? (
+        <nav aria-label="Schnellzugriff" className="mb-6 flex flex-wrap gap-2">
+          {quickActions.map((a) => (
+            <Link key={a.href} href={a.href} className="inline-flex min-h-11 items-center rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2">
+              {a.label}
+            </Link>
+          ))}
+        </nav>
+      ) : null}
 
       <div className="flex flex-wrap items-start gap-6">
         <Card className="min-w-0 flex-[3_1_480px]">
-          <CardTitle action={<Link href="/kalender" className="text-sm font-semibold text-primary">Kalender</Link>}>Heute</CardTitle>
+          <CardTitle action={<Link href="/kalender" className="text-sm font-semibold text-primary">Kalender</Link>}>
+            Heute{show.stats ? null : <span className="ml-2 text-sm font-normal text-muted">{active.length} Termin{active.length === 1 ? "" : "e"}{homeVisits ? ` · ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : ""}</span>}
+          </CardTitle>
           {overlaps.size ? (
             <p className="mb-3 rounded-xl bg-accent-soft p-3 text-sm text-accent-soft-text">
               <strong>Überschneidung:</strong> {overlaps.size} Termine heute überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in).
@@ -109,8 +137,9 @@ export default async function TodayPage(props: PageProps<"/heute">) {
           {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} />)}
         </Card>
 
+        {sideColumn ? (
         <div className="flex min-w-0 flex-[2_1_320px] flex-col gap-6">
-          {stats.recent.length ? (
+          {show.inbox && stats.recent.length ? (
             <Card>
               <CardTitle action={<Link href="/posteingang" className="text-sm font-semibold text-primary">Alle</Link>}>Posteingang</CardTitle>
               <ul className="flex flex-col gap-3">
@@ -125,7 +154,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
             </Card>
           ) : null}
 
-          {reminderYear && openCollective.length ? (
+          {show.collective && reminderYear && openCollective.length ? (
             <Card className="border-accent/40">
               <CardTitle action={<Link href={`/rechnungen/sammelrechnungen?jahr=${reminderYear}`} className="text-sm font-semibold text-primary">Alle</Link>}>
                 Sammelrechnungen {reminderYear}
@@ -145,6 +174,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
             </Card>
           ) : null}
 
+          {showTasks ? (
           <Card>
             <CardTitle>Aufgaben</CardTitle>
             {stats.countersign ? <p className="mb-2 text-sm"><Badge tone="warn">{stats.countersign} Einträge warten auf Gegenzeichnung</Badge></p> : null}
@@ -154,7 +184,9 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               </ul>
             )}
           </Card>
+          ) : null}
 
+          {show.integrations ? (
           <Card>
             <CardTitle action={auth.can("integrations.manage") ? <Link href="/einstellungen/schnittstellen" className="text-sm font-semibold text-primary">Verwalten</Link> : null}>Schnittstellen</CardTitle>
             <div className="grid grid-cols-2 gap-2">
@@ -167,7 +199,9 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               ))}
             </div>
           </Card>
+          ) : null}
         </div>
+        ) : null}
       </div>
     </div>
   );

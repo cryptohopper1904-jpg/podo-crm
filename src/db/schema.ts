@@ -263,6 +263,8 @@ export const users = pgTable("users", {
   failedLogins: integer("failed_logins").notNull().default(0),
   lockedUntil: timestamp("locked_until", { withTimezone: true }),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  /** Entsperr-PIN für den Übergabe-Modus (Hash wie Passwörter), null = Entsperren nur mit Passwort */
+  unlockPinHash: text("unlock_pin_hash"),
   /** persönliche Einstellungen, z. B. zuletzt gesehene Neuigkeit (src/lib/changelog.ts) */
   prefs: jsonb("prefs").$type<UserPrefs>().notNull().default({}),
   createdAt: createdAt(),
@@ -271,6 +273,8 @@ export const users = pgTable("users", {
 export type UserPrefs = {
   /** Neuigkeiten: zuletzt angezeigter Eintrag (seenId) bzw. „bis zur nächsten Neuerung nicht mehr anzeigen“ (mutedId) */
   changelog?: { seenId?: string; mutedId?: string };
+  /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
+  view?: "einfach" | "kompakt" | "komplex";
 };
 
 export const memberships = pgTable(
@@ -303,6 +307,11 @@ export const sessions = pgTable(
     totpFailures: integer("totp_failures").notNull().default(0),
     /** Neuigkeiten-Popup in dieser Sitzung bereits gezeigt (einmal je Anmeldung) */
     changelogShownAt: timestamp("changelog_shown_at", { withTimezone: true }),
+    /** Übergabe-Modus: Gerät an Patient:in übergeben – Sitzung gesperrt bis PIN/Passwort (src/lib/auth/handover.ts) */
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    /** Rücksprung nach dem Entsperren (nur interne Pfade) */
+    lockReturn: text("lock_return"),
+    unlockFailures: integer("unlock_failures").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     userAgent: text("user_agent"),
     ip: text("ip"),
