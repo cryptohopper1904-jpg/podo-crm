@@ -44,5 +44,5 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // screenshots: Bildschirmfotos der Website mit Demodaten (public/screenshots) – statisch, ohne Sitzung
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|screenshots/|manifest.webmanifest|sw.js).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons/|screenshots/|manifest.webmanifest|sw.js).*)"],
 };

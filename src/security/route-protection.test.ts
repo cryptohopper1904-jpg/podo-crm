@@ -124,5 +124,18 @@ describe("Proxy: Routen-Schutz", () => {
     expect(runsProxy("/screenshots")).toBe(true);
     expect(runsProxy("/kunden")).toBe(true);
     expect(runsProxy("/_next/static/chunk.js")).toBe(false);
+    // public/icons/* ausgenommen, ähnlich benannte Pfade nicht (sonst ohne Proxy-Kennung x-podo-*)
+    expect(runsProxy("/icons/icon-192.png")).toBe(false);
+    expect(runsProxy("/icons")).toBe(true);
+    expect(runsProxy("/iconsx")).toBe(true);
+    expect(runsProxy("/icons-api/route")).toBe(true);
+  });
+
+  it("Matcher: jede Seite/API-Route läuft durch den Proxy (setzt x-podo-method/x-podo-path, überschreibt Client-Werte)", () => {
+    const runsProxy = (p: string) => config.matcher.some((m) => new RegExp(`^${m}$`).test(p));
+    // Metadaten-Dateien (manifest, robots, sitemap, Icons) liefern keine Praxisdaten
+    const meta = /^\/(manifest\.webmanifest|robots\.txt|sitemap\.xml|favicon\.ico|sw\.js)$/;
+    const missed = routes.map((r) => r.path.replace(/\[\[?\.{0,3}[^\]]+\]\]?/g, "x")).filter((p) => !meta.test(p) && !runsProxy(p));
+    expect(missed).toEqual([]);
   });
 });

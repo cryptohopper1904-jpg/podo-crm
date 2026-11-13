@@ -12,8 +12,10 @@ export const READ_ONLY_POST_PATHS: Readonly<Record<string, string>> = {
 };
 
 export function isMutatingRequest(method: string | null | undefined, path: string | null | undefined): boolean {
-  const m = method?.toUpperCase() ?? null;
+  // ohne Proxy-Kennung (Methode UND Pfad setzt der Proxy immer gemeinsam) → schreibend
+  if (!method || !path) return true;
+  const m = method.toUpperCase();
   if (m === "GET" || m === "HEAD") return false;
-  if (m === "POST" && path && Object.hasOwn(READ_ONLY_POST_PATHS, path)) return false;
+  if (m === "POST" && Object.hasOwn(READ_ONLY_POST_PATHS, path)) return false;
   return true;
 }

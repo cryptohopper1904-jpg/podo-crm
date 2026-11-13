@@ -8,6 +8,8 @@ async function main() {
   if (!url) throw new Error("DATABASE_MIGRATION_URL fehlt");
   const pool = new Pool({ connectionString: url });
   await pool.query("create extension if not exists pgcrypto");
+  // Trigramm-Suche (Patientensuche „Meinten Sie“, Migration 0044) – auch dort idempotent angelegt
+  await pool.query("create extension if not exists pg_trgm");
   await migrate(drizzle(pool), { migrationsFolder: "./drizzle" });
   // App-Rolle (kein Superuser, unterliegt RLS) mit Rechten versorgen, falls vorhanden
   const appRole = process.env.DB_APP_ROLE ?? "podo_app";
