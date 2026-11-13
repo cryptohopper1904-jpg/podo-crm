@@ -41,6 +41,12 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const base = { kind: "collective" as const, patientId: null, billingContactId: home, issuedAt: "2026-11-01", dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
     const inv = await invoices.createInvoice(auth, { ...base, lines: [line(recs[0])] });
 
+    // Mail-Text: „sofort“ statt Datum bei Zahlungsziel 0, sonst Datum
+    const mailOf = (dueAt: string) =>
+      delivery.invoiceEmailText({ invoice: { ...inv, issuedAt: "2026-11-01", dueAt, status: "issued", paidCents: 0, totalCents: 4000 }, organization: { name: "Praxis", legalName: null, phone: null } } as never).body;
+    expect(mailOf("2026-11-01")).toMatch(/offenen Betrag von 40,00\s€ sofort unter Angabe/);
+    expect(mailOf("2026-11-15")).toContain("bis zum 15.11.2026");
+
     const s2 = await delivery.collectiveSuggestion(auth, home, "2026-10");
     expect(s2!.lines.map((l) => l.treatmentRecordId)).toEqual([recs[1]]);
     expect(s2!.skipped).toBe(1);

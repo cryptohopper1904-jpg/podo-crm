@@ -15,7 +15,7 @@ import { decryptSecret, encryptSecret } from "@/lib/secrets";
 import { seatCounts, seatProblem } from "@/lib/plans";
 import { usedSeats } from "@/server/billing";
 import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-qr";
-import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS } from "@/lib/practice-documents";
+import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
 
@@ -250,6 +250,10 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
   const d = z
     .object({
       websiteUrl: httpUrl,
+      dueDays: z.preprocess(
+        (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+        z.coerce.number({ error: "Bitte ein Zahlungsziel in Tagen angeben (0 = sofort)." }).int("Zahlungsziel: ganze Tage").min(0, "Zahlungsziel: mindestens 0 Tage").max(MAX_DUE_DAYS, `Zahlungsziel: höchstens ${MAX_DUE_DAYS} Tage`),
+      ),
       qualification: z.string().trim().max(DOC_LIMITS.qualification, "Berufsbezeichnung: höchstens 200 Zeichen").optional().transform((v) => v || null),
       whatsapp: z.string().optional(),
       bookingChannel: z.enum(BOOKING_CHANNELS).default("none"),
@@ -268,14 +272,14 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
       : v.bookingChannel === "custom"
         ? { channel: "custom", url: v.customUrl, ...(v.customLabel ? { label: v.customLabel } : {}) }
         : { channel: v.bookingChannel };
-  const documents = { qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
+  const documents = { dueDays: v.dueDays, qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
   await db
     .update(organizations)
     .set({
       settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb, 'websiteUrl', ${v.websiteUrl}::text)`,
     })
     .where(eq(organizations.id, auth.organization.id));
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { dueDays: v.dueDays, bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };
 }

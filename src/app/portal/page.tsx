@@ -2,6 +2,7 @@ import { CalendarDays, FileText, Gift } from "lucide-react";
 import { Card, Empty, LinkButton } from "@/components/ui";
 import { requestMeta } from "@/lib/auth/session";
 import { dateDe, money, timeDe, weekdayLong } from "@/lib/format";
+import { dueLabel } from "@/lib/invoice-view";
 import { INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
 import { clientKey } from "@/lib/rate-limit";
 import { currentPortalLink, loadPortalView, portalFailLimiter, portalLimiter } from "@/server/portal-core";
@@ -90,7 +91,7 @@ export default async function PortalPage() {
                 <div>
                   <p className="font-semibold">{INVOICE_KIND_LABEL[i.kind] ?? "Rechnung"} {i.number}</p>
                   <p className="text-sm text-muted">
-                    vom {dateDe(i.issuedAt)} · offen {money(i.totalCents - i.paidCents)}{i.dueAt ? ` · fällig ${dateDe(i.dueAt)}` : ""}
+                    vom {dateDe(i.issuedAt)} · offen {money(i.totalCents - i.paidCents)}{i.dueAt ? ` · fällig ${dueLabel(i, dateDe)}` : ""}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">

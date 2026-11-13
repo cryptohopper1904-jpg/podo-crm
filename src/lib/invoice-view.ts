@@ -62,6 +62,12 @@ export function showsDueDate(inv: { kind: string; status: string }) {
   return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid" && inv.status !== "cancelled";
 }
 
+/** Fällig am Rechnungstag (Zahlungsziel 0 Tage) → „sofort“ statt Datum */
+export const dueImmediately = (inv: { issuedAt?: string | null; dueAt: string | null }) => !!inv.dueAt && !!inv.issuedAt && inv.dueAt.slice(0, 10) <= inv.issuedAt.slice(0, 10);
+
+/** Anzeige für „Zahlbar bis“ (Kasten auf dem Beleg) */
+export const dueLabel = (inv: { issuedAt?: string | null; dueAt: string | null }, dateDe: (d: string | null) => string) => (dueImmediately(inv) ? "sofort" : dateDe(inv.dueAt));
+
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
 export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit";
 
@@ -135,7 +141,7 @@ const METHOD_PHRASE: Record<string, string> = {
  * Gibt Zeilen zurück; leere Liste = kein Hinweis (z. B. Storno ohne Restbetrag).
  */
 export function paymentNoteLines(
-  inv: { kind: string; status: string; number: string | null; dueAt: string | null; totalCents: number; paidCents: number; paymentLinkUrl?: string | null },
+  inv: { kind: string; status: string; number: string | null; issuedAt?: string | null; dueAt: string | null; totalCents: number; paidCents: number; paymentLinkUrl?: string | null },
   payments: { method: string; amountCents: number }[],
   o: { iban: string | null },
   fmt: { dateDe: (d: string | null) => string; money: (c: number) => string },
@@ -153,7 +159,7 @@ export function paymentNoteLines(
   }
   const lines: string[] = [];
   if (inv.paidCents > 0) lines.push(`Bereits bezahlt${via}: ${fmt.money(inv.paidCents)}. Offen: ${fmt.money(open)}.`);
-  const due = inv.dueAt ? ` bis zum ${fmt.dateDe(inv.dueAt)}` : "";
+  const due = dueImmediately(inv) ? " sofort" : inv.dueAt ? ` bis zum ${fmt.dateDe(inv.dueAt)}` : "";
   if (o.iban) {
     lines.push(`Zahlung per Überweisung: Bitte überweisen Sie ${inv.paidCents > 0 ? "den offenen Betrag" : "den Betrag"}${due} unter Angabe der Rechnungsnummer ${inv.number} auf das unten genannte Konto.`);
     if (opts.giroCode) lines.push("Tipp: Scannen Sie den GiroCode mit Ihrer Banking-App – Empfänger, Betrag und Verwendungszweck sind dann schon ausgefüllt.");

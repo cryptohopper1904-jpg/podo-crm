@@ -30,6 +30,8 @@ import {
   paymentNoteLines,
   invoiceRecipient,
   isReceiptLike,
+  dueImmediately,
+  dueLabel,
   paymentSummary,
   publicNotes as publicNoteText,
   qtyDe,
@@ -80,7 +82,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const qrSvg = (payload: string) => QRCode.toString(payload, { type: "svg", errorCorrectionLevel: "M", margin: 2 });
   const qrBlocks = [
     ...(giro ? [{ key: "giro", title: "Bezahlen per GiroCode", sub: [`${money(open)} an ${o.accountHolder || o.legalName || o.name}`, `Verwendungszweck: Rechnung ${inv.number}`], svg: await qrSvg(giro) }] : []),
-    ...(booking ? [{ key: "booking", title: booking.label, sub: [booking.display], svg: await qrSvg(booking.url) }] : []),
+    ...(booking ? [{ key: "booking", title: booking.label, sub: [], svg: await qrSvg(booking.url) }] : []),
   ];
   const payNotes = paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro });
   const canWrite = auth.can("invoices.write");
@@ -201,8 +203,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
           {showsDueDate(inv) ? (
             <div>
-              <dt className="text-xs text-muted">Zahlbar bis</dt>
-              <dd className="font-semibold tabular-nums">{dateDe(inv.dueAt)}</dd>
+              <dt className="text-xs text-muted">{dueImmediately(inv) ? "Zahlbar" : "Zahlbar bis"}</dt>
+              <dd className="font-semibold tabular-nums">{dueLabel(inv, dateDe)}</dd>
             </div>
           ) : null}
         </dl>

@@ -62,6 +62,7 @@ export function InvoiceForm({
   services,
   billingContacts,
   smallBusiness,
+  defaultDueDays = 14,
   today,
   preselectPatientId,
   preset,
@@ -73,6 +74,8 @@ export function InvoiceForm({
   services: Service[];
   billingContacts: ContactOpt[];
   smallBusiness: boolean;
+  /** Standard-Zahlungsziel der Praxis (Einstellungen → Praxisdaten → Belege), 0 = sofort */
+  defaultDueDays?: number;
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
@@ -296,8 +299,8 @@ export function InvoiceForm({
             <Field label="Datum">
               <Input type="date" name="issuedAt" defaultValue={today} max={today} required />
             </Field>
-            <Field label="Zahlungsziel (Tage)">
-              <Input type="number" name="dueDays" min={0} max={120} defaultValue={kind === "receipt" ? 0 : 14} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
+            <Field label="Zahlungsziel (Tage)" hint="0 = sofort">
+              <Input type="number" name="dueDays" min={0} max={120} defaultValue={kind === "receipt" ? 0 : defaultDueDays} key={kind === "receipt" ? "r" : "o"} disabled={kind === "receipt"} />
             </Field>
           </div>
         </div>
