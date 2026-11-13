@@ -43,6 +43,8 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   const patient = presetPatient ?? str(sp.patient);
 
   const data = await invoiceFormData(auth, patient, year);
+  // offene Anzahlungen zum Termin (bezahlt, noch nicht angerechnet): werden bei einer Rechnung angerechnet
+  const openDeposits = (source?.documents ?? []).filter((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId);
   const homes = source || yearSug ? [] : await careHomes(auth);
   const travel = patient ? await travelSuggestions(auth, patient) : null;
 
@@ -94,6 +96,14 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
               {source.billedBy.length ? (
                 <p className="font-semibold text-danger">
                   Bereits abgerechnet in {source.billedBy.map((d) => `${INVOICE_KIND_LABEL[d.kind]} ${d.number}`).join(", ")} – eine zweite Rechnung zu dieser Behandlung ist nicht möglich.
+                </p>
+              ) : null}
+              {openDeposits.length ? (
+                <p className="font-semibold text-warn-soft-text">
+                  Für diesen Termin gibt es bereits die Anzahlung {openDeposits.map((d) => d.number).join(", ")} –{" "}
+                  {sp.art === "quittung"
+                    ? "eine zweite Quittung ist nicht möglich. Bitte als Rechnung (die Anzahlung wird angerechnet) oder über die Sammelrechnung abrechnen."
+                    : "sie wird unten auf die Rechnung angerechnet."}
                 </p>
               ) : null}
               {source.prescription ? (
@@ -164,7 +174,15 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           </form>
         </Card>
       ) : null}
-      <InvoiceForm key={presetKey} {...data} preselectPatientId={patient} preset={preset} travel={travel} privateOnly={isPrivateOnly(auth.organization)} />
+      <InvoiceForm
+        key={presetKey}
+        {...data}
+        preselectPatientId={patient}
+        preset={preset}
+        travel={travel}
+        privateOnly={isPrivateOnly(auth.organization)}
+        alreadyBilled={(source?.billedBy ?? []).map((d) => ({ id: d.id, label: `${INVOICE_KIND_LABEL[d.kind]} ${d.number} vom ${dateDe(d.issuedAt)}` }))}
+      />
     </div>
   );
 }

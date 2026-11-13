@@ -11,6 +11,7 @@ import {
   createDeposit,
   createInvoice,
   depositInput,
+  DuplicateInvoiceError,
   InvoiceError,
   invoiceInput,
   openReceiptsForPatient,
@@ -20,7 +21,7 @@ import {
 import { createPaymentLink, sendPaymentLink, simulateTestPayment, startTerminalPayment } from "@/server/card-payments";
 import { sendInvoiceEmail } from "@/server/invoice-delivery";
 
-export type InvoiceFormState = { error?: string } | undefined;
+export type InvoiceFormState = { error?: string; /** gleicher Beleg am selben Tag – „Trotzdem erstellen“ nötig */ duplicate?: { id: string; number: string | null } } | undefined;
 export type SimpleState = { error?: string; success?: string } | undefined;
 
 function parseJson(raw: FormDataEntryValue | null): unknown {
@@ -53,12 +54,14 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     depositIds: parseJson(form.get("depositIds")),
     receiptIds: parseJson(form.get("receiptIds")),
     collectiveYear: form.get("collectiveYear") ?? undefined,
+    allowDuplicate: form.get("allowDuplicate") === "on",
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;
   try {
     id = (await createInvoice(auth, parsed.data)).id;
   } catch (e) {
+    if (e instanceof DuplicateInvoiceError) return { error: e.message, duplicate: e.duplicate };
     return { error: errorMessage(e) };
   }
   revalidatePath("/rechnungen");

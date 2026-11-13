@@ -59,6 +59,7 @@ export function InvoiceForm({
   openDeposits = [],
   openReceipts = [],
   receiptsYear,
+  alreadyBilled = [],
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -71,6 +72,8 @@ export function InvoiceForm({
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
+  /** Vorab-Prüfung (Termin/Behandlung der Vorlage ist schon abgerechnet): Hinweis mit Link, Ausstellen gesperrt */
+  alreadyBilled?: { id: string; label: string }[];
   travel?: TravelOptions;
   /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
   privateOnly?: boolean;
@@ -159,7 +162,12 @@ export function InvoiceForm({
   const patientDeposits = depositsAllowed && patientId ? openDeposits.filter((d) => d.patientId === patientId) : [];
   /** Sammelrechnung: vorausgewählt sind die offenen Quittungen (AZ und Q) aus dem Jahr der Sammelrechnung */
   const inYear = (iso: string | null) => !receiptsYear || !iso || iso.startsWith(String(receiptsYear));
-  const depositDefault = (k: CreatableKind, d: OpenDeposit) => k === "collective" && inYear(d.issuedAt);
+  /** Termine/Behandlungen der Vorlage: offene Anzahlungen dazu sind bei einer Rechnung vorausgewählt (nie doppelt kassieren) */
+  const presetRefs = new Set((preset?.lines ?? []).flatMap((l) => [l.appointmentId, l.treatmentRecordId]).filter((x): x is string => !!x));
+  const depositDefault = (k: CreatableKind, d: OpenDeposit) =>
+    (k === "collective" && inYear(d.issuedAt)) ||
+    ((k === "invoice" || k === "collective") && ((!!d.appointmentId && presetRefs.has(d.appointmentId)) || (!!d.treatmentRecordId && presetRefs.has(d.treatmentRecordId))));
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
   const depositOn = (id: string) => depositSel[id] ?? depositDefault(kind, patientDeposits.find((d) => d.id === id)!);
   const credited = patientDeposits.filter((d) => depositOn(d.id));
   const patientReceipts = kind === "collective" && patientId ? (receiptsBy[patientId] ?? []) : [];
@@ -353,7 +361,29 @@ export function InvoiceForm({
       <input type="hidden" name="depositIds" value={JSON.stringify(credited.map((d) => d.id))} />
       <input type="hidden" name="receiptIds" value={JSON.stringify(creditedReceipts.map((r) => r.id))} />
       {kind === "collective" && receiptsYear ? <input type="hidden" name="collectiveYear" value={receiptsYear} /> : null}
-      <FormError message={state?.error} />
+      {alreadyBilled.length ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm font-semibold text-danger">
+          Diese Behandlung wurde bereits abgerechnet:{" "}
+          {alreadyBilled.map((b, i) => (
+            <span key={b.id}>
+              {i ? ", " : ""}
+              <Link href={`/rechnungen/${b.id}`} className="underline">{b.label}</Link>
+            </span>
+          ))}
+          . Ein zweiter Beleg ist nicht möglich.
+        </p>
+      ) : null}
+      {state?.duplicate ? (
+        <div role="alert" className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
+          <p className="font-semibold">
+            {state.error}{" "}
+            <Link href={`/rechnungen/${state.duplicate.id}`} className="underline" target="_blank">{state.duplicate.number} ansehen</Link>
+          </p>
+          <Checkbox name="allowDuplicate" checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} label="Trotzdem erstellen (wird protokolliert)" />
+        </div>
+      ) : (
+        <FormError message={state?.error} />
+      )}
 
       <Card>
         <h2 className="mb-4 font-display text-lg font-semibold">Beleg</h2>
@@ -677,7 +707,10 @@ export function InvoiceForm({
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed)}>
+        <Button
+          type="submit"
+          disabled={pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed) || alreadyBilled.length > 0 || (!!state?.duplicate && !confirmDuplicate)}
+        >
           {pending ? "Wird ausgestellt …" : `${INVOICE_KIND_LABEL[kind]} ausstellen`}
         </Button>
         <Link href="/rechnungen" className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>

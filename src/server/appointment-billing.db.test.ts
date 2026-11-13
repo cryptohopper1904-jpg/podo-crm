@@ -77,7 +77,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const inv = await invoices.createInvoice(auth, { ...base, lines });
     expect(inv.totalCents).toBe(4500 + 1290);
     expect((await source(auth, { appointmentId: a1 })).billedBy.map((d) => d.number)).toEqual([inv.number]);
-    await expect(invoices.createInvoice(auth, { ...base, lines: [lines[0]] })).rejects.toThrow(/Termin vom .* bereits in Rechnung/);
+    await expect(invoices.createInvoice(auth, { ...base, lines: [lines[0]] })).rejects.toThrow(/Für die Behandlung vom 03\.02\.\d{4} wurde bereits die Rechnung R.* erstellt/);
 
     // Termin mit Doku-Eintrag: Abrechnung über den Doku-Eintrag sperrt auch den Termin (und umgekehrt)
     const a2 = await appointment(patient, `${year}-02-10 10:00+01`);
@@ -89,7 +89,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await invoices.createInvoice(auth, { ...base, lines: [{ serviceId: null, treatmentRecordId: rec, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 4500, vatRate: 0 }] });
     await expect(
       invoices.createInvoice(auth, { ...base, lines: [{ serviceId: null, treatmentRecordId: null, appointmentId: a2, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 4500, vatRate: 0 }] }),
-    ).rejects.toThrow(/bereits in Rechnung/);
+    ).rejects.toThrow(/wurde bereits die Rechnung R.* erstellt/);
 
     // Termin einer anderen Person
     const other = await f.patient(org, { lastName: "Andere" });

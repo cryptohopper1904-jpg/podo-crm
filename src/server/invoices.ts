@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, ilike, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { MAX_DUE_DAYS, readDocumentSettings } from "@/lib/practice-documents";
 import { withOrg, type Tx } from "@/db";
@@ -41,9 +41,23 @@ import {
   vatPortion,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 
 export class InvoiceError extends Error {}
+
+/**
+ * Weicher Doppel-Schutz: Für dieselbe Person gibt es am selben Leistungsdatum schon einen gültigen Beleg mit derselben
+ * Leistung (Positionen ohne Termin-/Doku-Bezug). Kein harter Block – zwei gleiche Leistungen an einem Tag können
+ * richtig sein –, aber erst nach ausdrücklicher Bestätigung (allowDuplicate).
+ */
+export class DuplicateInvoiceError extends InvoiceError {
+  constructor(
+    message: string,
+    readonly duplicate: { id: string; number: string | null },
+  ) {
+    super(message);
+  }
+}
 
 export { stornoReceiptNumbers } from "./partial-vat";
 
@@ -92,11 +106,14 @@ export const invoiceInput = z.object({
   receiptIds: z.array(z.uuid()).max(400).default([]),
   /** Leistungsjahr der Sammelrechnung: nur Quittungen aus diesem Jahr sind anrechenbar (Standard: Jahr des Rechnungsdatums) */
   collectiveYear: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(2000).max(2100).optional()),
+  /** Bestätigung „Trotzdem erstellen“ nach dem Hinweis auf einen gleichen Beleg am selben Tag (DuplicateInvoiceError) */
+  allowDuplicate: z.boolean().default(false),
 });
 type ParsedInvoiceInput = z.infer<typeof invoiceInput>;
 /** Positionen ohne Termin-/Doku-Bezug und ohne Anzahlungen dürfen die Felder weglassen. */
-export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "lines"> & {
+export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" | "collectiveYear" | "allowDuplicate" | "lines"> & {
   collectiveYear?: number;
+  allowDuplicate?: boolean;
   depositIds?: string[];
   receiptIds?: string[];
   lines: (Omit<LineInput, "appointmentId"> & { appointmentId?: string | null })[];
@@ -209,9 +226,11 @@ async function assertNotInvoiced(
   appointmentIds: string[],
   patientId: string | null,
   billingContactId: string | null,
-  creditedReceiptIds: string[] = [],
+  opts: { creditedReceiptIds?: string[]; creditedDepositIds?: string[] } = {},
 ) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
+  await lockInvoiceRecords(tx, org);
+  const creditedReceiptIds = opts.creditedReceiptIds ?? [];
+  const creditedDepositIds = opts.creditedDepositIds ?? [];
   const belongs = (p: string | null, careHomeId: string | null) => (patientId && p === patientId) || (billingContactId && careHomeId === billingContactId);
   const recs = recordIds.length
     ? await tx
@@ -248,28 +267,52 @@ async function assertNotInvoiced(
   if (allRecs.length) conds.push(inArray(invoiceLines.treatmentRecordId, allRecs));
   if (allAppts.length) conds.push(inArray(invoiceLines.appointmentId, allAppts));
   if (!conds.length) return;
-  const billed = await tx
-    .select({ recordId: invoiceLines.treatmentRecordId, appointmentId: invoiceLines.appointmentId, number: invoices.number })
+  const docs = await tx
+    .select({
+      id: invoices.id,
+      kind: invoices.kind,
+      status: invoices.status,
+      collectiveInvoiceId: invoices.collectiveInvoiceId,
+      recordId: invoiceLines.treatmentRecordId,
+      appointmentId: invoiceLines.appointmentId,
+      number: invoices.number,
+    })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(
-      and(
-        eq(invoiceLines.organizationId, org),
-        or(...conds),
-        notInArray(invoices.status, ["cancelled", "draft"]),
-        ne(invoices.kind, "deposit"),
-        ...(creditedReceiptIds.length ? [notInArray(invoices.id, creditedReceiptIds)] : []),
-      ),
-    )
-    .limit(1);
-  if (billed[0]) {
-    const b = billed[0];
+    .where(and(eq(invoiceLines.organizationId, org), or(...conds), notInArray(invoices.status, ["cancelled", "draft"])))
+    .orderBy(asc(invoices.issuedAt), asc(invoices.number));
+  const when = (b: { recordId: string | null; appointmentId: string | null }) => {
     const recId = b.recordId && allRecs.includes(b.recordId) ? b.recordId : null;
     const r = recs.find((x) => x.id === recId || (b.appointmentId && x.appointmentId === b.appointmentId));
     const a = appts.find((x) => x.id === b.appointmentId || linkedRecs.some((l) => l.id === recId && l.appointmentId === x.id));
-    const when = r ? `Die Behandlung vom ${dateDe(r.treatedAt)}` : a ? `Der Termin vom ${dateDe(a.startsAt)}` : "Die Behandlung";
-    throw new InvoiceError(`${when} ist bereits in Rechnung ${b.number} abgerechnet.`);
+    return r ? dateDe(r.treatedAt) : a ? dateDe(a.startsAt) : null;
+  };
+  // 1) abgerechnet: jede gültige Rechnung/Quittung/Sammelrechnung (außer den Quittungen, die genau hier angerechnet werden)
+  const billed = docs.find((d) => d.kind !== "deposit" && d.kind !== "credit_note" && !creditedReceiptIds.includes(d.id));
+  if (billed) {
+    const day = when(billed);
+    throw new InvoiceError(`Für die Behandlung${day ? ` vom ${day}` : ""} wurde bereits ${DOC_WITH_ARTICLE[billed.kind] ?? "der Beleg"} ${billed.number} erstellt.`);
   }
+  // 2) offene Anzahlung (bezahlt, noch nicht angerechnet) zu dieser Behandlung: erst anrechnen – nie zweimal kassieren
+  const openDeposit = docs.find((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId && !creditedDepositIds.includes(d.id));
+  if (openDeposit) {
+    const day = when(openDeposit);
+    throw new InvoiceError(`Für ${day ? `die Behandlung vom ${day}` : "diesen Termin"} gibt es bereits die Anzahlung ${openDeposit.number} – bitte anrechnen statt neu zu kassieren.`);
+  }
+}
+
+/** Belegart mit Artikel für Meldungen („… wurde bereits die Quittung Q2026-0004 erstellt.“) */
+const DOC_WITH_ARTICLE: Record<string, string> = {
+  receipt: "die Quittung",
+  invoice: "die Rechnung",
+  collective: "die Sammelrechnung",
+  no_show_fee: "das Ausfallhonorar",
+  deposit: "die Anzahlung",
+};
+
+/** Abrechnung von Behandlungen je Praxis serialisieren (zwei gleichzeitige Belege für dieselbe Behandlung → nur einer) */
+async function lockInvoiceRecords(tx: Tx, org: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`invoice-records:${org}`}))`);
 }
 
 /** Anzahlungen der Person, die noch auf keine (gültige) Rechnung angerechnet sind. */
@@ -503,7 +546,43 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     const recordIds = [...new Set(lines.map((l) => l.treatmentRecordId).filter((x): x is string => !!x))];
     const appointmentIds = [...new Set(lines.map((l) => l.appointmentId).filter((x): x is string => !!x))];
     if (recordIds.length || appointmentIds.length) {
-      await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null, partials.receipts.map((r) => r.id));
+      await assertNotInvoiced(tx, org, recordIds, appointmentIds, input.patientId ?? null, input.billingContactId ?? null, {
+        creditedReceiptIds: partials.receipts.map((r) => r.id),
+        creditedDepositIds: partials.deposits.map((d) => d.id),
+      });
+    }
+    // weicher Doppel-Schutz für Positionen ohne Termin-/Doku-Bezug: gleiche Leistung, gleiche Person, gleicher Tag
+    const freeServiceIds = [...new Set(lines.filter((l) => !l.treatmentRecordId && !l.appointmentId && l.serviceId).map((l) => l.serviceId!))];
+    let duplicateOf: { id: string; number: string | null } | null = null;
+    if (freeServiceIds.length && input.patientId) {
+      await lockInvoiceRecords(tx, org);
+      const [dup] = await tx
+        .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, name: services.name })
+        .from(invoiceLines)
+        .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
+        .innerJoin(services, eq(services.id, invoiceLines.serviceId))
+        .where(
+          and(
+            eq(invoiceLines.organizationId, org),
+            inArray(invoiceLines.serviceId, freeServiceIds),
+            eq(invoices.patientId, input.patientId),
+            eq(invoices.issuedAt, input.issuedAt),
+            inArray(invoices.kind, ["invoice", "receipt", "collective", "no_show_fee"]),
+            notInArray(invoices.status, ["cancelled", "draft"]),
+            ...(receiptIds.length ? [notInArray(invoices.id, receiptIds)] : []),
+          ),
+        )
+        .orderBy(asc(invoices.number))
+        .limit(1);
+      if (dup) {
+        duplicateOf = { id: dup.id, number: dup.number };
+        if (!input.allowDuplicate) {
+          throw new DuplicateInvoiceError(
+            `„${dup.name}“ wurde für diese Person am ${dateDe(input.issuedAt)} bereits abgerechnet (${INVOICE_KIND_LABEL[dup.kind] ?? "Beleg"} ${dup.number}). Wirklich ein zweites Mal?`,
+            duplicateOf,
+          );
+        }
+      }
     }
 
     const needsConfirm = needsTherapeuticConfirmation(lines, { smallBusiness });
@@ -607,7 +686,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     // 5) Zahlungen (Mischzahlung möglich)
     const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
-    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, receiptCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
+    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, receiptCents, duplicateOf, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
   });
 
   await audit({
@@ -616,7 +695,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, receipts: receiptIds.length, receiptCents: result.receiptCents, ustWaechter: result.ustWaechter },
+    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, receipts: receiptIds.length, receiptCents: result.receiptCents, duplicateOf: result.duplicateOf?.number ?? null, ustWaechter: result.ustWaechter },
   });
   return result;
 }
@@ -655,6 +734,10 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     if (input.treatmentRecordId) {
       const [r] = await tx.select({ patientId: treatmentRecords.patientId }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.id, input.treatmentRecordId)));
       if (!r || r.patientId !== input.patientId) throw new InvoiceError("Behandlung nicht gefunden.");
+    }
+    // nie doppelt kassieren: Behandlung schon abgerechnet bzw. schon eine offene Anzahlung dazu → ablehnen
+    if (input.appointmentId || input.treatmentRecordId) {
+      await assertNotInvoiced(tx, org, input.treatmentRecordId ? [input.treatmentRecordId] : [], input.appointmentId ? [input.appointmentId] : [], input.patientId, null);
     }
     const vatRate = effectiveVatRate(input.vatRate, { smallBusiness: o.smallBusiness });
     const line = { totalCents: input.amountCents, vatRate };

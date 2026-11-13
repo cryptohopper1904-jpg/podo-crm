@@ -131,11 +131,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const lines = linesOf(open);
     const base = { kind: "collective" as const, patientId: patient, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [], collectiveYear: year };
     // ohne Anrechnung bleibt die Doppelabrechnung gesperrt
-    await expect(invoices.createInvoice(auth, { ...base, lines })).rejects.toThrow(/bereits in Rechnung/);
+    await expect(invoices.createInvoice(auth, { ...base, lines })).rejects.toThrow(/wurde bereits die Quittung Q.* erstellt/);
     // Quittung nur auf eine Sammelrechnung
     await expect(invoices.createInvoice(auth, { ...base, kind: "invoice", lines: [lines[1]], receiptIds: [r1.id] })).rejects.toThrow(/nur auf eine Sammelrechnung/);
     // nur eine Quittung angerechnet: die Behandlung der anderen bleibt gesperrt
-    await expect(invoices.createInvoice(auth, { ...base, lines, receiptIds: [r1.id] })).rejects.toThrow(/06\.05\.\d{4} ist bereits in Rechnung/);
+    await expect(invoices.createInvoice(auth, { ...base, lines, receiptIds: [r1.id] })).rejects.toThrow(/Für die Behandlung vom 06\.05\.\d{4} wurde bereits die Quittung Q.* erstellt/);
     // Steuersätze: die Sammelrechnung muss je Satz mindestens die angerechneten Beträge enthalten
     await expect(
       invoices.createInvoice(auth, { ...base, lines: lines.map((l) => ({ ...l, vatRate: 0 })), receiptIds: [r1.id, r2.id] }),
