@@ -41,6 +41,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const base = { kind: "collective" as const, patientId: null, billingContactId: home, issuedAt: "2026-11-01", dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
     const inv = await invoices.createInvoice(auth, { ...base, lines: [line(recs[0])] });
 
+    // USt-Wächter: Vermerk nennt die Quelle; „aus Einstellung“ gilt nur bei aktiver Praxis-Einstellung
+    const free = { serviceId: null, description: "Freitext 0 %", quantity: 1, factor: 1, unitPriceCents: 1000, vatRate: 0 };
+    const noteOf = async (id: string) => f.asOrg(org, async (c) => (await c.query("select notes from invoices where id = $1", [id])).rows[0].notes as string);
+    const viaInactive = await invoices.createInvoice(auth, { ...base, therapeuticSource: "setting", lines: [free] });
+    expect(await noteOf(viaInactive.id)).toMatch(/bestätigt von/);
+    await f.asOrg(org, (c) => c.query(`update organizations set settings = coalesce(settings, '{}'::jsonb) || '{"documents":{"therapeuticDefault":true}}'::jsonb where id = $1`, [org]));
+    const viaSetting = await invoices.createInvoice(auth, { ...base, therapeuticSource: "setting", lines: [free] });
+    expect(await noteOf(viaSetting.id)).toMatch(/durch Praxis-Einstellung vorbelegt/);
+    await expect(invoices.createInvoice(auth, { ...base, therapeuticConfirmed: false, therapeuticSource: "setting", lines: [free] })).rejects.toThrow(/USt-Wächter/);
+
     // Mail-Text: „sofort“ statt Datum bei Zahlungsziel 0, sonst Datum
     const mailOf = (dueAt: string) =>
       delivery.invoiceEmailText({ invoice: { ...inv, issuedAt: "2026-11-01", dueAt, status: "issued", paidCents: 0, totalCents: 4000 }, organization: { name: "Praxis", legalName: null, phone: null } } as never).body;

@@ -76,6 +76,8 @@ export const invoiceInput = z.object({
   /** leer → Standard-Zahlungsziel der Praxis (Einstellungen → Belege) */
   dueDays: z.preprocess((v) => (v === "" || v === null ? undefined : v), z.coerce.number().int().min(0).max(MAX_DUE_DAYS).optional()),
   therapeuticConfirmed: z.boolean().default(false),
+  /** woher die USt-Wächter-Bestätigung kommt: aktiv angehakt oder aus der Praxis-Einstellung übernommen */
+  therapeuticSource: z.enum(["manual", "setting"]).optional(),
   notes: z.preprocess(emptyToNull, z.string().trim().max(2000).nullable().optional()),
   lines: z.array(lineInput).min(1, "Mindestens eine Position anlegen").max(100),
   payments: z.array(paymentInput).max(10).default([]),
@@ -362,10 +364,16 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       if (sum !== totals.totalCents) throw new InvoiceError("Eine Quittung muss sofort vollständig bezahlt werden.");
     }
 
+    // „Aus Einstellung“ nur gelten lassen, wenn die Praxis-Einstellung gerade wirklich aktiv ist – sonst als manuell werten
+    const fromSetting = input.therapeuticSource === "setting" && readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault;
     const noteParts: string[] = [];
     if (input.notes) noteParts.push(input.notes);
     if (needsConfirm && input.therapeuticConfirmed) {
-      noteParts.push(`${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – bestätigt von ${auth.user.name} am ${dateDe(new Date())}.`);
+      noteParts.push(
+        fromSetting
+          ? `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – durch Praxis-Einstellung vorbelegt, von ${auth.user.name} am ${dateDe(new Date())} ohne Änderung übernommen.`
+          : `${INTERNAL_NOTE_PREFIX}USt-Wächter: ${THERAPEUTIC_LABEL} – bestätigt von ${auth.user.name} am ${dateDe(new Date())}.`,
+      );
     }
 
     // 1) Entwurf
@@ -421,7 +429,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
 
     // 5) Zahlungen (Mischzahlung möglich)
     const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: depositCents }, input.payments, today, totals.groups);
-    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid };
+    return { id: draft.id, number, totalCents: totals.totalCents, depositCents, ...paid, ustWaechter: needsConfirm ? (fromSetting ? "setting" : "manual") : null };
   });
 
   await audit({
@@ -430,7 +438,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     action: "invoice.create",
     entity: "invoice",
     entityId: result.id,
-    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents },
+    meta: { number: result.number, kind: input.kind, totalCents: result.totalCents, payments: input.payments.length, deposits: depositIds.length, depositCents: result.depositCents, ustWaechter: result.ustWaechter },
   });
   return result;
 }
@@ -864,6 +872,7 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       list = [...extra, ...recent];
     }
     list = [...list].sort((a, b) => a.lastName.localeCompare(b.lastName, "de") || (a.firstName ?? "").localeCompare(b.firstName ?? "", "de"));
+    const docSettings = readDocumentSettings(o.settings as Record<string, unknown> | null);
     return {
       patients: list,
       services: svc.map((s) => ({
@@ -876,8 +885,8 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       })),
       billingContacts: contacts.map((c) => ({ id: c.id, name: c.name, kind: c.kind })),
       smallBusiness: o.smallBusiness,
-      defaultDueDays: readDocumentSettings(o.settings as Record<string, unknown> | null).dueDays,
-      therapeuticDefault: readDocumentSettings(o.settings as Record<string, unknown> | null).therapeuticDefault,
+      defaultDueDays: docSettings.dueDays,
+      therapeuticDefault: docSettings.therapeuticDefault,
       today: berlinDateIso(),
       openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
     };

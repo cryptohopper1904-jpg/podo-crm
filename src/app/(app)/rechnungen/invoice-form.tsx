@@ -451,12 +451,14 @@ export function InvoiceForm({
         {smallBusiness ? <p className="mt-3 text-sm text-muted">{NOTE_SMALL_BUSINESS}</p> : null}
       </Card>
 
-      {needsConfirm && therapeuticDefault && confirmed && !showGuard ? (
+      {/* Einklappen nur, wenn alle betroffenen Positionen Katalogleistungen sind – Freitext mit 0 % bleibt sichtbar zu prüfen */}
+      {needsConfirm && therapeuticDefault && confirmed && !showGuard && computed.every((l) => !l.needsConfirm || !!l.serviceId) ? (
         <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted">
           <input type="hidden" name="therapeuticConfirmed" value="on" />
-          Heilbehandlung (0 % USt, § 4 Nr. 14 UStG) – laut Praxis-Einstellung bestätigt.
+          <input type="hidden" name="therapeuticSource" value="setting" />
+          Heilbehandlung (0 % USt, § 4 Nr. 14 UStG) für {computed.filter((l) => l.needsConfirm).length} Position(en) – durch Praxis-Einstellung vorbelegt.
           <button type="button" className="font-semibold text-primary hover:underline" onClick={() => setShowGuard(true)}>
-            Ändern
+            Prüfen/Ändern
           </button>
         </p>
       ) : needsConfirm ? (

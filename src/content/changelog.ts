@@ -30,7 +30,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "USt-Wächter einmal bestätigen statt bei jeder Rechnung",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Unter Einstellungen → Praxisdaten → Belege können Sie einmalig bestätigen, dass Ihre 0-%-Leistungen Heilbehandlungen mit therapeutischem Ziel sind. Dann ist der Haken auf neuen Rechnungen schon gesetzt – bei kosmetischen Leistungen einfach auf der Rechnung ändern.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "Unter Einstellungen → Praxisdaten → Belege können Sie einmalig bestätigen, dass Ihre 0-%-Leistungen Heilbehandlungen mit therapeutischem Ziel sind. Dann ist der Haken auf neuen Rechnungen schon gesetzt. Bei kosmetischen Leistungen auf der Rechnung 19 % wählen – die Bestätigung wird weiterhin je Rechnung gespeichert.", href: "/einstellungen/praxis" },
     ],
   },
   {

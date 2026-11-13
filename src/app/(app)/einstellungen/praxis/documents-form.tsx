@@ -26,10 +26,10 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
         <Checkbox
           name="therapeuticDefault"
           defaultChecked={doc.therapeuticDefault}
-          label="USt-Wächter dauerhaft bestätigen: Unsere 0-%-Leistungen sind Heilbehandlungen mit therapeutischem Ziel (Befund/Verordnung dokumentiert)"
+          label="USt-Wächter auf neuen Rechnungen vorbelegen: Leistungen, die wir mit 0 % abrechnen, erbringen wir nur als Heilbehandlung mit therapeutischem Ziel (Befund/Verordnung dokumentiert)"
         />
         <p className="ml-8 text-xs text-muted">
-          Dann ist der Haken auf neuen Rechnungen schon gesetzt; bei kosmetischen Leistungen (z. B. Fußpflege ohne Befund) auf der Rechnung abwählen bzw. 19 % wählen. Steuerliche Einordnung bitte mit der Steuerberatung abstimmen.
+          Der Haken ist dann auf neuen Rechnungen gesetzt und wird je Rechnung mit Hinweis „durch Praxis-Einstellung vorbelegt“ gespeichert. Bei kosmetischen Leistungen (z. B. Fußpflege ohne Befund) auf der Rechnung „Prüfen/Ändern“ und die Position mit 19 % abrechnen. Steuerliche Einordnung bitte mit der Steuerberatung abstimmen.
         </p>
       </div>
       <Checkbox name="whatsapp" defaultChecked={doc.whatsapp} label="Telefonnummer ist auch per WhatsApp erreichbar („auch WhatsApp“ im Block Terminvereinbarung)" />
