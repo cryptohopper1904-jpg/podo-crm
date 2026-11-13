@@ -3,6 +3,7 @@ import type { RiskFlags } from "@/db/schema";
 import { setAppointmentStatusAction } from "@/app/(app)/kalender/actions";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
+import { dotStyle, type TherapistColor } from "@/lib/therapist-colors";
 import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 import { withReturn } from "@/lib/back-link";
@@ -41,7 +42,7 @@ const Gap = ({ wide = false }: { wide?: boolean }) => <span aria-hidden classNam
  * Die Umbrüche hängen an der Breite der Liste (Container-Query), nicht des Fensters – so brechen alle Zeilen
  * einer Liste gleich um: schmal Aktionen in eigener Zeile (weiterhin bündig), breit alles in einer Zeile.
  */
-export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from }: {
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color }: {
   row: ApptRow;
   canDoc: boolean;
   canEdit: boolean;
@@ -51,6 +52,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from }: 
    * „/doku“ – dort wird `von` immer angehängt, da der Standard im Termin der Kalender ist.
    */
   from?: string;
+  /** Kalenderfarbe der Behandler:in – als Farbpunkt vor dem Namen (der Statusstreifen bleibt) */
+  color?: TherapistColor;
 }) {
   const { a, patient, feed } = row;
   const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from, !from.startsWith("/kalender")) : `/kalender/termin/${a.id}`;
@@ -76,7 +79,16 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from }: 
           <p className="font-semibold">
             {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{[patient.firstName, patient.lastName].filter(Boolean).join(" ")}</Link> : a.title}
           </p>
-          <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? ` · ${row.therapist}` : ""}</p>
+          <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? (
+              <>
+                {" · "}
+                <span className="whitespace-nowrap">
+                  {color ? <span className="mr-1 inline-block size-2.5 rounded-full align-[-1px]" style={dotStyle(color)} aria-hidden /> : null}
+                  {row.therapist}
+                </span>
+              </>
+            ) : null}
+          </p>
           {patient ? <div className="mt-1"><RiskBadges flags={patient.riskFlags} compact /></div> : null}
           {feed || (overlap && !cancelled) ? (
             <div className="mt-1 flex flex-wrap gap-1.5">
