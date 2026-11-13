@@ -25,7 +25,7 @@ export function CheckoutForm({ defaultPlan, minSeats, mock }: { defaultPlan: Pai
             ))}
           </Select>
         </Field>
-        <Field label="Plätze (Personen mit eigenem Kalender)" hint={`enthalten: ${info.includedSeats}${info.maxSeats ? `, max. ${info.maxSeats}` : ", unbegrenzt"}. ${SEAT_FREE_NOTE}`}>
+        <Field label="Plätze (Inhaber:in, Podolog:innen, Azubis)" hint={`enthalten: ${info.includedSeats}${info.maxSeats ? `, max. ${info.maxSeats}` : ", unbegrenzt"}. ${SEAT_FREE_NOTE}`}>
           <Input
             name="seats"
             type="number"

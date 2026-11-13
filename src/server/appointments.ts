@@ -39,7 +39,8 @@ export async function listAppointments(auth: AuthContext, fromIso: string, days:
 
 /**
  * Wählbare Behandler:innen (eigene Kalenderspalte): nur Inhaber:in und Podolog:in (CALENDAR_ROLES).
- * Empfang und Azubis haben keinen eigenen Kalender und belegen dafür keinen bezahlten Platz.
+ * Empfang, Azubis und Steuerberatung haben keine eigene Kalenderspalte (Azubis belegen trotzdem einen Platz,
+ * siehe seatCounts in src/lib/plans.ts).
  */
 export async function therapists(auth: AuthContext) {
   const org = auth.organization.id;
@@ -271,7 +272,7 @@ export async function rescheduleAppointment(auth: AuthContext, id: string, input
       .limit(1);
     const lock = appointmentEditLock(a, !!feed, await isAppointmentBilled(tx, org, id));
     if (lock) return { ok: false, error: lock.message };
-    // Nur Rollen mit eigenem Kalender (Empfang/Azubis belegen keinen Platz und bekommen keine Termine)
+    // Nur Rollen mit eigenem Kalender (Empfang/Azubis bekommen keine eigenen Termine)
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false, error: "Behandler:in nicht gefunden." };
     if (!input.allowConflict) {
       const clash = (await conflictsInTx(tx, org, input.therapistId, input.startsAt, end)).filter((c) => c.id !== id);

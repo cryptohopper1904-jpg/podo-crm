@@ -23,6 +23,7 @@ import {
 } from "@/lib/waitlist";
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingPort, MessagingProvider } from "@/integrations/types";
+import { isCalendarMember } from "./appointments";
 import { adapterFor } from "./integrations";
 import { mailMessagingPort } from "./mail";
 
@@ -349,6 +350,9 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
     }
     const [p] = await tx.select({ firstName: patients.firstName, lastName: patients.lastName, archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, l.patientId)));
     if (!p || p.archivedAt) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
+    // Behandler:in des Ursprungstermins nur übernehmen, wenn sie weiterhin einen eigenen Kalender hat (aktiv, Inhaber:in/Podolog:in) –
+    // sonst ohne Zuordnung anlegen (wie Online-Buchungen), die Praxis ordnet zu
+    const therapistId = slot.therapistId && (await isCalendarMember(tx, org, slot.therapistId)) ? slot.therapistId : null;
     const svc = await tx
       .select({ serviceId: appointmentServices.serviceId, quantity: appointmentServices.quantity })
       .from(appointmentServices)
@@ -359,7 +363,7 @@ export async function acceptOffer(token: string, now = new Date()): Promise<Acce
         organizationId: org,
         locationId: slot.locationId,
         patientId: l.patientId,
-        therapistId: slot.therapistId,
+        therapistId,
         startsAt: slot.startsAt,
         endsAt: slot.endsAt,
         status: "planned",

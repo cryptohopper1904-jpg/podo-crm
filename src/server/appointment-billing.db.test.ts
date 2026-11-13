@@ -237,7 +237,10 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,$3)", [org, staff, role]);
       expect(await appts.rescheduleAppointment(auth, a, { startsAt: at, durationMin: 30, therapistId: staff, allowConflict: false })).toMatchObject({ ok: false, error: expect.stringMatching(/nicht gefunden/) });
       expect((await appts.therapists(auth)).map((t) => t.id)).not.toContain(staff);
+      // Arbeitszeiten von Empfang/Azubis ergeben keine buchbaren Zeiten (Online-Buchung, KI-Telefon)
+      expect((await (await import("./staff")).bookableStaff(org)).map((t) => t.id)).not.toContain(staff);
     }
     expect((await appts.therapists(auth)).map((t) => t.id)).toContain(user);
+    expect((await (await import("./staff")).bookableStaff(org)).map((t) => t.id)).toContain(user);
   });
 });

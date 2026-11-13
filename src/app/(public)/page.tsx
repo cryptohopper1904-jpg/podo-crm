@@ -290,7 +290,10 @@ export default async function Landing() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h2 id="preise-kurz" className="font-display text-3xl font-semibold tracking-tight">Einfache Preise</h2>
-            <p className="mt-2 text-muted">{PRICE_NOTE} Monatlich kündbar.</p>
+            <p className="mt-2 text-muted">
+              {PRICE_NOTE.replace(" (siehe unten).", ".")}{" "}
+              <Link href="/preise#vorlaeufig" className="font-semibold text-primary underline-offset-2 hover:underline">Was „vorläufig“ bedeutet</Link>. Monatlich kündbar.
+            </p>
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>
         </div>

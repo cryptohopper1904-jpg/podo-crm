@@ -1,12 +1,11 @@
 import "server-only";
-import { and, count, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, count, eq, ne, notInArray, or, sql } from "drizzle-orm";
 import { db, withOrg, type Db, type Tx } from "@/db";
 import { auditLog, billingEvents, memberships, organizations } from "@/db/schema";
 import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/stripe/events";
 import { priceIdsFromEnv, type PriceIds } from "@/integrations/stripe/stripe";
 import type { StripeEvent } from "@/integrations/stripe/types";
-import { CALENDAR_ROLES } from "@/lib/auth/permissions";
-import { freeSwitchProblem } from "@/lib/plans";
+import { freeSwitchProblem, SEAT_FREE_ROLES } from "@/lib/plans";
 import { countedPatients } from "./patient-limit";
 
 export type BillingResult = "processed" | "duplicate" | "ignored" | "unassigned";
@@ -123,10 +122,13 @@ export async function applyMockSubscription(organizationId: string, userId: stri
 }
 
 /**
- * Belegte Plätze (wie seatCounts in src/lib/plans.ts): aktive Mitgliedschaften mit eigenem Kalender
- * (Inhaber:in, Podolog:in). Empfang, Azubis und Steuerberatung sind kostenlos. Im Kostenlos-Tarif („1 Person“)
- * zählt jede aktive Person außer der Steuerberatung. Der Tarif wird in derselben Abfrage gelesen.
+ * Belegte Plätze (wie seatCounts in src/lib/plans.ts): aktive Mitgliedschaften außer Empfang und Steuerberatung
+ * (SEAT_FREE_ROLES; Azubis zählen). Im Kostenlos-Tarif („1 Person“) zählt jede aktive Person außer der
+ * Steuerberatung. Der Tarif wird in derselben Abfrage gelesen.
  */
+/** SQL-Bedingung „belegt einen Platz“ (braucht memberships und organizations in der Abfrage) – entspricht seatCounts */
+export const seatCountsSql = or(notInArray(memberships.role, [...SEAT_FREE_ROLES]), and(eq(organizations.plan, "free"), ne(memberships.role, "accountant")))!;
+
 export async function usedSeats(organizationId: string, exec: Db | Tx = db): Promise<number> {
   const [r] = await exec
     .select({ n: count() })
@@ -136,13 +138,13 @@ export async function usedSeats(organizationId: string, exec: Db | Tx = db): Pro
       and(
         eq(memberships.organizationId, organizationId),
         eq(memberships.active, true),
-        or(inArray(memberships.role, [...CALENDAR_ROLES]), and(eq(organizations.plan, "free"), ne(memberships.role, "accountant"))),
+        seatCountsSql,
       ),
     );
   return Number(r?.n ?? 0);
 }
 
-/** Aktive Teammitglieder ohne Steuerberatung (inkl. Empfang/Azubis) – z. B. für den Wechsel in den Kostenlos-Tarif */
+/** Aktive Teammitglieder ohne Steuerberatung (inkl. Empfang) – z. B. für den Wechsel in den Kostenlos-Tarif */
 export async function activeTeamMembers(organizationId: string, exec: Db | Tx = db): Promise<number> {
   const [r] = await exec
     .select({ n: count() })
@@ -170,8 +172,8 @@ export async function loadOrgBilling(organizationId: string) {
 /**
  * Wechsel in den kostenlosen Tarif (höchstens 20 Patient:innen, 1 Person). Nur ohne laufendes Stripe-Abo.
  * Sperren in fester Reihenfolge „seats:“ → „pnum:“ (wie Team-Änderungen bzw. Patienten-Neuanlagen), damit parallel
- * weder Personen noch Patient:innen dazukommen. Weitere Teammitglieder (außer Steuerberatung) werden deaktiviert – bewusst auch Empfang und Azubis, obwohl sie in
- * bezahlten Tarifen keinen Platz belegen: Der Kostenlos-Tarif ist auf „1 Person“ begrenzt (seatCounts mit plan "free").
+ * weder Personen noch Patient:innen dazukommen. Weitere Teammitglieder (außer Steuerberatung) werden deaktiviert – bewusst auch der Empfang, obwohl er in
+ * bezahlten Tarifen keinen Platz belegt: Der Kostenlos-Tarif ist auf „1 Person“ begrenzt (seatCounts mit plan "free").
  * Die alte Abo-ID wird gelöst und der Event-Stand auf jetzt gesetzt: verspätete Stripe-Events des alten Abos
  * überschreiben den Tarif nicht mehr (siehe processBillingEvent).
  */

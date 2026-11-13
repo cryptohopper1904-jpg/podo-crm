@@ -37,7 +37,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const freeWarning =
     [
       a.trialDaysLeft !== undefined ? `Die Testphase (noch ${a.trialDaysLeft} ${a.trialDaysLeft === 1 ? "Tag" : "Tage"}) endet damit sofort – Patientenportal, KI-Telefon und Website werden abgeschaltet.` : null,
-      team > 1 ? `${team - 1} weitere Teammitglied(er) werden deaktiviert – auch Empfang und Azubis, denn der kostenlose Tarif ist auf 1 Person begrenzt (die Steuerberatung bleibt).` : null,
+      team > 1 ? `${team - 1} weitere Teammitglied(er) werden deaktiviert – auch der Empfang, denn der kostenlose Tarif ist auf 1 Person begrenzt (die Steuerberatung bleibt).` : null,
     ]
       .filter(Boolean)
       .join(" ") || null;
@@ -59,7 +59,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
           <div>
             <p className="text-sm text-muted">Plätze belegt / gebucht</p>
             <p className="font-display text-2xl font-semibold tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</p>
-            <p className="text-xs text-muted">{org?.plan === "free" ? "Kostenloser Tarif: 1 Person, die Steuerberatung zählt nicht." : `Nur Personen mit eigenem Kalender. ${SEAT_FREE_NOTE}`}</p>
+            <p className="text-xs text-muted">{org?.plan === "free" ? "Kostenloser Tarif: 1 Person, die Steuerberatung zählt nicht." : `Inhaber:in, Podolog:innen und Azubis. ${SEAT_FREE_NOTE}`}</p>
           </div>
           <div>
             {a.trialDaysLeft !== undefined ? (
@@ -129,7 +129,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
                 <span className="block text-xs text-muted">{grossLabel(PLANS[p].priceCents)}</span>
                 {PLANS[p].maxSeats !== 1 ? <span className="block text-xs text-muted">+ {money(EXTRA_SEAT_CENTS)} netto ({grossLabel(EXTRA_SEAT_CENTS)}) je weiterem Platz</span> : null}
               </td>
-              <td>{PLANS[p].includedSeats} inkl.{PLANS[p].maxSeats ? `, max. ${PLANS[p].maxSeats}` : ", unbegrenzt"}<span className="block text-xs text-muted">Empfang/Azubis kostenlos</span></td>
+              <td>{PLANS[p].includedSeats} inkl.{PLANS[p].maxSeats ? `, max. ${PLANS[p].maxSeats}` : ", unbegrenzt"}<span className="block text-xs text-muted">Empfang kostenlos</span></td>
               {FEATURES.map((f) => <td key={f}>{PLANS[p].features.includes(f) ? (f === "voice_agent" ? `✓ (${PLANS[p].voiceMinutesIncluded} Min./Monat)` : "✓") : f === "voice_agent" && VOICE_ADDON_PLANS.includes(p) ? `Zusatzmodul (${VOICE_ADDON_MINUTES} Min./Monat)` : f === "website" && WEBSITE_ADDON_PLANS.includes(p) ? `Zusatzmodul (${money(WEBSITE_ADDON_CENTS)} netto/Monat, ${grossLabel(WEBSITE_ADDON_CENTS)}, vorläufig)` : "–"}</td>)}
             </tr>
           ))}
@@ -137,7 +137,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
       </Table>
       <p className="text-sm font-semibold text-warn-soft-text"><Badge tone="warn">Preise vorläufig</Badge> <span className="ml-2 font-normal text-muted">{PRICES_NOTE}</span></p>
       <p className="text-sm text-muted">
-        Ein Platz ist für eine Person mit eigenem Kalender (Inhaber:in, Podolog:in). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende bleibt die Praxis lesbar und alle Daten exportierbar (Einstellungen → Import/Export, Patientenexport in der Akte).
+        Ein Platz ist für eine Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende bleibt die Praxis lesbar und alle Daten exportierbar (Einstellungen → Import/Export, Patientenexport in der Akte).
       </p>
     </div>
   );

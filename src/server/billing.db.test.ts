@@ -82,16 +82,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await billing.processBillingEvent({ id: `evt_${sfx()}`, type: "invoice.payment_failed", created, data: { object: { customer: "cus_unbekannt" } } }, { prices })).toBe("unassigned");
   });
 
-  it("belegte Plätze: nur aktive Mitglieder mit eigenem Kalender (ohne Empfang, Azubi, Steuerberatung)", async () => {
+  it("belegte Plätze: nur aktive Mitglieder ohne Empfang und Steuerberatung (Azubis zählen)", async () => {
     const org = await f.org();
     await f.pool.query("update organizations set plan = 'praxis' where id = $1", [org]);
     for (const [role, active] of [["owner", true], ["therapist", true], ["therapist", false], ["accountant", true], ["reception", true], ["trainee", true], ["reception", false]] as const) {
       const u = await f.user();
       await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,$3,$4)", [org, u, role, active]);
     }
-    expect(await billing.usedSeats(org)).toBe(2);
+    expect(await billing.usedSeats(org)).toBe(3);
     expect(await billing.activeTeamMembers(org)).toBe(4);
-    // Kostenlos-Tarif („1 Person“): dort zählen auch Empfang und Azubi, die Steuerberatung weiterhin nicht
+    // Kostenlos-Tarif („1 Person“): dort zählt auch der Empfang, die Steuerberatung weiterhin nicht
     await f.pool.query("update organizations set plan = 'free' where id = $1", [org]);
     expect(await billing.usedSeats(org)).toBe(4);
   });
