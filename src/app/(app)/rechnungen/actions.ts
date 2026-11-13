@@ -45,6 +45,7 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     issuedAt: form.get("issuedAt"),
     dueDays: form.get("dueDays") || undefined,
     therapeuticConfirmed: form.get("therapeuticConfirmed") === "on",
+    therapeuticSource: form.get("therapeuticSource") === "setting" ? "setting" : "manual",
     notes: form.get("notes"),
     lines: parseJson(form.get("lines")),
     payments: parseJson(form.get("payments")),

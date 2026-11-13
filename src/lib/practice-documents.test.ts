@@ -6,7 +6,7 @@ const withBooking = (booking: Record<string, unknown>, extra: Record<string, unk
 
 describe("Belege-Einstellungen", () => {
   it("liefert sichere Standardwerte", () => {
-    expect(readDocumentSettings({})).toEqual({ dueDays: 14, qualification: null, whatsapp: false, booking: { channel: "none", url: null, label: null } });
+    expect(readDocumentSettings({})).toEqual({ dueDays: 14, therapeuticDefault: false, qualification: null, whatsapp: false, booking: { channel: "none", url: null, label: null } });
     expect(readDocumentSettings({ documents: { booking: { channel: "evil" }, whatsapp: "yes" } }).booking.channel).toBe("none");
   });
   it("verwirft Nicht-http(s)-Links", () => {
@@ -56,5 +56,13 @@ describe("Standard-Zahlungsziel", () => {
     expect(readDocumentSettings({ documents: { dueDays: -1 } }).dueDays).toBe(14);
     expect(readDocumentSettings({ documents: { dueDays: 500 } }).dueDays).toBe(14);
     expect(readDocumentSettings({ documents: { dueDays: "7" } }).dueDays).toBe(14);
+  });
+});
+
+describe("USt-Wächter dauerhaft bestätigt", () => {
+  it("nur bei ausdrücklichem true", () => {
+    expect(readDocumentSettings({ documents: { therapeuticDefault: true } }).therapeuticDefault).toBe(true);
+    expect(readDocumentSettings({ documents: { therapeuticDefault: "true" } }).therapeuticDefault).toBe(false);
+    expect(readDocumentSettings({}).therapeuticDefault).toBe(false);
   });
 });

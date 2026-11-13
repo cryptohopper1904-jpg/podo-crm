@@ -28,6 +28,9 @@ export const MAX_DUE_DAYS = 120;
 
 export type DocumentSettings = {
   dueDays: number;
+  /** USt-Wächter: Praxis bestätigt dauerhaft, dass 0-%-Leistungen Heilbehandlungen mit therapeutischem Ziel sind
+   *  (Haken auf neuen Rechnungen vorbelegt, pro Rechnung abwählbar; Bestätigung wird je Rechnung gespeichert). */
+  therapeuticDefault: boolean;
   qualification: string | null;
   whatsapp: boolean;
   booking: { channel: BookingChannel; url: string | null; label: string | null };
@@ -42,6 +45,7 @@ export function readDocumentSettings(settings: Record<string, unknown> | null | 
   const due = typeof raw.dueDays === "number" && Number.isInteger(raw.dueDays) && raw.dueDays >= 0 && raw.dueDays <= MAX_DUE_DAYS ? raw.dueDays : DEFAULT_DUE_DAYS;
   return {
     dueDays: due,
+    therapeuticDefault: raw.therapeuticDefault === true,
     qualification: str(raw.qualification, LIMITS.qualification),
     whatsapp: raw.whatsapp === true,
     booking: { channel, url: safeUrl(b.url), label: str(b.label, LIMITS.bookingLabel) },
