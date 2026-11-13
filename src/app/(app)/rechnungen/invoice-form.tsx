@@ -2,7 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
-import { useActionState, useMemo, useRef, useState } from "react";
+import { useActionState, useMemo, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
@@ -11,7 +11,8 @@ import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
-import { createInvoiceAction } from "./actions";
+import { euro, isEmptyLine, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
+import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
 
 type Service = { id: string; code: string; name: string; priceCents: number; vatRate: number; requiresTherapeuticPurpose: boolean };
@@ -29,19 +30,7 @@ export type InvoicePreset = {
   lines: { treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string | null; description: string; quantity: number; unitPriceCents: number | null; vatRate: number }[];
 };
 
-/** Noch nicht angerechnete Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet. */
-export type OpenDeposit = {
-  id: string;
-  patientId: string;
-  number: string | null;
-  issuedAt: string | null;
-  totalCents: number;
-  /** Leistung laut Quittung (wird bei Auswahl als Position der Sammelrechnung übernommen) */
-  description: string;
-  vatRate: number;
-  appointmentId: string | null;
-  treatmentRecordId: string | null;
-};
+export type { OpenDeposit, OpenReceipt } from "@/lib/partial-lines";
 
 /** Wegegeld für Hausbesuche (nur vor dem Ausstellen, nur Privat/Selbstzahler) – siehe src/server/trips.ts */
 export type TravelOptions = {
@@ -53,63 +42,11 @@ export type TravelOptions = {
   suggestions: { tripId: string; date: string; km: number; description: string; maybeBilled: boolean }[];
 } | null;
 
-type Line = { key: string; /** aus diesen Quittungen übernommen (fällt beim Abwählen wieder weg) */ depositIds?: string[]; treatmentRecordId?: string | null; appointmentId?: string | null; serviceId: string; /** Produktverkauf statt Leistung */ productId?: string; /** Produkt in der Behandlung angewendet (0 %) */ inTreatment?: boolean; /** zugeordnete Behandlungsposition (Zeilen-Key) */ treatmentKey?: string; description: string; quantity: string; factor: string; price: string; vatRate: number; /** Eingabe im Kürzel-Feld (sonst Kürzel der gewählten Leistung) */ codeInput?: string; /** Stand vor der Kürzel-Eingabe (für unbekannte Kürzel) */ codeStart?: { serviceId: string; productId?: string; inTreatment?: boolean; description: string; price: string; vatRate: number } };
-
-let seq = 0;
-const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
 const num = (s: string) => {
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 };
-const isEmptyLine = (l: Line) => !l.serviceId && !l.productId && !l.description.trim() && !l.price.trim() && !l.treatmentRecordId && !l.appointmentId;
 const PRODUCT_PREFIX = "p:";
-
-/**
- * Positionen passend zu den gewählten Quittungen. Steht die Behandlung schon als Position drin (Termin/Doku aus dem
- * Jahresvorschlag), wird nur angerechnet. Sonst eine Position je Behandlung – mehrere Quittungen zum selben Termin
- * ergeben eine Position mit der Summe (nie doppelt). Unveränderte Auswahl behält die vorhandene (ggf. bearbeitete) Zeile.
- */
-function syncDepositLines(ls: Line[], chosen: OpenDeposit[]): Line[] {
-  const others = ls.filter((l) => !l.depositIds?.length);
-  const existing = ls.filter((l) => l.depositIds?.length);
-  const groups = new Map<string, OpenDeposit[]>();
-  for (const d of chosen) {
-    const covered = others.some(
-      (l) => (!!d.appointmentId && l.appointmentId === d.appointmentId) || (!!d.treatmentRecordId && l.treatmentRecordId === d.treatmentRecordId),
-    );
-    if (covered) continue;
-    const key = `${d.appointmentId ?? d.treatmentRecordId ?? d.id}|${d.vatRate}`;
-    groups.set(key, [...(groups.get(key) ?? []), d]);
-  }
-  const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-  const depLines = [...groups.values()].map((g) => {
-    const ids = g.map((d) => d.id);
-    const prev = existing.find((l) => sameIds(l.depositIds!, ids));
-    if (prev) return prev;
-    const d = g[0];
-    return newLine({
-      depositIds: ids,
-      appointmentId: d.appointmentId,
-      treatmentRecordId: d.treatmentRecordId,
-      description: depositLineText(d),
-      price: euro(g.reduce((s, x) => s + x.totalCents, 0)),
-      vatRate: d.vatRate,
-    });
-  });
-  const result = [...(depLines.length ? others.filter((l) => !isEmptyLine(l)) : others), ...depLines];
-  return result.length ? result : [newLine()];
-}
-
-const newLine = (patch: Partial<Line> = {}): Line => ({
-  key: `l${++seq}`,
-  serviceId: "",
-  description: "",
-  quantity: "1",
-  factor: "1",
-  price: "",
-  vatRate: 0,
-  ...patch,
-});
 
 export function InvoiceForm({
   patients,
@@ -125,8 +62,9 @@ export function InvoiceForm({
   travel,
   privateOnly = false,
   openDeposits = [],
-  receiptsThisYear = {},
+  openReceipts = [],
   receiptsYear,
+  alreadyBilled = [],
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -141,12 +79,15 @@ export function InvoiceForm({
   today: string;
   preselectPatientId?: string | null;
   preset?: InvoicePreset;
+  /** Vorab-Prüfung (Termin/Behandlung der Vorlage ist schon abgerechnet): Hinweis mit Link, Ausstellen gesperrt */
+  alreadyBilled?: { id: string; label: string }[];
   travel?: TravelOptions;
   /** Praxis nur für Privat-/Selbstzahler (src/lib/features.ts): keine Kassen-Hinweise */
   privateOnly?: boolean;
   openDeposits?: OpenDeposit[];
-  /** normale Quittungen (sofort bezahlt) je Patient:in im laufenden Jahr – bereits abgerechnet */
-  receiptsThisYear?: Record<string, { count: number; cents: number }>;
+  /** offene normale Quittungen (Teilrechnungen) der vorausgewählten Person im Jahr `receiptsYear` */
+  openReceipts?: OpenReceipt[];
+  /** Jahr der Sammelrechnung: angeboten werden die Quittungen dieses Jahres */
   receiptsYear?: number;
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
@@ -167,6 +108,17 @@ export function InvoiceForm({
   const [billingContactId, setBillingContactId] = useState(preset?.billingContactId ?? initialPatient?.billingContactId ?? "");
   /** Auswahl der anzurechnenden Anzahlungen (Standard: bei Sammelrechnung alle offenen der Person, sonst keine) */
   const [depositSel, setDepositSel] = useState<Record<string, boolean>>({});
+  /** Auswahl der anzurechnenden normalen Quittungen (nur Sammelrechnung; Standard: alle des Jahres) */
+  const [receiptSel, setReceiptSel] = useState<Record<string, boolean>>({});
+  /** geladene offene Quittungen je Person (vorausgewählte Person vom Server, andere werden nachgeladen) */
+  const [receiptsBy, setReceiptsBy] = useState<Record<string, OpenReceipt[]>>(() => {
+    const m: Record<string, OpenReceipt[]> = {};
+    if (initialPatient) m[initialPatient.id] = openReceipts.filter((r) => r.patientId === initialPatient.id);
+    return m;
+  });
+  const [loadingReceipts, startLoadingReceipts] = useTransition();
+  /** aktueller Stand für das Nachladen (Antwort kommt asynchron, Auswahl kann sich inzwischen geändert haben) */
+  const cur = useRef({ kind: (preset?.kind ?? "invoice") as CreatableKind, patientId: initialPatient?.id ?? "", depositSel: {} as Record<string, boolean>, receiptSel: {} as Record<string, boolean> });
   const [patientFilter, setPatientFilter] = useState("");
   const [lines, setLines] = useState<Line[]>(() => {
     const start = preset?.lines.length
@@ -183,12 +135,19 @@ export function InvoiceForm({
           }),
         )
       : [newLine()];
-    // Sammelrechnung: offene Quittungen der Person sind vorausgewählt → ihre Leistungen gleich als Positionen
+    // Sammelrechnung: offene Anzahlungen und Quittungen der Person sind vorausgewählt → ihre Leistungen gleich als Positionen
     const k = preset?.kind ?? "invoice";
     const pid = initialPatient?.id;
-    return k === "collective" && pid ? syncDepositLines(start, openDeposits.filter((d) => d.patientId === pid)) : start;
+    return k === "collective" && pid
+      ? syncDepositLines(start, openDeposits.filter((d) => d.patientId === pid), openReceipts.filter((r) => r.patientId === pid))
+      : start;
   });
-  const [payments, setPayments] = useState<PaymentRow[]>([]);
+  // Quittung aus dem Termin: Barzahlung über den vorausgefüllten Betrag vorschlagen
+  const [payments, setPayments] = useState<PaymentRow[]>(() => {
+    if (preset?.kind !== "receipt") return [];
+    const cents = preset.lines.reduce((s, l) => s + lineTotalCents(l.unitPriceCents ?? 0, l.quantity, 1), 0);
+    return cents > 0 ? [newPaymentRow(cents)] : [];
+  });
   const [confirmed, setConfirmed] = useState(therapeuticDefault);
   const [showGuard, setShowGuard] = useState(!therapeuticDefault);
 
@@ -233,9 +192,27 @@ export function InvoiceForm({
   const paid = paymentsSum(payments);
   const depositsAllowed = kind === "invoice" || kind === "collective";
   const patientDeposits = depositsAllowed && patientId ? openDeposits.filter((d) => d.patientId === patientId) : [];
-  const depositOn = (id: string) => depositSel[id] ?? kind === "collective";
+  /** Sammelrechnung: vorausgewählt sind die offenen Quittungen (AZ und Q) aus dem Jahr der Sammelrechnung */
+  const inYear = (iso: string | null) => !receiptsYear || !iso || iso.startsWith(String(receiptsYear));
+  /** Termine/Behandlungen der Vorlage: offene Anzahlungen dazu sind bei einer Rechnung vorausgewählt (nie doppelt kassieren) */
+  const presetRefs = new Set((preset?.lines ?? []).flatMap((l) => [l.appointmentId, l.treatmentRecordId]).filter((x): x is string => !!x));
+  const depositDefault = (k: CreatableKind, d: OpenDeposit) =>
+    (k === "collective" && inYear(d.issuedAt)) ||
+    ((k === "invoice" || k === "collective") && ((!!d.appointmentId && presetRefs.has(d.appointmentId)) || (!!d.treatmentRecordId && presetRefs.has(d.treatmentRecordId))));
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+  const depositOn = (id: string) => depositSel[id] ?? depositDefault(kind, patientDeposits.find((d) => d.id === id)!);
   const credited = patientDeposits.filter((d) => depositOn(d.id));
-  const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0);
+  const patientReceipts = kind === "collective" && patientId ? (receiptsBy[patientId] ?? []) : [];
+  const receiptOn = (id: string) => receiptSel[id] ?? true;
+  const creditedReceipts = patientReceipts.filter((r) => receiptOn(r.id));
+  const creditedReceiptCents = creditedReceipts.reduce((s, r) => s + r.totalCents, 0);
+  const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0) + creditedReceiptCents;
+  const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
+  /** eine Auswahlliste für beide Quittungsarten (Sammelrechnung), nach Datum */
+  const partialItems = [
+    ...patientDeposits.map((d) => ({ id: d.id, kind: "deposit" as const, number: d.number, issuedAt: d.issuedAt, totalCents: d.totalCents, text: depositLineText(d), warn: !d.appointmentId && !d.treatmentRecordId, on: depositOn(d.id) })),
+    ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: false, on: receiptOn(r.id) })),
+  ].sort((x, y) => (x.issuedAt ?? "").localeCompare(y.issuedAt ?? "") || (x.number ?? "").localeCompare(y.number ?? ""));
   const openAfterDeposits = totals.totalCents - creditedCents;
 
   const update = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -307,11 +284,29 @@ export function InvoiceForm({
     );
   }
 
-  /** Auswahl der Quittungen ändern und Positionen nachziehen */
-  function applyDeposits(nextKind: CreatableKind, pid: string, sel: Record<string, boolean>) {
+  /** gewählte Anzahlungen und Quittungen für Belegart/Person/Auswahl */
+  function chosenPartials(nextKind: CreatableKind, pid: string, dSel: Record<string, boolean>, rSel: Record<string, boolean>, rBy: Record<string, OpenReceipt[]>) {
     const allowed = nextKind === "invoice" || nextKind === "collective";
-    const chosen = allowed && pid ? openDeposits.filter((d) => d.patientId === pid && (sel[d.id] ?? nextKind === "collective")) : [];
-    setLines((ls) => syncDepositLines(ls, chosen));
+    const deps = allowed && pid ? openDeposits.filter((d) => d.patientId === pid && (dSel[d.id] ?? depositDefault(nextKind, d))) : [];
+    const recs = nextKind === "collective" && pid ? (rBy[pid] ?? []).filter((r) => rSel[r.id] ?? true) : [];
+    return { deps, recs };
+  }
+  /** Auswahl der Quittungen ändern und Positionen nachziehen (`without`: gerade entfernte Position) */
+  function applyDeposits(nextKind: CreatableKind, pid: string, dSel: Record<string, boolean>, rSel: Record<string, boolean> = receiptSel, without?: string) {
+    cur.current = { kind: nextKind, patientId: pid, depositSel: dSel, receiptSel: rSel };
+    const { deps, recs } = chosenPartials(nextKind, pid, dSel, rSel, receiptsBy);
+    setLines((ls) => syncDepositLines(without ? ls.filter((l) => l.key !== without) : ls, deps, recs));
+    // Quittungen der Person für die Sammelrechnung nachladen (einmal je Person)
+    if (nextKind === "collective" && pid && !(pid in receiptsBy) && receiptsYear) {
+      startLoadingReceipts(async () => {
+        const list = (await openReceiptsAction(pid, receiptsYear)) as OpenReceipt[];
+        setReceiptsBy((m) => ({ ...m, [pid]: list }));
+        const c = cur.current;
+        if (c.kind !== "collective" || c.patientId !== pid || !list.length) return;
+        const next = chosenPartials(c.kind, pid, c.depositSel, c.receiptSel, { [pid]: list });
+        setLines((ls) => syncDepositLines(ls, next.deps, next.recs));
+      });
+    }
   }
   function toggleDeposit(id: string, on: boolean) {
     const sel = { ...depositSel, [id]: on };
@@ -323,6 +318,30 @@ export function InvoiceForm({
     for (const d of patientDeposits) sel[d.id] = on;
     setDepositSel(sel);
     applyDeposits(kind, patientId, sel);
+  }
+  function selectAllPartials(on: boolean) {
+    const dSel = { ...depositSel };
+    for (const d of patientDeposits) dSel[d.id] = on;
+    const rSel = { ...receiptSel };
+    for (const r of patientReceipts) rSel[r.id] = on;
+    setDepositSel(dSel);
+    setReceiptSel(rSel);
+    applyDeposits(kind, patientId, dSel, rSel);
+  }
+  function toggleReceipt(id: string, on: boolean) {
+    const sel = { ...receiptSel, [id]: on };
+    setReceiptSel(sel);
+    applyDeposits(kind, patientId, depositSel, sel);
+  }
+  /** Position entfernen; stammt sie aus einer Quittung/Anzahlung, wird diese auch nicht mehr angerechnet */
+  function removeLine(l: Line) {
+    if (!l.depositIds?.length) return setLines((ls) => ls.filter((x) => x.key !== l.key));
+    const off = Object.fromEntries(l.depositIds.map((id) => [id, false]));
+    const dSel = l.fromReceipt ? depositSel : { ...depositSel, ...off };
+    const rSel = l.fromReceipt ? { ...receiptSel, ...off } : receiptSel;
+    setDepositSel(dSel);
+    setReceiptSel(rSel);
+    applyDeposits(kind, patientId, dSel, rSel, l.key);
   }
 
   function chooseKind(k: CreatableKind) {
@@ -390,7 +409,38 @@ export function InvoiceForm({
       <input type="hidden" name="payments" value={paymentsToJson(payments)} />
       <input type="hidden" name="kind" value={kind} />
       <input type="hidden" name="depositIds" value={JSON.stringify(credited.map((d) => d.id))} />
-      <FormError message={state?.error} />
+      <input type="hidden" name="receiptIds" value={JSON.stringify(creditedReceipts.map((r) => r.id))} />
+      {kind === "collective" && receiptsYear ? <input type="hidden" name="collectiveYear" value={receiptsYear} /> : null}
+      {alreadyBilled.length ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm font-semibold text-danger">
+          Diese Behandlung wurde bereits abgerechnet:{" "}
+          {alreadyBilled.map((b, i) => (
+            <span key={b.id}>
+              {i ? ", " : ""}
+              <Link href={`/rechnungen/${b.id}`} className="underline">{b.label}</Link>
+            </span>
+          ))}
+          . Ein zweiter Beleg ist nicht möglich.
+        </p>
+      ) : null}
+      {state?.duplicate ? (
+        <div role="alert" className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
+          <p className="font-semibold">
+            {state.error}{" "}
+            <Link href={`/rechnungen/${state.duplicate.id}`} className="underline" target="_blank">{state.duplicate.number} ansehen</Link>
+          </p>
+          <Checkbox checked={confirmDuplicate} onChange={(e) => setConfirmDuplicate(e.target.checked)} label="Trotzdem erstellen (wird protokolliert)" />
+          {/* Bestätigung gilt nur für genau diesen Beleg */}
+          {confirmDuplicate ? <input type="hidden" name="duplicateAck" value={state.duplicate.id} /> : null}
+        </div>
+      ) : state?.link ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-3 text-sm font-semibold text-danger">
+          {state.error}{" "}
+          <Link href={`/rechnungen/${state.link.id}`} className="underline">{state.link.label}</Link>
+        </p>
+      ) : (
+        <FormError message={state?.error} />
+      )}
 
       <Card>
         <h2 className="mb-4 font-display text-lg font-semibold">Beleg</h2>
@@ -442,11 +492,11 @@ export function InvoiceForm({
         </div>
       </Card>
 
-      {patientDeposits.length ? (
+      {kind !== "collective" && patientDeposits.length ? (
         <Card>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-lg font-semibold">
-              Quittungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({patientDeposits.length})
+              Quittungen (Anzahlungen) von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({patientDeposits.length})
             </h2>
             <div className="flex gap-3 text-sm font-semibold">
               <button type="button" className="text-primary hover:underline" onClick={() => selectAllDeposits(true)}>Alle wählen</button>
@@ -454,7 +504,7 @@ export function InvoiceForm({
             </div>
           </div>
           <p className="mb-3 text-sm text-muted">
-            Gewählte Quittungen kommen mit ihrer Leistung als Position auf die {kind === "collective" ? "Sammelrechnung" : "Rechnung"} (Betrag = gezahlter Betrag, bitte prüfen); der bereits bezahlte Betrag wird angerechnet.
+            Gewählte Quittungen kommen mit ihrer Leistung als Position auf die Rechnung (Betrag = gezahlter Betrag, bitte prüfen); der bereits bezahlte Betrag wird angerechnet.
           </p>
           <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
             {patientDeposits.map((d) => (
@@ -475,15 +525,40 @@ export function InvoiceForm({
         </Card>
       ) : null}
 
-      {kind === "collective" && patientId && receiptsThisYear[patientId] ? (
-        <p className="flex gap-2 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
-          <Info size={18} className="mt-0.5 shrink-0" aria-hidden />
-          <span>
-            {receiptsYear ? `${receiptsYear} gibt es` : "Dieses Jahr gibt es"} außerdem {receiptsThisYear[patientId].count} normale Quittung(en) über {money(receiptsThisYear[patientId].cents)}. Diese sind bereits
-            fertige, bezahlte Belege und dürfen nicht noch einmal in die Sammelrechnung. Für Behandlungen, die erst zum Jahresende abgerechnet werden, beim Termin
-            „Quittung für Sammelrechnung“ wählen – nur diese erscheinen oben zur Auswahl. Für Versicherung/Beihilfe eine Kopie der Quittung verwenden.
-          </span>
-        </p>
+      {kind === "collective" && patientId && loadingReceipts && !(patientId in receiptsBy) ? (
+        <p className="text-sm text-muted" aria-live="polite">Quittungen {receiptsYear ?? ""} werden geladen …</p>
+      ) : null}
+      {kind === "collective" && hasPartials ? (
+        <Card>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-display text-lg font-semibold">
+              Quittungen von {patients.find((p) => p.id === patientId)?.lastName ?? "der Patient:in"} ({partialItems.length})
+            </h2>
+            <div className="flex gap-3 text-sm font-semibold">
+              <button type="button" className="text-primary hover:underline" onClick={() => selectAllPartials(true)}>Alle wählen</button>
+              <button type="button" className="text-muted hover:underline" onClick={() => selectAllPartials(false)}>Keine</button>
+            </div>
+          </div>
+          <p className="mb-3 text-sm text-muted">
+            Alle bezahlten Quittungen – aus dem Kalender (AZ…) und aus Rechnungen (Q…) – werden auf der Sammelrechnung zusammengeführt: ihre Leistungen kommen als
+            Positionen dazu, der bezahlte Betrag wird als „bereits bezahlt“ abgezogen (mit USt-Ausweis). Kein zweiter Umsatz und keine neue Kassenbuchung.
+            Vorausgewählt sind die offenen Quittungen {receiptsYear ? `aus ${receiptsYear}` : "des Jahres"}.
+          </p>
+          <ul className="flex flex-col divide-y divide-border rounded-xl border border-border">
+            {partialItems.map((it) => (
+              <li key={it.id} className="px-3 py-1">
+                <Checkbox
+                  checked={it.on}
+                  onChange={(e) => (it.kind === "receipt" ? toggleReceipt(it.id, e.target.checked) : toggleDeposit(it.id, e.target.checked))}
+                  label={`${it.number ?? "Quittung"} vom ${dateDe(it.issuedAt)} · ${it.text} · ${money(it.totalCents)}${it.warn ? " – ohne Terminbezug: bitte prüfen, dass die Behandlung nicht doppelt als Position steht" : ""}`}
+                />
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-sm">
+            {partialItems.filter((it) => it.on).length} von {partialItems.length} gewählt · bereits bezahlt: <span className="font-semibold tabular-nums">{money(creditedCents)}</span>
+          </p>
+        </Card>
       ) : null}
 
       <Card>
@@ -588,11 +663,7 @@ export function InvoiceForm({
                     variant="ghost"
                     aria-label={`Position ${i + 1} entfernen`}
                     disabled={lines.length === 1}
-                    onClick={() => {
-                      // Position aus einer Quittung entfernt → Quittung auch nicht mehr anrechnen
-                      if (l.depositIds?.length) setDepositSel((x) => ({ ...x, ...Object.fromEntries(l.depositIds!.map((id) => [id, false])) }));
-                      setLines((ls) => ls.filter((x) => x.key !== l.key));
-                    }}
+                    onClick={() => removeLine(l)}
                   >
                     <Trash2 size={18} aria-hidden />
                   </Button>
@@ -719,7 +790,7 @@ export function InvoiceForm({
         </Card>
       ) : null}
 
-      {patientDeposits.length ? (
+      {hasPartials ? (
         <p className="text-sm">
           Quittungen angerechnet: <span className="font-semibold tabular-nums">{money(creditedCents)}</span> · noch offen:{" "}
           <span className={openAfterDeposits < 0 ? "font-semibold text-danger" : "font-semibold tabular-nums"}>{money(openAfterDeposits)}</span>
@@ -731,7 +802,7 @@ export function InvoiceForm({
         <h2 className="mb-1 font-display text-lg font-semibold">Zahlung</h2>
         <p className="mb-4 text-sm text-muted">
           {kind === "receipt"
-            ? "Quittung: Der Betrag wird sofort vollständig bezahlt."
+            ? "Quittung: Der Betrag wird sofort vollständig bezahlt. Kann später in die Sammelrechnung übernommen werden (wird dort als „bereits bezahlt“ angerechnet)."
             : kind === "collective"
               ? "Optional – nur den noch offenen Betrag der Sammelrechnung erfassen (Quittungen sind oben bereits angerechnet). Mischzahlung möglich."
               : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
@@ -749,7 +820,12 @@ export function InvoiceForm({
       </Card>
 
       <div className="flex flex-wrap gap-3">
-        <Button type="submit" disabled={pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed) || !!productError}>
+        <Button
+          type="submit"
+          disabled={
+            pending || totals.totalCents <= 0 || openAfterDeposits < 0 || (needsConfirm && !confirmed) || !!productError || alreadyBilled.length > 0 || (!!state?.duplicate && !confirmDuplicate)
+          }
+        >
           {pending ? "Wird ausgestellt …" : `${INVOICE_KIND_LABEL[kind]} ausstellen`}
         </Button>
         <Link href="/rechnungen" className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>

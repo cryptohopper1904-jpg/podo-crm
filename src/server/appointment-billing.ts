@@ -8,7 +8,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, dateDe, fullName } from "@/lib/format";
 import { estimateCents, type UnbilledLine } from "@/lib/year-end";
-import { openDepositsFor } from "./invoices";
+import { openDepositsFor, openReceiptsFor } from "./invoices";
 
 /**
  * Abrechnung direkt aus Termin bzw. Behandlung (Doku-Eintrag) und die Sammelrechnung zum Jahresende.
@@ -235,7 +235,8 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
 
 /**
  * Vorschlag für die Sammelrechnung einer Person über ein Jahr: alle noch nicht abgerechneten Leistungen als
- * Positionen (mit Datum) und die offenen Anzahlungen (Quittungen), die angerechnet werden.
+ * Positionen (mit Datum), die offenen Anzahlungen und die offenen normalen Quittungen des Jahres (Teilrechnungen),
+ * die angerechnet werden – deren Leistungen übernimmt das Formular als Positionen.
  */
 export async function patientYearSuggestion(auth: AuthContext, patientId: string, year: number) {
   assertCan(auth, "invoices.write");
@@ -251,7 +252,8 @@ export async function patientYearSuggestion(auth: AuthContext, patientId: string
     const { items, svc, skipped } = await unbilledItems(tx, org, { from, to, patientIds: [patientId], includePrescriptions: isPrivateOnly(auth.organization), now: new Date() });
     const lines = items.flatMap((i) => linesFor(i, svc, true));
     const deposits = await openDepositsFor(tx, org, patientId);
-    return { patient: { ...p, name: fullName(p) }, year, lines, items: items.length, skipped, deposits };
+    const receipts = await openReceiptsFor(tx, org, patientId, year);
+    return { patient: { ...p, name: fullName(p) }, year, lines, items: items.length, skipped, deposits, receipts };
   });
 }
 
@@ -266,11 +268,14 @@ export type CollectiveOverviewRow = {
   unpricedLines: number;
   depositCount: number;
   depositCents: number;
+  /** bezahlte normale Quittungen des Jahres, die noch auf keine Sammelrechnung angerechnet sind */
+  receiptCount: number;
+  receiptCents: number;
 };
 
 /**
  * Jahresend-Erinnerung: Für welche Personen fehlt noch die Sammelrechnung des Jahres? (nicht abgerechnete
- * Leistungen oder noch nicht angerechnete Anzahlungen). Bewohner:innen, deren Rechnungen ans Pflegeheim gehen,
+ * Leistungen, noch nicht angerechnete Anzahlungen oder noch nicht angerechnete normale Quittungen des Jahres). Bewohner:innen, deren Rechnungen ans Pflegeheim gehen,
  * laufen über die monatliche Pflegeheim-Sammelrechnung und fehlen hier.
  */
 export async function collectiveOverview(auth: AuthContext, year: number): Promise<CollectiveOverviewRow[]> {
@@ -283,7 +288,22 @@ export async function collectiveOverview(auth: AuthContext, year: number): Promi
       .select({ patientId: invoices.patientId, totalCents: invoices.totalCents })
       .from(invoices)
       .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)));
-    const pids = [...new Set([...items.map((i) => i.patientId), ...deps.map((d) => d.patientId).filter((x): x is string => !!x)])];
+    const recs = await tx
+      .select({ patientId: invoices.patientId, totalCents: invoices.totalCents })
+      .from(invoices)
+      .where(
+        and(
+          eq(invoices.organizationId, org),
+          eq(invoices.kind, "receipt"),
+          eq(invoices.status, "paid"),
+          isNull(invoices.collectiveInvoiceId),
+          gte(invoices.issuedAt, `${year}-01-01`),
+          lt(invoices.issuedAt, `${year + 1}-01-01`),
+        ),
+      );
+    const pids = [
+      ...new Set([...items.map((i) => i.patientId), ...[...deps, ...recs].map((d) => d.patientId).filter((x): x is string => !!x)]),
+    ];
     if (!pids.length) return [];
     const people = await tx
       .select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName, careHomeId: patients.careHomeId, billingContactId: patients.billingContactId })
@@ -295,6 +315,7 @@ export async function collectiveOverview(auth: AuthContext, year: number): Promi
       const mine = items.filter((i) => i.patientId === p.id);
       const lines = mine.flatMap((i) => linesFor(i, svc, false));
       const d = deps.filter((x) => x.patientId === p.id);
+      const q = recs.filter((x) => x.patientId === p.id);
       rows.push({
         patientId: p.id,
         number: p.number,
@@ -306,6 +327,8 @@ export async function collectiveOverview(auth: AuthContext, year: number): Promi
         unpricedLines: lines.filter((l) => l.unitPriceCents === null).length,
         depositCount: d.length,
         depositCents: d.reduce((s, x) => s + x.totalCents, 0),
+        receiptCount: q.length,
+        receiptCents: q.reduce((s, x) => s + x.totalCents, 0),
       });
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name, "de"));
