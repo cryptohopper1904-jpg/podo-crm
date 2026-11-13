@@ -616,9 +616,9 @@ export function InvoiceForm({
                     {l.inTreatment && otherTreatments.length > 1 ? (
                       <Field label="Angewendet bei Behandlung">
                         <Select value={l.treatmentKey ?? ""} onChange={(e) => update(l.key, { treatmentKey: e.target.value || undefined })}>
-                          <option value="">{kind === "collective" ? "– bitte zuordnen –" : "– erste Behandlung –"}</option>
+                          <option value="">– bitte zuordnen –</option>
                           {otherTreatments.map((t) => (
-                            <option key={t.key} value={t.key}>Pos. {computed.findIndex((x) => x.key === t.key) + 1}: {t.description}</option>
+                            <option key={t.key} value={t.key}>Pos. {filled.findIndex((x) => x.key === t.key) + 1}: {t.description}</option>
                           ))}
                         </Select>
                       </Field>

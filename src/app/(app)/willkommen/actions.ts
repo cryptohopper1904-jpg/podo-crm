@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
-import { organizations, services } from "@/db/schema";
+import { organizations, products, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { isOnboardingKey, nextStep, type OnboardingKey } from "@/lib/onboarding";
@@ -61,14 +61,20 @@ export async function applyServiceTemplateAction(_: WelcomeState, form: FormData
   const tpl = form.get("template");
   if (!isTemplateId(tpl)) return { error: "Bitte eine Vorlage wählen." };
   const org = auth.organization.id;
-  const rows = SERVICE_TEMPLATES[tpl].services();
-  // Vorhandene Kürzel bleiben unverändert (keine Überschreibung eigener Preise)
-  await withOrg(org, (tx) =>
-    tx
+  const all = SERVICE_TEMPLATES[tpl].services();
+  // Vorhandene Kürzel bleiben unverändert (keine Überschreibung eigener Preise); Kürzel, die schon ein Produkt hat,
+  // werden übersprungen (Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel)
+  await withOrg(org, async (tx) => {
+    const taken = new Set(
+      (await tx.select({ code: products.code }).from(products).where(eq(products.organizationId, org))).map((p) => (p.code ?? "").toUpperCase()).filter(Boolean),
+    );
+    const rows = all.filter((s) => !taken.has(s.code.toUpperCase()));
+    if (!rows.length) return;
+    await tx
       .insert(services)
       .values(rows.map((s) => ({ ...s, organizationId: org })))
-      .onConflictDoNothing({ target: [services.organizationId, services.code] }),
-  );
+      .onConflictDoNothing({ target: [services.organizationId, services.code] });
+  });
   // Vorlage „Nur Selbstzahler“ → Praxis-Modus „nur Privat-/Selbstzahler“
   if (tpl === "selfpay") await setBillingMode(auth, "private_only", "onboarding");
   await markDone(org, "services");

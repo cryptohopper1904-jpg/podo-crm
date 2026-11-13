@@ -226,6 +226,19 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(products.bookReceipt(auth, { productId: salbe, quantity: 1, occurredOn: "2999-01-01" })).rejects.toThrow(/Zukunft/);
   });
 
+  it("gleichzeitige Verkäufe und Storno desselben Produkts: keine Verklemmung, Bestand stimmt", async () => {
+    const { auth, salbe, base, prodLine } = await setup();
+    await products.bookReceipt(auth, { productId: salbe, quantity: 50, occurredOn: today });
+    const sell = (n: number) => invoices.createInvoice(auth, { ...base, kind: "invoice", therapeuticConfirmed: false, lines: [prodLine(salbe, n)] });
+    const [a1, a2, a3] = await Promise.all([sell(1), sell(2), sell(3)]);
+    expect((await products.getProduct(auth, salbe))!.stock).toBe(50 - 6);
+    // Verkauf und Storno parallel
+    const [, a4] = await Promise.all([invoices.cancelInvoice(auth, a2.id, "Test"), sell(4), invoices.cancelInvoice(auth, a3.id, "Test")]);
+    expect(a4.totalCents).toBe(4 * 1290);
+    expect((await products.getProduct(auth, salbe))!.stock).toBe(50 - 6 + 2 + 3 - 4);
+    expect(a1.number).toBeTruthy();
+  });
+
   it("Kürzel: Leistungen und Produkte kollidieren in beide Richtungen nicht", async () => {
     const { org, auth } = await setup();
     // Produkt mit dem Kürzel einer Leistung (PK) → abgelehnt, auch klein geschrieben

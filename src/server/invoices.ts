@@ -41,9 +41,19 @@ import {
 } from "@/lib/invoice-math";
 import { CREATABLE_KINDS, DEPOSIT_METHODS, INTERNAL_NOTE_PREFIX, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
-import { bookSaleStock, productsForInvoice, restoreSaleStock } from "./products";
+import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 
 export class InvoiceError extends Error {}
+
+/** Fehler der Bestandsbuchung (Grenzen) als Rechnungsfehler melden */
+async function asInvoiceError<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof ProductError) throw new InvoiceError(e.message);
+    throw e;
+  }
+}
 
 /** leer → null; Zeilenumbrüche vereinheitlichen (Textarea sendet \r\n, im PDF sonst „?“; Länge zählt wie im Formular) */
 const emptyToNull = (v: unknown) => (typeof v === "string" ? (v.trim() === "" ? null : v.replace(/\r\n?/g, "\n")) : v);
@@ -334,6 +344,8 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       : [];
     const svc = new Map(svcRows.map((s) => [s.id, s]));
     const productIds = [...new Set(input.lines.map((l) => l.productId).filter((x): x is string => !!x))];
+    // Produkte zuerst sperren (vor dem Einfügen der Positionen, sortiert) – siehe lockProducts
+    await lockProducts(tx, org, productIds);
     const prodRows = productIds.length
       ? await tx.select().from(products).where(and(eq(products.organizationId, org), inArray(products.id, productIds)))
       : [];
@@ -527,7 +539,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
     // Produkte mit Bestandsführung: Abgang mit dem Ausstellen
-    await bookSaleStock(tx, org, auth.user.id, draft.id, lines, input.issuedAt);
+    await asInvoiceError(() => bookSaleStock(tx, org, auth.user.id, draft.id, lines, input.issuedAt));
 
     // 4) Anzahlungen (Quittungen) anrechnen – kein neuer Zahlungseingang, das Geld kam schon mit der Quittung
     const depositCents = await creditDeposits(tx, org, draft.id, input.patientId ?? null, depositIds, totals.totalCents);
@@ -725,6 +737,8 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .from(invoiceLines)
       .where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, orig.id)))
       .orderBy(asc(invoiceLines.position));
+    // Produkte vor dem Einfügen der Gutschriftpositionen sperren (sortiert) – siehe lockProducts
+    await lockProducts(tx, org, [...new Set(origLines.map((l) => l.productId).filter((x): x is string => !!x))]);
 
     const [draft] = await tx
       .insert(invoices)
@@ -785,7 +799,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, reason
       .set({ status: "cancelled", paymentLinkUrl: null, checkoutRef: null })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, orig.id)));
     // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
-    const restoredProducts = await restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today, origLines, opts.restockLineIds);
+    const restoredProducts = await asInvoiceError(() => restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today, origLines, opts.restockLineIds));
     if (credited.length) {
       await tx
         .update(invoices)

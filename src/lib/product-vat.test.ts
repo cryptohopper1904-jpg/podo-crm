@@ -47,7 +47,7 @@ describe("Produkte: Umsatzsteuer je Position", () => {
     expect(resolveProductVat([treatment, product()], { ...opts, invoiceKind: "no_show_fee" }).error).toMatch(/Ausfallhonorar/);
   });
 
-  it("Sammelrechnung mit mehreren Behandlungen: Produkt muss einer Behandlung zugeordnet sein", () => {
+  it("Mehrere Behandlungen auf dem Beleg: Produkt muss einer Behandlung zugeordnet sein", () => {
     const coll = { ...opts, invoiceKind: "collective" };
     const lines = [treatment, treatment, product({ vatRate: 0, inTreatment: true })];
     expect(resolveProductVat(lines, coll).error).toMatch(/zuordnen/);
@@ -57,6 +57,8 @@ describe("Produkte: Umsatzsteuer je Position", () => {
     });
     // Zuordnung auf eine Nicht-Behandlung
     expect(resolveProductVat([treatment, cosmetic, product({ vatRate: 0, inTreatment: true, treatmentLine: 1 })], coll).error).toMatch(/keine Heilbehandlung/);
+    // auch auf der normalen Rechnung: mehrere Behandlungen → Zuordnung Pflicht (nicht stumm die erste)
+    expect(resolveProductVat(lines, opts).error).toMatch(/zuordnen/);
     // nur eine Behandlung → Zuordnung nicht nötig
     expect(resolveProductVat([treatment, product({ vatRate: 0, inTreatment: true })], coll).error).toBeNull();
   });

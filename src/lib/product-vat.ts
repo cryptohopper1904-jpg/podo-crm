@@ -7,8 +7,8 @@
  * - 0 % nur, wenn das Produkt WÄHREND einer Heilbehandlung angewendet/verbraucht wird (unselbständige
  *   Nebenleistung, teilt das Schicksal der steuerfreien Hauptleistung nach § 4 Nr. 14 UStG). Dafür muss derselbe
  *   Beleg eine Behandlungsposition enthalten: Katalogleistung mit therapeutischem Ziel und 0 %.
- * - Auf der Sammelrechnung (mehrere Behandlungstage) muss die Produktposition einer bestimmten Behandlungsposition
- *   zugeordnet werden, sobald mehr als eine Behandlung auf dem Beleg steht (gleicher Tag/Termin).
+ * - Stehen mehrere Behandlungen auf dem Beleg (z. B. Sammelrechnung), muss die Produktposition einer bestimmten
+ *   Behandlungsposition zugeordnet werden (gleicher Tag/Termin).
  * - Mitgegebene oder zum Mitnehmen verkaufte Produkte: immer regulärer Satz.
  * - Kleinunternehmer (§ 19 UStG): keine USt, die Option entfällt.
  * - 0-%-Produktpositionen zählen für den USt-Wächter (Bestätigung „Heilbehandlung mit therapeutischem Ziel“).
@@ -87,10 +87,10 @@ export function resolveProductVat(
       fail(`${pos}: 0 % für Produkte nur zusammen mit einer Heilbehandlung (0 %) auf demselben Beleg. Ohne Behandlung: ${l.productVatRate} %.`);
     } else if (linked !== null) {
       if (!treatments.includes(linked)) fail(`${pos}: Die zugeordnete Position ist keine Heilbehandlung (0 %).`);
-    } else if (opts.invoiceKind === "collective" && treatments.length > 1) {
+    } else if (treatments.length > 1) {
       fail(`${pos}: Bitte die Behandlung (Tag/Termin) zuordnen, bei der das Produkt angewendet wurde.`);
     }
-    // Bezug wird immer gespeichert: zugeordnete Behandlung, sonst die (erste) Behandlung des Belegs
+    // Bezug wird immer gespeichert: zugeordnete Behandlung, sonst die einzige Behandlung des Belegs
     results.push({ vatRate: 0, inTreatment: true, treatmentLine: linked ?? treatments[0] ?? null });
   });
   return { results, error };

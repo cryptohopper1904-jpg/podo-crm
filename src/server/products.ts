@@ -181,7 +181,7 @@ export async function saveProduct(auth: AuthContext, id: string | null, input: P
       if (await codeTaken(tx, org, values.code, "service")) throw new ProductError(`Das Kürzel ${values.code} ist schon eine Leistung. Bitte ein anderes wählen.`);
     }
     if (id) {
-      const [before] = await tx.select().from(products).where(and(eq(products.organizationId, org), eq(products.id, id))).for("update");
+      const [before] = await tx.select().from(products).where(and(eq(products.organizationId, org), eq(products.id, id))).for("no key update");
       if (!before) throw new ProductError("Produkt nicht gefunden.");
       if (before.trackStock && !values.trackStock) {
         const [m] = await tx.select({ id: stockMovements.id }).from(stockMovements).where(and(eq(stockMovements.organizationId, org), eq(stockMovements.productId, id))).limit(1);
@@ -280,7 +280,7 @@ export async function setSupplierActive(auth: AuthContext, id: string, active: b
 
 /** Produkt sperren (Reihenfolge der Bestandsbuchungen je Produkt) und prüfen */
 async function lockProduct(tx: Tx, org: string, productId: string) {
-  const [p] = await tx.select().from(products).where(and(eq(products.organizationId, org), eq(products.id, productId))).for("update");
+  const [p] = await tx.select().from(products).where(and(eq(products.organizationId, org), eq(products.id, productId))).for("no key update");
   if (!p) throw new ProductError("Produkt nicht gefunden.");
   return p;
 }
@@ -297,15 +297,20 @@ export async function codeTaken(tx: Tx, org: string, code: string, where: "servi
   return !!r;
 }
 
-/** mehrere Produkte sperren, sortiert nach id */
-async function lockProducts(tx: Tx, org: string, ids: string[]) {
+/**
+ * Mehrere Produkte sperren, sortiert nach id. „FOR NO KEY UPDATE“ statt „FOR UPDATE“: verträgt sich mit den
+ * FOR-KEY-SHARE-Sperren, die das Einfügen von Rechnungspositionen (FK → products) setzt – sonst Deadlock bei
+ * gleichzeitigen Verkäufen desselben Produkts –, serialisiert aber alle Bestandsbuchungen.
+ * Rechnung/Storno rufen das schon VOR dem Einfügen der Positionen auf.
+ */
+export async function lockProducts(tx: Tx, org: string, ids: string[]) {
   if (!ids.length) return [];
   return tx
     .select({ id: products.id, trackStock: products.trackStock })
     .from(products)
     .where(and(eq(products.organizationId, org), inArray(products.id, ids)))
     .orderBy(asc(products.id))
-    .for("update");
+    .for("no key update");
 }
 
 async function currentStock(tx: Tx, org: string, productId: string): Promise<number> {
@@ -422,6 +427,10 @@ export async function bookSaleStock(tx: Tx, org: string, userId: string, invoice
   const locked = await lockProducts(tx, org, [...qty.keys()]);
   const rows = locked.filter((p) => p.trackStock && (qty.get(p.id) ?? 0) > 0);
   if (!rows.length) return;
+  for (const p of rows) {
+    const err = stockLimitError(await currentStock(tx, org, p.id), -(qty.get(p.id) ?? 0));
+    if (err) throw new ProductError(err);
+  }
   await tx.insert(stockMovements).values(
     rows.map((p) => ({ organizationId: org, productId: p.id, kind: "sale", quantity: -(qty.get(p.id) ?? 0), occurredOn: date, invoiceId, createdBy: userId })),
   );
@@ -458,6 +467,10 @@ export async function restoreSaleStock(
   const rows = sold.map((s) => ({ productId: s.productId, qty: Math.min(-s.n, want.get(s.productId) ?? 0) })).filter((r) => r.qty > 0);
   if (!rows.length) return 0;
   await lockProducts(tx, org, rows.map((r) => r.productId));
+  for (const r of rows) {
+    const err = stockLimitError(await currentStock(tx, org, r.productId), r.qty);
+    if (err) throw new ProductError(err);
+  }
   await tx.insert(stockMovements).values(
     rows.map((r) => ({ organizationId: org, productId: r.productId, kind: "storno", quantity: r.qty, occurredOn: date, invoiceId: creditNoteId, note: "Storno – Ware zurück ins Lager", createdBy: userId })),
   );
