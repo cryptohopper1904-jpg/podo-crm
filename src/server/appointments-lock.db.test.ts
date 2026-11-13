@@ -45,7 +45,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const res = await ap.createInternalAppointments(org, input(u, new Date(start.getTime() + 900_000)));
     expect(res).toMatchObject({ ok: false, conflict: true, absentDays: [] });
     // Fehlermeldung nennt die belegte Zeit (Berlin: 10:00–10:30 Uhr)
-    expect(res.ok || !res.conflict ? "" : ap.conflictMessage(res)).toContain("07.05. 10:00–10:30 Uhr");
+    expect(res.ok || !("conflict" in res) || !res.conflict ? "" : ap.conflictMessage(res)).toContain("07.05. 10:00–10:30 Uhr");
     expect((await ap.createInternalAppointments(org, input(u, new Date(start.getTime() + 900_000), { allowConflict: true }))).ok).toBe(true);
     // andere Behandler:in, anderer Zeitraum → frei
     expect((await ap.createInternalAppointments(org, input(u, new Date(start.getTime() + 4 * 3600_000)))).ok).toBe(true);
@@ -70,7 +70,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await f.asOrg(org, (c) => c.query("insert into absences (organization_id, user_id, starts_on, ends_on, kind) values ($1,$2,'2031-05-12','2031-05-13','vacation')", [org, u]));
     const res = await ap.createInternalAppointments(org, input(u, new Date("2031-05-13T07:00:00Z")));
     expect(res).toMatchObject({ ok: false, conflict: true, clashes: [], absentDays: ["2031-05-13"] });
-    expect(res.ok || !res.conflict ? "" : ap.conflictMessage(res)).toContain("abwesend – nicht verfügbar (13.05.2031)");
+    expect(res.ok || !("conflict" in res) || !res.conflict ? "" : ap.conflictMessage(res)).toContain("abwesend – nicht verfügbar (13.05.2031)");
     // Serie: nur die Termine in der Abwesenheit werden gemeldet
     const series = await ap.createInternalAppointments(org, input(u, new Date("2031-05-06T07:00:00Z"), { occurrences: [new Date("2031-05-06T07:00:00Z"), new Date("2031-05-13T07:00:00Z")] }));
     expect(series).toMatchObject({ ok: false, absentDays: ["2031-05-13"] });
