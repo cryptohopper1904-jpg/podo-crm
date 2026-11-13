@@ -501,6 +501,8 @@ export const appointments = pgTable(
   },
   (t) => [
     index("appointments_org_time").on(t.organizationId, t.startsAt),
+    /** erster Termin je Person (Auswertung: neue vs. wiederkehrende Patient:innen) */
+    index("appointments_org_patient").on(t.organizationId, t.patientId, t.startsAt),
     uniqueIndex("appointments_external").on(t.organizationId, t.source, t.externalId),
   ],
 );
@@ -515,7 +517,7 @@ export const appointmentServices = pgTable("appointment_services", {
     .notNull()
     .references(() => services.id),
   quantity: numeric("quantity", { precision: 6, scale: 2 }).notNull().default("1"),
-});
+}, (t) => [index("appointment_services_appointment").on(t.organizationId, t.appointmentId)]);
 
 export const waitlist = pgTable("waitlist", {
   id: id(),
@@ -902,6 +904,8 @@ export const invoices = pgTable(
     uniqueIndex("invoices_org_number").on(t.organizationId, t.number),
     index("invoices_org_status").on(t.organizationId, t.status),
     index("invoices_org_collective").on(t.organizationId, t.collectiveInvoiceId),
+    /** Auswertung nach Rechnungsdatum */
+    index("invoices_org_issued").on(t.organizationId, t.issuedAt),
   ],
 );
 
@@ -933,7 +937,7 @@ export const invoiceLines = pgTable(
     treatmentPosition: integer("treatment_position"),
     position: integer("position").notNull().default(0),
   },
-  (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId)],
+  (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId), index("invoice_lines_invoice").on(t.invoiceId)],
 );
 
 // ───────────────────────── Produkte & Warenwirtschaft ─────────────────────────
@@ -1100,7 +1104,7 @@ export const payments = pgTable("payments", {
    * danach – und für jede Zahlung eines abgeschlossenen Tages – verhindert ein DB-Trigger Änderung/Löschung.
    */
   cashClosingId: uuid("cash_closing_id").references((): AnyPgColumn => cashClosings.id),
-}, (t) => [index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt)]);
+}, (t) => [index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt), index("payments_org_paid").on(t.organizationId, t.paidAt)]);
 
 // ───────────────────────── Kasse (KassenSichV / GoBD, Phase 5) ─────────────────────────
 /** Zählprotokoll: Stückzahl je Stückelung in Cent, z. B. { "5000": 2, "200": 3 } */

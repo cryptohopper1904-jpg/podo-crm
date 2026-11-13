@@ -7,6 +7,7 @@ import { monthlyShare, percentChange } from "@/lib/invoice-math";
 import { financeOverview } from "@/server/finance";
 import { deleteFixedCostAction } from "./actions";
 import { FixedCostForm, MaterialCostForm } from "./finance-forms";
+import { StatsTabs, statsQueryForYear } from "./stats-nav";
 
 export const metadata = { title: "Auswertung" };
 
@@ -121,6 +122,7 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
           </nav>
         }
       />
+      <StatsTabs active="finanzen" statsQuery={statsQueryForYear(year, currentYear)} year={year} />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label={`Umsatz ${year}`} value={money(d.revenueYear)} tone="primary" sub={<Change current={d.revenueYear} previous={d.revenuePrev} />} />

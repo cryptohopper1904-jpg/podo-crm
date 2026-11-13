@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NavKey } from "./nav";
-import { DEFAULT_VIEW_LEVEL, NAV_BY_LEVEL, VIEW_LEVELS, isViewLevel, splitNav, todaySections, viewLevelOf } from "./view-level";
+import { DEFAULT_VIEW_LEVEL, NAV_BY_LEVEL, VIEW_LEVELS, isViewLevel, splitNav, statsDetailsOpen, todaySections, viewLevelOf } from "./view-level";
 
 const ALL: NavKey[] = [
   "heute", "kalender", "touren", "kunden", "verordnungen", "pflegeheime", "doku", "posteingang", "telefon", "bewertungen",
@@ -65,5 +65,13 @@ describe("todaySections", () => {
   });
   it("Einfach: Schnellzugriff statt Kennzahlen, keine Nebenkarten – wichtige Erinnerungen (Sammelrechnungen) bleiben", () => {
     expect(todaySections("einfach")).toEqual({ stats: false, quickActions: true, inbox: false, collective: true, tasks: "ifOpen", integrations: false });
+  });
+});
+
+describe("statsDetailsOpen", () => {
+  it("Detailtabellen der Auswertung nur in „Komplex“ aufgeklappt", () => {
+    expect(statsDetailsOpen("komplex")).toBe(true);
+    expect(statsDetailsOpen("kompakt")).toBe(false);
+    expect(statsDetailsOpen("einfach")).toBe(false);
   });
 });
