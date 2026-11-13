@@ -275,6 +275,8 @@ export type UserPrefs = {
   changelog?: { seenId?: string; mutedId?: string };
   /** Kalender: gewählte Ansicht („simple“ = einfache Liste, Standard; „full“ = Tag/Woche/Monat mit Zeitachse) */
   calendar?: { mode?: "simple" | "full" };
+  /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
+  view?: "einfach" | "kompakt" | "komplex";
 };
 
 export const memberships = pgTable(

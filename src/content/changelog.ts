@@ -36,6 +36,16 @@ export const CHANGELOG: ChangelogEntry[] = [
     ],
   },
   {
+    id: "2026-11-13-k",
+    date: "2026-11-13",
+    title: "Ansicht: Einfach, Kompakt oder Komplex",
+    items: [
+      { tag: "neu", text: "Unter Einstellungen → Ansicht (oder direkt unten links in der Navigation) wählen Sie, wie viel Sie sehen: „Einfach“ zeigt nur Heute, Kalender, Patienten, Behandlung, Rechnungen und Kasse, „Kompakt“ zusätzlich Posteingang, Verordnungen, Touren, Gutscheine und Auswertung, „Komplex“ alles wie bisher. Die Einstellung gilt nur für Ihr Konto.", href: "/einstellungen/ansicht" },
+      { tag: "neu", text: "Ausgeblendete Bereiche bleiben erreichbar: unten in der Navigation unter „Mehr“ oder über „Alle Bereiche“ – auf dem Handy über „Mehr“ in der unteren Leiste.", href: "/bereiche" },
+      { tag: "verbessert", text: "Die Startseite „Heute“ passt sich an: „Einfach“ zeigt die heutigen Termine, einen Schnellzugriff und offene Aufgaben, „Kompakt“ verzichtet auf die Karte „Schnittstellen“." },
+    ],
+  },
+  {
     id: "2026-11-13-j",
     date: "2026-11-13",
     title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",
