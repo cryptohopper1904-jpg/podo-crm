@@ -36,7 +36,39 @@ describe("backHref (sichere Rücksprung-Auswahl)", () => {
   });
 });
 
+describe("backHref mit weiteren erlaubten Elternseiten", () => {
+  const fallback = "/kalender?datum=2026-11-13";
+  const also = ["/heute", "/doku"] as const;
+
+  it("übernimmt ausdrücklich erlaubte Elternseiten (exakter Pfad)", () => {
+    expect(backHref(fallback, "/heute", also)).toBe("/heute");
+    expect(backHref(fallback, "/doku", also)).toBe("/doku");
+    expect(backHref(fallback, "/kalender?datum=2026-11-10&ansicht=woche", also)).toBe("/kalender?datum=2026-11-10&ansicht=woche");
+  });
+
+  it("lehnt Präfixe, Unterpfade, nicht erlaubte und unsichere Pfade weiterhin ab", () => {
+    for (const bad of ["/heutex", "/heute/abc", "/dokument", "/kunden", "//heute", "https://evil.example/heute", "/heute#x"]) {
+      expect(backHref(fallback, bad, also)).toBe(fallback);
+    }
+    expect(backHref(fallback, "/heute")).toBe(fallback); // ohne Whitelist wie bisher
+  });
+});
+
 describe("returnPath / withReturn", () => {
+  it("kodiert ' ( ) * ! ~ – Suche „D'Angelo“ übersteht den Hin- und Rückweg", () => {
+    const from = returnPath("/kunden", { q: "D'Angelo (Jr.)*!~" });
+    expect(from).toBe("/kunden?q=D%27Angelo%20%28Jr.%29%2A%21%7E");
+    const von = new URL(withReturn("/kunden/1", from), "http://x").searchParams.get("von");
+    expect(backHref("/kunden", von)).toBe(from);
+    expect(new URL(from, "http://x").searchParams.get("q")).toBe("D'Angelo (Jr.)*!~");
+  });
+
+  it("`always` hängt `von` auch ohne Query an (weitere Elternseiten)", () => {
+    expect(withReturn("/kalender/termin/1", "/heute")).toBe("/kalender/termin/1");
+    expect(withReturn("/kalender/termin/1", "/heute", true)).toBe(`/kalender/termin/1?von=${encodeURIComponent("/heute")}`);
+    expect(withReturn("/kalender/termin/1", "", true)).toBe("/kalender/termin/1");
+  });
+
   it("baut Pfad + Query ohne leere Werte, Leerzeichen als %20", () => {
     expect(returnPath("/kunden", { q: "Erika M", status: "" })).toBe("/kunden?q=Erika%20M");
     expect(returnPath("/kunden", { q: "", status: undefined })).toBe("/kunden");
