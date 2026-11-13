@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
@@ -9,6 +8,7 @@ import { feature } from "@/lib/features";
 import { fullName } from "@/lib/format";
 import { bookablePrescriptions } from "@/server/prescriptions";
 import { DokuForm } from "../doku-form";
+import { BackLink, pageTitleCls } from "@/components/ui";
 
 export const metadata = { title: "Behandlung dokumentieren" };
 
@@ -34,8 +34,8 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
   return (
     <div className="mx-auto max-w-4xl">
       <header className="mb-6">
-        <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← Patientenakte</Link></p>
-        <h1 className="font-display text-3xl font-semibold">{fullName(data.p)}</h1>
+        <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.p)}`} />
+        <h1 className={pageTitleCls}>{fullName(data.p)}</h1>
         <div className="mt-2"><RiskBadges flags={data.p.riskFlags} /></div>
       </header>
       <DokuForm

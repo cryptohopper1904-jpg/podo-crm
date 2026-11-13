@@ -6,6 +6,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { ANAMNESIS_PAPER, anamnesisSummary } from "@/lib/anamnesis";
 import { dateDe, dateTimeDe, fullName, timeDe } from "@/lib/format";
 import { anamnesisSheet } from "@/server/anamnesis";
+import { BackLink } from "@/components/ui";
 
 export const metadata = { title: "Anamnesebogen drucken" };
 
@@ -34,7 +35,7 @@ export default async function AnamnesisPrintPage(props: PageProps<"/kunden/[id]/
     <div className="mx-auto max-w-4xl">
       <style>{PRINT_CSS}</style>
       <div className="no-print mb-4 flex flex-wrap items-center gap-3">
-        <Link href={`/kunden/${id}/anamnese`} className="inline-flex min-h-11 items-center text-sm text-muted hover:text-primary">← Anamnese</Link>
+        <BackLink href={`/kunden/${id}/anamnese`} label="Anamnese" />
         <PrintButton />
         {latest ? (
           blank ? (

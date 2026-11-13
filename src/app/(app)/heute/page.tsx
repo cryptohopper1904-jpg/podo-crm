@@ -3,7 +3,7 @@ import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { OnboardingCard } from "@/components/onboarding-card";
-import { Badge, Card, CardTitle, Empty, LinkButton, Stat } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
 import { HiddenAreaNotice } from "@/components/hidden-area-notice";
@@ -88,9 +88,9 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   return (
     <div className="mx-auto max-w-7xl">
       <header className="mb-6 flex flex-wrap items-end gap-4">
-        <div className="flex-1">
+        <div className={pageTitleBox}>
           <p className="text-sm text-muted">{weekdayLong(new Date())}{holiday ? ` · ${holiday}` : ""}</p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">{greeting()}, {auth.user.name.split(" ")[0]}</h1>
+          <h1 className={pageTitleCls}>{greeting()}, {auth.user.name.split(" ")[0]}</h1>
         </div>
         {auth.can("appointments.write") ? <LinkButton href="/kalender/neu">+ Termin</LinkButton> : null}
       </header>

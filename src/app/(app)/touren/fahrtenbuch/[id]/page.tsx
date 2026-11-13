@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, PageHeader } from "@/components/ui";
@@ -25,7 +24,7 @@ export default async function TripDetailPage(props: PageProps<"/touren/fahrtenbu
   const who = (uid: string | null) => (uid ? (userNames[uid] ?? "unbekannt") : "–");
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title={`Fahrt am ${dateDe(t.tripDate)}`} subtitle={<Link href={`/touren/fahrtenbuch?monat=${t.tripDate.slice(0, 7)}`} className="hover:text-primary">← Fahrtenbuch</Link>} />
+      <PageHeader title={`Fahrt am ${dateDe(t.tripDate)}`} back={{ href: `/touren/fahrtenbuch?monat=${t.tripDate.slice(0, 7)}`, label: "Fahrtenbuch" }} />
       <Card className="mb-6">
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[15px]">
           <dt className="text-muted">Start</dt><dd>{t.fromLabel}</dd>

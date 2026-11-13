@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { Empty, LinkButton, PageHeader, Stat, Table } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
@@ -26,10 +25,8 @@ export default async function CollectiveOverviewPage(props: PageProps<"/rechnung
 
   return (
     <div className="mx-auto max-w-6xl">
-      <Link href="/rechnungen" className="mb-4 inline-flex h-11 items-center gap-2 text-sm font-semibold text-muted hover:text-text">
-        <ArrowLeft size={18} aria-hidden /> Rechnungen
-      </Link>
       <PageHeader
+        back={{ href: "/rechnungen", label: "Rechnungen" }}
         title={`Sammelrechnungen ${year}`}
         subtitle="Wer bekommt noch eine Sammelrechnung? Behandlungen und Quittungen des Jahres, die noch nicht abgerechnet sind"
         actions={

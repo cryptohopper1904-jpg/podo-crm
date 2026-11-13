@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ClipboardList, FileText } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Card, CardTitle, Checkbox, Empty, Field, LinkButton, Select, Table } from "@/components/ui";
+import { Badge, Card, CardTitle, Checkbox, Empty, Field, LinkButton, Select, Table, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, fullName } from "@/lib/format";
@@ -23,9 +23,9 @@ export default async function CareHomePage(props: PageProps<"/pflegeheime/[id]">
   return (
     <div className="mx-auto max-w-6xl">
       <header className="mb-6 flex flex-wrap items-end gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted"><Link href="/pflegeheime" className="hover:text-primary">← Pflegeheime</Link></p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">{home.name}</h1>
+        <div className={pageTitleBox}>
+          <BackLink href="/pflegeheime" label="Pflegeheime" />
+          <h1 className={pageTitleCls}>{home.name}</h1>
           <p className="text-sm text-muted">{[home.street, [home.zip, home.city].filter(Boolean).join(" ")].filter(Boolean).join(", ") || "Adresse fehlt"}{home.phone ? ` · ${home.phone}` : ""}</p>
         </div>
         <div className="flex flex-wrap gap-2">

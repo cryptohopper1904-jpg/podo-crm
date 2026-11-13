@@ -4,6 +4,7 @@ import { Badge, Empty, LinkButton, PageHeader, Stat, Table } from "@/components/
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, money } from "@/lib/format";
 import { listVouchers } from "@/server/vouchers";
+import { returnPath, withReturn } from "@/lib/back-link";
 
 export const metadata = { title: "Gutscheine" };
 
@@ -13,6 +14,7 @@ export default async function VouchersPage(props: PageProps<"/gutscheine">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const filter = sp.filter === "all" ? "all" : "active";
   const { rows, totals } = await listVouchers(auth, { q, filter });
+  const from = returnPath("/gutscheine", { q, filter: filter === "active" ? "" : filter }); // Rücksprung aus dem Gutschein
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
@@ -67,7 +69,7 @@ export default async function VouchersPage(props: PageProps<"/gutscheine">) {
             {rows.map((v) => (
               <tr key={v.id} className="hover:bg-surface-2">
                 <td>
-                  <Link href={`/gutscheine/${v.id}`} className="font-semibold tabular-nums hover:text-primary">{v.code}</Link>
+                  <Link href={withReturn(`/gutscheine/${v.id}`, from)} className="font-semibold tabular-nums hover:text-primary">{v.code}</Link>
                 </td>
                 <td className="text-sm tabular-nums">{dateDe(v.issuedAt)}</td>
                 <td className="text-sm tabular-nums">{dateDe(v.validUntil)}</td>

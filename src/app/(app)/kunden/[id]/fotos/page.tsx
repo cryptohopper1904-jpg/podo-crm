@@ -1,9 +1,8 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { media, patients } from "@/db/schema";
-import { Badge, Card, Empty } from "@/components/ui";
+import { Badge, Card, Empty, BackLink } from "@/components/ui";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, fullName } from "@/lib/format";
@@ -33,8 +32,8 @@ export default async function PhotosPage(props: PageProps<"/kunden/[id]/fotos">)
   }
   return (
     <div className="mx-auto max-w-7xl">
-      <p className="text-sm text-muted"><Link href={`/kunden/${id}`} className="hover:text-primary">← {fullName(data.p)}</Link></p>
-      <h1 className="mb-6 mt-1 font-display text-3xl font-semibold">Fotoverlauf</h1>
+      <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.p)}`} />
+      <h1 className="mb-6 font-display text-3xl font-semibold wrap-break-word">Fotoverlauf</h1>
       {groups.size === 0 ? <Empty title="Noch keine Fotos" /> : null}
       <div className="flex flex-col gap-6">
         {[...groups.entries()].map(([key, list]) => (

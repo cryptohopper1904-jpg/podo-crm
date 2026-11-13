@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { FileText } from "lucide-react";
-import { Badge, Card, Empty, LinkButton } from "@/components/ui";
+import { Badge, Card, Empty, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
 import { RiskBadges } from "@/components/risk-badges";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, fullName, weekdayLong } from "@/lib/format";
@@ -20,9 +20,9 @@ export default async function VisitDayPage(props: PageProps<"/pflegeheime/[id]/b
   return (
     <div className="mx-auto max-w-6xl">
       <header className="mb-6 flex flex-wrap items-end gap-4">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-muted"><Link href={`/pflegeheime/${id}`} className="hover:text-primary">← {data.home.name}</Link></p>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">Besuchstag · {weekdayLong(new Date())}</h1>
+        <div className={pageTitleBox}>
+          <BackLink href={`/pflegeheime/${id}`} label={data.home.name} />
+          <h1 className={pageTitleCls}>Besuchstag · {weekdayLong(new Date())}</h1>
           <p className="text-sm text-muted">{data.residents.length} Bewohner:innen · Listen-Doku: je Zeile ein unveränderbarer Behandlungseintrag</p>
         </div>
         {auth.can("invoices.write") ? <LinkButton href={`/rechnungen/neu?pflegeheim=${id}`} variant="secondary"><FileText size={18} aria-hidden /> Sammelrechnung</LinkButton> : null}
