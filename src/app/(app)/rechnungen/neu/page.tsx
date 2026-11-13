@@ -49,8 +49,9 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   let preset: InvoicePreset | undefined;
   let presetKey = "plain";
   if (source?.patient) {
-    preset = { kind: "invoice", patientId: source.patient.id, notes: `Leistungsdatum: ${dateDe(source.at)}`, lines: source.lines };
-    presetKey = `src-${source.appointmentId ?? source.recordId}`;
+    // ?art=quittung: sofort bezahlte Quittung zum Termin (Positionen mit Terminbezug → später in die Sammelrechnung übernehmbar)
+    preset = { kind: sp.art === "quittung" ? "receipt" : "invoice", patientId: source.patient.id, notes: `Leistungsdatum: ${dateDe(source.at)}`, lines: source.lines };
+    presetKey = `src-${preset.kind}-${source.appointmentId ?? source.recordId}`;
   } else if (yearSug) {
     const first = yearSug.lines.length ? yearSug.lines[0].description.slice(0, 10) : null;
     const last = yearSug.lines.length ? yearSug.lines.at(-1)!.description.slice(0, 10) : null;
@@ -85,7 +86,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
           ) : (
             <div className="flex flex-col gap-2 text-sm">
               <p className="flex items-center gap-2 font-display text-lg font-semibold">
-                <CalendarCheck size={20} aria-hidden /> Rechnung zur Behandlung am {dateDe(source.at)} – {source.patient.name}
+                <CalendarCheck size={20} aria-hidden /> {sp.art === "quittung" ? "Quittung" : "Rechnung"} zur Behandlung am {dateDe(source.at)} – {source.patient.name}
               </p>
               <p className="text-muted">
                 Mit den Leistungen des Termins vorausgefüllt. Weitere Positionen (z. B. Pflegeprodukte, Wegegeld) ergänzen Sie unten mit „+ Position“ – erst „ausstellen“ macht die Rechnung endgültig.
@@ -119,10 +120,13 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
                 {yearSug.skipped ? `, ${yearSug.skipped} bereits abgerechnet (übersprungen)` : ""}.
                 {yearSug.deposits.length
                   ? ` ${yearSug.deposits.length} Anzahlung(en) über ${money(yearSug.deposits.reduce((s, d) => s + d.totalCents, 0))} werden angerechnet.`
+                  : ""}
+                {yearSug.receipts.length
+                  ? ` ${yearSug.receipts.length} bezahlte Quittung(en) über ${money(yearSug.receipts.reduce((s, d) => s + d.totalCents, 0))} werden mit ihren Leistungen übernommen und als „bereits bezahlt“ angerechnet.`
                   : ""}{" "}
                 Bitte prüfen – Positionen ohne Preis ergänzen.
               </p>
-              {!yearSug.lines.length ? <p className="font-semibold">Keine offenen Behandlungen gefunden – bitte die Positionen selbst eintragen.</p> : null}
+              {!yearSug.lines.length && !yearSug.receipts.length && !yearSug.deposits.length ? <p className="font-semibold">Keine offenen Behandlungen gefunden – bitte die Positionen selbst eintragen.</p> : null}
               <Link href={`/rechnungen/sammelrechnungen?jahr=${year}`} className="self-start font-semibold text-primary">← Übersicht Sammelrechnungen {year}</Link>
             </div>
           )}

@@ -20,6 +20,7 @@ import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
 import { NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, NOTE_VAT_EXEMPT, PAYMENT_METHOD_LABEL } from "./invoice-labels";
 import {
+  creditedReceiptsBlock,
   formatIban,
   hasExemptNote,
   invoiceHeading,
@@ -33,7 +34,7 @@ import {
   qtyDe,
   senderLine,
   showsDueDate,
-  type CreditedDeposit,
+  type CreditedPartial,
 } from "./invoice-view";
 import { shortUrl, type InvoiceBookingLink } from "./practice-documents";
 
@@ -54,8 +55,8 @@ export type InvoicePdfData = {
   };
   lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number }[];
   payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
-  /** auf diese Rechnung angerechnete Anzahlungen (Quittungen) */
-  deposits?: CreditedDeposit[];
+  /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
+  credited?: CreditedPartial[];
   organization: {
     name: string;
     legalName: string | null;
@@ -356,7 +357,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     }
   }
   sumRows.push({ l: "Gesamt", v: money(inv.totalCents), strong: true });
-  for (const r of paymentSummary(inv, data.deposits ?? [], dateDe)) sumRows.push({ l: r.label, v: money(r.cents) });
+  for (const r of paymentSummary(inv, data.credited ?? [], dateDe)) sumRows.push({ l: r.label, v: money(r.cents) });
   if (inv.status !== "cancelled" && open !== 0 && (inv.paidCents !== 0 || open < 0)) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
   ensure(sumRows.length * 14 + 4);
   const sumLabelX = cx.unit;
@@ -371,6 +372,39 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     y -= h;
   }
   y -= 18;
+
+  // ── Bereits bezahlt (Quittungen): alle angerechneten normalen Quittungen der Sammelrechnung ──
+  const rb = creditedReceiptsBlock(data.credited ?? []);
+  if (rb.rows.length) {
+    const colNo = ML;
+    const colDate = ML + 120;
+    const colAmount = ML + 300;
+    const colVat = ML + 390;
+    ensure(34 + 12);
+    text("Bereits bezahlt (Quittungen)", ML, y, { size: 8.5, font: bold });
+    y -= 12;
+    text("Nummer", colNo, y, { size: 8 });
+    text("Datum", colDate, y, { size: 8 });
+    text("Betrag", colAmount, y, { size: 8, align: "right" });
+    text("darin USt", colVat, y, { size: 8, align: "right" });
+    y -= 11;
+    for (const r of rb.rows) {
+      ensure(12);
+      text(r.number, colNo, y, { size: 8.5 });
+      text(dateDe(r.issuedAt), colDate, y, { size: 8.5 });
+      text(money(r.totalCents), colAmount, y, { size: 8.5, align: "right" });
+      text(money(r.vatCents), colVat, y, { size: 8.5, align: "right" });
+      y -= 12;
+    }
+    ensure(26);
+    text(`Summe (${rb.rows.length} Quittung${rb.rows.length === 1 ? "" : "en"})`, colNo, y, { size: 8.5, font: bold });
+    text(money(rb.totalCents), colAmount, y, { size: 8.5, font: bold, align: "right" });
+    text(money(rb.vatCents), colVat, y, { size: 8.5, font: bold, align: "right" });
+    y -= 12;
+    text("Offener Restbetrag", colNo, y, { size: 8.5, font: bold });
+    text(money(inv.status === "cancelled" ? 0 : open), colAmount, y, { size: 8.5, font: bold, align: "right" });
+    y -= 20;
+  }
 
   // ── Zahlungen ──
   if (data.payments.length) {

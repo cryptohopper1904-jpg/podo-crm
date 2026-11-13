@@ -58,6 +58,16 @@ describe("PDF-Rechnung", () => {
       }),
     );
     expect((await PDFDocument.load(full)).getPageCount()).toBe(1);
+    // Sammelrechnung mit angerechneten Quittungen: Abzugszeilen und Block „Bereits bezahlt (Quittungen)“
+    const credited = Array.from({ length: 12 }, (_, i) => ({ kind: "receipt", number: `Q2026-${String(i + 1).padStart(4, "0")}`, issuedAt: `2026-${String(i + 1).padStart(2, "0")}-05`, totalCents: 4500, netCents: 4500, vatCents: 0 }));
+    const sr = await renderInvoicePdf(
+      data({
+        invoice: { ...data().invoice, kind: "collective", status: "paid", totalCents: 54000, paidCents: 54000 },
+        lines: credited.map((c) => ({ description: `${c.issuedAt}: Podologische Komplexbehandlung`, quantity: "1", factor: "1", unitPriceCents: 4500, vatRate: 0, totalCents: 4500 })),
+        credited,
+      }),
+    );
+    expect((await PDFDocument.load(sr)).getPageCount()).toBeGreaterThanOrEqual(1);
     for (const kind of ["receipt", "deposit", "credit_note", "no_show_fee"]) {
       const bytes = await renderInvoicePdf(data({ invoice: { ...data().invoice, kind, status: "paid", paidCents: 9450 }, payments: [{ paidAt: "2026-11-02T10:00:00Z", method: "cash", amountCents: 9450 }], logos: { compact: { bytes: png, mime: "image/png" } } }));
       expect((await PDFDocument.load(bytes)).getPageCount(), kind).toBe(1);

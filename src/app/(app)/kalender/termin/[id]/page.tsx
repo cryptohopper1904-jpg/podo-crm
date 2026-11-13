@@ -103,7 +103,10 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                   <Link href={`/rechnungen/${d.id}`} className="font-semibold text-primary hover:underline">{INVOICE_KIND_LABEL[d.kind]} {d.number}</Link>
                   <span className="text-muted">vom {dateDe(d.issuedAt)} · {money(d.totalCents)}</span>
                   <Badge tone={INVOICE_STATUS_TONE[d.status]}>{INVOICE_STATUS_LABEL[d.status]}</Badge>
-                  {d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId ? <Badge tone="warn">wird auf die Sammelrechnung angerechnet</Badge> : null}
+                  {(d.kind === "deposit" || d.kind === "receipt") && d.status === "paid" && !d.collectiveInvoiceId ? (
+                    <Badge tone="warn">kann in die Sammelrechnung übernommen werden</Badge>
+                  ) : null}
+                  {(d.kind === "deposit" || d.kind === "receipt") && d.collectiveInvoiceId && d.status !== "cancelled" ? <Badge tone="info">auf Sammelrechnung angerechnet</Badge> : null}
                 </li>
               ))}
             </ul>
@@ -118,6 +121,9 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
                 <LinkButton href={`/rechnungen/neu?termin=${a.id}`}>
                   <FileText size={18} aria-hidden /> Rechnung erstellen
                 </LinkButton>
+                <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} variant="secondary">
+                  <Receipt size={18} aria-hidden /> Quittung (sofort bezahlt)
+                </LinkButton>
                 <LinkButton href={`/rechnungen/anzahlung?termin=${a.id}`} variant="secondary">
                   <Receipt size={18} aria-hidden /> Quittung für Sammelrechnung
                 </LinkButton>
@@ -126,8 +132,8 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
           </div>
           {!billing.billedBy.length ? (
             <p className="mt-3 text-xs text-muted">
-              Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen, der Betrag wird
-              auf die Sammelrechnung zum Jahresende angerechnet.
+              Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung (sofort bezahlt) und Quittung für
+              Sammelrechnung: Zahlung jetzt annehmen. Kann später in die Sammelrechnung übernommen werden – der Betrag wird dort als „bereits bezahlt“ angerechnet.
             </p>
           ) : null}
         </Card>

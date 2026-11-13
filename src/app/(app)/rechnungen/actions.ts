@@ -13,6 +13,7 @@ import {
   depositInput,
   InvoiceError,
   invoiceInput,
+  openReceiptsForPatient,
   paymentInput,
   pushInvoiceToAccounting,
 } from "@/server/invoices";
@@ -50,6 +51,7 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
     lines: parseJson(form.get("lines")),
     payments: parseJson(form.get("payments")),
     depositIds: parseJson(form.get("depositIds")),
+    receiptIds: parseJson(form.get("receiptIds")),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;
@@ -61,6 +63,13 @@ export async function createInvoiceAction(_: InvoiceFormState, form: FormData): 
   revalidatePath("/rechnungen");
   if (parsed.data.patientId) revalidatePath(`/kunden/${parsed.data.patientId}`);
   redirect(`/rechnungen/${id}`);
+}
+
+/** Offene (bezahlte, noch nicht angerechnete) Quittungen einer Person im Jahr – für die Sammelrechnung im Formular. */
+export async function openReceiptsAction(patientId: string, year: number) {
+  const auth = await requireAuth("invoices.write");
+  if (typeof patientId !== "string" || typeof year !== "number") return [];
+  return openReceiptsForPatient(auth, patientId, year);
 }
 
 /** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) – aus Termin oder Behandlung. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe } from "./format";
-import { paymentSummary } from "./invoice-view";
+import { creditedReceiptsBlock, paymentSummary } from "./invoice-view";
 import { collectiveReminderYear, estimateCents, parseYear } from "./year-end";
 
 describe("Jahresend-Erinnerung Sammelrechnung", () => {
@@ -51,5 +51,44 @@ describe("Rechnung: angerechnete Anzahlungen in den Summen", () => {
     expect(paymentSummary({ kind: "invoice", paidCents: 5000 }, [], dateDe)).toEqual([{ label: "bezahlt", cents: 5000 }]);
     expect(paymentSummary({ kind: "credit_note", paidCents: -5000 }, [], dateDe)).toEqual([{ label: "erstattet/verrechnet", cents: -5000 }]);
     expect(paymentSummary({ kind: "invoice", paidCents: 0 }, [], dateDe)).toEqual([]);
+  });
+});
+describe("Sammelrechnung: angerechnete Quittungen (Teilrechnungen)", () => {
+  const receipts = [
+    // 45,00 € steuerfrei + 11,90 € mit 19 %
+    { kind: "receipt", number: "Q2026-0004", issuedAt: "2026-02-03", totalCents: 5690, netCents: 5500, vatCents: 190, vatGroups: [{ rate: 0, netCents: 4500, vatCents: 0 }, { rate: 19, netCents: 1000, vatCents: 190 }] },
+    { kind: "receipt", number: "Q2026-0019", issuedAt: "2026-05-06", totalCents: 4500, netCents: 4500, vatCents: 0, vatGroups: [{ rate: 0, netCents: 4500, vatCents: 0 }] },
+  ];
+
+  it("je Quittung „abzgl. bereits bezahlt mit Quittung …“ mit USt-Ausweis (§ 14 Abs. 5 UStG), danach verbleibende USt", () => {
+    expect(paymentSummary({ kind: "collective", paidCents: 10190, vatCents: 190 }, receipts, dateDe)).toEqual([
+      { label: "abzgl. bereits bezahlt mit Quittung Q2026-0004 vom 03.02.2026 (netto 55,00 € zzgl. 19 % USt 1,90 €)", cents: -5690 },
+      { label: "abzgl. bereits bezahlt mit Quittung Q2026-0019 vom 06.05.2026", cents: -4500 },
+      { label: "darin verbleibende USt", cents: 0 },
+    ]);
+  });
+
+  it("mehrere Steuersätze in einer Quittung, gemischt mit Anzahlung und Restzahlung", () => {
+    const mixed = { kind: "receipt", number: "Q2026-0030", issuedAt: "2026-07-01", totalCents: 2260, netCents: 2000, vatCents: 260, vatGroups: [{ rate: 7, netCents: 1000, vatCents: 70 }, { rate: 19, netCents: 1000, vatCents: 190 }] };
+    const deposit = { number: "AZ2026-0002", issuedAt: "2026-08-01", totalCents: 4500, netCents: 4500, vatCents: 0 };
+    expect(paymentSummary({ kind: "collective", paidCents: 9760, vatCents: 260 }, [mixed, deposit], dateDe)).toEqual([
+      { label: "abzgl. bereits bezahlt mit Quittung Q2026-0030 vom 01.07.2026 (netto 20,00 € zzgl. 7 % USt 0,70 € + 19 % USt 1,90 €)", cents: -2260 },
+      { label: "abzgl. Anzahlung AZ2026-0002 vom 01.08.2026", cents: -4500 },
+      { label: "darin verbleibende USt", cents: 0 },
+      { label: "weitere Zahlungen", cents: 3000 },
+    ]);
+  });
+
+  it("Block „Bereits bezahlt (Quittungen)“: nur normale Quittungen, mit Summe und USt", () => {
+    const deposit = { kind: "deposit", number: "AZ2026-0002", issuedAt: "2026-08-01", totalCents: 4500, vatCents: 0 };
+    expect(creditedReceiptsBlock([...receipts, deposit])).toEqual({
+      rows: [
+        { number: "Q2026-0004", issuedAt: "2026-02-03", totalCents: 5690, vatCents: 190 },
+        { number: "Q2026-0019", issuedAt: "2026-05-06", totalCents: 4500, vatCents: 0 },
+      ],
+      totalCents: 10190,
+      vatCents: 190,
+    });
+    expect(creditedReceiptsBlock([deposit]).rows).toEqual([]);
   });
 });

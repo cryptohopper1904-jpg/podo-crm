@@ -71,30 +71,71 @@ export const dueLabel = (inv: { issuedAt?: string | null; dueAt: string | null }
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
 export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit";
 
-export type CreditedDeposit = { number: string | null; issuedAt: string | null; totalCents: number; netCents?: number | null; vatCents?: number | null };
+/**
+ * Auf die (Sammel-)Rechnung angerechnete Teilrechnung: Anzahlungs-Quittung (kind = deposit) oder normale, bereits
+ * bezahlte Quittung (kind = receipt). `vatGroups` (je Steuersatz) aus den Positionen der Teilrechnung – fehlt es, wird
+ * der Satz aus netto/USt zurückgerechnet (eine Anzahlung hat nur einen Satz).
+ */
+export type CreditedPartial = {
+  kind?: "deposit" | "receipt" | string;
+  number: string | null;
+  issuedAt: string | null;
+  totalCents: number;
+  netCents?: number | null;
+  vatCents?: number | null;
+  vatGroups?: { rate: number; netCents: number; vatCents: number }[];
+};
+/** @deprecated Name aus der Zeit, als nur Anzahlungen angerechnet wurden */
+export type CreditedDeposit = CreditedPartial;
 
 const euroDe = (cents: number) => `${(cents / 100).toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
 
+/** USt-Ausweis einer angerechneten Teilrechnung: „netto … zzgl. 19 % USt …“ (mehrere Sätze mit „+“), leer ohne USt. */
+export function creditedTaxText(d: CreditedPartial): string {
+  const vat = d.vatCents ?? 0;
+  if (!vat) return "";
+  const net = d.netCents ?? d.totalCents - vat;
+  const groups = (d.vatGroups ?? []).filter((g) => g.vatCents);
+  const parts = groups.length
+    ? groups.map((g) => `${g.rate} % USt ${euroDe(g.vatCents)}`)
+    : [`${net ? Math.round((vat * 100) / net) : 0} % USt ${euroDe(vat)}`];
+  return `netto ${euroDe(net)} zzgl. ${parts.join(" + ")}`;
+}
+
+/** Text der Abzugszeile je angerechneter Teilrechnung */
+export function creditedLabel(d: CreditedPartial, dateDe: (d: string | null) => string): string {
+  const tax = creditedTaxText(d);
+  const what = d.kind === "receipt" ? `bereits bezahlt mit Quittung ${d.number ?? ""}` : `Anzahlung ${d.number ?? ""}`;
+  return `abzgl. ${what} vom ${dateDe(d.issuedAt)}${tax ? ` (${tax})` : ""}`;
+}
+
 /**
- * Summenzeilen nach dem Gesamtbetrag: angerechnete Anzahlungen (Quittungen) einzeln, danach die übrigen Zahlungen.
- * paidCents enthält die Anzahlungen (siehe createInvoice).
- * § 14 Abs. 5 S. 2 UStG: In der Endrechnung werden bei Anzahlungen mit USt auch deren Steuerbeträge abgesetzt –
- * deshalb je Anzahlung „netto … zzgl. USt …“ und danach die verbleibende USt.
+ * Summenzeilen nach dem Gesamtbetrag: angerechnete Anzahlungen und Quittungen einzeln, danach die übrigen Zahlungen.
+ * paidCents enthält die angerechneten Beträge (siehe createInvoice).
+ * § 14 Abs. 5 S. 2 UStG: In der Endrechnung werden bei Anzahlungen bzw. Teilrechnungen mit USt auch deren Steuerbeträge
+ * abgesetzt – deshalb je Beleg „netto … zzgl. USt …“ und danach die verbleibende USt.
  */
-export function paymentSummary(inv: { kind: string; paidCents: number; vatCents?: number | null }, deposits: CreditedDeposit[], dateDe: (d: string | null) => string) {
-  const rows: { label: string; cents: number }[] = deposits.map((d) => {
-    const vat = d.vatCents ?? 0;
-    const net = d.netCents ?? d.totalCents - vat;
-    const rate = vat && net ? Math.round((vat * 100) / net) : 0;
-    const tax = vat ? ` (netto ${euroDe(net)} zzgl. ${rate} % USt ${euroDe(vat)})` : "";
-    return { label: `abzgl. Anzahlung ${d.number ?? ""} vom ${dateDe(d.issuedAt)}${tax}`, cents: -d.totalCents };
-  });
-  const depositCents = deposits.reduce((s, d) => s + d.totalCents, 0);
-  const depositVat = deposits.reduce((s, d) => s + (d.vatCents ?? 0), 0);
-  if (depositVat && inv.vatCents != null) rows.push({ label: "darin verbleibende USt", cents: inv.vatCents - depositVat });
-  const rest = inv.paidCents - depositCents;
-  if (rest !== 0) rows.push({ label: inv.kind === "credit_note" ? "erstattet/verrechnet" : deposits.length ? "weitere Zahlungen" : "bezahlt", cents: rest });
+export function paymentSummary(inv: { kind: string; paidCents: number; vatCents?: number | null }, credited: CreditedPartial[], dateDe: (d: string | null) => string) {
+  const rows: { label: string; cents: number }[] = credited.map((d) => ({ label: creditedLabel(d, dateDe), cents: -d.totalCents }));
+  const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0);
+  const creditedVat = credited.reduce((s, d) => s + (d.vatCents ?? 0), 0);
+  if (creditedVat && inv.vatCents != null) rows.push({ label: "darin verbleibende USt", cents: inv.vatCents - creditedVat });
+  const rest = inv.paidCents - creditedCents;
+  if (rest !== 0) rows.push({ label: inv.kind === "credit_note" ? "erstattet/verrechnet" : credited.length ? "weitere Zahlungen" : "bezahlt", cents: rest });
   return rows;
+}
+
+/**
+ * Block „Bereits bezahlt (Quittungen)“ auf Sammelrechnung (Druckansicht und PDF): alle angerechneten normalen
+ * Quittungen mit Nummer, Datum, Betrag und USt sowie die Summe. Leer, wenn keine Quittung angerechnet ist.
+ */
+export function creditedReceiptsBlock(credited: CreditedPartial[]) {
+  const rows = credited.filter((d) => d.kind === "receipt");
+  return {
+    rows: rows.map((d) => ({ number: d.number ?? "", issuedAt: d.issuedAt, totalCents: d.totalCents, vatCents: d.vatCents ?? 0 })),
+    totalCents: rows.reduce((s, d) => s + d.totalCents, 0),
+    vatCents: rows.reduce((s, d) => s + (d.vatCents ?? 0), 0),
+  };
 }
 
 export const formatIban = (iban: string) => iban.replace(/\s/g, "").replace(/(.{4})/g, "$1 ").trim();

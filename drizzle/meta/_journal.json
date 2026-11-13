@@ -225,6 +225,13 @@
       "when": 1794596609134,
       "tag": "0031_uebergabe_modus",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794600198057,
+      "tag": "0032_quittungen_sammelrechnung",
+      "breakpoints": true
     }
   ]
 }

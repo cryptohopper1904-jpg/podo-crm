@@ -145,7 +145,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(sr.number).toMatch(/^SR/);
     expect(sr).toMatchObject({ totalCents: 9000, paidCents: 4500, status: "partially_paid", depositCents: 4500 });
     const bundle = await invoices.getInvoice(auth, sr.id);
-    expect(bundle!.deposits.map((d) => d.number)).toEqual([dep.number]);
+    expect(bundle!.credited.map((d) => d.number)).toEqual([dep.number]);
     // kein zweiter Zahlungseingang auf der Sammelrechnung (das Geld kam mit der Quittung)
     expect(bundle!.payments).toEqual([]);
     expect((await (await import("./kasse")).kasseOverview(auth)).calc.cashPaymentsCents).toBe(4500);
