@@ -1,10 +1,12 @@
 import "server-only";
 import { and, count, eq, ne, sql } from "drizzle-orm";
-import { db, type Db, type Tx } from "@/db";
+import { db, withOrg, type Db, type Tx } from "@/db";
 import { auditLog, billingEvents, memberships, organizations } from "@/db/schema";
 import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/stripe/events";
 import { priceIdsFromEnv, type PriceIds } from "@/integrations/stripe/stripe";
 import type { StripeEvent } from "@/integrations/stripe/types";
+import { freeSwitchProblem } from "@/lib/plans";
+import { activePatientCount } from "./patient-limit";
 
 export type BillingResult = "processed" | "duplicate" | "ignored" | "unassigned";
 
@@ -134,4 +136,25 @@ export async function loadOrgBilling(organizationId: string) {
     .from(organizations)
     .where(eq(organizations.id, organizationId));
   return o ?? null;
+}
+
+/**
+ * Wechsel in den kostenlosen Tarif (höchstens 20 aktive Patient:innen, 1 Person). Nur ohne laufendes bezahltes Abo.
+ * Prüfung und Umstellung unter derselben Sperre wie Patienten-Neuanlagen, damit parallel nichts dazukommt.
+ */
+export async function switchToFreePlan(organizationId: string, userId: string): Promise<{ error: string } | { ok: true }> {
+  const res = await withOrg(organizationId, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
+    const [o] = await tx
+      .select({ plan: organizations.plan, subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, currentPeriodEnd: organizations.currentPeriodEnd, seats: organizations.seats })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId));
+    if (!o) return { error: "Praxis nicht gefunden." };
+    const problem = freeSwitchProblem(o, await activePatientCount(tx, organizationId), await usedSeats(organizationId, tx));
+    if (problem) return { error: problem };
+    await tx.update(organizations).set({ plan: "free", seats: 1, subscriptionStatus: "none" }).where(eq(organizations.id, organizationId));
+    await tx.insert(auditLog).values({ organizationId, userId, action: "billing.switch_free", meta: { from: o.plan, status: o.subscriptionStatus } });
+    return { ok: true as const };
+  });
+  return res;
 }

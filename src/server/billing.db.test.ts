@@ -90,4 +90,25 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     }
     expect(await billing.usedSeats(org)).toBe(2);
   });
+
+  it("Kostenlos: Wechsel nur bis 20 aktive Patient:innen, danach keine 21. Person – auch nicht per Sammel-Import", async () => {
+    const org = await f.org();
+    const u = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role, active) values ($1,$2,'owner',true)", [org, u]);
+    const ids: string[] = [];
+    for (let i = 0; i < 21; i++) ids.push(await f.patient(org, { lastName: `P${i}` }));
+    expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/höchstens 20/) });
+    await f.asOrg(org, (c) => c.query("update patients set archived_at = now() where id = $1", [ids[0]]));
+    expect(await billing.switchToFreePlan(org, u)).toEqual({ ok: true });
+    expect(await orgRow(org)).toMatchObject({ plan: "free", subscription_status: "none", seats: 1 });
+
+    const { withOrg } = await import("@/db");
+    const { assertPatientCapacity, PatientLimitError, patientQuota } = await import("./patient-limit");
+    expect(await withOrg(org, (tx) => patientQuota(tx, org))).toEqual({ used: 20, limit: 20 });
+    await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org))).rejects.toBeInstanceOf(PatientLimitError);
+    await f.asOrg(org, (c) => c.query("update patients set archived_at = now() where id = any($1)", [ids.slice(1, 4)]));
+    await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org, 3))).resolves.toBeUndefined();
+    await expect(withOrg(org, (tx) => assertPatientCapacity(tx, org, 4))).rejects.toThrow(/frei: 3/);
+    expect(await billing.switchToFreePlan(org, u)).toMatchObject({ error: expect.stringMatching(/bereits/) });
+  });
 });

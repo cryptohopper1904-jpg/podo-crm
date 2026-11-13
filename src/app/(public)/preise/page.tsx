@@ -4,7 +4,7 @@ import { ADDONS, PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
 
 export const metadata = {
   title: "Preise",
-  description: "PodoHero-Tarife: 30 Tage kostenlos testen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
+  description: "PodoHero-Tarife: 30 Tage kostenlos testen, dauerhaft kostenlos bis 20 Patient:innen, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
 };
 
 const INCLUDED = [
@@ -18,7 +18,8 @@ const INCLUDED = [
 ];
 
 const FAQ = [
-  ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen."],
+  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ ist dauerhaft 0 € – für bis zu 20 aktive Patient:innen und eine Person, mit Terminen, Behandlungsdoku, Rechnungen und Kasse. Archivierte Patient:innen zählen nicht. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen."],
+  ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 aktive Patient:innen, 1 Person."],
   ["Kann ich monatlich kündigen?", "Ja. Vor der Löschung erstellen Sie einen vollständigen Export Ihrer Daten – Ihre Aufbewahrungspflichten bleiben bestehen."],
   ["Sind Drittanbieter enthalten?", "Nein. Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI-Anbieter rechnen ihre Leistungen selbst mit Ihnen ab."],
 ] as const;
@@ -32,7 +33,7 @@ export default function PricingPage() {
         <p className="mt-3"><Badge tone="warn">{PRICE_NOTE}</Badge></p>
       </header>
 
-      <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {PUBLIC_PLANS.map((p) => (
           <section
             key={p.id}

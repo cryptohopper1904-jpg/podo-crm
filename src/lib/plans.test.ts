@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessMode, assertEntitled, EntitlementError, entitlements, monthlyPriceCents, seatLimit, seatProblem, type OrgBilling } from "./plans";
+import { accessMode, assertEntitled, EntitlementError, entitlements, FREE_MAX_PATIENTS, freeSwitchProblem, monthlyPriceCents, patientLimit, patientLimitProblem, seatLimit, seatProblem, type OrgBilling } from "./plans";
 
 const now = new Date("2026-11-08T12:00:00Z");
 const day = 86_400_000;
@@ -63,5 +63,33 @@ describe("Plätze", () => {
     expect(seatProblem({ plan: "starter", seats: 1 }, 1, "accountant")).toBeNull();
     expect(seatProblem({ plan: "trial", seats: 1 }, 1, "reception")).toBeNull();
     expect(seatProblem({ plan: "trial", seats: 1 }, 2, "reception")).not.toBeNull();
+  });
+});
+
+describe("Kostenlos-Tarif", () => {
+  it("läuft nie ab, 1 Platz, keine Zusatzfunktionen, 20 Patient:innen", () => {
+    const free = org({ plan: "free", subscriptionStatus: "none", trialEndsAt: new Date(now.getTime() - 90 * day) });
+    expect(accessMode(free, now)).toEqual({ mode: "full" });
+    expect(seatLimit(free)).toBe(1);
+    expect(entitlements(free, now).features.size).toBe(0);
+    expect(patientLimit(free)).toBe(FREE_MAX_PATIENTS);
+    expect(patientLimit(org({ plan: "praxis" }))).toBe(Infinity);
+    expect(() => assertEntitled(free, "portal", now)).toThrow(/nicht enthalten/);
+  });
+  it("Patienten-Grenze: 20 erlaubt, 21. nicht; Mehrfach-Import zählt alle", () => {
+    const free = org({ plan: "free" });
+    expect(patientLimitProblem(free, 19)).toBeNull();
+    expect(patientLimitProblem(free, 20)).toMatch(/höchstens 20 aktive/);
+    expect(patientLimitProblem(free, 15, 5)).toBeNull();
+    expect(patientLimitProblem(free, 15, 6)).toMatch(/frei: 5/);
+    expect(patientLimitProblem(org({ plan: "starter" }), 5000, 100)).toBeNull();
+  });
+  it("Wechsel: nicht bei laufendem Abo, über 20 Patient:innen oder mit Team", () => {
+    expect(freeSwitchProblem(org({ plan: "trial" }), 20)).toBeNull();
+    expect(freeSwitchProblem(org({ plan: "trial" }), 21)).toMatch(/archivieren/);
+    expect(freeSwitchProblem(org({ plan: "trial" }), 3, 2)).toMatch(/eine Person/);
+    expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "active" }), 3)).toMatch(/kündigen/);
+    expect(freeSwitchProblem(org({ plan: "praxis", subscriptionStatus: "canceled" }), 3)).toBeNull();
+    expect(freeSwitchProblem(org({ plan: "free" }), 3)).toMatch(/bereits/);
   });
 });

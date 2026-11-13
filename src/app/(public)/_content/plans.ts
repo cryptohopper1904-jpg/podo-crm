@@ -4,7 +4,7 @@
  * Alle Preise netto (zzgl. USt.), vorläufig.
  */
 export type PublicPlan = {
-  id: "trial" | "starter" | "praxis" | "plus";
+  id: "trial" | "free" | "starter" | "praxis" | "plus";
   name: string;
   price: string;
   period: string;
@@ -15,6 +15,7 @@ export type PublicPlan = {
 
 export const PUBLIC_PLANS: readonly PublicPlan[] = [
   { id: "trial", name: "Testphase", price: "0 €", period: "30 Tage", therapists: "alle Funktionen zum Ausprobieren", note: "endet automatisch, keine Zahlungsdaten nötig" },
+  { id: "free", name: "Kostenlos", price: "0 €", period: "dauerhaft", therapists: "1 Behandler:in, bis 20 aktive Patient:innen", note: "Termine, Doku, Rechnungen, Kasse – ohne Portal, KI-Telefon, Website" },
   { id: "starter", name: "Starter", price: "59 €", period: "pro Monat", therapists: "1 Behandler:in", note: "Praxis-Website als Zusatzmodul: 9 €/Monat (vorläufig)" },
   { id: "praxis", name: "Praxis", price: "99 €", period: "pro Monat", therapists: "bis 5 Behandler:innen", note: "inkl. Praxis-Website", highlight: true },
   { id: "plus", name: "Plus", price: "149 €", period: "pro Monat", therapists: "für größere Teams", note: "inkl. Praxis-Website · +15 € je weiterem Behandler:in" },

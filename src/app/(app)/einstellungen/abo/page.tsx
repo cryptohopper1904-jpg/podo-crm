@@ -3,8 +3,11 @@ import { getBillingPort } from "@/integrations/stripe";
 import { denyAccess, requireAuth } from "@/lib/auth/session";
 import { dateDe, money } from "@/lib/format";
 import { WEBSITE_ADDON_CENTS, WEBSITE_ADDON_PLANS } from "@/lib/website";
-import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
+import { withOrg } from "@/db";
+import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { loadOrgBilling, usedSeats } from "@/server/billing";
+import { activePatientCount } from "@/server/patient-limit";
+import { FreePlanForm } from "./free-form";
 import { openPortalAction } from "./actions";
 import { CheckoutForm } from "./checkout-form";
 
@@ -29,6 +32,8 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const port = getBillingPort();
   const plan = PLANS[(org?.plan as keyof typeof PLANS) ?? "trial"] ?? PLANS.trial;
   const a = auth.access;
+  const activePatients = await withOrg(auth.organization.id, (tx) => activePatientCount(tx, auth.organization.id));
+  const freeProblem = org ? freeSwitchProblem({ ...org, seats: org.seats }, activePatients, used) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -71,6 +76,23 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         </form>
       </Card>
 
+      {org?.plan === "free" ? (
+        <Card>
+          <CardTitle>Kostenloser Tarif</CardTitle>
+          <p className="text-sm">
+            Aktive Patient:innen: <span className="font-semibold tabular-nums">{activePatients} von {FREE_MAX_PATIENTS}</span>. Für mehr Patient:innen, ein Team, Patientenportal oder KI-Telefon unten einen Tarif wählen.
+          </p>
+        </Card>
+      ) : org?.plan !== "internal" ? (
+        <Card>
+          <CardTitle>Kostenlos weiter nutzen</CardTitle>
+          <p className="mb-3 text-sm text-muted">
+            Dauerhaft 0 € für kleine Praxen: bis zu {FREE_MAX_PATIENTS} aktive Patient:innen, 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Archivierte Patient:innen zählen nicht. Aktuell: {activePatients} aktive Patient:innen.
+          </p>
+          <FreePlanForm disabledReason={freeProblem} />
+        </Card>
+      ) : null}
+
       <Card>
         <CardTitle>Tarif wählen</CardTitle>
         {port.isMock ? (
@@ -86,6 +108,12 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
           <tr><th>Tarif</th><th>Preis (netto/Monat)</th><th>Plätze</th>{FEATURES.map((f) => <th key={f}>{FEATURE_LABELS[f]}</th>)}</tr>
         </thead>
         <tbody>
+          <tr>
+            <td><p className="font-semibold">{PLANS.free.label}</p><p className="text-sm text-muted">{PLANS.free.description}</p></td>
+            <td className="tabular-nums">{money(0)}</td>
+            <td>1, max. 1</td>
+            {FEATURES.map((f) => <td key={f}>–</td>)}
+          </tr>
           {PAID_PLANS.map((p) => (
             <tr key={p}>
               <td><p className="font-semibold">{PLANS[p].label}</p><p className="text-sm text-muted">{PLANS[p].description}</p></td>

@@ -7,7 +7,7 @@ import { getBillingPort } from "@/integrations/stripe";
 import { audit } from "@/lib/audit";
 import { requireAuth, type AuthContext } from "@/lib/auth/session";
 import { isPaidPlan, PLANS } from "@/lib/plans";
-import { applyMockSubscription, loadOrgBilling, usedSeats } from "@/server/billing";
+import { applyMockSubscription, loadOrgBilling, switchToFreePlan, usedSeats } from "@/server/billing";
 
 export type AboState = { error?: string; ok?: string } | undefined;
 
@@ -76,4 +76,14 @@ export async function openPortalAction(): Promise<void> {
   const { url } = await port.createPortalSession({ customerId: org.stripeCustomerId, returnUrl: `${base}/einstellungen/abo` });
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "billing.portal_opened" });
   redirect(url);
+}
+
+/** Kostenlos weiterführen (bis 20 aktive Patient:innen) – auch aus dem Nur-Lesen-Modus heraus. */
+export async function switchToFreeAction(_: AboState): Promise<AboState> {
+  const auth = await ownerAuth();
+  if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann den Tarif wechseln." };
+  const r = await switchToFreePlan(auth.organization.id, auth.user.id);
+  if ("error" in r) return { error: r.error };
+  revalidatePath("/", "layout");
+  return { ok: "Die Praxis nutzt jetzt den kostenlosen Tarif (bis 20 aktive Patient:innen)." };
 }
