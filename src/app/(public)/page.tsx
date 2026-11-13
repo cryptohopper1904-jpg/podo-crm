@@ -26,10 +26,41 @@ import {
 } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
 import { getAuth } from "@/lib/auth/session";
-import { HeroCollage } from "./_content/hero-collage";
+import { HeroShots } from "./_content/hero-shots";
+import { JsonLd, softwareApplicationLd } from "./_content/json-ld";
 import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
+import { DemoDataNote, ScreenshotFrame, ShotImage } from "./_content/screenshot-frame";
+import { SHOTS, type Screenshot } from "./_content/screenshots";
+import { OG_IMAGE } from "./_content/site";
 
-export const metadata = { title: { absolute: "PodoHero – Praxissoftware für Podologie" } };
+const HOME_DESCRIPTION =
+  "Praxissoftware, gebaut nur für Podologie: Doku mit Fußschema und Fotos am iPad, Termine, Online-Buchung, Rechnungen, Sammelrechnung, Kasse, Verordnungen, Hygiene, Pflegeheime – gehostet in Deutschland. 30 Tage kostenlos testen.";
+
+export const metadata = {
+  title: { absolute: "PodoHero – Praxissoftware für Podologie" },
+  description: HOME_DESCRIPTION,
+  alternates: { canonical: "/" },
+  openGraph: { title: "PodoHero – Praxissoftware für Podologie", description: HOME_DESCRIPTION, url: "/", type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
+};
+
+/** Live-Beispiele: echte Screens mit Demodaten, verlinkt auf die passende Funktion */
+const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: string }[] = [
+  { shot: SHOTS.fussschema, tag: "iPad", title: "Doku am Behandlungsstuhl", text: "Befunde im Fußschema antippen, je Stelle notieren, Sterilgut-Charge erfassen.", href: "/funktionen#doku" },
+  { shot: SHOTS.besuchstag, tag: "iPad", title: "Besuchstag im Pflegeheim", text: "Je Bewohner:in Leistungen antippen und Kurzbefund speichern – Liste statt Einzelakten.", href: "/funktionen#praxis" },
+  { shot: SHOTS.sammelrechnung, tag: "Desktop", title: "Sammelrechnung ans Pflegeheim", text: "Positionen kommen aus dem Besuchstag, Steuerbefreiung wird geprüft und vermerkt.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.hygiene, tag: "Desktop", title: "Hygiene & Gerätebuch", text: "Chargen freigeben, Fristen für Wartung und Validierung, Tages-Checkliste.", href: "/funktionen#praxis" },
+  { shot: SHOTS.website, tag: "Website", title: "Ihre Praxis-Website", text: "Aus Ihren Praxisdaten erzeugt – mit „Termin online buchen“, ohne Cookies.", href: "/funktionen#termine" },
+];
+
+const ONLY_PODO = [
+  "Fußschema in 2D und am 3D-Fußmodell",
+  "Nagelspangen-Episoden mit Pflichtfoto-Assistent",
+  "Risiko-Ampel für Diabetes, Blutverdünner, pAVK, Neuropathie",
+  "Verordnungen DF, NF, QF und UI mit Fristen-Ampel",
+  "Sterilgut-Chargen bis zur einzelnen Behandlung rückverfolgbar",
+  "Pflegeheim-Modus, Touren und Sammelrechnung",
+] as const;
 
 type Capability = { icon: LucideIcon; title: string; text: string; href: string; test?: boolean };
 
@@ -129,11 +160,12 @@ export default async function Landing() {
 
   return (
     <>
+      <JsonLd data={softwareApplicationLd()} />
       {/* Hero */}
       <section aria-labelledby="hero-title" className="relative overflow-hidden">
         <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-12 pt-12 sm:px-6 md:pt-16 lg:grid-cols-[1fr_1.05fr] lg:gap-8 lg:pb-16">
           <div>
-            <Badge tone="primary">Praxissoftware für Podologie in Deutschland</Badge>
+            <Badge tone="primary">Gebaut nur für Podologie</Badge>
             <h1 id="hero-title" className="mt-5 font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3.6rem]">
               Ihre Praxis läuft.{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
@@ -155,8 +187,8 @@ export default async function Landing() {
             </ul>
           </div>
 
-          {/* Stilisierte Vorschau mehrerer Funktionen (keine echten Daten) */}
-          <HeroCollage />
+          {/* Echte Screenshots mit erfundenen Demodaten */}
+          <HeroShots />
         </div>
       </section>
 
@@ -211,6 +243,66 @@ export default async function Landing() {
         </div>
       </section>
 
+      {/* Live-Beispiele */}
+      <section aria-labelledby="live" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 id="live" className="font-display text-3xl font-semibold tracking-tight">Live-Beispiele aus PodoHero</h2>
+            <p className="mt-2 max-w-2xl text-muted">Keine Illustrationen: So sieht die Software im Praxisalltag aus – aufgenommen mit erfundenen Demodaten.</p>
+          </div>
+          <Link href="/funktionen" className="inline-flex items-center gap-1 rounded-lg font-semibold text-primary hover:underline">
+            Alle Screenshots <ArrowRight size={16} aria-hidden />
+          </Link>
+        </div>
+        <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {LIVE.map(({ shot, title, text, href, tag }) => (
+            <li key={title}>
+              <Link
+                href={href}
+                className="group flex h-full flex-col overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-[0_18px_40px_-24px_rgb(15_42_46/0.5)] motion-reduce:transition-none motion-reduce:hover:translate-y-0"
+              >
+                <div className="relative aspect-[16/10] overflow-hidden border-b border-border bg-surface-2">
+                  <ShotImage shot={shot} decorative sizes="(min-width: 1024px) 360px, (min-width: 640px) 50vw, 100vw" className="transition-transform duration-300 group-hover:scale-[1.02] motion-reduce:transition-none" />
+                  <span className="absolute left-3 top-3 rounded-full bg-bg/90 px-2.5 py-0.5 text-xs font-semibold backdrop-blur">{tag}</span>
+                </div>
+                <div className="flex flex-1 flex-col p-5">
+                  <p className="font-semibold group-hover:text-primary">{title}</p>
+                  <p className="mt-1 flex-1 text-sm text-muted">{text}</p>
+                  <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-primary">
+                    Mehr dazu <ArrowRight size={14} aria-hidden className="transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <DemoDataNote className="mt-4" />
+      </section>
+
+      {/* Gebaut nur für Podologie */}
+      <section aria-labelledby="nur-podologie" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
+        <div className="grid items-center gap-10 rounded-[24px] border border-border bg-surface p-6 sm:p-10 lg:grid-cols-[1fr_1fr]">
+          <div>
+            <Badge tone="primary"><Footprints size={14} aria-hidden className="mr-1" /> Gebaut nur für Podologie</Badge>
+            <h2 id="nur-podologie" className="mt-4 font-display text-3xl font-semibold tracking-tight">Von Grund auf für die Podologie entwickelt</h2>
+            <p className="mt-3 text-muted">
+              PodoHero kennt nur ein Fach: Ihres. Deshalb sind Fußschema, Nagelspange, Sterilgut-Charge und Pflegeheim-Besuchstag genau dort, wo
+              Sie sie im Behandlungsalltag brauchen.
+            </p>
+            <ul className="mt-5 grid gap-2.5">
+              {ONLY_PODO.map((t) => (
+                <li key={t} className="flex gap-2.5 text-[15px]"><Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> {t}</li>
+              ))}
+            </ul>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <LinkButton href="/vergleich" variant="secondary">Mit anderer Software vergleichen</LinkButton>
+              <LinkButton href="/wechseln" variant="ghost">Wechsel planen <ArrowRight size={16} aria-hidden /></LinkButton>
+            </div>
+          </div>
+          <ScreenshotFrame shot={SHOTS.fuss3d} sizes="(min-width: 1024px) 520px, 100vw" />
+        </div>
+      </section>
+
       {/* Ein Tag mit PodoHero */}
       <section aria-labelledby="tag" className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 id="tag" className="font-display text-3xl font-semibold tracking-tight">Ein Tag mit PodoHero</h2>
@@ -240,6 +332,10 @@ export default async function Landing() {
           <p className="mt-2 max-w-3xl text-muted">
             Viele etablierte Programme sind stark bei Kassenabrechnung und Telematik. PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung
             und Selbstzahler – und sagt offen, was noch fehlt. Allgemeine Einordnung, kein Vergleich mit einem bestimmten Produkt.
+          </p>
+          <p className="mt-2 text-muted">
+            Konkrete Gegenüberstellungen mit Quellen finden Sie unter{" "}
+            <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
           <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
             <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">

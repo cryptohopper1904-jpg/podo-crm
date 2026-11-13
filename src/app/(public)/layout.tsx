@@ -4,22 +4,36 @@ import { Menu } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkButton } from "@/components/ui";
+import { OG_IMAGE, siteUrl } from "./_content/site";
 
 /**
  * Öffentliche Website (ohne Anmeldung). Indexierung erst einschalten, wenn Impressum/AGB/AVV
  * ausgefüllt und anwaltlich geprüft sind: PUBLIC_SITE_INDEX=true.
  */
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl()),
   title: { default: "PodoHero – Praxissoftware für Podologie", template: "%s · PodoHero" },
   description:
     "Praxissoftware für Podologie: Patientenakte, Termine, Behandlungsdoku mit Fotos am iPad, Rechnungen, Verordnungen und Kommunikation – gehostet in Deutschland.",
   robots: process.env.PUBLIC_SITE_INDEX === "true" ? { index: true, follow: true } : { index: false, follow: false },
+  openGraph: { type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
+  twitter: { card: "summary_large_image" },
 };
 
 const NAV = [
   ["/funktionen", "Funktionen"],
   ["/preise", "Preise"],
+  ["/vergleich", "Vergleich"],
+  ["/wissen", "Wissen"],
   ["/sicherheit", "Sicherheit"],
+] as const;
+
+const RESOURCES = [
+  ["/wechseln", "Wechseln zu PodoHero"],
+  ["/vergleich", "Podologie-Software im Vergleich"],
+  ["/wissen", "Wissen für Podologie-Praxen"],
+  ["/wissen/sammelrechnung-und-quittung-podologie", "Sammelrechnung & Quittung"],
+  ["/wissen/hygieneplan-podologie-checkliste", "Hygieneplan-Checkliste"],
 ] as const;
 
 const LEGAL = [
@@ -41,7 +55,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
           <Link href="/" aria-label="PodoHero – Startseite" className="shrink-0 rounded-lg">
             <Logo />
           </Link>
-          <nav aria-label="Hauptnavigation" className="ml-6 hidden items-center gap-1 md:flex">
+          <nav aria-label="Hauptnavigation" className="ml-4 hidden items-center gap-0.5 lg:flex">
             {NAV.map(([href, label]) => (
               <Link key={href} href={href} className="rounded-lg px-3 py-2 text-[15px] font-medium text-muted hover:bg-surface-2 hover:text-text">
                 {label}
@@ -53,7 +67,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
             <LinkButton href="/login" variant="ghost" className="max-sm:hidden">Anmelden</LinkButton>
             <LinkButton href="/einrichtung" variant="accent" className="max-sm:hidden">Kostenlos testen</LinkButton>
             {/* Mobiles Menü ohne JavaScript (details/summary ist per Tastatur bedienbar) */}
-            <details className="group relative md:hidden">
+            <details className="group relative lg:hidden">
               <summary className="inline-flex size-11 cursor-pointer list-none items-center justify-center rounded-xl border border-border bg-surface [&::-webkit-details-marker]:hidden" aria-label="Menü">
                 <Menu size={20} aria-hidden />
               </summary>
@@ -61,6 +75,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
                 {NAV.map(([href, label]) => (
                   <Link key={href} href={href} className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">{label}</Link>
                 ))}
+                <Link href="/wechseln" className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">Wechseln zu PodoHero</Link>
                 <hr className="my-1 border-border" />
                 <Link href="/login" className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">Anmelden</Link>
                 <LinkButton href="/einrichtung" variant="accent">Kostenlos testen</LinkButton>
@@ -73,11 +88,11 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
       <main id="inhalt" className="flex-1">{children}</main>
 
       <footer className="border-t border-border bg-surface">
-        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-[2fr_1fr_1fr] sm:px-6">
+        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-2 sm:px-6 lg:grid-cols-[2fr_1fr_1.3fr_1fr]">
           <div>
             <Logo />
             <p className="mt-3 max-w-sm text-sm text-muted">
-              Praxissoftware für Podologie. Entwickelt in Deutschland, die Cloud läuft bei Hetzner in Deutschland.
+              Praxissoftware, gebaut nur für Podologie. Entwickelt in Deutschland, die Cloud läuft bei Hetzner in Deutschland.
             </p>
           </div>
           <nav aria-label="Produkt" className="flex flex-col gap-2 text-sm">
@@ -87,6 +102,12 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
             ))}
             <Link href="/einrichtung" className="text-muted hover:text-text">Kostenlos testen</Link>
             <Link href="/login" className="text-muted hover:text-text">Anmelden</Link>
+          </nav>
+          <nav aria-label="Ressourcen" className="flex flex-col gap-2 text-sm">
+            <p className="font-semibold">Ressourcen</p>
+            {RESOURCES.map(([href, label]) => (
+              <Link key={href} href={href} className="text-muted hover:text-text">{label}</Link>
+            ))}
           </nav>
           <nav aria-label="Rechtliches" className="flex flex-col gap-2 text-sm">
             <p className="font-semibold">Rechtliches</p>

@@ -38,6 +38,11 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/funktionen": "Website",
   "/sicherheit": "Website",
   "/unterauftragnehmer": "Website",
+  "/vergleich": "Website: Software-Vergleich (statisch)",
+  "/wechseln": "Website: Wechsel-Ratgeber (statisch)",
+  "/wissen": "Website: Wissensartikel (statisch)",
+  "/robots.txt": "robots.txt (keine Daten)",
+  "/sitemap.xml": "Sitemap der öffentlichen Website (keine Praxisdaten)",
 };
 
 const isIntendedPublic = (p: string) => p === "/" || Object.keys(INTENDED_PUBLIC).some((x) => p === x || p.startsWith(x + "/"));
@@ -77,7 +82,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/plattform/vertrieb"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/plattform/vertrieb", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {

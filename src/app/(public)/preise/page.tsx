@@ -1,11 +1,14 @@
 import { Check } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
+import { faqLd, JsonLd, softwareApplicationLd } from "../_content/json-ld";
 import { ADDONS, PRICE_NOTE, PUBLIC_PLANS } from "../_content/plans";
+import { pageMeta } from "../_content/site";
 
-export const metadata = {
+export const metadata = pageMeta({
   title: "Preise",
   description: "PodoHero-Tarife: 30 Tage kostenlos testen, kostenloser Tarif bis 20 Patient:innen ohne Zeitlimit, Starter 59 €, Praxis 99 €, Plus 149 € pro Monat (zzgl. USt., vorläufig).",
-};
+  path: "/preise",
+});
 
 const INCLUDED = [
   "Patientenakte, Kalender, Behandlungsdoku mit Fotos",
@@ -27,6 +30,7 @@ const FAQ = [
 export default function PricingPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
+      <JsonLd data={[softwareApplicationLd(), faqLd(FAQ)]} />
       <header className="max-w-3xl">
         <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Preise</h1>
         <p className="mt-4 text-lg text-muted">Ein Preis je Praxisgröße, monatlich kündbar.</p>
