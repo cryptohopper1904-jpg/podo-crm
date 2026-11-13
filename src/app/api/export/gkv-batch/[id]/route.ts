@@ -4,6 +4,7 @@ import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { gkvGuard } from "@/lib/features";
 import { billingBatchExport } from "@/server/prescriptions";
+import { berlinDateIso } from "@/lib/format";
 
 /**
  * Abrechnungslauf als CSV in einem neutralen Format für ein Abrechnungszentrum.
@@ -22,7 +23,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/export/gkv-
   return new NextResponse(writeCsv(data.lines), {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="gkv-abrechnung-${data.batch.createdAt.toISOString().slice(0, 10)}-${id.slice(0, 8)}.csv"`,
+      "Content-Disposition": `attachment; filename="gkv-abrechnung-${berlinDateIso(data.batch.createdAt)}-${id.slice(0, 8)}.csv"`,
       "Cache-Control": "private, no-store",
     },
   });

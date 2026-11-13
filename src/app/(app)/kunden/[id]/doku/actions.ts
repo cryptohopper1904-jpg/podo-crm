@@ -13,6 +13,7 @@ import { parseFootPoints } from "@/lib/foot3d-schema";
 import { chainHash } from "@/lib/records";
 import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/rules/brace";
 import { RecordInputError, checkTreatmentRefs, insertTreatmentRecord, lockPatientChain } from "@/server/records";
+import { berlinDateIso } from "@/lib/format";
 
 export type DokuFormState = { error?: string } | undefined;
 
@@ -88,11 +89,11 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
         if (!d.braceSide || !d.braceToe || !d.braceType) return { error: "Bitte Seite, Zehe und Spangentyp angeben." } as const;
         const [ep] = await tx
           .insert(braceEpisodes)
-          .values({ organizationId: org, patientId: d.patientId, side: d.braceSide, toe: d.braceToe, stage: d.braceStage, braceType: d.braceType, startedAt: new Date().toISOString().slice(0, 10) })
+          .values({ organizationId: org, patientId: d.patientId, side: d.braceSide, toe: d.braceToe, stage: d.braceStage, braceType: d.braceType, startedAt: berlinDateIso() })
           .returning({ id: braceEpisodes.id });
         braceEpisodeId = ep.id;
       } else if (braceEpisodeId && d.braceAction === "remove") {
-        await tx.update(braceEpisodes).set({ status: "completed", endedAt: new Date().toISOString().slice(0, 10) }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
+        await tx.update(braceEpisodes).set({ status: "completed", endedAt: berlinDateIso() }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
       } else if (braceEpisodeId && d.braceChange) {
         await tx.update(braceEpisodes).set({ braceType: d.braceChange }).where(and(eq(braceEpisodes.organizationId, org), eq(braceEpisodes.id, braceEpisodeId), eq(braceEpisodes.patientId, d.patientId)));
       }

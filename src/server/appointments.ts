@@ -10,6 +10,7 @@ import { CALENDAR_ROLES } from "@/lib/auth/permissions";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
+import { clampDurationMin } from "@/lib/appointment-duration";
 import { lockBooking } from "./portal-booking";
 import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
 
@@ -152,6 +153,8 @@ export async function createInternalAppointments(
   input: InternalAppointmentInput,
   now = new Date(),
 ): Promise<{ ok: true; ids: string[] } | SlotConflict | { ok: false; deceased: true } | { ok: false; conflict?: undefined; error: string }> {
+  // Summe der Leistungsdauern kann über 8 h liegen → serverseitig auf 5–480 Minuten begrenzen
+  const durationMin = clampDurationMin(input.durationMin);
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
@@ -162,7 +165,7 @@ export async function createInternalAppointments(
     if (!input.allowConflict) {
       const clashes: SlotClash[] = [];
       for (const s of input.occurrences) {
-        const found = await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + input.durationMin * 60_000));
+        const found = await conflictsInTx(tx, org, input.therapistId, s, new Date(s.getTime() + durationMin * 60_000));
         clashes.push(...found.map((c) => ({ startsAt: c.startsAt, endsAt: c.endsAt })));
       }
       const absentDays = await absentDaysInTx(tx, org, input.therapistId, input.occurrences.map((s) => berlinParts(s).dateIso));
@@ -177,7 +180,7 @@ export async function createInternalAppointments(
           patientId: input.patientId,
           therapistId: input.therapistId,
           startsAt: s,
-          endsAt: new Date(s.getTime() + input.durationMin * 60_000),
+          endsAt: new Date(s.getTime() + durationMin * 60_000),
           source: input.source,
           title: input.title,
           notes: input.notes,
