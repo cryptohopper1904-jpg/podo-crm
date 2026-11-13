@@ -866,6 +866,25 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       .from(invoices)
       .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "deposit"), eq(invoices.status, "paid"), isNull(invoices.collectiveInvoiceId)))
       .orderBy(asc(invoices.issuedAt));
+    // normale Quittungen (sofort bezahlt) des laufenden Jahres – schon abgerechnet, nur als Hinweis bei der Sammelrechnung
+    const yearStart = `${berlinDateIso().slice(0, 4)}-01-01`;
+    const receiptRows = await tx
+      .select({ patientId: invoices.patientId, n: sql<number>`count(*)::int`, cents: sql<number>`coalesce(sum(${invoices.totalCents}), 0)::int` })
+      .from(invoices)
+      .where(and(eq(invoices.organizationId, org), eq(invoices.kind, "receipt"), ne(invoices.status, "cancelled"), ne(invoices.status, "draft"), sql`${invoices.issuedAt} >= ${yearStart}`))
+      .groupBy(invoices.patientId);
+    const receiptsThisYear: Record<string, { count: number; cents: number }> = {};
+    for (const r of receiptRows) if (r.patientId) receiptsThisYear[r.patientId] = { count: r.n, cents: r.cents };
+    // Leistung laut Quittung (eine Position je Quittung) – für die Übernahme in die Sammelrechnung
+    const depLines = deposits.length
+      ? await tx
+          .select({ invoiceId: invoiceLines.invoiceId, description: invoiceLines.description, vatRate: invoiceLines.vatRate, appointmentId: invoiceLines.appointmentId, treatmentRecordId: invoiceLines.treatmentRecordId })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, deposits.map((d) => d.id))))
+          .orderBy(asc(invoiceLines.position))
+      : [];
+    const depLine = new Map<string, (typeof depLines)[number]>();
+    for (const l of depLines) if (!depLine.has(l.invoiceId)) depLine.set(l.invoiceId, l);
     let list = recent;
     if (preselectPatientId && z.uuid().safeParse(preselectPatientId).success && !recent.some((p) => p.id === preselectPatientId)) {
       const extra = await tx.select(cols).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, preselectPatientId)));
@@ -888,7 +907,13 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
       defaultDueDays: docSettings.dueDays,
       therapeuticDefault: docSettings.therapeuticDefault,
       today: berlinDateIso(),
-      openDeposits: deposits.filter((d): d is typeof d & { patientId: string } => !!d.patientId),
+      receiptsThisYear,
+      openDeposits: deposits
+        .filter((d): d is typeof d & { patientId: string } => !!d.patientId)
+        .map((d) => {
+          const l = depLine.get(d.id);
+          return { ...d, description: l?.description ?? "Anzahlung", vatRate: l?.vatRate ?? 0, appointmentId: l?.appointmentId ?? null, treatmentRecordId: l?.treatmentRecordId ?? null };
+        }),
     };
   });
 }
