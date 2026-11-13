@@ -2,12 +2,12 @@
 
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Car, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { dateDe, money, parseMoney } from "@/lib/format";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
-import { findServiceByCode } from "@/lib/service-code";
+import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { createInvoiceAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
@@ -125,9 +125,11 @@ export function InvoiceForm({
       unit,
       vatRate,
       totalCents: lineTotalCents(unit, num(l.quantity), num(l.factor)),
+      // komplett leere Zeile (z. B. nach Enter im Kürzel-Feld) wird ignoriert – weder abgerechnet noch geprüft
+      blank: !l.serviceId && !l.description.trim() && !l.price.trim(),
       needsConfirm: !smallBusiness && vatRate === 0 && (s ? s.requiresTherapeuticPurpose : kind !== "no_show_fee"),
     };
-  });
+  }).map((l) => (l.blank ? { ...l, needsConfirm: false } : l));
   const totals = computeTotals(computed);
   const needsConfirm = computed.some((l) => l.needsConfirm);
   const paid = paymentsSum(payments);
@@ -146,26 +148,48 @@ export function InvoiceForm({
     update(key, { serviceId, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: undefined });
   }
 
-  /** Schnelleingabe: Kürzel tippen (z. B. „PK“) → passende Leistung wird gewählt; unbekannt → Hinweis, nichts überschrieben */
+  /**
+   * Schnelleingabe: Kürzel tippen (z. B. „PK“) → passende Leistung wird gewählt. Die Beschreibung wird nur ersetzt,
+   * wenn sie leer ist oder noch dem Namen der bisherigen Leistung entspricht (vorbefüllte Texte wie „03.02.: …“ bleiben).
+   */
   function typeCode(key: string, value: string) {
     const s = findServiceByCode(services, value);
-    if (s) update(key, { serviceId: s.id, description: s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value });
-    else update(key, { codeInput: value });
+    setLines((ls) =>
+      ls.map((l) => {
+        if (l.key !== key) return l;
+        if (!s || s.id === l.serviceId) return { ...l, codeInput: value };
+        const prev = l.serviceId ? svcById.get(l.serviceId) : undefined;
+        const keepText = l.description.trim() !== "" && l.description !== prev?.name;
+        return { ...l, serviceId: s.id, description: keepText ? l.description : s.name, price: euro(s.priceCents), vatRate: s.vatRate, codeInput: value };
+      }),
+    );
   }
 
-  /** Enter im Kürzel-Feld: nächste Position anlegen und dort weitertippen (statt das Formular abzuschicken) */
+  // Fokus über Refs statt DOM-ids (Zeilen-Keys unterscheiden sich zwischen Server und Browser)
+  const codeRefs = useRef(new Map<string, HTMLInputElement>());
+  /** neu angelegte Zeile: Fokus, sobald ihr Kürzel-Feld im DOM ist (im Ref-Callback) */
+  const pendingFocus = useRef<string | null>(null);
+
+  const codeUnknown = (l: Line) => !!l.codeInput?.trim() && !findServiceByCode(services, l.codeInput);
+  const isBlank = (l: Line) => !l.serviceId && !l.description.trim() && !l.price.trim();
+
+  /** Enter im Kürzel-Feld: zur nächsten Position bzw. neue anlegen – nie das Formular abschicken */
   function codeKeyDown(e: React.KeyboardEvent<HTMLInputElement>, key: string) {
-    if (e.key !== "Enter") return;
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     e.preventDefault();
     const idx = lines.findIndex((l) => l.key === key);
+    const cur = lines[idx];
+    if (!cur || codeUnknown(cur) || isBlank(cur)) return; // unbekanntes Kürzel bzw. leere Zeile: hier bleiben
     const next = lines[idx + 1];
-    if (next) {
-      document.getElementById(`code-${next.key}`)?.focus();
-      return;
-    }
+    if (next) return codeRefs.current.get(next.key)?.focus();
     const nl = newLine();
+    pendingFocus.current = nl.key;
     setLines((ls) => [...ls, nl]);
-    requestAnimationFrame(() => document.getElementById(`code-${nl.key}`)?.focus());
+  }
+
+  /** Verlassen mit unbekanntem/leerem Kürzel: wieder das Kürzel der tatsächlich gewählten Leistung anzeigen */
+  function codeBlur(key: string) {
+    setLines((ls) => ls.map((l) => (l.key === key && l.codeInput !== undefined && (codeUnknown(l) || !l.codeInput.trim()) ? { ...l, codeInput: undefined } : l)));
   }
 
   function chooseKind(k: CreatableKind) {
@@ -203,7 +227,7 @@ export function InvoiceForm({
   };
 
   const linesJson = JSON.stringify(
-    computed.map((l) => ({
+    computed.filter((l) => !l.blank).map((l) => ({
       serviceId: l.serviceId || null,
       treatmentRecordId: l.treatmentRecordId || null,
       appointmentId: l.appointmentId || null,
@@ -275,22 +299,34 @@ export function InvoiceForm({
 
       <Card>
         <h2 className="mb-4 font-display text-lg font-semibold">Positionen</h2>
-        <div className="flex flex-col gap-3">
+        {/* Enter in Positionsfeldern stellt nie versehentlich die (unveränderbare) Rechnung aus */}
+        <div
+          className="flex flex-col gap-3"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.target instanceof HTMLInputElement) e.preventDefault();
+          }}
+        >
           {computed.map((l, i) => {
             const s = l.serviceId ? svcById.get(l.serviceId) : undefined;
             return (
               // Ab md zwei Zeilen (Leistung/Beschreibung, dann Zahlen), erst ab 2xl alles in einer Zeile – kein horizontales
               // Scrollen auf dem iPad (Gesamt-Review M8). min-w-0: Eingabefelder dürfen schrumpfen.
               <div key={l.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-6 md:items-end 2xl:grid-cols-[minmax(10rem,1.2fr)_minmax(10rem,2fr)_5rem_5rem_7rem_7rem_auto] [&>*]:min-w-0">
-                <Field
-                  label={`Pos. ${i + 1}: Leistung`}
-                  className="md:col-span-3 2xl:col-span-1"
-                  hint={l.codeInput && !findServiceByCode(services, l.codeInput) ? `Kürzel „${l.codeInput.trim()}“ unbekannt` : undefined}
-                >
+                <div role="group" aria-labelledby={`pos-${i}-label`} className="flex flex-col gap-1.5 md:col-span-3 2xl:col-span-1">
+                  <span id={`pos-${i}-label`} className="text-sm font-medium">{`Pos. ${i + 1}: Leistung`}</span>
                   <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
                     <Input
-                      id={`code-${l.key}`}
-                      aria-label={`Pos. ${i + 1}: Kürzel`}
+                      ref={(el) => {
+                        if (!el) return void codeRefs.current.delete(l.key);
+                        codeRefs.current.set(l.key, el);
+                        if (pendingFocus.current === l.key) {
+                          pendingFocus.current = null;
+                          el.focus();
+                        }
+                      }}
+                      aria-label={`Pos. ${i + 1}: Leistung – Kürzel`}
+                      aria-invalid={codeUnknown(l) || undefined}
+                      aria-describedby={codeUnknown(l) ? `pos-${i}-hint` : undefined}
                       title="Kürzel eintippen, z. B. PK – Enter für die nächste Position"
                       placeholder="Kürzel"
                       autoComplete="off"
@@ -301,15 +337,19 @@ export function InvoiceForm({
                       value={l.codeInput ?? s?.code ?? ""}
                       onChange={(e) => typeCode(l.key, e.target.value)}
                       onKeyDown={(e) => codeKeyDown(e, l.key)}
+                      onBlur={() => codeBlur(l.key)}
                     />
-                    <Select aria-label={`Pos. ${i + 1}: Leistung wählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
+                    <Select aria-label={`Pos. ${i + 1}: Leistung auswählen`} value={l.serviceId} onChange={(e) => chooseService(l.key, e.target.value)}>
                       <option value="">Freitext</option>
                       {services.map((sv) => (
                         <option key={sv.id} value={sv.id}>{sv.code} · {sv.name}</option>
                       ))}
                     </Select>
                   </div>
-                </Field>
+                  {codeUnknown(l) ? (
+                    <span id={`pos-${i}-hint`} aria-live="polite" className="text-xs text-danger">Kürzel „{normalizeServiceCode(l.codeInput ?? "")}“ unbekannt</span>
+                  ) : null}
+                </div>
                 <Field label="Beschreibung" className="md:col-span-3 2xl:col-span-1">
                   <Input value={l.description} onChange={(e) => update(l.key, { description: e.target.value })} placeholder={s?.name ?? "z. B. Pflegeprodukt"} />
                 </Field>
