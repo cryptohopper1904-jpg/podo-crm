@@ -12,6 +12,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, dateTimeDe, money } from "@/lib/format";
 import { invoicePaymentQr, isValidIban } from "@/lib/epc-qr";
 import { computeTotals } from "@/lib/invoice-math";
+import { cssString } from "@/lib/css-string";
 import {
   INVOICE_KIND_LABEL,
   INVOICE_STATUS_LABEL,
@@ -55,17 +56,25 @@ export const metadata = { title: "Rechnung" };
 
 const qty = qtyDe;
 
+/** Vermerk auf Entwürfen (Seite und Druck) */
+const DRAFT_NOTICE = "ENTWURF – kein gültiger Beleg";
+
 /**
  * Druck: immer DIN A4 mit festen Rändern, Papierfarben unabhängig vom Dunkelmodus. Mehrseitig: Tabellenkopf
  * wiederholt sich, Zeilen sowie Summen-, Quittungs-, Zahlungs- und Hinweisblock werden nicht getrennt;
- * Seitenzahl unten rechts über Seitenrand-Boxen (Chromium ab 131; andere Browser lassen sie weg – das PDF hat sie immer).
+ * Seitenrand-Boxen (Chromium ab 131; andere Browser lassen sie weg – das PDF hat sie immer): Seitenzahl unten rechts,
+ * auf Folgeseiten oben rechts Belegart und Nr.; Entwürfe tragen auf jeder Seite oben links den Entwurfsvermerk.
  */
-const PRINT_CSS = `
+const printCss = (runningHead: string, draft: boolean) => `
 @page {
   size: A4;
   margin: 15mm 17mm 18mm 20mm;
+  @top-right { content: ${cssString(runningHead)} " – Seite " counter(page) " von " counter(pages); font: 8pt Helvetica, Arial, sans-serif; color: #555; }
+  ${draft ? `@top-left { content: ${cssString(DRAFT_NOTICE)}; font: bold 9pt Helvetica, Arial, sans-serif; color: #000; }` : ""}
   @bottom-right { content: "Seite " counter(page) " von " counter(pages); font: 7.5pt Helvetica, Arial, sans-serif; color: #666; }
 }
+/* Kopfzeile (Belegart, Nr., Seite) nur auf Folgeseiten – Seite 1 trägt den Briefkopf */
+@page :first { @top-right { content: none; } }
 @media print {
   main { padding: 0 !important; }
   .invoice-sheet { border: 0 !important; border-radius: 0 !important; padding: 0 !important; max-width: none !important; width: auto !important; }
@@ -75,6 +84,7 @@ const PRINT_CSS = `
   .invoice-sheet thead { display: table-header-group; }
   .invoice-sheet tr, .invoice-sheet .print-keep { break-inside: avoid; page-break-inside: avoid; }
   .invoice-sheet h2 { break-after: avoid; page-break-after: avoid; }
+  .invoice-sheet .draft-notice { border-color: #000 !important; }
 }`;
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
@@ -85,6 +95,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   if (!data) notFound();
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
 
+  const isDraft = inv.status === "draft" || !inv.number;
+  const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  const runningHead = inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} – Entwurf`;
   const totals = computeTotals(lines);
   const open = inv.totalCents - inv.paidCents;
   const canPay = auth.can("invoices.write") && (inv.status === "issued" || inv.status === "partially_paid") && open !== 0;
@@ -119,7 +132,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
   return (
     <div className="mx-auto max-w-5xl">
-      <style>{PRINT_CSS}</style>
+      <style>{printCss(runningHead, isDraft)}</style>
       <div className="no-print mb-6 flex flex-col gap-4">
         <BackLink href={backHref("/rechnungen", von)} label="Rechnungen" className="-mb-4 self-start" />
         <div className="flex flex-wrap items-center gap-3">
@@ -217,6 +230,11 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
       </div>
 
       <article className="invoice-sheet mx-auto max-w-[210mm] rounded-[var(--radius-card)] border border-border bg-surface p-6 text-[14px] leading-relaxed sm:p-10">
+        {isDraft ? (
+          <p role="note" className="draft-notice mb-6 rounded border-2 border-dashed border-danger px-3 py-2 text-center text-base font-bold tracking-wide text-danger">
+            {DRAFT_NOTICE}
+          </p>
+        ) : null}
         <div className="mb-6 flex justify-center">
           <PracticeLogo organizationId={o.id} kind={isReceiptLike(inv.kind) ? "compact" : "full"} alt={o.name} className={isReceiptLike(inv.kind) ? "h-14" : "h-24 max-w-[60%]"} />
         </div>

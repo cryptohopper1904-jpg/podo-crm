@@ -77,13 +77,35 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
     getPage().drawText(s, { x: xx, y: yy, size, font, color: opts.color ?? BLACK });
     return w;
   };
+  /**
+   * Längstes Präfix von s (mindestens 1 Zeichen), das mit `suffix` in maxW passt. Exponentielle und dann binäre
+   * Suche: O(k log k) Breitenmessungen-Zeichen je Zeile statt quadratisch in der Wortlänge (lange Eingaben ohne
+   * Leerzeichen blockieren sonst den Server).
+   * Annahme: Die Breite wächst monoton mit der Präfixlänge – gilt für die Standardschriften (WinAnsi, keine
+   * Ligaturen, keine negativen Breiten). Bei eingebetteten TTF-Schriften mit Ligaturen/Kerning neu prüfen.
+   */
+  const fitPrefix = (s: string, maxW: number, size: number, font: PDFFont, suffix = ""): number => {
+    const fits = (n: number) => font.widthOfTextAtSize(s.slice(0, n) + suffix, size) <= maxW;
+    let lo = 1;
+    let hi = 2;
+    while (hi <= s.length && fits(hi)) {
+      lo = hi;
+      hi *= 2;
+    }
+    hi = Math.min(hi, s.length + 1);
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (fits(mid)) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  };
   /** Einzeilig auf maxW kürzen (mit „…“) */
   const clip = (t: string, maxW: number, size = 10, font = regular): string => {
-    const s = safe(t);
+    // wie text(): einzeilig – Zeilenumbrüche (safe macht \r/\t schon zu \n bzw. Leerzeichen) wären nicht kodierbar
+    const s = safe(t).replace(/[\r\n\t]/g, " ");
     if (font.widthOfTextAtSize(s, size) <= maxW) return s;
-    let out = s;
-    while (out.length > 1 && font.widthOfTextAtSize(out + "…", size) > maxW) out = out.slice(0, -1);
-    return out.trimEnd() + "…";
+    return s.slice(0, fitPrefix(s, maxW, size, font, "…")).trimEnd() + "…";
   };
   const wrap = (t: string, maxW: number, size = 10, font = regular): string[] => {
     const out: string[] = [];
@@ -96,11 +118,11 @@ export function makeWriter(getPage: () => PDFPage, fonts: Fonts, safe: (s: strin
           continue;
         }
         if (line) out.push(line);
-        // sehr lange Wörter hart umbrechen
+        // sehr lange Wörter hart umbrechen (Trennstelle per Suche, siehe fitPrefix)
         let rest = word;
-        while (font.widthOfTextAtSize(rest, size) > maxW && rest.length > 1) {
-          let n = rest.length - 1;
-          while (n > 1 && font.widthOfTextAtSize(rest.slice(0, n), size) > maxW) n--;
+        while (rest.length > 1) {
+          const n = fitPrefix(rest, maxW, size, font);
+          if (n >= rest.length) break;
           out.push(rest.slice(0, n));
           rest = rest.slice(n);
         }
@@ -194,7 +216,8 @@ export function drawAddressBlock(
   const boxW = RIGHT - boxX;
   const slSize = 6.5;
   const slMax = boxX - ML - 16;
-  let slText = safe(opts.senderLine.replaceAll(" · ", " - "));
+  // einzeilig (mehrzeilige Praxisangaben wären für die Standardschrift nicht kodierbar)
+  let slText = safe(opts.senderLine.replaceAll(" · ", " - ")).replaceAll("\n", " ");
   while (regular.widthOfTextAtSize(slText, slSize) > slMax && slText.length > 10) slText = slText.slice(0, -2);
   const slW = w.text(slText, ML, y - 8, { size: slSize, color: GRAY });
   w.line(ML, y - 9.5, ML + slW, y - 9.5, 0.3, GRAY);

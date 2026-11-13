@@ -231,16 +231,22 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
     let rest = d;
     let first = true;
     while (rest.length) {
-      const fit = Math.max(1, Math.floor((y - FOOTER_TOP - ROW_PAD) / ROW_LINE));
+      // kleiner Puffer gegen Rundungsfehler, wenn der Platz genau aufgeht
+      const fit = Math.max(1, Math.floor((y - FOOTER_TOP - ROW_PAD) / ROW_LINE + 1e-6));
       const part = rest.slice(0, fit);
       rest = rest.slice(fit);
-      const h = rowHeight(part.length);
+      // Fortsetzung (immer oben auf einer neuen Seite) mindestens zweizeilig: Pos-Nummer und „(Forts.)“
+      const h = rowHeight(first ? part.length : Math.max(part.length, 2));
       box(ML, y, width, h);
       rowLines(y, h);
       const ty = y - 9.5;
       if (first) {
         text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
         text(qtyDe(l.quantity), cx.qty + colW.qty / 2, ty, { size: 8.5, align: "center" });
+      } else {
+        // fortgesetzte Position auf der Folgeseite: Pos-Nummer, darunter „(Forts.)“ in 7 pt (passt in die Pos-Spalte)
+        text(String(i + 1), cx.pos + colW.pos / 2, ty, { size: 8.5, align: "center" });
+        text("(Forts.)", cx.pos + colW.pos / 2, ty - 9, { size: 7, align: "center" });
       }
       part.forEach((dl, k) => (d.length > 1 ? text(dl, cx.desc + 4, ty - k * ROW_LINE, { size: 8.5 }) : text(dl, cx.desc + descW / 2, ty, { size: 8.5, align: "center" })));
       if (first) {
@@ -384,7 +390,7 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
 
   // ── Fußzeile (jede Seite) ──
   const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
-  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} (Entwurf)`);
+  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} – Entwurf`);
 
   return doc.save();
 }

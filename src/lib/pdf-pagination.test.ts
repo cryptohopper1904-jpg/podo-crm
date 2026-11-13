@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFPage } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 import { renderDunningPdf, type DunningPdfData } from "./dunning-pdf";
+import { embedFonts, makeSafe, makeWriter } from "./pdf-letter";
 
 type Drawn = { page: number; x: number; y: number; size: number; text: string };
 let drawn: Drawn[] = [];
@@ -232,11 +233,11 @@ describe("Übergroße Blöcke: kein Textverlust", () => {
     for (const pg of pagesOf(drawn, /^Pw\d+/)) expect(pagesOf(drawn, "Leistung / Heilmittel")).toContain(pg);
   });
 
-  it("Entwurf ohne Nummer: Kopfzeile „Rechnung (Entwurf)“", async () => {
+  it("Entwurf ohne Nummer: Kopfzeile „Rechnung – Entwurf“", async () => {
     const base = invoice(40);
     const n = await pages(await renderInvoicePdf({ ...base, invoice: { ...base.invoice, number: null, status: "draft" } }));
     expect(n).toBeGreaterThan(1);
-    expectPageNumbers(n, "Rechnung (Entwurf)");
+    expectPageNumbers(n, "Rechnung – Entwurf");
   });
 
   it("Mahnung: Text über mehrere Seiten vollständig, nichts in der Fußzeile", async () => {
@@ -246,6 +247,70 @@ describe("Übergroße Blöcke: kein Textverlust", () => {
     const seen = allDrawnWords();
     for (const w of words("Mw", 1500)) expect(seen.has(w), w).toBe(true);
     expectInsideBody(n);
+  });
+});
+
+describe("Lange Wörter ohne Leerzeichen", () => {
+  const LETTERS = "abcdefghij";
+  const longWord = (n: number) => LETTERS.repeat(Math.ceil(n / LETTERS.length)).slice(0, n);
+  /** Median der Laufzeit (ms) über mehrere Läufe, robust gegen Ausreißer auf ausgelasteten Rechnern */
+  async function medianMs(fn: () => unknown | Promise<unknown>, runs = 5) {
+    const ms: number[] = [];
+    for (let i = 0; i < runs; i++) {
+      const t = performance.now();
+      await fn();
+      ms.push(performance.now() - t);
+    }
+    return ms.sort((a, b) => a - b)[Math.floor(runs / 2)];
+  }
+
+  it("300 Zeichen am Stück erscheinen vollständig im PDF", async () => {
+    const word = longWord(300);
+    const base = invoice(1);
+    await pages(await renderInvoicePdf({ ...base, lines: [{ ...base.lines[0], description: word }] }));
+    expect(drawn.filter((t) => /^[a-j]+$/.test(t.text)).map((t) => t.text).join("")).toBe(word);
+    expectInsideBody(1);
+  });
+
+  it("clip: mehrzeilige Werte (\\n, \\r, \\t) werden einzeilig, Fußzeile bricht die PDF-Erzeugung nicht ab", async () => {
+    const doc = await PDFDocument.create();
+    const fonts = await embedFonts(doc);
+    const w = makeWriter(() => doc.addPage(), fonts, makeSafe(fonts.regular));
+    expect(w.clip("Bank\nZweite Zeile\r\nDritte\tZeile", 1000, 7)).toBe("Bank Zweite Zeile Dritte Zeile");
+    expect(w.clip("Sehr lange Bank\nmit Zeilenumbruch und noch mehr Text dahinter", 60, 7).endsWith("…")).toBe(true);
+    const base = invoice(40);
+    const n = await pages(await renderInvoicePdf({ ...base, organization: { ...ORG, bankName: "Beispielbank\nFiliale Potsdam", legalName: "Fußwohl\r\nPodologie GmbH", accountHolder: "Erika\tMusterfrau" } }));
+    expect(n).toBeGreaterThan(1);
+    expect(drawn.some((t) => t.text === "Beispielbank Filiale Potsdam")).toBe(true);
+  });
+
+  it("harter Umbruch ist nicht quadratisch: 10.000 Zeichen am Stück < 200 ms (Median)", async () => {
+    const doc = await PDFDocument.create();
+    const fonts = await embedFonts(doc);
+    const w = makeWriter(() => doc.addPage(), fonts, makeSafe(fonts.regular));
+    const word = longWord(10_000);
+    let lines: string[] = [];
+    const ms = await medianMs(() => (lines = w.wrap(word, 300, 8.5)));
+    expect(lines.join("")).toBe(word);
+    for (const l of lines) expect(fonts.regular.widthOfTextAtSize(l, 8.5)).toBeLessThanOrEqual(300);
+    expect(ms).toBeLessThan(200);
+    // clip ebenfalls ohne Schleife über jedes Zeichen
+    expect(await medianMs(() => w.clip(word, 200, 7))).toBeLessThan(200);
+    expect(w.clip(word, 200, 7).endsWith("…")).toBe(true);
+  });
+
+  it("Position mit 6000 und Hinweis mit 3000 Zeichen am Stück: Rechnung in vertretbarer Zeit", async () => {
+    const base = invoice(1);
+    const data = { ...base, lines: [{ ...base.lines[0], description: longWord(6000) }], invoice: { ...base.invoice, notes: longWord(3000) } };
+    const ms = await medianMs(() => renderInvoicePdf(data), 3);
+    expect(ms).toBeLessThan(3000);
+    // fortgesetzte Position: Pos-Nummer und darunter „(Forts.)“ in 7 pt auf jeder Folgeseite mit Beschreibungsteilen
+    const cont = drawn.filter((t) => t.text === "(Forts.)");
+    expect(cont.length).toBeGreaterThan(0);
+    for (const c of cont) {
+      expect(c.size).toBe(7);
+      expect(drawn.some((t) => t.page === c.page && t.text === "1" && Math.abs(t.y - (c.y + 9)) < 0.01)).toBe(true);
+    }
   });
 });
 
