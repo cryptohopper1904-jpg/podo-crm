@@ -10,7 +10,8 @@ import { appointments, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
-import { createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
+import { conflictMessage, createInternalAppointments, rescheduleAppointment } from "@/server/appointments";
+import { saveCalendarMode } from "@/server/calendar-board";
 import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
 import { offerFreedSlotSafe } from "@/server/waitlist";
@@ -61,8 +62,8 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     allowConflict: !!d.allowConflict,
   });
   if (!res.ok && "deceased" in res) return { error: DECEASED_BLOCKED_MSG };
-  if (!res.ok) return { error: "Zu dieser Zeit ist bereits ein Termin eingetragen.", conflict: true };
-  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length } });
+  if (!res.ok) return { error: conflictMessage(res), conflict: true };
+  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length, allowConflict: !!d.allowConflict } });
   revalidatePath("/kalender");
   revalidatePath("/heute");
   redirect(`/kalender?datum=${d.date}`);
@@ -126,4 +127,26 @@ export async function rescheduleAppointmentAction(_: RescheduleState, form: Form
   revalidatePath("/heute");
   revalidatePath(`/kalender/termin/${d.id}`);
   redirect(`/kalender?datum=${d.date}`);
+}
+
+const modeSchema = z.object({
+  mode: z.enum(["simple", "full"]),
+  datum: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  ansicht: z.enum(["tag", "woche", "monat"]).optional(),
+});
+
+/** Kalenderansicht umschalten („Einfach“/„Vollständig“) und je Person merken (users.prefs.calendar). */
+export async function setCalendarModeAction(form: FormData) {
+  const auth = await requireAuth("appointments.read");
+  const parsed = modeSchema.safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  if (!parsed.success) redirect("/kalender");
+  const d = parsed.data;
+  await saveCalendarMode(auth.user.id, d.mode);
+  // Die einfache Ansicht kennt nur Tag/Woche – aus „Monat“ wird „Woche“
+  const ansicht = d.mode === "simple" ? (d.ansicht === "woche" || d.ansicht === "monat" ? "woche" : undefined) : d.ansicht;
+  const p = new URLSearchParams();
+  if (d.datum) p.set("datum", d.datum);
+  if (ansicht) p.set("ansicht", ansicht);
+  revalidatePath("/kalender");
+  redirect(`/kalender${p.size ? `?${p}` : ""}`);
 }
