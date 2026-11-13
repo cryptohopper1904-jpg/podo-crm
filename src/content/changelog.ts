@@ -25,6 +25,36 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-13-n",
+    date: "2026-11-13",
+    title: "Empfang belegt keinen bezahlten Platz mehr",
+    audience: "owner",
+    items: [
+      { tag: "verbessert", text: "Personen mit der Rolle Empfang sind in jedem Tarif kostenlos. Einen Platz belegen nur Behandlungsrollen (Inhaber:in, Podolog:innen, Azubis). Empfang kann nicht als Behandler:in eingetragen werden.", href: "/einstellungen/team" },
+      { tag: "verbessert", text: "Preise werden zusätzlich brutto (inkl. 19 % USt.) angezeigt.", href: "/einstellungen/abo" },
+    ],
+  },
+  {
+    id: "2026-11-13-m",
+    date: "2026-11-13",
+    title: "Patient:in als verstorben markieren",
+    items: [
+      { tag: "neu", text: "In der Akte: „Als verstorben markieren“ (Sterbedatum optional). Danach keine Erinnerungen, Rückholung, Warteliste, Portal- oder Anamnese-Links und keine neuen Termine mehr; künftige Termine werden nach Bestätigung abgesagt. Akte und Rechnungen bleiben erhalten. Bei Fehleingabe zurücknehmbar." },
+      { tag: "verbessert", text: "Im Rechnungsformular passen die Texte unten jetzt zur gewählten Belegart (Quittung, Sammelrechnung, Ausfallhonorar)." },
+    ],
+  },
+  {
+    id: "2026-11-13-l",
+    date: "2026-11-13",
+    title: "Kalender: vollständige Ansicht und freie Termine finden",
+    items: [
+      { tag: "neu", text: "Im Kalender können Sie zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Ihre Wahl wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
+      { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
+      { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
+    ],
+  },
+  {
     id: "2026-11-13-k",
     date: "2026-11-13",
     title: "Ansicht: Einfach, Kompakt oder Komplex",

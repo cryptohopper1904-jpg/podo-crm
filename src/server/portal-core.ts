@@ -2,7 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, withOrg } from "@/db";
+import { db, withOrg, type Tx } from "@/db";
 import { appointmentServices, appointments, invoices, messages, organizations, patientLinks, patients, payments, services, vouchers } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
@@ -23,6 +23,7 @@ import {
 import { PORTAL_COOKIE, verifyPortalSession } from "@/lib/portal-session";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { invoicePdfForOrg } from "./invoice-delivery";
+import { isDeceased } from "@/lib/patient-deceased";
 
 /** Drosselung je IP: Seitenaufrufe/Downloads und (strenger) ungültige Tokens. */
 export const portalLimiter = createRateLimiter({ windowMs: 10 * 60_000, max: 60 });
@@ -33,11 +34,20 @@ export async function createPortalLink(auth: AuthContext, patientId: string) {
   assertCan(auth, "patients.write");
   const org = auth.organization.id;
   if (!z.uuid().safeParse(patientId).success) throw new Error("Person nicht gefunden.");
-  const [p] = await withOrg(org, (tx) => tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt))));
-  if (!p) throw new Error("Person nicht gefunden.");
   const token = newPortalToken();
   const expiresAt = new Date(Date.now() + PORTAL_DAYS * 86400_000);
-  await insertPortalLinkLocked(org, patientId, hashPortalToken(token), expiresAt, auth.user.id);
+  // Prüfung der Person in DERSELBEN Transaktion wie das Einfügen, Zeile gesperrt (FOR UPDATE):
+  // ein paralleles „verstorben markieren“ kann keinen gültigen Link hinterlassen
+  await insertPortalLinkLocked(org, patientId, hashPortalToken(token), expiresAt, auth.user.id, async (tx) => {
+    const [p] = await tx
+      .select({ id: patients.id, extra: patients.extra })
+      .from(patients)
+      .where(and(eq(patients.organizationId, org), eq(patients.id, patientId), isNull(patients.archivedAt)))
+      .for("update");
+    if (!p) throw new Error("Person nicht gefunden.");
+    // verstorben: kein Portal-Zugang mehr (Links wurden beim Markieren widerrufen)
+    if (isDeceased(p.extra)) throw new Error("Patient:in ist als verstorben markiert.");
+  });
   await audit({ organizationId: org, userId: auth.user.id, action: "portal.link_create", entity: "patient", entityId: patientId, meta: { expiresAt: expiresAt.toISOString() } });
   const base = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   return { url: `${base}/portal/${token}`, expiresAt };
@@ -55,10 +65,11 @@ const isUniqueViolation = (e: unknown) => {
  * (z. B. paralleler Schreiber ohne Lock) wird einmal erneut versucht.
  * patient_links hat keine RLS → Mandant immer explizit filtern.
  */
-export async function insertPortalLinkLocked(org: string, patientId: string, tokenHash: string, expiresAt: Date, createdBy: string | null) {
+export async function insertPortalLinkLocked(org: string, patientId: string, tokenHash: string, expiresAt: Date, createdBy: string | null, guard?: (tx: Tx) => Promise<void>) {
   for (let attempt = 0; ; attempt++) {
     try {
-      await db.transaction(async (tx) => {
+      await withOrg(org, async (tx) => {
+        if (guard) await guard(tx);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`plink:${org}:${patientId}:${PORTAL_PURPOSE}`}))`);
         await tx
           .update(patientLinks)
@@ -116,8 +127,8 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
   const [o] = await db.select({ name: organizations.name, phone: organizations.phone, email: organizations.email }).from(organizations).where(eq(organizations.id, org));
   if (!o) return null;
   const data = await withOrg(org, async (tx) => {
-    const [p] = await tx.select({ firstName: patients.firstName, archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
-    if (!p || p.archivedAt) return null;
+    const [p] = await tx.select({ firstName: patients.firstName, archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, link.patientId)));
+    if (!p || p.archivedAt || isDeceased(p.extra)) return null;
     const appts = await tx
       .select({ id: appointments.id, startsAt: appointments.startsAt, endsAt: appointments.endsAt, status: appointments.status })
       .from(appointments)
@@ -164,14 +175,23 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
   return { practice: o, ...data };
 }
 
+/** Person des Links noch portalberechtigt (nicht archiviert, nicht verstorben)? */
+async function portalPatientActive(tx: Tx, org: string, patientId: string) {
+  const [p] = await tx.select({ archivedAt: patients.archivedAt, extra: patients.extra }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+  return !!p && !p.archivedAt && !isDeceased(p.extra);
+}
+
 /** PDF für das Portal – nur, wenn die Rechnung der Person des Links gehört. */
 export async function portalInvoicePdf(link: PortalLink, invoiceId: string) {
   if (!z.uuid().safeParse(invoiceId).success) return null;
-  const [inv] = await withOrg(link.organizationId, (tx) =>
-    tx
-      .select({ organizationId: invoices.organizationId, patientId: invoices.patientId, status: invoices.status })
-      .from(invoices)
-      .where(and(eq(invoices.organizationId, link.organizationId), eq(invoices.id, invoiceId))),
+  const [inv] = await withOrg(link.organizationId, async (tx) =>
+    // verstorben/archiviert: kein Portal-Zugriff mehr (Defense in Depth – die Links sind ohnehin widerrufen)
+    (await portalPatientActive(tx, link.organizationId, link.patientId))
+      ? tx
+          .select({ organizationId: invoices.organizationId, patientId: invoices.patientId, status: invoices.status })
+          .from(invoices)
+          .where(and(eq(invoices.organizationId, link.organizationId), eq(invoices.id, invoiceId)))
+      : [],
   );
   if (!invoiceVisibleInPortal(inv, link)) return null;
   const pdf = await invoicePdfForOrg(link.organizationId, invoiceId, { patientId: link.patientId });
@@ -188,6 +208,7 @@ export async function cancelPortalAppointment(link: PortalLink, appointmentId: s
   const [o] = await db.select({ phone: organizations.phone }).from(organizations).where(eq(organizations.id, org));
   if (!z.uuid().safeParse(appointmentId).success) return { ok: false, error: "Termin nicht gefunden." };
   const res = await withOrg(org, async (tx) => {
+    if (!(await portalPatientActive(tx, org, link.patientId))) return { ok: false as const, error: "Absage nicht möglich. Bitte wenden Sie sich an die Praxis.", phone: o?.phone ?? null };
     const [a] = await tx
       .select()
       .from(appointments)

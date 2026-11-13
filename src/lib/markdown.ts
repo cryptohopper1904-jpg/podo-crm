@@ -8,6 +8,9 @@
  * - Platzhalter wie [FIRMENNAME] oder [ANSCHRIFT] werden als eigener Knoten markiert, damit sie
  *   auf der Website deutlich sichtbar sind.
  *
+ * - HTML-Kommentare (<!-- … -->) werden entfernt: interne Hinweise wie „TODO: Telefonnummer ergänzen“
+ *   bleiben in der Datei, erscheinen aber nicht auf der Website.
+ *
  * Unterstützt: Überschriften (#–####), Absätze, Listen (-, *, 1.), Zitate (>), Tabellen (|),
  * Trennlinien (---), **fett**, *kursiv*, `Code`, [Link](Ziel).
  */
@@ -143,7 +146,10 @@ const isTableSep = (line: string) => /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*
 const LIST_ITEM = /^\s*(?:([-*+])|(\d+)[.)])\s+(.*)$/;
 
 export function parseMarkdown(src: string): Block[] {
-  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  const lines = src
+    .replace(/\r\n?/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .split("\n");
   const blocks: Block[] = [];
   const usedIds = new Map<string, number>();
   let i = 0;
