@@ -26,7 +26,7 @@ import { fiscalRef } from "@/integrations/tse";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
 import { berlinDateIso, dateDe } from "@/lib/format";
-import { accountingServiceDate, serviceDays, serviceRange } from "@/lib/invoice-view";
+import { accountingServiceDate, monthSpanTaxHint, serviceDays, serviceRange } from "@/lib/invoice-view";
 import { nextNumber } from "@/lib/numbering";
 import {
   addDaysIso,
@@ -746,8 +746,31 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     // (§ 14 Abs. 4 Nr. 6 UStG); Altbelege ohne festgeschriebene Angabe: Quittungsdatum
     const receiptDays = partials.receipts.flatMap((r) => (r.serviceDateFixed && r.serviceDate ? serviceDays(r) : r.issuedAt ? [r.issuedAt] : []));
     const refDays = [...linkedDays, ...receiptDays];
-    // Formular-Datum nur für eigene Positionen ohne Bezug (nicht aus einer angerechneten Quittung übernommen)
-    const ownFreeLines = input.lines.some((l) => !l.treatmentRecordId && !l.appointmentId && !(l.fromReceipt && partials.receipts.length));
+    // Formular-Datum nur für eigene Positionen ohne Bezug. „Aus einer Quittung übernommen“ gilt nur, wenn die Position
+    // wirklich zu einer Position einer angerechneten Quittung passt (Preis, Menge, Faktor, USt, Text) – sonst freie Position
+    const receiptPool = partials.receipts.length
+      ? await tx
+          .select({ description: invoiceLines.description, quantity: invoiceLines.quantity, factor: invoiceLines.factor, unitPriceCents: invoiceLines.unitPriceCents, vatRate: invoiceLines.vatRate })
+          .from(invoiceLines)
+          .where(and(eq(invoiceLines.organizationId, org), inArray(invoiceLines.invoiceId, partials.receipts.map((r) => r.id))))
+      : [];
+    const takeReceiptLine = (l: (typeof input.lines)[number]) => {
+      const i = receiptPool.findIndex(
+        (r) =>
+          r.unitPriceCents === l.unitPriceCents &&
+          Number(r.quantity) === Number(l.quantity) &&
+          Number(r.factor) === Number(l.factor) &&
+          r.vatRate === effectiveVatRate(l.vatRate, { smallBusiness }) &&
+          (l.description ?? "").includes(r.description.slice(0, 40)),
+      );
+      if (i < 0) return false;
+      receiptPool.splice(i, 1);
+      return true;
+    };
+    const ownFreeLines = input.lines
+      .filter((l) => !l.treatmentRecordId && !l.appointmentId)
+      .map((l) => !(l.fromReceipt && takeReceiptLine(l)))
+      .some(Boolean);
     const freeRange = { from: input.serviceDate ?? input.issuedAt, to: (input.kind === "collective" ? input.serviceDateTo : null) ?? null };
     const range = serviceRange(refDays, ownFreeLines || !refDays.length ? freeRange : null);
 
@@ -826,7 +849,8 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
             eq(invoiceLines.organizationId, org),
             inArray(invoiceLines.serviceId, freeServiceIds),
             eq(invoices.patientId, input.patientId),
-            inArray(invoices.kind, ["invoice", "receipt", "collective", "no_show_fee"]),
+            // Ausfallhonorar ist keine Leistung → kein Kandidat für „gleiche Leistung schon abgerechnet“
+            inArray(invoices.kind, ["invoice", "receipt", "collective"]),
             notInArray(invoices.status, ["cancelled", "draft"]),
             ...(receiptIds.length ? [notInArray(invoices.id, receiptIds)] : []),
           ),
@@ -1628,6 +1652,8 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
     });
     externalId = res.externalId;
     message = adapter.isMock ? "Schnittstelle im Testmodus – Beleg vorgemerkt" : "Beleg an lexoffice übertragen.";
+    const taxHint = monthSpanTaxHint(inv, groups);
+    if (taxHint) message += ` ${taxHint}`;
   } catch (e) {
     ok = false;
     message = e instanceof Error ? `Übertragung fehlgeschlagen: ${e.message}` : "Übertragung fehlgeschlagen.";

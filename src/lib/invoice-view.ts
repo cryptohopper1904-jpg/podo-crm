@@ -213,6 +213,40 @@ export function accountingServiceDate(
 }
 
 /**
+ * Hinweis für die Buchhaltungs-Übergabe: Leistungszeitraum über eine Monatsgrenze mit steuerpflichtigen Anteilen
+ * (> 0 % USt) – die Steuer entsteht ggf. je Leistungsmonat. Nur ein Hinweis, die Übergabe läuft trotzdem.
+ */
+export function monthSpanTaxHint(
+  inv: { serviceDate?: string | null; serviceDateTo?: string | null; serviceDateFixed?: boolean | null },
+  groups: { rate: number; grossCents: number }[],
+): string | null {
+  if (!inv.serviceDateFixed || !inv.serviceDate || !inv.serviceDateTo) return null;
+  if (inv.serviceDate.slice(0, 7) === inv.serviceDateTo.slice(0, 7)) return null;
+  if (!groups.some((g) => g.rate > 0 && g.grossCents !== 0)) return null;
+  return "Hinweis: Leistungszeitraum über Monatsgrenze – Steuer ggf. nach Leistungsmonat aufteilen (Steuerberatung).";
+}
+
+/** Vorbelegung „Leistungsdatum“/„Leistung bis“ im Rechnungsformular (reine Funktion, siehe invoice-form.tsx) */
+export function serviceDateDefaults(o: {
+  kind: string;
+  issuedAt: string;
+  /** vom Nutzer geändert; null = Vorbelegung */
+  serviceDate: string | null;
+  serviceDateTo: string | null;
+  /** Leistungstage der übernommenen Quittungen */
+  receiptDays: string[];
+  dateDe: (d: string | null) => string;
+}): { from: string; to: string; receiptHint: string | null } {
+  // eigene Positionen: Rechnungsdatum (Ausfallhonorar: bewusst leer); die Quittungstage ergänzt der Server ohnehin –
+  // sie hier vorzubelegen würde den Zeitraum für eigene Positionen (und den Doppel-Hinweis) künstlich verbreitern
+  const from = o.serviceDate ?? (o.kind === "no_show_fee" ? "" : o.issuedAt);
+  const to = o.serviceDateTo ?? "";
+  const days = [...o.receiptDays].sort();
+  const span = days.length ? (days[0] === days.at(-1) ? o.dateDe(days[0]) : `${o.dateDe(days[0])}–${o.dateDe(days.at(-1)!)}`) : null;
+  return { from, to, receiptHint: span ? `Übernommene Quittungen: ${span} – fließen automatisch in den Leistungszeitraum ein` : null };
+}
+
+/**
  * Leistungstage eines Belegs: festgeschriebene Felder (service_date … service_date_to); nur bei Altbelegen ohne diese
  * Felder die Tage der verknüpften Termine/Doku-Einträge (`legacyLinked`).
  */

@@ -7,6 +7,7 @@ import { AlertTriangle, Car, Info, Plus, Trash2 } from "lucide-react";
 import { Button, Card, Checkbox, cx, Field, fieldCls, FieldSlot, fieldLabelCls, FormError, Input, Select, Textarea } from "@/components/ui";
 import { depositLineText } from "@/lib/deposit-lines";
 import { dateDe, money, parseMoney } from "@/lib/format";
+import { serviceDateDefaults } from "@/lib/invoice-view";
 import { computeTotals, lineTotalCents } from "@/lib/invoice-math";
 import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
@@ -226,9 +227,7 @@ export function InvoiceForm({
   const creditedReceiptCents = creditedReceipts.reduce((s, r) => s + r.totalCents, 0);
   /** Leistungstage der übernommenen Quittungen → Vorbelegung des Leistungszeitraums (Sammelrechnung) */
   const receiptDays = creditedReceipts.flatMap((r) => r.lines.map((l) => l.serviceDate ?? r.issuedAt)).filter((d): d is string => !!d).sort();
-  // Ausfallhonorar: Termin-Datum bewusst eintragen (nicht das Rechnungsdatum unterstellen)
-  const serviceValue = serviceDate ?? (kind === "no_show_fee" ? "" : (receiptDays[0] ?? issuedAt));
-  const serviceToValue = serviceDateTo ?? (receiptDays.length && receiptDays.at(-1) !== serviceValue ? receiptDays.at(-1)! : "");
+  const { from: serviceValue, to: serviceToValue, receiptHint } = serviceDateDefaults({ kind, issuedAt, serviceDate, serviceDateTo, receiptDays, dateDe });
   const serviceLabel = kind === "no_show_fee" ? "Termin am" : kind === "collective" ? "Leistung von" : "Leistungsdatum";
   const creditedCents = credited.reduce((s, d) => s + d.totalCents, 0) + creditedReceiptCents;
   const hasPartials = patientDeposits.length > 0 || patientReceipts.length > 0;
@@ -517,13 +516,21 @@ export function InvoiceForm({
           {/* § 14 Abs. 4 Nr. 6 UStG: Zeitpunkt der Leistung. Verknüpfte Termine liefern ihn selbst; Positionen ohne Bezug
               brauchen ein Datum – der Beleg nennt beim Ausstellen den Zeitraum aus beidem (festgeschrieben). */}
           {fromRefs && !freeLines ? (
-            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint="aus den verknüpften Terminen bzw. übernommenen Quittungen">
+            <Field label={kind === "no_show_fee" ? "Termin am" : "Leistungsdatum"} hint={receiptHint ?? "aus den verknüpften Terminen bzw. übernommenen Quittungen"}>
               <Input value="laut Termin/Quittung" disabled readOnly />
             </Field>
           ) : (
             <Field
               label={serviceLabel}
-              hint={kind === "no_show_fee" ? "Datum des versäumten Termins" : fromRefs ? "für Positionen ohne Termin/Quittung (z. B. Produkte)" : "Tag der Behandlung bzw. Lieferung"}
+              hint={
+                kind === "no_show_fee"
+                  ? "Datum des versäumten Termins"
+                  : receiptHint
+                    ? `Eigene Positionen (z. B. Produkte). ${receiptHint}.`
+                    : fromRefs
+                      ? "für Positionen ohne Termin/Quittung (z. B. Produkte)"
+                      : "Tag der Behandlung bzw. Lieferung"
+              }
             >
               <Input type="date" name="serviceDate" value={serviceValue} onChange={(e) => setServiceDate(e.target.value)} max={today} required />
             </Field>

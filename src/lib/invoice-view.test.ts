@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
-import { accountingServiceDate, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
+import { accountingServiceDate, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
 const fmt = { dateDe, money };
@@ -118,5 +118,33 @@ describe("Leistungsdatum für die Buchhaltung (lexoffice shippingDate)", () => {
     expect(accountingServiceDate({ ...base, kind: "credit_note", serviceDate: "2026-11-02" }, { kind: "invoice", issuedAt: "2026-11-05" })).toBe("2026-11-02");
     expect(accountingServiceDate({ ...base, kind: "credit_note", serviceDate: "2026-11-20" }, { kind: "deposit", issuedAt: "2026-11-05" })).toBe("2026-11-05");
     expect(accountingServiceDate({ kind: "invoice", issuedAt: "2026-11-13", serviceDateFixed: false })).toBe("2026-11-13");
+  });
+});
+
+describe("Formular-Vorbelegung Leistungsdatum", () => {
+  const d = (o: Partial<Parameters<typeof serviceDateDefaults>[0]>) =>
+    serviceDateDefaults({ kind: "collective", issuedAt: "2027-01-15", serviceDate: null, serviceDateTo: null, receiptDays: [], dateDe, ...o });
+  it("eigene Positionen: Rechnungsdatum, „bis“ leer; Quittungsspanne nur als Hinweis", () => {
+    expect(d({ receiptDays: ["2026-03-18", "2026-02-10"] })).toEqual({
+      from: "2027-01-15",
+      to: "",
+      receiptHint: "Übernommene Quittungen: 10.02.2026–18.03.2026 – fließen automatisch in den Leistungszeitraum ein",
+    });
+    expect(d({ receiptDays: ["2026-02-10"] }).receiptHint).toBe("Übernommene Quittungen: 10.02.2026 – fließen automatisch in den Leistungszeitraum ein");
+    expect(d({}).receiptHint).toBeNull();
+  });
+  it("Eingaben des Nutzers bleiben; Ausfallhonorar ohne Vorbelegung", () => {
+    expect(d({ serviceDate: "2026-12-01", serviceDateTo: "2026-12-31" })).toMatchObject({ from: "2026-12-01", to: "2026-12-31" });
+    expect(d({ kind: "no_show_fee" }).from).toBe("");
+  });
+});
+
+describe("Buchhaltungs-Hinweis Leistungszeitraum über Monatsgrenze", () => {
+  const inv = { serviceDateFixed: true, serviceDate: "2026-02-10", serviceDateTo: "2026-03-18" };
+  it("nur bei Monatsgrenze und steuerpflichtigem Anteil", () => {
+    expect(monthSpanTaxHint(inv, [{ rate: 19, grossCents: 1190 }])).toMatch(/Monatsgrenze/);
+    expect(monthSpanTaxHint(inv, [{ rate: 0, grossCents: 6500 }])).toBeNull();
+    expect(monthSpanTaxHint({ ...inv, serviceDateTo: "2026-02-28" }, [{ rate: 19, grossCents: 1190 }])).toBeNull();
+    expect(monthSpanTaxHint({ ...inv, serviceDateFixed: false }, [{ rate: 19, grossCents: 1190 }])).toBeNull();
   });
 });

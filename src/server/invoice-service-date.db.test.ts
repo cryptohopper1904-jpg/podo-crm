@@ -171,6 +171,18 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       lines: [...fromReceipts, line({ description: "Pflegecreme" })],
     }));
     expect((await bundle(org, sr2.id)).invoice).toMatchObject({ serviceDate: `${year}-02-10`, serviceDateTo: `${year}-05-02` });
+
+    // als „aus Quittung“ markiert, passt aber zu keiner Quittungsposition → zählt als eigene Position (Formular-Datum)
+    await invoices.cancelInvoice(auth, sr2.id, "neu");
+    const sr3 = await invoices.createInvoice(auth, base(patient, {
+      kind: "collective",
+      issuedAt: berlinDateIso(),
+      collectiveYear: year,
+      receiptIds: [r1.id, r2.id],
+      serviceDate: `${year}-06-30`,
+      lines: [...fromReceipts, line({ fromReceipt: true, description: "Pflegecreme", unitPriceCents: 1200 })],
+    }));
+    expect((await bundle(org, sr3.id)).invoice).toMatchObject({ serviceDate: `${year}-02-10`, serviceDateTo: `${year}-06-30` });
   });
 
   it("weicher Doppel-Schutz vergleicht das Leistungsdatum, nicht das Rechnungsdatum", async () => {
@@ -192,5 +204,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(err.duplicate).toEqual({ id: first.id, number: first.number });
     // gleiches Rechnungsdatum, anderer Leistungstag → kein Hinweis
     await expect(doc(shift(1))).resolves.toMatchObject({ number: expect.any(String) });
+    // Ausfallhonorar ist kein Kandidat (keine Leistung)
+    const fee = await invoices.createInvoice(auth, base(patient, { kind: "no_show_fee", issuedAt: today, serviceDate: shift(3), lines: [line({ serviceId: service })] }));
+    expect(fee.number).toBeTruthy();
+    await expect(doc(shift(3))).resolves.toMatchObject({ duplicateOf: null });
   });
 });
