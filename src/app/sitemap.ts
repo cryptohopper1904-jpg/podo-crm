@@ -19,6 +19,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ["/wechseln", "monthly", 0.8],
     ["/wissen", "weekly", 0.7],
     ["/sicherheit", "monthly", 0.7],
+    ["/app", "monthly", 0.5],
     ["/impressum", "yearly", 0.2],
     ["/datenschutz", "yearly", 0.2],
     ["/agb", "yearly", 0.2],

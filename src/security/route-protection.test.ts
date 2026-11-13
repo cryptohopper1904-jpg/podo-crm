@@ -44,6 +44,10 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/wissen": "Website: Wissensartikel (statisch)",
   "/robots.txt": "robots.txt (keine Daten)",
   "/sitemap.xml": "Sitemap der öffentlichen Website (keine Praxisdaten)",
+  // installierbare Web-App
+  "/offline": "Offline-Hinweis (statisch, ohne Daten; vom Service Worker ohne Cookies vorab gespeichert)",
+  "/app": "Website: Infoseite zur Web-App (statisch)",
+  "/sw.js": "Service Worker (für alle gleich, cacht nur statische Dateien – src/lib/pwa/sw-rules.ts)",
 };
 
 const isIntendedPublic = (p: string) => p === "/" || Object.keys(INTENDED_PUBLIC).some((x) => p === x || p.startsWith(x + "/"));
@@ -83,7 +87,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx", "/offlinex", "/appx", "/apps", "/sw.jsx", "/splashx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
@@ -129,6 +133,9 @@ describe("Proxy: Routen-Schutz", () => {
     expect(runsProxy("/icons")).toBe(true);
     expect(runsProxy("/iconsx")).toBe(true);
     expect(runsProxy("/icons-api/route")).toBe(true);
+    // public/splash/* (iOS-Startbildschirme) ebenso
+    expect(runsProxy("/splash/apple-splash-1170x2532.png")).toBe(false);
+    expect(runsProxy("/splashx")).toBe(true);
   });
 
   it("Matcher: jede Seite/API-Route läuft durch den Proxy (setzt x-podo-method/x-podo-path, überschreibt Client-Werte)", () => {

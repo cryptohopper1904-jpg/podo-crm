@@ -17,7 +17,9 @@ const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/
   // Vergleich, Wechsel-Ratgeber und Wissensbereich (statisch, ohne Praxisdaten)
   "/vergleich", "/wechseln", "/wissen",
   // SEO-Dateien der Website (src/app/robots.ts, src/app/sitemap.ts)
-  "/robots.txt", "/sitemap.xml"];
+  "/robots.txt", "/sitemap.xml",
+  // Installierbare Web-App: Offline-Hinweis (vom Service Worker ohne Cookies vorab geladen), Infoseite /app, Service Worker
+  "/offline", "/app", "/sw.js"];
 
 /** Methode/Pfad für requireAuth (Nur-Lesen-/Support-Modus, Audit) – überschreibt vom Client gesendete Werte. */
 function next(request: NextRequest) {
@@ -44,5 +46,6 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   // screenshots: Bildschirmfotos der Website mit Demodaten (public/screenshots) – statisch, ohne Sitzung
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons/|screenshots/|manifest.webmanifest|sw.js).*)"],
+  // splash: iOS-Startbildschirme der installierten App (public/splash), sw.js: Service Worker
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons/|screenshots/|splash/|manifest.webmanifest|sw.js).*)"],
 };

@@ -48,7 +48,13 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     ],
   },
   { label: "Vertrag", tabs: [{ href: "abo", label: "Abo & Tarif", perm: "settings.manage", allowReadOnly: true }] },
-  { label: "Persönlich", tabs: [{ href: "ansicht", label: "Ansicht", perm: null }] },
+  {
+    label: "Persönlich",
+    tabs: [
+      { href: "ansicht", label: "Ansicht", perm: null },
+      { href: "app", label: "App installieren", perm: null },
+    ],
+  },
 ];
 
 /**
