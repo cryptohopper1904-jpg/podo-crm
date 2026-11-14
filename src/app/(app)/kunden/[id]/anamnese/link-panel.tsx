@@ -29,16 +29,16 @@ export function LinkPanel({ patientId, firstName, practiceName }: { patientId: s
         <input type="hidden" name="patientId" value={patientId} />
         <Button type="submit" variant="secondary" disabled={pending}><Link2 size={18} aria-hidden /> {state?.url ? "Neuen Link erzeugen" : "Online-Anamnese-Link erzeugen"}</Button>
       </form>
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       {state?.url ? (
         <>
           <p className="break-all rounded-xl bg-surface-2 p-3 font-mono text-sm">{state.url}</p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" className="h-10 text-sm" onClick={() => copy(state.url!, "link")}><Copy size={16} aria-hidden /> {copied === "link" ? "Kopiert" : "Link kopieren"}</Button>
-            <Button type="button" variant="secondary" className="h-10 text-sm" onClick={() => copy(message, "text")}><Copy size={16} aria-hidden /> {copied === "text" ? "Kopiert" : "Text für E-Mail/WhatsApp kopieren"}</Button>
+            <Button type="button" variant="secondary" className="text-sm" onClick={() => copy(state.url!, "link")}><Copy size={16} aria-hidden /> {copied === "link" ? "Kopiert" : "Link kopieren"}</Button>
+            <Button type="button" variant="secondary" className="h-auto min-h-11 text-sm whitespace-normal" onClick={() => copy(message, "text")}><Copy size={16} aria-hidden /> {copied === "text" ? "Kopiert" : "Text für E-Mail/WhatsApp kopieren"}</Button>
           </div>
           <Textarea readOnly value={message} rows={6} aria-label="Nachrichtentext" />
-          <p className="text-xs text-muted">Der Link wird nur jetzt angezeigt. Ein neuer Link macht ältere, unbenutzte Links ungültig. WhatsApp nur mit Einwilligung.</p>
+          <p className="text-[13px] leading-5 text-muted">Der Link wird nur jetzt angezeigt. Ein neuer Link macht ältere, unbenutzte Links ungültig. WhatsApp nur mit Einwilligung.</p>
         </>
       ) : null}
     </div>

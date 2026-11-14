@@ -5,6 +5,7 @@ import { runReminders } from "@/server/reminders";
 import { retryDueWebhooks } from "@/server/webhooks";
 import { runPromoTrialReturns } from "@/server/promo-codes";
 import { catchUpArchives } from "@/server/archive-catchup";
+import { runPendingWaitlistOffers } from "@/server/calendar-status";
 
 /**
  * Erinnerungs-Lauf (alle 15 Minuten): POST /api/cron/reminders mit `Authorization: Bearer ${CRON_SECRET}`.
@@ -16,6 +17,8 @@ import { catchUpArchives } from "@/server/archive-catchup";
  * Zusätzlich: abgelaufene Aktionscode-Testphasen aus dem Kostenlos-Tarif zurückstellen (runPromoTrialReturns, eigener
  * Fehlerpfad; läuft auch im nächtlichen Cron – die Hinweise versprechen „spätestens in der folgenden Nacht“).
  * Zusätzlich: Beleg-Archiv nachholen (PDFs von Belegen/Zahlungsbelegen, deren Ablage gescheitert war; eigener Fehlerpfad).
+ * Zusätzlich: Wartelisten-Angebote für Absagen aus dem Kalender nachholen, deren verzögerter Versand (Frist für
+ * „Rückgängig“) nicht gelaufen ist (runPendingWaitlistOffers, nur letzte 24 h, eigener Fehlerpfad).
  * Antwort enthält nur Zähler, keine Personendaten.
  */
 
@@ -43,10 +46,16 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.archive_catchup.failed", { error: e });
   }
+  let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
+  try {
+    waitlistOffers = await runPendingWaitlistOffers();
+  } catch (e) {
+    log.error("cron.waitlist_pending.failed", { error: e });
+  }
   try {
     const result = await runReminders();
     if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
-    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, archives }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, archives, waitlistOffers }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     log.error("cron.reminders.failed", { error: e });
     return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });
