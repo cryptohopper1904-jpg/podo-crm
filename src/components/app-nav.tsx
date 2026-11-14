@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { cx } from "./ui";
 import { bottomNavSplit, groupNav, showSettings, type NavKey } from "@/lib/nav";
+import { opensKeyboard, subscribeFocusSettled } from "@/lib/keyboard";
 import { DEFAULT_VIEW_LEVEL, splitNav, VIEW_LEVEL_LABELS, type ViewLevel } from "@/lib/view-level";
 
 export type { NavKey };
@@ -202,35 +203,11 @@ function SettingsLinkInner({ collapsed }: { collapsed: boolean }) {
 
 // ── Handy/Tablet hochkant ────────────────────────────────────────────────────────────────────────────────────────
 
-/** Ein Eingabefeld hat den Fokus → auf Touch-Geräten ist die Bildschirmtastatur offen */
+/** Ein Feld mit Schreibtastatur hat den Fokus → auf Touch-Geräten ist die Bildschirmtastatur offen (Regeln: src/lib/keyboard.ts) */
 function keyboardOpenNow(): boolean {
-  const el = document.activeElement;
-  if (!(el instanceof HTMLElement) || !matchMedia("(pointer: coarse)").matches) return false;
-  if (el.isContentEditable) return true;
-  if (el instanceof HTMLTextAreaElement) return !el.readOnly;
-  // nur Felder mit Schreibtastatur – Datum/Uhrzeit öffnen eine Auswahl (iOS: Rad), Select ein Menü
-  if (el instanceof HTMLInputElement) return !el.readOnly && !NO_KEYBOARD_INPUTS.includes(el.type);
-  return false;
+  return matchMedia("(pointer: coarse)").matches && opensKeyboard(document.activeElement as HTMLElement | null);
 }
-const NO_KEYBOARD_INPUTS = ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "hidden", "image", "date", "time", "datetime-local", "month", "week"];
-/**
- * Fokus-Wechsel melden – erst nach dem Ereignis (setTimeout 0): beim Wechsel von Feld zu Feld liegt zwischen focusout
- * und focusin kurz kein Feld im Fokus; sofort gelesen, würde die Leiste dabei kurz aufblitzen.
- */
-function subscribeFocus(cb: () => void) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const later = () => {
-    clearTimeout(timer);
-    timer = setTimeout(cb, 0);
-  };
-  document.addEventListener("focusin", later);
-  document.addEventListener("focusout", later);
-  return () => {
-    clearTimeout(timer);
-    document.removeEventListener("focusin", later);
-    document.removeEventListener("focusout", later);
-  };
-}
+const subscribeFocus = (cb: () => void) => subscribeFocusSettled(document, cb);
 /**
  * true, solange die Bildschirmtastatur (vermutlich) offen ist. Setzt zusätzlich `data-keyboard` am <html>, damit z. B.
  * klebende Aktionsleisten ihren Abstand zur (dann ausgeblendeten) unteren Leiste anpassen können.
