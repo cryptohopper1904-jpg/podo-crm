@@ -40,6 +40,22 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
         Support-Zugriff ist nur mit Freigabe der Praxis möglich.
       </p>
       {typeof fehler === "string" && ERR[fehler] ? <p role="alert" className="mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">{ERR[fehler]}</p> : null}
+      {practices.some((p) => p.billingProblem) ? (
+        <Card className="mt-6 border-danger/50" data-testid="abo-kuendigung-probleme">
+          <h2 className="font-display text-xl font-semibold">Abo-Kündigung prüfen</h2>
+          <p className="mt-1 text-sm text-muted">
+            Diese Praxen haben die Löschung beantragt (gilt als Kündigung, AGB § 8 Nr. 3), ihr Stripe-Abo ist aber nicht gekündigt. Bitte im
+            Stripe-Dashboard zum Periodenende kündigen bzw. die Praxis kontaktieren – der Löschlauf beendet ein noch laufendes Abo sonst sofort.
+          </p>
+          <ul className="mt-3 list-disc pl-5 text-sm">
+            {practices.filter((p) => p.billingProblem).map((p) => (
+              <li key={p.id}>
+                <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: {p.billingProblem} (Löschantrag vom {dateDe(p.deletionRequestedAt)})
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       <UsageDashboard usage={usage} />
       <h2 className="mt-10 font-display text-2xl font-semibold">Praxen verwalten</h2>
       <Card className="mt-4 p-0">

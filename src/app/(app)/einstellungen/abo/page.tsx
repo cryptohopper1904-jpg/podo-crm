@@ -4,7 +4,7 @@ import { denyAccess, requireAuth } from "@/lib/auth/session";
 import { dateDe, money, moneyShort } from "@/lib/format";
 import { WEBSITE_ADDON_CENTS, WEBSITE_ADDON_PLANS } from "@/lib/website";
 import { withOrg } from "@/db";
-import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
+import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, GRACE_DAYS, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { activeTeamMembers, loadOrgBilling, usedSeats } from "@/server/billing";
 import { countedPatients } from "@/server/patient-limit";
 import { PROMO_FREE_RETURN_NOTE, PROMO_FREE_RETURN_NOTE_BEFORE, promoRedemptionProblem, trialDaysLabel } from "@/lib/promo-codes";
@@ -13,6 +13,9 @@ import { FreePlanForm } from "./free-form";
 import { PromoForm } from "./promo-form";
 import { openPortalAction } from "./actions";
 import { CheckoutForm } from "./checkout-form";
+import { CancelSubscriptionForm, ResumeSubscriptionForm } from "./cancel-form";
+import Link from "next/link";
+import { CANCEL_FAILED_MESSAGE, cancelStateFromSettings, hasRunningSubscription } from "@/lib/subscription-cancel";
 
 export const metadata = { title: "Abo & Tarif" };
 
@@ -39,6 +42,9 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const freeProblem = org ? freeSwitchProblem(org, patientCount) : null;
   const redemption = await redemptionForOrganization(auth.organization.id);
   const promoProblem = org ? promoRedemptionProblem(org) : "Praxis nicht gefunden.";
+  const running = !!org && hasRunningSubscription(org);
+  const cancel = cancelStateFromSettings(org?.settings);
+  const periodEndLabel = org?.currentPeriodEnd ? dateDe(org.currentPeriodEnd) : "Ende des Abrechnungszeitraums";
   const freeWarning =
     [
       a.trialDaysLeft !== undefined ? `Die Testphase (noch ${a.trialDaysLeft} ${a.trialDaysLeft === 1 ? "Tag" : "Tage"}) endet damit sofort – Patientenportal, KI-Telefon und Website werden abgeschaltet.` : null,
@@ -87,6 +93,41 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
           <Button type="submit" variant="secondary" disabled={!org?.stripeCustomerId || port.isMock}>Rechnungen & Zahlungsart</Button>
         </form>
       </Card>
+
+      {running ? (
+        <Card>
+          <CardTitle>Abo kündigen</CardTitle>
+          {cancel.cancelAtPeriodEnd ? (
+            <>
+              <p className="mb-3 text-[15px]" data-testid="abo-gekuendigt">
+                Dein Abo ist zum <strong>{periodEndLabel}</strong> gekündigt{cancel.reason === "deletion_request" ? " (mit deinem Löschantrag)" : ""}. Bis dahin
+                nutzt du PodoHero wie gewohnt; danach wird nichts mehr abgebucht. {GRACE_DAYS} Tage nach dem Ende wechselt die Praxis in den
+                Nur-Lesen-Modus – alle Daten bleiben lesbar und exportierbar.
+              </p>
+              <ResumeSubscriptionForm
+                disabledReason={
+                  org?.deletionRequestedAt ? (
+                    "Es läuft ein Löschantrag. Nimmst du ihn unter Daten & Kündigung zurück, wird auch die damit verbundene Kündigung zurückgenommen."
+                  ) : null
+                }
+              />
+            </>
+          ) : (
+            <>
+              <p className="mb-3 text-sm text-muted">
+                Kündigung jederzeit zum Ende des laufenden Abrechnungszeitraums (derzeit {periodEndLabel}); danach wird nichts mehr abgebucht. Deine
+                Daten bleiben erhalten: {GRACE_DAYS} Tage nach dem Ende wechselt die Praxis in den Nur-Lesen-Modus, alle Daten bleiben lesbar und
+                exportierbar. Bis zum Ende kannst du die Kündigung hier zurücknehmen. Soll die Praxis auch gelöscht werden, nutze{" "}
+                <Link href="/einstellungen/daten" className="font-semibold text-primary underline">Daten & Kündigung</Link>.
+              </p>
+              {cancel.error && org?.deletionRequestedAt ? (
+                <p role="alert" className="mb-3 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text">{CANCEL_FAILED_MESSAGE}</p>
+              ) : null}
+              <CancelSubscriptionForm periodEnd={periodEndLabel} />
+            </>
+          )}
+        </Card>
+      ) : null}
 
       {org?.plan === "free" ? (
         <Card>

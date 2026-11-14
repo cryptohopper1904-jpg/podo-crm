@@ -7,6 +7,7 @@ import { getSession, requestMeta } from "@/lib/auth/session";
 import { isPlanId, PLANS, seatCounts, voiceAddonActive, type PlanId } from "@/lib/plans";
 import { websiteAddonActive } from "@/lib/website";
 import { isDemoPractice } from "@/lib/demo-practice";
+import { deletionBillingProblem } from "@/lib/subscription-cancel";
 
 /**
  * Plattform-Konsole (SaaS-Betreiber). Zugang NUR für users.is_platform_admin MIT aktiver 2FA – sonst 404.
@@ -37,6 +38,9 @@ export type PracticeOverview = {
   websiteAddon: boolean;
   /** Demo-Praxis mit erfundenen Daten (organizations.settings.demo, Bootstrap) */
   demo: boolean;
+  /** Löschantrag gestellt, Stripe-Abo aber nicht gekündigt (automatische Kündigung fehlgeschlagen) – Betreiber muss handeln */
+  billingProblem: string | null;
+  deletionRequestedAt: Date | null;
   /** Praxis-Inhaber:innen (Konto, kein Patientendatum) – für „Passwort-Reset senden“ */
   owners: { id: string; name: string; email: string }[];
 };
@@ -86,6 +90,8 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       voiceAddon: voiceAddonActive(o.settings),
       websiteAddon: websiteAddonActive(o.settings),
       demo: isDemoPractice(o.settings),
+      billingProblem: deletionBillingProblem(o),
+      deletionRequestedAt: o.deletionRequestedAt,
       owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),
     });
   }

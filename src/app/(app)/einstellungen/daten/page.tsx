@@ -7,6 +7,7 @@ import { Badge, Card, CardTitle } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { DELETION_GRACE_DAYS, deletionDueAt, isWithinGrace } from "@/lib/org-deletion";
+import { CANCEL_FAILED_MESSAGE, cancelStateFromSettings, hasRunningSubscription } from "@/lib/subscription-cancel";
 import { DeletionCancel, DeletionRequest } from "./deletion-panel";
 
 export const metadata = { title: "Daten & Kündigung" };
@@ -14,7 +15,7 @@ export const metadata = { title: "Daten & Kündigung" };
 function RetentionNotice() {
   return (
     <div className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
-      <p className="font-semibold">Ihre Aufbewahrungspflichten bleiben bestehen</p>
+      <p className="font-semibold">Deine Aufbewahrungspflichten bleiben bestehen</p>
       <ul className="mt-2 list-disc pl-5">
         <li>Behandlungsdokumentation: <strong>10 Jahre</strong> nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)</li>
         <li>
@@ -36,12 +37,13 @@ function RetentionNotice() {
         Abs. 3 lit. b DSGVO, § 147 AO). Die Löschung nach Fristablauf erfolgt derzeit nicht automatisch, sondern auf Antrag.
       </p>
       <p className="mt-2">
-        Diese Pflichten treffen die Praxis. Erstellen Sie deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahren Sie ihn sicher
-        auf. Wir löschen alle Daten {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig und behalten keine Kopie für Sie.
+        Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
+        auf. Wir löschen alle Daten frühestens {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig. Verschlüsselte Datensicherungen laufen
+        spätestens 14 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
       </p>
       <p className="mt-2">
         Der Komplett-Export enthält <strong>nicht</strong> den DSFinV-K-Export (Kasse → DSFinV-K-Export) und den TSE-Export (beim TSE-Anbieter):
-        Erstellen Sie beide für <strong>alle Zeiträume bis zur Kündigung</strong> separat und bewahren Sie sie 10 Jahre auf – nach der Löschung lassen
+        Erstelle beide für <strong>alle Zeiträume bis zur Kündigung</strong> separat und bewahre sie 10 Jahre auf – nach der Löschung lassen
         sie sich nicht mehr erzeugen.
       </p>
     </div>
@@ -58,8 +60,23 @@ export default async function DataSettings() {
       </Card>
     );
   }
-  const [org] = await db.select({ name: organizations.name, at: organizations.deletionRequestedAt }).from(organizations).where(eq(organizations.id, auth.organization.id));
+  const [org] = await db
+    .select({
+      name: organizations.name,
+      at: organizations.deletionRequestedAt,
+      plan: organizations.plan,
+      subscriptionStatus: organizations.subscriptionStatus,
+      stripeSubscriptionId: organizations.stripeSubscriptionId,
+      currentPeriodEnd: organizations.currentPeriodEnd,
+      settings: organizations.settings,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, auth.organization.id));
   const requestedAt = org?.at ?? null;
+  const running = !!org && hasRunningSubscription(org);
+  const cancel = cancelStateFromSettings(org?.settings);
+  const periodEnd = org?.currentPeriodEnd ? dateDe(org.currentPeriodEnd) : "Ende des Abrechnungszeitraums";
+  const aboLink = <Link href="/einstellungen/abo" className="font-semibold underline">Abo</Link>;
 
   return (
     <div className="flex flex-col gap-6">
@@ -68,8 +85,18 @@ export default async function DataSettings() {
           <CardTitle>Löschung beantragt <Badge tone="accent">Karenzzeit</Badge></CardTitle>
           <p className="text-[15px]">
             Beantragt am <strong>{dateDe(requestedAt)}</strong>. Die Praxis wird frühestens am <strong>{dateDe(deletionDueAt(requestedAt))}</strong> mit allen
-            Daten, Fotos und Zugängen endgültig gelöscht. Bis dahin können Sie weiterarbeiten und exportieren.
+            Daten, Fotos und Zugängen endgültig gelöscht. Bis dahin kannst du weiterarbeiten und exportieren.
           </p>
+          {running && cancel.cancelAtPeriodEnd ? (
+            <p className="mt-2 text-[15px]" data-testid="abo-kuendigung-status">
+              Dein Abo ist zum <strong>{periodEnd}</strong> gekündigt; danach wird nichts mehr abgebucht.
+              {cancel.reason !== "deletion_request" ? " Die Kündigung wurde separat ausgesprochen und bleibt auch bei einer Rücknahme des Löschantrags bestehen." : null}
+            </p>
+          ) : running ? (
+            <p role="alert" className="mt-3 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text" data-testid="abo-kuendigung-status">
+              {CANCEL_FAILED_MESSAGE} Zum Kündigen: {aboLink}.
+            </p>
+          ) : null}
           <div className="mt-4">
             {isWithinGrace(requestedAt) ? (
               <DeletionCancel />
@@ -83,7 +110,7 @@ export default async function DataSettings() {
       <Card>
         <CardTitle>Vollständiger Datenexport</CardTitle>
         <p className="text-[15px] text-muted">
-          ZIP-Datei mit allen Daten Ihrer Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Patientennummer) und eine
+          ZIP-Datei mit allen Daten deiner Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Patientennummer) und eine
           Erläuterung (README.txt). Zugangsdaten, Passwörter und 2FA-Geheimnisse sind nicht enthalten. Der Export wird im Zugriffsprotokoll vermerkt.
         </p>
         <p className="mt-2 text-sm text-muted">Enthält Gesundheitsdaten – nur auf einem verschlüsselten, geschützten Gerät speichern. Höchstens ein Export alle 10 Minuten.</p>
@@ -100,10 +127,16 @@ export default async function DataSettings() {
         <Card>
           <CardTitle>Praxis kündigen & löschen</CardTitle>
           <p className="mb-4 text-[15px] text-muted">
-            Mit der Kündigung beantragen Sie die vollständige Löschung Ihrer Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
-            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin können Sie den Antrag zurücknehmen. Ein laufendes Abo
-            verwalten Sie unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
+            Mit der Kündigung beantragst du die vollständige Löschung deiner Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
+            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Der Löschantrag gilt
+            zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums; danach wird nichts mehr abgebucht. Nimmst du den
+            Löschantrag innerhalb der Karenzzeit zurück, gilt auch die Kündigung als zurückgenommen und dein Abo läuft weiter. Möchtest du nur das
+            Abo kündigen und deine Daten behalten, nutze „Abo kündigen“ unter{" "}
+            <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>
+          {running && cancel.cancelAtPeriodEnd ? (
+            <p className="mb-4 text-sm text-muted">Hinweis: Dein Abo ist bereits zum {periodEnd} gekündigt. Diese Kündigung bleibt auch bestehen, wenn du einen Löschantrag zurücknimmst.</p>
+          ) : null}
           <RetentionNotice />
           <div className="mt-5">
             <DeletionRequest practiceName={org?.name ?? auth.organization.name} />

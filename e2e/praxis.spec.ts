@@ -1,12 +1,12 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
  * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → Zahlung erfassen (Zahlungsbeleg) → öffentliche Buchung →
- * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
+ * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abo kündigen/zurücknehmen → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp, setDemoBilling } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -242,6 +242,28 @@ test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () 
   await expect(page.getByText("Im Kassenbuch erfasst.")).toBeVisible();
   await page.getByRole("link", { name: /DSFinV-K-Export/ }).click();
   await expect(page).toHaveURL(/\/kasse\/export/);
+});
+
+test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {
+  await page.goto("/einstellungen/daten");
+  await expect(page.getByText(/Der Löschantrag gilt\s+zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums/)).toBeVisible();
+  const restore = await setDemoBilling({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toBeVisible();
+    await page.getByRole("button", { name: "Abo kündigen …" }).click();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    // Bestätigung ist Pflicht (required) – erst mit Haken wird gekündigt
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+    await page.getByLabel(/Ich kündige das Abo zum/).check();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    await expect(page.getByTestId("abo-gekuendigt")).toContainText("gekündigt");
+    await page.getByRole("button", { name: "Kündigung zurücknehmen" }).click();
+    await expect(page.getByText("Die Kündigung ist zurückgenommen – dein Abo läuft weiter.").or(page.getByRole("button", { name: "Abo kündigen …" }))).toBeVisible();
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+  } finally {
+    await restore();
+  }
 });
 
 test("Abmelden", async () => {

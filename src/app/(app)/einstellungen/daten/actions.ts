@@ -6,9 +6,12 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { dateDe } from "@/lib/format";
 import { confirmsPracticeName, isWithinGrace } from "@/lib/org-deletion";
+import { CANCEL_FAILED_MESSAGE } from "@/lib/subscription-cancel";
+import { cancelSubscriptionAtPeriodEnd, resumeSubscription } from "@/server/subscription-cancel";
 
-export type DataState = { error?: string; ok?: string } | undefined;
+export type DataState = { error?: string; ok?: string; warning?: string } | undefined;
 
 async function requireOwner() {
   const auth = await requireAuth("settings.manage");
@@ -25,7 +28,7 @@ export async function requestDeletionAction(_: DataState, form: FormData): Promi
     return { error: (e as Error).message };
   }
   const name = String(form.get("confirmName") ?? "");
-  if (form.get("acknowledge") !== "on") return { error: "Bitte bestätigen Sie, dass Sie einen Export gesichert haben und Ihre Aufbewahrungspflichten kennen." };
+  if (form.get("acknowledge") !== "on") return { error: "Bitte bestätige, dass du einen Export gesichert hast und deine Aufbewahrungspflichten kennst." };
   if (!confirmsPracticeName(name, auth.organization.name)) return { error: "Der eingegebene Praxisname stimmt nicht überein." };
   // organizations hat keine RLS – Filter auf die eigene Praxis ist hier die Zugriffskontrolle
   const [row] = await db
@@ -35,7 +38,15 @@ export async function requestDeletionAction(_: DataState, form: FormData): Promi
     .returning({ at: organizations.deletionRequestedAt });
   if (!row) return { error: "Die Löschung wurde bereits beantragt." };
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_requested", entity: "organization", entityId: auth.organization.id });
+  // AGB § 8 Nr. 3: Der Löschantrag gilt als Kündigung → Stripe-Abo zum Periodenende kündigen. Ein Fehler verhindert den
+  // (bereits gespeicherten) Antrag nicht, wird aber protokolliert, im Posteingang und beim Betreiber angezeigt.
+  const c = await cancelSubscriptionAtPeriodEnd(auth.organization.id, auth.user.id, "deletion_request");
   revalidatePath("/einstellungen/daten");
+  revalidatePath("/einstellungen/abo");
+  if (c.status === "failed") return { ok: "Kündigung und Löschung beantragt.", warning: CANCEL_FAILED_MESSAGE };
+  if (c.status === "canceled" || c.status === "already_canceled") {
+    return { ok: `Kündigung und Löschung beantragt. Dein Abo endet zum ${c.periodEnd ? dateDe(c.periodEnd) : "Ende des Abrechnungszeitraums"}; danach wird nichts mehr abgebucht.` };
+  }
   return { ok: "Kündigung und Löschung beantragt." };
 }
 
@@ -50,9 +61,21 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
   }
   const [org] = await db.select({ at: organizations.deletionRequestedAt }).from(organizations).where(eq(organizations.id, auth.organization.id));
   if (!org?.at) return { ok: "Es ist keine Löschung beantragt." };
-  if (!isWithinGrace(org.at)) return { error: "Die Karenzzeit ist abgelaufen. Bitte wenden Sie sich an den Support." };
+  if (!isWithinGrace(org.at)) return { error: "Die Karenzzeit ist abgelaufen. Bitte wende dich an den Support." };
   await db.update(organizations).set({ deletionRequestedAt: null }).where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_cancelled", entity: "organization", entityId: auth.organization.id });
+  // Rücknahme gilt auch für die Kündigung – aber nur, wenn sie durch den Löschantrag kam (eine separat, z. B. über das
+  // Stripe-Kundenportal ausgesprochene Kündigung bleibt bestehen).
+  const r = await resumeSubscription(auth.organization.id, auth.user.id, { onlyReason: "deletion_request" });
   revalidatePath("/einstellungen/daten");
-  return { ok: "Die Löschung wurde zurückgenommen. Ihre Praxis bleibt bestehen." };
+  revalidatePath("/einstellungen/abo");
+  const base = "Die Löschung wurde zurückgenommen. Deine Praxis bleibt bestehen.";
+  if (r.status === "failed") {
+    return { ok: base, warning: "Die Kündigung deines Abos konnte nicht automatisch zurückgenommen werden – bitte unter Einstellungen → Abo „Kündigung zurücknehmen“ wählen oder den Support kontaktieren." };
+  }
+  if (r.status === "resumed") return { ok: `${base} Auch die Kündigung ist zurückgenommen – dein Abo läuft weiter.` };
+  if (r.status === "kept") {
+    return { ok: base, warning: `Dein Abo bleibt gekündigt (zum ${r.periodEnd ? dateDe(r.periodEnd) : "Ende des Abrechnungszeitraums"}), weil die Kündigung separat ausgesprochen wurde. Du kannst sie unter Einstellungen → Abo zurücknehmen.` };
+  }
+  return { ok: base };
 }

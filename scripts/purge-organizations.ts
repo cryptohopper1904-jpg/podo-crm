@@ -9,10 +9,13 @@
  * Benötigt die EIGENTÜMER-Rolle der Tabellen (nicht die App-Rolle): Nur der Eigentümer darf die
  * Unveränderbarkeits-Trigger innerhalb der Lösch-Transaktion aussetzen (Details: src/server/purge-organization.ts).
  * Löscht anschließend <STORAGE_DIR>/<org-id>/. Verschlüsselte Backups laufen nach ihrer Frist (14 Tage) aus.
+ * Stripe: Vorher wird ein noch laufendes Abo sofort beendet und der Stripe-Kunde gelöscht (STRIPE_SECRET_KEY nötig,
+ * sobald eine Praxis eine Stripe-ID hat – sonst wird sie übersprungen und der Lauf endet mit Fehlercode).
  */
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import { getBillingPort } from "../src/integrations/stripe";
 import { assertTableOwner, findDueOrganizations, purgeOrganization } from "../src/server/purge-organization";
 
 async function main() {
@@ -23,6 +26,7 @@ async function main() {
   if (!url) throw new Error("DATABASE_MIGRATION_URL (Eigentümer-Rolle) fehlt – mit der App-Rolle ist keine Löschung möglich.");
   const storageRoot = process.env.STORAGE_DIR ?? path.join(process.cwd(), "data", "storage");
 
+  const billing = getBillingPort();
   const pool = new Pool({ connectionString: url, max: 1 });
   const client = await pool.connect();
   try {
@@ -34,9 +38,15 @@ async function main() {
     let failed = 0;
     for (const o of targets) {
       try {
-        const r = await purgeOrganization(client, o.id, { execute, storageRoot, log: (l) => console.log(l) });
+        const r = await purgeOrganization(client, o.id, { execute, storageRoot, billing, log: (l) => console.log(l) });
         const total = Object.values(r.rows).reduce((a, b) => a + b, 0);
-        console.log(`${execute ? "gelöscht" : "würde löschen"}: ${o.slug} (${o.id}), beantragt ${o.deletionRequestedAt.toISOString()} · ${total} Zeilen · ${r.users} Benutzer${r.usersKept ? ` (${r.usersKept} behalten)` : ""}`);
+        console.log(
+          `${execute ? "gelöscht" : "würde löschen"}: ${o.slug} (${o.id}), beantragt ${o.deletionRequestedAt.toISOString()} · ${total} Zeilen · ${r.users} Benutzer${r.usersKept ? ` (${r.usersKept} behalten)` : ""} · Stripe-Abo: ${r.stripe.subscription}, Stripe-Kunde: ${r.stripe.customer}`,
+        );
+        if (r.stripe.subscription === "unchecked" || r.stripe.customer === "unchecked") {
+          console.log("    Stripe ungeprüft: STRIPE_SECRET_KEY fehlt – mit --execute würde diese Praxis übersprungen.");
+        }
+        if (r.stripe.refundCheck) console.log(`    ACHTUNG: Nach dem Löschantrag wurde eine neue Abo-Periode abgerechnet – Erstattung im Stripe-Dashboard prüfen (Praxis ${o.id}, Abo-ID siehe Zeile stripe.subscription_canceled).`);
         if (!execute) for (const [t, n] of Object.entries(r.rows)) if (n) console.log(`    ${t.padEnd(26)} ${n}`);
       } catch (e) {
         failed++;

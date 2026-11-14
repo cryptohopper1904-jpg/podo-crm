@@ -3,13 +3,46 @@
  * Abo-Seite; die Server Action stellt den Tarif dann sofort um (nur außerhalb von Produktion).
  */
 import { parseVerifiedEvent } from "./signature";
-import type { BillingPort, CheckoutInput, StripeEvent } from "./types";
+import type { BillingPort, CheckoutInput, StripeEvent, SubscriptionInfo } from "./types";
 
 export const MOCK_WEBHOOK_SECRET = "whsec_mock_dev_only";
+
+/** Abos im Testmodus (je Prozess, nur Entwicklung): unbekannte Abo-IDs gelten als laufendes Monatsabo. */
+const mockSubscriptions = new Map<string, SubscriptionInfo>();
 
 export class StripeMock implements BillingPort {
   readonly isMock = true;
   constructor(private readonly webhookSecret: string | null = MOCK_WEBHOOK_SECRET) {}
+
+  private sub(id: string): SubscriptionInfo {
+    let s = mockSubscriptions.get(id);
+    if (!s) {
+      const now = Date.now();
+      s = { id, status: "active", cancelAtPeriodEnd: false, cancelReason: null, customerId: null, currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 30 * 86_400_000) };
+      mockSubscriptions.set(id, s);
+    }
+    return s;
+  }
+
+  async getSubscription(subscriptionId: string) {
+    return { ...this.sub(subscriptionId) };
+  }
+
+  async setCancelAtPeriodEnd(subscriptionId: string, cancel: boolean, reason: string | null) {
+    const s = this.sub(subscriptionId);
+    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason });
+    return { ...s };
+  }
+
+  async cancelSubscriptionNow(subscriptionId: string) {
+    const s = this.sub(subscriptionId);
+    Object.assign(s, { status: "canceled", cancelAtPeriodEnd: false });
+    return { ...s };
+  }
+
+  async deleteCustomer(_customerId: string) {
+    void _customerId;
+  }
 
   async createCheckoutSession(input: CheckoutInput) {
     const id = `cs_mock_${input.organizationId.slice(0, 8)}_${Date.now()}`;

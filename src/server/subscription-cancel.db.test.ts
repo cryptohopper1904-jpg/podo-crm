@@ -1,0 +1,376 @@
+/**
+ * Löschantrag = Kündigung (AGB § 8 Nr. 3): Stripe-Abo zum Periodenende kündigen, bei Rücknahme nur die eigene Kündigung
+ * aufheben, Fehler sichtbar machen, „Abo kündigen“ auf der Abo-Seite, Webhook-Konsistenz und Löschlauf mit aktivem Abo.
+ * Stripe ist durch eine Fälschung im Speicher ersetzt – keine echten Aufrufe. Erfundene Daten.
+ */
+import { Pool } from "pg";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BillingPort, SubscriptionInfo } from "@/integrations/stripe/types";
+vi.mock("server-only", () => ({}));
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+
+const authState = vi.hoisted(() => ({ org: "", user: "", role: "owner", support: false, perms: [] as string[] }));
+vi.mock("@/lib/auth/session", () => ({
+  requireAuth: async (perm?: string) => {
+    if (perm) authState.perms.push(perm);
+    return {
+      organization: { id: authState.org, name: "Testpraxis Fuß", state: "BE" },
+      user: { id: authState.user, email: "inhaber@example.org" },
+      role: authState.role,
+      support: authState.support ? { grantId: "g" } : null,
+      can: () => true,
+    };
+  },
+  requestMeta: async () => ({ ip: null }),
+  revokeUserSessions: async () => undefined,
+}));
+
+/** Stripe-Fälschung: Abos im Speicher, Aufrufprotokoll, gezielte Fehler */
+class FakeStripe {
+  readonly isMock = false;
+  subs = new Map<string, SubscriptionInfo>();
+  calls: string[] = [];
+  deletedCustomers: string[] = [];
+  fail = false;
+  add(id: string, s: Partial<SubscriptionInfo> = {}) {
+    const start = new Date(Date.now() - 10 * 86_400_000);
+    this.subs.set(id, { id, status: "active", cancelAtPeriodEnd: false, cancelReason: null, customerId: null, currentPeriodStart: start, currentPeriodEnd: new Date(start.getTime() + 30 * 86_400_000), ...s });
+  }
+  private check(op: string) {
+    this.calls.push(op);
+    if (this.fail) throw Object.assign(new Error("Stripe: /subscriptions fehlgeschlagen (HTTP 500): kaputt"), { name: "BillingHttpError" });
+  }
+  async getSubscription(id: string) {
+    this.check(`get:${id}`);
+    const s = this.subs.get(id);
+    return s ? { ...s } : null;
+  }
+  async setCancelAtPeriodEnd(id: string, cancel: boolean, reason: string | null) {
+    this.check(`set:${id}:${cancel}:${reason ?? ""}`);
+    const s = this.subs.get(id)!;
+    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason });
+    return { ...s };
+  }
+  async cancelSubscriptionNow(id: string) {
+    this.check(`cancel_now:${id}`);
+    const s = this.subs.get(id);
+    if (!s) return null;
+    Object.assign(s, { status: "canceled", cancelAtPeriodEnd: false });
+    return { ...s };
+  }
+  async deleteCustomer(id: string) {
+    this.check(`delete_customer:${id}`);
+    this.deletedCustomers.push(id);
+  }
+  async createCheckoutSession(): Promise<{ id: string; url: string }> {
+    throw new Error("nicht benutzt");
+  }
+  async createPortalSession(): Promise<{ url: string }> {
+    throw new Error("nicht benutzt");
+  }
+  verifyWebhook(): never {
+    throw new Error("nicht benutzt");
+  }
+}
+const fake = vi.hoisted(() => ({ port: null as unknown }));
+vi.mock("@/integrations/stripe", async (orig) => ({ ...(await orig<typeof import("@/integrations/stripe")>()), getBillingPort: () => fake.port }));
+
+import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+
+const fd = (o: Record<string, string>) => {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(o)) f.set(k, v);
+  return f;
+};
+const ownerUrlFrom = (url: string) => url.replace(/\/\/[^@]+@/, "//podo_owner:podo_owner@");
+const sfx = () => Math.random().toString(36).slice(2, 10);
+
+(TEST_DB ? describe : describe.skip)("Löschantrag kündigt das Abo (DB, Stripe gefälscht)", () => {
+  const f = fixtures(TEST_DB!);
+  const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? ""), max: 2 });
+  let stripe: FakeStripe;
+  let daten: typeof import("@/app/(app)/einstellungen/daten/actions");
+  let abo: typeof import("@/app/(app)/einstellungen/abo/actions");
+  let billing: typeof import("./billing");
+  let purge: typeof import("./purge-organization");
+  let lib: typeof import("@/lib/subscription-cancel");
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = TEST_DB;
+    daten = await import("@/app/(app)/einstellungen/daten/actions");
+    abo = await import("@/app/(app)/einstellungen/abo/actions");
+    billing = await import("./billing");
+    purge = await import("./purge-organization");
+    lib = await import("@/lib/subscription-cancel");
+  });
+  afterAll(async () => {
+    await f.end();
+    await owner.end();
+    const { db } = await import("@/db");
+    await (db.$client as { end: () => Promise<void> }).end();
+  });
+  beforeEach(() => {
+    stripe = new FakeStripe();
+    fake.port = stripe as unknown as BillingPort;
+    authState.role = "owner";
+    authState.support = false;
+    authState.perms = [];
+  });
+
+  /** Praxis mit laufendem Stripe-Abo (Tarif Praxis) und Inhaber:in */
+  async function setup(opts: { sub?: Partial<SubscriptionInfo> | null; status?: string } = {}) {
+    const org = await f.org();
+    const user = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, user]);
+    const subId = `sub_${sfx()}`;
+    const cusId = `cus_${sfx()}`;
+    if (opts.sub !== null) {
+      await f.pool.query(
+        "update organizations set plan='praxis', subscription_status=$2, stripe_subscription_id=$3, stripe_customer_id=$4, current_period_end=now() + interval '20 days' where id=$1",
+        [org, opts.status ?? "active", subId, cusId],
+      );
+      stripe.add(subId, { customerId: cusId, ...opts.sub });
+    }
+    authState.org = org;
+    authState.user = user;
+    return { org, user, subId, cusId };
+  }
+  const orgRow = async (org: string) =>
+    (await f.pool.query("select deletion_requested_at, settings, subscription_status, current_period_end from organizations where id=$1", [org])).rows[0];
+  const audits = async (org: string, action: string) =>
+    f.asOrg(org, async (c) => (await c.query("select meta, user_id from audit_log where organization_id=$1 and action=$2", [org, action])).rows);
+  const request = () => daten.requestDeletionAction(undefined, fd({ acknowledge: "on", confirmName: "Testpraxis Fuß" }));
+  const withdraw = () => daten.cancelDeletionAction(undefined, fd({}));
+
+  it("Löschantrag setzt cancel_at_period_end=true mit Herkunft; Rücknahme setzt es zurück", async () => {
+    const { org, user, subId } = await setup();
+    const r = await request();
+    expect(r?.ok).toMatch(/Kündigung und Löschung beantragt\. Dein Abo endet zum \d\d\.\d\d\.\d{4}; danach wird nichts mehr abgebucht\./);
+    expect(r?.warning).toBeUndefined();
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "deletion_request" });
+    let o = await orgRow(org);
+    expect(o.deletion_requested_at).not.toBeNull();
+    expect(o.settings).toMatchObject({ billingCancelAtPeriodEnd: true, billingCancelReason: "deletion_request" });
+    expect(await audits(org, "billing.cancel_at_period_end")).toEqual([expect.objectContaining({ user_id: user, meta: expect.objectContaining({ trigger: "deletion_request" }) })]);
+    expect(lib.deletionBillingProblem({ ...o, plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: subId, deletionRequestedAt: o.deletion_requested_at })).toBeNull();
+
+    const w = await withdraw();
+    expect(w?.ok).toMatch(/Auch die Kündigung ist zurückgenommen – dein Abo läuft weiter\./);
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: false, cancelReason: null });
+    expect(stripe.calls.filter((c) => c.startsWith("set:"))).toEqual([`set:${subId}:true:deletion_request`, `set:${subId}:false:`]);
+    o = await orgRow(org);
+    expect(o.deletion_requested_at).toBeNull();
+    expect(o.settings.billingCancelAtPeriodEnd).toBe(false);
+    expect(o.settings.billingCancelReason).toBeUndefined();
+    expect(await audits(org, "billing.cancel_withdrawn")).toHaveLength(1);
+  });
+
+  it("separat im Kundenportal ausgesprochene Kündigung bleibt bei der Rücknahme bestehen", async () => {
+    const { org, subId } = await setup({ sub: { cancelAtPeriodEnd: true } });
+    const r = await request();
+    expect(r?.ok).toMatch(/Dein Abo endet zum/);
+    expect(stripe.calls.some((c) => c.startsWith("set:"))).toBe(false); // nichts überschrieben, keine Herkunft gesetzt
+    expect((await orgRow(org)).settings).toMatchObject({ billingCancelAtPeriodEnd: true });
+    expect((await orgRow(org)).settings.billingCancelReason).toBeUndefined();
+    const w = await withdraw();
+    expect(w?.warning).toMatch(/Dein Abo bleibt gekündigt .* weil die Kündigung separat ausgesprochen wurde/);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
+    expect(stripe.calls.some((c) => c.startsWith("set:"))).toBe(false);
+  });
+
+  it("Portal: erst fortgesetzt, dann erneut gekündigt (Webhooks) → gilt nicht mehr als Löschantrag", async () => {
+    const { org, subId, cusId } = await setup();
+    await request();
+    const ev = (cancel: boolean, created: number) =>
+      billing.processBillingEvent(
+        { id: `evt_${sfx()}`, type: "customer.subscription.updated", created, data: { object: { id: subId, customer: cusId, status: "active", cancel_at_period_end: cancel, metadata: { organizationId: org, cancel_reason: "deletion_request" } } } },
+        { prices: {} },
+      );
+    const now = Math.floor(Date.now() / 1000);
+    // eigenes Event (Kündigung) bestätigt den Zustand, Herkunft bleibt
+    expect(await ev(true, now + 1)).toBe("processed");
+    expect((await orgRow(org)).settings).toMatchObject({ billingCancelAtPeriodEnd: true, billingCancelReason: "deletion_request" });
+    // veraltetes Event von vor dem Antrag ändert nichts
+    expect(await ev(false, now - 3600)).toBe("ignored");
+    expect((await orgRow(org)).settings.billingCancelReason).toBe("deletion_request");
+    // Portal: fortsetzen, dann erneut kündigen (Stripe-Metadaten bleiben veraltet „deletion_request“)
+    stripe.subs.get(subId)!.cancelAtPeriodEnd = false;
+    expect(await ev(false, now + 2)).toBe("processed");
+    expect((await orgRow(org)).settings.billingCancelReason).toBeUndefined();
+    stripe.subs.get(subId)!.cancelAtPeriodEnd = true;
+    expect(await ev(true, now + 3)).toBe("processed");
+    expect((await orgRow(org)).settings).toMatchObject({ billingCancelAtPeriodEnd: true });
+    const w = await withdraw();
+    expect(w?.warning).toMatch(/bleibt gekündigt/);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
+    // Abo endet: Merker entfallen
+    expect(
+      await billing.processBillingEvent(
+        { id: `evt_${sfx()}`, type: "customer.subscription.deleted", created: now + 4, data: { object: { id: subId, customer: cusId, status: "canceled", metadata: { organizationId: org } } } },
+        { prices: {} },
+      ),
+    ).toBe("processed");
+    const o = await orgRow(org);
+    expect(o.subscription_status).toBe("canceled");
+    expect(o.settings.billingCancelAtPeriodEnd).toBe(false);
+  });
+
+  it("Stripe-Fehler: Antrag trotzdem gespeichert, Meldung, Audit, Posteingang, Betreiber-Hinweis", async () => {
+    const { org, user, subId } = await setup();
+    stripe.fail = true;
+    const r = await request();
+    expect(r?.ok).toBe("Kündigung und Löschung beantragt.");
+    expect(r?.warning).toBe("Abo konnte nicht automatisch gekündigt werden – bitte unter Abo kündigen oder Support kontaktieren.");
+    const o = await orgRow(org);
+    expect(o.deletion_requested_at).not.toBeNull();
+    expect(o.settings.billingCancelAtPeriodEnd).toBeUndefined();
+    expect(o.settings.billingCancelError).toMatchObject({ trigger: "deletion_request" });
+    const failed = await audits(org, "billing.cancel_failed");
+    expect(failed).toEqual([{ user_id: user, meta: { trigger: "deletion_request", error: "BillingHttpError" } }]);
+    expect(JSON.stringify(failed)).not.toContain("kaputt"); // keine Stripe-Antworttexte im Audit
+    const inbox = await f.asOrg(org, async (c) => (await c.query("select subject, body, status, channel, direction from messages where organization_id=$1", [org])).rows);
+    expect(inbox).toEqual([expect.objectContaining({ subject: "Abo nicht automatisch gekündigt", status: "new", channel: "none", direction: "inbound" })]);
+    expect(lib.deletionBillingProblem({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: subId, deletionRequestedAt: o.deletion_requested_at, settings: o.settings })).toMatch(/fehlgeschlagen/);
+
+    // Rücknahme: keine Kündigung von uns → nichts zu tun, Fehlermerker entfällt
+    stripe.fail = false;
+    const w = await withdraw();
+    expect(w?.ok).toBe("Die Löschung wurde zurückgenommen. Deine Praxis bleibt bestehen.");
+    expect(w?.warning).toBeUndefined();
+    expect((await orgRow(org)).settings.billingCancelError).toBeUndefined();
+    expect(stripe.calls.some((c) => c.startsWith("set:"))).toBe(false);
+  });
+
+  it("ohne Stripe-Zugang (Mock-Port) wird ein echtes Abo nie als gekündigt gemeldet", async () => {
+    const { org } = await setup();
+    const { StripeMock } = await import("@/integrations/stripe/mock");
+    fake.port = new StripeMock();
+    const r = await request();
+    expect(r?.warning).toMatch(/Abo konnte nicht automatisch gekündigt werden/);
+    expect((await audits(org, "billing.cancel_failed"))[0].meta.error).toBe("BillingNotConfiguredError");
+  });
+
+  it("ohne Abo (Testphase): Löschantrag ohne Stripe-Aufruf", async () => {
+    await setup({ sub: null });
+    const r = await request();
+    expect(r).toEqual({ ok: "Kündigung und Löschung beantragt." });
+    expect(stripe.calls).toEqual([]);
+  });
+
+  it("Abo-Seite: kündigen und zurücknehmen nur durch Inhaber:in, mit Bestätigung", async () => {
+    const { org, subId } = await setup();
+    authState.role = "admin";
+    expect(await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" }))).toEqual({ error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann das Abo kündigen." });
+    expect(await abo.resumeSubscriptionAction()).toEqual({ error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann die Kündigung zurücknehmen." });
+    authState.role = "owner";
+    authState.support = true;
+    expect((await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" })))?.error).toMatch(/Nur die Praxisinhaberin/);
+    authState.support = false;
+    expect(await abo.cancelSubscriptionAction(undefined, fd({}))).toEqual({ error: "Bitte bestätige die Kündigung." });
+    expect(stripe.calls).toEqual([]);
+    expect(authState.perms.every((p) => p === "settings.manage")).toBe(true);
+
+    const c = await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" }));
+    expect(c?.ok).toMatch(/^Dein Abo ist zum \d\d\.\d\d\.\d{4} gekündigt\./);
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "owner" });
+    expect((await orgRow(org)).settings).toMatchObject({ billingCancelAtPeriodEnd: true, billingCancelReason: "owner" });
+    expect((await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" })))?.ok).toMatch(/bereits zum/);
+
+    // Löschantrag danach: Kündigung stammt vom Abo-Weg → Rücknahme des Löschantrags lässt sie bestehen
+    await request();
+    expect((await abo.resumeSubscriptionAction())?.error).toMatch(/Es läuft ein Löschantrag/);
+    expect((await withdraw())?.warning).toMatch(/bleibt gekündigt/);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
+
+    expect(await abo.resumeSubscriptionAction()).toEqual({ ok: "Die Kündigung ist zurückgenommen – dein Abo läuft weiter." });
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: false, cancelReason: null });
+    expect((await orgRow(org)).settings.billingCancelAtPeriodEnd).toBe(false);
+    expect(await abo.resumeSubscriptionAction()).toEqual({ ok: "Dein Abo ist nicht gekündigt." });
+
+    stripe.fail = true;
+    expect((await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" })))?.error).toMatch(/konnte gerade nicht gekündigt werden/);
+    // kein Posteingang-Hinweis beim Abo-Weg (Nutzer:in sieht die Meldung direkt)
+    const inbox = await f.asOrg(org, async (cl) => (await cl.query("select 1 from messages where organization_id=$1", [org])).rows);
+    expect(inbox).toHaveLength(0);
+  });
+
+  it("Abo-Seite: ohne laufendes Abo nichts zu kündigen", async () => {
+    await setup({ sub: null });
+    expect(await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" }))).toEqual({ error: "Es gibt kein laufendes Abo, das gekündigt werden kann." });
+    expect(stripe.calls).toEqual([]);
+  });
+
+  describe("Löschlauf", () => {
+    async function dueOrg(sub: Partial<SubscriptionInfo> | null) {
+      const { org, subId, cusId } = await setup({ sub });
+      await owner.query("update organizations set deletion_requested_at = now() - interval '31 days' where id=$1", [org]);
+      return { org, subId, cusId };
+    }
+    const exists = async (org: string) => (await owner.query("select 1 from organizations where id=$1", [org])).rowCount === 1;
+
+    it("beendet ein noch laufendes Abo sofort (ohne Erstattung) und löscht den Stripe-Kunden; Probelauf ändert nichts", async () => {
+      // Periode begann vor dem Antrag (vor 31 Tagen) und läuft z. B. bei 31-Tage-Monaten noch kurz
+      const { org, subId, cusId } = await dueOrg({ cancelAtPeriodEnd: true, cancelReason: "deletion_request", currentPeriodStart: new Date(Date.now() - 32 * 86_400_000) });
+      const c = await owner.connect();
+      try {
+        const dry = await purge.purgeOrganization(c, org, { execute: false, billing: stripe as unknown as BillingPort });
+        expect(dry.stripe).toEqual({ subscription: "would_cancel", customer: "would_delete", refundCheck: false });
+        expect(stripe.calls).toEqual([`get:${subId}`]);
+        const lines: string[] = [];
+        const r = await purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort, log: (l) => lines.push(l) });
+        expect(r.executed).toBe(true);
+        expect(r.stripe).toEqual({ subscription: "canceled_now", customer: "deleted", refundCheck: false });
+        expect(stripe.calls).toContain(`cancel_now:${subId}`);
+        expect(stripe.deletedCustomers).toEqual([cusId]);
+        expect(lines.some((l) => l.includes("stripe.subscription_canceled") && l.includes(subId))).toBe(true);
+      } finally {
+        c.release();
+      }
+      expect(await exists(org)).toBe(false);
+    });
+
+    it("neue Periode nach dem Antrag → Erstattung prüfen; bereits beendetes Abo wird nicht erneut beendet", async () => {
+      const a = await dueOrg({ currentPeriodStart: new Date(Date.now() - 2 * 86_400_000) });
+      const b = await dueOrg({ status: "canceled", currentPeriodStart: new Date(Date.now() - 40 * 86_400_000) });
+      const c = await owner.connect();
+      try {
+        expect((await purge.purgeOrganization(c, a.org, { execute: true, billing: stripe as unknown as BillingPort })).stripe).toMatchObject({ subscription: "canceled_now", refundCheck: true });
+        expect((await purge.purgeOrganization(c, b.org, { execute: true, billing: stripe as unknown as BillingPort })).stripe).toEqual({ subscription: "ended", customer: "deleted", refundCheck: false });
+        expect(stripe.calls).not.toContain(`cancel_now:${b.subId}`);
+      } finally {
+        c.release();
+      }
+    });
+
+    it("Stripe nicht erreichbar oder nicht konfiguriert → Abbruch, Praxis bleibt, Protokoll", async () => {
+      const { org, subId } = await dueOrg({});
+      const c = await owner.connect();
+      try {
+        stripe.fail = true;
+        await expect(purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort })).rejects.toThrow(/HTTP 500/);
+        await expect(purge.purgeOrganization(c, org, { execute: true })).rejects.toThrow(/kein Stripe-Zugang/);
+        const { StripeMock } = await import("@/integrations/stripe/mock");
+        await expect(purge.purgeOrganization(c, org, { execute: true, billing: new StripeMock() })).rejects.toThrow(/kein Stripe-Zugang/);
+        // Probelauf ohne Zugang: meldet „ungeprüft“, bricht nicht ab
+        expect((await purge.purgeOrganization(c, org, { execute: false })).stripe).toEqual({ subscription: "unchecked", customer: "unchecked", refundCheck: false });
+      } finally {
+        c.release();
+      }
+      expect(await exists(org)).toBe(true);
+      expect(stripe.subs.get(subId)?.status).toBe("active");
+      // Plattform-Protokoll (Zeilen ohne Praxis sind per RLS unsichtbar → kurz als Eigentümer ohne FORCE lesen, dann zurückrollen)
+      const oc = await owner.connect();
+      let aborted: { meta: { reason: string } }[];
+      try {
+        await oc.query("begin");
+        await oc.query("alter table audit_log no force row level security");
+        aborted = (await oc.query("select meta from audit_log where organization_id is null and action='platform.org_purge_aborted' and entity_id=$1", [org])).rows;
+      } finally {
+        await oc.query("rollback");
+        oc.release();
+      }
+      expect(aborted).toHaveLength(3);
+      expect(aborted[0].meta.reason).toMatch(/HTTP 500|kein Stripe-Zugang/);
+    });
+  });
+});

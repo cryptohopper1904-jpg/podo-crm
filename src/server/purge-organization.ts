@@ -19,13 +19,19 @@
  *   7. Danach das Speicherverzeichnis <STORAGE_DIR>/<org-id>/ löschen.
  * Schlägt etwas fehl, wird alles zurückgerollt (auch die Trigger-Änderungen).
  *
+ * Stripe (vorab, außerhalb der Transaktion – siehe settleStripe): Ein noch laufendes Abo wird sofort beendet (ohne
+ * anteilige Erstattung, ohne Abschlussrechnung), der Stripe-Kunde gelöscht. Ist Stripe nicht erreichbar oder nicht
+ * konfiguriert, wird der Löschlauf für diese Praxis abgebrochen und protokolliert – nie löschen, während weiter abgebucht wird.
+ *
  * Bewusst behalten: billing_events (Abo-Abrechnung des Betreibers, eigene Aufbewahrungspflicht; die
  * Verknüpfung zur Praxis wird per FK auf NULL gesetzt).
  */
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { PoolClient } from "pg";
+import type { BillingPort } from "../integrations/stripe/types";
 import { purgeCutoff } from "../lib/org-deletion";
+import { STRIPE_LIVE_STATUSES } from "../lib/subscription-cancel";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -48,6 +54,21 @@ export type PurgeReport = {
   users: number;
   usersKept: number;
   storageDir: string | null;
+  stripe: StripeSettlement;
+};
+
+/**
+ * Stripe-Abschluss vor dem Löschen:
+ *  - subscription: none (keins hinterlegt) | ended (bei Stripe beendet/unbekannt) | canceled_now (laufendes Abo sofort beendet)
+ *    | would_cancel (Probelauf) | unchecked (Probelauf ohne Stripe-Zugang)
+ *  - customer: none | deleted | would_delete | unchecked
+ *  - refundCheck: Das laufende Abo hat eine Abrechnungsperiode NACH dem Löschantrag begonnen (die automatische Kündigung
+ *    hat also nicht gegriffen) → Betreiber prüft eine Erstattung dieser Periode im Stripe-Dashboard.
+ */
+export type StripeSettlement = {
+  subscription: "none" | "ended" | "canceled_now" | "would_cancel" | "unchecked";
+  customer: "none" | "deleted" | "would_delete" | "unchecked";
+  refundCheck: boolean;
 };
 
 export async function findDueOrganizations(client: PoolClient, now: Date = new Date()): Promise<DueOrganization[]> {
@@ -134,13 +155,20 @@ async function exclusiveUsers(client: PoolClient, orgId: string): Promise<string
 export async function purgeOrganization(
   client: PoolClient,
   orgId: string,
-  opts: { execute: boolean; storageRoot?: string | null; now?: Date; log?: (line: string) => void },
+  opts: { execute: boolean; storageRoot?: string | null; now?: Date; log?: (line: string) => void; billing?: BillingPort | null },
 ): Promise<PurgeReport> {
   if (!UUID.test(orgId)) throw new Error("Ungültige Praxis-ID");
   const log = opts.log ?? (() => {});
+  let stripe: StripeSettlement;
+  try {
+    stripe = await settleStripe(client, orgId, opts, log);
+  } catch (e) {
+    if (opts.execute) await logPurgeAborted(client, orgId, (e as Error).message).catch(() => {});
+    throw e;
+  }
   for (let attempt = 1; ; attempt++) {
     try {
-      return await purgeOnce(client, orgId, opts, log);
+      return { ...(await purgeOnce(client, orgId, opts, log)), stripe };
     } catch (e) {
       const code = (e as { code?: string }).code;
       // Deadlock / Sperr-Timeout: andere Sitzungen hielten Sperren – kurz warten und neu versuchen
@@ -154,12 +182,87 @@ export async function purgeOrganization(
   }
 }
 
+const SUB_ID = /^sub_[A-Za-z0-9_]+$/;
+const CUS_ID = /^cus_[A-Za-z0-9_]+$/;
+
+/**
+ * Stripe vor dem Löschen bereinigen (Probelauf: nur lesen). Begründung siehe docs/BETRIEB.md, Abschnitt 9:
+ *  - Laufendes Abo → sofort beenden (prorate=false, invoice_now=false): Der Löschantrag gilt als Kündigung zum
+ *    Periodenende (AGB § 8 Nr. 3) und war bei der Anmeldung zum Löschlauf mindestens 30 Tage alt; bei Monatsabos ist die
+ *    damals laufende Periode also (bis auf höchstens einen Tag) abgelaufen. Ein Rest der bezahlten Periode entfällt, weil
+ *    die Praxis die Löschung selbst beantragt hat – eine Leistung nach der Löschung ist nicht mehr möglich. Hat dagegen
+ *    nach dem Antrag eine NEUE Periode begonnen, hätte nicht mehr abgebucht werden dürfen → refundCheck für den Betreiber.
+ *  - Kunde löschen: Zahlungsmittel, Adresse und Steuer-ID werden bei Stripe nicht mehr gebraucht (Art. 5 Abs. 1 lit. c/e,
+ *    Art. 17 DSGVO). Ausgestellte Stripe-Rechnungen bleiben mit den beim Ausstellen festgehaltenen Kundenangaben erhalten
+ *    (Aufbewahrung beim Betreiber, § 147 AO, § 14b UStG) – das Löschen des Kunden-Objekts berührt sie nicht.
+ * Fehler (Stripe nicht erreichbar/nicht konfiguriert) werfen → Löschlauf für diese Praxis wird abgebrochen.
+ */
+async function settleStripe(
+  client: PoolClient,
+  orgId: string,
+  opts: { execute: boolean; billing?: BillingPort | null; now?: Date },
+  log: (line: string) => void,
+): Promise<StripeSettlement> {
+  const org = (await client.query("select slug, deletion_requested_at, stripe_customer_id, stripe_subscription_id from organizations where id = $1", [orgId])).rows[0];
+  if (!org) throw new Error(`Praxis ${orgId} nicht gefunden`);
+  // Fälligkeit wie in purgeOnce prüfen, bevor bei Stripe etwas geändert wird
+  if (!org.deletion_requested_at) throw new Error(`Praxis ${org.slug}: keine Löschung beantragt`);
+  if (org.deletion_requested_at >= purgeCutoff(opts.now)) throw new Error(`Praxis ${org.slug}: Karenzzeit läuft noch`);
+  const subId: string | null = org.stripe_subscription_id;
+  const cusId: string | null = org.stripe_customer_id;
+  const out: StripeSettlement = { subscription: subId ? "unchecked" : "none", customer: cusId ? "unchecked" : "none", refundCheck: false };
+  if (!subId && !cusId) return out;
+  const port = opts.billing;
+  const mockOnly = (!subId || subId.startsWith("sub_mock_")) && !cusId;
+  if (!port || (port.isMock && !mockOnly)) {
+    if (!opts.execute) return out;
+    throw new Error(`Praxis ${org.slug}: Stripe-Abo/-Kunde hinterlegt, aber kein Stripe-Zugang (STRIPE_SECRET_KEY) – Löschlauf abgebrochen, damit nicht weiter abgebucht wird`);
+  }
+  if (subId) {
+    if (!SUB_ID.test(subId)) throw new Error(`Praxis ${org.slug}: unerwartete Stripe-Abo-ID`);
+    const sub = await port.getSubscription(subId);
+    if (sub && (STRIPE_LIVE_STATUSES as readonly string[]).includes(sub.status)) {
+      out.refundCheck = !!sub.currentPeriodStart && sub.currentPeriodStart.getTime() > new Date(org.deletion_requested_at).getTime();
+      if (opts.execute) {
+        await port.cancelSubscriptionNow(subId);
+        out.subscription = "canceled_now";
+        log(`[platform] ${new Date().toISOString()} stripe.subscription_canceled id=${orgId} sub=${subId} status_before=${sub.status} cancel_at_period_end=${sub.cancelAtPeriodEnd} refund_check=${out.refundCheck}`);
+      } else out.subscription = "would_cancel";
+    } else out.subscription = "ended";
+  }
+  if (cusId) {
+    if (!CUS_ID.test(cusId)) throw new Error(`Praxis ${org.slug}: unerwartete Stripe-Kunden-ID`);
+    if (opts.execute) {
+      await port.deleteCustomer(cusId);
+      out.customer = "deleted";
+      log(`[platform] ${new Date().toISOString()} stripe.customer_deleted id=${orgId}`);
+    } else out.customer = "would_delete";
+  }
+  return out;
+}
+
+/** Plattform-Protokoll: Löschlauf für eine Praxis abgebrochen (ohne Inhalte, nur Grund) */
+async function logPurgeAborted(client: PoolClient, orgId: string, reason: string) {
+  await client.query("begin");
+  try {
+    await client.query("select set_config('app.org_id', '', true)");
+    await client.query(
+      "insert into audit_log (organization_id, user_id, action, entity, entity_id, meta) values (null, null, 'platform.org_purge_aborted', 'organization', $1, $2)",
+      [orgId, JSON.stringify({ reason: reason.slice(0, 300) })],
+    );
+    await client.query("commit");
+  } catch (e) {
+    await client.query("rollback").catch(() => {});
+    throw e;
+  }
+}
+
 async function purgeOnce(
   client: PoolClient,
   orgId: string,
   opts: { execute: boolean; storageRoot?: string | null; now?: Date },
   log: (line: string) => void,
-): Promise<PurgeReport> {
+): Promise<Omit<PurgeReport, "stripe">> {
   await client.query("begin");
   try {
     await client.query("set local lock_timeout = '15s'");

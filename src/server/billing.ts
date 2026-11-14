@@ -70,13 +70,17 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
     if (codeTrial && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
       return done("ignored", org.id, "Aktionscode-Testphase: altes Abo");
     }
-    await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created));
+    await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created), {
+      cancelAtPeriodEnd: upd.cancelAtPeriodEnd,
+      // Abo beendet oder neues Abo abgeschlossen: Herkunft und Fehlermerker einer früheren Kündigung entfallen
+      reset: ev.type === "customer.subscription.deleted" || ev.type === "checkout.session.completed",
+    });
     await tx.insert(auditLog).values({
       organizationId: org.id,
       action: "billing.event",
       entity: "billing_event",
       entityId: ev.id,
-      meta: { type: ev.type, plan: upd.patch.plan, status: upd.patch.subscriptionStatus, seats: upd.patch.seats },
+      meta: { type: ev.type, plan: upd.patch.plan, status: upd.patch.subscriptionStatus, seats: upd.patch.seats, cancelAtPeriodEnd: upd.cancelAtPeriodEnd },
     });
     return done("processed", org.id);
   });
@@ -102,16 +106,28 @@ function invoiceSubscriptionId(ev: StripeEvent): string | null {
   return id(o.subscription) ?? id(parent.subscription_details?.subscription);
 }
 
-/** Nur die Abo-Felder setzen; settings wird per jsonb-Merge ergänzt (keine parallelen Einstellungsänderungen überschreiben). */
-async function applyPatch(tx: Tx, organizationId: string, patch: OrgBillingPatch, lastEventAt?: number) {
+/**
+ * Nur die Abo-Felder setzen; settings wird per jsonb-Merge ergänzt (keine parallelen Einstellungsänderungen überschreiben).
+ * Kündigung zum Periodenende (src/lib/subscription-cancel.ts): Stripe meldet den Zustand, die Herkunft
+ * (billingCancelReason) setzt nur PodoHero. Wird die Kündigung aufgehoben (z. B. im Kundenportal fortgesetzt) oder
+ * endet das Abo, entfällt die Herkunft – eine spätere erneute Kündigung im Portal gilt dann NICHT als Löschantrag.
+ */
+async function applyPatch(
+  tx: Tx,
+  organizationId: string,
+  patch: OrgBillingPatch,
+  lastEventAt?: number,
+  cancel: { cancelAtPeriodEnd?: boolean; reset?: boolean } = {},
+) {
+  let settings = sql`coalesce(${organizations.settings}, '{}'::jsonb)`;
+  if (cancel.reset) settings = sql`(${settings} - 'billingCancelReason' - 'billingCancelError')`;
+  else if (cancel.cancelAtPeriodEnd === false) settings = sql`(${settings} - 'billingCancelReason')`;
+  if (cancel.cancelAtPeriodEnd !== undefined) settings = sql`${settings} || jsonb_build_object('billingCancelAtPeriodEnd', ${cancel.cancelAtPeriodEnd}::boolean)`;
+  if (lastEventAt !== undefined) settings = sql`${settings} || jsonb_build_object('billingLastEventAt', ${lastEventAt}::bigint)`;
+  const touchesSettings = lastEventAt !== undefined || cancel.cancelAtPeriodEnd !== undefined || cancel.reset;
   await tx
     .update(organizations)
-    .set({
-      ...patch,
-      ...(lastEventAt !== undefined
-        ? { settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingLastEventAt', ${lastEventAt}::bigint)` }
-        : {}),
-    })
+    .set({ ...patch, ...(touchesSettings ? { settings } : {}) })
     .where(eq(organizations.id, organizationId));
 }
 
@@ -136,7 +152,9 @@ export async function applyMockSubscription(organizationId: string, userId: stri
       seats,
       subscriptionStatus: "active",
       currentPeriodEnd: new Date(Date.now() + 30 * 86_400_000),
-    });
+      // Pseudo-Abo-ID: „Abo kündigen“ und die Kündigung per Löschantrag laufen im Testmodus gegen StripeMock
+      stripeSubscriptionId: `sub_mock_${organizationId.replace(/-/g, "").slice(0, 12)}`,
+    }, undefined, { cancelAtPeriodEnd: false, reset: true });
     await tx.insert(auditLog).values({ organizationId, userId, action: "billing.mock_switch", meta: { plan, seats } });
   });
 }
@@ -184,6 +202,8 @@ export async function loadOrgBilling(organizationId: string) {
       seats: organizations.seats,
       stripeCustomerId: organizations.stripeCustomerId,
       stripeSubscriptionId: organizations.stripeSubscriptionId,
+      settings: organizations.settings,
+      deletionRequestedAt: organizations.deletionRequestedAt,
     })
     .from(organizations)
     .where(eq(organizations.id, organizationId));

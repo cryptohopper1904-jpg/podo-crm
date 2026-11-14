@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.3 · Stand 13.11.2026
+> Version 0.3 · Stand 14.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
@@ -59,7 +59,7 @@
 
 1. Kostenpflichtige Verträge laufen auf unbestimmte Zeit und sind monatlich zum Ende des Abrechnungszeitraums kündbar, sofern im Tarif nichts anderes angegeben ist.
 2. Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt. Für den kostenlosen Tarif gilt § 3a.
-3. Die Kündigung kann in der Software (Einstellungen → Daten & Kündigung) oder in Textform erfolgen.
+3. Die Kündigung kann in Textform oder in der Software erfolgen: unter Einstellungen → Abo (Kündigung zum Ende des Abrechnungszeitraums; die Daten bleiben im Nur-Lesen-Modus erhalten) oder unter Einstellungen → Daten & Kündigung (Kündigung verbunden mit Löschantrag).
 
 ## § 9 Datenexport und Löschung bei Vertragsende
 

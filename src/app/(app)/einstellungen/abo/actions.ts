@@ -12,6 +12,7 @@ import { dateDe } from "@/lib/format";
 import { PROMO_INVALID, trialDaysLabel } from "@/lib/promo-codes";
 import { clientKey } from "@/lib/rate-limit";
 import { PromoCodeError, promoFailLimiter, redeemPromoCodeForOrganization } from "@/server/promo-codes";
+import { cancelSubscriptionAtPeriodEnd, resumeSubscription } from "@/server/subscription-cancel";
 
 export type AboState = { error?: string; ok?: string } | undefined;
 
@@ -114,5 +115,54 @@ export async function redeemPromoAction(_: AboState, form: FormData): Promise<Ab
     if (!(e instanceof PromoCodeError)) throw e;
     for (const k of keys) promoFailLimiter.limited(k);
     return { error: e.message };
+  }
+}
+
+const endLabel = (d: Date | null) => (d ? dateDe(d) : "Ende des Abrechnungszeitraums");
+
+/**
+ * „Abo kündigen“ (AGB § 8 Nr. 3): Kündigung zum Ende des Abrechnungszeitraums über Stripe (cancel_at_period_end),
+ * die Daten bleiben erhalten. Nur Inhaber:in, nie im Support-Modus; mit ausdrücklicher Bestätigung.
+ */
+export async function cancelSubscriptionAction(_: AboState, form: FormData): Promise<AboState> {
+  const auth = await ownerAuth();
+  if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann das Abo kündigen." };
+  if (form.get("confirm") !== "on") return { error: "Bitte bestätige die Kündigung." };
+  const r = await cancelSubscriptionAtPeriodEnd(auth.organization.id, auth.user.id, "owner");
+  revalidatePath("/einstellungen/abo");
+  revalidatePath("/einstellungen/daten");
+  switch (r.status) {
+    case "canceled":
+      return { ok: `Dein Abo ist zum ${endLabel(r.periodEnd)} gekündigt. Bis dahin nutzt du PodoHero wie gewohnt; danach wird nichts mehr abgebucht und deine Daten bleiben im Nur-Lesen-Modus erhalten.` };
+    case "already_canceled":
+      return { ok: `Dein Abo ist bereits zum ${endLabel(r.periodEnd)} gekündigt.` };
+    case "no_subscription":
+      return { error: "Es gibt kein laufendes Abo, das gekündigt werden kann." };
+    case "failed":
+      return { error: "Das Abo konnte gerade nicht gekündigt werden. Bitte versuche es später erneut oder kontaktiere den Support – die Kündigung ist auch in Textform möglich." };
+  }
+}
+
+/** „Kündigung zurücknehmen“, solange die bezahlte Periode läuft. Nicht während eines Löschantrags (dort zurücknehmen). */
+export async function resumeSubscriptionAction(): Promise<AboState> {
+  const auth = await ownerAuth();
+  if (!auth) return { error: "Nur die Praxisinhaberin bzw. der Praxisinhaber kann die Kündigung zurücknehmen." };
+  const org = await loadOrgBilling(auth.organization.id);
+  if (org?.deletionRequestedAt) {
+    return { error: "Es läuft ein Löschantrag. Nimm ihn unter Einstellungen → Daten & Kündigung zurück – damit wird auch die Kündigung zurückgenommen." };
+  }
+  const r = await resumeSubscription(auth.organization.id, auth.user.id);
+  revalidatePath("/einstellungen/abo");
+  revalidatePath("/einstellungen/daten");
+  switch (r.status) {
+    case "resumed":
+      return { ok: "Die Kündigung ist zurückgenommen – dein Abo läuft weiter." };
+    case "not_canceled":
+    case "kept":
+      return { ok: "Dein Abo ist nicht gekündigt." };
+    case "no_subscription":
+      return { error: "Es gibt kein laufendes Abo mehr. Bitte wähle unten einen Tarif." };
+    case "failed":
+      return { error: "Die Kündigung konnte gerade nicht zurückgenommen werden. Bitte versuche es später erneut oder kontaktiere den Support." };
   }
 }
