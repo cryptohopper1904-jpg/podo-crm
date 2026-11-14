@@ -468,7 +468,10 @@ afterEach(() => vi.restoreAllMocks());
     const alt = new Pool({ connectionString: url, max: 1 });
     // Beim DROP … WITH (FORCE) beendet Postgres evtl. noch offene Verbindungen (57P01); ohne Listener
     // wäre das ein „Unhandled Error“, der den ganzen vitest-Lauf rot macht.
+    // pool.end() wartet nicht, bis die Sockets zu sind; der Client ist dann schon aus dem Pool entfernt und
+    // meldet 57P01 an sich selbst – daher den Listener auch je Client setzen.
     alt.on("error", () => {});
+    alt.on("connect", (c) => c.on("error", () => {}));
     try {
       await alt.query("create extension if not exists pgcrypto");
       await alt.query("create extension if not exists pg_trgm");
