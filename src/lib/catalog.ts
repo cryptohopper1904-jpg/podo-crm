@@ -22,12 +22,27 @@ export const STATUS_FILTERS = ["aktiv", "archiviert", "alle"] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 export const STATUS_FILTER_LABELS: Record<StatusFilter, string> = { aktiv: "Aktiv", archiviert: "Archiviert", alle: "Alle" };
 
-export const SORTS = ["name", "kuerzel", "preis"] as const;
+/** „haeufig“ = häufig gebucht (nur Leistungen; Häufigkeit aus src/server/service-catalog.ts) */
+export const SORTS = ["haeufig", "name", "kuerzel", "preis"] as const;
 export type CatalogSort = (typeof SORTS)[number];
-export const SORT_LABELS: Record<CatalogSort, string> = { name: "Name", kuerzel: "Kürzel", preis: "Preis" };
+export const SORT_LABELS: Record<CatalogSort, string> = { haeufig: "Häufig gebucht", name: "Name", kuerzel: "Kürzel", preis: "Preis" };
+export const PRODUCT_SORTS = ["name", "kuerzel", "preis"] as const satisfies readonly CatalogSort[];
 
-/** Kategorien der Leistungen (services.category). „product“ = Altbestand (Verkauf als Leistung angelegt). */
+/**
+ * Fachliche Arten der Leistungen (services.category = service_categories.kind). Die Kategorien selbst legt jede
+ * Praxis an (Tabelle service_categories); an der Art hängen Buchbarkeit, Website, Wegegeld usw.
+ * „product“ = Altbestand (Verkauf als Leistung angelegt).
+ */
 export const SERVICE_CATEGORIES = ["treatment", "brace", "cosmetic", "travel", "product"] as const;
+export type ServiceKind = (typeof SERVICE_CATEGORIES)[number];
+/** Erklärung der Art beim Anlegen einer Kategorie */
+export const SERVICE_KIND_HINTS: Record<ServiceKind, string> = {
+  treatment: "Behandlung – online buchbar, auf der Website",
+  brace: "Nagelkorrektur – online buchbar, auf der Website",
+  cosmetic: "Kosmetik & Wellness – online buchbar, auf der Website",
+  travel: "Hausbesuch & Wegegeld – wird in Touren als Wegegeld vorgeschlagen",
+  product: "Verkauf (alt) – nicht buchbar",
+};
 export const SERVICE_CATEGORY_LABELS: Record<string, string> = {
   treatment: "Behandlung",
   brace: "Nagelkorrektur",
@@ -50,15 +65,22 @@ export type CatalogQuery = { q: string; category: string; status: StatusFilter; 
 
 const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : "");
 
-/** Suchparameter (?q=&kat=&status=&sort=) lesen; Unbekanntes → Standard */
-export function parseCatalogQuery(sp: Record<string, string | string[] | undefined>): CatalogQuery {
+/**
+ * Suchparameter (?q=&kat=&status=&sort=) lesen; Unbekanntes → Standard. `sorts`: erlaubte Sortierungen (Produkte ohne
+ * „häufig gebucht“), `defaultSort`: Standard (Leistungen: häufig gebucht).
+ */
+export function parseCatalogQuery(
+  sp: Record<string, string | string[] | undefined>,
+  opts: { sorts?: readonly CatalogSort[]; defaultSort?: CatalogSort } = {},
+): CatalogQuery {
   const status = one(sp.status);
   const sort = one(sp.sort);
+  const sorts = opts.sorts ?? PRODUCT_SORTS;
   return {
     q: one(sp.q).trim().slice(0, 100),
     category: one(sp.kat).slice(0, 40),
     status: (STATUS_FILTERS as readonly string[]).includes(status) ? (status as StatusFilter) : "aktiv",
-    sort: (SORTS as readonly string[]).includes(sort) ? (sort as CatalogSort) : "name",
+    sort: (sorts as readonly string[]).includes(sort) ? (sort as CatalogSort) : (opts.defaultSort ?? "name"),
   };
 }
 
@@ -66,8 +88,11 @@ type Item = { name: string; code?: string | null; sku?: string | null; ean?: str
 
 const norm = (s: string) => s.toLocaleLowerCase("de").normalize("NFKD").replace(/[̀-ͯ]/g, "");
 
-/** Filtern (Status, Kategorie, Suche in Name/Kürzel/Artikelnummer/EAN) und sortieren */
-export function filterCatalog<T extends Item>(items: readonly T[], q: CatalogQuery): T[] {
+/**
+ * Filtern (Status, Kategorie, Suche in Name/Kürzel/Artikelnummer/EAN) und sortieren. „häufig gebucht“ braucht die
+ * Häufigkeit je id (`usage`); ohne sie wird nach Name sortiert.
+ */
+export function filterCatalog<T extends Item & { id?: string }>(items: readonly T[], q: CatalogQuery, usage?: ReadonlyMap<string, number>): T[] {
   const needle = norm(q.q);
   const out = items.filter((i) => {
     if (q.status === "aktiv" && !i.active) return false;
@@ -77,8 +102,15 @@ export function filterCatalog<T extends Item>(items: readonly T[], q: CatalogQue
     return [i.name, i.code, i.sku, i.ean].some((f) => !!f && norm(f).includes(needle));
   });
   const byName = (a: T, b: T) => a.name.localeCompare(b.name, "de");
+  const used = (i: T) => (i.id ? (usage?.get(i.id) ?? 0) : 0);
   out.sort((a, b) =>
-    q.sort === "preis" ? a.priceCents - b.priceCents || byName(a, b) : q.sort === "kuerzel" ? (a.code ?? "￿").localeCompare(b.code ?? "￿", "de") || byName(a, b) : byName(a, b),
+    q.sort === "preis"
+      ? a.priceCents - b.priceCents || byName(a, b)
+      : q.sort === "kuerzel"
+        ? (a.code ?? "￿").localeCompare(b.code ?? "￿", "de") || byName(a, b)
+        : q.sort === "haeufig" && usage
+          ? used(b) - used(a) || byName(a, b)
+          : byName(a, b),
   );
   return out;
 }

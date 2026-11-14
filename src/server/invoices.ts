@@ -1,4 +1,5 @@
 import "server-only";
+import { servicesByUsage } from "./service-catalog";
 import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { invoiceBookingLink, MAX_DUE_DAYS, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
@@ -1762,11 +1763,8 @@ export async function invoiceFormData(auth: AuthContext, preselectPatientId?: st
         .where(and(eq(patients.organizationId, org), isNull(patients.archivedAt)))
         .orderBy(desc(patients.updatedAt))
         .limit(200));
-    const svc = await (tx
-        .select()
-        .from(services)
-        .where(and(eq(services.organizationId, org), eq(services.active, true)))
-        .orderBy(asc(services.category), asc(services.name)));
+    // Positionsauswahl: „häufig gebucht“ zuerst (gemeinsam mit der Terminbuchung, src/server/service-catalog.ts)
+    const svc = await servicesByUsage(org, tx);
     const prods = await productsForInvoice(tx, org);
     const contacts = await (tx.select().from(billingContacts).where(eq(billingContacts.organizationId, org)).orderBy(asc(billingContacts.name)));
     const o = await (loadOrg(tx, org));

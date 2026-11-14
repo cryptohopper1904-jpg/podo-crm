@@ -76,3 +76,30 @@ export async function insertAppointment(patientId: string, startsAt: Date): Prom
     await pool.end();
   }
 }
+
+/** Produkt „E2E <name>“ mit Bestandsführung unter Mindestbestand anlegen (Hinweis „Bestand knapp“ auf Heute), RLS über app.org_id */
+export async function insertLowStockProduct(name: string, stock: number, minStock: number): Promise<void> {
+  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const c = await pool.connect();
+  try {
+    const org = await c.query(
+      "select o.id from organizations o join memberships m on m.organization_id = o.id join users u on u.id = m.user_id where u.email = $1 order by o.created_at limit 1",
+      [DEMO_EMAIL],
+    );
+    await c.query("begin");
+    await c.query("select set_config('app.org_id', $1, true)", [org.rows[0].id]);
+    // Produkte früherer Läufe archivieren (wiederholte Läufe gegen dieselbe Datenbank), damit der Hinweis dieses zeigt
+    await c.query("update products set active = false where organization_id = $1 and name like 'E2E %'", [org.rows[0].id]);
+    const p = await c.query(
+      "insert into products (organization_id, name, price_cents, track_stock, min_stock) values ($1, $2, 990, true, $3) returning id",
+      [org.rows[0].id, `E2E ${name}`, minStock],
+    );
+    if (stock > 0) {
+      await c.query("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1, $2, 'receipt', $3, current_date)", [org.rows[0].id, p.rows[0].id, stock]);
+    }
+    await c.query("commit");
+  } finally {
+    c.release();
+    await pool.end();
+  }
+}

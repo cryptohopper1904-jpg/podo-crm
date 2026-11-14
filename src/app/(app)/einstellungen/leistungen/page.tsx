@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { Archive, ArchiveRestore, Clock, Pencil, Plus } from "lucide-react";
+import { Archive, ArchiveRestore, Clock, FolderCog, Pencil, Plus } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Card, CardTitle, Empty, Field, Input, LinkButton, Select, Table } from "@/components/ui";
+import { Badge, Card, CardTitle, Empty, Field, Input, LinkButton, SegmentedControl, Select, Table } from "@/components/ui";
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
-import { filterCatalog, groupByCategory, parseCatalogQuery, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, type CatalogView } from "@/lib/catalog";
+import { filterCatalog, parseCatalogQuery, SORTS, type CatalogView } from "@/lib/catalog";
+import { isArchivedCode } from "@/lib/service-codes";
+import { listServiceCategories, serviceUsageCounts } from "@/server/service-catalog";
 import { feature } from "@/lib/features";
 import { money } from "@/lib/format";
 import { currentCatalogView } from "@/server/catalog-prefs";
@@ -16,19 +18,27 @@ import { saveServiceAction, setServiceActiveAction } from "../actions";
 export const metadata = { title: "Leistungen" };
 
 type Service = typeof services.$inferSelect;
+type Category = { id: string; name: string };
 const BASE = "/einstellungen/leistungen";
 
 /** gkv=false (Praxis nur Privat-/Selbstzahler): GKV-Position ausgeblendet, vorhandener Wert bleibt erhalten */
-function ServiceFields({ s, gkv = true }: { s?: Service; gkv?: boolean }) {
-  const categories = SERVICE_CATEGORIES.filter((c) => c !== "product" || s?.category === "product");
+function ServiceFields({ s, gkv = true, categories }: { s?: Service; gkv?: boolean; categories: Category[] }) {
+  // Archiviert: Kürzel ist das Archiv-Kürzel (z. B. „AN_archiv“) und kommt beim Wiederherstellen zurück – hier nicht änderbar
+  const archivedCode = !!s && !s.active && isArchivedCode(s.code);
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {s ? <input type="hidden" name="id" value={s.id} /> : null}
-      <Field label="Kürzel" hint="für die Schnelleingabe, z. B. PK"><Input name="code" defaultValue={s?.code} required maxLength={10} className="uppercase" /></Field>
+      {archivedCode ? (
+        <Field label="Kürzel" hint="archiviert – das ursprüngliche Kürzel kommt beim Wiederherstellen zurück, wenn es frei ist">
+          <Input value={s.code} disabled readOnly />
+        </Field>
+      ) : (
+        <Field label="Kürzel" hint="für die Schnelleingabe, z. B. PK"><Input name="code" defaultValue={s?.code} required maxLength={10} className="uppercase" /></Field>
+      )}
       <Field label="Bezeichnung" className="sm:col-span-2 lg:col-span-3"><Input name="name" defaultValue={s?.name} required /></Field>
       <Field label="Kategorie">
-        <Select name="category" defaultValue={s?.category ?? "treatment"}>
-          {categories.map((c) => <option key={c} value={c}>{SERVICE_CATEGORY_LABELS[c]}</option>)}
+        <Select name="categoryId" defaultValue={s?.categoryId ?? categories[0]?.id} required>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
       </Field>
       <Field label="Preis (€, brutto)"><Input name="price" defaultValue={s ? (s.priceCents / 100).toFixed(2).replace(".", ",") : ""} required inputMode="decimal" /></Field>
@@ -60,11 +70,12 @@ function RowActions({ s, qs, compact = false }: { s: Service; qs: string; compac
       </Link>
       <form action={setServiceActiveAction}>
         <input type="hidden" name="id" value={s.id} />
+        <input type="hidden" name="back" value={qs} />
         <input type="hidden" name="active" value={s.active ? "0" : "1"} />
         <button
           className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-semibold text-muted hover:bg-surface-2"
           aria-label={s.active ? `${s.name} archivieren` : `${s.name} wiederherstellen`}
-          title={s.active ? "Archivieren: verschwindet aus Termin- und Rechnungsauswahl, alte Belege bleiben" : "Wiederherstellen"}
+          title={s.active ? "Archivieren: verschwindet aus Termin- und Rechnungsauswahl, das Kürzel wird frei; alte Belege bleiben unverändert" : "Wiederherstellen"}
         >
           {s.active ? <Archive size={15} aria-hidden /> : <ArchiveRestore size={15} aria-hidden />} {compact ? null : s.active ? "Archivieren" : "Wiederherstellen"}
         </button>
@@ -73,7 +84,8 @@ function RowActions({ s, qs, compact = false }: { s: Service; qs: string; compac
   );
 }
 
-function ServiceList({ rows, view, qs, notes }: { rows: Service[]; view: CatalogView; qs: string; notes: Record<string, unknown> }) {
+function ServiceList({ rows, view, qs, notes, categories }: { rows: Service[]; view: CatalogView; qs: string; notes: Record<string, unknown>; categories: Category[] }) {
+  const catName = (s: Service) => categories.find((c) => c.id === s.categoryId)?.name ?? "–";
   const note = (s: Service) => (typeof notes[s.code] === "string" ? <Badge tone="warn">{String(notes[s.code])}</Badge> : null);
   if (view === "liste") {
     return (
@@ -84,7 +96,7 @@ function ServiceList({ rows, view, qs, notes }: { rows: Service[]; view: Catalog
             <tr key={s.id} className={s.active ? undefined : "opacity-60"}>
               <td className="font-mono font-semibold">{s.code}</td>
               <td>{s.name} {note(s)}</td>
-              <td className="text-sm text-muted">{SERVICE_CATEGORY_LABELS[s.category] ?? s.category}</td>
+              <td className="text-sm text-muted">{catName(s)}</td>
               <td className="text-right tabular-nums">{money(s.priceCents)}</td>
               <td className="text-right tabular-nums">{s.durationMin} Min</td>
               <td><div className="flex flex-wrap gap-1"><VatBadges s={s} /></div></td>
@@ -114,9 +126,11 @@ function ServiceList({ rows, view, qs, notes }: { rows: Service[]; view: Catalog
   }
   return (
     <div className="flex flex-col gap-6">
-      {groupByCategory(rows, SERVICE_CATEGORIES).map(([cat, list]) => (
+      {[...categories.map((c) => [c.name, rows.filter((s) => s.categoryId === c.id)] as const), ["Ohne Kategorie", rows.filter((s) => !categories.some((c) => c.id === s.categoryId))] as const]
+        .filter(([, list]) => list.length > 0)
+        .map(([cat, list]) => (
         <section key={cat}>
-          <h2 className="mb-2 font-display text-lg font-semibold">{SERVICE_CATEGORY_LABELS[cat] ?? cat} <span className="text-sm font-normal text-muted">({list.length})</span></h2>
+          <h2 className="mb-2 font-display text-lg font-semibold">{cat} <span className="text-sm font-normal text-muted">({list.length})</span></h2>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {list.map((s) => (
               <article key={s.id} className={`flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface p-4 ${s.active ? "" : "opacity-60"}`}>
@@ -144,18 +158,29 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
   const org = auth.organization.id;
   const gkv = feature(auth.organization, "gkvServices");
   const sp = await props.searchParams;
-  const query = parseCatalogQuery(sp);
+  // Standard: „häufig gebucht“ (Termine + Rechnungspositionen der letzten 12 Monate), umschaltbar auf alphabetisch
+  const query = parseCatalogQuery(sp, { sorts: SORTS, defaultSort: "haeufig" });
   const view = await currentCatalogView("services");
-  const all = await withOrg(org, (tx) => tx.select().from(services).where(eq(services.organizationId, org)));
+  const { all, categories, usage } = await withOrg(org, async (tx) => ({
+    all: await tx.select().from(services).where(eq(services.organizationId, org)),
+    categories: await listServiceCategories(tx, org),
+    usage: await serviceUsageCounts(tx, org),
+  }));
   // Hinweise aus dem Bootstrap (z. B. „Preis bitte prüfen“ bei Platzhalter-Preisen)
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
   const priceNotes = (o?.settings?.servicePriceNotes ?? {}) as Record<string, unknown>;
-  const rows = filterCatalog(all, query);
+  // Kategorie-Filter über die Kategorie-ID (eigene Kategorien der Praxis)
+  const rows = filterCatalog(all.map((s) => ({ ...s, category: s.categoryId ?? "" })), query, usage).map((r) => all.find((s) => s.id === r.id)!);
   const editing = typeof sp.edit === "string" ? all.find((s) => s.id === sp.edit) : undefined;
   const creating = sp.neu === "1";
-  const qs = catalogQs(query);
+  const qs = catalogQs(query, {}, "haeufig");
   const back = `${BASE}${qs ? `?${qs}` : ""}`;
-  const usedCategories = SERVICE_CATEGORIES.filter((c) => c !== "product" || all.some((s) => s.category === "product")).map((c) => [c, SERVICE_CATEGORY_LABELS[c]] as const);
+  const usedCategories = categories.map((c) => [c.id, c.name] as const);
+  const codeConflict = typeof sp.kuerzel === "string" ? sp.kuerzel.slice(0, 20) : null;
+  const sortHref = (sort: "haeufig" | "name") => {
+    const p = new URLSearchParams(catalogQs({ ...query, sort }, {}, "haeufig"));
+    return `${BASE}${p.size ? `?${p}` : ""}`;
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -164,18 +189,25 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
         <Link href="/produkte" className="font-semibold underline">Produkte</Link> anlegen. Nicht mehr benötigte Leistungen archivieren statt löschen – alte Termine und Rechnungen bleiben unverändert.
       </p>
 
+      {codeConflict && editing ? (
+        <p role="status" className="rounded-xl bg-warn-soft p-4 text-sm font-medium text-warn-soft-text">
+          „{editing.name}“ ist wiederhergestellt. Das Kürzel {codeConflict} ist inzwischen vergeben – die Leistung behält vorerst „{editing.code}“. Bitte unten ein neues Kürzel eintragen.
+        </p>
+      ) : null}
+
       {editing || creating ? (
         <Card>
           <CardTitle action={<Link href={back} className="text-sm font-semibold text-muted">Schließen</Link>}>
             {editing ? `Bearbeiten: ${editing.code} · ${editing.name}` : "Neue Leistung"}
           </CardTitle>
           <ActionForm key={editing?.id ?? "neu"} action={saveServiceAction} submit={editing ? "Änderung speichern" : "Anlegen"}>
-            <ServiceFields s={editing} gkv={gkv} />
+            <ServiceFields s={editing} gkv={gkv} categories={categories} />
           </ActionForm>
         </Card>
       ) : (
-        <div>
+        <div className="flex flex-wrap gap-2">
           <LinkButton href={`${BASE}?${new URLSearchParams([...new URLSearchParams(qs), ["neu", "1"]])}`}><Plus size={18} aria-hidden /> Neue Leistung</LinkButton>
+          <LinkButton href={`${BASE}/kategorien`} variant="secondary"><FolderCog size={18} aria-hidden /> Kategorien verwalten</LinkButton>
         </div>
       )}
 
@@ -186,14 +218,24 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
         categories={usedCategories}
         view={view}
         counts={{ shown: rows.length, active: all.filter((s) => s.active).length, archived: all.filter((s) => !s.active).length }}
-      />
+        sorts={SORTS}
+        defaultSort="haeufig"
+      >
+        <SegmentedControl
+          label="Reihenfolge"
+          items={[
+            { href: sortHref("haeufig"), label: "Häufig gebucht", active: query.sort === "haeufig", title: "Termine und Rechnungspositionen der letzten 12 Monate" },
+            { href: sortHref("name"), label: "Alphabetisch", active: query.sort === "name" },
+          ]}
+        />
+      </CatalogToolbar>
 
       {rows.length === 0 ? (
         <Empty title={all.length ? "Keine Leistung passt zum Filter" : "Noch keine Leistungen angelegt"}>
           {all.length ? <Link href={BASE} className="font-semibold text-primary">Filter zurücksetzen</Link> : null}
         </Empty>
       ) : (
-        <ServiceList rows={rows} view={view} qs={qs} notes={priceNotes} />
+        <ServiceList rows={rows} view={view} qs={qs} notes={priceNotes} categories={categories} />
       )}
     </div>
   );

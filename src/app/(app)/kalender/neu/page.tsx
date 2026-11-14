@@ -1,6 +1,7 @@
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { patients, services } from "@/db/schema";
+import { patients } from "@/db/schema";
+import { servicesByUsage } from "@/server/service-catalog";
 import { PageHeader } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso } from "@/lib/format";
@@ -20,7 +21,8 @@ export default async function NewAppointmentPage(props: PageProps<"/kalender/neu
   const [pts, svc] = await withOrg(org, (tx) =>
     sequential(
       () => tx.select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName }).from(patients).where(and(eq(patients.organizationId, org), isNull(patients.archivedAt))).orderBy(asc(patients.lastName)).limit(2000),
-      () => tx.select({ id: services.id, code: services.code, name: services.name, durationMin: services.durationMin }).from(services).where(and(eq(services.organizationId, org), eq(services.active, true))).orderBy(asc(services.code)),
+      // „häufig gebucht“ zuerst (gemeinsame Quelle mit Termin-Dialog und Rechnung, src/server/service-catalog.ts)
+      async () => (await servicesByUsage(org, tx)).map((s) => ({ id: s.id, code: s.code, name: s.name, durationMin: s.durationMin })),
     ),
   );
   const team = await therapists(auth);

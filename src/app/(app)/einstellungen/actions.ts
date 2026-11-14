@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg, type Tx } from "@/db";
-import { memberships, organizations, services, users } from "@/db/schema";
+import { memberships, organizations, serviceCategories, services, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { requireAuth, revokeUserSessions } from "@/lib/auth/session";
@@ -18,8 +18,17 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
-import { SERVICE_CATEGORIES } from "@/lib/catalog";
 import { codeTaken } from "@/server/products";
+import {
+  createServiceCategory,
+  deleteServiceCategory,
+  moveServiceCategory,
+  moveServicesToCategory,
+  renameServiceCategory,
+  ServiceCatalogError,
+  setServiceActive,
+} from "@/server/service-catalog";
+import { isArchivedCode } from "@/lib/service-codes";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
@@ -155,51 +164,71 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
   const d = z
     .object({
       id: z.string().uuid().optional(),
-      code: z.string().trim().min(1).max(10).toUpperCase(),
+      code: z.string().trim().min(1).max(10).toUpperCase().optional(),
       name: z.string().trim().min(2).max(200),
       price: z.string(),
       vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v)),
       durationMin: z.coerce.number().int().min(0).max(480),
-      category: z.enum(SERVICE_CATEGORIES).default("treatment"),
+      categoryId: z.string().uuid("Bitte eine Kategorie wählen."),
       gkvPosition: opt,
     })
     .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
   if (!d.success) return { error: d.success === false ? d.error.issues[0]?.message : undefined };
   const priceCents = parseMoney(d.data.price);
   if (priceCents === null) return { error: "Preis ungültig" };
-  const values = {
-    code: d.data.code,
+  const base = {
     name: d.data.name,
     priceCents,
     vatRate: d.data.vatRate,
     durationMin: d.data.durationMin,
-    category: d.data.category,
+    // Art (services.category) setzt der DB-Trigger aus der Kategorie
+    categoryId: d.data.categoryId,
     gkvPosition: d.data.gkvPosition,
     requiresTherapeuticPurpose: d.data.vatRate === 0,
   };
   // aktiv/archiviert ändert nur setServiceActiveAction; neue Leistungen sind aktiv
   let found = true;
   let productClash = false;
+  let missingCode = false;
+  let badCategory = false;
+  let code = d.data.code ?? "";
   try {
     await withOrg(org, async (tx) => {
+      const [cat] = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, d.data.categoryId)));
+      if (!cat) {
+        badCategory = true;
+        return;
+      }
+      const [current] = d.data.id ? await tx.select({ code: services.code, active: services.active }).from(services).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))) : [];
+      if (d.data.id && !current) {
+        found = false;
+        return;
+      }
+      // Archivierte Leistung: Kürzel bleibt das Archiv-Kürzel (wird beim Wiederherstellen zurückgegeben)
+      if (current && !current.active && isArchivedCode(current.code)) code = current.code;
+      if (!code) {
+        missingCode = true;
+        return;
+      }
       // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
-      if (await codeTaken(tx, org, values.code, "product")) {
+      if (await codeTaken(tx, org, code, "product")) {
         productClash = true;
         return;
       }
       if (d.data.id) {
-        const r = await tx.update(services).set(values).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))).returning({ id: services.id });
-        found = r.length > 0;
+        await tx.update(services).set({ ...base, code }).where(and(eq(services.organizationId, org), eq(services.id, d.data.id)));
       } else {
-        await tx.insert(services).values({ ...values, active: true, organizationId: org });
+        await tx.insert(services).values({ ...base, code, active: true, organizationId: org });
       }
     });
   } catch {
-    return { error: `Das Kürzel ${d.data.code} gibt es schon.` };
+    return { error: `Das Kürzel ${code} gibt es schon.` };
   }
-  if (productClash) return { error: `Das Kürzel ${d.data.code} hat schon ein Produkt. Bitte ein anderes wählen.` };
+  if (badCategory) return { error: "Kategorie nicht gefunden." };
+  if (missingCode) return { error: "Bitte ein Kürzel eingeben." };
+  if (productClash) return { error: `Das Kürzel ${code} hat schon ein Produkt. Bitte ein anderes wählen.` };
   if (!found) return { error: "Leistung nicht gefunden." };
-  await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code: d.data.code } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code } });
   revalidatePath("/einstellungen/leistungen");
   return { ok: "Gespeichert." };
 }
@@ -207,18 +236,75 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
 /**
  * Leistung archivieren bzw. wiederherstellen (services.active). Archivierte Leistungen erscheinen nicht mehr in
  * Termin-, Rechnungs- und Doku-Auswahl, Online-Buchung und Website; bestehende Termine/Rechnungen behalten sie.
+ * Archivieren gibt das Kürzel frei („AN“ → „AN_archiv“); ist es beim Wiederherstellen vergeben, erscheint ein Hinweis.
  */
 export async function setServiceActiveAction(form: FormData) {
   const auth = await requireAuth("settings.manage");
-  const org = auth.organization.id;
   const id = z.uuid().safeParse(form.get("id"));
   if (!id.success) return;
   const active = form.get("active") === "1";
-  const r = await withOrg(org, (tx) =>
-    tx.update(services).set({ active }).where(and(eq(services.organizationId, org), eq(services.id, id.data))).returning({ code: services.code }),
-  );
-  if (r[0]) await audit({ organizationId: org, userId: auth.user.id, action: active ? "service.unarchive" : "service.archive", entity: "service", entityId: id.data, meta: { code: r[0].code } });
+  const r = await setServiceActive(auth, id.data, active);
   revalidatePath("/einstellungen/leistungen");
+  const back = String(form.get("back") ?? "");
+  if (r?.codeConflict) {
+    const qs = new URLSearchParams(back.startsWith("?") ? back.slice(1) : "");
+    qs.set("kuerzel", r.codeConflict);
+    qs.set("edit", id.data);
+    redirect(`/einstellungen/leistungen?${qs}`);
+  }
+}
+
+// ── Kategorien der Leistungen ──
+export type CategoryState = { error?: string; ok?: string } | undefined;
+const KAT_PATH = "/einstellungen/leistungen/kategorien";
+
+async function categoryCall(fn: () => Promise<unknown>, ok: string): Promise<CategoryState> {
+  try {
+    await fn();
+  } catch (e) {
+    if (e instanceof ServiceCatalogError) return { error: e.message };
+    if (e instanceof z.ZodError) return { error: e.issues[0]?.message ?? "Eingaben prüfen." };
+    throw e;
+  }
+  revalidatePath(KAT_PATH);
+  revalidatePath("/einstellungen/leistungen");
+  return { ok };
+}
+
+export async function createCategoryAction(_: CategoryState, form: FormData): Promise<CategoryState> {
+  const auth = await requireAuth("settings.manage");
+  return categoryCall(() => createServiceCategory(auth, { name: form.get("name"), kind: form.get("kind") || undefined }), "Kategorie angelegt.");
+}
+
+export async function renameCategoryAction(_: CategoryState, form: FormData): Promise<CategoryState> {
+  const auth = await requireAuth("settings.manage");
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) return { error: "Kategorie nicht gefunden." };
+  return categoryCall(() => renameServiceCategory(auth, id.data, form.get("name")), "Umbenannt.");
+}
+
+export async function moveCategoryAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) return;
+  await moveServiceCategory(auth, id.data, form.get("dir") === "up" ? -1 : 1);
+  revalidatePath(KAT_PATH);
+  revalidatePath("/einstellungen/leistungen");
+}
+
+export async function moveServicesAction(_: CategoryState, form: FormData): Promise<CategoryState> {
+  const auth = await requireAuth("settings.manage");
+  const from = z.uuid().safeParse(form.get("id"));
+  const to = z.uuid().safeParse(form.get("to"));
+  if (!from.success || !to.success) return { error: "Bitte eine Ziel-Kategorie wählen." };
+  return categoryCall(() => moveServicesToCategory(auth, from.data, to.data), "Leistungen verschoben.");
+}
+
+export async function deleteCategoryAction(_: CategoryState, form: FormData): Promise<CategoryState> {
+  const auth = await requireAuth("settings.manage");
+  const id = z.uuid().safeParse(form.get("id"));
+  if (!id.success) return { error: "Kategorie nicht gefunden." };
+  return categoryCall(() => deleteServiceCategory(auth, id.data), "Kategorie gelöscht.");
 }
 
 export async function startTotpAction(): Promise<SettingsState> {

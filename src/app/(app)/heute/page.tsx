@@ -22,6 +22,8 @@ import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
 import { todaySections } from "@/lib/view-level";
 import { currentViewLevel } from "@/server/view-level";
+import { listProducts } from "@/server/products";
+import { lowStockSummary } from "@/lib/stock";
 
 export const metadata = { title: "Heute" };
 
@@ -70,6 +72,8 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];
+  // Bestand knapp (Produkte mit Bestandsführung auf/unter Mindestbestand) – nur wer Produkte sehen darf (invoices.read)
+  const lowStock = auth.can("invoices.read") ? lowStockSummary(await listProducts(auth)) : { shown: [], more: 0 };
   // Persönliche Ansicht (Einstellungen → Ansicht): blendet nur Karten aus, die Daten bleiben unverändert
   const show = todaySections(await currentViewLevel());
   const quickActions = [
@@ -98,6 +102,21 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       {isGkvArea(hiddenArea) && !feature(auth.organization, hiddenArea) ? <HiddenAreaNotice area={hiddenArea} settingsLink={auth.can("settings.manage")} /> : null}
       <div className="max-md:order-5"><OnboardingCard auth={auth} /></div>
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
+
+      {lowStock.shown.length ? (
+        <p role="status" className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text max-md:order-2">
+          <span className="font-semibold">Bestand knapp: </span>
+          {lowStock.shown.map((p, i) => (
+            <span key={p.id}>
+              {i ? " · " : ""}
+              {p.name} ({p.stock} von mind. {p.minStock})
+            </span>
+          ))}
+          {lowStock.more ? <span> und {lowStock.more} weitere</span> : null}
+          {" – "}
+          <Link href="/produkte/nachbestellen" className="touch-target font-semibold whitespace-nowrap underline">nachbestellen</Link>
+        </p>
+      ) : null}
 
       {show.stats ? (
         <section aria-label="Kennzahlen" className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4 max-md:order-3">

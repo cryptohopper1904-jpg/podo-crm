@@ -102,3 +102,14 @@ export function orderEmailText(g: ReorderGroup, practice: { name: string }): str
     practice.name,
   ].join("\n");
 }
+
+/**
+ * Hinweis „Bestand knapp“ (Heute-Seite): Produkte mit Bestandsführung auf/unter Mindestbestand, knappste zuerst
+ * (Verhältnis Bestand/Mindestbestand), höchstens `max` Einträge, der Rest als Anzahl.
+ */
+export function lowStockSummary<T extends StockItem & { name: string }>(items: readonly T[], max = 3): { shown: T[]; more: number } {
+  const low = items
+    .filter(isBelowMinimum)
+    .sort((a, b) => a.stock / a.minStock - b.stock / b.minStock || a.name.localeCompare(b.name, "de"));
+  return { shown: low.slice(0, max), more: Math.max(0, low.length - max) };
+}
