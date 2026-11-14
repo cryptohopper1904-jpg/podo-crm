@@ -163,20 +163,33 @@ export const hintCls = "text-[13px] leading-5 text-muted";
  * Ist das Kind eine einzelne Eingabe (<Input>, <Select>, <Textarea>, <SearchInput> oder ein natives Element), steht
  * nur die Beschriftung im <label> (htmlFor); Hinweis und Fehler sind Geschwister und per `aria-describedby` an der
  * Eingabe verknüpft – so werden sie als Beschreibung vorgelesen, nicht als Teil des Namens. Ohne `id` erzeugt Field
- * eine (useId). `error` setzt zusätzlich `aria-invalid`.
- * Andere Kinder (eigene Komponenten, mehrere Elemente): wie bisher alles in einem umschließenden <label>.
+ * eine (useId); hat die Eingabe selbst eine `id`, gewinnt diese (vor der `id` von Field). `error` setzt zusätzlich
+ * `aria-invalid`. Eine Einheit (<Input suffix="Min">) schreibt Field als „in Minuten“ (sr-only) mit ins <label> – der
+ * zugängliche Name bleibt „Dauer in Minuten“; Input lässt seinen eigenen sr-only-Text dann weg.
+ * Andere Kinder (eigene Komponenten, Wrapper, mehrere Elemente): wie bisher alles in einem umschließenden <label>
+ * (Hinweis und Fehler sind dort Teil des Namens). Bei `error` bekommt ein einzelnes Element-Kind trotzdem
+ * `aria-invalid` und `aria-describedby` auf den Fehlertext (reicht es die Props an seine Eingabe weiter, wirkt das dort).
  */
 export function Field({ label, hint, error, id, children, className }: { label: string; hint?: ReactNode; error?: string | null; id?: string; children: ReactNode; className?: string }) {
   const autoId = useId();
   const only = Children.count(children) === 1 && isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
   const direct = !!only && FIELD_CONTROLS.has(only.type);
   if (!direct) {
+    const fbErrId = error ? `${id ?? autoId}-fehler` : undefined;
+    const content =
+      error && only
+        ? cloneElement(only, { "aria-invalid": true, "aria-describedby": [only.props["aria-describedby"], fbErrId].filter(Boolean).join(" ") })
+        : children;
     return (
       <label className={cx(fieldCls, className)}>
         <span className={fieldLabelCls}>{label}</span>
         <span className="flex min-w-0 flex-col gap-1.5">
-          {children}
-          {error ? <span className="text-[13px] leading-5 font-medium text-danger">{error}</span> : null}
+          {content}
+          {error ? (
+            <span id={fbErrId} className="text-[13px] leading-5 font-medium text-danger">
+              {error}
+            </span>
+          ) : null}
           {hint ? <span className={hintCls}>{hint}</span> : null}
         </span>
       </label>
@@ -186,11 +199,20 @@ export function Field({ label, hint, error, id, children, className }: { label: 
   const errId = error ? `${controlId}-fehler` : undefined;
   const hintId = hint ? `${controlId}-hinweis` : undefined;
   const describedBy = [only.props["aria-describedby"], errId, hintId].filter(Boolean).join(" ") || undefined;
-  const control = cloneElement(only, { id: controlId, ...(error ? { "aria-invalid": true } : {}), ...(describedBy ? { "aria-describedby": describedBy } : {}) });
+  // Einheit einer <Input suffix> gehört zum Namen: im <label> statt verwaist neben der Eingabe
+  const suffix = only.type === Input && typeof only.props.suffix === "string" ? only.props.suffix : null;
+  const unit = suffix ? spokenUnit(suffix, only.props.suffixSpoken as string | undefined) : null;
+  const control = cloneElement(only, {
+    id: controlId,
+    ...(error ? { "aria-invalid": true } : {}),
+    ...(describedBy ? { "aria-describedby": describedBy } : {}),
+    ...(unit ? { unitInLabel: true } : {}),
+  });
   return (
     <div className={cx(fieldCls, className)}>
       <label htmlFor={controlId} className={fieldLabelCls}>
         {label}
+        {unit ? <span className="sr-only">{` in ${unit}`}</span> : null}
       </label>
       <div className="flex min-w-0 flex-col gap-1.5">
         {control}
@@ -226,6 +248,11 @@ export function FieldSlot({ children, className, spacer = "block" }: { children:
 /** Gesprochene Form gängiger Einheiten (für Screenreader) */
 const UNIT_SPOKEN: Record<string, string> = { "€": "Euro", Min: "Minuten", Tage: "Tagen", km: "Kilometer", "%": "Prozent" };
 
+/** Einheit, wie Screenreader sie hören sollen („Min“ → „Minuten“) */
+export function spokenUnit(suffix: string, suffixSpoken?: string): string {
+  return suffixSpoken ?? UNIT_SPOKEN[suffix] ?? suffix;
+}
+
 const DATE_TYPES = new Set(["date", "time", "datetime-local", "month", "week"]);
 
 /**
@@ -255,13 +282,21 @@ export function Input({
   suffixSpoken,
   stepper,
   clearable,
+  unitInLabel,
   ...props
-}: ComponentProps<"input"> & { suffix?: string; suffixSpoken?: string; stepper?: boolean; clearable?: boolean }) {
+}: ComponentProps<"input"> & {
+  suffix?: string;
+  suffixSpoken?: string;
+  stepper?: boolean;
+  clearable?: boolean;
+  /** intern (Field): die Einheit steht schon im <label> – keinen eigenen sr-only-Text ausgeben */
+  unitInLabel?: boolean;
+}) {
   const isNumber = props.type === "number";
   if (props.type && DATE_TYPES.has(props.type) && suffix == null) return <DateInput className={cx(inputCls, className)} clearable={clearable} {...props} />;
   if (suffix == null && !(stepper && isNumber)) return <input className={cx(inputCls, className)} {...props} />;
   const inputMode = isNumber ? numberInputMode(props.step, props.inputMode) : props.inputMode;
-  const unit = suffix ? (suffixSpoken ?? UNIT_SPOKEN[suffix] ?? suffix) : "";
+  const unit = suffix ? spokenUnit(suffix, suffixSpoken) : "";
   const withStepper = !!stepper && isNumber;
   return (
     <span className={affixCls}>
@@ -282,7 +317,7 @@ export function Input({
           {suffix}
         </span>
       ) : null}
-      {suffix ? <span className="sr-only">{` in ${unit}`}</span> : null}
+      {suffix && !unitInLabel ? <span className="sr-only">{` in ${unit}`}</span> : null}
       {withStepper ? <StepButton dir={1} label={`Mehr${unit ? ` ${unit}` : ""}`} disabled={props.disabled} /> : null}
     </span>
   );
