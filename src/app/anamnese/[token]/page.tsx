@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { publicLinkInfo } from "@/server/anamnesis";
-import { OnlineAnamnesisForm } from "./online-form";
+import { OnlineAnamnesisForm, PracticeExitLink } from "./online-form";
 
 // Token steht in der URL: nicht indexieren, nicht als Referrer weitergeben
 export const metadata: Metadata = { title: "Anamnesebogen", robots: { index: false, follow: false }, referrer: "no-referrer" };
@@ -37,8 +37,8 @@ export default async function OnlineAnamnesisPage(props: PageProps<"/anamnese/[t
           </p>
           <OnlineAnamnesisForm token={token} onSite={onSite} />
           {onSite ? (
-            <p className="mt-8 text-center text-xs text-muted">
-              <a href="/entsperren" className="underline">Praxis: Übergabe beenden</a>
+            <p className="mt-8 flex justify-center">
+              <PracticeExitLink />
             </p>
           ) : null}
         </>
@@ -46,7 +46,7 @@ export default async function OnlineAnamnesisPage(props: PageProps<"/anamnese/[t
         <>
           <h1 className="font-display text-3xl font-semibold">Link nicht gültig</h1>
           <p className="mt-3">Dieser Link ist abgelaufen, wurde bereits verwendet oder ist ungültig. Bitte wenden Sie sich an Ihre Praxis – wir schicken Ihnen gern einen neuen Link.</p>
-          {onSite ? <p className="mt-6"><a href="/entsperren" className="font-semibold text-primary underline">Praxis: Übergabe beenden</a></p> : null}
+          {onSite ? <p className="mt-6"><PracticeExitLink /></p> : null}
         </>
       )}
     </main>
