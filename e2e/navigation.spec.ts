@@ -58,6 +58,9 @@ const hrefs = (page: Page, selector: string) =>
 async function expectedAreas(browser: Browser): Promise<string[]> {
   const { context, page } = await newDevice(browser, { viewport: { width: 1280, height: 900 } });
   await page.goto("/bereiche");
+  // erst lesen, wenn die Seite wirklich da ist (nicht Ladezustand/Weiterleitung) – sonst flackert der Test mit „[]“
+  await expect(page).toHaveURL(/\/bereiche$/);
+  await page.locator("main section a").first().waitFor();
   const list = await hrefs(page, "main section a");
   await context.close();
   return [...new Set(list)].sort();

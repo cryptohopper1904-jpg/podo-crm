@@ -196,6 +196,8 @@ const OTHER_GUARDS = [
   "payment_receipts.payment_id",
   "payments.cash_closing_id",
   "products.supplier_id",
+  // Trigger services_default_category (Migration *_leistungs_kategorien): Kategorie muss zur Praxis der Leistung gehören
+  "services.category_id",
   "stock_movements.invoice_id",
   "stock_movements.product_id",
   "stock_movements.supplier_id",

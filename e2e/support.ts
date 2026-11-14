@@ -135,3 +135,18 @@ export async function withDemoOrg<T>(fn: (q: (sql: string, params?: unknown[]) =
     await pool.end();
   }
 }
+
+/** Produkt „E2E <name>“ mit Bestandsführung unter Mindestbestand anlegen (Hinweis „Bestand knapp“ auf Heute), RLS über app.org_id */
+export async function insertLowStockProduct(name: string, stock: number, minStock: number): Promise<void> {
+  await withDemoOrg(async (q, org) => {
+    // Produkte früherer Läufe archivieren (wiederholte Läufe gegen dieselbe Datenbank), damit der Hinweis dieses zeigt
+    await q("update products set active = false where organization_id = $1 and name like 'E2E %'", [org]);
+    const p = await q(
+      "insert into products (organization_id, name, price_cents, track_stock, min_stock) values ($1, $2, 990, true, $3) returning id",
+      [org, `E2E ${name}`, minStock],
+    );
+    if (stock > 0) {
+      await q("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1, $2, 'receipt', $3, current_date)", [org, p.rows[0].id, stock]);
+    }
+  });
+}

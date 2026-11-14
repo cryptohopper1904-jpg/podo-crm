@@ -1,26 +1,23 @@
 import "server-only";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { patients, services } from "@/db/schema";
+import { patients } from "@/db/schema";
 import type { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso } from "@/lib/format";
 import { sequential } from "@/lib/seq";
 import { therapists } from "@/server/appointments";
 import { canCreateBlocks } from "@/server/calendar-blocks";
+import { servicesByUsage } from "@/server/service-catalog";
 
 /** Leistung in der Auswahl „Neuer Termin“ */
 export type NewAppointmentService = { id: string; code: string; name: string; durationMin: number };
 
 /**
- * Leistungen für „Neuer Termin“ (Seite und Fenster) – eine Stelle für die Reihenfolge. Aktiv, nach Kürzel.
- * Austauschpunkt: hier z. B. `(await servicesByUsage(org, tx)).map(…)` einsetzen („häufig gebucht“ zuerst).
+ * Leistungen für „Neuer Termin“ (Seite und Fenster) – eine Stelle für die Reihenfolge: aktive Leistungen,
+ * „häufig gebucht“ zuerst (gemeinsame Quelle mit der Rechnung, src/server/service-catalog.ts).
  */
 export async function loadAppointmentServices(org: string, tx: Tx): Promise<NewAppointmentService[]> {
-  return tx
-    .select({ id: services.id, code: services.code, name: services.name, durationMin: services.durationMin })
-    .from(services)
-    .where(and(eq(services.organizationId, org), eq(services.active, true)))
-    .orderBy(asc(services.code));
+  return (await servicesByUsage(org, tx)).map((s) => ({ id: s.id, code: s.code, name: s.name, durationMin: s.durationMin }));
 }
 
 /** Daten für „Neuer Termin“ (Seite /kalender/neu und Fenster im Kalender) */

@@ -28,7 +28,7 @@ import { DEMO_IMPRINT, missingImprintFields } from "./imprint";
 import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-practice";
 
 export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
-import { seedIntegrationDefaults } from "./org-defaults";
+import { seedIntegrationDefaults, seedServiceCategories } from "./org-defaults";
 import { BILLING_MODES, type BillingMode } from "./features";
 import { weekFromList, weekToList } from "./opening-hours";
 import { PLANS, TRIAL_DAYS } from "./plans";
@@ -282,6 +282,8 @@ async function bootstrapPractice(db: Db, env: Env, warnings: string[]): Promise<
     // ab hier mandantengeschützte Tabellen (RLS)
     await tx.execute(sql`select set_config('app.org_id', ${org.id}, true)`);
     await tx.insert(schema.locations).values({ organizationId: org.id, name: "Hauptpraxis", street: spec.street, zip: spec.zip, city: spec.city });
+    // Startkategorien wie bei der Registrierung (vor den Leistungen; der DB-Trigger ordnet sie zu)
+    await seedServiceCategories(tx, org.id);
     if (spec.services.length) {
       await tx.insert(schema.services).values(
         spec.services.map((s, i) => ({

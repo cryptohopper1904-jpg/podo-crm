@@ -7,7 +7,7 @@
 import { eq, sql } from "drizzle-orm";
 import type { Tx } from "../db";
 import * as s from "../db/schema";
-import { DEFAULT_SERVICES } from "./org-defaults";
+import { DEFAULT_SERVICES, seedServiceCategories } from "./org-defaults";
 import { chainHash } from "./records";
 
 /** Stammdaten der Demo-Praxis (fiktiv) */
@@ -40,6 +40,7 @@ const PEOPLE = [
 export async function seedDemoPracticeData(tx: Tx, orgId: string, ownerUserId: string): Promise<void> {
   await tx.execute(sql`select set_config('app.org_id', ${orgId}, true)`);
   await tx.insert(s.locations).values({ organizationId: orgId, name: "Hauptpraxis" });
+  await seedServiceCategories(tx, orgId);
   const svc = await tx
     .insert(s.services)
     .values(DEFAULT_SERVICES.map((x) => ({ organizationId: orgId, code: x.code, name: x.name, priceCents: x.priceCents, vatRate: x.vatRate, durationMin: x.durationMin, category: x.category, requiresTherapeuticPurpose: !("requiresTherapeuticPurpose" in x) })))

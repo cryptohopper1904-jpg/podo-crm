@@ -62,6 +62,23 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   const linesOf = (org: string, invoiceId: string) =>
     f.asOrg(org, async (c) => (await c.query("select line_kind, product_id, in_treatment, treatment_position, vat_rate, description, unit_price_cents, total_cents from invoice_lines where invoice_id = $1 order by position", [invoiceId])).rows);
 
+  it("Hinweis „Bestand knapp“: nur aktive Produkte mit Bestandsführung auf/unter Mindestbestand (Filter in der DB)", async () => {
+    const { auth, salbe } = await setup();
+    const add = async (name: string, trackStock: boolean, minStock: number) =>
+      (await products.saveProduct(auth, null, { name, category: "salbe", priceCents: 500, vatRate: 19, unit: "Stück", trackStock, minStock })).id;
+    const ohne = await add("Ohne Bestandsführung", false, 5);
+    const genug = await add("Genug da", true, 1);
+    await products.bookReceipt(auth, { productId: genug, quantity: 3, occurredOn: today });
+    const archiviert = await add("Archiviert knapp", true, 4);
+    await products.setProductActive(auth, archiviert, false);
+    const low = await products.lowStockProducts(auth);
+    expect(low.map((p) => p.id)).toContain(salbe);
+    expect(low.map((p) => p.id)).not.toContain(ohne);
+    expect(low.map((p) => p.id)).not.toContain(genug);
+    expect(low.map((p) => p.id)).not.toContain(archiviert);
+    expect(low.find((p) => p.id === salbe)).toMatchObject({ stock: 0, minStock: 2 });
+  });
+
   it("Verkauf zum Mitnehmen: 19 %, Katalogpreis, Bestand sinkt beim Ausstellen und steigt beim Storno", async () => {
     const { org, auth, salbe, base, prodLine } = await setup();
     await products.bookReceipt(auth, { productId: salbe, quantity: 10, occurredOn: today, unitCostCents: 600, deliveryNote: "LS-1" });

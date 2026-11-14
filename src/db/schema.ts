@@ -464,6 +464,24 @@ export const anamneses = pgTable("anamneses", {
 });
 
 // ───────────────────────── Leistungen & Termine ─────────────────────────
+/**
+ * Kategorien der Leistungen je Praxis (anlegen, umbenennen, sortieren, löschen in Einstellungen → Leistungen).
+ * `kind` ist die fachliche Art (treatment | brace | cosmetic | travel | product, siehe src/lib/catalog.ts) – an ihr
+ * hängen Buchbarkeit, Website, Wegegeld usw.; sie wird beim Anlegen gewählt und in services.category gespiegelt.
+ */
+export const serviceCategories = pgTable(
+  "service_categories",
+  {
+    id: id(),
+    organizationId: orgId(),
+    name: text("name").notNull(),
+    kind: text("kind").notNull().default("treatment"),
+    sort: integer("sort").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("service_categories_org_name").on(t.organizationId, t.name), index("service_categories_org").on(t.organizationId, t.sort)],
+);
+
 export const services = pgTable(
   "services",
   {
@@ -475,13 +493,16 @@ export const services = pgTable(
     /** 0 = steuerfreie Heilbehandlung § 4 Nr. 14 UStG (nur mit therapeutischem Ziel!), 19 = kosmetisch/Verkauf */
     vatRate: integer("vat_rate").notNull().default(0),
     durationMin: integer("duration_min").notNull().default(30),
+    /** fachliche Art (= kind der Kategorie, s. serviceCategories) – Logik (Buchbarkeit, Wegegeld …) hängt daran */
     category: text("category").notNull().default("treatment"),
+    /** Kategorie der Praxis (Anzeige/Gruppierung); neu angelegte Leistungen ohne Angabe bekommt ein DB-Trigger zugeordnet */
+    categoryId: uuid("category_id").references(() => serviceCategories.id),
     gkvPosition: text("gkv_position"),
     requiresTherapeuticPurpose: boolean("requires_therapeutic_purpose").notNull().default(true),
     active: boolean("active").notNull().default(true),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("services_org_code").on(t.organizationId, t.code), uniqueIndex("services_org_id").on(t.organizationId, t.id)],
+  (t) => [uniqueIndex("services_org_code").on(t.organizationId, t.code), index("services_category_id").on(t.categoryId), uniqueIndex("services_org_id").on(t.organizationId, t.id)],
 );
 
 export const appointments = pgTable(

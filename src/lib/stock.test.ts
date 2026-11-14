@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { catalogViewOf, filterCatalog, groupByCategory, parseCatalogQuery } from "./catalog";
-import { correctionQuantity, isBelowMinimum, orderEmailText, reorderGroups, stockLimitError, stockOf, type ReorderSource } from "./stock";
+import { correctionQuantity, isBelowMinimum, lowStockSummary, orderEmailText, reorderGroups, stockLimitError, stockOf, type ReorderSource } from "./stock";
 
 describe("Warenwirtschaft: Bestand aus Bewegungen", () => {
   it("Bestand = Summe der Bewegungen", () => {
@@ -98,5 +98,30 @@ describe("Kataloge: Darstellung, Filter, Sortierung", () => {
       ["treatment", 2],
       ["cosmetic", 1],
     ]);
+  });
+});
+
+describe("Hinweis „Bestand knapp“ (Heute)", () => {
+  const p = (name: string, stock: number, minStock: number, trackStock = true, active = true) => ({ name, stock, minStock, trackStock, active });
+  it("nur Bestandsführung auf/unter Mindestbestand, knappste zuerst, höchstens 3 + Rest", () => {
+    const items = [p("Creme", 3, 5), p("Salbe", 0, 2), p("Feile", 5, 5), p("Spray", 9, 5), p("Ohne Führung", 0, 5, false), p("Archiv", 0, 5, true, false), p("Pflaster", 1, 4)];
+    const r = lowStockSummary(items);
+    expect(r.shown.map((x) => x.name)).toEqual(["Salbe", "Pflaster", "Creme"]);
+    expect(r.more).toBe(1);
+    expect(lowStockSummary([p("Spray", 9, 5)])).toEqual({ shown: [], more: 0 });
+  });
+});
+
+describe("Katalog: Reihenfolge „häufig gebucht“", () => {
+  const items = [
+    { id: "a", name: "Anamnese", code: "AN", category: "x", priceCents: 1, active: true },
+    { id: "b", name: "Behandlung", code: "PK", category: "x", priceCents: 1, active: true },
+    { id: "c", name: "Creme", code: "CR", category: "x", priceCents: 1, active: true },
+  ];
+  it("häufigste zuerst, Gleichstand alphabetisch; Produkte kennen die Sortierung nicht", () => {
+    const q = parseCatalogQuery({ sort: "haeufig" }, { sorts: ["haeufig", "name"], defaultSort: "haeufig" });
+    expect(filterCatalog(items, q, new Map([["c", 4], ["b", 4]])).map((i) => i.id)).toEqual(["b", "c", "a"]);
+    expect(parseCatalogQuery({}, { sorts: ["haeufig", "name"], defaultSort: "haeufig" }).sort).toBe("haeufig");
+    expect(parseCatalogQuery({ sort: "haeufig" }).sort).toBe("name");
   });
 });

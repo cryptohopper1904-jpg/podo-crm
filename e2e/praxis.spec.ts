@@ -6,7 +6,7 @@
  */
 import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp, setDemoBilling, withDemoOrg } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, insertLowStockProduct, resetDemoTotp, setDemoBilling, withDemoOrg } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -370,6 +370,61 @@ test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () 
   await expect(page.getByText("Im Kassenbuch erfasst.")).toBeVisible();
   await page.getByRole("link", { name: /DSFinV-K-Export/ }).click();
   await expect(page).toHaveURL(/\/kasse\/export/);
+});
+
+test("Leistungen: Kategorie umbenennen, Leistung archivieren gibt das Kürzel frei", async () => {
+  const cat = `Kat ${run}`;
+  await page.goto("/einstellungen/leistungen/kategorien");
+  await page.getByLabel("Name", { exact: true }).fill(cat);
+  await page.getByRole("button", { name: "Anlegen" }).click();
+  await expect(page.getByRole("heading", { name: cat })).toBeVisible();
+  const card = page.locator("li").filter({ has: page.getByRole("heading", { name: cat }) });
+  await card.getByText("Umbenennen, verschieben oder löschen").click();
+  await card.getByLabel(`Neuer Name für „${cat}“`).fill(`${cat} neu`);
+  await card.getByRole("button", { name: "Umbenennen" }).click();
+  await expect(page.getByRole("heading", { name: `${cat} neu` })).toBeVisible();
+
+  // Leistung mit eigenem Kürzel in der neuen Kategorie anlegen, archivieren, Kürzel neu vergeben
+  const code = `Z${run.slice(-4).toUpperCase()}`;
+  const neu = async (name: string) => {
+    await page.goto("/einstellungen/leistungen?neu=1");
+    await page.getByLabel(/^Kürzel/).fill(code);
+    await page.getByLabel("Bezeichnung", { exact: true }).fill(name);
+    // Formularfeld (die Werkzeugleiste hat ebenfalls eine Auswahl „Kategorie“ als Filter)
+    await page.locator(`select[name="categoryId"]`).selectOption({ label: `${cat} neu` });
+    await page.getByLabel("Preis (€, brutto)").fill("12,00");
+    await page.getByRole("button", { name: "Anlegen" }).click();
+    await expect(page.getByText("Gespeichert.")).toBeVisible();
+  };
+  await neu(`Erste ${run}`);
+  await page.goto("/einstellungen/leistungen?sort=name");
+  await page.getByRole("button", { name: `Erste ${run} archivieren` }).click();
+  // Liste „Aktiv“ ohne den archivierten Eintrag = Aktion fertig
+  await expect(page.getByRole("button", { name: `Erste ${run} archivieren` })).toHaveCount(0);
+  await page.goto("/einstellungen/leistungen?status=archiviert&sort=name");
+  await expect(page.getByText(`${code}_archiv`, { exact: true }).first()).toBeVisible();
+  await neu(`Zweite ${run}`);
+  await page.goto(`/einstellungen/leistungen?sort=name&q=${code}`);
+  await expect(page.getByRole("heading", { name: `Zweite ${run}` })).toBeVisible();
+
+  // früher (vor der Kürzel-Freigabe) archivierte Leistung blockiert ihr Kürzel → Hinweis im Archiv, Freigeben per Knopf
+  const early = `Y${run.slice(-4).toUpperCase()}`;
+  await withDemoOrg((q, org) => q("insert into services (organization_id, code, name, price_cents, active) values ($1, $2, $3, 100, false)", [org, early, `Früh ${run}`]));
+  await page.goto("/einstellungen/leistungen?status=archiviert&sort=name");
+  const note = page.getByRole("note").filter({ hasText: "blockier" });
+  await expect(note).toContainText(early);
+  await note.getByRole("button", { name: "Kürzel freigeben" }).click();
+  await expect(page.getByText(/Kürzel freigegeben\./)).toBeVisible();
+  await expect(page.getByText(`${early}_archiv`, { exact: true }).first()).toBeVisible();
+});
+
+test("Heute: Hinweis „Bestand knapp“ mit Link zum Nachbestellen", async () => {
+  await insertLowStockProduct(`Fußcreme ${run}`, 0, 5);
+  await page.goto("/heute");
+  const hint = page.getByRole("status").filter({ hasText: "Bestand knapp" });
+  await expect(hint).toContainText(`E2E Fußcreme ${run} (0 von mind. 5)`);
+  await hint.getByRole("link", { name: "nachbestellen" }).click();
+  await expect(page).toHaveURL(/\/produkte\/nachbestellen$/);
 });
 
 test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {

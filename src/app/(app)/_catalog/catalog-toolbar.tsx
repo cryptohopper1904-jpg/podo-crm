@@ -1,27 +1,32 @@
+import type { ReactNode } from "react";
 import { LayoutGrid, List, Rows3, Search } from "lucide-react";
-import { Button, Input, Select, cx } from "@/components/ui";
+import { Button, Input, Select, segmentGroupCls, segmentItemCls } from "@/components/ui";
 import {
   CATALOG_VIEW_LABELS,
   CATALOG_VIEWS,
+  PRODUCT_SORTS,
   SORT_LABELS,
-  SORTS,
   STATUS_FILTER_LABELS,
   STATUS_FILTERS,
   type CatalogKey,
   type CatalogQuery,
+  type CatalogSort,
   type CatalogView,
 } from "@/lib/catalog";
 import { setCatalogViewAction } from "./actions";
 
 const ICONS = { kacheln: LayoutGrid, liste: List, kompakt: Rows3 } as const;
 
-/** Filter als Suchparameter (Teilen/Zurück-Taste funktionieren), ohne leere Werte und ohne Standardwerte */
-export function catalogQs(q: CatalogQuery, extra: Record<string, string> = {}): string {
+/**
+ * Filter als Suchparameter (Teilen/Zurück-Taste funktionieren), ohne leere Werte und ohne Standardwerte.
+ * `defaultSort`: Standard-Sortierung des Katalogs (Leistungen: häufig gebucht, Produkte: Name).
+ */
+export function catalogQs(q: CatalogQuery, extra: Record<string, string> = {}, defaultSort: CatalogSort = "name"): string {
   const p = new URLSearchParams();
   if (q.q) p.set("q", q.q);
   if (q.category) p.set("kat", q.category);
   if (q.status !== "aktiv") p.set("status", q.status);
-  if (q.sort !== "name") p.set("sort", q.sort);
+  if (q.sort !== defaultSort) p.set("sort", q.sort);
   for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
   return p.toString();
 }
@@ -37,6 +42,9 @@ export function CatalogToolbar({
   categories,
   view,
   counts,
+  sorts = PRODUCT_SORTS,
+  defaultSort = "name",
+  children,
 }: {
   catalog: CatalogKey;
   basePath: string;
@@ -44,6 +52,11 @@ export function CatalogToolbar({
   categories: readonly (readonly [string, string])[];
   view: CatalogView;
   counts: { shown: number; active: number; archived: number };
+  /** erlaubte Sortierungen (Leistungen zusätzlich „häufig gebucht“) */
+  sorts?: readonly CatalogSort[];
+  defaultSort?: CatalogSort;
+  /** zusätzliche Bedienelemente in der unteren Zeile (z. B. Umschalter „Häufig gebucht / Alphabetisch“) */
+  children?: ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3">
@@ -67,30 +80,25 @@ export function CatalogToolbar({
           ))}
         </Select>
         <Select name="sort" defaultValue={query.sort} aria-label="Sortierung">
-          {SORTS.map((s) => (
+          {sorts.map((s) => (
             <option key={s} value={s}>Sortieren: {SORT_LABELS[s]}</option>
           ))}
         </Select>
         <Button type="submit" variant="secondary">Anzeigen</Button>
       </form>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted">{counts.shown} angezeigt</p>
-        <form action={setCatalogViewAction} className="flex gap-1 rounded-xl border border-border p-1" role="group" aria-label="Darstellung">
+        <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3">
+          <p className="text-sm text-muted">{counts.shown} angezeigt</p>
+          {children}
+        </div>
+        {/* gleicher Umschalter wie überall (ui.tsx segmentGroupCls) – passt auch auf 320 px */}
+        <form action={setCatalogViewAction} className={segmentGroupCls} role="group" aria-label="Darstellung">
           <input type="hidden" name="key" value={catalog} />
-          <input type="hidden" name="qs" value={catalogQs(query)} />
+          <input type="hidden" name="qs" value={catalogQs(query, {}, defaultSort)} />
           {CATALOG_VIEWS.map((v) => {
             const Icon = ICONS[v];
             return (
-              <button
-                key={v}
-                name="view"
-                value={v}
-                aria-pressed={view === v}
-                className={cx(
-                  "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-semibold",
-                  view === v ? "bg-primary text-on-primary" : "hover:bg-surface-2",
-                )}
-              >
+              <button key={v} name="view" value={v} aria-pressed={view === v} className={segmentItemCls(view === v)}>
                 <Icon size={16} aria-hidden /> {CATALOG_VIEW_LABELS[v]}
               </button>
             );

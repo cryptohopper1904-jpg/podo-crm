@@ -108,6 +108,21 @@ export async function listProducts(auth: AuthContext) {
 }
 export type ProductRow = Awaited<ReturnType<typeof listProducts>>[number];
 
+/**
+ * Hinweis „Bestand knapp“ (Heute-Seite): nur aktive Produkte mit Bestandsführung, Mindestbestand gesetzt und
+ * erreicht/unterschritten – gefiltert in der DB (nicht alle Produkte laden). Gleiche Regel wie isBelowMinimum.
+ */
+export async function lowStockProducts(auth: AuthContext) {
+  assertCan(auth, "invoices.read");
+  const org = auth.organization.id;
+  return withOrg(org, (tx) =>
+    tx
+      .select({ id: products.id, name: products.name, trackStock: products.trackStock, active: products.active, minStock: products.minStock, stock: stockSum })
+      .from(products)
+      .where(and(eq(products.organizationId, org), eq(products.active, true), eq(products.trackStock, true), sql`${products.minStock} > 0`, sql`${stockSum} <= ${products.minStock}`)),
+  );
+}
+
 export async function getProduct(auth: AuthContext, id: string) {
   assertCan(auth, "invoices.read");
   if (!z.uuid().safeParse(id).success) return null;
