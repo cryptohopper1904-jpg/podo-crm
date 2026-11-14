@@ -29,6 +29,8 @@ export type PaymentReceiptSnapshot = {
   fiscal: (Omit<FiscalInfo, "startedAt" | "finishedAt"> & { startedAt: string; finishedAt: string }) | null;
   /** Kassenvorgang ohne Signatur (TSE-Ausfall, z. B. SumUp-Terminalzahlung bei gestörter TSE) */
   tseFailed: boolean;
+  /** Beleg nachträglich erstellt (Anlegen bei der Buchung war gescheitert) – Zeitpunkt der Erstellung (ISO) */
+  belatedAt?: string | null;
 };
 
 export type PaymentReceiptPdfData = {
@@ -187,6 +189,14 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     ensure(12);
     text(`PDF nachträglich erzeugt am ${dateTimeDe(input.generatedAt)} aus den bei der Zahlung festgeschriebenen Angaben.`, ML, y, { size: 7.5, color: GRAY });
     y -= 12;
+  }
+  if (d.belatedAt) {
+    y -= 4;
+    for (const l of wrap(`Zahlungsbeleg nachträglich erstellt am ${dateTimeDe(d.belatedAt)} (Zahlung vom ${dateTimeDe(d.payment.paidAt)}; Angaben aus der gebuchten Zahlung und ihrer TSE-Signatur).`, width, 8.5)) {
+      ensure(11);
+      text(l, ML, y, { size: 8.5, color: GRAY });
+      y -= 11;
+    }
   }
   if (input.reproduction) {
     y -= 8;

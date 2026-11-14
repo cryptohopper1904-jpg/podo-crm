@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { audit } from "@/lib/audit";
 import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
-import { ArchiveIntegrityError } from "@/server/document-archive";
+import { ArchiveIntegrityError, ArchivePendingError } from "@/server/document-archive";
 import { invoicePdfForOrg, pdfResponseHeaders } from "@/server/invoice-delivery";
 
 /**
@@ -20,6 +20,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/invoices/[id
     pdf = await invoicePdfForOrg(auth.organization.id, id, { original: req.nextUrl.searchParams.get("original") === "1" });
   } catch (e) {
     // beschädigtes/fehlendes Archiv: nie stillschweigend neu erzeugen, sondern melden (Details im Server-Log)
+    if (e instanceof ArchivePendingError) return NextResponse.json({ error: e.message }, { status: 503, headers: { "Retry-After": "60" } });
     if (e instanceof ArchiveIntegrityError) return NextResponse.json({ error: e.message }, { status: 500 });
     throw e;
   }

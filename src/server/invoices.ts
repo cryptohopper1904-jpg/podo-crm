@@ -52,7 +52,7 @@ import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreS
 import { buildInvoiceSnapshot, readInvoiceSnapshot, smallBusinessNoteFor, withSnapshot } from "@/lib/invoice-snapshot";
 import { bookingDocumentRetentionEnd } from "@/lib/retention";
 import { findInvoiceArchive, reportToInbox, withArchiveCleanup, type PendingFiles } from "./document-archive";
-import { archivePaymentReceipts, paymentReceiptsFor, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
+import { archivePaymentReceipts, paymentReceiptsFor, paymentsMissingReceipt, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
 import { log } from "@/lib/log";
 import { discardStored } from "@/lib/storage";
 
@@ -1290,7 +1290,7 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
     }
     return { ...paid, receipts, receiptFailed, number: inv.number };
   });
-  if (result.receiptFailed) await reportReceiptRecordFailure(org, result.number, list.reduce((sum, p) => sum + p.amountCents, 0));
+  if (result.receiptFailed) await reportReceiptRecordFailure(org, { id: invoiceId, number: result.number }, list.reduce((sum, p) => sum + p.amountCents, 0));
   const archived = await archivePaymentReceipts(org, result.receipts, auth.user.id);
   await audit({
     organizationId: org,
@@ -1653,6 +1653,7 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   });
   const archive = inv.status === "draft" ? null : await findInvoiceArchive(tx, org, id);
   const receipts = inv.status === "draft" ? [] : await paymentReceiptsFor(tx, org, id);
+  const missingReceipts = inv.status === "draft" ? [] : await paymentsMissingReceipt(tx, org, id);
   return {
     invoice: inv,
     lines,
@@ -1703,6 +1704,8 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
       : null,
     /** Belege über Zahlungseingänge nach Ausstellung (Kassenbelege) */
     paymentReceipts: receipts,
+    /** TSE-signierte Zahlungen nach Ausstellung ohne Zahlungsbeleg (Anlegen bei der Buchung gescheitert) */
+    paymentsMissingReceipt: missingReceipts,
     cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
     cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
   };

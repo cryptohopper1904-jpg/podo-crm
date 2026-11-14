@@ -22,7 +22,7 @@ import {
 import { createPaymentLink, sendPaymentLink, simulateTestPayment, startTerminalPayment } from "@/server/card-payments";
 import { sendInvoiceEmail } from "@/server/invoice-delivery";
 import { ArchiveIntegrityError } from "@/server/document-archive";
-import { PaymentReceiptError, sendPaymentReceiptEmail } from "@/server/payment-receipts";
+import { createMissingPaymentReceipt, PaymentReceiptError, sendPaymentReceiptEmail } from "@/server/payment-receipts";
 import { createDunnings, markDunningPosted, sendDunningEmail } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, type DunningStage } from "@/lib/dunning";
 
@@ -116,16 +116,37 @@ export async function addPaymentAction(_: SimpleState, form: FormData): Promise<
   const parsed = z.array(paymentInput).min(1, "Bitte eine Zahlung angeben.").safeParse(parseJson(form.get("payments")));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   let receipts: { id: string }[] = [];
+  let receiptFailed = false;
   try {
-    receipts = (await addPayments(auth, invoiceId, parsed.data)).receipts;
+    const r = await addPayments(auth, invoiceId, parsed.data);
+    receipts = r.receipts;
+    receiptFailed = r.receiptFailed;
   } catch (e) {
     return { error: errorMessage(e) };
   }
   revalidatePath(`/rechnungen/${invoiceId}`);
   revalidatePath("/rechnungen");
+  // Zahlung gebucht, aber Zahlungsbeleg nicht angelegt: deutliche Warnung oben auf der Rechnungsseite (kein Formular
+  // mehr offen – sonst würde die Zahlung womöglich ein zweites Mal erfasst)
+  if (receiptFailed && z.uuid().safeParse(invoiceId).success) redirect(`/rechnungen/${invoiceId}?zahlungsbeleg=fehlt`);
   // Kassenvorgang: Zahlungsbeleg direkt zum Aushändigen anbieten (Drucken/PDF/E-Mail oben auf der Rechnungsseite)
   if (receipts.length && z.uuid().safeParse(invoiceId).success) redirect(`/rechnungen/${invoiceId}?beleg=${receipts.map((r) => r.id).join(",")}`);
   return { success: "Zahlung erfasst." };
+}
+
+export async function createMissingReceiptAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  const paymentId = z.uuid().safeParse(form.get("paymentId"));
+  if (!id.success || !paymentId.success) return { error: "Zahlung nicht gefunden." };
+  let receipt: { id: string; number: string };
+  try {
+    receipt = await createMissingPaymentReceipt(auth, id.data, paymentId.data);
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+  refresh(id.data);
+  redirect(`/rechnungen/${id.data}?beleg=${receipt.id}`);
 }
 
 export async function cancelInvoiceAction(_: SimpleState, form: FormData): Promise<SimpleState> {

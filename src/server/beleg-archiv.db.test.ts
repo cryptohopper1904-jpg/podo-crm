@@ -555,20 +555,100 @@ afterEach(() => vi.restoreAllMocks());
     expect((await bundle(org, inv.id)).paymentReceipts[0].archived).toBe(true);
   });
 
-  it("Zahlungsbeleg ohne Archiv und weiter gestörter Ablage: Reproduktion mit Kennzeichnung", async () => {
+  it("Zahlungsbeleg ohne Archiv bei weiter gestörter Ablage: keine unarchivierte Fassung (abgelehnt), danach Archiv", async () => {
     const { org, auth, patient } = await setup();
     const inv = await invoices.createInvoice(auth, base(patient));
+    let receiptId = "";
     failPut = true;
     try {
       const res = await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
       expect(res.status).toBe("paid");
-      drawn = [];
-      const pdf = await receipts.paymentReceiptPdfForOrg(org, inv.id, res.receipts[0].id);
-      expect(pdf?.variant).toBe("reproduction");
-      expect(drawn.join(" ")).toMatch(/Reproduktion \(kein archiviertes Original\): Die Angaben wurden bei der Zahlung festgeschrieben/);
+      receiptId = res.receipts[0].id;
+      await rejects(receipts.paymentReceiptPdfForOrg(org, inv.id, receiptId), /PDF dieses Belegs wird gerade erzeugt/);
+      await rejects(receipts.sendPaymentReceiptEmail(auth, inv.id, receiptId), /PDF dieses Belegs wird gerade erzeugt/);
     } finally {
       failPut = false;
     }
+    expect((await receipts.paymentReceiptPdfForOrg(org, inv.id, receiptId))?.variant).toBe("archive");
+    const audits = await f.asOrg(org, (c) => c.query("select count(*)::int as n from audit_log where organization_id = $1 and action = 'payment_receipt.archive_catchup'", [org]));
+    expect(audits.rows[0].n).toBe(1);
+  });
+
+  it("Rechnung: Archivfehler → spätere Zahlung → Nachholen: Archiv-PDF wie ausgestellt (ohne spätere Zahlung), mit Vermerk; bis dahin abgelehnt", async () => {
+    const { org, auth, patient } = await setup();
+    await withFailingTrigger("document_archive", `new.organization_id = '${org}'::uuid`, async () => {
+      const inv = await invoices.createInvoice(auth, base(patient, { payments: [pay("card", 2000)] }));
+      // Ausstellung liegt „eine Stunde zurück“ (Vermerk „nachträglich erzeugt“ ab 10 Minuten); Zahlung beim Ausstellen mitverschieben
+      await f.asOrg(org, (c) => c.query("update invoices set created_at = created_at - interval '1 hour' where id = $1", [inv.id]));
+      await owner.query(`begin; select set_config('app.org_id', '${org}', true); alter table payments disable trigger user; update payments set paid_at = paid_at - interval '1 hour' where invoice_id = '${inv.id}'; alter table payments enable trigger user; commit;`);
+      await invoices.addPayments(auth, inv.id, [pay("cash", 4500)]);
+      // solange die Ablage scheitert: Download, Portal und E-Mail lehnen ab (keine unarchivierte Fassung)
+      await rejects(delivery.invoicePdfForOrg(org, inv.id), /PDF dieses Belegs wird gerade erzeugt/);
+      await rejects(delivery.invoicePdfForOrg(org, inv.id, { patientId: patient }), /PDF dieses Belegs wird gerade erzeugt/);
+      await rejects(delivery.sendInvoiceEmail(auth, inv.id), /PDF dieses Belegs wird gerade erzeugt/);
+      return inv;
+    }).then(async (inv) => {
+      drawn = [];
+      const pdf = await delivery.invoicePdfForOrg(org, inv.id);
+      expect(pdf?.variant).toBe("archive");
+      const text = drawn.join("\n");
+      expect(text).toContain("Bereits bezahlt per Karte: 20,00 €. Offen: 45,00 €.");
+      expect(text).not.toMatch(/in bar/);
+      expect(text).toMatch(/PDF nachträglich erzeugt am .* aus den bei Ausstellung festgeschriebenen Angaben/);
+      const audits = await f.asOrg(org, (c) => c.query("select count(*)::int as n from audit_log where organization_id = $1 and action = 'invoice.archive_catchup'", [org]));
+      expect(audits.rows[0].n).toBe(1);
+    });
+  });
+
+  it("Zahlungsbeleg fehlt: gezielt nachträglich erstellen (idempotent, Vermerk, nur für Zahlungen nach Ausstellung mit TSE)", async () => {
+    const { org, auth, patient } = await setup();
+    const inv = await invoices.createInvoice(auth, base(patient));
+    const res = await withFailingTrigger("payment_receipts", `new.organization_id = '${org}'::uuid`, () => invoices.addPayments(auth, inv.id, [pay("cash", 6500)]));
+    expect(res).toMatchObject({ receiptFailed: true, receipts: [] });
+    const missing = (await bundle(org, inv.id)).paymentsMissingReceipt;
+    expect(missing).toHaveLength(1);
+    drawn = [];
+    const r1 = await receipts.createMissingPaymentReceipt(auth, inv.id, missing[0].id);
+    expect(r1).toMatchObject({ created: true });
+    expect(r1.number).toMatch(/^ZB\d{4}-\d{4}$/);
+    expect(drawn.join(" ")).toMatch(/Zahlungsbeleg nachträglich erstellt am/);
+    const r2 = await receipts.createMissingPaymentReceipt(auth, inv.id, missing[0].id);
+    expect(r2).toMatchObject({ id: r1.id, number: r1.number, created: false });
+    const b = await bundle(org, inv.id);
+    expect(b.paymentsMissingReceipt).toEqual([]);
+    expect(b.paymentReceipts[0]).toMatchObject({ id: r1.id, archived: true });
+    const data = await f.asOrg(org, async (c) => (await c.query("select data from payment_receipts where id = $1", [r1.id])).rows[0].data);
+    expect(data.belatedAt).toBeTruthy();
+    expect(data.openAfterCents).toBe(0);
+    // Zahlung beim Ausstellen (steht auf dem Beleg selbst): abgelehnt
+    const rec = await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [pay("cash", 6500)] }));
+    const payId = (await bundle(org, rec.id)).payments[0].id;
+    await rejects(receipts.createMissingPaymentReceipt(auth, rec.id, payId), /beim Ausstellen erfasst/);
+  });
+
+  it("Nachhol-Lauf (Cron): Fehlversuch mit Backoff, ältester zuerst, Zeitbudget; Erfolg löscht den Versuch", async () => {
+    const { org, auth, patient } = await setup();
+    const catchUp = await import("./archive-catchup");
+    const inv = await invoices.createInvoice(auth, base(patient));
+    failPut = true;
+    try {
+      await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
+      const run1 = await catchUp.catchUpArchives({ organizationIds: [org], respectBackoff: true });
+      expect(run1.receipts).toEqual({ ok: 0, failed: 1 });
+    } finally {
+      failPut = false;
+    }
+    const attempt = await f.asOrg(org, async (c) => (await c.query("select attempts, last_error from archive_catchup_attempts")).rows);
+    expect(attempt).toHaveLength(1);
+    expect(attempt[0].attempts).toBe(1);
+    // Backoff: sofort danach nicht fällig
+    expect((await catchUp.catchUpArchives({ organizationIds: [org], respectBackoff: true })).receipts).toEqual({ ok: 0, failed: 0 });
+    // Zeitbudget erschöpft: nichts bearbeitet, „truncated“
+    await f.asOrg(org, (c) => c.query("update archive_catchup_attempts set last_attempt_at = now() - interval '2 hours'"));
+    expect(await catchUp.catchUpArchives({ organizationIds: [org], respectBackoff: true, budgetMs: -1 })).toMatchObject({ truncated: true, receipts: { ok: 0, failed: 0 } });
+    const run3 = await catchUp.catchUpArchives({ organizationIds: [org], respectBackoff: true });
+    expect(run3.receipts).toEqual({ ok: 1, failed: 0 });
+    expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from archive_catchup_attempts")).rows[0].n)).toBe(0);
   });
 
   it("Altbeleg ohne Archiv/Momentaufnahme: Reproduktion mit Fußnote, aktuelle Stammdaten", async () => {

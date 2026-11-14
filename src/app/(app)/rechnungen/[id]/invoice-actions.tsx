@@ -11,6 +11,7 @@ import {
   pushToLexofficeAction,
   sendInvoiceEmailAction,
   sendPaymentReceiptEmailAction,
+  createMissingReceiptAction,
   sendPaymentLinkAction,
   simulatePaymentAction,
   startTerminalAction,
@@ -18,6 +19,27 @@ import {
 import { newPaymentRow, PaymentsEditor, paymentsToJson, type PaymentRow } from "../payments-editor";
 
 /** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
+/** Zahlungsbeleg für eine gebuchte, TSE-signierte Zahlung nachträglich erstellen (Anlegen war gescheitert) */
+export function CreateMissingReceiptButton({ invoiceId, paymentId, label }: { invoiceId: string; paymentId: string; label: string }) {
+  const [state, action, pending] = useActionState(createMissingReceiptAction, undefined);
+  return (
+    <form
+      onSubmit={(e) => {
+        if (!window.confirm(`Zahlungsbeleg für ${label} nachträglich erstellen?`)) return e.preventDefault();
+        keepValues(action)(e);
+      }}
+      className="flex flex-col gap-1"
+    >
+      <input type="hidden" name="invoiceId" value={invoiceId} />
+      <input type="hidden" name="paymentId" value={paymentId} />
+      <Button type="submit" variant="secondary" disabled={pending}>
+        {pending ? "Erstelle …" : "Zahlungsbeleg nachträglich erstellen"}
+      </Button>
+      <FormError message={state?.error} />
+    </form>
+  );
+}
+
 /** Zahlungsbelege direkt nach „Zahlung erfassen“ ausgeben (Kassenbeleg, § 146a Abs. 2 AO) */
 export function ReceiptLinks({ invoiceId, receipts, recipientEmail }: { invoiceId: string; receipts: { id: string; number: string }[]; recipientEmail: string | null }) {
   return (

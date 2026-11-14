@@ -9,6 +9,9 @@ import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/li
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 import { readArchivedPdf } from "./document-archive";
 import { catchUpArchives, missingArchives } from "./archive-catchup";
+
+/** Nachholen fehlender Archiv-PDFs vor dem Export: höchstens so viele je Art */
+const EXPORT_CATCHUP_LIMIT = 200;
 import { log } from "@/lib/log";
 
 type Row = Record<string, unknown>;
@@ -197,7 +200,8 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     // 1b) Beleg-Archiv (GoBD): vorher fehlende PDFs nachholen (Ablage beim Ausstellen gescheitert), dann die archivierten
     //     Original-PDFs entschlüsselt, Prüfsumme in tables/document_archive.json
     try {
-      await catchUpArchives({ organizationIds: [org], limitPerOrg: 10_000 });
+      // höchstens EXPORT_CATCHUP_LIMIT je Art (der Export soll nicht minutenlang PDFs erzeugen); der Rest steht im README
+      await catchUpArchives({ organizationIds: [org], limitPerOrg: EXPORT_CATCHUP_LIMIT });
     } catch (e) {
       log.error("export.archive_catchup_failed", { error: e });
     }
@@ -354,7 +358,8 @@ function readme(p: {
       ? [
           "",
           `ACHTUNG: ${p.notArchived.length} Beleg(e) seit Einführung des Beleg-Archivs ohne archiviertes PDF (Ablage gescheitert, auch`,
-          "der Nachhol-Lauf vor dem Export war erfolglos – bitte den Support kontaktieren). Ihre Angaben sind in den Tabellen",
+          `der Nachhol-Lauf vor dem Export war erfolglos oder auf ${EXPORT_CATCHUP_LIMIT} je Art begrenzt – bitte später erneut exportieren`,
+          "bzw. den Support kontaktieren). Ihre Angaben sind in den Tabellen",
           `festgeschrieben: ${p.notArchived.slice(0, 50).join(", ")}${p.notArchived.length > 50 ? " …" : ""}`,
         ]
       : []),

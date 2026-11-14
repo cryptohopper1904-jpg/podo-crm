@@ -12,7 +12,7 @@ import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
-import { archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
+import { ArchivePendingError, archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
 import { log } from "@/lib/log";
 import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
@@ -31,7 +31,10 @@ export type InvoicePdfVariant = "archive" | "storno" | "reproduction";
  *  - bei einer stornierten Rechnung der Neudruck wie ausgestellt (festgeschriebene Angaben, Anrechnungen, Zahlungen
  *    beim Ausstellen) mit Vermerk „STORNIERT durch Stornorechnung Nr. … vom …“ und ohne GiroCode
  *    (`original: true` liefert stattdessen das archivierte Original);
- *  - nur bei Altbelegen ohne Archiv eine Neuerzeugung, gekennzeichnet als „Reproduktion“ (Fußnote).
+ *  - nur bei Altbelegen ohne Archiv (vor Einführung) eine Neuerzeugung, gekennzeichnet als „Reproduktion“ (Fußnote).
+ * Belege ab Einführung des Archivs, deren Ablage gescheitert ist, werden zuerst nachgeholt (aus den festgeschriebenen
+ * Angaben archiviert, dann das Archiv ausgeliefert). Scheitert auch das, wird abgelehnt (ArchivePendingError) –
+ * es wird nie eine unarchivierte Fassung ausgehändigt.
  */
 export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean } = {}) {
   if (!z.uuid().safeParse(invoiceId).success) return null;
@@ -54,11 +57,14 @@ export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { p
     if (!row) throw new InvoiceError("Archivierter Beleg nicht gefunden.");
     return { bytes: await readArchivedPdf(row), filename, bundle, variant: "archive" as InvoicePdfVariant };
   }
+  // Beleg ab Einführung des Archivs ohne Archiv-PDF: nicht unarchiviert aushändigen (auch nicht als „Original“).
+  // Ausnahme: Neudruck einer stornierten Rechnung mit Stornovermerk (ungültig gekennzeichnet, keine Zahlungsaufforderung).
+  if (!archived && bundle.fromSnapshot && (!cancelled || opts.original)) throw new ArchivePendingError();
   const data = await invoicePdfData(bundle);
   const bytes = await renderInvoicePdf({
     ...data,
     cancellation: cancelled ? { number: bundle.cancelledBy?.number ?? null, issuedAt: bundle.cancelledBy?.issuedAt ?? null } : null,
-    reproduction: archived ? null : { generatedAt: new Date() },
+    reproduction: archived ? null : { generatedAt: new Date(), fromSnapshot: bundle.fromSnapshot },
   });
   return { bytes, filename, bundle, variant: (cancelled ? "storno" : "reproduction") as InvoicePdfVariant };
 }
@@ -94,7 +100,9 @@ export async function ensureInvoiceArchived(org: string, invoiceId: string, user
         .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
       if (!inv || inv.status === "draft" || !inv.number || !inv.snapshot) return false;
       if (await findInvoiceArchive(tx, org, invoiceId)) return true;
-      await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+      const row = await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+      // erfolgreiches Nachholen protokollieren (GoBD: Nachvollziehbarkeit, wann das Archiv-PDF entstand)
+      await audit({ organizationId: org, userId, action: "invoice.archive_catchup", entity: "invoice", entityId: invoiceId, meta: { number: inv.number, sha256: row.sha256 } });
       return true;
     }),
   );
@@ -111,7 +119,8 @@ export async function archiveInvoicePdf(tx: Tx, org: string, invoiceId: string, 
   const data = await invoicePdfData(bundle, tx);
   // Nachholen für eine inzwischen stornierte Rechnung: das Original zeigt den Stand der Ausstellung (nicht „storniert“)
   if (data.invoice.status === "cancelled" && data.invoice.kind !== "credit_note") data.invoice = { ...data.invoice, status: "issued" };
-  const bytes = await renderInvoicePdf(data);
+  // Erzeugungszeitpunkt: beim Nachholen (> 10 min nach dem Ausstellen) dezenter Vermerk auf dem PDF
+  const bytes = await renderInvoicePdf({ ...data, generatedAt: new Date() });
   return archivePdf(
     tx,
     org,

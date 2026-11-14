@@ -266,6 +266,22 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     expectInsideBody(n);
   });
 
+  it("Reproduktion mit Momentaufnahme: eigener Wortlaut (festgeschriebene Angaben statt heutiger Stammdaten)", async () => {
+    await renderInvoicePdf({ ...invoice(1), reproduction: { generatedAt: "2026-11-14T10:00:00Z", fromSnapshot: true } });
+    const body = bodyTexts(drawn).join(" ");
+    expect(body).toContain("aus den bei Ausstellung festgeschriebenen Angaben erzeugt");
+    expect(body).not.toContain("heutigen Stammdaten");
+  });
+
+  it("nachgeholtes Archiv-PDF (> 10 min nach dem Ausstellen): Vermerk; sofort erzeugt: kein Vermerk", async () => {
+    const base = invoice(1);
+    await renderInvoicePdf({ ...base, invoice: { ...base.invoice, createdAt: "2026-11-02T09:00:00Z" }, generatedAt: "2026-11-02T09:30:00Z" });
+    expect(drawn.map((t) => t.text).join(" ")).toMatch(/PDF nachträglich erzeugt am 02\.11\.2026, 10:30/);
+    drawn = [];
+    await renderInvoicePdf({ ...base, invoice: { ...base.invoice, createdAt: "2026-11-02T09:00:00Z" }, generatedAt: "2026-11-02T09:00:02Z" });
+    expect(drawn.map((t) => t.text).join(" ")).not.toMatch(/nachträglich/);
+  });
+
   it("Altbeleg ohne Archiv: Reproduktion mit Fußnote", async () => {
     const n = await pages(await renderInvoicePdf({ ...invoice(1), reproduction: { generatedAt: "2026-11-14T10:00:00Z" } }));
     const body = bodyTexts(drawn);

@@ -53,7 +53,7 @@ import { getInvoice } from "@/server/invoices";
 import { invoiceDunningList } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, dunningTotalCents, isDunnable, type DunningStage } from "@/lib/dunning";
 import { DunningLetterActions } from "../mahnungen/dunning-actions";
-import { CancelPanel, EmailInvoiceButton, EmailPaymentReceiptButton, LexofficeButton, PaymentPanel, ReceiptLinks, SumupPanel } from "./invoice-actions";
+import { CancelPanel, CreateMissingReceiptButton, EmailInvoiceButton, EmailPaymentReceiptButton, LexofficeButton, PaymentPanel, ReceiptLinks, SumupPanel } from "./invoice-actions";
 import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Rechnung" };
@@ -94,7 +94,7 @@ const printCss = (runningHead: string, draft: boolean) => `
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
   const { id } = await props.params;
-  const { von, beleg } = await props.searchParams;
+  const { von, beleg, zahlungsbeleg } = await props.searchParams;
   const auth = await requireAuth("invoices.read");
   const data = await getInvoice(auth, id);
   if (!data) notFound();
@@ -214,6 +214,27 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             </Link>
           ) : null}
         </div>
+        {data.paymentsMissingReceipt.length || zahlungsbeleg === "fehlt" ? (
+          <Card className="w-full border-2 border-danger" role="alert">
+            <h2 className="mb-1 font-display text-lg font-semibold text-danger">Zahlung gebucht – Zahlungsbeleg fehlt</h2>
+            <p className="mb-3 text-sm">
+              Die Zahlung ist gebucht und TSE-signiert, der Beleg über den Zahlungseingang konnte aber nicht erstellt werden. Bitte die Zahlung
+              <strong> nicht erneut erfassen</strong> und Support bzw. Praxisinhaber:in informieren.
+              {canWrite ? " Der Beleg lässt sich hier nachträglich erstellen (eigene Nummer, Vermerk „nachträglich erstellt“)." : ""}
+            </p>
+            <ul className="flex flex-col gap-2">
+              {data.paymentsMissingReceipt.map((mp) => {
+                const label = `${PAYMENT_METHOD_LABEL[mp.method] ?? mp.method} ${money(mp.amountCents)} vom ${dateTimeDe(mp.paidAt)}`;
+                return (
+                  <li key={mp.id} className="flex flex-wrap items-center gap-3 text-sm">
+                    <span>{label}</span>
+                    {canWrite ? <CreateMissingReceiptButton invoiceId={inv.id} paymentId={mp.id} label={label} /> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </Card>
+        ) : null}
         {freshReceipts.length ? (
           <Card className="w-full border-2 border-primary" role="status">
             <h2 className="mb-1 font-display text-lg font-semibold">Zahlung erfasst – Zahlungsbeleg aushändigen</h2>
