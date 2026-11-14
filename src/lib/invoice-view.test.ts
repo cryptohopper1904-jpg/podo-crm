@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
-import { accountingServiceDate, invoiceAsIssued, paidAtIssue, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
+import { accountingServiceDate, invoiceAsIssued, openSumRow, paidAtIssue, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
 const fmt = { dateDe, money };
@@ -155,10 +155,19 @@ describe("Beleg im Stand der Ausstellung (GoBD, § 14 UStG)", () => {
   const later = { paidAt: new Date("2026-11-20T10:00:00Z"), method: "cash", amountCents: 7500 };
 
   it("trennt Zahlungen beim Ausstellen (gleicher Zeitstempel, Altbestand davor) von späteren", () => {
-    expect(paidAtIssue(atIssue, created)).toBe(true);
-    expect(paidAtIssue({ paidAt: "2026-01-05T12:00:00Z" }, created)).toBe(true);
-    expect(paidAtIssue(later, created)).toBe(false);
-    expect(paidAtIssue(later, null)).toBe(true);
+    const crm = { createdAt: created, source: "crm" };
+    expect(paidAtIssue(atIssue, crm)).toBe(true);
+    expect(paidAtIssue({ paidAt: "2026-01-05T12:00:00Z" }, crm)).toBe(true);
+    expect(paidAtIssue(later, crm)).toBe(false);
+    expect(paidAtIssue(later, { createdAt: null })).toBe(true);
+  });
+
+  it("SumUp-Zahlungen zählen nie zum Ausstellungsstand, Excel-Import immer", () => {
+    const sumup = { paidAt: "2026-11-13T09:00:00Z", externalRef: "sumup:tx-1" };
+    expect(paidAtIssue(sumup, { createdAt: created, source: "crm" })).toBe(false);
+    expect(paidAtIssue(sumup, { createdAt: null })).toBe(false);
+    expect(paidAtIssue(later, { createdAt: created, source: "excel-import" })).toBe(true);
+    expect(paidAtIssue({ ...later, externalRef: "excel:R1" }, { createdAt: created, source: "excel-import" })).toBe(true);
   });
 
   it("spätere Zahlung (bar) ändert Status, paidCents und Zahlungshinweis des Belegs nicht", () => {
@@ -184,5 +193,15 @@ describe("Beleg im Stand der Ausstellung (GoBD, § 14 UStG)", () => {
     // 1500 angerechnet beim Ausstellen, 8000 später per Zahlungslink
     const doc = invoiceAsIssued({ ...inv, createdAt: created, status: "paid", paidCents: 9500 }, [{ ...later, method: "payment_link", amountCents: 8000 }]);
     expect(doc.invoice).toMatchObject({ status: "partially_paid", paidCents: 1500 });
+  });
+});
+
+describe("Summenzeile „offen“ (Druckansicht und PDF)", () => {
+  it("nur mit Zahlung/Anrechnung bzw. Erstattung, nie bei Storno", () => {
+    expect(openSumRow({ status: "issued", totalCents: 9500, paidCents: 0 })).toBeNull();
+    expect(openSumRow({ status: "partially_paid", totalCents: 9500, paidCents: 2000 })).toEqual({ label: "offen", cents: 7500 });
+    expect(openSumRow({ status: "paid", totalCents: 9500, paidCents: 9500 })).toBeNull();
+    expect(openSumRow({ status: "issued", totalCents: -9500, paidCents: 0 })).toEqual({ label: "zu erstatten", cents: 9500 });
+    expect(openSumRow({ status: "cancelled", totalCents: 9500, paidCents: 2000 })).toBeNull();
   });
 });

@@ -359,16 +359,30 @@ export function legacyHeading(
   }
 }
 
+/** Rechnungsangaben, die für den Ausstellungsstand nötig sind (invoices-Zeile bzw. InvoicePdfData.invoice) */
+export type IssueInfo = {
+  /** invoices.created_at; null = unbekannt (reine Darstellungsdaten) → alle Zahlungen gelten als beim Ausstellen erfasst */
+  createdAt: Date | string | null;
+  /** invoices.source: „crm“ = in PodoHero ausgestellt; sonst übernommener Altbestand (z. B. Excel-Import) */
+  source?: string | null;
+};
+
+/** Zahlung eines Zahlungsanbieters (SumUp-Webhook) – kommt immer nach dem Ausstellen */
+export const isProviderPayment = (pay: { externalRef?: string | null }) => !!pay.externalRef?.toLowerCase().startsWith("sumup:");
+
 /**
  * Zahlung im Ausstellungsvorgang erfasst? Beim Ausstellen (createInvoice/createDeposit) laufen Rechnung und Zahlungen
- * in derselben Transaktion – paid_at und created_at sind dann beide `now()` der Transaktion, also gleich. Übernommene
- * Altbestände (Excel-Import, Demo) tragen das frühere Zahlungsdatum (≤ Anlage). Jede später erfasste Zahlung
- * („Zahlung erfassen“, SumUp) liegt danach. Ohne `createdAt` (reine Darstellungsdaten) gilt jede Zahlung als
- * beim Ausstellen erfasst.
+ * in derselben Transaktion – paid_at und created_at sind dann beide `now()` der Transaktion, also gleich. Jede später
+ * erfasste Zahlung („Zahlung erfassen“) liegt danach. Regeln:
+ *  - übernommener Altbestand (source ≠ „crm“, z. B. Excel-Import): alle Zahlungen gehören zum Beleg
+ *  - Zahlungen eines Anbieters (external_ref „sumup:…“): nie (Zeitstempel kommt vom Anbieter)
+ *  - sonst paid_at ≤ created_at; ohne created_at (reine Darstellungsdaten) alle
  */
-export function paidAtIssue(pay: { paidAt: Date | string }, createdAt: Date | string | null | undefined): boolean {
-  if (!createdAt) return true;
-  return new Date(pay.paidAt).getTime() <= new Date(createdAt).getTime();
+export function paidAtIssue(pay: { paidAt: Date | string; externalRef?: string | null }, inv: IssueInfo): boolean {
+  if (inv.source && inv.source !== "crm") return true;
+  if (isProviderPayment(pay)) return false;
+  if (!inv.createdAt) return true;
+  return new Date(pay.paidAt).getTime() <= new Date(inv.createdAt).getTime();
 }
 
 /**
@@ -380,14 +394,24 @@ export function paidAtIssue(pay: { paidAt: Date | string }, createdAt: Date | st
  * Storno: Der Status „storniert“ bleibt (der Beleg wird wie bisher ohne Zahlungsaufforderung gedruckt).
  */
 export function invoiceAsIssued<
-  I extends { status: string; totalCents: number; paidCents: number; paymentLinkUrl?: string | null; createdAt?: Date | string | null },
-  P extends { paidAt: Date | string; amountCents: number },
+  I extends IssueInfo & { status: string; totalCents: number; paidCents: number; paymentLinkUrl?: string | null },
+  P extends { paidAt: Date | string; amountCents: number; externalRef?: string | null },
 >(inv: I, payments: P[]): { invoice: I; payments: P[]; laterPayments: P[] } {
-  const atIssue = payments.filter((p) => paidAtIssue(p, inv.createdAt));
-  const laterPayments = payments.filter((p) => !paidAtIssue(p, inv.createdAt));
+  const atIssue = payments.filter((p) => paidAtIssue(p, inv));
+  const laterPayments = payments.filter((p) => !paidAtIssue(p, inv));
   const paidCents = inv.paidCents - laterPayments.reduce((s, p) => s + p.amountCents, 0);
   const status = inv.status === "draft" || inv.status === "cancelled" ? inv.status : statusFromPayments(inv.totalCents, paidCents);
   return { invoice: { ...inv, paidCents, status, paymentLinkUrl: null }, payments: atIssue, laterPayments };
+}
+
+/**
+ * Summenzeile „offen“ bzw. „zu erstatten“ unter dem Gesamtbetrag (Druckansicht und PDF gleich): nur, wenn schon etwas
+ * bezahlt/angerechnet ist oder zu erstatten ist – ohne Zahlung wäre sie gleich dem Gesamtbetrag. Nicht bei Storno.
+ */
+export function openSumRow(inv: { status: string; totalCents: number; paidCents: number }): { label: string; cents: number } | null {
+  const open = inv.totalCents - inv.paidCents;
+  if (inv.status === "cancelled" || open === 0 || (inv.paidCents === 0 && open > 0)) return null;
+  return { label: open < 0 ? "zu erstatten" : "offen", cents: Math.abs(open) };
 }
 
 const METHOD_PHRASE: Record<string, string> = {

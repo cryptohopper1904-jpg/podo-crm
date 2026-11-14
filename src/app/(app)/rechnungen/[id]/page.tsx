@@ -33,6 +33,7 @@ import {
   invoiceAsIssued,
   invoiceHeading,
   invoiceService,
+  openSumRow,
   paymentNoteLines,
   invoiceRecipient,
   isReceiptLike,
@@ -107,6 +108,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   // darunter außerhalb des Belegs. Status/Badge/„Zahlung erfassen“ oben zeigen den aktuellen Stand.
   const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(inv, data.payments);
   const docOpen = doc.totalCents - doc.paidCents;
+  const docOpenRow = openSumRow(doc);
   const hasExempt = hasExemptNote(o, inv, lines);
   const publicNotes = publicNoteText(inv.notes);
   const internalNotes = internalNoteLines(inv.notes);
@@ -340,10 +342,10 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <dd className="text-right tabular-nums">{money(r.cents)}</dd>
             </div>
           ))}
-          {doc.status !== "cancelled" && docOpen !== 0 ? (
+          {docOpenRow ? (
             <>
-              <dt className="font-semibold">{docOpen < 0 ? "zu erstatten" : "offen"}</dt>
-              <dd className="text-right font-semibold tabular-nums">{money(Math.abs(docOpen))}</dd>
+              <dt className="font-semibold">{docOpenRow.label}</dt>
+              <dd className="text-right font-semibold tabular-nums">{money(docOpenRow.cents)}</dd>
             </>
           ) : null}
         </dl>
@@ -455,7 +457,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             {laterPayments.map((pay) => (
               <li key={pay.id} className="flex justify-between gap-4 tabular-nums">
                 <span>
-                  Zahlung erfasst am {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
+                  {pay.amountCents < 0 ? "Erstattung" : "Zahlung"} erfasst am {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
                   {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
                 </span>
                 <span>{money(pay.amountCents)}</span>
@@ -463,8 +465,23 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             ))}
           </ul>
           <p className="mt-2 text-muted">
-            {open === 0 ? "Vollständig bezahlt." : open > 0 ? `Noch offen: ${money(open)}.` : `Zu erstatten: ${money(-open)}.`} Der Beleg oben bleibt wie
-            ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt.
+            {inv.status === "cancelled" ? (
+              data.cancelledBy ? (
+                <>
+                  Rechnung storniert – Erstattung bzw. Verrechnung siehe Stornorechnung{" "}
+                  <Link href={`/rechnungen/${data.cancelledBy.id}`} className="font-semibold text-primary underline">{data.cancelledBy.number}</Link>.
+                </>
+              ) : (
+                "Rechnung storniert – Erstattung bzw. Verrechnung siehe Stornorechnung."
+              )
+            ) : open === 0 ? (
+              "Vollständig bezahlt."
+            ) : open > 0 ? (
+              `Noch offen: ${money(open)}.`
+            ) : (
+              `Zu erstatten: ${money(-open)}.`
+            )}{" "}
+            Der Beleg oben bleibt wie ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt.
           </p>
         </Card>
       ) : null}

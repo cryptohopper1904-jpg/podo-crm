@@ -76,7 +76,7 @@ const invoice = (n: number, patch: Partial<InvoicePdfData> = {}): InvoicePdfData
   const lines = Array.from({ length: n }, (_, i) => line(i, i % 5 === 0 ? 19 : 0));
   const total = lines.reduce((s, l) => s + l.totalCents, 0);
   return {
-    invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", status: "issued", issuedAt: "2026-11-02", dueAt: "2026-11-16", totalCents: total, paidCents: 0, notes: "Behandlungszeitraum Oktober" },
+    invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", status: "issued", issuedAt: "2026-11-02", dueAt: "2026-11-16", totalCents: total, paidCents: 0, createdAt: null, notes: "Behandlungszeitraum Oktober" },
     lines,
     payments: [],
     organization: ORG,
