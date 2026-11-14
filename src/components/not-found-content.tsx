@@ -3,7 +3,7 @@ import { errorBtnPrimary, errorBtnSecondary, ErrorScreen, type errorContext } fr
 import { HistoryBack } from "./history-back";
 
 /**
- * Inhalt der 404-Seiten (src/app/not-found.tsx und die Segment-Seiten unter /buchen und /p): je nach Bereich
+ * Inhalt der 404-Seiten (src/app/not-found.tsx und die Segment-Seiten unter /buchen, /p und /anamnese): je nach Bereich
  * Patient:innen (Sie-Form, kein Weg in die Praxis-App), öffentliche Website oder Praxis-App (du, Tagesübersicht).
  */
 export function NotFoundContent({ ctx }: { ctx: ReturnType<typeof errorContext> }) {

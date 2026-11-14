@@ -1,4 +1,5 @@
 import "server-only";
+import { UUID } from "./patient-route";
 import { and, asc, desc, eq, ilike, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
@@ -127,20 +128,31 @@ export async function listPatients(auth: AuthContext, opts: { q?: string; status
       .where(and(eq(invoices.organizationId, org), sql`${invoices.status} in ('issued','partially_paid')`))
       .groupBy(invoices.patientId)
       .as("op");
-    const rows = await tx
-      .select({ p: patients, last: lastVisit.last, openCents: open.openCents })
-      .from(patients)
-      .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
-      .leftJoin(open, eq(open.patientId, patients.id))
-      .where(and(...where))
-      .orderBy(asc(patients.lastName), asc(patients.firstName))
-      .limit(opts.limit ?? 300);
+    // Offene Beträge nur mit Rechnungs-Leserecht – ohne (z. B. Azubi) wird die Summe gar nicht erst abgefragt
+    const withMoney = auth.can("invoices.read");
+    const rows = withMoney
+      ? await tx
+          .select({ p: patients, last: lastVisit.last, openCents: open.openCents })
+          .from(patients)
+          .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
+          .leftJoin(open, eq(open.patientId, patients.id))
+          .where(and(...where))
+          .orderBy(asc(patients.lastName), asc(patients.firstName))
+          .limit(opts.limit ?? 300)
+      : await tx
+          .select({ p: patients, last: lastVisit.last })
+          .from(patients)
+          .leftJoin(lastVisit, eq(lastVisit.patientId, patients.id))
+          .where(and(...where))
+          .orderBy(asc(patients.lastName), asc(patients.firstName))
+          .limit(opts.limit ?? 300);
     await audit({ organizationId: org, userId: auth.user.id, action: "patients.list", meta: { q: q ? "[suche]" : null, n: rows.length } });
     return rows
       .map((r) => ({
         ...r.p,
         lastVisit: r.last ? new Date(r.last) : null,
-        openCents: Number(r.openCents ?? 0),
+        /** null = kein Rechnungs-Leserecht (nicht anzeigen) */
+        openCents: withMoney ? Number(("openCents" in r ? r.openCents : 0) ?? 0) : null,
         status: patientStatus(r.last ? new Date(r.last) : null, r.p.visitIntervalWeeks),
         deceased: isDeceased(r.p.extra),
       }))
@@ -150,6 +162,8 @@ export async function listPatients(auth: AuthContext, opts: { q?: string; status
 }
 
 export async function getPatient(auth: AuthContext, id: string) {
+  // Kaputte Kennung: kein DB-Aufruf (sonst „invalid input syntax for type uuid“ als Fehler im Log)
+  if (!UUID.test(id)) return null;
   const org = auth.organization.id;
   const result = await withOrg(org, async (tx) => {
     const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, id)));
@@ -182,8 +196,9 @@ export async function getPatient(auth: AuthContext, id: string) {
       billingContact: billing[0] ?? null,
       status: patientStatus(lastDone ? lastDone.startsAt : null, p.visitIntervalWeeks),
       deceased: deceasedInfo(p.extra),
-      openCents: invs.filter((i) => i.status === "issued" || i.status === "partially_paid").reduce((s, i) => s + i.totalCents - i.paidCents, 0),
-      revenueCents: invs.filter((i) => i.status !== "cancelled" && i.status !== "draft").reduce((s, i) => s + i.paidCents, 0),
+      /** null = kein Rechnungs-Leserecht: Beträge nicht anzeigen (Rechnungen werden dann auch nicht geladen) */
+      openCents: auth.can("invoices.read") ? invs.filter((i) => i.status === "issued" || i.status === "partially_paid").reduce((s, i) => s + i.totalCents - i.paidCents, 0) : null,
+      revenueCents: auth.can("invoices.read") ? invs.filter((i) => i.status !== "cancelled" && i.status !== "draft").reduce((s, i) => s + i.paidCents, 0) : null,
     };
   });
   if (result) await audit({ organizationId: org, userId: auth.user.id, action: "patient.read", entity: "patient", entityId: id });

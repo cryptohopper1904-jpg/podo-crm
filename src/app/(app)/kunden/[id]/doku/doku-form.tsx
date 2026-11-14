@@ -50,6 +50,7 @@ export function DokuForm({
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [photoMeta, setPhotoMeta] = useState({ purpose: "finding", footSide: "right", toe: "1", view: "dorsal" });
   const [braceAction, setBraceAction] = useState<BraceAction>(activeBrace ? "check" : "none");
+  const [braceOpenAtStart] = useState(!!activeBrace);
   const [fields, setFields] = useState({ findings: "", servicesText: "", material: "", reaction: "", recommendation: "" });
   const [picked, setPicked] = useState<string[]>([]);
   const [batch, setBatch] = useState("");
@@ -177,7 +178,8 @@ export function DokuForm({
 
       <Card className="p-0">
         {/* Ohne laufende Spange eingeklappt (selten gebraucht) – das Formular wird auf dem Handy deutlich kürzer */}
-        <details open={!!activeBrace || braceAction !== "none"} className="group">
+        {/* open nur als Startwert (konstant) – danach bestimmt das Auf-/Zuklappen der Nutzer:in, React setzt nichts zurück */}
+        <details open={braceOpenAtStart} className="group">
           <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-card)] px-5 py-3 [&::-webkit-details-marker]:hidden">
             <span className="min-w-0">
               <span className="block font-display text-lg font-semibold">Nagelkorrekturspange</span>
@@ -226,7 +228,7 @@ export function DokuForm({
               <Select name="braceToe" defaultValue="1">{[1, 2, 3, 4, 5].map((t) => <option key={t} value={t}>D{t}</option>)}</Select>
             </Field>
             <Field label="Stadium"><Select name="braceStage" defaultValue="2"><option value="1">1</option><option value="2">2</option><option value="3">3</option></Select></Field>
-            <Field label="Spangentyp/Produkt" className="col-span-2 sm:col-span-1"><Input name="braceType" placeholder="z. B. 3-teilige Drahtspange" required /></Field>
+            <Field label="Spangentyp/Produkt" className="col-span-2 sm:col-span-1"><Input name="braceType" placeholder="z. B. 3-teilige Drahtspange" aria-required="true" /></Field>
           </div>
         ) : null}
         {braceAction === "check" ? (
