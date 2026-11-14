@@ -487,7 +487,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     }
   });
 
-  it("Steuerberatung: Gegen-Mail bei Rücknahme (BK-5), je Art höchstens eine E-Mail je Praxis und 24 h (AppSec AS-2)", async () => {
+  it("Steuerberatung: Gegen-Mail bei Rücknahme (BK-5), je Art höchstens eine E-Mail je Praxis und 24 h, außer nach Statuswechsel (AppSec AS-2, I-1)", async () => {
     const { org } = await setup();
     const acc = await f.user();
     await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [org, acc]);
@@ -498,16 +498,20 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     await withdraw();
     expect(toAcc().map((m) => m.subject)).toEqual([expect.stringMatching(/^Löschantrag der Praxis „Testpraxis Fuß“ – Löschung am /), "Löschantrag der Praxis „Testpraxis Fuß“ zurückgenommen – PodoHero"]);
     expect(toAcc()[1].text).toMatch(/wurde der Löschantrag am \d\d\.\d\d\.\d{4} zurückgenommen\. Die Praxis wird nicht gelöscht/);
-    // erneuter Antrag und erneute Rücknahme innerhalb von 24 h: keine weiteren E-Mails an die Steuerberatung
-    await request();
-    await withdraw();
-    expect(toAcc()).toHaveLength(2);
-    expect((await audits(org, "org.deletion_request_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "throttled"]);
-    expect((await audits(org, "org.deletion_withdrawn_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "throttled"]);
-    // nach 24 h wieder
-    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb((now() - interval '25 hours')::text)) where id=$1", [org]);
+    // erneuter Antrag nach Rücknahme (Status geändert): wird trotz 24 h gemeldet, sonst hielte die Steuerberatung
+    // die Rücknahme für aktuell (AppSec I-1); dieselbe Art ohne Statuswechsel bleibt gedrosselt
     await request();
     expect(toAcc()).toHaveLength(3);
+    expect(toAcc()[2].subject).toMatch(/^Löschantrag der Praxis/);
+    const mailMod0 = await import("./org-mail");
+    expect(await mailMod0.notifyAccountantsOfDeletionRequest(org, "Testpraxis Fuß", new Date())).toBe("throttled");
+    expect(toAcc()).toHaveLength(3);
+    expect((await audits(org, "org.deletion_request_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "sent", "throttled"]);
+    // nach 24 h wieder (auch ohne Statuswechsel)
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb((now() - interval '25 hours')::text)) where id=$1", [org]);
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_withdrawn}', to_jsonb((now() - interval '26 hours')::text)) where id=$1", [org]);
+    expect(await mailMod0.notifyAccountantsOfDeletionRequest(org, "Testpraxis Fuß", new Date())).toBe("sent");
+    expect(toAcc()).toHaveLength(4);
     // gleichzeitige Anträge (Rennen) senden höchstens einmal
     const mailMod = await import("./org-mail");
     await owner.query("update organizations set settings = settings - 'accountantMailAt' where id=$1", [org]);

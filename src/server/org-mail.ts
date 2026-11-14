@@ -86,10 +86,14 @@ export type AccountantMailOutcome = MailOutcome | "throttled";
 /**
  * Drossel (AppSec AS-2): beansprucht per bedingtem UPDATE den Versand dieser Art für die Praxis
  * (organizations.settings.accountantMailAt[kind]); false = in den letzten ACCOUNTANT_MAIL_THROTTLE_HOURS schon versendet.
- * Atomar – auch gleichzeitige Anträge/Rücknahmen senden höchstens einmal.
+ * Atomar – auch gleichzeitige Anträge/Rücknahmen senden höchstens einmal. Ausnahme: Ist seit der letzten Mail dieser
+ * Art eine Mail der jeweils anderen Art (Antrag/Rücknahme) gegangen, wird nicht gedrosselt.
  */
 async function claimAccountantMail(organizationId: string, kind: AccountantMailKind, now: Date): Promise<boolean> {
   const cutoff = new Date(now.getTime() - ACCOUNTANT_MAIL_THROTTLE_HOURS * 3600_000).toISOString();
+  // Status hat sich seit der letzten Mail dieser Art geändert (z. B. Antrag → Rücknahme → erneuter Antrag):
+  // dann nicht drosseln, sonst hielte die Steuerberatung den veralteten Stand für aktuell (AppSec I-1)
+  const other: AccountantMailKind = kind === "deletion_request" ? "deletion_withdrawn" : "deletion_request";
   const prev = sql`(case when jsonb_typeof(${organizations.settings}->'accountantMailAt') = 'object' then ${organizations.settings}->'accountantMailAt' else '{}'::jsonb end)`;
   const rows = await db
     .update(organizations)
@@ -97,7 +101,9 @@ async function claimAccountantMail(organizationId: string, kind: AccountantMailK
     .where(
       and(
         eq(organizations.id, organizationId),
-        sql`case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end`,
+        sql`(case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end
+          or (coalesce(${prev}->>${other}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' and coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+              and (${prev}->>${other}::text)::timestamptz > (${prev}->>${kind}::text)::timestamptz))`,
       ),
     )
     .returning({ id: organizations.id });
