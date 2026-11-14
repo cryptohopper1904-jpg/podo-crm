@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useOptimistic, useState, useTransition } from "react";
 import { ChevronsLeft, ChevronsRight, Sparkles } from "lucide-react";
-import { SideNav, type NavKey } from "./app-nav";
+import { SettingsLink, SideNav, type NavKey } from "./app-nav";
 import { Logo, LogoMark } from "./logo";
 import { cx } from "./ui";
 import { NAV_COOKIE } from "@/lib/nav";
@@ -85,7 +85,7 @@ export function Sidebar({
       <div
         data-sidebar-scroll
         className={cx(
-          "flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overflow-x-hidden overscroll-contain pb-6 pt-2",
+          "flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overflow-x-hidden overscroll-contain pb-4 pt-1",
           // eingeklappt kein sichtbarer Scrollbalken (er würde die 44-px-Icons in der 76-px-Leiste beschneiden); Scrollen per Rad/Touch/Tab bleibt
           collapsed ? "px-3 [scrollbar-width:none]" : "px-4 [scrollbar-width:thin]",
         )}
@@ -137,6 +137,10 @@ export function Sidebar({
             </Link>
           </div>
         )}
+      </div>
+      {/* „Einstellungen“ unten fest – bleibt bei wenig Bildschirmhöhe sichtbar, während die Liste darüber scrollt (nicht im Support-Modus ohne Praxis-Recht) */}
+      <div className={cx("shrink-0 border-t border-border py-2 empty:hidden", collapsed ? "px-3" : "px-4")}>
+        <SettingsLink collapsed={collapsed} allowed={allowed} personal={canChangeView} />
       </div>
     </aside>
   );

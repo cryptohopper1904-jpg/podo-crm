@@ -18,12 +18,17 @@ export default async function AreasPage() {
         title="Alle Bereiche"
         subtitle={
           <>
-            Ansicht: {VIEW_LEVEL_LABELS[level]} ·{" "}
-            <Link href="/einstellungen/ansicht" className="font-semibold text-primary hover:underline">ändern</Link>
+            Ansicht: {VIEW_LEVEL_LABELS[level]}
+            {auth.support ? null : (
+              <>
+                {" · "}
+                <Link href="/einstellungen/ansicht" className="font-semibold text-primary hover:underline">ändern</Link>
+              </>
+            )}
           </>
         }
       />
-      <AreaOverview allowed={navAllowed(auth)} level={level} badges={await navBadges(auth)} />
+      <AreaOverview allowed={navAllowed(auth)} level={level} badges={await navBadges(auth)} personal={!auth.support} />
     </div>
   );
 }

@@ -83,8 +83,10 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const showTasks = show.tasks === "always" || hasTasks;
   const sideColumn = (show.inbox && stats.recent.length > 0) || (show.collective && !!reminderYear && openCollective.length > 0) || showTasks || show.integrations;
 
+  // Handy (< md): erst die heutigen Termine, dann Kennzahlen (2×2), Nebenkarten und zuletzt „Praxis einrichten“ –
+  // ab md die gewohnte Reihenfolge (order-Klassen wirken nur unter md; der Termin-Block nutzt dort `contents`).
   return (
-    <div className="mx-auto max-w-7xl">
+    <div className="mx-auto flex max-w-7xl flex-col">
       <header className="mb-6 flex flex-wrap items-end gap-4">
         <div className={pageTitleBox}>
           <p className="text-sm text-muted">{weekdayLong(new Date())}{holiday ? ` · ${holiday}` : ""}</p>
@@ -94,11 +96,11 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       </header>
 
       {isGkvArea(hiddenArea) && !feature(auth.organization, hiddenArea) ? <HiddenAreaNotice area={hiddenArea} settingsLink={auth.can("settings.manage")} /> : null}
-      <OnboardingCard auth={auth} />
+      <div className="max-md:order-5"><OnboardingCard auth={auth} /></div>
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
 
       {show.stats ? (
-        <section aria-label="Kennzahlen" className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <section aria-label="Kennzahlen" className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4 max-md:order-3">
           <Stat label="Termine heute" value={active.length} sub={homeVisits ? `davon ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : "keine Hausbesuche"} tone="primary" />
           <Stat label="Eingenommen heute" value={money(Number(stats.paidToday.sum))} sub="alle Zahlarten" tone="info" />
           <Stat label="Offene Posten" value={stats.open.n} sub={money(Number(stats.open.sum))} tone="accent" />
@@ -107,7 +109,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       ) : null}
 
       {show.quickActions && quickActions.length ? (
-        <nav aria-label="Schnellzugriff" className="mb-6 flex flex-wrap gap-2">
+        <nav aria-label="Schnellzugriff" className="mb-6 flex flex-wrap gap-2 max-md:order-1">
           {quickActions.map((a) => (
             <Link key={a.href} href={a.href} className="inline-flex min-h-11 items-center rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2">
               {a.label}
@@ -116,8 +118,8 @@ export default async function TodayPage(props: PageProps<"/heute">) {
         </nav>
       ) : null}
 
-      <div className="flex flex-wrap items-start gap-6">
-        <Card className="min-w-0 flex-[3_1_480px]">
+      <div className="flex flex-wrap items-start gap-6 max-md:contents">
+        <Card className="min-w-0 flex-[3_1_480px] max-md:order-2 max-md:mb-6 max-md:flex-none">
           <CardTitle action={<Link href="/kalender" className="text-sm font-semibold text-primary">Kalender</Link>}>
             Heute{show.stats ? null : <span className="ml-2 text-sm font-normal text-muted">{active.length} Termin{active.length === 1 ? "" : "e"}{homeVisits ? ` · ${homeVisits} Hausbesuch${homeVisits > 1 ? "e" : ""}` : ""}</span>}
           </CardTitle>
@@ -136,7 +138,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
         </Card>
 
         {sideColumn ? (
-        <div className="flex min-w-0 flex-[2_1_320px] flex-col gap-6">
+        <div className="flex min-w-0 flex-[2_1_320px] flex-col gap-6 max-md:order-4 max-md:mb-6 max-md:flex-none">
           {show.inbox && stats.recent.length ? (
             <Card>
               <CardTitle action={<Link href="/posteingang" className="text-sm font-semibold text-primary">Alle</Link>}>Posteingang</CardTitle>

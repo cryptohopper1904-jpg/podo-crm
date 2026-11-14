@@ -285,6 +285,8 @@ test("Abmelden leert die App-Caches, der Offline-Hinweis funktioniert danach wei
   await page.reload(); // jetzt vom Service Worker kontrolliert
   const cachedPaths = () =>
     page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (k) => (await (await caches.open(k)).keys()).map((r) => new URL(r.url).pathname)))).flat());
+  // Handy: Abmelden steht im Konto-Menü der Kopfzeile
+  await page.getByRole("button", { name: "Konto-Menü" }).click();
   await page.getByRole("button", { name: "Abmelden" }).click();
   await expect(page).toHaveURL(/\/login/);
   // nach dem Leeren wieder abgelegt: Offline-Seite (+ deren Programmdateien), keine Praxis-Seiten

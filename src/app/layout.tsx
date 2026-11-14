@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     ],
     apple: { url: PWA_ICONS.apple, sizes: "180x180" },
   },
-  // Startbilder nur in den App-Layouts ((auth), (app)) – siehe src/lib/pwa/app-meta.ts
+  // Startbilder nur in den App-Layouts ((auth), (app), (plattform) – Letzteres übernimmt das (app)-Layout) – siehe src/lib/pwa/app-meta.ts
   appleWebApp: appleWebApp(false),
   robots: { index: false, follow: false },
 };
@@ -23,6 +23,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Android/Chrome: die Bildschirmtastatur verkleinert das Layout (statt Inhalte zu überdecken) – zusammen mit der
+  // ausgeblendeten unteren Leiste (src/components/app-nav.tsx) bleibt das fokussierte Feld samt Umgebung sichtbar.
+  // iOS Safari ignoriert den Wert und verschiebt ohnehin nur den sichtbaren Ausschnitt.
+  interactiveWidget: "resizes-content",
   // Farbe der Kopfzeile (--surface): Statusleiste der installierten App bzw. Browserleiste. Der Hell/Dunkel-Umschalter
   // überschreibt sie zur Laufzeit (themeScript), wenn die Wahl von der Systemeinstellung abweicht.
   themeColor: [

@@ -3,7 +3,7 @@
 /**
  * Live-Patientensuche in der Kopfzeile (ARIA 1.2 Combobox mit Listbox).
  * Ab SUGGEST_MIN_CHARS Zeichen entprellt Vorschläge von /api/patienten/vorschlaege (ältere Anfragen werden
- * abgebrochen); ohne direkten Treffer „Meinten Sie: …“ mit ähnlichen Namen.
+ * abgebrochen); ohne direkten Treffer „Meintest du: …“ mit ähnlichen Namen.
  * Tastatur: ↑/↓ wählen, Enter öffnet die Akte (ohne Auswahl: Ergebnisliste /kunden?q=…), Esc schließt/leert.
  * Unter md: Lupen-Schaltfläche, die das Suchfeld als Leiste unter der Kopfzeile öffnet.
  */
@@ -191,7 +191,7 @@ function SearchBox({
       : empty
         ? "Keine Treffer"
         : result
-          ? `${result.hits.length}${result.more ? "+" : ""} Treffer${result.didYouMean ? `, Meinten Sie: ${result.didYouMean.query}` : ""}`
+          ? `${result.hits.length}${result.more ? "+" : ""} Treffer${result.didYouMean ? `, Meintest du: ${result.didYouMean.query}` : ""}`
           : "";
 
   return (
@@ -271,7 +271,7 @@ function SearchBox({
               return (
                 <li key={`q-${o.q}`} {...common} className={cx(base, tone, i > 0 && "mt-1 border-t border-border pt-2.5")}>
                   <span>
-                    <span className="text-muted">Meinten Sie: </span>
+                    <span className="text-muted">Meintest du: </span>
                     <span className="font-semibold">{o.q}</span>
                     <span className="text-muted">?</span>
                   </span>
