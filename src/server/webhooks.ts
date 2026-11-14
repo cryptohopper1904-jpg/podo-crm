@@ -7,8 +7,9 @@ import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWha
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
-import { archivePaymentReceipts, recordPaymentReceipts } from "./payment-receipts";
+import { archivePaymentReceipts, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
 import { adapterFor, logSync } from "./integrations";
+import { log } from "@/lib/log";
 import { matchPatientByAddress } from "./messages";
 import { payableVatGroups } from "./partial-vat";
 
@@ -279,7 +280,7 @@ export function isDuplicateProviderRef(e: unknown): boolean {
 }
 
 export async function recordProviderPayment(organizationId: string, input: ProviderPaymentInput): Promise<ProviderPaymentResult> {
-  const res = await withOrg(organizationId, async (t): Promise<ProviderPaymentResult & { number?: string | null; patientId?: string | null; receipts?: { id: string; number: string }[] }> => {
+  const res = await withOrg(organizationId, async (t): Promise<ProviderPaymentResult & { number?: string | null; patientId?: string | null; receipts?: { id: string; number: string }[]; receiptFailed?: boolean }> => {
     if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) return { status: "nicht zugeordnet", invoiceId: null, reason: "Betrag ungültig" };
     const byId = isUuid(input.invoiceId)
       ? await t.select().from(invoices).where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, input.invoiceId))).for("update")
@@ -344,11 +345,19 @@ export async function recordProviderPayment(organizationId: string, input: Provi
       .update(invoices)
       .set({ paidCents: paid, status: statusFromPayments(inv.totalCents, paid) })
       .where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, inv.id)));
-    // Terminalzahlung (Kassenvorgang): Beleg über den Zahlungseingang mit TSE-Angaben bzw. Ausfallvermerk – hier nur
-    // Nummer + Angaben; das PDF wird nach dem COMMIT abgelegt (ein Ablagefehler darf die Zahlung nicht zurückrollen,
-    // eine erneute Zustellung würde sonst neu TSE-signieren)
-    const receipts = await recordPaymentReceipts(t, organizationId, inv.id, [payRow.id], null);
-    return { status: "gebucht", invoiceId: inv.id, receipts };
+    // Terminalzahlung (Kassenvorgang): Beleg über den Zahlungseingang mit TSE-Angaben bzw. Ausfallvermerk. Hier nur
+    // Nummer + Angaben, und zwar in einem SAVEPOINT nach der Signatur: Scheitert das Anlegen, wird nur der Beleg
+    // zurückgerollt – die Zahlung bleibt gebucht (eine erneute Zustellung fände sie über external_ref und würde NICHT
+    // neu signieren); die Praxis bekommt eine Meldung. Das PDF wird nach dem COMMIT abgelegt (archivePaymentReceipts).
+    let receipts: { id: string; number: string }[] = [];
+    let receiptFailed = false;
+    try {
+      receipts = await t.transaction((sp) => recordPaymentReceipts(sp, organizationId, inv.id, [payRow.id], null));
+    } catch (e) {
+      log.error("payment_receipt.record_failed", { error: e, invoiceId: inv.id });
+      receiptFailed = true;
+    }
+    return { status: "gebucht", invoiceId: inv.id, receipts, receiptFailed, number: inv.number };
   }).catch((e: unknown): ProviderPaymentResult => {
     // Rennen mit einer parallelen Zustellung, die die Sperre umgangen hat: der eindeutige Index hat die zweite Zeile
     // abgewiesen (Transaktion zurückgerollt) → dieselbe Transaktion ist bereits gebucht
@@ -357,6 +366,7 @@ export async function recordProviderPayment(organizationId: string, input: Provi
   });
   if (res.status === "nicht zugeordnet") await reportUnassignedPayment(organizationId, input, res);
   if ("receipts" in res && res.receipts?.length) await archivePaymentReceipts(organizationId, res.receipts, null);
+  if ("receiptFailed" in res && res.receiptFailed) await reportReceiptRecordFailure(organizationId, res.number ?? null, input.amountCents);
   return { status: res.status, invoiceId: res.invoiceId, reason: res.reason };
 }
 

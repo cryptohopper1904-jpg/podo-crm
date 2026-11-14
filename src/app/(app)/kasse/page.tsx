@@ -6,6 +6,7 @@ import { dateDe, dateTimeDe, money, timeDe } from "@/lib/format";
 import { PAYMENT_METHOD_LABEL } from "@/lib/invoice-labels";
 import { MOVEMENT_LABEL } from "@/lib/kasse/labels";
 import { kasseOverview, NO_TSE_NOTE } from "@/server/kasse";
+import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { CloseDayForm, MovementForm } from "./kasse-forms";
 
 export const metadata = { title: "Kasse" };
@@ -43,6 +44,11 @@ export default async function KassePage() {
         }
       />
 
+      {fiscalLiveBlockedReason() ? (
+        <p className="mb-6 rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+          <strong>Echtbetrieb der TSE gesperrt.</strong> {fiscalLiveBlockedReason()}
+        </p>
+      ) : null}
       {data.tseMode === "none" ? (
         <p className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text" role="note">
           <strong>Keine TSE angebunden.</strong> Abschlüsse werden als „{NO_TSE_NOTE}“ gekennzeichnet. Wer Bargeld mit einem

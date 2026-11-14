@@ -19,7 +19,6 @@ import {
   INVOICE_STATUS_TONE,
   NOTE_DEPOSIT,
   NOTE_NO_SHOW,
-  NOTE_SMALL_BUSINESS,
   vatExemptNote,
   PAYMENT_METHOD_LABEL,
 } from "@/lib/invoice-labels";
@@ -54,7 +53,7 @@ import { getInvoice } from "@/server/invoices";
 import { invoiceDunningList } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, dunningTotalCents, isDunnable, type DunningStage } from "@/lib/dunning";
 import { DunningLetterActions } from "../mahnungen/dunning-actions";
-import { CancelPanel, EmailInvoiceButton, EmailPaymentReceiptButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
+import { CancelPanel, EmailInvoiceButton, EmailPaymentReceiptButton, LexofficeButton, PaymentPanel, ReceiptLinks, SumupPanel } from "./invoice-actions";
 import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Rechnung" };
@@ -95,7 +94,7 @@ const printCss = (runningHead: string, draft: boolean) => `
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
   const { id } = await props.params;
-  const { von } = await props.searchParams;
+  const { von, beleg } = await props.searchParams;
   const auth = await requireAuth("invoices.read");
   const data = await getInvoice(auth, id);
   if (!data) notFound();
@@ -138,6 +137,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
   const sumupMock = canWrite && isOpen ? isMockMode(await loadConnection(o.id, "sumup")) : false;
   const recipientEmail = b?.email || p?.email || null;
+  // nach „Zahlung erfassen“ (?beleg=<id,…>): die eben erzeugten Zahlungsbelege oben anbieten
+  const belegIds = new Set((typeof beleg === "string" ? beleg : "").split(",").filter(Boolean));
+  const freshReceipts = data.paymentReceipts.filter((r) => belegIds.has(r.id));
   const dunnings = await invoiceDunningList(auth, inv.id);
   const linkChannels: { value: "email" | "sms" | "whatsapp"; label: string }[] = [];
   if (recipientEmail) linkChannels.push({ value: "email", label: `E-Mail (${recipientEmail})` });
@@ -212,6 +214,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             </Link>
           ) : null}
         </div>
+        {freshReceipts.length ? (
+          <Card className="w-full border-2 border-primary" role="status">
+            <h2 className="mb-1 font-display text-lg font-semibold">Zahlung erfasst – Zahlungsbeleg aushändigen</h2>
+            <p className="mb-3 text-sm text-muted">
+              Beleg über den Zahlungseingang (Kassenbeleg, § 146a Abs. 2 AO): drucken, als PDF speichern oder per E-Mail senden.
+            </p>
+            <ReceiptLinks invoiceId={inv.id} receipts={freshReceipts.map((r) => ({ id: r.id, number: r.number }))} recipientEmail={canWrite ? recipientEmail : null} />
+          </Card>
+        ) : null}
         {internalNotes.length ? (
           <p className="rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">{internalNotes.join(" · ")}</p>
         ) : null}
@@ -226,7 +237,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         {canPay && fiscalIsTestMode() ? (
           <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
             Kasse/TSE im Testmodus: Barzahlungen erhalten nur eine Test-Signatur. Vor dem echten Bargeldeinsatz ist ein Vertrag mit einer
-            zertifizierten TSE (z. B. fiskaly SIGN DE) und die Kassenmeldung ans Finanzamt Pflicht (KassenSichV, § 146a AO).
+            zertifizierten TSE (z. B. fiskaly SIGN DE) und die Kassenmeldung ans Finanzamt Pflicht (KassenSichV, § 146a AO). Zahlungen auf
+            bereits ausgestellte Rechnungen werden derzeit als Umsatz erfasst; vor Echtbetrieb mit Steuerberatung abstimmen.
           </p>
         ) : null}
         {dunnings.length || (isDunnable(inv) && open > 0 && inv.dueAt && inv.dueAt < berlinDateIso()) ? (
@@ -449,7 +461,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         ))}
 
         <section className="print-keep mt-6 flex flex-col gap-2 text-[13px]">
-          {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
+          {o.smallBusiness ? <p>{data.smallBusinessNote}</p> : null}
           {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}

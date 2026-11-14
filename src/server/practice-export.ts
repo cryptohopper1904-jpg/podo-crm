@@ -8,6 +8,8 @@ import { documentArchive, media, memberships, organizations, patients, users } f
 import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 import { readArchivedPdf } from "./document-archive";
+import { catchUpArchives, missingArchives } from "./archive-catchup";
+import { log } from "@/lib/log";
 
 type Row = Record<string, unknown>;
 
@@ -192,7 +194,13 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       }
     }
 
-    // 1b) Beleg-Archiv (GoBD): archivierte Original-PDFs entschlüsselt, Prüfsumme in tables/document_archive.json
+    // 1b) Beleg-Archiv (GoBD): vorher fehlende PDFs nachholen (Ablage beim Ausstellen gescheitert), dann die archivierten
+    //     Original-PDFs entschlüsselt, Prüfsumme in tables/document_archive.json
+    try {
+      await catchUpArchives({ organizationIds: [org], limitPerOrg: 10_000 });
+    } catch (e) {
+      log.error("export.archive_catchup_failed", { error: e });
+    }
     const archiveCols = {
       id: documentArchive.id,
       organizationId: documentArchive.organizationId,
@@ -272,7 +280,11 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     counts.users = userRows.length;
     await add(JSON.stringify(userRows, replacer, 2), { name: "tables/users.json" });
     await add(JSON.stringify(orgRow ? [sanitizeOrganizationRow(orgRow)] : [], replacer, 2), { name: "tables/organizations.json" });
-    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors], archiveFiles, archiveErrors: [...archiveErrors] }), { name: "README.txt" });
+    const missing = await missingArchives(org, 10_000);
+    const notArchived = [...missing.invoices.map((i) => i.number ?? i.id), ...missing.receipts.map((r) => r.number)];
+    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors], archiveFiles, archiveErrors: [...archiveErrors], notArchived }), {
+      name: "README.txt",
+    });
     await archive.finalize();
     finished = true;
     return { counts, mediaFiles, mediaErrors: mediaErrors.size, archiveFiles, archiveErrors: archiveErrors.size };
@@ -297,6 +309,8 @@ function readme(p: {
   mediaErrors: string[];
   archiveFiles: number;
   archiveErrors: string[];
+  /** Belegnummern seit Einführung des Archivs ohne archiviertes PDF */
+  notArchived: string[];
 }) {
   const lines = [
     "PodoHero – Vollständiger Datenexport",
@@ -316,9 +330,14 @@ function readme(p: {
     "belege/rechnungen/     Beleg-Archiv: die beim Ausstellen gespeicherten Original-PDFs (Rechnungen, Quittungen,",
     "                       Anzahlungen, Stornorechnungen, Sammelrechnungen) – byte-gleich, Prüfsumme (sha256) und",
     "                       Zuordnung in tables/document_archive.json (Feld exportFile). Jede Datei wurde beim Export",
-    "                       gegen ihre Prüfsumme geprüft.",
-    "belege/zahlungsbelege/ Belege über Zahlungseingänge nach Ausstellung (Kassenbelege mit TSE-Angaben).",
-    "                       Belege ohne Archiv (vor Einführung) lassen sich aus den Tabellen reproduzieren.",
+    "                       gegen ihre Prüfsumme geprüft. Belege ohne Archiv (ausgestellt vor Einführung des",
+    "                       Beleg-Archivs) lassen sich aus den Tabellen reproduzieren.",
+    "belege/zahlungsbelege/ Belege über Zahlungseingänge nach Ausstellung (Kassenbelege mit TSE-Angaben); ihre",
+    "                       festgeschriebenen Angaben stehen zusätzlich in tables/payment_receipts.json (Feld data).",
+    "",
+    "NICHT ENTHALTEN – BITTE SEPARAT ERSTELLEN: der DSFinV-K-Export (Kasse → DSFinV-K-Export) und der TSE-Export",
+    "(beim TSE-Anbieter) für ALLE Zeiträume bis zur Kündigung. Beide sind Kassenaufzeichnungen (10 Jahre aufzubewahren)",
+    "und lassen sich nach der Löschung der Praxis nicht mehr erzeugen.",
     "",
     "Nicht enthalten: Passwort-Hashes, 2FA-Geheimnisse, Zugangsdaten zu Schnittstellen, Sitzungen, interne Speicherpfade.",
     "",
@@ -331,6 +350,14 @@ function readme(p: {
     ...(p.mediaErrors.length ? ["", `ACHTUNG: ${p.mediaErrors.length} Datei(en) konnten nicht gelesen werden (IDs in tables/media.json, Feld exportError).`] : []),
     `${"Archivierte Belege (PDF)".padEnd(28)} ${p.archiveFiles}`,
     ...(p.archiveErrors.length ? ["", `ACHTUNG: ${p.archiveErrors.length} archivierte(r) Beleg(e) konnten nicht gelesen werden (IDs in tables/document_archive.json, Feld exportError).`] : []),
+    ...(p.notArchived.length
+      ? [
+          "",
+          `ACHTUNG: ${p.notArchived.length} Beleg(e) seit Einführung des Beleg-Archivs ohne archiviertes PDF (Ablage gescheitert, auch`,
+          "der Nachhol-Lauf vor dem Export war erfolglos – bitte den Support kontaktieren). Ihre Angaben sind in den Tabellen",
+          `festgeschrieben: ${p.notArchived.slice(0, 50).join(", ")}${p.notArchived.length > 50 ? " …" : ""}`,
+        ]
+      : []),
     "",
     "AUFBEWAHRUNG – BITTE BEACHTEN",
     "-----------------------------",
@@ -341,6 +368,8 @@ function readme(p: {
     "- Behandlungsdokumentation: 10 Jahre nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)",
     "- Rechnungen, Quittungen, Zahlungsbelege und andere Buchungsbelege: 8 Jahre ab Ende des Ausstellungsjahres (§ 147 AO, § 14b UStG)",
     "- Bücher, Jahresabschlüsse und Kassenaufzeichnungen (Einzelaufzeichnungen, TSE-/DSFinV-K-Export): 10 Jahre (§ 147 AO)",
+    "- Arbeitsanweisungen und Organisationsunterlagen (Verfahrensdokumentation, Einrichtungsprotokolle der Kasse,",
+    "  Kassenmeldung ans Finanzamt, Angaben zum TSE-Zertifikat): 10 Jahre (§ 147 AO)",
     "- Steuerliche Fristen enden frühestens dann – Ablaufhemmung nach § 147 Abs. 3 S. 5 AO beachten.",
     "Nach der Löschung der Praxis in PodoHero ist dieser Export Ihre einzige Kopie.",
     "",

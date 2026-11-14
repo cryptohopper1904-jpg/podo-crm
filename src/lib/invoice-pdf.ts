@@ -17,7 +17,7 @@ import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
+import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS_LEGACY, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
@@ -141,6 +141,8 @@ export type InvoicePdfData = {
    * neu erzeugt und als „Reproduktion“ gekennzeichnet (Fußnote).
    */
   reproduction?: { generatedAt: Date | string } | null;
+  /** Wortlaut des Kleinunternehmer-Hinweises wie beim Ausstellen (fehlt → bisheriger Wortlaut, Altbelege) */
+  smallBusinessNote?: string;
 };
 
 const STAMP_RED = rgb(0.75, 0.05, 0.05);
@@ -153,7 +155,7 @@ export const CANCELLATION_SUB = "Neudruck des ausgestellten Belegs – dieser Be
 
 /** Fußnote eines aus gespeicherten Daten neu erzeugten Altbelegs */
 export function reproductionNote(at: Date | string): string {
-  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich versandte Beleg.`;
+  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich ausgestellte bzw. ausgegebene Beleg.`;
 }
 
 export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {
@@ -445,7 +447,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   // ── Hinweise ──
   const giro = !data.cancellation && isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
-  if (o.smallBusiness) notes.push({ t: NOTE_SMALL_BUSINESS });
+  if (o.smallBusiness) notes.push({ t: data.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY });
   if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });

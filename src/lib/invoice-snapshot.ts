@@ -9,6 +9,7 @@
  * Kontaktwege für den Versand (E-Mail-Adresse der Person bleibt aktuell).
  * Altbelege ohne Momentaufnahme (NULL) zeigen wie bisher die aktuellen Stammdaten.
  */
+import { NOTE_SMALL_BUSINESS, NOTE_SMALL_BUSINESS_LEGACY } from "./invoice-labels";
 import type { InvoiceBookingLink } from "./practice-documents";
 
 export const INVOICE_SNAPSHOT_VERSION = 1;
@@ -52,6 +53,8 @@ export type InvoiceSnapshot = {
   booking: InvoiceBookingLink | null;
   patient: SnapshotPatient | null;
   billingContact: SnapshotBillingContact | null;
+  /** Wortlaut des Kleinunternehmer-Hinweises beim Ausstellen (fehlt bei Belegen ohne Momentaufnahme → alter Wortlaut) */
+  smallBusinessNote?: string;
 };
 
 type OrgInput = Omit<SnapshotOrganization, "website" | "qualification" | "whatsapp" | "bic" | "bankName" | "accountHolder"> & {
@@ -110,8 +113,12 @@ export function buildInvoiceSnapshot(input: {
     billingContact: input.billingContact
       ? { name: input.billingContact.name, street: s(input.billingContact.street), zip: s(input.billingContact.zip), city: s(input.billingContact.city) }
       : null,
+    smallBusinessNote: NOTE_SMALL_BUSINESS,
   };
 }
+
+/** Kleinunternehmer-Hinweis des Belegs: Wortlaut beim Ausstellen; Belege ohne Momentaufnahme behalten den alten. */
+export const smallBusinessNoteFor = (snap: InvoiceSnapshot | null) => snap?.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY;
 
 /** Liest die gespeicherte Momentaufnahme (null = Altbeleg oder unbekanntes Format → aktuelle Stammdaten). */
 export function readInvoiceSnapshot(raw: unknown): InvoiceSnapshot | null {
@@ -124,6 +131,7 @@ export function readInvoiceSnapshot(raw: unknown): InvoiceSnapshot | null {
     booking: r.booking ?? null,
     patient: r.patient ?? null,
     billingContact: r.billingContact ?? null,
+    ...(typeof r.smallBusinessNote === "string" ? { smallBusinessNote: r.smallBusinessNote } : {}),
   };
 }
 

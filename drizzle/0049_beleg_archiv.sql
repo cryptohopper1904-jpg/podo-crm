@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS "payment_receipts" (
 --> statement-breakpoint
 ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "issued_snapshot" jsonb;
 --> statement-breakpoint
+-- Robust gegen eine frühere Fassung dieser Migration (Entwicklungs-/Test-Datenbanken): damals mit Spalte retain_until
+-- (NOT NULL) und einem Datei-Constraint ohne Prüfung des Ablagebereichs. CREATE TABLE IF NOT EXISTS ließe beides
+-- stehen – das Ausstellen würde dann scheitern. Daher hier ausdrücklich angleichen.
+ALTER TABLE "document_archive" DROP COLUMN IF EXISTS "retain_until";
+--> statement-breakpoint
+ALTER TABLE "document_archive" DROP CONSTRAINT IF EXISTS "document_archive_file_check";
+--> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'document_archive_organization_id_organizations_id_fk') THEN
     ALTER TABLE "document_archive" ADD CONSTRAINT "document_archive_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;
@@ -146,8 +153,9 @@ END $$;
 -- Anlegen nur passend zur Praxis (FK-Prüfungen umgehen RLS, daher hier explizit):
 -- Anrechnung: Endrechnung (Rechnung/Sammelrechnung) und Teilbeleg (Anzahlung/Quittung) derselben Praxis und Person,
 -- Betrag = Gesamtbetrag des Teilbelegs; der Teilbeleg ist gerade auf diese Rechnung angerechnet (collective_invoice_id).
--- Einzige Ausnahme: Rückverknüpfung von Altbeständen stornierter Rechnungen – nur in dieser Migration
--- (Sitzungsvariable podo.backfill = '1', transaktionslokal gesetzt), nie aus der App.
+-- Einzige Ausnahme: Rückverknüpfung von Altbeständen stornierter Rechnungen – nur während dieser Migration
+-- (Sitzungsvariable podo.backfill = '1'). Am Ende der Migration wird die Funktion OHNE diese Ausnahme neu angelegt,
+-- weil jede Rolle eine solche Sitzungsvariable setzen könnte.
 CREATE OR REPLACE FUNCTION podo_invoice_credit_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   i invoices%ROWTYPE;
@@ -299,4 +307,27 @@ BEGIN
   END LOOP;
   PERFORM set_config('app.org_id', '', true);
   PERFORM set_config('podo.backfill', '', true);
+END $$;
+--> statement-breakpoint
+-- Nach der Rückverknüpfung: Guard ohne Backfill-Ausnahme (eine Sitzungsvariable kann jede Rolle setzen)
+CREATE OR REPLACE FUNCTION podo_invoice_credit_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  i invoices%ROWTYPE;
+  c invoices%ROWTYPE;
+BEGIN
+  SELECT * INTO i FROM invoices WHERE id = NEW.invoice_id;
+  SELECT * INTO c FROM invoices WHERE id = NEW.credited_invoice_id;
+  IF i.id IS NULL OR c.id IS NULL OR i.organization_id <> NEW.organization_id OR c.organization_id <> NEW.organization_id THEN
+    RAISE EXCEPTION 'Anrechnung: Beleg nicht gefunden.' USING ERRCODE = 'P0001';
+  END IF;
+  IF i.kind NOT IN ('invoice', 'collective') OR c.kind NOT IN ('deposit', 'receipt') OR i.patient_id IS DISTINCT FROM c.patient_id THEN
+    RAISE EXCEPTION 'Anrechnung nur von Anzahlungen/Quittungen derselben Person auf eine Rechnung/Sammelrechnung.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.amount_cents <> c.total_cents THEN
+    RAISE EXCEPTION 'Anrechnung: Betrag passt nicht zum Teilbeleg.' USING ERRCODE = 'P0001';
+  END IF;
+  IF c.collective_invoice_id IS DISTINCT FROM NEW.invoice_id THEN
+    RAISE EXCEPTION 'Anrechnung: Der Teilbeleg ist nicht auf diese Rechnung angerechnet.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
 END $$;

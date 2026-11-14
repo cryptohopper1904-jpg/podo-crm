@@ -115,13 +115,16 @@ export async function addPaymentAction(_: SimpleState, form: FormData): Promise<
   const invoiceId = String(form.get("invoiceId") ?? "");
   const parsed = z.array(paymentInput).min(1, "Bitte eine Zahlung angeben.").safeParse(parseJson(form.get("payments")));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  let receipts: { id: string }[] = [];
   try {
-    await addPayments(auth, invoiceId, parsed.data);
+    receipts = (await addPayments(auth, invoiceId, parsed.data)).receipts;
   } catch (e) {
     return { error: errorMessage(e) };
   }
   revalidatePath(`/rechnungen/${invoiceId}`);
   revalidatePath("/rechnungen");
+  // Kassenvorgang: Zahlungsbeleg direkt zum Aushändigen anbieten (Drucken/PDF/E-Mail oben auf der Rechnungsseite)
+  if (receipts.length && z.uuid().safeParse(invoiceId).success) redirect(`/rechnungen/${invoiceId}?beleg=${receipts.map((r) => r.id).join(",")}`);
   return { success: "Zahlung erfasst." };
 }
 

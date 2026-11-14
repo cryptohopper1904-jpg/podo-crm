@@ -49,10 +49,12 @@ import {
 import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
-import { buildInvoiceSnapshot, readInvoiceSnapshot, withSnapshot } from "@/lib/invoice-snapshot";
+import { buildInvoiceSnapshot, readInvoiceSnapshot, smallBusinessNoteFor, withSnapshot } from "@/lib/invoice-snapshot";
 import { bookingDocumentRetentionEnd } from "@/lib/retention";
-import { findInvoiceArchive, withArchiveCleanup, type PendingFiles } from "./document-archive";
-import { archivePaymentReceipts, paymentReceiptsFor, recordPaymentReceipts } from "./payment-receipts";
+import { findInvoiceArchive, reportToInbox, withArchiveCleanup, type PendingFiles } from "./document-archive";
+import { archivePaymentReceipts, paymentReceiptsFor, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
+import { log } from "@/lib/log";
+import { discardStored } from "@/lib/storage";
 
 export class InvoiceError extends Error {}
 
@@ -202,11 +204,38 @@ async function issuedSnapshot(tx: Tx, org: string, o: OrgRow, patientId: string 
   });
 }
 
-/** PDF des eben ausgestellten Belegs erzeugen und archivieren (in der Transaktion des Ausstellens). */
-async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: string, pending: PendingFiles) {
+/**
+ * PDF des eben ausgestellten Belegs erzeugen und archivieren – in der Transaktion des Ausstellens, aber in einem
+ * SAVEPOINT als letzter Schritt: Scheitert die Ablage (Speicher, Schlüssel, Rendern, Guard), wird NUR das Archiv
+ * zurückgerollt (Datei sofort entfernt), die Ausstellung samt Zahlungen und TSE-Signatur bleibt bestehen. So kann ein
+ * Archivfehler nie zu einer erneuten Ausstellung und damit zu einer zweiten TSE-Signatur führen. Das PDF wird danach
+ * aus den festgeschriebenen Daten nachgeholt (beim Abruf, im Hintergrundlauf); die Praxis bekommt eine Meldung.
+ * Gibt false zurück, wenn das Archiv nachgeholt werden muss.
+ */
+async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: string, pending: PendingFiles): Promise<boolean> {
   // dynamisch: invoice-delivery importiert dieses Modul (loadInvoiceBundle)
   const { archiveInvoicePdf } = await import("./invoice-delivery");
-  await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+  const mark = pending.length;
+  try {
+    await tx.transaction((sp) => archiveInvoicePdf(sp, org, invoiceId, userId, pending));
+    return true;
+  } catch (e) {
+    log.error("invoice.archive_failed", { error: e, invoiceId });
+    // der Savepoint ist zurückgerollt → die eben geschriebenen Dateien sind nirgends verzeichnet
+    await Promise.all(pending.splice(mark).map((k) => discardStored(k).catch(() => undefined)));
+    return false;
+  }
+}
+
+/** Nach dem COMMIT: Meldung, dass das Archiv-PDF nachgeholt wird (Ausstellung selbst ist gültig). */
+async function reportInvoiceArchivePending(org: string, r: { id: string; number: string | null; archived: boolean }) {
+  if (r.archived) return;
+  await reportToInbox(
+    org,
+    `beleg-archiv:${r.id}`,
+    `Beleg ${r.number ?? ""}: PDF konnte nicht archiviert werden`,
+    `Der Beleg ${r.number ?? ""} ist ausgestellt und gültig, das PDF konnte aber nicht im Beleg-Archiv abgelegt werden. Es wird aus den festgeschriebenen Angaben automatisch nachgeholt (beim Öffnen und im regelmäßigen Hintergrundlauf). Bitte den Beleg NICHT erneut ausstellen. Bleibt der Fehler bestehen, bitte den Support kontaktieren.`,
+  );
 }
 
 /**
@@ -1059,9 +1088,11 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     void _paymentIds;
     const productLines = lines.filter((l) => l.productId).length;
     const productsInTreatment = lines.filter((l) => l.inTreatment).length;
-    // 6) Beleg-Archiv: PDF im Stand der Ausstellung (mit TSE-Angaben der Zahlungen) festschreiben
-    await archiveIssued(tx, org, draft.id, auth.user.id, pending);
+    // 6) Beleg-Archiv: PDF im Stand der Ausstellung (mit TSE-Angaben der Zahlungen) festschreiben – letzter Schritt,
+    //    im Savepoint (ein Archivfehler rollt die signierten Zahlungen nicht zurück)
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
     return {
+      archived,
       id: draft.id,
       number,
       totalCents: totals.totalCents,
@@ -1074,6 +1105,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       productsInTreatment,
     };
   }));
+  await reportInvoiceArchivePending(org, result);
 
   await audit({
     organizationId: org,
@@ -1214,9 +1246,10 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
       totals.groups,
     );
     void _paymentIds;
-    await archiveIssued(tx, org, draft.id, auth.user.id, pending);
-    return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
+    return { id: draft.id, number, totalCents: totals.totalCents, archived, ...paid };
   }));
+  await reportInvoiceArchivePending(org, result);
   await audit({
     organizationId: org,
     userId: auth.user.id,
@@ -1245,9 +1278,19 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
     const { paymentIds, ...paid } = await applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
     // Kassenbeleg über den Zahlungseingang (§ 146a Abs. 2 AO) je Bar-/Karten-/Gutscheinzahlung, mit TSE-Angaben:
     // Nummer und Angaben in dieser Transaktion, das PDF danach (Ablagefehler verhindern die Buchung nicht)
-    const receipts = await recordPaymentReceipts(tx, org, inv.id, paymentIds, auth.user.id);
-    return { ...paid, receipts };
+    // Savepoint: ein Fehler beim Anlegen des Belegs rollt die eben TSE-signierten Zahlungen nicht zurück (sonst
+    // würde „erneut erfassen“ ein zweites Mal signieren) – stattdessen Meldung im Posteingang
+    let receipts: { id: string; number: string }[] = [];
+    let receiptFailed = false;
+    try {
+      receipts = await tx.transaction((sp) => recordPaymentReceipts(sp, org, inv.id, paymentIds, auth.user.id));
+    } catch (e) {
+      log.error("payment_receipt.record_failed", { error: e, invoiceId: inv.id });
+      receiptFailed = true;
+    }
+    return { ...paid, receipts, receiptFailed, number: inv.number };
   });
+  if (result.receiptFailed) await reportReceiptRecordFailure(org, result.number, list.reduce((sum, p) => sum + p.amountCents, 0));
   const archived = await archivePaymentReceipts(org, result.receipts, auth.user.id);
   await audit({
     organizationId: org,
@@ -1417,8 +1460,9 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
         .where(and(eq(invoices.organizationId, org), inArray(invoices.id, credited.map((d) => d.id))));
     }
     // Stornorechnung archivieren (das Original bleibt im Archiv unverändert)
-    await archiveIssued(tx, org, draft.id, auth.user.id, pending);
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
     return {
+      archived,
       id: draft.id,
       number,
       originalNumber: orig.number,
@@ -1429,6 +1473,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
       restoredProducts,
     };
   }));
+  await reportInvoiceArchivePending(org, result);
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
     organizationId: org,
@@ -1598,7 +1643,8 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   // Belegangaben wie beim Ausstellen (Momentaufnahme); Altbelege ohne Momentaufnahme: aktuelle Stammdaten
   const settings = (o.settings ?? {}) as Record<string, unknown>;
   const docSettings = readDocumentSettings(settings);
-  const printed = withSnapshot(readInvoiceSnapshot(inv.issuedSnapshot), {
+  const snap = readInvoiceSnapshot(inv.issuedSnapshot);
+  const printed = withSnapshot(snap, {
     organization: o,
     patient,
     billingContact: billing,
@@ -1642,6 +1688,8 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
     booking: printed.booking,
     /** Belegangaben aus der Momentaufnahme beim Ausstellen (false = Altbeleg, aktuelle Stammdaten) */
     fromSnapshot: printed.fromSnapshot,
+    /** Kleinunternehmer-Hinweis im Wortlaut des Belegs */
+    smallBusinessNote: smallBusinessNoteFor(snap),
     /** archiviertes Original (PDF) – null bei Altbelegen vor dem Beleg-Archiv */
     archive: archive
       ? {

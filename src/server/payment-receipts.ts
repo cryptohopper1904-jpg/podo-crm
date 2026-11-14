@@ -24,7 +24,7 @@ import {
 } from "@/lib/payment-receipt";
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { log } from "@/lib/log";
-import { archivePdf, findReceiptArchives, readArchivedPdf, withArchiveCleanup } from "./document-archive";
+import { archivePdf, findReceiptArchives, readArchivedPdf, reportToInbox, withArchiveCleanup } from "./document-archive";
 import { logSync } from "./integrations";
 import { mailMessagingPort } from "./mail";
 import { loadLogos } from "./practice-logos";
@@ -73,6 +73,8 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
     billingContact: null,
   }).organization;
   const invSnap = readInvoiceSnapshot(inv.issuedSnapshot);
+  // Steuerlicher Status (Kleinunternehmer) wie auf der Rechnung, nicht wie heute – der Zahlungsbeleg verweist auf sie
+  const receiptOrg = { ...orgSnap, smallBusiness: invSnap ? invSnap.organization.smallBusiness : orgSnap.smallBusiness };
   const patient = invSnap?.patient ?? (inv.patientId ? (await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))))[0] ?? null : null);
   const billing = invSnap ? invSnap.billingContact : inv.billingContactId
     ? (await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId))))[0] ?? null
@@ -89,7 +91,7 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
     const f = p.fiscal;
     const data: PaymentReceiptSnapshot = {
       v: PAYMENT_RECEIPT_VERSION,
-      organization: orgSnap,
+      organization: receiptOrg,
       recipient,
       invoice: { id: inv.id, number: inv.number, kind: inv.kind, issuedAt: inv.issuedAt, totalCents: inv.totalCents },
       payment: { id: p.payment.id, paidAt: new Date(p.payment.paidAt).toISOString(), method: p.payment.method, amountCents: p.payment.amountCents, voucherCode: p.voucherCode ?? null },
@@ -123,7 +125,7 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
  * tun. Gegen gleichzeitiges Nachholen sperrt ein Advisory-Lock je Beleg (die Zeile selbst ist unveränderbar).
  * Gibt true zurück, wenn der Beleg danach archiviert ist.
  */
-async function archiveReceipt(org: string, receiptId: string, userId: string | null): Promise<boolean> {
+export async function archiveReceipt(org: string, receiptId: string, userId: string | null): Promise<boolean> {
   return withArchiveCleanup(org, (pending) =>
     withOrg(org, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`zb-archiv:${receiptId}`}, 0))`);
@@ -133,7 +135,7 @@ async function archiveReceipt(org: string, receiptId: string, userId: string | n
       if (done) return true;
       const data = readPaymentReceiptSnapshot(r.data);
       if (!data) return false;
-      const bytes = await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos: await loadLogos(org, tx) });
+      const bytes = await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos: await loadLogos(org, tx), generatedAt: new Date() });
       await archivePdf(tx, org, { kind: "payment_receipt", invoiceId: r.invoiceId, paymentReceiptId: r.id, bytes, filename: paymentReceiptFilename(r.number), userId }, pending);
       return true;
     }),
@@ -148,33 +150,38 @@ async function archiveReceipt(org: string, receiptId: string, userId: string | n
 export async function archivePaymentReceipts(org: string, receipts: { id: string; number: string }[], userId: string | null) {
   const failed: string[] = [];
   for (const r of receipts) {
+    let error: unknown = null;
     try {
-      if (!(await archiveReceipt(org, r.id, userId))) failed.push(r.number);
+      if (!(await archiveReceipt(org, r.id, userId))) error = new Error("Zahlungsbeleg nicht lesbar (Angaben fehlen oder unbekanntes Format)");
     } catch (e) {
-      log.error("payment_receipt.archive_failed", { error: e, receipt: r.number });
+      error = e;
+    }
+    if (error) {
+      log.error("payment_receipt.archive_failed", { error, receipt: r.number });
       failed.push(r.number);
-      await reportArchiveFailure(org, r).catch(() => undefined);
+      await reportArchiveFailure(org, r);
     }
   }
   return { failed };
 }
 
 async function reportArchiveFailure(org: string, r: { id: string; number: string }) {
-  const threadKey = `zb-archiv:${r.id}`;
-  await withOrg(org, async (tx) => {
-    const [exists] = await tx.select({ id: messages.id }).from(messages).where(and(eq(messages.organizationId, org), eq(messages.threadKey, threadKey))).limit(1);
-    if (exists) return;
-    await tx.insert(messages).values({
-      organizationId: org,
-      patientId: null,
-      channel: "none",
-      direction: "inbound",
-      subject: `Zahlungsbeleg ${r.number}: PDF konnte nicht abgelegt werden`,
-      body: `Die Zahlung ist gebucht und der Zahlungsbeleg ${r.number} mit allen Angaben (inkl. TSE) gespeichert, aber das PDF konnte nicht im Beleg-Archiv abgelegt werden. Es wird beim nächsten Öffnen des Belegs automatisch nachgeholt. Bleibt der Fehler bestehen, bitte den Support kontaktieren.`,
-      status: "new",
-      threadKey,
-    });
-  });
+  await reportToInbox(
+    org,
+    `zb-archiv:${r.id}`,
+    `Zahlungsbeleg ${r.number}: PDF konnte nicht abgelegt werden`,
+    `Die Zahlung ist gebucht und der Zahlungsbeleg ${r.number} mit allen Angaben (inkl. TSE) gespeichert, aber das PDF konnte nicht im Beleg-Archiv abgelegt werden. Es wird automatisch nachgeholt (beim Öffnen des Belegs und im regelmäßigen Hintergrundlauf). Bleibt der Fehler bestehen, bitte den Support kontaktieren.`,
+  );
+}
+
+/** Beleg-Zeile konnte bei der Buchung nicht angelegt werden (Zahlung und TSE-Signatur bleiben gebucht). */
+export async function reportReceiptRecordFailure(org: string, invoiceNumber: string | null, amountCents: number) {
+  await reportToInbox(
+    org,
+    `zb-fehlt:${invoiceNumber ?? "?"}:${amountCents}:${Date.now()}`,
+    `Zahlungsbeleg zu Rechnung ${invoiceNumber ?? "?"} konnte nicht angelegt werden`,
+    `Die Zahlung über ${money(amountCents)} zu Rechnung ${invoiceNumber ?? "?"} ist gebucht und TSE-signiert, der Beleg über den Zahlungseingang konnte aber nicht angelegt werden. Bitte die Signatur in der Kasse prüfen und den Support kontaktieren – die Zahlung nicht erneut erfassen.`,
+  );
 }
 
 export type PaymentReceiptListItem = {

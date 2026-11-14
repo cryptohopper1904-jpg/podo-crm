@@ -38,6 +38,11 @@ export type PaymentReceiptPdfData = {
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
   /** kein archiviertes Original (Ablage gescheitert): Neuerzeugung aus den festgeschriebenen Angaben, gekennzeichnet */
   reproduction?: { generatedAt: Date | string } | null;
+  /**
+   * Zeitpunkt der PDF-Erzeugung. Liegt er deutlich nach dem Beleg (Ablage nachgeholt), erscheint ein dezenter Vermerk –
+   * das PDF ist dann trotzdem das archivierte Original aus den festgeschriebenen Angaben.
+   */
+  generatedAt?: Date | string;
 };
 
 export function readPaymentReceiptSnapshot(raw: unknown): PaymentReceiptSnapshot | null {
@@ -59,8 +64,8 @@ export function paymentReceiptTitle(d: Pick<PaymentReceiptSnapshot, "payment" | 
 export function paymentReceiptVatNote(d: Pick<PaymentReceiptSnapshot, "invoice" | "organization">): string {
   const doc = INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung";
   return d.organization.smallBusiness
-    ? `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung und Entgelt siehe ${doc} Nr. ${d.invoice.number}. Keine Umsatzsteuerberechnung gemäß § 19 UStG (Kleinunternehmerregelung).`
-    : `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung, Entgelt und Umsatzsteuer sind in der ${doc} Nr. ${d.invoice.number} ausgewiesen – hier erfolgt kein gesonderter Steuerausweis.`;
+    ? `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung und Entgelt siehe ${doc} Nr. ${d.invoice.number}. Steuerbefreiung für Kleinunternehmer (§ 19 UStG).`
+    : `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung, Entgelt und die umsatzsteuerlichen Angaben (Steuersatz bzw. Steuerbefreiung) sind in der ${doc} Nr. ${d.invoice.number} ausgewiesen – hier erfolgt kein gesonderter Steuerausweis.`;
 }
 
 /** Stand nach dieser Zahlung (eine Zeile) */
@@ -71,7 +76,7 @@ export function paymentReceiptBalance(d: Pick<PaymentReceiptSnapshot, "openAfter
 }
 
 export function paymentReceiptReproductionNote(at: Date | string): string {
-  return `Reproduktion: Dieser Zahlungsbeleg wurde am ${dateTimeDe(at)} aus den gespeicherten Angaben neu erzeugt (kein archiviertes Original). Maßgeblich ist der ursprünglich ausgegebene Beleg.`;
+  return `Reproduktion (kein archiviertes Original): Die Angaben wurden bei der Zahlung festgeschrieben; dieses PDF wurde am ${dateTimeDe(at)} daraus erzeugt. Maßgeblich ist der ursprünglich ausgegebene Beleg.`;
 }
 
 export function paymentReceiptFilename(number: string) {
@@ -79,6 +84,8 @@ export function paymentReceiptFilename(number: string) {
 }
 
 const RED = rgb(0.75, 0.05, 0.05);
+/** ab dieser Verzögerung gilt das PDF als nachgeholt (Vermerk) */
+const LATE_PDF_MS = 10 * 60 * 1000;
 
 export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Promise<Uint8Array> {
   const { data: d } = input;
@@ -175,6 +182,11 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     y -= 2;
     text(`Erzeugt: ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
     y -= 14;
+  }
+  if (!input.reproduction && input.generatedAt && new Date(input.generatedAt).getTime() - new Date(input.issuedAt).getTime() > LATE_PDF_MS) {
+    ensure(12);
+    text(`PDF nachträglich erzeugt am ${dateTimeDe(input.generatedAt)} aus den bei der Zahlung festgeschriebenen Angaben.`, ML, y, { size: 7.5, color: GRAY });
+    y -= 12;
   }
   if (input.reproduction) {
     y -= 8;

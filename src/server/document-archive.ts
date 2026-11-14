@@ -1,8 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { documentArchive } from "@/db/schema";
+import { documentArchive, messages } from "@/db/schema";
 import { log } from "@/lib/log";
 import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
 
@@ -50,6 +50,24 @@ async function discardUnreferenced(org: string, keys: string[]) {
     await Promise.all(keys.filter((k) => !referenced.has(k)).map((k) => discardStored(k).catch(() => undefined)));
   } catch (e) {
     log.warn("archive.cleanup_skipped", { error: e, files: keys.length });
+  }
+}
+
+/**
+ * Meldung im Posteingang der Praxis (z. B. „PDF konnte nicht abgelegt werden“) – je Vorgang (threadKey) höchstens
+ * einmal: Advisory-Lock auf den Schlüssel, dann Prüfung, dann Anlegen (gleichzeitige Meldungen erzeugen keine Doppelten).
+ * Wirft nie (Meldung ist Begleitinformation, kein Teil der Buchung).
+ */
+export async function reportToInbox(org: string, threadKey: string, subject: string, body: string) {
+  try {
+    await withOrg(org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`inbox:${org}:${threadKey}`}, 0))`);
+      const [exists] = await tx.select({ id: messages.id }).from(messages).where(and(eq(messages.organizationId, org), eq(messages.threadKey, threadKey))).limit(1);
+      if (exists) return;
+      await tx.insert(messages).values({ organizationId: org, patientId: null, channel: "none", direction: "inbound", subject, body, status: "new", threadKey });
+    });
+  } catch (e) {
+    log.error("inbox.report_failed", { error: e, threadKey });
   }
 }
 

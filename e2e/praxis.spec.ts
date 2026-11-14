@@ -104,10 +104,15 @@ test("Rechnung erstellen und ausstellen", async () => {
 });
 
 test("Zahlung erfassen (bar): Beleg über den Zahlungseingang, Rechnungs-PDF aus dem Beleg-Archiv", async () => {
-  const invoiceUrl = page.url();
+  const invoiceUrl = page.url().split("?")[0];
   await page.getByRole("button", { name: "Zahlung erfassen" }).click();
   await page.getByLabel("Zahlung 1: Methode").selectOption("cash");
   await page.getByRole("button", { name: "Buchen" }).click();
+  // Zahlungsbeleg wird direkt zum Aushändigen angeboten
+  await expect(page).toHaveURL(/\?beleg=[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Zahlung erfasst – Zahlungsbeleg aushändigen" })).toBeVisible();
+  const printHref = await page.getByRole("link", { name: /^Zahlungsbeleg ZB\d{4}-\d{4} drucken$/ }).getAttribute("href");
+  expect((await page.request.get(printHref!)).status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Zahlungseingang nach Ausstellung" })).toBeVisible();
   await expect(page.getByText(/Beleg ZB\d{4}-\d{4}/)).toBeVisible();
   const receiptHref = await page.getByRole("link", { name: "Anzeigen / Drucken" }).getAttribute("href");

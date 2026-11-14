@@ -249,6 +249,24 @@ afterEach(() => vi.restoreAllMocks());
     expect(res2.receipts[0].number).toMatch(/-0002$/);
   });
 
+  it("Zahlungsbeleg übernimmt den Kleinunternehmer-Status der Rechnung (Momentaufnahme), nicht den heutigen", async () => {
+    const { org, auth, patient } = await setup();
+    await f.asOrg(org, (c) => c.query("update organizations set small_business = true where id = $1", [org]));
+    const inv = await invoices.createInvoice(auth, base(patient));
+    const snap = await f.asOrg(org, async (c) => (await c.query("select issued_snapshot from invoices where id = $1", [inv.id])).rows[0].issued_snapshot);
+    expect(snap.smallBusinessNote).toBe("Steuerbefreiung für Kleinunternehmer (§ 19 UStG).");
+    await f.asOrg(org, (c) => c.query("update organizations set small_business = false where id = $1", [org]));
+    drawn = [];
+    const res = await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
+    const data = await f.asOrg(org, async (c) => (await c.query("select data from payment_receipts where id = $1", [res.receipts[0].id])).rows[0].data);
+    expect(data.organization.smallBusiness).toBe(true);
+    expect(drawn.join(" ")).toMatch(/Steuerbefreiung für Kleinunternehmer \(§ 19 UStG\)/);
+    // Druckansicht/Neudruck der Rechnung behalten Status und Wortlaut der Ausstellung
+    const b = await bundle(org, inv.id);
+    expect(b.organization.smallBusiness).toBe(true);
+    expect(b.smallBusinessNote).toBe("Steuerbefreiung für Kleinunternehmer (§ 19 UStG).");
+  });
+
   it("Quittung bar beim Ausstellen trägt die TSE-Angaben auf dem Beleg selbst (kein zusätzlicher Zahlungsbeleg)", async () => {
     const { org, auth, patient } = await setup();
     drawn = [];
@@ -309,25 +327,184 @@ afterEach(() => vi.restoreAllMocks());
     );
   });
 
-  it("Fehler nach dem Ablegen: Rollback entfernt die Datei, die Rechnungsnummer ist nicht verbraucht", async () => {
-    const { org, auth, patient } = await setup();
-    const fn = `test_fail_archive_${org.replace(/-/g, "")}`;
-    await owner.query(`create function ${fn}() returns trigger language plpgsql as $$ begin raise exception 'Testfehler nach Ablage'; end $$`);
-    await owner.query(`create trigger ${fn} before insert on document_archive for each row when (new.organization_id = '${org}'::uuid) execute function ${fn}()`);
+  /** Test-Trigger (Eigentümer) für genau eine Praxis bzw. Rechnung; wird nach dem Block wieder entfernt */
+  async function withFailingTrigger<T>(table: string, when: string, fn: () => Promise<T>, opts: { deferred?: boolean } = {}): Promise<T> {
+    const name = `test_fail_${Math.random().toString(36).slice(2, 10)}`;
+    await owner.query(`create function ${name}() returns trigger language plpgsql as $$ begin raise exception 'Testfehler ${table}'; end $$`);
+    await owner.query(
+      opts.deferred
+        ? `create constraint trigger ${name} after insert on ${table} deferrable initially deferred for each row when (${when}) execute function ${name}()`
+        : `create trigger ${name} before insert on ${table} for each row when (${when}) execute function ${name}()`,
+    );
     try {
-      await rejects(invoices.createInvoice(auth, base(patient)), /Testfehler nach Ablage/);
+      return await fn();
     } finally {
-      await owner.query(`drop trigger ${fn} on document_archive`);
-      await owner.query(`drop function ${fn}()`);
+      await owner.query(`drop trigger ${name} on ${table}`);
+      await owner.query(`drop function ${name}()`);
     }
-    // keine Datei der Praxis übrig, keine Rechnung, Nummernkreis unberührt
+  }
+  const binFiles = async (org: string) => {
     const dir = path.join(process.env.STORAGE_DIR!, org);
-    const files = existsSync(dir) ? (await import("node:fs")).readdirSync(dir, { recursive: true }).filter((x) => String(x).endsWith(".bin")) : [];
-    expect(files).toEqual([]);
-    expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from invoices")).rows[0].n)).toBe(0);
-    const ok = await invoices.createInvoice(auth, base(patient));
-    expect(ok.number).toMatch(/-0001$/);
+    return existsSync(dir) ? (await import("node:fs")).readdirSync(dir, { recursive: true }).map(String).filter((x) => x.endsWith(".bin")) : [];
+  };
+  const fiscalCount = (org: string) => f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from fiscal_transactions")).rows[0].n as number);
+
+  it("Archivfehler beim Ausstellen (Quittung bar): Beleg gültig, genau eine TSE-Signatur, keine Datei übrig, Meldung; Abruf holt nach", async () => {
+    const { org, auth, patient } = await setup();
+    const rec = await withFailingTrigger("document_archive", `new.organization_id = '${org}'::uuid`, () =>
+      invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [pay("cash", 6500)] })),
+    );
+    expect(rec.number).toMatch(/-0001$/);
+    // nichts zurückgerollt → keine erneute Ausstellung nötig → keine zweite Signatur
+    expect(await fiscalCount(org)).toBe(1);
+    expect(await archiveRows(org, rec.id)).toEqual([]);
+    expect(await binFiles(org)).toEqual([]);
+    const inbox = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from messages where subject like 'Beleg % konnte nicht archiviert werden'")).rows[0].n);
+    expect(inbox).toBe(1);
+    // Abruf holt das Archiv aus den festgeschriebenen Daten nach (mit TSE-Angaben der Zahlung beim Ausstellen)
+    drawn = [];
+    const pdf = await delivery.invoicePdfForOrg(org, rec.id);
+    expect(pdf?.variant).toBe("archive");
+    expect(drawn).toContain("TSE-Signaturzähler");
+    expect(await archiveRows(org, rec.id)).toHaveLength(1);
+    expect(await fiscalCount(org)).toBe(1);
   });
+
+  it("Fehler erst beim COMMIT: Rollback entfernt die nicht verzeichnete Datei, die Rechnungsnummer ist nicht verbraucht", async () => {
+    const { org, auth, patient } = await setup();
+    await withFailingTrigger(
+      "document_archive",
+      `new.organization_id = '${org}'::uuid`,
+      () => rejects(invoices.createInvoice(auth, base(patient)), /Testfehler document_archive/),
+      { deferred: true },
+    );
+    expect(await binFiles(org)).toEqual([]);
+    expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from invoices")).rows[0].n)).toBe(0);
+    expect((await invoices.createInvoice(auth, base(patient))).number).toMatch(/-0001$/);
+  });
+
+  it("Aufräumen nach einem Fehler NACH dem COMMIT: verzeichnete Datei bleibt erhalten", async () => {
+    const { org, patient } = await setup();
+    const legacy = await f.invoice(org, patient);
+    const archive = await import("./document-archive");
+    await rejects(
+      archive.withArchiveCleanup(org, async (pending) => {
+        await withOrg(org, (tx) => archive.archivePdf(tx, org, { kind: "invoice", invoiceId: legacy, bytes: new Uint8Array([37, 80, 68, 70]), filename: "T.pdf", userId: null }, pending));
+        throw new Error("Fehler nach dem Commit");
+      }),
+      /nach dem Commit/,
+    );
+    const [row] = await archiveRows(org, legacy);
+    expect(row).toBeTruthy();
+    expect(await binFiles(org)).toHaveLength(1);
+    expect(Buffer.from(await archive.readArchivedPdf({ id: row.id, storageKey: row.storage_key, sha256: row.sha256, sizeBytes: row.size_bytes, organizationId: org })).toString()).toBe("%PDF");
+  });
+
+  it("Fehler beim Anlegen des Zahlungsbelegs (Webhook und „Zahlung erfassen“): Zahlung gebucht, eine Signatur, Meldung", async () => {
+    const { org, auth, patient } = await setup();
+    const inv = await invoices.createInvoice(auth, base(patient));
+    const inv2 = await invoices.createInvoice(auth, base(patient));
+    await withFailingTrigger("payment_receipts", `new.organization_id = '${org}'::uuid`, async () => {
+      const r = await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:pr-${inv.id}`, amountCents: 6500, method: "card" });
+      expect(r.status).toBe("gebucht");
+      // erneute Zustellung: bereits gebucht, keine zweite Signatur
+      expect((await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:pr-${inv.id}`, amountCents: 6500, method: "card" })).status).toBe("bereits gebucht");
+      const res = await invoices.addPayments(auth, inv2.id, [pay("cash", 6500)]);
+      expect(res).toMatchObject({ status: "paid", receipts: [] });
+    });
+    expect(await fiscalCount(org)).toBe(2);
+    const b = await bundle(org, inv.id);
+    expect(b.invoice.status).toBe("paid");
+    expect(b.paymentReceipts).toEqual([]);
+    const inbox = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from messages where subject like 'Zahlungsbeleg zu Rechnung % konnte nicht angelegt werden'")).rows[0].n);
+    expect(inbox).toBe(2);
+  });
+
+  it("zurückgerollter Zahlungsbeleg in paralleler Buchung: Nummern der übrigen bleiben lückenlos", async () => {
+    const { auth, patient } = await setup();
+    const list: { id: string; number: string }[] = [];
+    for (let i = 0; i < 4; i++) list.push(await invoices.createInvoice(auth, base(patient)));
+    const res = await withFailingTrigger("payment_receipts", `new.invoice_id = '${list[1].id}'::uuid`, () =>
+      Promise.all(list.map((inv) => invoices.addPayments(auth, inv.id, [pay("cash", 6500)]))),
+    );
+    const y = today.slice(0, 4);
+    expect(res.flatMap((r) => r.receipts.map((x) => x.number)).sort()).toEqual([1, 2, 3].map((n) => `ZB${y}-000${n}`));
+  });
+
+  it("gleichzeitiges Nachholen: genau ein Archiv je Beleg, beide Abrufe byte-gleich; Nachhol-Lauf erfasst übrige", async () => {
+    const { org, auth, patient } = await setup();
+    const inv = await invoices.createInvoice(auth, base(patient));
+    failPut = true;
+    let r1: Awaited<ReturnType<typeof invoices.addPayments>>;
+    let r2: Awaited<ReturnType<typeof invoices.addPayments>>;
+    const inv2 = await invoices.createInvoice(auth, base(patient));
+    try {
+      r1 = await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
+      r2 = await invoices.addPayments(auth, inv2.id, [pay("cash", 6500)]);
+    } finally {
+      failPut = false;
+    }
+    const id = r1.receipts[0].id;
+    const [a, b] = await Promise.all([receipts.paymentReceiptPdfForOrg(org, inv.id, id), receipts.paymentReceiptPdfForOrg(org, inv.id, id)]);
+    expect([a?.variant, b?.variant]).toEqual(["archive", "archive"]);
+    expect(Buffer.from(a!.bytes).equals(Buffer.from(b!.bytes))).toBe(true);
+    expect((await archiveRows(org, inv.id)).filter((x) => x.kind === "payment_receipt")).toHaveLength(1);
+    // der zweite Beleg wird vom Nachhol-Lauf (Cron/Export) erfasst
+    const catchUp = await import("./archive-catchup");
+    expect((await catchUp.missingArchives(org)).receipts.map((x) => x.id)).toEqual([r2.receipts[0].id]);
+    const run = await catchUp.catchUpArchives({ organizationIds: [org] });
+    expect(run.receipts).toEqual({ ok: 1, failed: 0 });
+    expect((await catchUp.missingArchives(org)).receipts).toEqual([]);
+    // nachträglich erzeugtes Original: kein Reproduktions-Vermerk
+    drawn = [];
+    await receipts.paymentReceiptPdfForOrg(org, inv2.id, r2.receipts[0].id);
+    expect(drawn.join(" ")).not.toMatch(/Reproduktion/);
+  });
+
+  it("Migration 0049 auf einer Datenbank mit der früheren Fassung (retain_until, alter Datei-Constraint): danach ausstellbar", async () => {
+    const dbName = `podo_alt_${Math.random().toString(36).slice(2, 8)}`;
+    await owner.query(`create database ${dbName}`);
+    const url = (process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? "")).replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
+    const alt = new Pool({ connectionString: url, max: 1 });
+    try {
+      await alt.query("create extension if not exists pgcrypto");
+      await alt.query("create extension if not exists pg_trgm");
+      const { drizzle } = await import("drizzle-orm/node-postgres");
+      const { migrate } = await import("drizzle-orm/node-postgres/migrator");
+      await migrate(drizzle(alt), { migrationsFolder: path.join(__dirname, "../../drizzle") });
+      // frühere Fassung nachstellen
+      await alt.query(`alter table document_archive add column retain_until date not null`);
+      await alt.query(`alter table document_archive drop constraint document_archive_file_check`);
+      await alt.query(
+        `alter table document_archive add constraint document_archive_file_check check (mime = 'application/pdf' and size_bytes > 0 and sha256 ~ '^[0-9a-f]{64}$')`,
+      );
+      // 0049 läuft erneut (geänderter Zeitstempel) → gleicht an
+      await alt.query(MIGRATION);
+      const cols = (await alt.query("select column_name from information_schema.columns where table_name = 'document_archive'")).rows.map((r) => r.column_name);
+      expect(cols).not.toContain("retain_until");
+      const org = (await alt.query("insert into organizations (name, slug) values ('Alt', 'alt-test') returning id")).rows[0].id as string;
+      await alt.query("begin");
+      await alt.query("select set_config('app.org_id', $1, true)", [org]);
+      const inv = (await alt.query("insert into invoices (organization_id, status) values ($1, 'draft') returning id", [org])).rows[0].id as string;
+      await alt.query("update invoices set status = 'issued', number = 'R2026-0001', issued_at = '2026-11-14' where id = $1", [inv]);
+      await alt.query(
+        "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename) values ($1, 'invoice', $2, $3, 4, $4, 'R2026-0001.pdf')",
+        [org, inv, `${org}/2026/11/00000000-0000-4000-8000-000000000000.bin`, "a".repeat(64)],
+      );
+      // neuer Constraint greift: fremder Ablagebereich abgelehnt
+      await rejects(
+        alt.query("insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename) values ($1, 'invoice', $2, 'x/y.bin', 4, $3, 'x.pdf')", [org, inv, "a".repeat(64)]),
+        /Ablagebereich/,
+      );
+      await alt.query("rollback");
+      // Guard ohne Backfill-Ausnahme nach der Migration
+      const src = (await alt.query("select prosrc from pg_proc where proname = 'podo_invoice_credit_guard'")).rows[0].prosrc as string;
+      expect(src).not.toContain("podo.backfill");
+    } finally {
+      await alt.end();
+      await owner.query(`drop database ${dbName} with (force)`);
+    }
+  }, 120_000);
 
   it("parallele Barzahlungen: Zahlungsbelege lückenlos und eindeutig nummeriert", async () => {
     const { org, auth, patient } = await setup();
@@ -388,7 +565,7 @@ afterEach(() => vi.restoreAllMocks());
       drawn = [];
       const pdf = await receipts.paymentReceiptPdfForOrg(org, inv.id, res.receipts[0].id);
       expect(pdf?.variant).toBe("reproduction");
-      expect(drawn.join(" ")).toMatch(/Reproduktion: Dieser Zahlungsbeleg wurde am/);
+      expect(drawn.join(" ")).toMatch(/Reproduktion \(kein archiviertes Original\): Die Angaben wurden bei der Zahlung festgeschrieben/);
     } finally {
       failPut = false;
     }

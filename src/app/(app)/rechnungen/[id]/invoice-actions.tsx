@@ -2,7 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
-import { Ban, Copy, CreditCard, FlaskConical, Link2, Mail, Send, Smartphone } from "lucide-react";
+import { Ban, Copy, CreditCard, FlaskConical, Link2, Mail, Printer, Send, Smartphone } from "lucide-react";
 import { Button, Card, Checkbox, Field, FormError, FormSuccess, Input, Select } from "@/components/ui";
 import {
   addPaymentAction,
@@ -18,6 +18,33 @@ import {
 import { newPaymentRow, PaymentsEditor, paymentsToJson, type PaymentRow } from "../payments-editor";
 
 /** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
+/** Zahlungsbelege direkt nach „Zahlung erfassen“ ausgeben (Kassenbeleg, § 146a Abs. 2 AO) */
+export function ReceiptLinks({ invoiceId, receipts, recipientEmail }: { invoiceId: string; receipts: { id: string; number: string }[]; recipientEmail: string | null }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {receipts.map((r) => (
+        <div key={r.id} className="flex flex-wrap items-start gap-2">
+          <a
+            href={`/api/invoices/${invoiceId}/zahlungsbelege/${r.id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+          >
+            <Printer size={18} aria-hidden /> Zahlungsbeleg {r.number} drucken
+          </a>
+          <a
+            href={`/api/invoices/${invoiceId}/zahlungsbelege/${r.id}/pdf?download=1`}
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+          >
+            PDF
+          </a>
+          <EmailPaymentReceiptButton invoiceId={invoiceId} receiptId={r.id} number={r.number} recipientEmail={recipientEmail} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; openCents: number }) {
   const refund = openCents < 0;
   const abs = Math.abs(openCents);
@@ -238,6 +265,12 @@ export function SumupPanel({
       </div>
       <div className="mt-3 flex flex-col gap-2">
         <FormSuccess message={terminal?.success ?? sim?.success} />
+        {terminal?.success ? (
+          <p className="text-xs text-muted">
+            Nach erfolgreicher Kartenzahlung erscheint der Zahlungsbeleg (Kassenbeleg) unten unter „Zahlungseingang nach Ausstellung“ – Seite neu
+            laden, dann drucken oder per E-Mail senden.
+          </p>
+        ) : null}
         <FormError message={terminal?.error ?? link?.error ?? sim?.error} />
       </div>
       {url ? (

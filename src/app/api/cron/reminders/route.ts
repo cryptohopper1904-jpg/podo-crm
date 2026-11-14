@@ -4,6 +4,7 @@ import { log } from "@/lib/log";
 import { runReminders } from "@/server/reminders";
 import { retryDueWebhooks } from "@/server/webhooks";
 import { runPromoTrialReturns } from "@/server/promo-codes";
+import { catchUpArchives } from "@/server/archive-catchup";
 
 /**
  * Erinnerungs-Lauf (alle 15 Minuten): POST /api/cron/reminders mit `Authorization: Bearer ${CRON_SECRET}`.
@@ -14,6 +15,7 @@ import { runPromoTrialReturns } from "@/server/promo-codes";
  * Ereignisse (Gesamt-Review H4/H7) – eigener Fehlerpfad, damit Erinnerungen davon unabhängig laufen.
  * Zusätzlich: abgelaufene Aktionscode-Testphasen aus dem Kostenlos-Tarif zurückstellen (runPromoTrialReturns, eigener
  * Fehlerpfad; läuft auch im nächtlichen Cron – die Hinweise versprechen „spätestens in der folgenden Nacht“).
+ * Zusätzlich: Beleg-Archiv nachholen (PDFs von Belegen/Zahlungsbelegen, deren Ablage gescheitert war; eigener Fehlerpfad).
  * Antwort enthält nur Zähler, keine Personendaten.
  */
 
@@ -35,10 +37,16 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.promo_return_free.failed", { error: e });
   }
+  let archives: Awaited<ReturnType<typeof catchUpArchives>> | null = null;
+  try {
+    archives = await catchUpArchives();
+  } catch (e) {
+    log.error("cron.archive_catchup.failed", { error: e });
+  }
   try {
     const result = await runReminders();
     if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
-    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, archives }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     log.error("cron.reminders.failed", { error: e });
     return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });

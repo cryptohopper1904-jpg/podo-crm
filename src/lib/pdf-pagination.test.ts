@@ -202,6 +202,17 @@ describe("Rechnung: Belegtext weiterer Belegarten", () => {
     expect(n).toBe(1);
   });
 
+  it("Kleinunternehmer: neue Belege mit „Steuerbefreiung für Kleinunternehmer (§ 19 UStG)“, Altbelege mit bisherigem Wortlaut", async () => {
+    const base = invoice(1);
+    const org = { ...ORG, smallBusiness: true };
+    const lines = base.lines.map((l) => ({ ...l, vatRate: 0 }));
+    await renderInvoicePdf({ ...base, organization: org, lines, smallBusinessNote: "Steuerbefreiung für Kleinunternehmer (§ 19 UStG)." });
+    expect(drawn.map((t) => t.text)).toContain("Steuerbefreiung für Kleinunternehmer (§ 19 UStG).");
+    drawn = [];
+    await renderInvoicePdf({ ...base, organization: org, lines });
+    expect(drawn.map((t) => t.text).join(" ")).toContain("Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).");
+  });
+
   it("Kleinunternehmer (§ 19 UStG): Belegtext unverändert", async () => {
     const base = invoice(3);
     const n = await pages(await renderInvoicePdf({ ...base, organization: { ...ORG, smallBusiness: true }, lines: base.lines.map((l) => ({ ...l, vatRate: 0 })) }));
@@ -259,7 +270,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     const n = await pages(await renderInvoicePdf({ ...invoice(1), reproduction: { generatedAt: "2026-11-14T10:00:00Z" } }));
     const body = bodyTexts(drawn);
     expect(body).toMatchSnapshot("Belegtext");
-    expect(body.join(" ")).toContain("Reproduktion: Dieser Beleg wurde am 14.11.2026, 11:00 aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich versandte Beleg.");
+    expect(body.join(" ")).toContain("Reproduktion: Dieser Beleg wurde am 14.11.2026, 11:00 aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich ausgestellte bzw. ausgegebene Beleg.");
     expect(n).toBe(1);
     expectInsideBody(n);
   });
@@ -287,7 +298,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     expect(body.join(" ")).not.toMatch(/USt \d+ %|Netto/);
     // Kleinunternehmer: ausdrücklicher Hinweis statt Steuerausweis
     expect(paymentReceiptVatNote({ invoice: { id: "i", number: "R2026-0042", kind: "invoice", issuedAt: "2026-11-02", totalCents: 6500 }, organization: { ...ORG, smallBusiness: true } as never })).toMatch(
-      /Keine Umsatzsteuerberechnung gemäß § 19 UStG/,
+      /Steuerbefreiung für Kleinunternehmer \(§ 19 UStG\)/,
     );
     expect(n).toBe(1);
   });

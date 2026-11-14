@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/invoices/[id
     throw e;
   }
   if (!pdf) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
-  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "payment_receipt.pdf", entity: "invoice", entityId: id, meta: { receipt: pdf.receipt.number } });
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "payment_receipt.pdf", entity: "invoice", entityId: id, meta: { receipt: pdf.receipt.number, variant: pdf.variant } });
   const disposition = req.nextUrl.searchParams.get("download") === "1" ? "attachment" : "inline";
   return new NextResponse(Buffer.from(pdf.bytes), { headers: pdfResponseHeaders(pdf.filename, disposition) });
 }
