@@ -26,6 +26,8 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
   const q = typeof sp.q === "string" ? sp.q : "";
   const status = typeof sp.status === "string" ? sp.status : "";
   const rows = await listPatients(auth, { q, status });
+  // Offene Beträge nur mit Rechnungs-Leserecht (listPatients lädt sie sonst gar nicht)
+  const showMoney = auth.can("invoices.read");
   const from = returnPath("/kunden", { q, status }); // Akte → „Zurück“ landet wieder auf dieser gefilterten Liste
   // Kostenlos-Tarif: „x von 20 Patient:innen“
   const quota = await withOrg(auth.organization.id, (tx) => patientQuota(tx, auth.organization.id));
@@ -118,7 +120,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                       <RiskBadges flags={p.riskFlags} compact />
                       <span className="text-sm text-muted">
                         Letzter Besuch: <span className="tabular-nums">{dateDe(p.lastVisit)}</span>
-                        {p.openCents > 0 ? <> · <span className="font-semibold text-danger">offen {money(p.openCents)}</span></> : null}
+                        {p.openCents ? <> · <span className="font-semibold text-danger">offen {money(p.openCents)}</span></> : null}
                       </span>
                     </span>
                     <ChevronRight size={18} aria-hidden className="shrink-0 text-muted" />
@@ -146,7 +148,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                   <th>Kontakt</th>
                   <th>Ort</th>
                   <th>Letzter Besuch</th>
-                  <th>Offen</th>
+                  {showMoney ? <th>Offen</th> : null}
                   <th>Status</th>
                 </tr>
               </thead>
@@ -164,7 +166,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                     <td className="text-sm">{p.phoneMobile ?? p.phoneLandline ?? p.email ?? "–"}</td>
                     <td className="text-sm">{[p.zip, p.city].filter(Boolean).join(" ") || "–"}{p.homeVisit ? " · Hausbesuch" : ""}</td>
                     <td className="text-sm tabular-nums">{dateDe(p.lastVisit)}</td>
-                    <td className="tabular-nums">{p.openCents > 0 ? <span className="font-semibold text-danger">{money(p.openCents)}</span> : "–"}</td>
+                    {showMoney ? <td className="tabular-nums">{p.openCents ? <span className="font-semibold text-danger">{money(p.openCents)}</span> : "–"}</td> : null}
                     <td>{p.deceased ? <Badge>{DECEASED_LABEL}</Badge> : <Badge tone={statusTone[p.status]}>{STATUS_LABEL[p.status]}</Badge>}</td>
                   </tr>
                 ))}
