@@ -125,7 +125,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
             <div className="flex flex-wrap gap-2">
               <LinkButton href={`/rechnungen/neu?behandlung=${recordId}`}>Rechnung erstellen</LinkButton>
               <LinkButton href={`/rechnungen/neu?behandlung=${recordId}&art=quittung`} variant="secondary">Quittung</LinkButton>
-              <p className="w-full text-xs text-muted">{RECEIPT_COLLECTIVE_HINT}</p>
+              <p className="w-full text-[13px] leading-5 text-muted">{RECEIPT_COLLECTIVE_HINT}</p>
             </div>
           )}
         </Card>
@@ -136,7 +136,7 @@ export default async function RecordPage(props: PageProps<"/kunden/[id]/doku/[re
           <ol className="mb-4 flex flex-col gap-3">
             {data.add.map(({ a, author }) => (
               <li key={a.id} className="rounded-xl bg-surface-2 p-3 text-sm">
-                <p className="text-xs text-muted">{dateTimeDe(a.createdAt)} · {author} · {a.kind === "countersign" ? "Gegenzeichnung" : "Nachtrag"}</p>
+                <p className="text-[13px] leading-5 text-muted">{dateTimeDe(a.createdAt)} · {author} · {a.kind === "countersign" ? "Gegenzeichnung" : "Nachtrag"}</p>
                 <p className="mt-1 whitespace-pre-wrap">{a.text}</p>
               </li>
             ))}
