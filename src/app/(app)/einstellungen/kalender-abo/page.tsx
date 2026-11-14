@@ -135,7 +135,7 @@ export default async function CalendarFeedSettings() {
               <Field label="Behandler:in für importierte Termine">{therapistSelect("therapistId", null)}</Field>
               <Field label="Termine kennzeichnen als">{sourceSelect("doctolib")}</Field>
             </div>
-            <Checkbox name="avv" label="Mit Google (geschäftliches Workspace-Konto) und dem Sync-Dienst (Docal.io/CalMedi) habe ich einen AVV abgeschlossen." />
+            <Checkbox name="avv" label="Mit Google (geschäftliches Workspace-Konto) und dem Sync-Dienst (Docal.io/CalMedi) habe ich einen AVV abgeschlossen und beide zur Verschwiegenheit (§ 203 Abs. 4 StGB) verpflichtet." />
           </ActionForm>
         </Card>
       ) : null}
