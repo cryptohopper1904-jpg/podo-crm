@@ -15,6 +15,7 @@ import { lockBooking } from "./portal-booking";
 import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
 import { blockClashesInTx } from "./calendar-blocks";
 import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
+import { PATIENT_NOT_IN_ORG_MSG, patientInOrg } from "./patient-route";
 
 export async function listAppointments(auth: AuthContext, fromIso: string, days: number) {
   const org = auth.organization.id;
@@ -173,6 +174,8 @@ export async function createInternalAppointments(
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
+    // Patient:in nur aus der eigenen Praxis (Fremdschlüssel umgehen RLS; zweite Sicherung: Trigger aus Migration 0050)
+    if (input.patientId && !(await patientInOrg(tx, org, input.patientId))) return { ok: false as const, error: PATIENT_NOT_IN_ORG_MSG };
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {
       return { ok: false as const, deceased: true as const };

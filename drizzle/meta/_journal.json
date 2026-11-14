@@ -351,6 +351,13 @@
       "when": 1794643215894,
       "tag": "0049_beleg_archiv",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1794656526036,
+      "tag": "0050_fk_praxis_abgleich",
+      "breakpoints": true
     }
   ]
 }
