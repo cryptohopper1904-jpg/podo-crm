@@ -36,15 +36,15 @@ export default async function HygieneOverview() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Chargen ohne Freigabe" value={pending} tone={pending ? "warn" : "neutral"} sub={<Link href="/hygiene/chargen" className="underline">zu den Chargen</Link>} />
-        <Stat label="Fristen ≤ 30 Tage / überfällig" value={deadlines.length} tone={deadlines.some((d) => d.st.status === "overdue") ? "accent" : deadlines.length ? "warn" : "primary"} sub={<Link href="/hygiene/geraete" className="underline">zu den Geräten</Link>} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Stat label="Chargen ohne Freigabe" value={pending} tone={pending ? "warn" : "neutral"} sub={<Link href="/hygiene/chargen" className="inline-flex min-h-11 items-center underline">zu den Chargen</Link>} />
+        <Stat label="Fristen ≤ 30 Tage / überfällig" value={deadlines.length} tone={deadlines.some((d) => d.st.status === "overdue") ? "accent" : deadlines.length ? "warn" : "primary"} sub={<Link href="/hygiene/geraete" className="inline-flex min-h-11 items-center underline">zu den Geräten</Link>} />
         {canViewMaterials(auth) ? (
-          <Stat label="Material nachbestellen" value={lowStock} tone={lowStock ? "warn" : "neutral"} sub={<Link href="/hygiene/material/bestellliste" className="underline">Bestellliste</Link>} />
+          <Stat label="Material nachbestellen" value={lowStock} tone={lowStock ? "warn" : "neutral"} sub={<Link href="/hygiene/material/bestellliste" className="inline-flex min-h-11 items-center underline">Bestellliste</Link>} />
         ) : null}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardTitle>Hygiene-Checkliste {dateDe(today)}</CardTitle>
           {checks.length === 0 ? (
@@ -63,7 +63,7 @@ export default async function HygieneOverview() {
                               <CheckCircle2 size={22} className="shrink-0 text-primary" aria-hidden />
                               <span className="flex-1">
                                 {c.item}
-                                <span className="block text-xs text-muted">erledigt {dateDe(c.doneAt)} {timeDe(c.doneAt)}{c.doneBy ? ` · ${c.doneBy}` : ""}</span>
+                                <span className="block text-[13px] text-muted">erledigt {dateDe(c.doneAt)} {timeDe(c.doneAt)}{c.doneBy ? ` · ${c.doneBy}` : ""}</span>
                               </span>
                               {edit && c.taskId && berlinDateIso(c.doneAt) === today ? (
                                 <form action={undoCheckAction}>

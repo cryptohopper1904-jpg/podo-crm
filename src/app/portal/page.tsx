@@ -32,8 +32,12 @@ export default async function PortalPage() {
   if (!link || !view) {
     return (
       <Shell>
+        {/* Ohne gültigen Link kennen wir die Praxis nicht – deshalb konkrete nächste Schritte statt Kontaktdaten */}
         <Empty title="Sitzung abgelaufen oder Link ungültig">
-          Bitte öffnen Sie den persönlichen Link aus der Nachricht Ihrer Praxis erneut. Ist er abgelaufen, erhalten Sie in der Praxis einen neuen.
+          <ol className="mx-auto mt-1 flex max-w-sm list-decimal flex-col gap-2 pl-5 text-left text-[15px]">
+            <li>Öffnen Sie die Nachricht Ihrer Praxis erneut und tippen Sie auf Ihren persönlichen Link.</li>
+            <li>Ist der Link abgelaufen, rufen Sie bitte Ihre Praxis an – dort erhalten Sie einen neuen.</li>
+          </ol>
         </Empty>
       </Shell>
     );

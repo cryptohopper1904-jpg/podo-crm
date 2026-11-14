@@ -33,7 +33,7 @@ export default async function CalendarFeedSettings() {
         <CardTitle>Kalender-Abo: Doctolib-Termine automatisch in PodoHero</CardTitle>
         <p className="mb-3 text-sm">
           Doctolib bietet keine offene Schnittstelle. Mit einem Synchronisationsdienst wie <strong>Docal.io</strong> oder <strong>CalMedi</strong> landen
-          Ihre Doctolib-Buchungen in einem Google-Kalender. PodoHero liest diesen Kalender über die <strong>private iCal-Adresse</strong> etwa alle
+          deine Doctolib-Buchungen in einem Google-Kalender. PodoHero liest diesen Kalender über die <strong>private iCal-Adresse</strong> etwa alle
           5 Minuten (nur lesend) und zeigt die Termine im Kalender und auf „Heute“ an – gekennzeichnet mit „aus Kalender-Abo“.
         </p>
         <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm">
@@ -49,9 +49,13 @@ export default async function CalendarFeedSettings() {
           <li>Überschneidungen mit PodoHero-Terminen derselben Behandler:in werden im Kalender und auf „Heute“ markiert.</li>
         </ul>
         <p className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
-          <strong>Datenschutz:</strong> Google (Kalender) und Docal.io bzw. CalMedi verarbeiten dabei Termindaten Ihrer Patient:innen als eigene
-          Auftragsverarbeiter – unabhängig von PodoHero. Schließen Sie mit jedem Anbieter einen Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO),
-          nutzen Sie möglichst Google Workspace mit EU-Datenregion und tragen Sie in Doctolib-Terminen keine Diagnosen in Titel oder Beschreibung ein.
+          <strong>Datenschutz:</strong> Termine in Doctolib, im Sync-Dienst (Docal.io bzw. CalMedi) und im Google-Kalender enthalten Namen deiner
+          Patient:innen und zeigen, dass sie podologisch behandelt werden. Das sind Gesundheitsdaten (Art. 9 DSGVO), die außerdem der Schweigepflicht
+          (§ 203 StGB) unterliegen. Diese Anbieter sind deine eigenen Auftragsverarbeiter, unabhängig von PodoHero. Nutze dafür nur ein geschäftliches
+          Google-Workspace-Konto, kein privates Google- oder Gmail-Konto, denn nur mit Workspace kannst du einen Auftragsverarbeitungsvertrag (AVV,
+          Art. 28 DSGVO) abschließen. Schließe auch mit dem Sync-Dienst einen AVV und verpflichte beide Anbieter zur Verschwiegenheit (§ 203 Abs. 4
+          StGB). Google verarbeitet Daten auch in den USA. Wähle, wenn deine Workspace-Edition das anbietet, die EU-Datenregion. Trage keine Diagnosen
+          in Titel oder Beschreibung ein. Stimme den Einsatz im Zweifel mit deiner/deinem Datenschutzbeauftragten ab.
           Die private iCal-Adresse ist wie ein Passwort: Sie wird verschlüsselt gespeichert und nie wieder angezeigt. Wurde sie weitergegeben, in
           Google „Zurücksetzen“ wählen und die neue Adresse hier eintragen.
         </p>
@@ -74,7 +78,7 @@ export default async function CalendarFeedSettings() {
             </p>
             {f.lastError ? <p className="mb-2 text-sm text-danger">Letzter Fehler: {f.lastError}{f.lastAttemptAt ? ` (${dateTimeDe(f.lastAttemptAt)})` : ""}</p> : null}
             {f.lastSyncAt ? (
-              <p className="mb-2 text-xs text-muted">
+              <p className="mb-2 text-[13px] text-muted">
                 Zuletzt erfolgreich: {dateTimeDe(f.lastSyncAt)}
                 {typeof r.events === "number" ? ` · ${r.events} Einträge, ${r.created ?? 0} neu, ${r.updated ?? 0} geändert, ${r.cancelled ?? 0} abgesagt` : ""}
                 {r.rruleSkipped ? ` · ${r.rruleSkipped} Serien mit nicht unterstützter Regel übersprungen` : ""}
@@ -97,7 +101,7 @@ export default async function CalendarFeedSettings() {
               <div className="mt-3">
                 <ActionForm action={updateFeedAction}>
                   <input type="hidden" name="id" value={f.id} />
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <Field label="Bezeichnung"><Input name="label" defaultValue={f.label} maxLength={80} required /></Field>
                     <Field label="Behandler:in (für neue Termine)">{therapistSelect("therapistId", f.therapistId)}</Field>
                     <Field label="Termine kennzeichnen als">{sourceSelect(f.source)}</Field>
@@ -123,15 +127,15 @@ export default async function CalendarFeedSettings() {
         <Card>
           <CardTitle>{feeds.length ? "Weiteres Kalender-Abo hinzufügen" : "Kalender-Abo hinzufügen"}</CardTitle>
           <ActionForm action={createFeedAction} submit="Speichern und abrufen">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Private iCal-Adresse" hint="https://calendar.google.com/calendar/ical/…/private-…/basic.ics" className="sm:col-span-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Private iCal-Adresse" hint={<span className="break-all">https://calendar.google.com/calendar/ical/…/private-…/basic.ics</span>} className="sm:col-span-2">
                 <Input name="url" type="password" autoComplete="off" required placeholder="https://…/basic.ics" />
               </Field>
               <Field label="Bezeichnung"><Input name="label" required maxLength={80} placeholder="z. B. Doctolib – Praxis Mitte" /></Field>
               <Field label="Behandler:in für importierte Termine">{therapistSelect("therapistId", null)}</Field>
               <Field label="Termine kennzeichnen als">{sourceSelect("doctolib")}</Field>
             </div>
-            <Checkbox name="avv" label="Mit Google und dem Sync-Dienst (Docal.io/CalMedi) besteht ein AVV bzw. wird vor dem Echtbetrieb abgeschlossen." />
+            <Checkbox name="avv" label="Mit Google (geschäftliches Workspace-Konto) und dem Sync-Dienst (Docal.io/CalMedi) habe ich einen AVV abgeschlossen und beide zur Verschwiegenheit (§ 203 Abs. 4 StGB) verpflichtet." />
           </ActionForm>
         </Card>
       ) : null}

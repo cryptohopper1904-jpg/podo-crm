@@ -37,7 +37,7 @@ export default async function ArticlePage({ params }: PageProps<"/wissen/[slug]"
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
       <JsonLd data={[breadcrumbLd(trail), articleLd({ title: a.title, description: a.description, path, published: a.published, modified: a.modified })]} />
       <Breadcrumbs trail={trail} />
-      <div className="mt-6 grid gap-10 lg:grid-cols-[1fr_280px]">
+      <div className="mt-6 grid grid-cols-1 gap-10 lg:grid-cols-[1fr_280px]">
         <article className="min-w-0 max-w-3xl">
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">{a.topic} · {a.minutes} Min. Lesezeit</p>
           <h1 className="mt-2 font-display text-3xl font-bold tracking-tight sm:text-4xl">{a.title}</h1>

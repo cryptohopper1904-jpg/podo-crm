@@ -10,7 +10,7 @@ export function RunNowButton() {
   const [state, action, pending] = useActionState(runRemindersNowAction, undefined);
   return (
     <form onSubmit={keepValues(() => action())} className="flex flex-col gap-2">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <div>
         <Button type="submit" variant="secondary" disabled={pending}>

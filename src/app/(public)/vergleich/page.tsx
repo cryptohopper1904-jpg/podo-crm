@@ -47,7 +47,7 @@ export default function ComparisonHub() {
 
       <section aria-labelledby="anbieter" className="mt-10">
         <h2 id="anbieter" className="font-display text-2xl font-semibold">PodoHero im Vergleich mit …</h2>
-        <ul className="mt-4 grid gap-4 md:grid-cols-3">
+        <ul className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
           {COMPETITORS.map((c) => (
             <li key={c.slug}>
               <Link href={`/vergleich/${c.slug}`} className="group flex h-full flex-col rounded-[var(--radius-card)] border border-border bg-surface p-6 hover:border-primary">
@@ -64,7 +64,7 @@ export default function ComparisonHub() {
 
       <section aria-labelledby="podo-kurz" className="mt-12 rounded-[var(--radius-card)] border border-border bg-surface p-6">
         <h2 id="podo-kurz" className="font-display text-2xl font-semibold">PodoHero auf einen Blick</h2>
-        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {[PODO.audience, PODO.footDoc, PODO.booking, PODO.invoices, PODO.hygiene, PODO.carehome, PODO.gkv, PODO.hosting].map((t) => (
             <li key={t} className="flex gap-2.5 text-[15px]">
               <Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> <span>{t.charAt(0).toUpperCase() + t.slice(1)}</span>
@@ -75,7 +75,7 @@ export default function ComparisonHub() {
 
       <section aria-labelledby="kriterien" className="mt-12">
         <h2 id="kriterien" className="font-display text-2xl font-semibold">Worauf Sie beim Vergleich achten sollten</h2>
-        <dl className="mt-4 grid gap-4 md:grid-cols-2">
+        <dl className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {CRITERIA.map(([t, d]) => (
             <div key={t} className="rounded-[var(--radius-card)] border border-border bg-surface p-5">
               <dt className="font-semibold">{t}</dt>
@@ -92,7 +92,7 @@ export default function ComparisonHub() {
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Selbst ausprobieren statt nur vergleichen</h2>
-          <p className="mt-1 opacity-90">
+          <p className="mt-1">
             30 Tage kostenlos, danach auf Wunsch im kostenlosen Tarif weiter (bis 20 Patient:innen, eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>).
           </p>

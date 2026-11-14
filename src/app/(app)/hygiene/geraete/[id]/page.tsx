@@ -50,7 +50,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
         <PrintButton label="Gerätebuch drucken" />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {DEADLINE_FIELDS.map((f) => (
           <div key={f} className="rounded-xl border border-border bg-surface p-4">
             <p className="text-sm font-medium">{DEADLINE_LABELS[f]}</p>
@@ -65,7 +65,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
           <CardTitle>Eintrag ins Gerätebuch</CardTitle>
           <ActionForm key={events.length} action={addDeviceEventAction} submit="Eintrag speichern">
             <input type="hidden" name="deviceId" value={device.id} />
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Art *">
                 <Select name="kind" defaultValue="maintenance">
                   {DEVICE_EVENT_KINDS.map((k) => <option key={k} value={k}>{DEVICE_EVENT_LABELS[k]}</option>)}
@@ -78,7 +78,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
                 <Input name="performedBy" maxLength={120} />
               </Field>
               <Field label="Neue Frist" hint="nur bei Wartung/Validierung/Prüfung">
-                <Input type="date" name="nextDueAt" min={today} />
+                <Input type="date" name="nextDueAt" min={today} placeholder="keine neue Frist" clearable />
               </Field>
               <Field label="Bemerkung / Ergebnis" className="sm:col-span-2 lg:col-span-4" hint="Prüfprotokolle bitte zusätzlich in Papierform bzw. im Praxisordner ablegen (Protokoll-Nr. hier notieren).">
                 <Textarea name="note" maxLength={2000} rows={2} />
@@ -94,7 +94,7 @@ export default async function DevicePage(props: PageProps<"/hygiene/geraete/[id]
         {events.length === 0 ? (
           <Empty title="Noch keine Einträge" />
         ) : (
-          <Table>
+          <Table label="Gerätebuch">
             <thead><tr><th>Datum</th><th>Art</th><th>Durchgeführt von</th><th>Bemerkung</th><th>Erfasst</th></tr></thead>
             <tbody>
               {events.map(({ e, author }) => (

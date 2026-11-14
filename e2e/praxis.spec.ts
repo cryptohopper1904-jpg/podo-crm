@@ -235,7 +235,7 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await pub.getByLabel("Ich habe die Datenschutzhinweise gelesen.").check();
   await pub.getByLabel(/Nicht rechtzeitig/).check();
   await pub.getByRole("button", { name: /Termin anfragen/ }).click();
-  await expect(pub.getByText(/Deine Anfrage ist eingegangen/)).toBeVisible();
+  await expect(pub.getByText(/Ihre Terminanfrage ist eingegangen/)).toBeVisible();
   await ctx.close();
 });
 

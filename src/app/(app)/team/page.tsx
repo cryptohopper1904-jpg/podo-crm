@@ -35,6 +35,24 @@ export default async function TeamPlanningPage() {
   const hoursOf = (userId: string) => hours.filter((h) => h.userId === userId);
   const absOf = (userId: string) => absences.filter((a) => a.a.userId === userId).map((a) => a.a);
   const upcoming = absences;
+  // Anwesenheit je Person und Tag (für Tabelle ab md und Liste auf dem Handy)
+  const grid = staff.map((s) => ({
+    s,
+    cells: days.map((d) => {
+      const av = computeAvailability({ dateIso: d, hours: hoursOf(s.id), absences: absOf(s.id), holiday: holidayOn(d, state) });
+      const label = av.available
+        ? formatRanges(av.ranges)
+        : av.reason === "absence"
+          ? kindLabel(av.absenceKind ?? "other")
+          : av.reason === "holiday"
+            ? `Feiertag: ${av.holiday}`
+            : "frei";
+      const tone = av.available ? "bg-primary-soft" : av.reason === "absence" ? "bg-accent-soft ring-1 ring-inset ring-accent" : "bg-surface-2";
+      return { d, label, tone };
+    }),
+  }));
+  // Handy: Wochenraster Mo–So, beginnend mit dem Montag dieser Woche (Tage vor heute bleiben leer)
+  const lead = (new Date(`${today}T12:00:00Z`).getUTCDay() + 6) % 7;
   const recent = past.absences.filter((a) => a.a.endsOn < today).reverse().slice(0, 10);
 
   return (
@@ -49,7 +67,7 @@ export default async function TeamPlanningPage() {
           <ul className="flex flex-col gap-1 text-[15px]">
             {conflicts.map((c) => (
               <li key={c.id}>
-                <Link href={`/kalender?datum=${berlinDateIso(c.startsAt)}`} className="font-semibold hover:underline">{dateTimeDe(c.startsAt)}</Link>
+                <Link href={`/kalender?datum=${berlinDateIso(c.startsAt)}`} className="inline-flex min-h-11 items-center font-semibold underline-offset-2 hover:underline">{dateTimeDe(c.startsAt)}</Link>
                 {" · "}{c.therapist ?? "–"} ({kindLabel(c.absenceKind)})
                 {" · "}{c.patientId ? fullName({ firstName: c.firstName, lastName: c.lastName ?? "" }) : (c.title ?? "Termin")}
               </li>
@@ -64,64 +82,74 @@ export default async function TeamPlanningPage() {
         {staff.length === 0 ? (
           <Empty title="Noch keine Teammitglieder" />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="border-collapse text-xs">
-              <caption className="sr-only">Anwesenheit je Person und Tag</caption>
-              <thead>
-                <tr>
-                  <th scope="col" className="sticky left-0 bg-surface pr-3 text-left font-semibold">Person</th>
-                  {days.map((d) => {
-                    const hol = holidayOn(d, state);
-                    return (
-                      <th key={d} scope="col" title={hol ?? undefined} className={cx("min-w-8 px-0.5 text-center font-medium", hol ? "text-accent" : "text-muted")}>
-                        <span className="block">{WD_SHORT[new Date(`${d}T12:00:00Z`).getUTCDay() || 7]}</span>
-                        <span className="block tabular-nums">{d.slice(8, 10)}</span>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody>
-                {staff.map((s) => (
-                  <tr key={s.id}>
-                    <th scope="row" className="sticky left-0 whitespace-nowrap bg-surface py-1 pr-3 text-left text-sm font-semibold">{s.name}</th>
-                    {days.map((d) => {
-                      const av = computeAvailability({ dateIso: d, hours: hoursOf(s.id), absences: absOf(s.id), holiday: holidayOn(d, state) });
-                      const label = av.available
-                        ? formatRanges(av.ranges)
-                        : av.reason === "absence"
-                          ? kindLabel(av.absenceKind ?? "other")
-                          : av.reason === "holiday"
-                            ? `Feiertag: ${av.holiday}`
-                            : "frei";
+          <>
+            {/* Handy: Liste je Person mit Wochenraster (die 28-Tage-Tabelle wäre über 1 000 px breit) */}
+            <ul className="flex flex-col gap-5 md:hidden">
+              {grid.map(({ s, cells }) => (
+                <li key={s.id}>
+                  <h3 className="mb-2 text-[15px] font-semibold wrap-break-word">{s.name}</h3>
+                  <div role="list" aria-label={`Anwesenheit ${s.name}, nächste 4 Wochen`} className="grid grid-cols-7 gap-1 text-center">
+                    {WD_SHORT.slice(1).map((w) => (
+                      <span key={w} aria-hidden className="text-[13px] font-medium text-muted">{w}</span>
+                    ))}
+                    {Array.from({ length: lead }, (_, i) => <span key={`l${i}`} aria-hidden />)}
+                    {cells.map(({ d, label, tone }) => {
+                      const hol = holidayOn(d, state);
                       return (
-                        <td key={d} className="p-0.5" title={`${s.name}, ${dateDe(d)}: ${label}`}>
-                          <span
-                            className={cx(
-                              "block h-7 rounded",
-                              av.available ? "bg-primary-soft" : av.reason === "absence" ? "bg-accent-soft ring-1 ring-inset ring-accent" : "bg-surface-2",
-                            )}
-                          >
-                            <span className="sr-only">{label}</span>
-                          </span>
-                        </td>
+                        <span key={d} role="listitem" title={`${dateDe(d)}: ${label}`} className={cx("flex h-9 items-center justify-center rounded text-[13px] tabular-nums", tone, hol ? "font-semibold underline decoration-accent decoration-2 underline-offset-2" : "")}>
+                          <span aria-hidden>{d.slice(8, 10)}</span>
+                          <span className="sr-only">{`${dateDe(d)}: ${label}`}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="border-collapse text-xs">
+                <caption className="sr-only">Anwesenheit je Person und Tag</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className="sticky left-0 bg-surface pr-3 text-left font-semibold">Person</th>
+                    {days.map((d) => {
+                      const hol = holidayOn(d, state);
+                      return (
+                        <th key={d} scope="col" title={hol ?? undefined} className={cx("min-w-8 px-0.5 text-center font-medium", hol ? "text-accent" : "text-muted")}>
+                          <span className="block">{WD_SHORT[new Date(`${d}T12:00:00Z`).getUTCDay() || 7]}</span>
+                          <span className="block tabular-nums">{d.slice(8, 10)}</span>
+                        </th>
                       );
                     })}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="mt-3 flex flex-wrap gap-4 text-sm text-muted">
+                </thead>
+                <tbody>
+                  {grid.map(({ s, cells }) => (
+                    <tr key={s.id}>
+                      <th scope="row" className="sticky left-0 whitespace-nowrap bg-surface py-1 pr-3 text-left text-sm font-semibold">{s.name}</th>
+                      {cells.map(({ d, label, tone }) => (
+                        <td key={d} className="p-0.5" title={`${s.name}, ${dateDe(d)}: ${label}`}>
+                          <span className={cx("block h-7 rounded", tone)}>
+                            <span className="sr-only">{label}</span>
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted">
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-primary-soft" aria-hidden /> arbeitet</span>
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-accent-soft ring-1 ring-accent" aria-hidden /> abwesend</span>
               <span className="inline-flex items-center gap-2"><span className="size-3 rounded bg-surface-2" aria-hidden /> frei / Feiertag</span>
               <span>Ohne gepflegte Arbeitszeiten gelten die Öffnungszeiten der Praxis.</span>
             </p>
-          </div>
+          </>
         )}
       </Card>
 
-      <div className="mb-6 grid gap-6 lg:grid-cols-2">
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardTitle>Abwesenheiten</CardTitle>
           {upcoming.length === 0 ? (
@@ -161,7 +189,7 @@ export default async function TeamPlanningPage() {
           <Card>
             <CardTitle>Abwesenheit eintragen</CardTitle>
             <ActionForm key={upcoming.length} action={addAbsenceAction} submit="Eintragen">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Field label="Person *">
                   <Select name="userId" required defaultValue="">
                     <option value="" disabled>– wählen –</option>
@@ -174,7 +202,7 @@ export default async function TeamPlanningPage() {
                   </Select>
                 </Field>
                 <Field label="Von *"><Input type="date" name="startsOn" defaultValue={today} required /></Field>
-                <Field label="Bis" hint="leer = nur ein Tag"><Input type="date" name="endsOn" /></Field>
+                <Field label="Bis" hint="leer = nur ein Tag"><Input type="date" name="endsOn" placeholder="nur ein Tag" clearable /></Field>
                 <Field label="Notiz" className="sm:col-span-2" hint="Keine Diagnosen eintragen.">
                   <Input name="note" maxLength={300} />
                 </Field>
@@ -187,7 +215,7 @@ export default async function TeamPlanningPage() {
       <section>
         <h2 className="mb-3 font-display text-xl font-semibold">Arbeitszeiten</h2>
         {edit ? (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {staff.map((s) => {
               const own = hoursOf(s.id);
               return (
@@ -195,7 +223,7 @@ export default async function TeamPlanningPage() {
                   <CardTitle>{s.name} <span className="text-sm font-normal text-muted">· {ROLE_LABELS[s.role]}</span></CardTitle>
                   <ActionForm action={saveWorkingHoursAction} submit="Arbeitszeiten speichern">
                     <input type="hidden" name="userId" value={s.id} />
-                    <div className="grid gap-2 sm:grid-cols-[7rem_1fr] sm:items-center">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center">
                       {WEEKDAYS.map(([wd, label]) => (
                         <label key={wd} className="contents">
                           <span className="text-sm font-medium">{label}</span>
@@ -214,7 +242,7 @@ export default async function TeamPlanningPage() {
             })}
           </div>
         ) : (
-          <Table>
+          <Table label="Arbeitszeiten">
             <thead><tr><th>Person</th>{WEEKDAYS.map(([wd, l]) => <th key={wd}>{l.slice(0, 2)}</th>)}</tr></thead>
             <tbody>
               {staff.map((s) => {

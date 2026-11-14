@@ -36,7 +36,7 @@ export default async function SupportSettings() {
           <Field label="Grund" hint="z. B. Ticketnummer oder Beschreibung des Problems">
             <Textarea name="reason" required minLength={5} maxLength={500} />
           </Field>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Dauer" hint="1 bis 72 Stunden">
               <Select name="hours" defaultValue="4">
                 {[1, 2, 4, 8, 24, 48, 72].map((h) => <option key={h} value={h}>{h} {h === 1 ? "Stunde" : "Stunden"}</option>)}
@@ -58,7 +58,7 @@ export default async function SupportSettings() {
         {grants.length === 0 ? (
           <Empty title="Noch keine Freigaben" />
         ) : (
-          <Table>
+          <Table label="Freigaben">
             <thead><tr><th>Erteilt</th><th>Für</th><th>Grund</th><th>Umfang</th><th>Gültig bis</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {grants.map(({ g, grantedByName, granteeName, granteeEmail }) => {
@@ -72,7 +72,7 @@ export default async function SupportSettings() {
                       ) : (
                         <Badge tone="warn">alle Betreiber-Admins</Badge>
                       )}
-                      {!g.granteeUserId && active ? <p className="mt-1 text-xs text-muted">Ältere Freigabe ohne Person – bitte widerrufen und personengebunden neu erteilen.</p> : null}
+                      {!g.granteeUserId && active ? <p className="mt-1 text-[13px] text-muted">Ältere Freigabe ohne Person – bitte widerrufen und personengebunden neu erteilen.</p> : null}
                     </td>
                     <td className="max-w-xs break-words">{g.reason}</td>
                     <td>{g.scope === "write" ? "Lesen + Konfiguration" : "Nur lesen"}</td>
