@@ -9,7 +9,7 @@ export function TotpForm() {
   const [state, action, pending] = useActionState(verifyTotpAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <Field label="Code">
         <Input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" required autoFocus />
       </Field>

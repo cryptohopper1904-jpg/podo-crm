@@ -42,7 +42,7 @@ export default async function BatchTracePage(props: PageProps<"/hygiene/charge/[
       <Card>
         <CardTitle>Charge</CardTitle>
         {batch ? (
-          <dl className="grid gap-x-6 gap-y-2 text-[15px] sm:grid-cols-[auto_1fr]">
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-[15px] sm:grid-cols-[auto_1fr]">
             <dt className="text-muted">Status</dt><dd><BatchBadge result={batch.b.result} expiresAt={batch.b.expiresAt} today={today} /></dd>
             <dt className="text-muted">Aufbereitet</dt><dd>{dateTimeDe(batch.b.processedAt)}</dd>
             <dt className="text-muted">Gerät / Zyklus</dt><dd>{batch.device ?? batch.b.sterilizer ?? "–"}{batch.b.cycleNo ? ` · Zyklus ${batch.b.cycleNo}` : ""}</dd>
@@ -62,7 +62,7 @@ export default async function BatchTracePage(props: PageProps<"/hygiene/charge/[
         {people.length === 0 ? (
           <Empty title="Keine Behandlung mit dieser Charge dokumentiert" />
         ) : (
-          <Table>
+          <Table label="Betroffene Patient:innen">
             <thead><tr><th>Nr.</th><th>Name</th><th>Telefon</th><th>Behandlungen</th><th>zuletzt</th></tr></thead>
             <tbody>
               {people.map((p) => (

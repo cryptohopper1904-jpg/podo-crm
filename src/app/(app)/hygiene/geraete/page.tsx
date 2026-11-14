@@ -28,7 +28,7 @@ export default async function DevicesPage() {
       {devs.length === 0 ? (
         <Empty title="Noch keine Geräte erfasst">Sterilisator, Thermodesinfektor, Fräse, Ultraschallbad … mit Prüffristen anlegen.</Empty>
       ) : (
-        <Table>
+        <Table label="Geräte">
           <thead>
             <tr><th>Ampel</th><th>Gerät</th><th>Wartung</th><th>Validierung</th><th>Elektr. Prüfung</th></tr>
           </thead>

@@ -11,7 +11,7 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
   const [channel, setChannel] = useState<BookingChannel>(doc.booking.channel);
   return (
     <ActionForm action={saveDocumentsAction}>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Website (Fußzeile)" hint="z. B. https://www.podologie-kiehne.de">
           <Input name="websiteUrl" type="url" inputMode="url" defaultValue={websiteUrl ?? ""} maxLength={LIMITS.url} placeholder="https://" />
         </Field>
@@ -28,7 +28,7 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
           defaultChecked={doc.therapeuticDefault}
           label="USt-Wächter auf neuen Rechnungen vorbelegen: Leistungen, die wir mit 0 % abrechnen, erbringen wir nur als Heilbehandlung mit therapeutischem Ziel (Befund/Verordnung dokumentiert)"
         />
-        <p className="ml-8 text-xs text-muted">
+        <p className="ml-8 text-[13px] text-muted">
           Der Haken ist dann auf neuen Rechnungen gesetzt und wird je Rechnung mit Hinweis „durch Praxis-Einstellung vorbelegt“ gespeichert. Bei kosmetischen Leistungen (z. B. Fußpflege ohne Befund) auf der Rechnung „Prüfen/Ändern“ und die Position mit 19 % abrechnen. Steuerliche Einordnung bitte mit der Steuerberatung abstimmen.
         </p>
       </div>
@@ -47,12 +47,12 @@ export function DocumentsForm({ doc, websiteUrl, ownBookingUrl, ownBookingActive
           </p>
         ) : null}
         {channel === "doctolib" ? (
-          <Field label="Doctolib-Link Ihrer Praxis" className="ml-8">
+          <Field label="Doctolib-Link deiner Praxis" className="ml-8">
             <Input name="doctolibUrl" type="url" inputMode="url" defaultValue={doc.booking.channel === "doctolib" ? doc.booking.url ?? "" : ""} maxLength={LIMITS.url} placeholder="https://www.doctolib.de/…" required />
           </Field>
         ) : null}
         {channel === "custom" ? (
-          <div className="ml-8 grid gap-4 sm:grid-cols-2">
+          <div className="ml-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Buchungslink">
               <Input name="customUrl" type="url" inputMode="url" defaultValue={doc.booking.channel === "custom" ? doc.booking.url ?? "" : ""} maxLength={LIMITS.url} placeholder="https://" required />
             </Field>

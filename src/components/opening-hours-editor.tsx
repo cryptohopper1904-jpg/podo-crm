@@ -12,6 +12,12 @@ const toMin = (t: string) => (/^\d{2}:\d{2}$/.test(t) ? Number(t.slice(0, 2)) * 
 const toHhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const LAST = 23 * 60 + 55;
 
+/**
+ * Zeitfelder auf dem Handy: Von, Bis und Löschen stehen in einer Zeile (auch auf 320 px). Dafür weniger Innenabstand
+ * und auf schmalen Bildschirmen ohne Uhr-Symbol (ein Tipp ins Feld öffnet auf dem Handy ohnehin die Zeitauswahl), damit „08:00“ lesbar bleibt.
+ */
+const timeCls = "px-2.5! tabular-nums sm:px-3.5! max-sm:[&::-webkit-calendar-picker-indicator]:hidden";
+
 /** Vorschlag für ein weiteres Zeitfenster: 30 Min. nach dem letzten Ende, 2 Std. lang (im 5-Min-Raster). */
 function nextWindow(days: Win[]): Win {
   const lastEnd = toMin(days[days.length - 1]?.end ?? "");
@@ -56,7 +62,7 @@ export function OpeningHoursEditor({ name, initial, legend = "Öffnungszeiten" }
           const dayName = WEEKDAY_LONG[d];
           const switchId = `${ids}-open-${d}`;
           return (
-            <div key={d} className="flex flex-col gap-3 p-4 md:grid md:grid-cols-[10rem_minmax(0,1fr)] md:gap-4" data-weekday={d}>
+            <div key={d} className="flex flex-col gap-3 p-3 sm:p-4 md:grid md:grid-cols-[10rem_minmax(0,1fr)] md:gap-4" data-weekday={d}>
               <div className="flex min-h-11 items-center justify-between gap-3 md:self-start">
                 <label htmlFor={switchId} className="min-w-0 font-semibold">{dayName}</label>
                 <label className="flex min-h-11 shrink-0 cursor-pointer items-center" title={open ? "geöffnet" : "geschlossen"}>
@@ -70,15 +76,15 @@ export function OpeningHoursEditor({ name, initial, legend = "Öffnungszeiten" }
               {open ? (
                 <div className="flex min-w-0 flex-col gap-3">
                   {wins.map((w, i) => (
-                    <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-x-3 sm:max-w-xl">
+                    <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-x-2 sm:max-w-xl sm:gap-x-3">
                       <Field label="Von">
-                        <Input type="time" step={300} required value={w.start} onChange={(e) => set(d, wins.map((x, j) => (j === i ? { ...x, start: e.target.value } : x)))} aria-label={`${dayName}, ${i + 1}. Zeitfenster von`} />
+                        <Input type="time" step={300} required className={timeCls} value={w.start} onChange={(e) => set(d, wins.map((x, j) => (j === i ? { ...x, start: e.target.value } : x)))} aria-label={`${dayName}, ${i + 1}. Zeitfenster von`} />
                       </Field>
                       <Field label="Bis">
-                        <Input type="time" step={300} required value={w.end} onChange={(e) => set(d, wins.map((x, j) => (j === i ? { ...x, end: e.target.value } : x)))} aria-label={`${dayName}, ${i + 1}. Zeitfenster bis`} />
+                        <Input type="time" step={300} required className={timeCls} value={w.end} onChange={(e) => set(d, wins.map((x, j) => (j === i ? { ...x, end: e.target.value } : x)))} aria-label={`${dayName}, ${i + 1}. Zeitfenster bis`} />
                       </Field>
                       <FieldSlot>
-                        <Button type="button" variant="ghost" className="px-3" onClick={() => set(d, wins.filter((_, j) => j !== i))} aria-label={`${dayName}: ${i + 1}. Zeitfenster entfernen`} title="Zeitfenster entfernen">
+                        <Button type="button" variant="ghost" className="w-11 px-0!" onClick={() => set(d, wins.filter((_, j) => j !== i))} aria-label={`${dayName}: ${i + 1}. Zeitfenster entfernen`} title="Zeitfenster entfernen">
                           <Trash2 size={18} aria-hidden />
                         </Button>
                       </FieldSlot>

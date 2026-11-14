@@ -2,7 +2,7 @@ import Link from "next/link";
 import { LogoutForm } from "@/components/pwa/logout-form";
 import { LogOut, Settings, SlidersHorizontal, Sparkles } from "lucide-react";
 import { AccessBanner } from "@/components/access-banner";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { BottomNav } from "@/components/app-nav";
 import { Sidebar } from "@/components/sidebar";
 import { NAV_COOKIE, showSettings } from "@/lib/nav";
@@ -18,6 +18,7 @@ import { PatientSearch } from "@/components/patient-search";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
+import { assertPatientRouteExists } from "@/server/patient-route";
 import type { Metadata } from "next";
 import { appLayoutMetadata } from "@/lib/pwa/app-meta";
 import { PwaClient } from "@/components/pwa/pwa-client";
@@ -136,6 +137,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
     }
   }
   const auth = await requireAuth();
+  // Unbekannte Akte → echte 404 vor der Suspense-Grenze aus ./loading.tsx (Begründung in src/server/patient-route.ts)
+  await assertPatientRouteExists(auth, (await headers()).get("x-podo-path"));
   const allowed = navAllowed(auth); // Rechte + Praxis-Schalter (src/server/nav.ts)
 
   const switcher = await loadSwitcherModel({

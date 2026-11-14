@@ -6,7 +6,7 @@ type Device = typeof devices.$inferSelect;
 
 export function DeviceFields({ device }: { device?: Device }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {device ? <input type="hidden" name="id" value={device.id} /> : null}
       <Field label="Bezeichnung *">
         <Input name="name" defaultValue={device?.name ?? ""} required maxLength={120} placeholder="z. B. Autoklav Melag" />
@@ -27,13 +27,13 @@ export function DeviceFields({ device }: { device?: Device }) {
       </Field>
       <div />
       <Field label="Nächste Wartung">
-        <Input type="date" name="nextMaintenanceAt" defaultValue={device?.nextMaintenanceAt ?? ""} />
+        <Input type="date" name="nextMaintenanceAt" defaultValue={device?.nextMaintenanceAt ?? ""} placeholder="keine Frist" clearable />
       </Field>
       <Field label="Nächste Validierung" hint="Aufbereitungsprozess (z. B. jährlich)">
-        <Input type="date" name="nextValidationAt" defaultValue={device?.nextValidationAt ?? ""} />
+        <Input type="date" name="nextValidationAt" defaultValue={device?.nextValidationAt ?? ""} placeholder="keine Frist" clearable />
       </Field>
       <Field label="Nächste elektr. Prüfung" hint="DGUV V3">
-        <Input type="date" name="nextElectricalCheckAt" defaultValue={device?.nextElectricalCheckAt ?? ""} />
+        <Input type="date" name="nextElectricalCheckAt" defaultValue={device?.nextElectricalCheckAt ?? ""} placeholder="keine Frist" clearable />
       </Field>
       <Field label="Notizen" className="sm:col-span-2">
         <Textarea name="notes" defaultValue={device?.notes ?? ""} maxLength={1000} rows={2} />

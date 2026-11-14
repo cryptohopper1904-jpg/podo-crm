@@ -23,15 +23,15 @@ export function BookingForm({ slug, services, days }: { slug: string; services: 
       <input type="hidden" name="date" value={date ?? ""} />
       <input type="hidden" name="time" value={time ?? ""} />
       <div className="sr-only" aria-hidden><label>Website<input name="website" tabIndex={-1} autoComplete="off" /></label></div>
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <Card>
         <h2 className="mb-3 font-display text-lg font-semibold">1. Leistung</h2>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {services.map((s) => (
             <button key={s.id} type="button" aria-pressed={svc?.id === s.id} onClick={() => { setSvc(s); setTime(null); }}
               className={cx("rounded-xl p-4 text-left", svc?.id === s.id ? "bg-primary text-on-primary" : "border border-border bg-surface hover:bg-surface-2")}>
               <span className="block font-semibold">{s.name}</span>
-              <span className="text-sm opacity-80">{s.durationMin} Min · {eur.format(s.priceCents / 100)}</span>
+              <span className="text-sm">{s.durationMin} Min · {eur.format(s.priceCents / 100)}</span>
             </button>
           ))}
         </div>
@@ -58,8 +58,8 @@ export function BookingForm({ slug, services, days }: { slug: string; services: 
       ) : null}
       {svc && date && time ? (
         <Card>
-          <h2 className="mb-3 font-display text-lg font-semibold">3. Deine Angaben</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <h2 className="mb-3 font-display text-lg font-semibold">3. Ihre Angaben</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Vorname"><Input name="firstName" required autoComplete="given-name" /></Field>
             <Field label="Nachname"><Input name="lastName" required autoComplete="family-name" /></Field>
             <Field label="Mobilnummer"><Input name="phone" type="tel" required autoComplete="tel" /></Field>

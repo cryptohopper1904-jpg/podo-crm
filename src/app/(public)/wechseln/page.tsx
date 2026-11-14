@@ -68,7 +68,7 @@ export default function SwitchPage() {
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
       <JsonLd data={[breadcrumbLd(trail), faqLd(FAQ)]} />
       <Breadcrumbs trail={trail} />
-      <div className="mt-6 grid items-center gap-10 lg:grid-cols-[1fr_1.1fr]">
+      <div className="mt-6 grid grid-cols-1 items-center gap-10 lg:grid-cols-[1fr_1.1fr]">
         <header>
           <Badge tone="primary">Gebaut nur für Podologie</Badge>
           <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">Wechseln zu PodoHero</h1>
@@ -90,7 +90,7 @@ export default function SwitchPage() {
 
       <section aria-labelledby="wege" className="mt-14">
         <h2 id="wege" className="font-display text-2xl font-semibold">So kommen Ihre Daten zu PodoHero</h2>
-        <ul className="mt-4 grid gap-4 md:grid-cols-3">
+        <ul className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
           {PATHS.map(({ icon: Icon, title, text }) => (
             <li key={title} className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
               <span className="inline-flex size-10 items-center justify-center rounded-xl bg-primary-soft text-primary-soft-text"><Icon size={20} aria-hidden /></span>
@@ -103,7 +103,7 @@ export default function SwitchPage() {
 
       <section aria-labelledby="ablauf" className="mt-14">
         <h2 id="ablauf" className="font-display text-2xl font-semibold">Der Ablauf in sechs Schritten</h2>
-        <ol className="mt-6 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <ol className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {STEPS.map(([t, d], i) => (
             <li key={t} className="flex gap-4">
               <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-primary font-display font-bold text-on-primary">{i + 1}</span>
@@ -118,7 +118,7 @@ export default function SwitchPage() {
 
       <section aria-labelledby="checkliste" className="mt-14 rounded-[var(--radius-card)] border border-border bg-surface p-6">
         <h2 id="checkliste" className="font-display text-2xl font-semibold">Checkliste für den Umstieg</h2>
-        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {CHECKLIST.map((t) => (
             <li key={t} className="flex gap-2.5 text-[15px]"><Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> {t}</li>
           ))}
@@ -136,7 +136,7 @@ export default function SwitchPage() {
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Jetzt unverbindlich wechseln</h2>
-          <p className="mt-1 opacity-90">
+          <p className="mt-1">
             30 Tage alle Funktionen testen. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>) oder Tarif wählen.
           </p>

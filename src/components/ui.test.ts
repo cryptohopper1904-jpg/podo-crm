@@ -67,6 +67,45 @@ describe("Feldfehler (F3)", () => {
     expect(out).toContain('aria-describedby="datum-fehler"');
     expect(out).toContain('id="datum-fehler"');
   });
+  it("verknüpft den Hinweis auch ohne Fehler (aria-describedby), ohne aria-invalid", () => {
+    const out = html(h(Field, { label: "Dauer", id: "dauer", hint: "0 = einmalig", children: h(Input, { name: "dauer" }) }));
+    expect(out).toContain('aria-describedby="dauer-hinweis"');
+    expect(out).toContain('id="dauer-hinweis"');
+    expect(out).not.toContain('aria-invalid="');
+    const both = html(h(Field, { label: "Dauer", id: "dauer", hint: "0 = einmalig", error: "Fehlt", children: h(Input, { name: "dauer" }) }));
+    expect(both).toContain('aria-describedby="dauer-fehler dauer-hinweis"');
+  });
+  it("ohne id: eigene id, Hinweis außerhalb des <label> (nicht Teil des Namens), aber verknüpft", () => {
+    const out = html(h(Field, { label: "Dauer", hint: "0 = einmalig", children: h(Input, { name: "dauer" }) }));
+    const id = out.match(/<input[^>]* id="([^"]+)"/)?.[1];
+    expect(id).toBeTruthy();
+    expect(out).toContain(`<label for="${id}"`);
+    expect(out).toMatch(/<label[^>]*>Dauer<\/label>/);
+    expect(out).toContain(`aria-describedby="${id}-hinweis"`);
+    expect(out).toContain(`id="${id}-hinweis"`);
+  });
+  it("Einheit gehört zum Namen: „Dauer in Minuten“ steht im <label>, nicht verwaist neben der Eingabe", () => {
+    const out = html(h(Field, { label: "Dauer", children: h(Input, { type: "number", name: "durationMin", suffix: "Min" }) }));
+    expect(out).toMatch(/<label for="[^"]+"[^>]*>Dauer<span class="sr-only"> in Minuten<\/span><\/label>/);
+    expect(out.match(/ in Minuten/g)).toHaveLength(1);
+    // sichtbare Einheit bleibt im Feld
+    expect(out).toMatch(/<span aria-hidden="true"[^>]*>Min<\/span>/);
+  });
+  it("Rückfall-Weg: Fehler setzt aria-invalid/aria-describedby am einzelnen Kind", () => {
+    const out = html(h(Field, { label: "Preis", error: "Pflichtfeld", children: h("span", { className: "block w-36" }, h("input", { name: "p" })) }));
+    const errId = out.match(/<span id="([^"]+-fehler)"/)?.[1];
+    expect(errId).toBeTruthy();
+    expect(out).toContain(`<span class="block w-36" aria-invalid="true" aria-describedby="${errId}">`);
+  });
+  it("eigene Komponenten als Kind: bleibt ein umschließendes <label>", () => {
+    const out = html(h(Field, { label: "Preis", hint: "brutto", children: h("span", { className: "block w-36" }, h("input", { name: "p" })) }));
+    expect(out).toMatch(/^<label class="podo-field/);
+  });
+  it("shouldReveal: Ausgangswerte = Anfangsmeldung → kein Anspringen (Verhalten im Browser: e2e/formular-meldungen.spec.ts)", () => {
+    const k = {};
+    expect(shouldReveal({ message: "Link abgelaufen", key: k }, { message: "Link abgelaufen", key: k })).toBe(false);
+    expect(shouldReveal({ message: "Link abgelaufen" }, { message: "Link abgelaufen" })).toBe(false);
+  });
   it("Fehlermeldung wird bei neuer Meldung oder erneutem Absenden angesprungen", () => {
     const a = {};
     const b = {};
