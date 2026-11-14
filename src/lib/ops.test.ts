@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatLog, sanitizeFields, scrubText } from "./log";
 import { buildErrorReport, parseSentryDsn, scrubRoute, sentryEnvelope } from "./error-report";
-import { evaluateMigrations, evaluateTimestamp, overallStatus, parseEpoch } from "./ops-health";
+import { evaluateMigrations, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, overallStatus, parseEpoch } from "./ops-health";
 
 describe("Logs ohne Personendaten", () => {
   it("filtert E-Mail, Telefon, IBAN, Query-Strings und Token-Pfade", () => {
@@ -66,6 +66,26 @@ describe("Deep-Health-Bewertung", () => {
     expect(evaluateTimestamp(now / 1000 - 3600, 60, now).status).toBe("fail");
     expect(parseEpoch("1731000000\n")).toBe(1731000000);
     expect(parseEpoch("kaputt")).toBeNull();
+  });
+
+  it("Cron Nur-Lesen: deaktiviert → skipped (kein warn/fail); eingeschaltet ohne Datei → warn, zu alt → fail", () => {
+    expect(evaluateReadonlyExpiryCron(false, null, now)).toMatchObject({ status: "skipped", hint: expect.stringMatching(/deaktiviert/) });
+    expect(evaluateReadonlyExpiryCron(false, now / 1000 - 100 * 3600, now).status).toBe("skipped");
+    expect(evaluateReadonlyExpiryCron(true, null, now)).toMatchObject({ status: "warn", hint: "noch kein Lauf erfasst" });
+    expect(evaluateReadonlyExpiryCron(true, now / 1000 - 6 * 3600, now).status).toBe("ok");
+    expect(evaluateReadonlyExpiryCron(true, now / 1000 - MAX_AGE_SECONDS.cron6h - 60, now).status).toBe("fail");
+    expect(overallStatus({ a: { status: "ok" }, nurLesen: evaluateReadonlyExpiryCron(false, null, now) })).toBe("ok");
+  });
+
+  it("fehlender Zeitstempel: warn kurz nach dem ersten Start, fail nach Ablauf der Frist (nicht dauerhaft warn)", () => {
+    const day = 26 * 3600;
+    expect(evaluateTimestamp(null, day, now, "noch kein Lauf erfasst", now / 1000 - 3600).status).toBe("warn");
+    const late = evaluateTimestamp(null, day, now, "noch kein Lauf erfasst", now / 1000 - day - 60);
+    expect(late).toMatchObject({ status: "fail", hint: "seit dem Start kein erfolgreicher Lauf", lastAt: null });
+    // ohne Start-Zeitstempel (z. B. alter cron-Container): weiterhin warn
+    expect(evaluateTimestamp(null, day, now, "x", null).status).toBe("warn");
+    // ein vorhandener Lauf-Zeitstempel geht vor
+    expect(evaluateTimestamp(now / 1000 - 60, day, now, "x", now / 1000 - 10 * day).status).toBe("ok");
   });
 
   it("bewertet den Migrationsstand", () => {

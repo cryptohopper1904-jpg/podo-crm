@@ -29,6 +29,11 @@ export type BillingUpdate = {
   /** Fallback-Zuordnung über die Stripe-Kunden-ID */
   customerId: string | null;
   patch: OrgBillingPatch;
+  /**
+   * Kündigung zum Periodenende laut Stripe (nur Abo-Events): true = gekündigt, false = läuft weiter bzw. beendet.
+   * Landet in organizations.settings.billingCancelAtPeriodEnd (src/lib/subscription-cancel.ts).
+   */
+  cancelAtPeriodEnd?: boolean;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -114,7 +119,8 @@ export function billingUpdateFromEvent(ev: StripeEvent, prices: PriceIds): Billi
       const sub = idOf(o.subscription);
       if (customer) patch.stripeCustomerId = customer;
       if (sub) patch.stripeSubscriptionId = sub;
-      return { organizationId: uuid(o.client_reference_id) ?? uuid(meta.organizationId), customerId: customer, patch };
+      // neues Abo: nie gekündigt
+      return { organizationId: uuid(o.client_reference_id) ?? uuid(meta.organizationId), customerId: customer, patch, ...(sub ? { cancelAtPeriodEnd: false } : {}) };
     }
     case "customer.subscription.created":
     case "customer.subscription.updated":
@@ -133,7 +139,8 @@ export function billingUpdateFromEvent(ev: StripeEvent, prices: PriceIds): Billi
       const sid = idOf(o.id);
       if (sid) patch.stripeSubscriptionId = sid;
       if (customer) patch.stripeCustomerId = customer;
-      return { organizationId: uuid(obj(o.metadata).organizationId), customerId: customer, patch };
+      const cancelAtPeriodEnd = ev.type === "customer.subscription.deleted" ? false : o.cancel_at_period_end === true || (typeof o.cancel_at === "number" && o.cancel_at > 0);
+      return { organizationId: uuid(obj(o.metadata).organizationId), customerId: customer, patch, cancelAtPeriodEnd };
     }
     case "invoice.payment_failed": {
       const customer = idOf(o.customer);

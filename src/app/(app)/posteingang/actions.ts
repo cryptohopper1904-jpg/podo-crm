@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { withOrg } from "@/db";
-import { consents, messages, patients } from "@/db/schema";
+import { db, withOrg } from "@/db";
+import { appointments, consents, messages, organizations, patients } from "@/db/schema";
 import { redact, restore } from "@/integrations/llm/redact";
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingProvider } from "@/integrations/types";
@@ -15,6 +15,9 @@ import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
 import { kimAdapterFor, syncKimInbox } from "@/server/kim";
 import { matchPatientByAddress } from "@/server/messages";
 import { replyFacts } from "@/server/reply-context";
+import { replySuggestionInput } from "@/server/reply-suggestion";
+import { aiReplySettings } from "@/lib/ai-replies";
+import { onlineRequestMessageAppointmentId } from "@/lib/online-request";
 
 export type InboxState = { error?: string; ok?: string } | undefined;
 
@@ -47,8 +50,21 @@ export async function matchPatientAction(_: InboxState, form: FormData): Promise
     patientId = await matchPatientByAddress(org, m.fromAddress);
     if (!patientId) return { error: "Keine eindeutige Zuordnung über Absender möglich – bitte Patientennummer angeben." };
   }
-  await withOrg(org, (tx) => tx.update(messages).set({ patientId }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id))));
-  await audit({ organizationId: org, userId: auth.user.id, action: "message.match", entity: "message", entityId: m.id, meta: { patientId } });
+  // Online-Anfrage (/buchen): den vorgemerkten Termin derselben Praxis gleich mit zuordnen, sofern noch ohne Person –
+  // sonst bliebe er „unbestätigt ohne Akte“ und fiele nach 6 Monaten unter die automatische Löschung
+  // nur echte Formular-Eingänge (thread_key, ohne external_id, fester Betreff – AppSec I-4)
+  const requestAppointmentId = onlineRequestMessageAppointmentId(m);
+  const linked = await withOrg(org, async (tx) => {
+    await tx.update(messages).set({ patientId }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id)));
+    if (!requestAppointmentId || !m.threadKey) return [];
+    return tx
+      .update(appointments)
+      .set({ patientId })
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, requestAppointmentId), eq(appointments.externalId, m.threadKey), isNull(appointments.patientId)))
+      .returning({ id: appointments.id });
+  });
+  await audit({ organizationId: org, userId: auth.user.id, action: "message.match", entity: "message", entityId: m.id, meta: { patientId, ...(linked.length ? { appointmentId: linked[0].id } : {}) } });
+  if (linked.length) revalidatePath("/kalender");
   revalidatePath("/posteingang");
   return { ok: "Zugeordnet." };
 }
@@ -60,16 +76,19 @@ export async function suggestReplyAction(_: InboxState, form: FormData): Promise
   if (!id.success) return { error: "Nachricht nicht gefunden." };
   const m = await loadMessage(org, id.data);
   if (!m) return { error: "Nachricht nicht gefunden." };
-  let knownNames: string[] = [];
-  if (m.patientId) {
-    const [p] = await withOrg(org, (tx) => tx.select({ firstName: patients.firstName, lastName: patients.lastName }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, m.patientId!))));
-    if (p) knownNames = [[p.firstName, p.lastName].filter(Boolean).join(" "), p.lastName, p.firstName ?? ""].filter(Boolean);
+  // KI-Antwortvorschläge nur, wenn die Praxis sie eingeschaltet hat (Einstellungen → Praxis; Standard aus)
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+  if (!aiReplySettings(o?.settings).enabled) {
+    return { error: "KI-Antwortvorschläge sind ausgeschaltet. Einschalten kann sie die Inhaberin bzw. der Inhaber unter Einstellungen → Praxis." };
   }
+  const input = await replySuggestionInput(org, m);
+  if ("error" in input) return { error: input.error };
+  const { knownNames } = input;
   try {
     const { facts, practiceName } = await replyFacts(org, m.patientId);
     const llm = await adapterFor(org, "llm");
     // Datenminimierung: Namen, Telefonnummern, E-Mails, Datumsangaben vor dem Versand entfernen
-    const { text: redacted, map } = redact(m.body, { names: knownNames });
+    const { text: redacted, map } = redact(input.text, { names: knownNames });
     const raw = await llm.suggestReply(redacted, {
       practiceName,
       tone: "friendly",

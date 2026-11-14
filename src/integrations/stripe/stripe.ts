@@ -6,7 +6,17 @@
 import { randomUUID } from "node:crypto";
 import { PLANS } from "@/lib/plans";
 import { parseVerifiedEvent } from "./signature";
-import { BillingHttpError, BillingNotConfiguredError, type BillingPort, type CheckoutInput, type FetchLike, type StripeEvent } from "./types";
+import {
+  BillingHttpError,
+  BillingNotConfiguredError,
+  CANCEL_REASON_METADATA_KEY,
+  type BillingPort,
+  type CheckoutInput,
+  type FetchLike,
+  type OpenBillingItems,
+  type StripeEvent,
+  type SubscriptionInfo,
+} from "./types";
 
 export type PriceIds = { starter?: string; praxis?: string; plus?: string; seat?: string };
 
@@ -49,6 +59,48 @@ export function checkoutParams(input: CheckoutInput, prices: PriceIds): Record<s
   };
 }
 
+const unixDate = (v: unknown): Date | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 ? new Date(v * 1000) : undefined);
+
+/** Stripe-Abo-Objekt → SubscriptionInfo (Periodenfelder: ältere API am Abo, neuere je Position) */
+export function subscriptionInfo(raw: Record<string, unknown>): SubscriptionInfo {
+  const items = Array.isArray((raw.items as { data?: unknown } | undefined)?.data) ? ((raw.items as { data: Record<string, unknown>[] }).data) : [];
+  const pick = (key: "current_period_start" | "current_period_end", agg: (a: number[]) => number) => {
+    const top = unixDate(raw[key]);
+    if (top) return top;
+    const vals = items.map((i) => unixDate(i?.[key])).filter((d): d is Date => !!d).map((d) => d.getTime());
+    return vals.length ? new Date(agg(vals)) : undefined;
+  };
+  const meta = raw.metadata && typeof raw.metadata === "object" ? (raw.metadata as Record<string, unknown>) : {};
+  const reason = meta[CANCEL_REASON_METADATA_KEY];
+  const customer = typeof raw.customer === "string" ? raw.customer : typeof (raw.customer as { id?: unknown } | null)?.id === "string" ? (raw.customer as { id: string }).id : null;
+  // Intervall des Grundpreises (erste Position; ältere API zusätzlich raw.plan)
+  const first = items[0] as { price?: { recurring?: { interval?: unknown; interval_count?: unknown } }; plan?: { interval?: unknown; interval_count?: unknown } } | undefined;
+  const rec = first?.price?.recurring ?? first?.plan ?? (raw.plan as { interval?: unknown; interval_count?: unknown } | undefined);
+  return {
+    id: String(raw.id ?? ""),
+    status: String(raw.status ?? ""),
+    cancelAtPeriodEnd: raw.cancel_at_period_end === true || (typeof raw.cancel_at === "number" && raw.cancel_at > 0),
+    cancelReason: typeof reason === "string" && reason ? reason : null,
+    customerId: customer,
+    currentPeriodStart: pick("current_period_start", (a) => Math.min(...a)),
+    currentPeriodEnd: pick("current_period_end", (a) => Math.max(...a)),
+    canceledAt: typeof raw.canceled_at === "number" && raw.canceled_at > 0 ? raw.canceled_at : null,
+    interval: typeof rec?.interval === "string" ? rec.interval : null,
+    intervalCount: typeof rec?.interval_count === "number" ? rec.interval_count : null,
+  };
+}
+
+/** Höchstzahl Seiten (à 100) beim Lesen offener Posten – genug für jeden realistischen Kunden, begrenzt die Laufzeit */
+const LIST_MAX_PAGES = 10;
+
+const cents = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0);
+
+/** Stripe-IDs landen im URL-Pfad: nur das erwartete Format zulassen */
+function stripeId(id: string, prefix: "sub_" | "cus_"): string {
+  if (!new RegExp(`^${prefix}[A-Za-z0-9_]{1,250}$`).test(id)) throw new BillingHttpError(400, "Ungültige ID", prefix);
+  return id;
+}
+
 export class StripeAdapter implements BillingPort {
   readonly isMock = false;
   private readonly fetch: FetchLike;
@@ -63,15 +115,22 @@ export class StripeAdapter implements BillingPort {
   }
 
   private async post<T>(path: string, params: Record<string, unknown>, idempotencyKey?: string): Promise<T> {
-    const res = await this.fetch(this.baseUrl + path, {
-      method: "POST",
+    return this.request<T>("POST", path, params, idempotencyKey);
+  }
+
+  /** GET/DELETE: Parameter als Query-String (wie die offiziellen Stripe-Bibliotheken), POST: form-encoded Body */
+  private async request<T>(method: "GET" | "POST" | "DELETE", path: string, params: Record<string, unknown> = {}, idempotencyKey?: string): Promise<T> {
+    const encoded = formEncode(params);
+    const url = this.baseUrl + path + (method !== "POST" && encoded ? `?${encoded}` : "");
+    const res = await this.fetch(url, {
+      method,
       headers: {
         Authorization: `Bearer ${this.opts.secretKey}`,
-        "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
+        ...(method === "POST" ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
         ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
       },
-      body: formEncode(params),
+      ...(method === "POST" ? { body: encoded } : {}),
       signal: AbortSignal.timeout(15_000),
     });
     const text = await res.text();
@@ -88,6 +147,86 @@ export class StripeAdapter implements BillingPort {
   async createPortalSession(input: { customerId: string; returnUrl: string }) {
     const s = await this.post<{ url: string }>("/billing_portal/sessions", { customer: input.customerId, return_url: input.returnUrl });
     return { url: s.url };
+  }
+
+  async getSubscription(subscriptionId: string): Promise<SubscriptionInfo | null> {
+    try {
+      return subscriptionInfo(await this.request<Record<string, unknown>>("GET", `/subscriptions/${stripeId(subscriptionId, "sub_")}`));
+    } catch (e) {
+      if (e instanceof BillingHttpError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async setCancelAtPeriodEnd(subscriptionId: string, cancel: boolean, reason: string | null): Promise<SubscriptionInfo> {
+    // Leerer Wert entfernt einen Metadaten-Schlüssel bei Stripe
+    const params = { cancel_at_period_end: cancel ? "true" : "false", metadata: { [CANCEL_REASON_METADATA_KEY]: reason ?? "" } };
+    return subscriptionInfo(await this.post<Record<string, unknown>>(`/subscriptions/${stripeId(subscriptionId, "sub_")}`, params));
+  }
+
+  async listSubscriptions(customerId: string): Promise<SubscriptionInfo[]> {
+    const r = await this.request<{ data?: Record<string, unknown>[] }>("GET", "/subscriptions", { customer: stripeId(customerId, "cus_"), status: "all", limit: 100 });
+    return (r.data ?? []).map(subscriptionInfo);
+  }
+
+  /**
+   * Liste seitenweise lesen (has_more/starting_after), höchstens LIST_MAX_PAGES Seiten à 100 – `more` = es gäbe noch weitere
+   * (Zahlen sind dann Untergrenzen).
+   */
+  private async listAll(path: string, params: Record<string, unknown>): Promise<{ data: Record<string, unknown>[]; more: boolean }> {
+    const data: Record<string, unknown>[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < LIST_MAX_PAGES; page++) {
+      const r: { data?: Record<string, unknown>[]; has_more?: boolean } = await this.request("GET", path, { ...params, limit: 100, ...(after ? { starting_after: after } : {}) });
+      const rows = r.data ?? [];
+      data.push(...rows);
+      const last = rows.at(-1)?.id;
+      if (r.has_more !== true) return { data, more: false };
+      // ohne ID kein Weiterblättern möglich: als unvollständig melden
+      if (typeof last !== "string" || !last) return { data, more: true };
+      after = last;
+    }
+    return { data, more: true };
+  }
+
+  async openBillingItems(customerId: string): Promise<OpenBillingItems> {
+    const customer = stripeId(customerId, "cus_");
+    const inv = await this.listAll("/invoices", { customer, status: "open" });
+    const items = await this.listAll("/invoiceitems", { customer, pending: "true" });
+    // Kundensaldo (negativ = Guthaben); ein gelöschter Kunde liefert { deleted: true } ohne Saldo
+    const cus = await this.request<{ balance?: unknown; deleted?: unknown }>("GET", `/customers/${customer}`);
+    const invoices = inv.data;
+    const pending = items.data.map((i) => cents(i.amount));
+    return {
+      openInvoices: invoices.length,
+      openInvoiceCents: invoices.reduce((s, i) => s + cents(i.amount_remaining), 0),
+      pendingItems: pending.length,
+      pendingItemCents: pending.reduce((s, a) => s + a, 0),
+      pendingChargeCents: pending.filter((a) => a > 0).reduce((s, a) => s + a, 0),
+      pendingCreditCents: pending.filter((a) => a < 0).reduce((s, a) => s + a, 0),
+      customerBalanceCents: cus.deleted === true ? null : cents(cus.balance),
+      truncated: inv.more || items.more,
+    };
+  }
+
+  async cancelSubscriptionNow(subscriptionId: string): Promise<SubscriptionInfo | null> {
+    try {
+      return subscriptionInfo(
+        await this.request<Record<string, unknown>>("DELETE", `/subscriptions/${stripeId(subscriptionId, "sub_")}`, { prorate: "false", invoice_now: "false" }),
+      );
+    } catch (e) {
+      if (e instanceof BillingHttpError && e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async deleteCustomer(customerId: string): Promise<void> {
+    try {
+      await this.request("DELETE", `/customers/${stripeId(customerId, "cus_")}`);
+    } catch (e) {
+      if (e instanceof BillingHttpError && e.status === 404) return;
+      throw e;
+    }
   }
 
   verifyWebhook(rawBody: string, signatureHeader: string | null, now?: Date): StripeEvent {

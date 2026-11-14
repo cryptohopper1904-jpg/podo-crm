@@ -197,6 +197,34 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
     expect(await counts()).toEqual(c1);
     expect((await pool.query("select count(*)::int n from organizations where slug = $1", [DEMO_PRACTICE_SLUG])).rows[0].n).toBe(1);
 
+    // ältere Demo ohne Impressumsangaben (Online-Buchung gesperrt): nächster Lauf ergänzt nur Fehlendes
+    await pool.query("update organizations set settings = settings - 'imprint', phone = null, email = 'eigene@example.org' where id = $1", [org.id]);
+    expect((await runBootstrap(db, env)).demo).toBe("exists");
+    const fixed = (await pool.query("select settings, phone, email from organizations where id = $1", [org.id])).rows[0];
+    expect(fixed.settings.imprint).toMatchObject({ owner: "Dana Demo", profession: "Podologin", legalForm: "Einzelpraxis" });
+    expect(fixed.settings.demo).toBe(true);
+    expect(fixed.phone).toBe("03303 000000");
+    expect(fixed.email).toBe("eigene@example.org"); // vorhandene Werte bleiben
+    const { missingImprintFields } = await import("./imprint");
+    const full = (await pool.query("select name, street, zip, city, phone, email, settings from organizations where id = $1", [org.id])).rows[0];
+    expect(missingImprintFields(full, full.settings)).toEqual([]);
+    // vorhandenes Impressum wird nicht überschrieben
+    await pool.query("update organizations set settings = jsonb_set(settings, '{imprint,owner}', '\"Geändert\"') where id = $1", [org.id]);
+    await runBootstrap(db, env);
+    expect((await pool.query("select settings from organizations where id = $1", [org.id])).rows[0].settings.imprint.owner).toBe("Geändert");
+    expect(await counts()).toEqual(c1);
+    // leere Strings / nur Leerzeichen gelten als fehlend: werden ergänzt, nicht leere Werte bleiben
+    await pool.query(
+      `update organizations set street = '  ', settings = jsonb_set(settings, '{imprint}', '{"owner": "", "profession": "  ", "authority": "Gesundheitsamt Test", "dpo": ""}') where id = $1`,
+      [org.id],
+    );
+    await runBootstrap(db, env);
+    const refilled = (await pool.query("select street, settings from organizations where id = $1", [org.id])).rows[0];
+    expect(refilled.street).toBe("Musterstraße 1");
+    expect(refilled.settings.imprint).toMatchObject({ owner: "Dana Demo", profession: "Podologin", legalForm: "Einzelpraxis", authority: "Gesundheitsamt Test" });
+    const full2 = (await pool.query("select name, street, zip, city, phone, email, settings from organizations where id = $1", [org.id])).rows[0];
+    expect(missingImprintFields(full2, full2.settings)).toEqual([]);
+
     // ein zweiter Plattform-Admin wird Inhaber:in derselben Demo-Praxis – Daten bleiben unverändert
     const email2 = `admin-${sfx()}@example.org`;
     expect((await runBootstrap(db, { ...env, BOOTSTRAP_ADMIN_EMAIL: email2 })).demo).toBe("exists");

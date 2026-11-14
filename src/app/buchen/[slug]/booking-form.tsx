@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
 import { Button, Card, Checkbox, Field, FormError, FormSuccess, Input, Textarea, cx } from "@/components/ui";
@@ -9,7 +10,7 @@ type S = { id: string; name: string; priceCents: number; durationMin: number };
 const eur = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const dayLabel = (iso: string) => new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
 
-export function BookingForm({ slug, services, days }: { slug: string; services: S[]; days: { date: string; slots: Record<number, string[]> }[] }) {
+export function BookingForm({ slug, services, days, privacyHref }: { slug: string; services: S[]; days: { date: string; slots: Record<number, string[]> }[]; privacyHref: string }) {
   const [state, action, pending] = useActionState(bookAction, undefined);
   const [svc, setSvc] = useState<S | null>(null);
   const [date, setDate] = useState<string | null>(null);
@@ -66,7 +67,11 @@ export function BookingForm({ slug, services, days }: { slug: string; services: 
             <Field label="E-Mail (optional)"><Input name="email" type="email" autoComplete="email" /></Field>
             <Field label="Nachricht (optional, bitte keine Diagnosen)" className="sm:col-span-2"><Textarea name="note" rows={2} maxLength={500} /></Field>
           </div>
-          <Checkbox name="privacy" required label="Ich habe die Datenschutzhinweise gelesen." />
+          {/* Information statt Pflicht-Häkchen (Art. 13 DSGVO verlangt Information, keine Bestätigung) */}
+          <p className="mt-4 text-sm text-muted">
+            Informationen zur Verarbeitung Ihrer Daten finden Sie in den{" "}
+            <Link href={privacyHref} className="font-semibold text-primary underline underline-offset-2">Datenschutzhinweisen der Praxis</Link>.
+          </p>
           <Checkbox name="noShow" required label="Nicht rechtzeitig (24 h) abgesagte Termine können in Rechnung gestellt werden." />
           <Button type="submit" disabled={pending} className="mt-4 w-full">{pending ? "Wird gesendet …" : `Termin anfragen: ${dayLabel(date)}, ${time} Uhr`}</Button>
         </Card>

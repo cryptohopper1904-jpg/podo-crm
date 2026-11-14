@@ -25,6 +25,23 @@ async function warnMissingPaymentRefIndex(pool: Pool) {
   );
 }
 
+/** Migration 0053 legt den Index bei doppelten Stripe-Kunden-IDs nicht an – dann laut warnen. */
+async function warnMissingStripeCustomerIndex(pool: Pool) {
+  const r = await pool.query("select 1 from pg_indexes where schemaname = 'public' and indexname = 'organizations_stripe_customer_id'");
+  if (r.rowCount) return;
+  console.error(
+    [
+      "",
+      "WARNUNG: Index organizations_stripe_customer_id fehlt – eine Stripe-Kunden-ID ist mehreren Praxen zugeordnet (Migration 0053).",
+      "Webhooks werden dann womöglich der falschen Praxis zugeordnet. Dubletten prüfen:",
+      "  select stripe_customer_id, array_agg(id) from organizations where stripe_customer_id is not null group by 1 having count(*) > 1;",
+      "Nach der Klärung den Index anlegen:",
+      "  create unique index organizations_stripe_customer_id on organizations (stripe_customer_id) where stripe_customer_id is not null;",
+      "",
+    ].join("\n"),
+  );
+}
+
 async function main() {
   const url = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_MIGRATION_URL fehlt");
@@ -63,6 +80,7 @@ async function main() {
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);
   }
   await warnMissingPaymentRefIndex(pool);
+  await warnMissingStripeCustomerIndex(pool);
   await pool.end();
   console.log("Migrationen ausgeführt.");
 }

@@ -1,6 +1,6 @@
 {
-  "id": "e09985a4-cec8-4e2b-9ec2-6a90ea2fbf77",
-  "prevId": "64a127fc-490a-40c3-8601-ab434e19a315",
+  "id": "c1e09c81-8eb1-4c34-b657-e768c62d7ade",
+  "prevId": "9284408a-fe66-4625-8cf1-c81d6431b3f2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4732,6 +4732,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "received_at": {
           "name": "received_at",
           "type": "timestamp with time zone",
@@ -5283,7 +5289,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "organizations_stripe_customer_id": {
+          "name": "organizations_stripe_customer_id",
+          "columns": [
+            {
+              "expression": "stripe_customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"organizations\".\"stripe_customer_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
