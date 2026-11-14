@@ -7,8 +7,21 @@
 
 /*
  * PodoHero Design-Tokens – flach, frisch, hell.
- * Primär: Mint/Petrol (Frische, Medizin), Akzent: Koralle (Aktionen), Info: Himmelblau, Warnung: Sonnengelb.
- * Kontraste geprüft: Text auf Fläche ≥ 4.5:1.
+ * Primär: Mint/Petrol (Frische, Medizin), Akzent: Koralle, Info: Himmelblau, Warnung: Sonnengelb.
+ * Kontraste geprüft: Text auf Fläche ≥ 4.5:1 (hell und dunkel).
+ *
+ * Regeln für alle Seiten (Bausteine in src/components/ui.tsx):
+ *  - Farbe: Petrol (primary) = Hauptaktion (Speichern, Termin anlegen, Doku abschließen). Koralle (accent) nur für
+ *    Marketing-CTAs der öffentlichen Website und als Hinweis-/Warnfläche (accent-soft) – nie für Formular-Aktionen.
+ *    Nur Tokens verwenden (bg-surface, text-muted …), keine festen Farben – sonst fehlt der Dunkelmodus.
+ *  - Schrift: Inhalte mindestens 13 px (Hinweise, Badges, Tabellenköpfe), 12 px (text-xs) nur für Metadaten
+ *    (Zeitstempel, Zähler); Eingaben 15 px, auf iOS 16 px (Regel unten).
+ *  - Touch: Bedienelemente ≥ 44 px (h-11; auf Touch-Geräten zusätzlich die pointer:coarse-Regel unten).
+ *  - Grids immer mit Basis-Spalte: `grid grid-cols-1 lg:grid-cols-3` statt nur `grid lg:grid-cols-3`. Ohne Basis
+ *    erzeugt der Browser auf dem Handy eine `auto`-Spalte, die mit breiten Inhalten (Tabellen) mitwächst und die ganze
+ *    Seite seitlich verschiebt. Card hat dafür zusätzlich `min-w-0`, Table scrollt in einer ScrollArea.
+ *    Prüfen: grep -rnE 'className="grid [^"]*(sm|md|lg|xl):grid-cols' src | grep -v 'grid-cols-1'
+ *  - Anrede: Praxis-App = du, Seiten für Patient:innen (/buchen, /p, /portal, /anamnese) = Sie.
  */
 :root {
   --bg: #f4f9f8;
@@ -211,15 +224,103 @@ body {
   outline-offset: 2px;
 }
 
-/* Große Touch-Ziele für iPad/iPhone (Bedienung mit Handschuhen) */
+/*
+ * Große Touch-Ziele für iPad/iPhone (Bedienung mit Handschuhen): Bedienelemente mindestens 44 px hoch.
+ * Nicht für Kontrollkästchen/Radio/Farbwähler (die Beschriftung ist die Trefffläche, siehe Checkbox) – sie wurden
+ * sonst verzerrt. `summary` (aufklappbare Abschnitte) gehört dazu. Links in Tabellenzellen werden 44 px hohe
+ * Inline-Blöcke (Namen in Listen, Regel darunter). Ausnahme für dichte Raster (Monatskalender): Klasse `touch-compact` und – wenn
+ * die Fläche trotzdem treffbar sein soll – `touch-target`.
+ */
 @media (pointer: coarse) {
-  button,
-  a,
-  input,
-  select,
-  textarea {
+  :is(button, a, select, textarea, summary, input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="hidden"])):not(.touch-compact) {
     min-height: 44px;
   }
+  summary:not(.touch-compact) {
+    align-content: center;
+  }
+}
+/* Links in Tabellenzellen als 44 px hohe Inline-Blöcke (in @layer: ausdrückliche Utilities wie `block` gehen vor) */
+@layer base {
+  @media (pointer: coarse) {
+    :is(td, th) a:not(.touch-compact) {
+      display: inline-flex;
+      align-items: center;
+    }
+  }
+}
+
+/*
+ * Unsichtbar vergrößerte Trefffläche (mind. 44 × 44 px) ohne Layout-Änderung – für kleine Inline-Links und
+ * Symbole („Route öffnen“, „Ansehen ›“, Tageszahlen im Monatsraster). Das Element bekommt position: relative.
+ */
+.touch-target {
+  position: relative;
+}
+.touch-target::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
+/*
+ * Abstand schwebender Elemente (Formular-Aktionsleiste, Meldungen) zum unteren Rand: über der Home-Leiste und – in der
+ * Praxis-App unter lg – über der Bottom-Navigation (src/components/app-nav.tsx, „Schnellnavigation“; neue Navigationen
+ * bitte mit data-bottom-nav kennzeichnen, ausgeblendete mit hidden/data-hidden). Bei offener Bildschirmtastatur blendet
+ * app-nav.tsx die Leiste aus (html[data-keyboard=open], nav[data-keyboard]) – dann kein Abstand zur Leiste.
+ */
+:root {
+  --podo-sticky-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  /* Meldungen (toaster.tsx) liegen über einer klebenden Formular-Aktionsleiste (ui.tsx FormActions) */
+  --podo-toast-bottom: var(--podo-sticky-bottom);
+}
+@media (max-width: 1023.98px) {
+  :root:not([data-keyboard="open"]):has(:is(nav[aria-label="Schnellnavigation"], [data-bottom-nav]):not([hidden], [data-hidden], [data-keyboard])) {
+    --podo-sticky-bottom: calc(4.25rem + env(safe-area-inset-bottom));
+  }
+}
+:root:has(.podo-form-actions) {
+  --podo-toast-bottom: calc(var(--podo-sticky-bottom) + 4.5rem);
+}
+
+/* Eingaben mit Einheit/Stepper (ui.tsx Input): Fokusring am ganzen Rahmen statt nur an der inneren Eingabe */
+.podo-affix > input:focus-visible {
+  outline: none;
+}
+.podo-affix:has(> input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Scrollbereiche (ScrollArea) schneiden den Rand ab – Fokusring nach innen */
+.podo-scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+/*
+ * Datums-/Zeitfelder (ui.tsx Input → date-input.tsx): leere Felder zeigen gedämpft „Kein Datum“ statt eines
+ * Browser-Platzhalters, der wie ein Wert aussieht (Safari/iPadOS: Datum in Akzentfarbe, Chromium „TT.MM.JJJJ“).
+ * Beim Fokus erscheinen die Eingabesegmente wieder. Picker-Symbol einheitlich gedämpft; Wert linksbündig (iOS).
+ */
+input[data-empty]:not(:focus)::-webkit-datetime-edit {
+  color: transparent;
+}
+input[data-empty]:not(:focus)::-webkit-date-and-time-value {
+  color: transparent;
+}
+input::-webkit-date-and-time-value {
+  text-align: left;
+  min-height: 1.5em;
+}
+input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+}
+input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
 }
 
 /*
@@ -265,6 +366,19 @@ body {
 @layer base {
   :where(:has(> .podo-field)) > :where(:not(.podo-field)) {
     grid-row: span 2;
+  }
+  /*
+   * Scrollbereiche als Bezugsrahmen: absolut positionierte Kinder (v. a. `sr-only`-Texte in Tabellenzellen) lägen
+   * sonst relativ zu einem Vorfahren außerhalb des Bereichs, würden nicht abgeschnitten und machten die ganze Seite
+   * breiter (Auswertung, Team-Planung: Seite 576 bzw. 993 px breit auf dem iPhone). Utilities (sticky, fixed …) gehen vor.
+   */
+  :where(.overflow-x-auto, .overflow-auto, .overflow-x-scroll, .overflow-scroll):not(dialog, [popover]) {
+    position: relative;
+  }
+  /* Kontrollkästchen/Radio schrumpfen neben langen Beschriftungen nicht (auch in eigenen Flex-Zeilen) */
+  input[type="checkbox"],
+  input[type="radio"] {
+    flex-shrink: 0;
   }
 }
 
