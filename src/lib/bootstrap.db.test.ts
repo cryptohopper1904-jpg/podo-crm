@@ -104,6 +104,9 @@ describe("Bootstrap-Datei deploy/bootstrap/kiehne.json", () => {
       expect(svc.rows.find((r) => r.code === "NP").price_cents).toBe(0);
       const loc = await c.query("select count(*)::int n from locations where organization_id = $1", [org.id]);
       expect(loc.rows[0].n).toBe(1);
+      // Startkategorien wie bei der Registrierung (src/lib/org-defaults.ts seedServiceCategories)
+      const cats = await c.query("select name from service_categories where organization_id = $1 order by sort", [org.id]);
+      expect(cats.rows.map((r) => r.name)).toEqual(["Behandlung", "Nagelkorrektur", "Kosmetik & Wellness", "Hausbesuch & Wegegeld"]);
       await c.query("commit");
     } finally {
       c.release();

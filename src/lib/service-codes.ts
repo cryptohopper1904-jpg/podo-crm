@@ -6,6 +6,9 @@
 /** Höchstens so viele Archiv-Kürzel je Ausgangskürzel (AN_archiv … AN_archiv99) */
 export const MAX_ARCHIVED_CODES = 99;
 
+/** Länge eines Kürzels, wie es im Formular eingegeben werden kann (Archiv-Kürzel dürfen länger sein) */
+export const MAX_SERVICE_CODE_LENGTH = 10;
+
 const ARCHIVE_SUFFIX = /_archiv(\d*)$/i;
 
 export function isArchivedCode(code: string): boolean {
@@ -21,6 +24,15 @@ export function archivedCodeCandidates(code: string): string[] {
 /** Ursprüngliches Kürzel ohne Archiv-Zusatz */
 export function restoredCode(code: string): string {
   return code.replace(ARCHIVE_SUFFIX, "");
+}
+
+/**
+ * Taugt ein (z. B. beim Wiederherstellen zurückgewonnenes) Kürzel als normales Kürzel? Leer, zu lang oder selbst
+ * noch mit Archiv-Zusatz („AN_archiv_archiv“) → nein. Gleiche Grenzen wie die Eingabe im Formular.
+ */
+export function isUsableCode(code: string): boolean {
+  const c = code.trim();
+  return c.length >= 1 && c.length <= MAX_SERVICE_CODE_LENGTH && !isArchivedCode(c);
 }
 
 type Settings = Record<string, unknown>;

@@ -51,26 +51,37 @@ CREATE POLICY tenant_isolation ON "service_categories"
 --  * mit category_id: Art (services.category) kommt aus der Kategorie (eine Quelle der Wahrheit für Buchbarkeit/Wegegeld).
 --    Ändert ein UPDATE services.category auf eine Art, die nicht zur Kategorie passt, gibt es einen Fehler (kein stilles
 --    Überschreiben).
--- Läuft mit den Rechten der aufrufenden Rolle (RLS gilt).
-CREATE OR REPLACE FUNCTION services_default_category() RETURNS trigger LANGUAGE plpgsql AS $$
+--  * Wechselt eine Leistung die Praxis (UPDATE organization_id), wird die Kategorie erneut geprüft – eine Kategorie der
+--    alten Praxis darf nicht hängen bleiben.
+-- Läuft mit den Rechten der aufrufenden Rolle (RLS gilt). Fester search_path, Tabellen voll qualifiziert (kein Kapern
+-- über gleichnamige Objekte in einem anderen Schema).
+CREATE OR REPLACE FUNCTION public.services_default_category() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp
+AS $$
 DECLARE
   cat uuid;
   cat_kind text;
   label text;
 BEGIN
   IF NEW.category_id IS NULL THEN
-    SELECT c.id INTO cat FROM service_categories c
+    SELECT c.id INTO cat FROM public.service_categories c
       WHERE c.organization_id = NEW.organization_id AND c.kind = NEW.category ORDER BY c.sort, c.created_at LIMIT 1;
     IF cat IS NULL THEN
       label := CASE NEW.category WHEN 'brace' THEN 'Nagelkorrektur' WHEN 'cosmetic' THEN 'Kosmetik & Wellness' WHEN 'travel' THEN 'Hausbesuch & Wegegeld' WHEN 'product' THEN 'Verkauf (alt)' ELSE 'Behandlung' END;
-      INSERT INTO service_categories (organization_id, name, kind, sort)
+      INSERT INTO public.service_categories (organization_id, name, kind, sort)
       VALUES (NEW.organization_id, label, NEW.category,
         CASE NEW.category WHEN 'brace' THEN 20 WHEN 'cosmetic' THEN 30 WHEN 'travel' THEN 40 WHEN 'product' THEN 50 ELSE 10 END)
       ON CONFLICT (organization_id, name) DO NOTHING
       RETURNING id INTO cat;
       IF cat IS NULL THEN
+        -- Konflikt: evtl. hat eine gleichzeitige Transaktion genau diese Kategorie (gleiche Art) eben angelegt →
+        -- erneut lesen (neuer Snapshot je Anweisung) und verwenden statt „Weitere (…)“
+        SELECT c.id INTO cat FROM public.service_categories c
+          WHERE c.organization_id = NEW.organization_id AND c.name = label AND c.kind = NEW.category;
+      END IF;
+      IF cat IS NULL THEN
         -- Standardname schon von einer Kategorie anderer Art belegt: „Weitere (…)“, nur gleiche Art wiederverwenden
-        INSERT INTO service_categories (organization_id, name, kind, sort)
+        INSERT INTO public.service_categories (organization_id, name, kind, sort)
         VALUES (NEW.organization_id, 'Weitere (' || label || ')', NEW.category, 90)
         ON CONFLICT (organization_id, name) DO UPDATE SET name = EXCLUDED.name WHERE service_categories.kind = EXCLUDED.kind
         RETURNING id INTO cat;
@@ -84,7 +95,7 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  SELECT c.kind INTO cat_kind FROM service_categories c WHERE c.id = NEW.category_id AND c.organization_id = NEW.organization_id;
+  SELECT c.kind INTO cat_kind FROM public.service_categories c WHERE c.id = NEW.category_id AND c.organization_id = NEW.organization_id;
   IF cat_kind IS NULL THEN
     RAISE EXCEPTION 'Kategorie gehört nicht zu dieser Praxis' USING ERRCODE = 'foreign_key_violation';
   END IF;
@@ -96,10 +107,10 @@ BEGIN
   RETURN NEW;
 END $$;
 --> statement-breakpoint
-DROP TRIGGER IF EXISTS services_default_category ON services;
+DROP TRIGGER IF EXISTS services_default_category ON public.services;
 --> statement-breakpoint
-CREATE TRIGGER services_default_category BEFORE INSERT OR UPDATE OF category_id, category ON services
-  FOR EACH ROW EXECUTE FUNCTION services_default_category();
+CREATE TRIGGER services_default_category BEFORE INSERT OR UPDATE OF category_id, category, organization_id ON public.services
+  FOR EACH ROW EXECUTE FUNCTION public.services_default_category();
 --> statement-breakpoint
 -- Datenübernahme: Startkategorien (die bisher festen Kategorien; „Verkauf (alt)“ nur, wo es solche Leistungen gibt) und
 -- services.category_id. RLS ist auch für den Eigentümer erzwungen → je Praxis app.org_id setzen (wie 0048/0049).

@@ -1,7 +1,8 @@
 /**
  * Leistungs-Katalog gegen eine echte DB (RLS aktiv, erfundene Daten): eigene Kategorien (CRUD, Mandantentrennung,
  * Löschen nur leer, Art folgt der Kategorie), Archivieren gibt das Kürzel frei (mit Kollision), alte Rechnungen bleiben
- * unverändert, Reihenfolge „häufig gebucht“.
+ * unverändert, Reihenfolge „häufig gebucht“; letzte Prüfrunde: Trigger-Race, Trigger-Härtung, _archiv-Kürzel abgelehnt,
+ * Gutschriften nicht gezählt, Audit-Felder, Startkategorien nur beim Anlegen der Praxis (nicht beim Lesen).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
@@ -240,5 +241,144 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const usage = await withOrg(org, (tx) => mod.serviceUsageCounts(tx, org));
     expect(usage.get(a) ?? 0).toBe(0);
     expect(usage.get(b)).toBe(1);
+  });
+
+  it("Trigger-Race: gleichzeitig angelegte Leistungen derselben Art landen in derselben Kategorie (kein „Weitere (…)“)", async () => {
+    const org = await f.org();
+    const c1 = await f.pool.connect();
+    const c2 = await f.pool.connect();
+    try {
+      for (const c of [c1, c2]) {
+        await c.query("begin");
+        await c.query("select set_config('app.org_id', $1, true)", [org]);
+      }
+      // c1 legt „Behandlung“ an (noch nicht festgeschrieben); c2 sieht sie noch nicht und wartet am Unique-Index
+      await c1.query("insert into services (organization_id, code, name, price_cents) values ($1,'R1','Race 1',100)", [org]);
+      const second = c2.query("insert into services (organization_id, code, name, price_cents) values ($1,'R2','Race 2',100) returning category_id", [org]);
+      await new Promise((r) => setTimeout(r, 300));
+      await c1.query("commit");
+      const [{ category_id }] = (await second).rows;
+      await c2.query("commit");
+      const cats = await q<{ id: string; name: string }>(org, "select id, name from service_categories order by name");
+      expect(cats.map((c) => c.name)).toEqual(["Behandlung"]);
+      expect(category_id).toBe(cats[0].id);
+    } finally {
+      await c1.query("rollback").catch(() => {});
+      await c2.query("rollback").catch(() => {});
+      c1.release();
+      c2.release();
+    }
+  });
+
+  it("Trigger gehärtet: fester search_path, feuert auch bei UPDATE OF organization_id", async () => {
+    const [fn] = (await f.pool.query("select proconfig from pg_proc where proname = 'services_default_category'")).rows;
+    expect(fn.proconfig).toContain("search_path=pg_catalog, public, pg_temp");
+    const [tg] = (await f.pool.query("select pg_get_triggerdef(oid) as def from pg_trigger where tgname = 'services_default_category'")).rows;
+    expect(tg.def).toMatch(/UPDATE OF category_id, category, organization_id/);
+  });
+
+  it("Startkategorien: Lesen legt nichts an; neue Praxis bekommt die vier Standardkategorien (wie die Migration)", async () => {
+    const { withOrg } = await import("@/db");
+    const { seedOrganizationDefaults, seedServiceCategories } = await import("@/lib/org-defaults");
+    const empty = await f.org();
+    expect(await withOrg(empty, (tx) => mod.listServiceCategories(tx, empty))).toEqual([]);
+    expect(await q(empty, "select 1 from service_categories")).toEqual([]);
+
+    const org = await f.org();
+    await withOrg(org, (tx) => seedOrganizationDefaults(tx, org));
+    const cats = await withOrg(org, (tx) => mod.listServiceCategories(tx, org));
+    // vier Standardkategorien; „Verkauf (alt)“ nur, weil der Startkatalog eine Verkaufs-Leistung enthält
+    expect(cats.map((c) => [c.name, c.kind])).toEqual([
+      ["Behandlung", "treatment"],
+      ["Nagelkorrektur", "brace"],
+      ["Kosmetik & Wellness", "cosmetic"],
+      ["Hausbesuch & Wegegeld", "travel"],
+      ["Verkauf (alt)", "product"],
+    ]);
+    expect(cats.find((c) => c.kind === "treatment")?.count).toBeGreaterThan(0);
+    // erneut: keine Dubletten; umbenannte Standardkategorie wird nicht neu angelegt
+    await q(org, "update service_categories set name = 'Podologie' where name = 'Behandlung' and organization_id = $1", [org]);
+    await withOrg(org, (tx) => seedServiceCategories(tx, org));
+    expect((await q(org, "select 1 from service_categories")).length).toBe(5);
+  });
+
+  it("Speichern: Kürzel mit „_archiv“ abgelehnt, unverändertes Archiv-Kürzel erlaubt; Audit mit entityId und altem Kürzel", async () => {
+    const org = await f.org({ settings: { onlineBooking: { serviceCodes: ["ALT"] } } });
+    const { withOrg } = await import("@/db");
+    const [cat] = await withOrg(org, async (tx) => {
+      const { seedServiceCategories } = await import("@/lib/org-defaults");
+      await seedServiceCategories(tx, org);
+      return mod.listServiceCategories(tx, org);
+    });
+    const form = (extra: Record<string, string>) => ({ name: "Testleistung", price: "12,50", vatRate: "0", durationMin: "20", categoryId: cat.id, ...extra });
+    for (const code of ["AN_archiv", "an_ARCHIV2", "X_Archiv99"]) {
+      expect(await mod.saveService(auth(org), form({ code }))).toEqual({ error: expect.stringMatching(/reserviert/) });
+    }
+    const created = await mod.saveService(auth(org), form({ code: "alt" }));
+    expect(created).toMatchObject({ ok: true, code: "ALT" });
+    if (!("ok" in created)) throw new Error("nicht angelegt");
+    // Kürzel ändern: Verweise wandern mit, Audit nennt das alte Kürzel
+    expect(await mod.saveService(auth(org), form({ id: created.id, code: "neu" }))).toMatchObject({ ok: true, code: "NEU" });
+    const logs = await q<{ entity_id: string; meta: Record<string, unknown> }>(org, "select entity_id, meta from audit_log where organization_id = $1 and action = 'service.save' order by id", [org]);
+    expect(logs).toEqual([
+      { entity_id: created.id, meta: { code: "ALT", created: true } },
+      { entity_id: created.id, meta: { code: "NEU", before: "ALT", refsMoved: ["onlineBooking"] } },
+    ]);
+    // Wiederhergestellt mit belegtem Kürzel: Archiv-Kürzel unverändert speichern geht (Bezeichnung ändern)
+    await q(org, "update services set code = 'NEU_archiv' where id = $1", [created.id]);
+    expect(await mod.saveService(auth(org), form({ id: created.id, code: "NEU_ARCHIV", name: "Umbenannt" }))).toMatchObject({ ok: true, code: "NEU_archiv" });
+    // ohne Recht
+    await expect(mod.saveService(auth(org, []), form({ code: "OK" }))).rejects.toThrow();
+  });
+
+  it("Wiederherstellen: ungültiges ursprüngliches Kürzel → Archiv-Kürzel bleibt, eigener Hinweis", async () => {
+    const org = await f.org();
+    const sid = (await q<{ id: string }>(org, "insert into services (organization_id, code, name, price_cents, active) values ($1,'_archiv','Ohne Kürzel',100,false) returning id", [org]))[0].id;
+    expect(await mod.setServiceActive(auth(org), sid, true)).toEqual({ code: "_archiv", codeConflict: null, codeInvalid: "" });
+    const long = (await q<{ id: string }>(org, "insert into services (organization_id, code, name, price_cents, active) values ($1,'SEHRLANGESK_archiv','Zu lang',100,false) returning id", [org]))[0].id;
+    expect(await mod.setServiceActive(auth(org), long, true)).toEqual({ code: "SEHRLANGESK_archiv", codeConflict: null, codeInvalid: "SEHRLANGESK" });
+    const [a] = await q<{ meta: unknown }>(org, "select meta from audit_log where organization_id = $1 and action = 'service.unarchive' and entity_id = $2", [org, long]);
+    expect(a.meta).toEqual({ code: "SEHRLANGESK_archiv", codeInvalid: "SEHRLANGESK" });
+  });
+
+  it("Audit: Umbenennen mit altem Namen, Verschieben mit Art vorher/nachher, Archivieren mit mitgewanderten Verweisen", async () => {
+    const org = await f.org({ settings: { servicePriceNotes: { AU: "Preis prüfen" } } });
+    const { id: from } = await mod.createServiceCategory(auth(org), { name: "Spangen A", kind: "brace" });
+    const { id: to } = await mod.createServiceCategory(auth(org), { name: "Kosmetik A", kind: "cosmetic" });
+    await mod.renameServiceCategory(auth(org), from, "Spangen B");
+    const sid = await addService(org, "AU", "Audit");
+    await q(org, "update services set category_id = $2 where id = $1", [sid, from]);
+    await mod.moveServicesToCategory(auth(org), from, to);
+    await mod.setServiceActive(auth(org), sid, false);
+    const meta = async (action: string) => (await q<{ meta: unknown }>(org, "select meta from audit_log where organization_id = $1 and action = $2", [org, action]))[0]?.meta;
+    expect(await meta("service_category.rename")).toEqual({ name: "Spangen B", before: "Spangen A" });
+    expect(await meta("service_category.move_services")).toEqual({ to, count: 1, fromName: "Spangen B", toName: "Kosmetik A", kindBefore: "brace", kindAfter: "cosmetic" });
+    expect(await meta("service.archive")).toEqual({ code: "AU_archiv", before: "AU", refsMoved: ["servicePriceNotes"] });
+  });
+
+  it("„häufig gebucht“: Gutschriften zählen nicht", async () => {
+    const org = await f.org();
+    const sid = await addService(org, "GS", "Gutschrift-Test");
+    for (const [kind, nr] of [["invoice", "G-1"], ["credit_note", "G-2"], ["credit_note", "G-3"]] as const) {
+      const [inv] = await q<{ id: string }>(org, "insert into invoices (organization_id, status, kind) values ($1,'draft',$2) returning id", [org, kind]);
+      await q(org, "insert into invoice_lines (organization_id, invoice_id, service_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,$3,'GS',5000,5000,0,1)", [org, inv.id, sid]);
+      await q(org, "update invoices set status='issued', number=$2, issued_at=current_date - 3, total_cents=5000, net_cents=5000 where id=$1", [inv.id, `${nr}-${org.slice(0, 8)}`]);
+    }
+    const { withOrg } = await import("@/db");
+    expect((await withOrg(org, (tx) => mod.serviceUsageCounts(tx, org))).get(sid)).toBe(1);
+  });
+
+  it("früher archivierte Leistungen: Kürzel nachträglich freigeben (Verweise wandern mit)", async () => {
+    const org = await f.org({ settings: { website: { serviceDescriptions: { FA: "Alt" } } } });
+    const old = (await q<{ id: string }>(org, "insert into services (organization_id, code, name, price_cents, active) values ($1,'FA','Früh archiviert',100,false) returning id", [org]))[0].id;
+    await q(org, "insert into services (organization_id, code, name, price_cents, active) values ($1,'FA_archiv','Schon frei',100,false)", [org]);
+    const { withOrg } = await import("@/db");
+    expect((await withOrg(org, (tx) => mod.archivedServicesBlockingCodes(tx, org))).map((s) => s.code)).toEqual(["FA"]);
+    expect(await mod.releaseArchivedCodes(auth(org))).toEqual({ released: 1, skipped: 0 });
+    expect((await service(org, old)).code).toBe("FA_archiv2");
+    expect((await f.pool.query("select settings from organizations where id = $1", [org])).rows[0].settings.website.serviceDescriptions).toEqual({ FA_archiv2: "Alt" });
+    expect(await withOrg(org, (tx) => mod.archivedServicesBlockingCodes(tx, org))).toEqual([]);
+    // Wiederherstellen gibt „FA“ zurück
+    expect(await mod.setServiceActive(auth(org), old, true)).toEqual({ code: "FA", codeConflict: null });
   });
 });

@@ -2,29 +2,43 @@ import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { Archive, ArchiveRestore, Clock, FolderCog, Pencil, Plus } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
-import { Badge, Card, CardTitle, Empty, Field, Input, LinkButton, SegmentedControl, Select, Table } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, Empty, Field, Input, LinkButton, SegmentedControl, Select, Table } from "@/components/ui";
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { filterCatalog, parseCatalogQuery, SORTS, type CatalogView } from "@/lib/catalog";
-import { isArchivedCode, MAX_ARCHIVED_CODES } from "@/lib/service-codes";
-import { listServiceCategories, serviceUsageCounts } from "@/server/service-catalog";
+import { isArchivedCode, MAX_ARCHIVED_CODES, MAX_SERVICE_CODE_LENGTH, restoredCode } from "@/lib/service-codes";
+import { archivedServicesBlockingCodes, listServiceCategories, serviceUsageCounts } from "@/server/service-catalog";
 import { feature } from "@/lib/features";
 import { money } from "@/lib/format";
 import { currentCatalogView } from "@/server/catalog-prefs";
 import { CatalogToolbar, catalogQs } from "../../_catalog/catalog-toolbar";
-import { saveServiceAction, setServiceActiveAction } from "../actions";
+import { releaseArchivedCodesAction, saveServiceAction, setServiceActiveAction } from "../actions";
 
 export const metadata = { title: "Leistungen" };
 
 type Service = typeof services.$inferSelect;
-type Category = { id: string; name: string };
+type Category = { id: string; name: string; kind: string };
 const BASE = "/einstellungen/leistungen";
 
 /** gkv=false (Praxis nur Privat-/Selbstzahler): GKV-Position ausgeblendet, vorhandener Wert bleibt erhalten */
+/**
+ * Kategorien, die das Formular anbietet: Kategorien der Art „Verkauf (alt)“ (product) nur, wenn die Leistung schon
+ * dort liegt – neue Verkaufsartikel gehören zu den Produkten.
+ */
+function selectableCategories(categories: Category[], s?: Service) {
+  return categories.filter((c) => c.kind !== "product" || c.id === s?.categoryId);
+}
+
+/** Vorauswahl: bestehende Leistung → ihre Kategorie; neue Leistung → erste Kategorie der Art „Behandlung“ */
+function defaultCategoryId(options: Category[], s?: Service) {
+  return s?.categoryId ?? (options.find((c) => c.kind === "treatment") ?? options[0])?.id;
+}
+
 function ServiceFields({ s, gkv = true, categories }: { s?: Service; gkv?: boolean; categories: Category[] }) {
   // Archiviert: Kürzel ist das Archiv-Kürzel (z. B. „AN_archiv“) und kommt beim Wiederherstellen zurück – hier nicht änderbar
   const archivedCode = !!s && !s.active && isArchivedCode(s.code);
+  const options = selectableCategories(categories, s);
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {s ? <input type="hidden" name="id" value={s.id} /> : null}
@@ -33,12 +47,12 @@ function ServiceFields({ s, gkv = true, categories }: { s?: Service; gkv?: boole
           <Input value={s.code} disabled readOnly />
         </Field>
       ) : (
-        <Field label="Kürzel" hint="für die Schnelleingabe, z. B. PK"><Input name="code" defaultValue={s?.code} required maxLength={10} className="uppercase" /></Field>
+        <Field label="Kürzel" hint="für die Schnelleingabe, z. B. PK"><Input name="code" defaultValue={s?.code} required maxLength={s && s.code.length > MAX_SERVICE_CODE_LENGTH ? s.code.length : MAX_SERVICE_CODE_LENGTH} className="uppercase" /></Field>
       )}
       <Field label="Bezeichnung" className="sm:col-span-2 lg:col-span-3"><Input name="name" defaultValue={s?.name} required /></Field>
       <Field label="Kategorie">
-        <Select name="categoryId" defaultValue={s?.categoryId ?? categories[0]?.id} required>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        <Select name="categoryId" defaultValue={defaultCategoryId(options, s)} required>
+          {options.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
       </Field>
       <Field label="Preis (€, brutto)"><Input name="price" defaultValue={s ? (s.priceCents / 100).toFixed(2).replace(".", ",") : ""} required inputMode="decimal" /></Field>
@@ -176,7 +190,15 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
   const qs = catalogQs(query, {}, "haeufig");
   const back = `${BASE}${qs ? `?${qs}` : ""}`;
   const usedCategories = categories.map((c) => [c.id, c.name] as const);
-  const codeConflict = typeof sp.kuerzel === "string" ? sp.kuerzel.slice(0, 20) : null;
+  // Hinweise nach dem Wiederherstellen: nur ein fester Schlüssel in der URL; das Kürzel kommt aus der DB und nur,
+  // wenn die Leistung tatsächlich aktiv ist und noch ihr Archiv-Kürzel trägt
+  const restoredHint = editing && editing.active && isArchivedCode(editing.code) ? restoredCode(editing.code) : null;
+  const hint = sp.hinweis === "kuerzel-belegt" || sp.hinweis === "kuerzel-ungueltig" ? sp.hinweis : null;
+  // Archiv-Ansicht: früher archivierte Leistungen, die ihr Kürzel noch blockieren (vor der Kürzel-Freigabe archiviert)
+  const blocking = query.status !== "aktiv" ? await withOrg(org, (tx) => archivedServicesBlockingCodes(tx, org)) : [];
+  const released = typeof sp.freigegeben === "string" && /^\d{1,4}$/.test(sp.freigegeben) ? Number(sp.freigegeben) : null;
+  const skipped = typeof sp.uebersprungen === "string" && /^\d{1,4}$/.test(sp.uebersprungen) ? Number(sp.uebersprungen) : 0;
+  const formCategories = selectableCategories(categories, editing);
   const sortHref = (sort: "haeufig" | "name") => {
     const p = new URLSearchParams(catalogQs({ ...query, sort }, {}, "haeufig"));
     return `${BASE}${p.size ? `?${p}` : ""}`;
@@ -195,10 +217,36 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
         </p>
       ) : null}
 
-      {codeConflict && editing ? (
+      {hint === "kuerzel-belegt" && editing && restoredHint !== null ? (
         <p role="status" className="rounded-xl bg-warn-soft p-4 text-sm font-medium text-warn-soft-text">
-          „{editing.name}“ ist wiederhergestellt. Das Kürzel {codeConflict} ist inzwischen vergeben – die Leistung behält vorerst „{editing.code}“. Bitte unten ein neues Kürzel eintragen.
+          „{editing.name}“ ist wiederhergestellt. Das Kürzel {restoredHint} ist inzwischen vergeben – die Leistung behält vorerst „{editing.code}“. Bitte unten ein neues Kürzel eintragen.
         </p>
+      ) : null}
+
+      {hint === "kuerzel-ungueltig" && editing && restoredHint !== null ? (
+        <p role="status" className="rounded-xl bg-warn-soft p-4 text-sm font-medium text-warn-soft-text">
+          „{editing.name}“ ist wiederhergestellt. Das ursprüngliche Kürzel {restoredHint ? `„${restoredHint}“` : "(leer)"} taugt nicht als Kürzel (1 bis {MAX_SERVICE_CODE_LENGTH} Zeichen) – die Leistung behält vorerst „{editing.code}“. Bitte unten ein neues Kürzel eintragen.
+        </p>
+      ) : null}
+
+      {released !== null ? (
+        <p role="status" className="rounded-xl bg-surface-2 p-4 text-sm font-medium">
+          {released === 1 ? "1 Kürzel freigegeben." : `${released} Kürzel freigegeben.`}
+          {skipped ? ` ${skipped} Leistung(en) übersprungen – alle Archiv-Kürzel belegt; bitte dort zuerst ein anderes Kürzel eintragen.` : ""}
+        </p>
+      ) : null}
+
+      {blocking.length > 0 ? (
+        <div role="note" className="flex flex-col gap-2 rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            <span className="font-semibold">{blocking.length === 1 ? "1 archivierte Leistung blockiert" : `${blocking.length} archivierte Leistungen blockieren`} noch ihr Kürzel</span>{" "}
+            ({blocking.slice(0, 8).map((b) => b.code).join(", ")}{blocking.length > 8 ? " …" : ""}) – sie wurden archiviert, bevor Archivieren das Kürzel freigab. Freigeben hängt „_archiv“ an, wie beim Archivieren; Wiederherstellen gibt es zurück.
+          </p>
+          <form action={releaseArchivedCodesAction} className="shrink-0">
+            <input type="hidden" name="back" value={qs} />
+            <Button type="submit" variant="secondary">Kürzel freigeben</Button>
+          </form>
+        </div>
       ) : null}
 
       {editing || creating ? (
@@ -206,9 +254,15 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
           <CardTitle action={<Link href={back} className="text-sm font-semibold text-muted">Schließen</Link>}>
             {editing ? `Bearbeiten: ${editing.code} · ${editing.name}` : "Neue Leistung"}
           </CardTitle>
-          <ActionForm key={editing?.id ?? "neu"} action={saveServiceAction} submit={editing ? "Änderung speichern" : "Anlegen"}>
-            <ServiceFields s={editing} gkv={gkv} categories={categories} />
-          </ActionForm>
+          {formCategories.length ? (
+            <ActionForm key={editing?.id ?? "neu"} action={saveServiceAction} submit={editing ? "Änderung speichern" : "Anlegen"}>
+              <ServiceFields s={editing} gkv={gkv} categories={categories} />
+            </ActionForm>
+          ) : (
+            <p className="text-sm text-muted">
+              Es gibt noch keine Kategorie für Leistungen. Bitte zuerst unter <Link href={`${BASE}/kategorien`} className="font-semibold underline">Kategorien verwalten</Link> eine anlegen.
+            </p>
+          )}
         </Card>
       ) : (
         <div className="flex flex-wrap gap-2">

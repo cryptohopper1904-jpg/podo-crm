@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, withOrg, type Tx } from "@/db";
-import { memberships, organizations, serviceCategories, services, users } from "@/db/schema";
+import { db, type Tx } from "@/db";
+import { memberships, organizations, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
 import { requireAuth, revokeUserSessions } from "@/lib/auth/session";
@@ -18,18 +18,17 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
-import { codeTaken } from "@/server/products";
 import {
   createServiceCategory,
   deleteServiceCategory,
   moveServiceCategory,
-  moveCodeRefsInSettings,
   moveServicesToCategory,
+  releaseArchivedCodes,
   renameServiceCategory,
+  saveService,
   ServiceCatalogError,
   setServiceActive,
 } from "@/server/service-catalog";
-import { isArchivedCode } from "@/lib/service-codes";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
@@ -161,85 +160,9 @@ export async function updateMemberAction(form: FormData) {
 
 export async function saveServiceAction(_: SettingsState, form: FormData): Promise<SettingsState> {
   const auth = await requireAuth("settings.manage");
-  const org = auth.organization.id;
-  const d = z
-    .object({
-      id: z.string().uuid().optional(),
-      code: z.string().trim().min(1).max(10).toUpperCase().optional(),
-      name: z.string().trim().min(2).max(200),
-      price: z.string(),
-      vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v)),
-      durationMin: z.coerce.number().int().min(0).max(480),
-      categoryId: z.string().uuid("Bitte eine Kategorie wählen."),
-      gkvPosition: opt,
-    })
-    .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
-  if (!d.success) return { error: d.success === false ? d.error.issues[0]?.message : undefined };
-  const priceCents = parseMoney(d.data.price);
-  if (priceCents === null) return { error: "Preis ungültig" };
-  const base = {
-    name: d.data.name,
-    priceCents,
-    vatRate: d.data.vatRate,
-    durationMin: d.data.durationMin,
-    // Art (services.category) setzt der DB-Trigger aus der Kategorie
-    categoryId: d.data.categoryId,
-    gkvPosition: d.data.gkvPosition,
-    requiresTherapeuticPurpose: d.data.vatRate === 0,
-  };
-  // aktiv/archiviert ändert nur setServiceActiveAction; neue Leistungen sind aktiv
-  let found = true;
-  let productClash = false;
-  let missingCode = false;
-  let badCategory = false;
-  let code = d.data.code ?? "";
-  try {
-    await withOrg(org, async (tx) => {
-      // Kürzel-Vergabe und Verweise per Kürzel serialisieren (wie Archivieren, src/server/service-catalog.ts)
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('service-codes'), hashtext(${org}))`);
-      const [cat] = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, d.data.categoryId)));
-      if (!cat) {
-        badCategory = true;
-        return;
-      }
-      const [current] = d.data.id ? await tx.select({ code: services.code, active: services.active }).from(services).where(and(eq(services.organizationId, org), eq(services.id, d.data.id))) : [];
-      if (d.data.id && !current) {
-        found = false;
-        return;
-      }
-      // Archivierte Leistung: Kürzel bleibt das Archiv-Kürzel (wird beim Wiederherstellen zurückgegeben)
-      if (current && !current.active && isArchivedCode(current.code)) code = current.code;
-      if (!code) {
-        missingCode = true;
-        return;
-      }
-      // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
-      if (await codeTaken(tx, org, code, "product")) {
-        productClash = true;
-        return;
-      }
-      if (d.data.id) {
-        await tx.update(services).set({ ...base, code }).where(and(eq(services.organizationId, org), eq(services.id, d.data.id)));
-        // Kürzel geändert: Verweise (Online-/Telefonbuchung, Website-Beschreibung, Preis-Hinweis) wandern mit
-        if (current && current.code !== code) await moveCodeRefsInSettings(tx, org, current.code, code);
-      } else {
-        await tx.insert(services).values({ ...base, code, active: true, organizationId: org });
-        // neue Leistung mit (evtl. freigewordenem) Kürzel erbt keine Altverweise
-        await moveCodeRefsInSettings(tx, org, code, null);
-      }
-    });
-  } catch (e) {
-    const pg = (e as { cause?: { code?: string; constraint?: string } })?.cause ?? (e as { code?: string; constraint?: string });
-    if (pg?.code === "23505") return { error: `Das Kürzel ${code} gibt es schon.` };
-    if (pg?.code === "23514" || pg?.code === "23503") return { error: "Kategorie passt nicht – bitte Seite neu laden und erneut wählen." };
-    console.error("[leistungen] Speichern fehlgeschlagen", e);
-    return { error: "Speichern hat nicht geklappt. Bitte erneut versuchen." };
-  }
-  if (badCategory) return { error: "Kategorie nicht gefunden." };
-  if (missingCode) return { error: "Bitte ein Kürzel eingeben." };
-  if (productClash) return { error: `Das Kürzel ${code} hat schon ein Produkt. Bitte ein anderes wählen.` };
-  if (!found) return { error: "Leistung nicht gefunden." };
-  await audit({ organizationId: org, userId: auth.user.id, action: "service.save", meta: { code } });
+  // Prüfung, Kürzel-Regeln, Verweise und Audit: src/server/service-catalog.ts saveService
+  const r = await saveService(auth, Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  if ("error" in r) return { error: r.error };
   revalidatePath("/einstellungen/leistungen");
   return { ok: "Gespeichert." };
 }
@@ -261,18 +184,31 @@ export async function setServiceActiveAction(form: FormData) {
   } catch (e) {
     if (!(e instanceof ServiceCatalogError)) throw e;
     // z. B. alle Archiv-Kürzel belegt: feste Meldung über einen Schlüssel (kein freier Text in der URL)
-    const qs = new URLSearchParams(back.startsWith("?") ? back.slice(1) : "");
+    const qs = new URLSearchParams(back.replace(/^\?/, ""));
     qs.set("fehler", "archiv-kuerzel");
     qs.set("edit", id.data);
     redirect(`/einstellungen/leistungen?${qs}`);
   }
   revalidatePath("/einstellungen/leistungen");
-  if (r?.codeConflict) {
-    const qs = new URLSearchParams(back.startsWith("?") ? back.slice(1) : "");
-    qs.set("kuerzel", r.codeConflict);
+  // Hinweis nur als fester Schlüssel – das betroffene Kürzel ermittelt die Seite selbst aus der DB
+  if (r?.codeConflict || r?.codeInvalid !== undefined) {
+    const qs = new URLSearchParams(back.replace(/^\?/, ""));
+    qs.set("hinweis", r.codeConflict ? "kuerzel-belegt" : "kuerzel-ungueltig");
     qs.set("edit", id.data);
     redirect(`/einstellungen/leistungen?${qs}`);
   }
+}
+
+/** Kürzel früher archivierter Leistungen freigeben (Hinweis in der Archiv-Ansicht) */
+export async function releaseArchivedCodesAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const back = String(form.get("back") ?? "");
+  const r = await releaseArchivedCodes(auth);
+  revalidatePath("/einstellungen/leistungen");
+  const qs = new URLSearchParams(back.replace(/^\?/, ""));
+  qs.set("freigegeben", String(r.released));
+  if (r.skipped) qs.set("uebersprungen", String(r.skipped));
+  redirect(`/einstellungen/leistungen?${qs}`);
 }
 
 // ── Kategorien der Leistungen ──

@@ -7,7 +7,9 @@ import type { AuthContext } from "@/lib/auth/session";
 import { assertCan } from "@/lib/auth/assert";
 import { audit } from "@/lib/audit";
 import type { ServiceKind } from "@/lib/catalog";
-import { archivedCodeCandidates, MAX_ARCHIVED_CODES, moveServiceCodeRefs, restoredCode } from "@/lib/service-codes";
+import { parseMoney } from "@/lib/format";
+import { archivedCodeCandidates, isArchivedCode, isUsableCode, MAX_ARCHIVED_CODES, MAX_SERVICE_CODE_LENGTH, moveServiceCodeRefs, restoredCode } from "@/lib/service-codes";
+import { codeTaken } from "@/server/products";
 
 /**
  * Leistungs-Katalog der Praxis: eigene Kategorien (anlegen, umbenennen, sortieren, löschen), Archivieren mit
@@ -26,26 +28,12 @@ export const categoryInput = z.object({
   kind: z.enum(NEW_CATEGORY_KINDS, "Bitte eine gültige Art wählen.").default("treatment"),
 });
 
-/** Startkategorien (wie die früher festen Kategorien) – für Praxen, die noch keine haben */
-export const DEFAULT_SERVICE_CATEGORIES = [
-  { name: "Behandlung", kind: "treatment", sort: 10 },
-  { name: "Nagelkorrektur", kind: "brace", sort: 20 },
-  { name: "Kosmetik & Wellness", kind: "cosmetic", sort: 30 },
-  { name: "Hausbesuch & Wegegeld", kind: "travel", sort: 40 },
-] as const;
-
 /**
- * Kategorien der Praxis in Anzeige-Reihenfolge, mit Anzahl Leistungen (aktiv + archiviert). Hat die Praxis noch
- * keine (neue Praxis ohne Leistungen), werden die Startkategorien angelegt.
+ * Kategorien der Praxis in Anzeige-Reihenfolge, mit Anzahl Leistungen (aktiv + archiviert). Nur lesend – die
+ * Startkategorien entstehen in der Migration (Bestand) bzw. beim Anlegen der Praxis (src/lib/org-defaults.ts
+ * seedServiceCategories); ein GET (auch im Nur-Lesen-Modus) schreibt nichts.
  */
 export async function listServiceCategories(tx: Tx, org: string) {
-  const [{ n }] = await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(serviceCategories).where(eq(serviceCategories.organizationId, org));
-  if (n === 0) {
-    await tx
-      .insert(serviceCategories)
-      .values(DEFAULT_SERVICE_CATEGORIES.map((c) => ({ ...c, organizationId: org })))
-      .onConflictDoNothing();
-  }
   return tx
     .select({
       id: serviceCategories.id,
@@ -86,16 +74,20 @@ export async function renameServiceCategory(auth: AuthContext, id: string, name:
   assertCan(auth, "settings.manage");
   const n = categoryInput.shape.name.parse(name);
   const org = auth.organization.id;
+  let before: string;
   try {
-    const r = await withOrg(org, (tx) =>
-      tx.update(serviceCategories).set({ name: n }).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, id))).returning({ id: serviceCategories.id }),
-    );
-    if (!r.length) throw new ServiceCatalogError("Kategorie nicht gefunden.");
+    before = await withOrg(org, async (tx) => {
+      const [c] = await tx.select({ name: serviceCategories.name }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, id))).for("update");
+      if (!c) throw new ServiceCatalogError("Kategorie nicht gefunden.");
+      await tx.update(serviceCategories).set({ name: n }).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, id)));
+      return c.name;
+    });
   } catch (e) {
     if (uniqueViolation(e)) throw new ServiceCatalogError(`Die Kategorie „${n}“ gibt es schon.`);
     throw e;
   }
-  await audit({ organizationId: org, userId: auth.user.id, action: "service_category.rename", entity: "service_category", entityId: id, meta: { name: n } });
+  if (before === n) return;
+  await audit({ organizationId: org, userId: auth.user.id, action: "service_category.rename", entity: "service_category", entityId: id, meta: { name: n, before } });
 }
 
 /** Eine Position nach oben (-1) oder unten (+1); Reihenfolge wird dabei lückenlos neu durchnummeriert */
@@ -125,14 +117,27 @@ export async function moveServicesToCategory(auth: AuthContext, fromId: string, 
   assertCan(auth, "settings.manage");
   if (fromId === toId) return 0;
   const org = auth.organization.id;
-  const n = await withOrg(org, async (tx) => {
-    const cats = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), inArray(serviceCategories.id, [fromId, toId])));
-    if (cats.length !== 2) throw new ServiceCatalogError("Kategorie nicht gefunden.");
+  const res = await withOrg(org, async (tx) => {
+    const cats = await tx
+      .select({ id: serviceCategories.id, name: serviceCategories.name, kind: serviceCategories.kind })
+      .from(serviceCategories)
+      .where(and(eq(serviceCategories.organizationId, org), inArray(serviceCategories.id, [fromId, toId])));
+    const from = cats.find((c) => c.id === fromId);
+    const to = cats.find((c) => c.id === toId);
+    if (!from || !to) throw new ServiceCatalogError("Kategorie nicht gefunden.");
     const r = await tx.update(services).set({ categoryId: toId }).where(and(eq(services.organizationId, org), eq(services.categoryId, fromId))).returning({ id: services.id });
-    return r.length;
+    return { n: r.length, from, to };
   });
-  await audit({ organizationId: org, userId: auth.user.id, action: "service_category.move_services", entity: "service_category", entityId: fromId, meta: { to: toId, count: n } });
-  return n;
+  // Art vorher/nachher: an ihr hängen Online-Buchung, Website und Wegegeld der verschobenen Leistungen
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "service_category.move_services",
+    entity: "service_category",
+    entityId: fromId,
+    meta: { to: toId, count: res.n, fromName: res.from.name, toName: res.to.name, kindBefore: res.from.kind, kindAfter: res.to.kind },
+  });
+  return res.n;
 }
 
 /** Löschen nur, wenn keine Leistung (auch keine archivierte) mehr darin ist */
@@ -170,16 +175,19 @@ async function codeInUse(tx: Tx, org: string, code: string, exceptId?: string): 
 /**
  * Verweise per Kürzel in organizations.settings umschreiben (from → to) bzw. bei `to = null` entfernen
  * (Regeln: src/lib/service-codes.ts moveServiceCodeRefs). Innerhalb der Transaktion der Kürzel-Änderung, Zeile gesperrt.
+ * Liefert die geänderten Einstellungs-Bereiche (leer = nichts geändert).
  */
-export async function moveCodeRefsInSettings(tx: Tx, org: string, from: string, to: string | null): Promise<void> {
-  if (from === to) return;
+export async function moveCodeRefsInSettings(tx: Tx, org: string, from: string, to: string | null): Promise<string[]> {
+  if (from === to) return [];
   const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("update");
   const patch = moveServiceCodeRefs(o?.settings, from, to);
-  if (!patch) return;
+  if (!patch) return [];
   await tx
     .update(organizations)
     .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
     .where(eq(organizations.id, org));
+  // geänderte Bereiche (onlineBooking, voice, website, servicePriceNotes) – fürs Audit-Log
+  return Object.keys(patch).sort();
 }
 
 /**
@@ -187,13 +195,14 @@ export async function moveCodeRefsInSettings(tx: Tx, org: string, from: string, 
  * Archivieren gibt das Kürzel frei: „AN“ → „AN_archiv“ (bei Kollision „AN_archiv2“ …), damit „AN“ neu vergeben werden
  * kann. Rechnungspositionen speichern Bezeichnung/Preis/USt als Kopie (invoice_lines.description …) – alte Belege
  * ändern sich dadurch nicht. Wiederherstellen: Kürzel zurück, wenn frei; sonst bleibt das Archiv-Kürzel und
- * `codeConflict` nennt das belegte Kürzel.
+ * `codeConflict` nennt das belegte Kürzel. Taugt das zurückgewonnene Kürzel nicht (leer, zu lang – z. B. aus einem
+ * Import), bleibt ebenfalls das Archiv-Kürzel und `codeInvalid` nennt es.
  */
 export async function setServiceActive(
   auth: AuthContext,
   id: string,
   active: boolean,
-): Promise<{ code: string; codeConflict: string | null } | null> {
+): Promise<{ code: string; codeConflict: string | null; codeInvalid?: string } | null> {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
   const res = await withOrg(org, async (tx) => {
@@ -204,6 +213,7 @@ export async function setServiceActive(
     if (s.active === active) return { code: s.code, codeConflict: null };
     let code = s.code;
     let codeConflict: string | null = null;
+    let codeInvalid: string | undefined;
     if (!active) {
       let free: string | null = null;
       for (const candidate of archivedCodeCandidates(s.code)) {
@@ -221,32 +231,40 @@ export async function setServiceActive(
     } else {
       const original = restoredCode(s.code);
       if (original !== s.code) {
-        if (await codeInUse(tx, org, original, id)) codeConflict = original;
+        if (!isUsableCode(original)) codeInvalid = original;
+        else if (await codeInUse(tx, org, original, id)) codeConflict = original;
         else code = original;
       }
     }
     await tx.update(services).set({ active, code }).where(and(eq(services.organizationId, org), eq(services.id, id)));
     // Verweise per Kürzel (Online-/Telefonbuchung, Website-Beschreibung, Preis-Hinweis) wandern mit – ein freigegebenes
     // Kürzel vererbt so nichts an eine neue Leistung
-    await moveCodeRefsInSettings(tx, org, s.code, code);
-    return { code, codeConflict, before: s.code };
+    const refsMoved = await moveCodeRefsInSettings(tx, org, s.code, code);
+    return { code, codeConflict, codeInvalid, before: s.code, refsMoved };
   });
-  if (res) {
+  if (res && "before" in res) {
     await audit({
       organizationId: org,
       userId: auth.user.id,
       action: active ? "service.unarchive" : "service.archive",
       entity: "service",
       entityId: id,
-      meta: { code: res.code, ...("before" in res && res.before !== res.code ? { before: res.before } : {}), ...(res.codeConflict ? { codeConflict: res.codeConflict } : {}) },
+      meta: {
+        code: res.code,
+        ...(res.before !== res.code ? { before: res.before } : {}),
+        ...(res.codeConflict ? { codeConflict: res.codeConflict } : {}),
+        ...(res.codeInvalid !== undefined ? { codeInvalid: res.codeInvalid } : {}),
+        ...(res.refsMoved?.length ? { refsMoved: res.refsMoved } : {}),
+      },
     });
   }
-  return res ? { code: res.code, codeConflict: res.codeConflict } : null;
+  return res ? { code: res.code, codeConflict: res.codeConflict, ...(res.codeInvalid !== undefined ? { codeInvalid: res.codeInvalid } : {}) } : null;
 }
 
 /**
  * Wie oft wurde jede Leistung in den letzten 12 Monaten gebucht? (Termine + Rechnungspositionen, ohne abgesagte
- * und nicht wahrgenommene Termine und ohne stornierte/Entwurfs-Belege) – für die Reihenfolge „häufig gebucht“.
+ * und nicht wahrgenommene Termine, ohne stornierte/Entwurfs-Belege und ohne Gutschriften – eine Gutschrift nimmt
+ * eine Leistung zurück, ist also keine Buchung) – für die Reihenfolge „häufig gebucht“.
  */
 export async function serviceUsageCounts(tx: Tx, org: string, now: Date = new Date()): Promise<Map<string, number>> {
   const since = new Date(now.getTime() - 365 * 86_400_000);
@@ -262,7 +280,7 @@ export async function serviceUsageCounts(tx: Tx, org: string, now: Date = new Da
     .select({ id: invoiceLines.serviceId, n: sql<number>`count(*)`.mapWith(Number) })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(and(eq(invoiceLines.organizationId, org), eq(invoices.organizationId, org), isNotNull(invoiceLines.serviceId), gte(invoices.issuedAt, sinceDay), sql`${invoices.status} not in ('cancelled', 'draft')`))
+    .where(and(eq(invoiceLines.organizationId, org), eq(invoices.organizationId, org), isNotNull(invoiceLines.serviceId), gte(invoices.issuedAt, sinceDay), sql`${invoices.status} not in ('cancelled', 'draft')`, ne(invoices.kind, "credit_note")))
     .groupBy(invoiceLines.serviceId);
   const m = new Map<string, number>();
   for (const r of [...appt, ...lines]) if (r.id) m.set(r.id, (m.get(r.id) ?? 0) + r.n);
@@ -285,4 +303,162 @@ export async function servicesByUsage(org: string, tx?: Tx) {
     return sortByUsage(rows, usage).map((s) => ({ ...s, usage: usage.get(s.id) ?? 0 }));
   };
   return tx ? run(tx) : withOrg(org, run);
+}
+
+const optText = z.string().trim().max(300).optional().transform((v) => v || null);
+
+/** Formular „Leistung“ (Einstellungen → Leistungen); leere Felder sind vorher entfernt */
+export const serviceInput = z.object({
+  id: z.uuid().optional(),
+  code: z.string().trim().min(1, "Bitte ein Kürzel eingeben.").max(MAX_SERVICE_CODE_LENGTH, `Kürzel höchstens ${MAX_SERVICE_CODE_LENGTH} Zeichen.`).toUpperCase().optional(),
+  name: z.string().trim().min(2, "Bezeichnung: mindestens 2 Zeichen.").max(200),
+  price: z.string(),
+  vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v), "Bitte einen gültigen USt-Satz wählen."),
+  durationMin: z.coerce.number().int().min(0).max(480),
+  categoryId: z.uuid("Bitte eine Kategorie wählen."),
+  gkvPosition: optText,
+});
+
+export type SaveServiceResult = { error: string } | { ok: true; id: string; code: string };
+
+/**
+ * Leistung anlegen oder ändern. Aktiv/archiviert ändert nur setServiceActive; neue Leistungen sind aktiv.
+ *  - Kürzel mit Archiv-Zusatz („…_archiv“, „…_ARCHIV2“) sind für archivierte Leistungen reserviert und werden als
+ *    neue Eingabe abgelehnt; ein unverändertes Kürzel (z. B. nach Wiederherstellen mit belegtem Kürzel) bleibt erlaubt.
+ *  - Archivierte Leistung mit Archiv-Kürzel: Kürzel bleibt (kommt beim Wiederherstellen zurück).
+ *  - Kürzel geändert: Verweise in den Einstellungen wandern mit; neue Leistung erbt keine Altverweise.
+ * Audit „service.save“ mit entityId, bei Änderung des Kürzels auch dem alten (`before`) und den mitgewanderten Verweisen.
+ */
+export async function saveService(auth: AuthContext, input: unknown): Promise<SaveServiceResult> {
+  assertCan(auth, "settings.manage");
+  const org = auth.organization.id;
+  const parsed = serviceInput.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const d = parsed.data;
+  const priceCents = parseMoney(d.price);
+  if (priceCents === null) return { error: "Preis ungültig" };
+  const base = {
+    name: d.name,
+    priceCents,
+    vatRate: d.vatRate,
+    durationMin: d.durationMin,
+    // Art (services.category) setzt der DB-Trigger aus der Kategorie
+    categoryId: d.categoryId,
+    gkvPosition: d.gkvPosition,
+    requiresTherapeuticPurpose: d.vatRate === 0,
+  };
+  let code = d.code ?? "";
+  type Done = { id: string; created: boolean; before: string | null; refsMoved: string[] };
+  let res: Done | { error: string };
+  try {
+    res = await withOrg(org, async (tx): Promise<Done | { error: string }> => {
+      // Kürzel-Vergabe und Verweise per Kürzel serialisieren (wie Archivieren)
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('service-codes'), hashtext(${org}))`);
+      const [cat] = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, d.categoryId)));
+      if (!cat) return { error: "Kategorie nicht gefunden." };
+      const [current] = d.id
+        ? await tx.select({ code: services.code, active: services.active }).from(services).where(and(eq(services.organizationId, org), eq(services.id, d.id))).for("update")
+        : [];
+      if (d.id && !current) return { error: "Leistung nicht gefunden." };
+      if (current && !current.active && isArchivedCode(current.code)) code = current.code;
+      else if (current && code.toUpperCase() === current.code.toUpperCase()) code = current.code;
+      else if (code && isArchivedCode(code)) {
+        return { error: `Kürzel mit „_archiv“ am Ende sind für archivierte Leistungen reserviert – bitte ein anderes Kürzel wählen.` };
+      }
+      if (!code) return { error: "Bitte ein Kürzel eingeben." };
+      // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
+      if (await codeTaken(tx, org, code, "product")) return { error: `Das Kürzel ${code} hat schon ein Produkt. Bitte ein anderes wählen.` };
+      if (d.id && current) {
+        await tx.update(services).set({ ...base, code }).where(and(eq(services.organizationId, org), eq(services.id, d.id)));
+        // Kürzel geändert: Verweise (Online-/Telefonbuchung, Website-Beschreibung, Preis-Hinweis) wandern mit
+        const refsMoved = current.code !== code ? await moveCodeRefsInSettings(tx, org, current.code, code) : [];
+        return { id: d.id, created: false, before: current.code !== code ? current.code : null, refsMoved };
+      }
+      const [row] = await tx.insert(services).values({ ...base, code, active: true, organizationId: org }).returning({ id: services.id });
+      // neue Leistung mit (evtl. freigewordenem) Kürzel erbt keine Altverweise
+      const refsMoved = await moveCodeRefsInSettings(tx, org, code, null);
+      return { id: row.id, created: true, before: null, refsMoved };
+    });
+  } catch (e) {
+    if (uniqueViolation(e)) return { error: `Das Kürzel ${code} gibt es schon.` };
+    if (pgCode(e) === "23514" || foreignKeyViolation(e)) return { error: "Kategorie passt nicht – bitte Seite neu laden und erneut wählen." };
+    throw e;
+  }
+  if ("error" in res) return res;
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "service.save",
+    entity: "service",
+    entityId: res.id,
+    meta: {
+      code,
+      ...(res.created ? { created: true } : {}),
+      ...(res.before ? { before: res.before } : {}),
+      ...(res.refsMoved.length ? { refsMoved: res.refsMoved } : {}),
+    },
+  });
+  return { ok: true, id: res.id, code };
+}
+
+/**
+ * Früher (vor der Kürzel-Freigabe) archivierte Leistungen behalten ihr altes Kürzel und blockieren es. Liste für den
+ * Hinweis im Archiv.
+ */
+export async function archivedServicesBlockingCodes(tx: Tx, org: string) {
+  const rows = await tx
+    .select({ id: services.id, code: services.code, name: services.name })
+    .from(services)
+    .where(and(eq(services.organizationId, org), eq(services.active, false)))
+    .orderBy(asc(services.code));
+  return rows.filter((r) => !isArchivedCode(r.code));
+}
+
+/**
+ * Kürzel aller früher archivierten Leistungen freigeben (wie beim Archivieren: „AN“ → „AN_archiv“ …, Verweise
+ * wandern mit). Leistungen, für die kein Archiv-Kürzel mehr frei ist, bleiben unverändert. Liefert die Anzahl
+ * freigegebener und übersprungener Kürzel.
+ */
+export async function releaseArchivedCodes(auth: AuthContext): Promise<{ released: number; skipped: number }> {
+  assertCan(auth, "settings.manage");
+  const org = auth.organization.id;
+  const changes = await withOrg(org, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('service-codes'), hashtext(${org}))`);
+    const rows = await tx
+      .select({ id: services.id, code: services.code })
+      .from(services)
+      .where(and(eq(services.organizationId, org), eq(services.active, false)))
+      .orderBy(asc(services.code))
+      .for("update");
+    const out: { id: string; before: string; code: string | null; refsMoved: string[] }[] = [];
+    for (const r of rows) {
+      if (isArchivedCode(r.code)) continue;
+      let free: string | null = null;
+      for (const candidate of archivedCodeCandidates(r.code)) {
+        if (!(await codeInUse(tx, org, candidate, r.id))) {
+          free = candidate;
+          break;
+        }
+      }
+      if (!free) {
+        out.push({ id: r.id, before: r.code, code: null, refsMoved: [] });
+        continue;
+      }
+      await tx.update(services).set({ code: free }).where(and(eq(services.organizationId, org), eq(services.id, r.id)));
+      out.push({ id: r.id, before: r.code, code: free, refsMoved: await moveCodeRefsInSettings(tx, org, r.code, free) });
+    }
+    return out;
+  });
+  for (const c of changes) {
+    if (!c.code) continue;
+    await audit({
+      organizationId: org,
+      userId: auth.user.id,
+      action: "service.release_code",
+      entity: "service",
+      entityId: c.id,
+      meta: { code: c.code, before: c.before, ...(c.refsMoved.length ? { refsMoved: c.refsMoved } : {}) },
+    });
+  }
+  return { released: changes.filter((c) => c.code).length, skipped: changes.filter((c) => !c.code).length };
 }

@@ -1,5 +1,34 @@
+import { sql } from "drizzle-orm";
 import type { Tx } from "@/db";
 import { integrationConnections, services } from "@/db/schema";
+
+/**
+ * Startkategorien der Leistungen (wie die früher festen Kategorien) – dieselben vier wie in der Migration
+ * drizzle/0055_leistungs_kategorien.sql. „Verkauf (alt)“ entsteht nur, wo es Verkaufs-Leistungen gibt (DB-Trigger).
+ */
+export const DEFAULT_SERVICE_CATEGORIES = [
+  { name: "Behandlung", kind: "treatment", sort: 10 },
+  { name: "Nagelkorrektur", kind: "brace", sort: 20 },
+  { name: "Kosmetik & Wellness", kind: "cosmetic", sort: 30 },
+  { name: "Hausbesuch & Wegegeld", kind: "travel", sort: 40 },
+] as const;
+
+/**
+ * Startkategorien für eine neue Praxis anlegen (Registrierung, Bootstrap, Demo) – idempotent wie die Migration:
+ * nur Arten, für die es noch keine Kategorie gibt; vorhandene Namen bleiben unangetastet.
+ * Erwartet app.org_id = organizationId in der Transaktion (RLS).
+ */
+export async function seedServiceCategories(tx: Tx, organizationId: string) {
+  const values = sql.join(
+    DEFAULT_SERVICE_CATEGORIES.map((c) => sql`(${c.name}::text, ${c.kind}::text, ${c.sort}::int)`),
+    sql`, `,
+  );
+  await tx.execute(sql`
+    insert into service_categories (organization_id, name, kind, sort)
+    select ${organizationId}::uuid, d.name, d.kind, d.sort from (values ${values}) as d(name, kind, sort)
+     where not exists (select 1 from service_categories c where c.organization_id = ${organizationId}::uuid and c.kind = d.kind)
+    on conflict (organization_id, name) do nothing`);
+}
 
 /**
  * Startkatalog für eine neue Praxis. Preise sind Beispielwerte und müssen von der Praxis
@@ -35,6 +64,8 @@ const PROVIDERS = [
 ] as const;
 
 export async function seedOrganizationDefaults(tx: Tx, organizationId: string) {
+  // zuerst die Kategorien – die Leistungen ordnet der DB-Trigger der ersten Kategorie ihrer Art zu
+  await seedServiceCategories(tx, organizationId);
   await tx.insert(services).values(
     DEFAULT_SERVICES.map((s) => ({
       organizationId,

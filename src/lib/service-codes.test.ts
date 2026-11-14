@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archivedCodeCandidates, isArchivedCode, MAX_ARCHIVED_CODES, moveServiceCodeRefs, restoredCode } from "./service-codes";
+import { archivedCodeCandidates, isArchivedCode, isUsableCode, MAX_ARCHIVED_CODES, moveServiceCodeRefs, restoredCode } from "./service-codes";
 
 describe("Kürzel archivierter Leistungen", () => {
   it("AN → AN_archiv, bei Kollision AN_archiv2 …; Wiederherstellen nimmt den Zusatz ab", () => {
@@ -11,6 +11,17 @@ describe("Kürzel archivierter Leistungen", () => {
     expect(restoredCode("ARCHIV")).toBe("ARCHIV");
     expect(isArchivedCode("PK_archiv3")).toBe(true);
     expect(isArchivedCode("PK")).toBe(false);
+    // Groß-/Kleinschreibung egal (Formular schreibt groß: „AN_ARCHIV“ zählt als Archiv-Kürzel)
+    expect(isArchivedCode("AN_ARCHIV2")).toBe(true);
+  });
+
+  it("zurückgewonnenes Kürzel taugt nur mit 1–10 Zeichen und ohne Archiv-Zusatz", () => {
+    expect(isUsableCode("AN")).toBe(true);
+    expect(isUsableCode("ABCDEFGHIJ")).toBe(true);
+    expect(isUsableCode("")).toBe(false);
+    expect(isUsableCode("   ")).toBe(false);
+    expect(isUsableCode("ABCDEFGHIJK")).toBe(false);
+    expect(isUsableCode("AN_archiv")).toBe(false);
   });
 });
 

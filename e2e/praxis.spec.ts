@@ -382,6 +382,16 @@ test("Leistungen: Kategorie umbenennen, Leistung archivieren gibt das Kürzel fr
   await neu(`Zweite ${run}`);
   await page.goto(`/einstellungen/leistungen?sort=name&q=${code}`);
   await expect(page.getByRole("heading", { name: `Zweite ${run}` })).toBeVisible();
+
+  // früher (vor der Kürzel-Freigabe) archivierte Leistung blockiert ihr Kürzel → Hinweis im Archiv, Freigeben per Knopf
+  const early = `Y${run.slice(-4).toUpperCase()}`;
+  await withDemoOrg((q, org) => q("insert into services (organization_id, code, name, price_cents, active) values ($1, $2, $3, 100, false)", [org, early, `Früh ${run}`]));
+  await page.goto("/einstellungen/leistungen?status=archiviert&sort=name");
+  const note = page.getByRole("note").filter({ hasText: "blockier" });
+  await expect(note).toContainText(early);
+  await note.getByRole("button", { name: "Kürzel freigeben" }).click();
+  await expect(page.getByText(/Kürzel freigegeben\./)).toBeVisible();
+  await expect(page.getByText(`${early}_archiv`, { exact: true }).first()).toBeVisible();
 });
 
 test("Heute: Hinweis „Bestand knapp“ mit Link zum Nachbestellen", async () => {
