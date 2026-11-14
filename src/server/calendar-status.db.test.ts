@@ -68,6 +68,17 @@ function futureWeekday(minDays: number) {
         ])
       ).rows[0].id as string,
     );
+  const activeIn = async (org: string, start: Date, minutes: number) =>
+    (
+      await f.asOrg(org, (c) =>
+        c.query("select count(*)::int n from appointments where organization_id = $1 and status <> 'cancelled' and starts_at < $3 and ends_at > $2", [org, start, new Date(start.getTime() + minutes * 60_000)]),
+      )
+    ).rows[0].n as number;
+  const offerLinks = async (org: string, id: string) =>
+    (await f.asOrg(org, (c) => c.query("select patient_id, revoked_at from patient_links where organization_id = $1 and appointment_id = $2 and purpose = 'waitlist_offer' order by created_at", [org, id]))).rows as {
+      patient_id: string;
+      revoked_at: Date | null;
+    }[];
   const statusOf = async (org: string, id: string) => (await f.asOrg(org, (c) => c.query("select status from appointments where id = $1", [id]))).rows[0]?.status as string;
   /** Wartelisten-Eintrag (ohne Wünsche) einer Person mit E-Mail-Einwilligung */
   const waiting = async (org: string, email: string) => {
@@ -82,9 +93,9 @@ function futureWeekday(minDays: number) {
     const u = await member(org, "owner");
     const auth = authOf(org, u);
     const id = await appt(org, { therapist: u, start: new Date("2031-04-08T08:00:00Z"), status: "confirmed" });
-    expect(await cs.changeAppointmentStatus(auth, { id, status: "cancelled" })).toEqual({ ok: true, prev: "confirmed" });
+    expect(await cs.changeAppointmentStatus(auth, { id, status: "cancelled" })).toMatchObject({ ok: true, prev: "confirmed" });
     expect(await statusOf(org, id)).toBe("cancelled");
-    expect(await cs.changeAppointmentStatus(auth, { id, status: "confirmed", expected: "cancelled" })).toEqual({ ok: true, prev: "cancelled" });
+    expect(await cs.changeAppointmentStatus(auth, { id, status: "confirmed", expected: "cancelled" })).toMatchObject({ ok: true, prev: "cancelled" });
     expect(await statusOf(org, id)).toBe("confirmed");
     const log = await f.asOrg(org, (c) => c.query("select meta from audit_log where organization_id = $1 and action = 'appointment.status' and entity_id = $2 order by id", [org, id]));
     expect(log.rows.map((r) => r.meta)).toEqual([
@@ -92,7 +103,7 @@ function futureWeekday(minDays: number) {
       { status: "confirmed", from: "cancelled", undo: true },
     ]);
     // „Nicht da“ und zurück
-    expect(await cs.changeAppointmentStatus(auth, { id, status: "no_show" })).toEqual({ ok: true, prev: "confirmed" });
+    expect(await cs.changeAppointmentStatus(auth, { id, status: "no_show" })).toMatchObject({ ok: true, prev: "confirmed" });
     expect(await cs.changeAppointmentStatus(auth, { id, status: "confirmed", expected: "no_show" })).toMatchObject({ ok: true });
   });
 
@@ -194,10 +205,10 @@ function futureWeekday(minDays: number) {
     const id = await appt(org, { therapist: u, patient: owner, start: berlinToUtc(day, "09:00") });
     await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
     // noch in der Frist für „Rückgängig“: nichts
-    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps })).toEqual({ checked: 0, offered: 0 });
+    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps })).toEqual({ checked: 0, offered: 0, failed: 0 });
     const later = new Date(Date.now() + 60_000);
-    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: later })).toEqual({ checked: 1, offered: 1 });
-    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: new Date(later.getTime() + 60_000) })).toEqual({ checked: 0, offered: 0 });
+    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: later })).toEqual({ checked: 1, offered: 1, failed: 0 });
+    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: new Date(later.getTime() + 60_000) })).toEqual({ checked: 0, offered: 0, failed: 0 });
     const logs = await f.asOrg(org, (c) => c.query("select count(*)::int n from reminder_log where organization_id = $1 and appointment_id = $2 and kind = 'waitlist_offer'", [org, id]));
     expect(logs.rows[0].n).toBe(1);
     // zurückgenommene Absage und Absage ohne Markierung (vor dieser Version) lösen nichts aus
@@ -206,6 +217,110 @@ function futureWeekday(minDays: number) {
     await cs.changeAppointmentStatus(auth, { id: undone, status: "planned", expected: "cancelled" });
     const old = await appt(org, { therapist: u, patient: owner, start: berlinToUtc(day, "15:00"), status: "cancelled" });
     await f.asOrg(org, (c) => c.query("insert into audit_log (organization_id, action, entity, entity_id, meta) values ($1,'appointment.status','appointment',$2,'{\"status\":\"cancelled\"}')", [org, old]));
-    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: new Date(Date.now() + 120_000) })).toEqual({ checked: 0, offered: 0 });
+    expect(await cs.runPendingWaitlistOffers({ organizationId: org, deps, now: new Date(Date.now() + 120_000) })).toEqual({ checked: 0, offered: 0, failed: 0 });
+  });
+
+  it("Rückgängig gegen inzwischen gebuchte Zeit: Online-Buchung bzw. Nachrücker ohne Behandler:in → abgelehnt; direkt anschließend → erlaubt", async () => {
+    const org = await f.org();
+    const u = await member(org, "owner");
+    const auth = authOf(org, u);
+    const start = new Date("2031-05-06T08:00:00Z");
+    const id = await appt(org, { therapist: u, start });
+    await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+    const online = await appt(org, { therapist: null, start: new Date(start.getTime() + 10 * 60_000), source: "online" });
+    expect(await cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" })).toEqual({ ok: false, error: cs.SLOT_TAKEN_MSG });
+    // „nicht erschienen“ der anderen Buchung zählt weiter als belegt (nur „abgesagt“ gibt die Zeit frei)
+    await f.asOrg(org, (c) => c.query("update appointments set status = 'no_show' where id = $1", [online]));
+    expect((await cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" })).ok).toBe(false);
+    await f.asOrg(org, (c) => c.query("update appointments set status = 'cancelled' where id = $1", [online]));
+    // direkt anschließender Termin derselben Behandler:in (09:30) überschneidet nicht
+    await appt(org, { therapist: u, start: new Date(start.getTime() + 30 * 60_000) });
+    expect((await cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" })).ok).toBe(true);
+  });
+
+  it("Nachrücker ohne Behandler:in (ursprüngliche Person ohne eigenen Kalender) → Rückgängig abgelehnt", async () => {
+    const org = await f.org();
+    const u = await member(org, "owner");
+    const rec = await member(org, "reception");
+    const auth = authOf(org, u);
+    const start = berlinToUtc(futureWeekday(4), "14:00");
+    const owner = await f.patient(org, { firstName: "Absagend" });
+    await waiting(org, "ohne-zuordnung@example.org");
+    const id = await appt(org, { therapist: rec, patient: owner, start });
+    await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+    expect((await wl.offerFreedSlot(org, id, deps)).offered).toBe(1);
+    const acc = await wl.acceptOffer(tokenFor("ohne-zuordnung@example.org"));
+    expect(acc.ok).toBe(true);
+    const t = await f.asOrg(org, (c) => c.query("select therapist_id from appointments where id = $1", [acc.ok ? acc.appointmentId : null]));
+    expect(t.rows[0].therapist_id).toBeNull();
+    expect(await cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" })).toEqual({ ok: false, error: cs.SLOT_TAKEN_MSG });
+    expect(await activeIn(org, start, 30)).toBe(1);
+  });
+
+  it("parallel: Rückgängig und Annahme des Angebots → genau ein aktiver Termin", async () => {
+    for (let i = 0; i < 3; i++) {
+      const org = await f.org();
+      const u = await member(org, "owner");
+      const auth = authOf(org, u);
+      const start = berlinToUtc(futureWeekday(5 + i), "15:00");
+      const owner = await f.patient(org, { firstName: "Absagend" });
+      const email = `parallel${i}@example.org`;
+      await waiting(org, email);
+      const id = await appt(org, { therapist: u, patient: owner, start });
+      await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+      expect((await wl.offerFreedSlot(org, id, deps)).offered).toBe(1);
+      const [undo, acc] = await Promise.all([cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" }), wl.acceptOffer(tokenFor(email))]);
+      expect(undo.ok !== acc.ok).toBe(true);
+      expect(await activeIn(org, start, 30)).toBe(1);
+    }
+  });
+
+  it("after() und Cron gleichzeitig: nur eine Angebotswelle", async () => {
+    const org = await f.org();
+    const u = await member(org, "owner");
+    const auth = authOf(org, u);
+    const start = berlinToUtc(futureWeekday(4), "16:00");
+    const owner = await f.patient(org, { firstName: "Absagend" });
+    for (const e of ["welle1@example.org", "welle2@example.org", "welle3@example.org"]) await waiting(org, e);
+    const id = await appt(org, { therapist: u, patient: owner, start });
+    const r = await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+    if (!r.ok) throw new Error(r.error);
+    await Promise.all([
+      cs.offerAfterCancel(org, id, { cancelledAt: r.changedAt, deps }),
+      cs.runPendingWaitlistOffers({ organizationId: org, deps, now: new Date(Date.now() + 60_000) }),
+      cs.offerAfterCancel(org, id, { cancelledAt: r.changedAt, deps }),
+    ]);
+    expect((await offerLinks(org, id)).length).toBe(3);
+    // später nachgetragene Person: eine zweite (verspätete) Welle derselben Absage gibt es nicht
+    await waiting(org, "welle4@example.org");
+    expect((await cs.offerAfterCancel(org, id, { cancelledAt: r.changedAt, deps }))?.skipped).toBe("already_offered");
+    expect((await offerLinks(org, id)).length).toBe(3);
+  });
+
+  it("erneute Absage nach Rückgängig: widerrufene Personen wieder berücksichtigt; alter Timer wirkt nicht", async () => {
+    const org = await f.org();
+    const u = await member(org, "owner");
+    const auth = authOf(org, u);
+    const start = berlinToUtc(futureWeekday(6), "08:00");
+    const owner = await f.patient(org, { firstName: "Absagend" });
+    const p = await waiting(org, "nochmal@example.org");
+    const id = await appt(org, { therapist: u, patient: owner, start });
+    const first = await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+    if (!first.ok) throw new Error(first.error);
+    expect((await cs.offerAfterCancel(org, id, { cancelledAt: first.changedAt, deps }))?.offered).toBe(1);
+    await cs.changeAppointmentStatus(auth, { id, status: "planned", expected: "cancelled" });
+    const second = await cs.changeAppointmentStatus(auth, { id, status: "cancelled" });
+    if (!second.ok) throw new Error(second.error);
+    // Timer der ersten Absage: nichts (die zweite hat ihre eigene Frist)
+    expect((await cs.offerAfterCancel(org, id, { cancelledAt: first.changedAt, deps }))?.skipped).toBe("superseded");
+    expect((await offerLinks(org, id)).length).toBe(1);
+    // vor Ablauf der Frist der zweiten Absage: Cron tut nichts
+    expect((await cs.runPendingWaitlistOffers({ organizationId: org, deps })).checked).toBe(0);
+    expect((await cs.offerAfterCancel(org, id, { cancelledAt: second.changedAt, deps }))?.offered).toBe(1);
+    const links = await offerLinks(org, id);
+    expect(links.map((l) => [l.patient_id, l.revoked_at === null])).toEqual([
+      [p, false],
+      [p, true],
+    ]);
   });
 });

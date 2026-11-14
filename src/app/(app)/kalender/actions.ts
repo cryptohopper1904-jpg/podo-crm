@@ -98,10 +98,12 @@ export async function changeAppointmentStatusAction(input: { id: string; status:
   if (!res.ok) return res;
   // Absage → frei gewordenen Termin der Warteliste anbieten, erst nach der Frist für „Rückgängig“ (offerFreedSlot
   // prüft dann, ob der Termin noch abgesagt ist). Läuft dieser Nachlauf nicht (Neustart), übernimmt der Cron.
-  if (input.status === "cancelled" && res.prev !== "cancelled") {
+  if (input.status === "cancelled") {
+    const cancelledAt = res.changedAt;
     after(async () => {
       await new Promise((r) => setTimeout(r, UNDO_GRACE_MS));
-      await offerAfterCancel(org, input.id);
+      // nur, wenn diese Absage noch die aktuelle ist (sonst hat eine neuere ihre eigene Frist)
+      await offerAfterCancel(org, input.id, { cancelledAt });
     });
   }
   revalidatePath("/kalender");

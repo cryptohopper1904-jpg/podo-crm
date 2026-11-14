@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, gte, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointmentServices, appointments, consents, messages, organizations, patientLinks, patients, reminderLog, services, waitlist } from "@/db/schema";
@@ -56,7 +56,21 @@ export type OfferDeps = {
   getPort?: (org: string, provider: MessagingProvider) => Promise<MessagingPort>;
   /** Basis-URL für den Link (Standard: PUBLIC_URL) */
   baseUrl?: string;
+  /**
+   * Nur die erste Angebotswelle dieser Absage verschicken: gab es seit der Absage (appointments.updated_at) schon
+   * ein Angebot zum Termin, nichts tun. Für den verzögerten Versand nach einer Absage (after() und Cron-Nachlauf
+   * können sonst gleichzeitig je eine Welle schicken). Geprüft unter der wl:-Sperre.
+   */
+  onlyFirstWave?: boolean;
+  /**
+   * Geplant für die Absage mit diesem Zeitstempel (appointments.updated_at): wurde der Termin seither erneut
+   * geändert (z. B. Rückgängig + neue Absage), gilt die Planung nicht mehr – die neue Absage hat ihre eigene Frist.
+   */
+  cancelledAt?: Date;
 };
+
+/** reminder_log.status für Angebote, deren Link durch „Rückgängig“ (Absage zurückgenommen) widerrufen wurde */
+export const OFFER_REVOKED_STATUS = "revoked";
 
 /** Ergebnis ohne Links/Tokens (die stehen nur in der versendeten Nachricht). */
 export type OfferSummary = { offered: number; manual: number; skipped?: string };
@@ -79,10 +93,19 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
   const prepared = await withOrg(org, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`wl:${org}:${appointmentId}`}, 0))`);
     const [a] = await tx
-      .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, endsAt: appointments.endsAt, status: appointments.status })
+      .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, endsAt: appointments.endsAt, status: appointments.status, updatedAt: appointments.updatedAt })
       .from(appointments)
       .where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId)));
     if (!a || a.status !== "cancelled") return { skipped: "not_cancelled" as const };
+    if (deps.cancelledAt && a.updatedAt.getTime() !== deps.cancelledAt.getTime()) return { skipped: "superseded" as const };
+    if (deps.onlyFirstWave) {
+      const [wave] = await tx
+        .select({ id: reminderLog.id })
+        .from(reminderLog)
+        .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), gte(reminderLog.at, a.updatedAt), ne(reminderLog.status, OFFER_REVOKED_STATUS)))
+        .limit(1);
+      if (wave) return { skipped: "already_offered" as const };
+    }
     const expiresAt = offerExpiry(a.startsAt, now);
     if (!expiresAt) return { skipped: "too_soon" as const };
     // Zeit inzwischen anderweitig belegt?
@@ -102,10 +125,11 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), isNull(patients.archivedAt), notDeceased()));
     if (!entries.length) return { skipped: "no_entries" as const };
     // schon für diesen Termin angeboten oder anderes Angebot noch offen → nicht erneut
+    // (außer das Angebot wurde durch „Rückgängig“ widerrufen – dann bei einer erneuten Absage wieder berücksichtigen)
     const already = await tx
       .select({ patientId: reminderLog.patientId })
       .from(reminderLog)
-      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id)));
+      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), ne(reminderLog.status, OFFER_REVOKED_STATUS)));
     const activeOffers = await tx
       .select({ patientId: patientLinks.patientId })
       .from(patientLinks)
@@ -200,7 +224,13 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       // fehlgeschlagener Versand → Link sofort ungültig
       await db.update(patientLinks).set({ revokedAt: new Date() }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, r.linkId)));
     }
-    await withOrg(org, (tx) => tx.update(reminderLog).set({ status, detail }).where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, offerKey(r.linkId)))));
+    // „widerrufen“ (Rückgängig während des Versands) bleibt stehen
+    await withOrg(org, (tx) =>
+      tx
+        .update(reminderLog)
+        .set({ status, detail })
+        .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, offerKey(r.linkId)), ne(reminderLog.status, OFFER_REVOKED_STATUS))),
+    );
   }
 
   if (sent.length || failed.length || manual.length) {

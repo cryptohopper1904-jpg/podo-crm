@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointments, auditLog, calendarFeedEvents, organizations, patientLinks, reminderLog } from "@/db/schema";
@@ -9,7 +9,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { OFFER_KIND, OFFER_PURPOSE } from "@/lib/waitlist";
 import { billedIdsInTx } from "./appointments";
 import { lockBooking } from "./portal-booking";
-import { offerFreedSlot, type OfferDeps } from "./waitlist";
+import { OFFER_REVOKED_STATUS, offerFreedSlot, type OfferDeps } from "./waitlist";
+import { log } from "@/lib/log";
 
 /**
  * Statuswechsel aus der Terminzeile/Terminseite („Nicht da“, „Absagen“) und deren „Rückgängig“.
@@ -24,7 +25,7 @@ import { offerFreedSlot, type OfferDeps } from "./waitlist";
 
 export const STATUSES = ["planned", "confirmed", "done", "cancelled", "no_show"] as const;
 export type AppointmentStatus = (typeof STATUSES)[number];
-export type StatusResult = { ok: true; prev: AppointmentStatus } | { ok: false; error: string };
+export type StatusResult = { ok: true; prev: AppointmentStatus; changedAt: Date } | { ok: false; error: string };
 
 const ACTIVE = new Set<string>(["planned", "confirmed"]);
 const INACTIVE = new Set<string>(["cancelled", "no_show"]);
@@ -84,89 +85,128 @@ export async function changeAppointmentStatus(auth: AuthContext, raw: { id: stri
             lt(appointments.startsAt, a.endsAt),
             gt(appointments.endsAt, a.startsAt),
             sql`${appointments.id} <> ${id}`,
-            inArray(appointments.status, ["planned", "confirmed", "done"]),
+            ne(appointments.status, "cancelled"),
             a.therapistId ? or(eq(appointments.therapistId, a.therapistId), isNull(appointments.therapistId)) : undefined,
           ),
         )
         .limit(1);
       if (others.length) return { ok: false, error: a.status === "cancelled" ? SLOT_TAKEN_MSG : "Zeit inzwischen vergeben – Termin bleibt „nicht erschienen“." };
-      // offene Wartelisten-Angebote für diesen Termin gelten nicht mehr
-      await tx
+      // offene Wartelisten-Angebote für diesen Termin gelten nicht mehr; im Versandprotokoll als „widerrufen“
+      // markiert, damit die Personen bei einer erneuten Absage wieder ein Angebot bekommen können
+      const revoked = await tx
         .update(patientLinks)
         .set({ revokedAt: new Date() })
-        .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.purpose, OFFER_PURPOSE), eq(patientLinks.appointmentId, id), isNull(patientLinks.usedAt), isNull(patientLinks.revokedAt)));
+        .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.purpose, OFFER_PURPOSE), eq(patientLinks.appointmentId, id), isNull(patientLinks.usedAt), isNull(patientLinks.revokedAt)))
+        .returning({ id: patientLinks.id });
+      for (const l of revoked) {
+        await tx
+          .update(reminderLog)
+          .set({ status: OFFER_REVOKED_STATUS, detail: "Angebot widerrufen – Absage zurückgenommen" })
+          .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, `wloffer:${l.id}`)));
+      }
     }
-    await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
-    return { ok: true, prev: a.status as AppointmentStatus };
-  });
-  if (!res.ok) return res;
-  const offerPending = status === "cancelled" && res.prev !== "cancelled";
-  await audit({
-    organizationId: org,
-    userId: auth.user.id,
-    action: "appointment.status",
-    entity: "appointment",
-    entityId: id,
-    // waitlist: „pending“ = Angebot an die Warteliste steht noch aus (after() bzw. Cron-Nachlauf runPendingWaitlistOffers)
-    meta: { status, from: res.prev, ...(expected ? { undo: true } : {}), ...(offerPending ? { waitlist: "pending" } : {}) },
+    // updated_at = Zeitpunkt der Transaktion (gleich dem Protokolleintrag unten) – daran erkennen verzögerter Versand
+    // und Cron-Nachlauf, ob eine Absage noch die aktuelle ist
+    const [u] = await tx
+      .update(appointments)
+      .set({ status, updatedAt: sql`now()` })
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, id)))
+      .returning({ updatedAt: appointments.updatedAt });
+    const offerPending = status === "cancelled";
+    await audit(
+      {
+        organizationId: org,
+        userId: auth.user.id,
+        action: "appointment.status",
+        entity: "appointment",
+        entityId: id,
+        // waitlist: „pending“ = Angebot an die Warteliste steht noch aus (after() bzw. Cron-Nachlauf runPendingWaitlistOffers)
+        meta: { status, from: a.status, ...(expected ? { undo: true } : {}), ...(offerPending ? { waitlist: "pending" } : {}) },
+      },
+      tx,
+    );
+    return { ok: true, prev: a.status as AppointmentStatus, changedAt: u.updatedAt };
   });
   return res;
 }
 
 /** Frist für „Rückgängig“, bevor ein frei gewordener Termin der Warteliste angeboten wird */
 export const UNDO_GRACE_MS = 20_000;
-/** Cron-Nachlauf: nur Absagen der letzten 24 h */
+/** Cron-Nachlauf: nur Absagen der letzten 24 h, höchstens so viele Termine je Lauf */
 const PENDING_WINDOW_MS = 24 * 3600_000;
+export const PENDING_MAX_PER_RUN = 50;
 const CHECKED = "waitlist.offer_checked";
 
-/** Angebot an die Warteliste für einen abgesagten Termin (einmal; Fehler werden protokolliert, nicht geworfen). */
-export async function offerAfterCancel(org: string, appointmentId: string, deps: OfferDeps = {}) {
+/**
+ * Angebot an die Warteliste nach einer Absage – nur die erste Welle dieser Absage (after() und Cron können
+ * gleichzeitig laufen; geprüft unter der Sperre in offerFreedSlot). `cancelledAt`: Zeitpunkt der Absage, für die
+ * der Versand geplant wurde – wurde der Termin seither geändert (Rückgängig, erneute Absage), nichts tun.
+ * „Geprüft“ wird nur nach fehlerfreiem Lauf vermerkt, damit der Cron Fehler nachholt. Wirft nie.
+ */
+export async function offerAfterCancel(org: string, appointmentId: string, opts: { cancelledAt?: Date; deps?: OfferDeps } = {}) {
   let summary: Awaited<ReturnType<typeof offerFreedSlot>> | null = null;
   try {
-    summary = await offerFreedSlot(org, appointmentId, deps);
+    summary = await offerFreedSlot(org, appointmentId, { ...opts.deps, onlyFirstWave: true, cancelledAt: opts.cancelledAt });
   } catch (e) {
     await audit({ organizationId: org, action: "waitlist.offer_failed", entity: "appointment", entityId: appointmentId, meta: { error: String(e).slice(0, 200) } }).catch(() => undefined);
+    return null;
   }
-  await audit({ organizationId: org, action: CHECKED, entity: "appointment", entityId: appointmentId, meta: { offered: summary?.offered ?? 0, skipped: summary?.skipped ?? null } }).catch(() => undefined);
+  if (summary.skipped !== "superseded") {
+    await audit({ organizationId: org, action: CHECKED, entity: "appointment", entityId: appointmentId, meta: { offered: summary.offered, skipped: summary.skipped ?? null } }).catch(() => undefined);
+  }
   return summary;
 }
 
 /**
  * Cron-Nachlauf (/api/cron/reminders): Absagen aus Terminzeile/Terminseite, deren verzögertes Angebot (after() mit
- * UNDO_GRACE_MS) nicht gelaufen ist – z. B. Neustart des Servers in der Frist. Erfasst nur Absagen mit
- * `waitlist: "pending"` (erst ab dieser Version gesetzt – ältere Absagen lösen nichts aus) aus den letzten 24 h,
- * älter als die Frist, ohne bisherige Prüfung bzw. bisheriges Angebot, Termin weiterhin abgesagt und in der Zukunft.
+ * UNDO_GRACE_MS) nicht gelaufen oder fehlgeschlagen ist – z. B. Neustart des Servers in der Frist. Erfasst nur:
+ *  - Absagen mit `waitlist: "pending"` (erst ab dieser Version gesetzt – ältere Absagen lösen nichts aus),
+ *  - die noch die aktuelle Änderung des Termins sind (Protokoll-Zeit = updated_at, gleiche Transaktion),
+ *  - älter als die Frist und höchstens 24 h alt, Termin weiterhin abgesagt und in der Zukunft,
+ *  - ohne „geprüft“ und ohne (nicht widerrufenes) Angebot seit dieser Absage.
+ * Fehler einer Praxis stoppen den Lauf nicht; höchstens PENDING_MAX_PER_RUN Termine je Lauf.
  */
 export async function runPendingWaitlistOffers(opts: { now?: Date; organizationId?: string; deps?: OfferDeps } = {}) {
   const now = opts.now ?? new Date();
   const orgs = await db.select({ id: organizations.id }).from(organizations).where(opts.organizationId ? eq(organizations.id, opts.organizationId) : undefined);
   let checked = 0;
   let offered = 0;
+  let failed = 0;
   for (const o of orgs) {
-    const ids = await withOrg(o.id, async (tx) => {
-      const rows = await tx
-        .selectDistinct({ id: appointments.id })
-        .from(auditLog)
-        .innerJoin(appointments, and(eq(appointments.organizationId, o.id), sql`${appointments.id}::text = ${auditLog.entityId}`))
-        .where(
-          and(
-            eq(auditLog.organizationId, o.id),
-            eq(auditLog.action, "appointment.status"),
-            sql`${auditLog.meta} ->> 'waitlist' = 'pending'`,
-            gt(auditLog.at, new Date(now.getTime() - PENDING_WINDOW_MS)),
-            lt(auditLog.at, new Date(now.getTime() - UNDO_GRACE_MS)),
-            eq(appointments.status, "cancelled"),
-            gt(appointments.startsAt, now),
-            sql`not exists (select 1 from ${auditLog} c where c.organization_id = ${o.id} and c.action = ${CHECKED} and c.entity_id = ${appointments.id}::text and c.at > ${auditLog.at})`,
-            sql`not exists (select 1 from ${reminderLog} r where r.organization_id = ${o.id} and r.kind = ${OFFER_KIND} and r.appointment_id = ${appointments.id})`,
-          ),
-        );
-      return rows.map((r) => r.id);
-    });
-    for (const id of ids) {
-      checked++;
-      offered += (await offerAfterCancel(o.id, id, { ...opts.deps, now }))?.offered ?? 0;
+    if (checked >= PENDING_MAX_PER_RUN) break;
+    try {
+      const ids = await withOrg(o.id, async (tx) => {
+        const rows = await tx
+          .selectDistinct({ id: appointments.id, updatedAt: appointments.updatedAt })
+          .from(auditLog)
+          .innerJoin(appointments, and(eq(appointments.organizationId, o.id), sql`${appointments.id}::text = ${auditLog.entityId}`))
+          .where(
+            and(
+              eq(auditLog.organizationId, o.id),
+              eq(auditLog.action, "appointment.status"),
+              sql`${auditLog.meta} ->> 'waitlist' = 'pending'`,
+              eq(auditLog.at, appointments.updatedAt),
+              gt(auditLog.at, new Date(now.getTime() - PENDING_WINDOW_MS)),
+              lt(auditLog.at, new Date(now.getTime() - UNDO_GRACE_MS)),
+              eq(appointments.status, "cancelled"),
+              gt(appointments.startsAt, now),
+              sql`not exists (select 1 from ${auditLog} c where c.organization_id = ${o.id} and c.action = ${CHECKED} and c.entity_id = ${appointments.id}::text and c.at >= ${appointments.updatedAt})`,
+              sql`not exists (select 1 from ${reminderLog} r where r.organization_id = ${o.id} and r.kind = ${OFFER_KIND} and r.appointment_id = ${appointments.id} and r.at >= ${appointments.updatedAt} and r.status <> ${OFFER_REVOKED_STATUS})`,
+            ),
+          )
+          .limit(PENDING_MAX_PER_RUN - checked);
+        return rows;
+      });
+      for (const r of ids) {
+        checked++;
+        const res = await offerAfterCancel(o.id, r.id, { cancelledAt: r.updatedAt, deps: { ...opts.deps, now } });
+        if (res) offered += res.offered;
+        else failed++;
+      }
+    } catch (e) {
+      failed++;
+      log.error("cron.waitlist_pending.org_failed", { organizationId: o.id, error: e });
     }
   }
-  return { checked, offered };
+  return { checked, offered, failed };
 }

@@ -38,14 +38,15 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.promo_return_free.failed", { error: e });
   }
-  let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
-  try {
-    waitlistOffers = await runPendingWaitlistOffers();
-  } catch (e) {
-    log.error("cron.waitlist_pending.failed", { error: e });
-  }
   try {
     const result = await runReminders();
+    // nach den Erinnerungen (eigener Fehlerpfad, Obergrenze je Lauf): Wartelisten-Angebote nachholen
+    let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
+    try {
+      waitlistOffers = await runPendingWaitlistOffers();
+    } catch (e) {
+      log.error("cron.waitlist_pending.failed", { error: e });
+    }
     if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
     return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, waitlistOffers }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
