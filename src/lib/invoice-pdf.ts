@@ -23,9 +23,11 @@ import {
   creditedReceiptsNote,
   serviceYear,
   hasExemptNote,
+  invoiceAsIssued,
   invoiceHeading,
   invoiceService,
   invoiceRecipient,
+  openSumRow,
   invoiceTitle,
   isReceiptLike,
   dueImmediately,
@@ -76,9 +78,16 @@ export type InvoicePdfData = {
     paidCents: number;
     notes: string | null;
     paymentLinkUrl?: string | null;
+    /**
+     * Anlagezeitpunkt (invoices.created_at): trennt beim Ausstellen erfasste von späteren Zahlungen (invoiceAsIssued).
+     * Pflicht – null nur für reine Darstellungsdaten ohne DB-Bezug (dann gelten alle Zahlungen als beim Ausstellen).
+     */
+    createdAt: Date | string | null;
+    /** invoices.source („crm“ bzw. Altbestand, z. B. Excel-Import) */
+    source?: string | null;
   };
   lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number; inTreatment?: boolean | null }[];
-  payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
+  payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null; externalRef?: string | null }[];
   /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
   credited?: CreditedPartial[];
   organization: {
@@ -115,7 +124,10 @@ export type InvoicePdfData = {
   booking?: InvoiceBookingLink | null;
 };
 
-export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array> {
+export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {
+  // Beleg im Stand der Ausstellung: spätere Zahlungen/Zahlungslinks ändern das PDF nicht (GoBD, § 14 UStG)
+  const issued = invoiceAsIssued(input.invoice, input.payments);
+  const data: InvoicePdfData = { ...input, invoice: issued.invoice, payments: issued.payments };
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
   const doc = await PDFDocument.create();
   const fonts = await embedFonts(doc);
@@ -276,7 +288,8 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array
   }
   sumRows.push({ l: "Gesamt", v: money(inv.totalCents), strong: true });
   for (const r of paymentSummary(inv, data.credited ?? [], dateDe, totals.groups)) sumRows.push({ l: r.label, v: money(r.cents) });
-  if (inv.status !== "cancelled" && open !== 0 && (inv.paidCents !== 0 || open < 0)) sumRows.push({ l: open < 0 ? "zu erstatten" : "offen", v: money(Math.abs(open)), strong: true });
+  const openRow = openSumRow(inv);
+  if (openRow) sumRows.push({ l: openRow.label, v: money(openRow.cents), strong: true });
   // Summenblock mit USt-Ausweis und Anrechnungen nicht trennen
   keep(sumRows.length * 14 + 4);
   const sumLabelX = cx.unit;

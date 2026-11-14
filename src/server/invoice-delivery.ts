@@ -11,7 +11,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
-import { dueImmediately, showsDueDate } from "@/lib/invoice-view";
+import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
@@ -57,8 +57,11 @@ export function pdfResponseHeaders(filename: string, disposition: "inline" | "at
   };
 }
 
-/** Text der Begleit-E-Mail – nur Belegdaten, keine Leistungen/Diagnosen. */
-export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organization"> & { recipientName?: string | null }) {
+/**
+ * Text der Begleit-E-Mail – nur Belegdaten, keine Leistungen/Diagnosen. Das PDF zeigt den Stand bei Ausstellung;
+ * der Begleittext nennt den aktuellen Stand (spätere Zahlungen aus `payments`).
+ */
+export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organization"> & { payments?: InvoiceBundle["payments"]; recipientName?: string | null }) {
   const inv = b.invoice;
   const o = b.organization;
   const label = inv.kind === "credit_note" ? "Stornorechnung" : INVOICE_DOC_LABEL[inv.kind] ?? "Rechnung";
@@ -68,10 +71,18 @@ export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organizatio
     "",
     `anbei erhalten Sie Ihre ${label} ${inv.number} vom ${dateDe(inv.issuedAt)} über ${money(inv.totalCents)} als PDF.`,
   ];
+  const paidLater = invoiceAsIssued(inv, b.payments ?? []).laterPayments.reduce((s, p) => s + p.amountCents, 0);
   if (showsDueDate(inv) && open > 0) {
     const when = dueImmediately(inv) ? "sofort" : `bis zum ${dateDe(inv.dueAt)}`;
-    lines.push(`Bitte überweisen Sie den offenen Betrag von ${money(open)} ${when} unter Angabe der Rechnungsnummer.`);
+    if (paidLater > 0) {
+      lines.push(
+        `Bereits eingegangen: ${money(inv.paidCents)}. Bitte nur den Restbetrag von ${money(open)} ${when} unter Angabe der Rechnungsnummer überweisen – Betrag und GiroCode im PDF entsprechen dem Stand bei Ausstellung.`,
+      );
+    } else lines.push(`Bitte überweisen Sie den offenen Betrag von ${money(open)} ${when} unter Angabe der Rechnungsnummer.`);
     if (inv.paymentLinkUrl) lines.push(`Alternativ können Sie bequem online bezahlen: ${inv.paymentLinkUrl}`);
+  } else if (inv.status === "paid" && !isReceiptLike(inv.kind) && inv.kind !== "credit_note" && inv.totalCents > 0) {
+    // Beleg bleibt wie ausgestellt (ggf. mit Zahlungsaufforderung) – der aktuelle Stand steht im Begleittext
+    lines.push("Der Rechnungsbetrag ist bereits vollständig bei uns eingegangen – vielen Dank. Sie müssen nichts mehr überweisen.");
   }
   lines.push("", "Bei Fragen erreichen Sie uns gern" + (o.phone ? ` unter ${o.phone}` : "") + ".", "", "Mit freundlichen Grüßen", o.legalName ?? o.name);
   return { subject: `${label} ${inv.number} – ${o.name}`, body: lines.join("\n") };

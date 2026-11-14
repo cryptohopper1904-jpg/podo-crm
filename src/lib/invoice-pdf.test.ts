@@ -5,7 +5,7 @@ import { PDFDocument } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 
 const data = (patch: Partial<InvoicePdfData> = {}): InvoicePdfData => ({
-  invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", status: "issued", issuedAt: "2026-11-02", dueAt: "2026-11-16", totalCents: 9450, paidCents: 0, notes: "Behandlungszeitraum November\n[intern] USt-Wächter bestätigt" },
+  invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", status: "issued", issuedAt: "2026-11-02", dueAt: "2026-11-16", totalCents: 9450, paidCents: 0, createdAt: null, notes: "Behandlungszeitraum November\n[intern] USt-Wächter bestätigt" },
   lines: [
     { description: "Podologische Komplexbehandlung", quantity: "1", factor: "1", unitPriceCents: 6500, vatRate: 0, totalCents: 6500 },
     { description: "Pflegecreme „Fußwohl“ – 75 ml", quantity: "1", factor: "1", unitPriceCents: 2950, vatRate: 19, totalCents: 2950 },
@@ -72,5 +72,19 @@ describe("PDF-Rechnung", () => {
       const bytes = await renderInvoicePdf(data({ invoice: { ...data().invoice, kind, status: "paid", paidCents: 9450 }, payments: [{ paidAt: "2026-11-02T10:00:00Z", method: "cash", amountCents: 9450 }], logos: { compact: { bytes: png, mime: "image/png" } } }));
       expect((await PDFDocument.load(bytes)).getPageCount(), kind).toBe(1);
     }
+  });
+});
+
+describe("PDF im Stand der Ausstellung", () => {
+  it("spätere Zahlung (bar) und Zahlungslink ändern das PDF nicht; Zahlung beim Ausstellen bleibt", async () => {
+    const created = "2026-11-02T09:00:00.000Z";
+    const issued = data({ invoice: { ...data().invoice, createdAt: created }, payments: [] });
+    const paidLater = data({
+      invoice: { ...data().invoice, createdAt: created, status: "paid", paidCents: 9450, paymentLinkUrl: "https://pay.example/x" },
+      payments: [{ paidAt: "2026-11-10T15:30:00Z", method: "cash", amountCents: 9450 }],
+    });
+    // Erzeugungs-/Änderungsdatum und Datei-ID des PDFs ausgenommen – der Inhalt muss byte-gleich sein
+    const strip = (b: Uint8Array) => Buffer.from(b).toString("latin1").replace(/\/(CreationDate|ModDate) \(D:[^)]*\)/g, "").replace(/\/ID \[[^\]]*\]/g, "");
+    expect(strip(await renderInvoicePdf(paidLater))).toBe(strip(await renderInvoicePdf(issued)));
   });
 });

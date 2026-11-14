@@ -1141,7 +1141,12 @@ export const payments = pgTable("payments", {
    * danach – und für jede Zahlung eines abgeschlossenen Tages – verhindert ein DB-Trigger Änderung/Löschung.
    */
   cashClosingId: uuid("cash_closing_id").references((): AnyPgColumn => cashClosings.id),
-}, (t) => [index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt), index("payments_org_paid").on(t.organizationId, t.paidAt)]);
+}, (t) => [
+  index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt),
+  index("payments_org_paid").on(t.organizationId, t.paidAt),
+  /** SumUp-Zahlung je Transaktion höchstens einmal (Webhook-Idempotenz zusätzlich zur Sperre, Migration 0048) */
+  uniqueIndex("payments_org_sumup_ref").on(t.organizationId, t.externalRef).where(sql`${t.externalRef} like 'sumup:%'`),
+]);
 
 // ───────────────────────── Kasse (KassenSichV / GoBD, Phase 5) ─────────────────────────
 /** Zählprotokoll: Stückzahl je Stückelung in Cent, z. B. { "5000": 2, "200": 3 } */

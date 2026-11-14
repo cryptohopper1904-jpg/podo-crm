@@ -268,6 +268,15 @@ export type ProviderPaymentResult = {
  * Sonst (storniert, schon bezahlt, Überzahlung, Rechnung unbekannt) wird NICHT gebucht, sondern eine
  * Nachricht im Posteingang angelegt („bitte prüfen“) – das Geld ist ja bei SumUp eingegangen.
  */
+/** pg-Fehler „unique_violation“ auf payments_org_sumup_ref (auch in Drizzle-Fehlern verpackt), Muster wie everordnung.ts */
+export function isDuplicateProviderRef(e: unknown): boolean {
+  for (let cur: unknown = e, i = 0; cur && i < 5; cur = (cur as { cause?: unknown }).cause, i++) {
+    const c = cur as { code?: string; constraint?: string };
+    if (c.code === "23505" && c.constraint === "payments_org_sumup_ref") return true;
+  }
+  return false;
+}
+
 export async function recordProviderPayment(organizationId: string, input: ProviderPaymentInput): Promise<ProviderPaymentResult> {
   const res = await withOrg(organizationId, async (t): Promise<ProviderPaymentResult & { number?: string | null; patientId?: string | null }> => {
     if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) return { status: "nicht zugeordnet", invoiceId: null, reason: "Betrag ungültig" };
@@ -324,16 +333,19 @@ export async function recordProviderPayment(organizationId: string, input: Provi
         status: "new",
         threadKey: `tse-fail:${input.externalRef}`.slice(0, 300),
       });
-    const [sum] = await t
-      .select({ paid: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int` })
-      .from(payments)
-      .where(and(eq(payments.organizationId, organizationId), eq(payments.invoiceId, inv.id)));
-    const paid = Number(sum?.paid ?? 0);
+    // wie applyPayments: auf den bisherigen Stand aufaddieren (Rechnung ist gesperrt). Nicht aus der Summe der
+    // Zahlungszeilen neu rechnen – angerechnete Anzahlungen/Quittungen haben keine Zahlungszeile und gingen sonst verloren.
+    const paid = inv.paidCents + input.amountCents;
     await t
       .update(invoices)
       .set({ paidCents: paid, status: statusFromPayments(inv.totalCents, paid) })
       .where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, inv.id)));
     return { status: "gebucht", invoiceId: inv.id };
+  }).catch((e: unknown): ProviderPaymentResult => {
+    // Rennen mit einer parallelen Zustellung, die die Sperre umgangen hat: der eindeutige Index hat die zweite Zeile
+    // abgewiesen (Transaktion zurückgerollt) → dieselbe Transaktion ist bereits gebucht
+    if (isDuplicateProviderRef(e)) return { status: "bereits gebucht", invoiceId: isUuid(input.invoiceId) ? input.invoiceId : null };
+    throw e;
   });
   if (res.status === "nicht zugeordnet") await reportUnassignedPayment(organizationId, input, res);
   return { status: res.status, invoiceId: res.invoiceId, reason: res.reason };

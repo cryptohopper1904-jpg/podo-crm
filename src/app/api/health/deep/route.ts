@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { safeEqual } from "@/lib/safe-equal";
 import { log } from "@/lib/log";
 import { evaluateCalendarFeeds, overallStatus, type CheckResult } from "@/lib/ops-health";
-import { checkMigrations, checkTimestamps, withTimeout } from "@/server/ops-status";
+import { checkMigrations, checkPaymentRefIndex, checkTimestamps, withTimeout } from "@/server/ops-status";
 import { webhookBacklog } from "@/server/webhooks";
 import { calendarFeedHealth } from "@/server/calendar-feeds";
 
@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
  * - kein Token konfiguriert → 503 (fail closed), falsches Token → 401 (zeitkonstanter Vergleich)
  * - Prüfungen: Datenbank, Migrationsstand, Dateiablage beschreibbar, Alter des letzten Backups,
  *   letzte Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR, geschrieben von backup-/cron-Container),
- *   Kalender-Abo (Alter des letzten erfolgreichen Abrufs, „kalender_abo“)
+ *   Kalender-Abo (Alter des letzten erfolgreichen Abrufs, „kalender_abo“), eindeutiger SumUp-Index („zahlungen_index“)
  * - Antwort: Zustand je Prüfung, nur Zeiten/Zähler, keine Personendaten, keine Fehlertexte der DB
  * - HTTP 200 bei ok/warn, 503 bei mindestens einem „fail“
  * Das öffentliche /api/health bleibt minimal ({ ok: true }) für Container-Healthchecks.
@@ -78,8 +78,16 @@ export async function GET(req: NextRequest) {
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!safeEqual(token, secret)) return NextResponse.json({ error: "Nicht autorisiert" }, { status: 401 });
 
-  const [database, migrations, storage, stamps, webhooks, kalender_abo] = await Promise.all([checkDb(), checkMigrations(), checkStorage(), checkTimestamps(), checkWebhooks(), checkCalendarFeeds()]);
-  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps, webhooks, kalender_abo };
+  const [database, migrations, storage, stamps, webhooks, kalender_abo, zahlungen_index] = await Promise.all([
+    checkDb(),
+    checkMigrations(),
+    checkStorage(),
+    checkTimestamps(),
+    checkWebhooks(),
+    checkCalendarFeeds(),
+    checkPaymentRefIndex(),
+  ]);
+  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps, webhooks, kalender_abo, zahlungen_index };
   const status = overallStatus(checks);
   if (status !== "ok") {
     log.warn("health.deep", { status, failed: Object.entries(checks).filter(([, c]) => c.status === "fail").map(([k]) => k).join(",") || null });
