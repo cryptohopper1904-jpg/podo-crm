@@ -21,6 +21,8 @@ import {
 } from "@/server/invoices";
 import { createPaymentLink, sendPaymentLink, simulateTestPayment, startTerminalPayment } from "@/server/card-payments";
 import { sendInvoiceEmail } from "@/server/invoice-delivery";
+import { ArchiveIntegrityError } from "@/server/document-archive";
+import { PaymentReceiptError, sendPaymentReceiptEmail } from "@/server/payment-receipts";
 import { createDunnings, markDunningPosted, sendDunningEmail } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, type DunningStage } from "@/lib/dunning";
 
@@ -36,7 +38,7 @@ function parseJson(raw: FormDataEntryValue | null): unknown {
 }
 
 function errorMessage(e: unknown): string {
-  if (e instanceof InvoiceError) return e.message;
+  if (e instanceof InvoiceError || e instanceof PaymentReceiptError || e instanceof ArchiveIntegrityError) return e.message;
   console.error(e);
   return "Speichern fehlgeschlagen. Bitte erneut versuchen.";
 }
@@ -167,6 +169,20 @@ export async function sendInvoiceEmailAction(_: SimpleState, form: FormData): Pr
     const r = await sendInvoiceEmail(auth, id.data);
     refresh(id.data);
     return { success: r.mock ? `Testmodus: E-Mail an ${r.to} vorbereitet, aber nicht wirklich versendet.` : `Rechnung an ${r.to} gesendet.` };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+export async function sendPaymentReceiptEmailAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  const id = invoiceIdOf(form);
+  const receiptId = z.uuid().safeParse(form.get("receiptId"));
+  if (!id.success || !receiptId.success) return { error: "Zahlungsbeleg nicht gefunden." };
+  try {
+    const r = await sendPaymentReceiptEmail(auth, id.data, receiptId.data);
+    refresh(id.data);
+    return { success: r.mock ? `Testmodus: E-Mail an ${r.to} vorbereitet, aber nicht wirklich versendet.` : `Zahlungsbeleg an ${r.to} gesendet.` };
   } catch (e) {
     return { error: errorMessage(e) };
   }

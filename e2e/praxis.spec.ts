@@ -1,6 +1,6 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
- * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → öffentliche Buchung →
+ * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → Zahlung erfassen (Zahlungsbeleg) → öffentliche Buchung →
  * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
@@ -101,6 +101,26 @@ test("Rechnung erstellen und ausstellen", async () => {
   await page.getByRole("button", { name: "Rechnung ausstellen" }).click();
   await expect(page).toHaveURL(/\/rechnungen\/[0-9a-f-]{36}$/);
   await expect(page.getByText(/R\d{4}-\d{4}/).first()).toBeVisible();
+});
+
+test("Zahlung erfassen (bar): Beleg über den Zahlungseingang, Rechnungs-PDF aus dem Beleg-Archiv", async () => {
+  const invoiceUrl = page.url();
+  await page.getByRole("button", { name: "Zahlung erfassen" }).click();
+  await page.getByLabel("Zahlung 1: Methode").selectOption("cash");
+  await page.getByRole("button", { name: "Buchen" }).click();
+  await expect(page.getByRole("heading", { name: "Zahlungseingang nach Ausstellung" })).toBeVisible();
+  await expect(page.getByText(/Beleg ZB\d{4}-\d{4}/)).toBeVisible();
+  const receiptHref = await page.getByRole("link", { name: "Anzeigen / Drucken" }).getAttribute("href");
+  const receipt = await page.request.get(receiptHref!);
+  expect(receipt.status()).toBe(200);
+  expect(receipt.headers()["content-type"]).toBe("application/pdf");
+  // Rechnung: archiviertes Original (zweimal abgerufen byte-gleich)
+  const id = invoiceUrl.split("/").pop();
+  const a = await page.request.get(`/api/invoices/${id}/pdf`);
+  const b = await page.request.get(`/api/invoices/${id}/pdf`);
+  expect(a.status()).toBe(200);
+  expect(Buffer.compare(await a.body(), await b.body())).toBe(0);
+  await expect(page.getByText(/Beleg-Archiv: Original vom/)).toBeVisible();
 });
 
 test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", async () => {

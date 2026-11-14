@@ -45,13 +45,15 @@ import {
   senderLine as senderLineOf,
   showsDueDate,
 } from "@/lib/invoice-view";
-import { invoiceBookingLink, practiceWebsite, readDocumentSettings, shortUrl } from "@/lib/practice-documents";
+import { shortUrl } from "@/lib/practice-documents";
+import { CANCELLATION_SUB, cancellationStamp } from "@/lib/invoice-pdf";
+import { TSE_TEST_NOTICE, tseLines } from "@/lib/tse-receipt";
 import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
 import { invoiceDunningList } from "@/server/dunning";
 import { DUNNING_STAGE_LABEL, dunningTotalCents, isDunnable, type DunningStage } from "@/lib/dunning";
 import { DunningLetterActions } from "../mahnungen/dunning-actions";
-import { CancelPanel, EmailInvoiceButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
+import { CancelPanel, EmailInvoiceButton, EmailPaymentReceiptButton, LexofficeButton, PaymentPanel, SumupPanel } from "./invoice-actions";
 import { backHref } from "@/lib/back-link";
 
 export const metadata = { title: "Rechnung" };
@@ -87,6 +89,7 @@ const printCss = (runningHead: string, draft: boolean) => `
   .invoice-sheet tr, .invoice-sheet .print-keep { break-inside: avoid; page-break-inside: avoid; }
   .invoice-sheet h2 { break-after: avoid; page-break-after: avoid; }
   .invoice-sheet .draft-notice { border-color: #000 !important; }
+  .invoice-sheet .cancel-stamp, .invoice-sheet .cancel-stamp * { color: #b00 !important; border-color: #b00 !important; }
 }`;
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
@@ -106,7 +109,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const canCancel = auth.can("invoices.write") && inv.kind !== "credit_note" && inv.status !== "cancelled" && inv.status !== "draft";
   // Beleg (Druckansicht) im Stand der Ausstellung: spätere Zahlungen ändern ihn nicht (GoBD, § 14 UStG) – sie stehen
   // darunter außerhalb des Belegs. Status/Badge/„Zahlung erfassen“ oben zeigen den aktuellen Stand.
-  const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(inv, data.payments);
+  // Stornierte Rechnung: Beleg wie ausgestellt (Zahlungsaufforderung usw.) mit Stornovermerk, ohne GiroCode
+  const cancelledOriginal = inv.status === "cancelled" && inv.kind !== "credit_note";
+  const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(cancelledOriginal ? { ...inv, status: "issued" as const } : inv, data.payments);
   const docOpen = doc.totalCents - doc.paidCents;
   const docOpenRow = openSumRow(doc);
   const hasExempt = hasExemptNote(o, inv, lines);
@@ -115,11 +120,11 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const recipient = invoiceRecipient(p, b);
   const senderLine = senderLineOf(o);
   const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
-  const settings = (o.settings ?? {}) as Record<string, unknown>;
-  const docSettings = readDocumentSettings(settings);
-  const website = practiceWebsite(settings);
-  const giro = isValidIban(o.iban) ? invoicePaymentQr(doc, o) : null;
-  const booking = inv.kind !== "credit_note" ? invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }) : null;
+  // Website, Berufsbezeichnung, WhatsApp-Hinweis, Buchungshinweis wie beim Ausstellen (Momentaufnahme)
+  const docSettings = data.letter;
+  const website = data.letter.website;
+  const giro = !cancelledOriginal && isValidIban(o.iban) ? invoicePaymentQr(doc, o) : null;
+  const booking = inv.kind !== "credit_note" ? data.booking : null;
   // qrcode erzeugt reines SVG aus Pfaden (keine Eingabe-Texte im Markup)
   const qrSvg = (payload: string) => QRCode.toString(payload, { type: "svg", errorCorrectionLevel: "M", margin: 2 });
   const qrBlocks = [
@@ -183,6 +188,16 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <FileDown size={18} aria-hidden /> PDF
             </a>
           ) : null}
+          {cancelledOriginal && data.archive ? (
+            <a
+              href={`/api/invoices/${inv.id}/pdf?original=1`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+            >
+              <FileDown size={18} aria-hidden /> Original (Archiv)
+            </a>
+          ) : null}
           {canWrite && inv.status !== "draft" ? (
             <EmailInvoiceButton invoiceId={inv.id} sentTo={inv.sentTo} sentAt={inv.sentAt ? dateTimeDe(inv.sentAt) : null} recipientEmail={recipientEmail} />
           ) : null}
@@ -198,6 +213,14 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         </div>
         {internalNotes.length ? (
           <p className="rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">{internalNotes.join(" · ")}</p>
+        ) : null}
+        {inv.status !== "draft" ? (
+          <p className="text-xs text-muted">
+            {data.archive
+              ? `Beleg-Archiv: Original vom ${dateTimeDe(data.archive.createdAt)} (SHA-256 ${data.archive.sha256.slice(0, 16)}…), aufzubewahren bis ${dateDe(data.archive.retainUntil)}. ${cancelledOriginal ? "„PDF“ ist der Neudruck mit Stornovermerk." : "„PDF“ liefert genau dieses Original."}`
+              : "Altbeleg ohne archiviertes Original – das PDF wird aus den gespeicherten Daten neu erzeugt und als „Reproduktion“ gekennzeichnet."}
+            {data.fromSnapshot ? "" : " Belegangaben (Praxis, Anschrift) aus den aktuellen Stammdaten."}
+          </p>
         ) : null}
         {canPay && fiscalIsTestMode() ? (
           <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
@@ -241,6 +264,12 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           <p role="note" className="draft-notice mb-6 rounded border-2 border-dashed border-danger px-3 py-2 text-center text-base font-bold tracking-wide text-danger">
             {DRAFT_NOTICE}
           </p>
+        ) : null}
+        {cancelledOriginal ? (
+          <div role="note" className="cancel-stamp mb-6 rounded border-2 border-danger px-3 py-2 text-danger">
+            <p className="text-base font-bold tracking-wide">{cancellationStamp({ number: data.cancelledBy?.number ?? null, issuedAt: data.cancelledBy?.issuedAt ?? null })}</p>
+            <p className="text-sm">{CANCELLATION_SUB}</p>
+          </div>
         ) : null}
         <div className="mb-6 flex justify-center">
           <PracticeLogo organizationId={o.id} kind={isReceiptLike(inv.kind) ? "compact" : "full"} alt={o.name} className={isReceiptLike(inv.kind) ? "h-14" : "h-24 max-w-[60%]"} />
@@ -403,6 +432,21 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </section>
         ) : null}
 
+        {docPayments.filter((pay) => pay.fiscal).map((pay) => (
+          <section key={`tse-${pay.id}`} className="print-keep mt-4 text-[11px]">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">TSE-Angaben{docPayments.filter((x) => x.fiscal).length > 1 ? ` (${PAYMENT_METHOD_LABEL[pay.method]}, ${money(pay.amountCents)})` : ""}</h3>
+            {pay.fiscal!.isTest ? <p className="font-semibold text-danger">{TSE_TEST_NOTICE}</p> : null}
+            <dl className="mt-1 grid grid-cols-[max-content_1fr] gap-x-4">
+              {tseLines(pay.fiscal!).map(([k, v]) => (
+                <div key={k} className="contents">
+                  <dt className="text-muted">{k}</dt>
+                  <dd className="break-all tabular-nums">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+
         <section className="print-keep mt-6 flex flex-col gap-2 text-[13px]">
           {o.smallBusiness ? <p>{NOTE_SMALL_BUSINESS}</p> : null}
           {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
@@ -454,15 +498,44 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         <Card className="no-print mx-auto mt-4 max-w-[210mm] text-sm">
           <h2 className="font-display text-base font-semibold">Zahlungseingang nach Ausstellung</h2>
           <ul className="mt-2 flex flex-col gap-1">
-            {laterPayments.map((pay) => (
-              <li key={pay.id} className="flex justify-between gap-4 tabular-nums">
-                <span>
-                  {pay.amountCents < 0 ? "Erstattung" : "Zahlung"} erfasst am {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
-                  {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
-                </span>
-                <span>{money(pay.amountCents)}</span>
-              </li>
-            ))}
+            {laterPayments.map((pay) => {
+              const receipt = data.paymentReceipts.find((r) => r.paymentId === pay.id);
+              return (
+                <li key={pay.id} className="flex flex-col gap-2 border-b border-border pb-2 last:border-0">
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>
+                      {pay.amountCents < 0 ? "Erstattung" : "Zahlung"} erfasst am {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
+                      {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
+                    </span>
+                    <span>{money(pay.amountCents)}</span>
+                  </div>
+                  {receipt ? (
+                    <div className="flex flex-wrap items-start gap-2">
+                      <span className="self-center text-xs text-muted">
+                        Beleg {receipt.number}
+                        {receipt.isTest ? " · TSE-Testmodus" : ""}
+                        {receipt.tseFailed ? " · TSE ausgefallen" : ""}
+                      </span>
+                      <a
+                        href={`/api/invoices/${inv.id}/zahlungsbelege/${receipt.id}/pdf`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+                      >
+                        <FileDown size={18} aria-hidden /> Anzeigen / Drucken
+                      </a>
+                      <a
+                        href={`/api/invoices/${inv.id}/zahlungsbelege/${receipt.id}/pdf?download=1`}
+                        className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+                      >
+                        PDF
+                      </a>
+                      {canWrite ? <EmailPaymentReceiptButton invoiceId={inv.id} receiptId={receipt.id} number={receipt.number} recipientEmail={recipientEmail} /> : null}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
           <p className="mt-2 text-muted">
             {inv.status === "cancelled" ? (
@@ -481,7 +554,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             ) : (
               `Zu erstatten: ${money(-open)}.`
             )}{" "}
-            Der Beleg oben bleibt wie ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt.
+            Der Beleg oben bleibt wie ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt. Für Bar-, Karten- und
+            Gutscheinzahlungen gibt es je einen eigenen Beleg über den Zahlungseingang (Kassenbeleg mit TSE-Angaben).
           </p>
         </Card>
       ) : null}

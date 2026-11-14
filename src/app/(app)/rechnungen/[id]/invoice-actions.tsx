@@ -10,6 +10,7 @@ import {
   createPaymentLinkAction,
   pushToLexofficeAction,
   sendInvoiceEmailAction,
+  sendPaymentReceiptEmailAction,
   sendPaymentLinkAction,
   simulatePaymentAction,
   startTerminalAction,
@@ -142,6 +143,29 @@ export function EmailInvoiceButton({ invoiceId, sentTo, sentAt, recipientEmail }
       </Button>
       {sentAt && !state ? <p className="text-xs text-muted">Zuletzt gesendet an {sentTo} am {sentAt}</p> : null}
       {!recipientEmail ? <p className="text-xs text-muted">Keine E-Mail-Adresse hinterlegt</p> : null}
+      <FormSuccess message={state?.success} />
+      <FormError message={state?.error} />
+    </form>
+  );
+}
+
+/** Zahlungsbeleg (Kassenbeleg über einen späteren Zahlungseingang) per E-Mail senden */
+export function EmailPaymentReceiptButton({ invoiceId, receiptId, number, recipientEmail }: { invoiceId: string; receiptId: string; number: string; recipientEmail: string | null }) {
+  const [state, action, pending] = useActionState(sendPaymentReceiptEmailAction, undefined);
+  return (
+    <form
+      onSubmit={(e) => {
+        if (!recipientEmail) return e.preventDefault();
+        if (!window.confirm(`Zahlungsbeleg ${number} als PDF an ${recipientEmail} senden?`)) return e.preventDefault();
+        keepValues(action)(e);
+      }}
+      className="flex flex-col gap-1"
+    >
+      <input type="hidden" name="invoiceId" value={invoiceId} />
+      <input type="hidden" name="receiptId" value={receiptId} />
+      <Button type="submit" variant="secondary" disabled={pending || !recipientEmail} title={recipientEmail ? undefined : "Keine E-Mail-Adresse hinterlegt"}>
+        <Mail size={18} aria-hidden /> {pending ? "Sende …" : "Per E-Mail"}
+      </Button>
       <FormSuccess message={state?.success} />
       <FormError message={state?.error} />
     </form>

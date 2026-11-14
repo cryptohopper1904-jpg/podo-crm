@@ -4,7 +4,7 @@ import archiver from "archiver";
 import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { withOrg } from "@/db";
-import { media, memberships, organizations, patients, users } from "@/db/schema";
+import { documentArchive, media, memberships, organizations, patients, users } from "@/db/schema";
 import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 
@@ -14,6 +14,9 @@ export type ExportSummary = {
   counts: Record<string, number>;
   mediaFiles: number;
   mediaErrors: number;
+  /** archivierte Beleg-PDFs im ZIP (belege/…) */
+  archiveFiles: number;
+  archiveErrors: number;
 };
 
 export type PracticeExport = {
@@ -88,6 +91,10 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
   const counts: Record<string, number> = {};
   const mediaErrors = new Set<string>();
   let mediaFiles = 0;
+  const archiveErrors = new Set<string>();
+  let archiveFiles = 0;
+  /** Pfad im ZIP für ein archiviertes Beleg-PDF (Dateiname = Belegnummer, je Praxis eindeutig) */
+  const archivePath = (r: Row) => `belege/${r.kind === "payment_receipt" ? "zahlungsbelege" : "rechnungen"}/${String(r.filename).replace(/[^A-Za-z0-9._-]/g, "_")}`;
 
   /** Seitenweise alle Zeilen einer Tabelle (Keyset über id), je Seite eine kurze RLS-Transaktion. */
   async function* pages<T extends Row>(read: (after: unknown, limit: number) => Promise<T[]>, limit: number): AsyncGenerator<T[]> {
@@ -184,14 +191,48 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       }
     }
 
+    // 1b) Beleg-Archiv (GoBD): archivierte Original-PDFs entschlüsselt, Prüfsumme in tables/document_archive.json
+    const archiveCols = { id: documentArchive.id, storageKey: documentArchive.storageKey, kind: documentArchive.kind, filename: documentArchive.filename, createdAt: documentArchive.createdAt };
+    const archivePages = pages(
+      (after, limit) =>
+        withOrg(org, (tx) =>
+          tx
+            .select(archiveCols)
+            .from(documentArchive)
+            .where(and(eq(documentArchive.organizationId, org), after === undefined ? undefined : gt(documentArchive.id, after as string)))
+            .orderBy(asc(documentArchive.id))
+            .limit(limit),
+        ),
+      mediaPageSize,
+    );
+    for await (const page of archivePages) {
+      for (const a of page) {
+        try {
+          await verifyStored(a.storageKey);
+        } catch {
+          archiveErrors.add(a.id);
+          continue;
+        }
+        await add(readDecryptedStream(a.storageKey), { name: archivePath(a), store: false, date: new Date(a.createdAt) });
+        archiveFiles++;
+      }
+    }
+
     // 2) Tabellen (seitenweise)
     for (const t of tables) {
       const isMedia = t.name === "media";
+      const isArchive = t.name === "document_archive";
       const source = jsonTable(t.name, pages(tableReader(t.table), pageSize), async (rows) => {
         const numbers = isMedia ? await numbersFor(rows.map((r) => r.patientId as string)) : null;
         return rows.map((r) => {
           const hadFile = isMedia && !!r.storageKey;
           const clean = stripRow(r, t.strippedKeys) as Row;
+          if (isArchive) {
+            if (archiveErrors.has(r.id as string)) {
+              clean.exportFile = null;
+              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
+            } else clean.exportFile = archivePath(r);
+          }
           if (hadFile && numbers) {
             if (mediaErrors.has(r.id as string)) {
               clean.exportFile = null;
@@ -219,10 +260,10 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     counts.users = userRows.length;
     await add(JSON.stringify(userRows, replacer, 2), { name: "tables/users.json" });
     await add(JSON.stringify(orgRow ? [sanitizeOrganizationRow(orgRow)] : [], replacer, 2), { name: "tables/organizations.json" });
-    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors] }), { name: "README.txt" });
+    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors], archiveFiles, archiveErrors: [...archiveErrors] }), { name: "README.txt" });
     await archive.finalize();
     finished = true;
-    return { counts, mediaFiles, mediaErrors: mediaErrors.size };
+    return { counts, mediaFiles, mediaErrors: mediaErrors.size, archiveFiles, archiveErrors: archiveErrors.size };
   }
 
   const done = produce().catch((e: unknown) => {
@@ -236,7 +277,15 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
   return { stream, done };
 }
 
-function readme(p: { orgName: string; exportedBy: { name: string; email: string }; counts: Record<string, number>; mediaFiles: number; mediaErrors: string[] }) {
+function readme(p: {
+  orgName: string;
+  exportedBy: { name: string; email: string };
+  counts: Record<string, number>;
+  mediaFiles: number;
+  mediaErrors: string[];
+  archiveFiles: number;
+  archiveErrors: string[];
+}) {
   const lines = [
     "PodoHero – Vollständiger Datenexport",
     "===================================",
@@ -252,6 +301,11 @@ function readme(p: { orgName: string; exportedBy: { name: string; email: string 
     "tables/users.json      Mitglieder der Praxis (ohne Passwort und 2FA-Geheimnis).",
     "media/<Patientennummer>/  Fotos, Audio und Dokumente – entschlüsselt. Zuordnung über tables/media.json (Feld exportFile).",
     "                       Die Prüfsumme (sha256) in tables/media.json belegt die Unversehrtheit der Datei.",
+    "belege/rechnungen/     Beleg-Archiv: die beim Ausstellen gespeicherten Original-PDFs (Rechnungen, Quittungen,",
+    "                       Anzahlungen, Stornorechnungen, Sammelrechnungen) – byte-gleich, Prüfsumme (sha256) und",
+    "                       Aufbewahrungsfrist (retain_until) in tables/document_archive.json (Feld exportFile).",
+    "belege/zahlungsbelege/ Belege über Zahlungseingänge nach Ausstellung (Kassenbelege mit TSE-Angaben).",
+    "                       Belege ohne Archiv (vor Einführung) lassen sich aus den Tabellen reproduzieren.",
     "",
     "Nicht enthalten: Passwort-Hashes, 2FA-Geheimnisse, Zugangsdaten zu Schnittstellen, Sitzungen, interne Speicherpfade.",
     "",
@@ -262,6 +316,8 @@ function readme(p: { orgName: string; exportedBy: { name: string; email: string 
       .map(([k, v]) => `${k.padEnd(28)} ${v}`),
     `${"Mediendateien".padEnd(28)} ${p.mediaFiles}`,
     ...(p.mediaErrors.length ? ["", `ACHTUNG: ${p.mediaErrors.length} Datei(en) konnten nicht gelesen werden (IDs in tables/media.json, Feld exportError).`] : []),
+    `${"Archivierte Belege (PDF)".padEnd(28)} ${p.archiveFiles}`,
+    ...(p.archiveErrors.length ? ["", `ACHTUNG: ${p.archiveErrors.length} archivierte(r) Beleg(e) konnten nicht gelesen werden (IDs in tables/document_archive.json, Feld exportError).`] : []),
     "",
     "AUFBEWAHRUNG – BITTE BEACHTEN",
     "-----------------------------",

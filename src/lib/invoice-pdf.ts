@@ -13,7 +13,7 @@
  *
  * Schrift: Helvetica (Standardschrift, WinAnsi). Nicht darstellbare Zeichen werden ersetzt.
  */
-import { PDFDocument, type PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
@@ -40,6 +40,7 @@ import {
   type CreditedPartial,
 } from "./invoice-view";
 import { type InvoiceBookingLink } from "./practice-documents";
+import { TSE_TEST_NOTICE, tseLines, type FiscalInfo } from "./tse-receipt";
 import {
   A4,
   CONT_TOP,
@@ -87,7 +88,15 @@ export type InvoicePdfData = {
     source?: string | null;
   };
   lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number; inTreatment?: boolean | null }[];
-  payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null; externalRef?: string | null }[];
+  payments: {
+    paidAt: Date | string;
+    method: string;
+    amountCents: number;
+    voucherCode?: string | null;
+    externalRef?: string | null;
+    /** TSE-Signatur des Kassenvorgangs (fiscal_transactions) – Pflichtangaben nach § 6 KassenSichV auf dem Beleg */
+    fiscal?: FiscalInfo | null;
+  }[];
   /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
   credited?: CreditedPartial[];
   organization: {
@@ -122,11 +131,36 @@ export type InvoicePdfData = {
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
   /** Buchungshinweis mit QR-Code (Einstellungen → Praxisdaten → Belege) */
   booking?: InvoiceBookingLink | null;
+  /**
+   * Neudruck einer stornierten Rechnung: Beleg wie ausgestellt mit deutlichem Vermerk „STORNIERT durch Stornorechnung
+   * Nr. … vom …“, ohne GiroCode (nichts mehr zu überweisen).
+   */
+  cancellation?: { number: string | null; issuedAt: string | null } | null;
+  /**
+   * Kein archiviertes Original vorhanden (Altbeleg vor dem Beleg-Archiv): der Beleg wird aus den gespeicherten Daten
+   * neu erzeugt und als „Reproduktion“ gekennzeichnet (Fußnote).
+   */
+  reproduction?: { generatedAt: Date | string } | null;
 };
+
+const STAMP_RED = rgb(0.75, 0.05, 0.05);
+
+/** Vermerk auf dem Neudruck einer stornierten Rechnung */
+export function cancellationStamp(c: { number: string | null; issuedAt: string | null }): string {
+  return `STORNIERT durch Stornorechnung Nr. ${c.number ?? "–"} vom ${dateDe(c.issuedAt)}`;
+}
+export const CANCELLATION_SUB = "Neudruck des ausgestellten Belegs – dieser Beleg ist ungültig und nicht mehr zu bezahlen.";
+
+/** Fußnote eines aus gespeicherten Daten neu erzeugten Altbelegs */
+export function reproductionNote(at: Date | string): string {
+  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten neu erzeugt. Ein archiviertes Original liegt nicht vor (ausgestellt vor Einführung des Beleg-Archivs).`;
+}
 
 export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {
   // Beleg im Stand der Ausstellung: spätere Zahlungen/Zahlungslinks ändern das PDF nicht (GoBD, § 14 UStG)
-  const issued = invoiceAsIssued(input.invoice, input.payments);
+  // Neudruck einer stornierten Rechnung: Stand wie ausgestellt (Zahlungsaufforderung usw.), der Vermerk macht ihn ungültig
+  const asIssuedBase = input.cancellation && input.invoice.status === "cancelled" ? { ...input.invoice, status: "issued" } : input.invoice;
+  const issued = invoiceAsIssued(asIssuedBase, input.payments);
   const data: InvoicePdfData = { ...input, invoice: issued.invoice, payments: issued.payments };
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
   const doc = await PDFDocument.create();
@@ -182,6 +216,24 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
     boldMeta: (l) => l.startsWith("Rechnungsnummer") || l.startsWith("Quittungsnummer"),
     org: o,
   });
+
+  // ── Stornovermerk (Neudruck einer stornierten Rechnung) ──
+  if (data.cancellation) {
+    const stamp = wrap(cancellationStamp(data.cancellation), width - 16, 12, bold);
+    const sub = wrap(CANCELLATION_SUB, width - 16, 9);
+    const h = stamp.length * 15 + sub.length * 11 + 12;
+    page.drawRectangle({ x: ML, y: y - h, width, height: h, borderColor: STAMP_RED, borderWidth: 2 });
+    let sy = y - 16;
+    for (const l of stamp) {
+      text(l, ML + 8, sy, { size: 12, font: bold, color: STAMP_RED });
+      sy -= 15;
+    }
+    for (const l of sub) {
+      text(l, ML + 8, sy, { size: 9, color: STAMP_RED });
+      sy -= 11;
+    }
+    y -= h + 12;
+  }
 
   // ── Überschrift ──
   const { heading, serviceDateNote } = invoiceHeading(inv, invoiceService(data), dateDe);
@@ -359,8 +411,39 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
     y -= 8;
   }
 
+  // ── TSE-Angaben der Kassenvorgänge (§ 6 KassenSichV) ──
+  const signed = data.payments.filter((pay) => pay.fiscal);
+  for (const pay of signed) {
+    const f = pay.fiscal!;
+    const rows = tseLines(f);
+    const sigLines = wrap(rows.at(-1)![1], width - 110, 7);
+    const h = 12 + (rows.length - 1) * 10 + sigLines.length * 9 + (f.isTest ? 12 : 0) + 6;
+    keep(h);
+    ensure(24);
+    text(signed.length > 1 ? `TSE-Angaben (${PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}, ${money(pay.amountCents)})` : "TSE-Angaben", ML, y, { size: 8.5, font: bold });
+    y -= 12;
+    if (f.isTest) {
+      text(TSE_TEST_NOTICE, ML, y, { size: 8, font: bold, color: STAMP_RED });
+      y -= 12;
+    }
+    for (const [k, v] of rows.slice(0, -1)) {
+      ensure(10);
+      text(k, ML, y, { size: 7.5, color: GRAY });
+      text(v, ML + 110, y, { size: 7.5 });
+      y -= 10;
+    }
+    ensure(9);
+    text(rows.at(-1)![0], ML, y, { size: 7.5, color: GRAY });
+    for (const l of sigLines) {
+      ensure(9);
+      text(l, ML + 110, y, { size: 7 });
+      y -= 9;
+    }
+    y -= 6;
+  }
+
   // ── Hinweise ──
-  const giro = isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
+  const giro = !data.cancellation && isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
   if (o.smallBusiness) notes.push({ t: NOTE_SMALL_BUSINESS });
   if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
@@ -371,8 +454,10 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   if (pub) notes.push({ t: pub });
   for (const n of paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro })) notes.push({ t: n });
   if (inv.kind !== "credit_note" && inv.status !== "cancelled") notes.push({ t: "Vielen Dank für Ihr Vertrauen" });
+  if (data.reproduction) notes.push({ t: reproductionNote(data.reproduction.generatedAt), strong: true });
   // Hinweise (Steuer-/Zahlungshinweise) als Ganzes halten; passt das nicht auf eine Seite, jeden Absatz für sich
-  const thanks = (i: number) => i === notes.length - 1 && notes[i].t.startsWith("Vielen Dank");
+  const lastBeforeFootnote = notes.length - (data.reproduction ? 2 : 1);
+  const thanks = (i: number) => i === lastBeforeFootnote && notes[i].t.startsWith("Vielen Dank");
   keep(notes.reduce((h, n, i) => h + wrap(n.t, width, 10).length * 13 + 1 + (thanks(i) ? 10 : 0), 0) + 1);
   for (const [i, n] of notes.entries()) {
     const wl = wrap(n.t, width, 10);
@@ -403,7 +488,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
 
   // ── Fußzeile (jede Seite) ──
   const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
-  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} – Entwurf`);
+  drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}${data.cancellation ? " (STORNIERT)" : ""}` : `${kindLabel} – Entwurf`);
 
   return doc.save();
 }

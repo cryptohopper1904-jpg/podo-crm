@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFPage } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 import { renderDunningPdf, type DunningPdfData } from "./dunning-pdf";
+import { renderPaymentReceiptPdf } from "./payment-receipt";
 import { embedFonts, makeSafe, makeWriter } from "./pdf-letter";
 
 type Drawn = { page: number; x: number; y: number; size: number; text: string };
@@ -205,6 +206,85 @@ describe("Rechnung: Belegtext weiterer Belegarten", () => {
     const base = invoice(3);
     const n = await pages(await renderInvoicePdf({ ...base, organization: { ...ORG, smallBusiness: true }, lines: base.lines.map((l) => ({ ...l, vatRate: 0 })) }));
     expect(bodyTexts(drawn)).toMatchSnapshot("Belegtext");
+    expect(n).toBe(1);
+  });
+});
+
+describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (Beleg-Archiv/KassenSichV)", () => {
+  const FISCAL = {
+    vendor: "mock",
+    tssSerial: "TEST-TSS-0001",
+    txNumber: 4711,
+    signatureCounter: 9001,
+    signature: "TEST-c2lnbmF0dXJlLWJhc2U2NC1hYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODk=",
+    startedAt: "2026-11-02T09:15:01Z",
+    finishedAt: "2026-11-02T09:15:03Z",
+    processType: "Kassenbeleg-V1",
+    isTest: true,
+  };
+
+  it("Quittung bar beim Ausstellen: TSE-Angaben (§ 6 KassenSichV) mit Testmodus-Hinweis", async () => {
+    const base = invoice(1);
+    const total = base.invoice.totalCents;
+    const n = await pages(
+      await renderInvoicePdf({
+        ...base,
+        invoice: { ...base.invoice, number: "Q2026-0005", kind: "receipt", status: "paid", dueAt: "2026-11-02", paidCents: total },
+        payments: [{ paidAt: "2026-11-02T09:15:03Z", method: "cash", amountCents: total, fiscal: FISCAL }],
+      }),
+    );
+    expect(bodyTexts(drawn)).toMatchSnapshot("Belegtext");
+    expect(n).toBe(1);
+    expect(drawn.some((t) => t.text === "TSE-Transaktionsnummer")).toBe(true);
+    expect(drawn.some((t) => t.text.startsWith("TESTMODUS"))).toBe(true);
+    expectInsideBody(n);
+  });
+
+  it("Neudruck einer stornierten Rechnung: wie ausgestellt, Stornovermerk, ohne GiroCode", async () => {
+    const base = invoice(3);
+    const n = await pages(
+      await renderInvoicePdf({ ...base, invoice: { ...base.invoice, status: "cancelled" }, cancellation: { number: "GS2026-0002", issuedAt: "2026-11-10" } }),
+    );
+    const body = bodyTexts(drawn);
+    expect(body).toMatchSnapshot("Belegtext");
+    expect(body).toContain("STORNIERT durch Stornorechnung Nr. GS2026-0002 vom 10.11.2026");
+    expect(body).not.toContain("Bezahlen per GiroCode");
+    // Zahlungsaufforderung wie ausgestellt (nicht „storniert“-Text) – der Vermerk macht den Beleg ungültig
+    expect(body.join(" ")).toMatch(/Bitte überweisen Sie den Betrag bis zum 16\.11\.2026/);
+    expect(n).toBe(1);
+    expectInsideBody(n);
+  });
+
+  it("Altbeleg ohne Archiv: Reproduktion mit Fußnote", async () => {
+    const n = await pages(await renderInvoicePdf({ ...invoice(1), reproduction: { generatedAt: "2026-11-14T10:00:00Z" } }));
+    const body = bodyTexts(drawn);
+    expect(body).toMatchSnapshot("Belegtext");
+    expect(body.join(" ")).toContain("Reproduktion: Dieser Beleg wurde am 14.11.2026, 11:00 aus den gespeicherten Belegdaten neu erzeugt.");
+    expect(n).toBe(1);
+    expectInsideBody(n);
+  });
+
+  it("Zahlungsbeleg (späterer Zahlungseingang): Verweis auf die Rechnung, kein USt-Ausweis, TSE-Angaben", async () => {
+    const n = await pages(
+      await renderPaymentReceiptPdf({
+        number: "ZB2026-0001",
+        issuedAt: "2026-11-14T10:00:05Z",
+        data: {
+          v: 1,
+          organization: { ...ORG, bic: ORG.bic ?? null, bankName: ORG.bankName ?? null, accountHolder: null, website: ORG.website ?? null, qualification: ORG.qualification ?? null, whatsapp: false },
+          recipient: { name: "Frau Erika Mustermann", patientNumber: 17 },
+          invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", issuedAt: "2026-11-02", totalCents: 6500 },
+          payment: { id: "p1", paidAt: "2026-11-14T10:00:03Z", method: "cash", amountCents: 6500, voucherCode: null },
+          openAfterCents: 0,
+          fiscal: { ...FISCAL, startedAt: "2026-11-14T10:00:01Z", finishedAt: "2026-11-14T10:00:03Z" },
+          tseFailed: false,
+        },
+      }),
+    );
+    const body = bodyTexts(drawn);
+    expect(body).toMatchSnapshot("Belegtext");
+    expect(body).toContain("Beleg über Zahlungseingang zu Rechnung Nr. R2026-0042 vom 02.11.2026");
+    expect(body.join(" ")).not.toMatch(/USt \d+ %|Netto/);
     expect(n).toBe(1);
   });
 });

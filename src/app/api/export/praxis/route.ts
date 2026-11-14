@@ -28,7 +28,7 @@ export async function GET() {
       audit({
         ...base,
         action: "org.export.completed",
-        meta: { tables: Object.keys(r.counts).length, rows: Object.values(r.counts).reduce((a, b) => a + b, 0), mediaFiles: r.mediaFiles, mediaErrors: r.mediaErrors },
+        meta: { tables: Object.keys(r.counts).length, rows: Object.values(r.counts).reduce((a, b) => a + b, 0), mediaFiles: r.mediaFiles, mediaErrors: r.mediaErrors, archiveFiles: r.archiveFiles, archiveErrors: r.archiveErrors },
       }),
     (e: unknown) => audit({ ...base, action: "org.export.failed", meta: { error: e instanceof Error ? e.message.slice(0, 200) : "unbekannt" } }),
   ).catch(() => undefined);

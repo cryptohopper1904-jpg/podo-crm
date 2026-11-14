@@ -934,6 +934,14 @@ export const invoices = pgTable(
     paymentLinkUrl: text("payment_link_url"),
     checkoutRef: text("checkout_ref"),
     notes: text("notes"),
+    /**
+     * Momentaufnahme der Belegangaben beim Ausstellen (Praxis/Briefkopf, Bankverbindung, Steuernummer, Empfänger:in mit
+     * Anschrift, Buchungshinweis) – Druckansicht und Neudruck entsprechen dem ausgestellten Beleg, auch wenn sich
+     * Praxis- oder Patientendaten später ändern (§ 14 UStG, § 147 AO; wie der eingefrorene Briefkopf bei Mahnungen).
+     * Nur beim Ausstellen gesetzt, danach per Trigger unveränderbar. NULL = Altbeleg (vor Migration 0049).
+     * Aufbau: src/lib/invoice-snapshot.ts
+     */
+    issuedSnapshot: jsonb("issued_snapshot").$type<Record<string, unknown>>(),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
   },
@@ -1101,6 +1109,104 @@ export const invoiceDunnings = pgTable(
   (t) => [
     uniqueIndex("invoice_dunnings_invoice_stage").on(t.invoiceId, t.stage),
     index("invoice_dunnings_org_invoice").on(t.organizationId, t.invoiceId),
+  ],
+);
+
+/**
+ * Anrechnung von Anzahlungen und Quittungen (Teilrechnungen) auf eine Rechnung/Sammelrechnung – festgeschrieben beim
+ * Ausstellen (§ 14 Abs. 5 S. 2 UStG: Teilentgelte und die darauf entfallende Steuer stehen auf der Endrechnung).
+ * invoices.collective_invoice_id ist der aktuelle (freigebbare) Zustand: Beim Storno der Endrechnung wird er geleert,
+ * damit die Teilbelege neu angerechnet werden können – diese Zeilen bleiben, damit der Neudruck der stornierten
+ * Rechnung die Anrechnungszeilen weiter zeigt. Append-only (Trigger), je Rechnung und Teilbeleg einmal.
+ */
+export const invoiceCredits = pgTable(
+  "invoice_credits",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** Rechnung/Sammelrechnung, auf die angerechnet wurde */
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    /** angerechnete Anzahlung (deposit) bzw. Quittung (receipt) */
+    creditedInvoiceId: uuid("credited_invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    /** angerechneter Betrag (= Gesamtbetrag des Teilbelegs) */
+    amountCents: integer("amount_cents").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("invoice_credits_pair").on(t.invoiceId, t.creditedInvoiceId),
+    index("invoice_credits_org_invoice").on(t.organizationId, t.invoiceId),
+    index("invoice_credits_org_credited").on(t.organizationId, t.creditedInvoiceId),
+  ],
+);
+
+/**
+ * Beleg über einen Zahlungseingang nach Ausstellung (§ 146a Abs. 2 AO, § 6 KassenSichV): „Zahlung erfassen“ (bar,
+ * Karte, Gutschein) und SumUp-Terminalzahlung zu einer bereits ausgestellten Rechnung. Eigener lückenloser
+ * Nummernkreis („ZB“), Verweis auf die Rechnung (kein neuer USt-Ausweis), TSE-Angaben aus fiscal_transactions.
+ * `data` hält alle gedruckten Angaben fest (Praxis, Rechnung, Zahlung, TSE) – Aufbau: src/lib/payment-receipt.ts.
+ * Append-only (Trigger), je Zahlung höchstens ein Beleg.
+ */
+export const paymentReceipts = pgTable(
+  "payment_receipts",
+  {
+    id: id(),
+    organizationId: orgId(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    paymentId: uuid("payment_id")
+      .notNull()
+      .references(() => payments.id, { onDelete: "restrict" }),
+    number: text("number").notNull(),
+    issuedAt: timestamp("issued_at", { withTimezone: true }).notNull().defaultNow(),
+    amountCents: integer("amount_cents").notNull(),
+    method: text("method").notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("payment_receipts_payment").on(t.paymentId),
+    uniqueIndex("payment_receipts_org_number").on(t.organizationId, t.number),
+    index("payment_receipts_org_invoice").on(t.organizationId, t.invoiceId),
+  ],
+);
+
+/**
+ * Beleg-Archiv (GoBD, § 14b UStG, § 147 AO): das beim Ausstellen erzeugte PDF jeder Rechnung/Quittung/Anzahlung/
+ * Stornorechnung/Sammelrechnung („invoice“) und jedes Zahlungsbelegs („payment_receipt“), verschlüsselt in der
+ * Dateiablage (src/lib/storage.ts) mit SHA-256 des Klartexts. Download, E-Mail-Anhang und Patientenportal liefern
+ * genau diese Bytes aus. Append-only (Trigger gegen UPDATE/DELETE/TRUNCATE), RLS je Praxis.
+ * `retain_until`: Ende der Aufbewahrungsfrist (31.12. des 10. Jahres nach dem Ausstellungsjahr).
+ */
+export const documentArchive = pgTable(
+  "document_archive",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** invoice | payment_receipt */
+    kind: text("kind").notNull(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "restrict" }),
+    paymentReceiptId: uuid("payment_receipt_id").references(() => paymentReceipts.id, { onDelete: "restrict" }),
+    storageKey: text("storage_key").notNull(),
+    mime: text("mime").notNull().default("application/pdf"),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256").notNull(),
+    filename: text("filename").notNull(),
+    retainUntil: date("retain_until").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("document_archive_invoice").on(t.invoiceId).where(sql`${t.kind} = 'invoice'`),
+    uniqueIndex("document_archive_payment_receipt").on(t.paymentReceiptId).where(sql`${t.kind} = 'payment_receipt'`),
+    index("document_archive_org_invoice").on(t.organizationId, t.invoiceId),
   ],
 );
 
