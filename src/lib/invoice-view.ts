@@ -5,6 +5,7 @@
  */
 import { fullName } from "./format";
 import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL } from "./invoice-labels";
+import { statusFromPayments } from "./invoice-math";
 
 type Org = {
   name: string;
@@ -356,6 +357,37 @@ export function legacyHeading(
     default:
       return { heading: invoiceTitle(inv), serviceDateNote: defaultNote };
   }
+}
+
+/**
+ * Zahlung im Ausstellungsvorgang erfasst? Beim Ausstellen (createInvoice/createDeposit) laufen Rechnung und Zahlungen
+ * in derselben Transaktion – paid_at und created_at sind dann beide `now()` der Transaktion, also gleich. Übernommene
+ * Altbestände (Excel-Import, Demo) tragen das frühere Zahlungsdatum (≤ Anlage). Jede später erfasste Zahlung
+ * („Zahlung erfassen“, SumUp) liegt danach. Ohne `createdAt` (reine Darstellungsdaten) gilt jede Zahlung als
+ * beim Ausstellen erfasst.
+ */
+export function paidAtIssue(pay: { paidAt: Date | string }, createdAt: Date | string | null | undefined): boolean {
+  if (!createdAt) return true;
+  return new Date(pay.paidAt).getTime() <= new Date(createdAt).getTime();
+}
+
+/**
+ * Beleg im Stand der Ausstellung (GoBD-Unveränderbarkeit, § 14 UStG): Text, Summen, Hinweise, GiroCode und PDF dürfen
+ * sich durch eine spätere Zahlung nicht ändern. Liefert die Rechnung mit paidCents/Status zum Ausstellungszeitpunkt
+ * (angerechnete Anzahlungen/Quittungen und die beim Ausstellen erfassten Zahlungen – ohne spätere Zahlungseingänge)
+ * und nur die beim Ausstellen erfassten Zahlungen. Ein später erzeugter Zahlungslink gehört ebenfalls nicht zum Beleg.
+ * Spätere Zahlungen (`laterPayments`) zeigt die App außerhalb des Belegs.
+ * Storno: Der Status „storniert“ bleibt (der Beleg wird wie bisher ohne Zahlungsaufforderung gedruckt).
+ */
+export function invoiceAsIssued<
+  I extends { status: string; totalCents: number; paidCents: number; paymentLinkUrl?: string | null; createdAt?: Date | string | null },
+  P extends { paidAt: Date | string; amountCents: number },
+>(inv: I, payments: P[]): { invoice: I; payments: P[]; laterPayments: P[] } {
+  const atIssue = payments.filter((p) => paidAtIssue(p, inv.createdAt));
+  const laterPayments = payments.filter((p) => !paidAtIssue(p, inv.createdAt));
+  const paidCents = inv.paidCents - laterPayments.reduce((s, p) => s + p.amountCents, 0);
+  const status = inv.status === "draft" || inv.status === "cancelled" ? inv.status : statusFromPayments(inv.totalCents, paidCents);
+  return { invoice: { ...inv, paidCents, status, paymentLinkUrl: null }, payments: atIssue, laterPayments };
 }
 
 const METHOD_PHRASE: Record<string, string> = {

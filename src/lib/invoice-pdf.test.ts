@@ -74,3 +74,17 @@ describe("PDF-Rechnung", () => {
     }
   });
 });
+
+describe("PDF im Stand der Ausstellung", () => {
+  it("spätere Zahlung (bar) und Zahlungslink ändern das PDF nicht; Zahlung beim Ausstellen bleibt", async () => {
+    const created = "2026-11-02T09:00:00.000Z";
+    const issued = data({ invoice: { ...data().invoice, createdAt: created }, payments: [] });
+    const paidLater = data({
+      invoice: { ...data().invoice, createdAt: created, status: "paid", paidCents: 9450, paymentLinkUrl: "https://pay.example/x" },
+      payments: [{ paidAt: "2026-11-10T15:30:00Z", method: "cash", amountCents: 9450 }],
+    });
+    // Erzeugungs-/Änderungsdatum und Datei-ID des PDFs ausgenommen – der Inhalt muss byte-gleich sein
+    const strip = (b: Uint8Array) => Buffer.from(b).toString("latin1").replace(/\/(CreationDate|ModDate) \(D:[^)]*\)/g, "").replace(/\/ID \[[^\]]*\]/g, "");
+    expect(strip(await renderInvoicePdf(paidLater))).toBe(strip(await renderInvoicePdf(issued)));
+  });
+});

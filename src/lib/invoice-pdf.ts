@@ -23,6 +23,7 @@ import {
   creditedReceiptsNote,
   serviceYear,
   hasExemptNote,
+  invoiceAsIssued,
   invoiceHeading,
   invoiceService,
   invoiceRecipient,
@@ -76,6 +77,8 @@ export type InvoicePdfData = {
     paidCents: number;
     notes: string | null;
     paymentLinkUrl?: string | null;
+    /** Anlagezeitpunkt (invoices.created_at): trennt beim Ausstellen erfasste von späteren Zahlungen (invoiceAsIssued) */
+    createdAt?: Date | string | null;
   };
   lines: { description: string; quantity: string; factor: string; unitPriceCents: number; vatRate: number; totalCents: number; inTreatment?: boolean | null }[];
   payments: { paidAt: Date | string; method: string; amountCents: number; voucherCode?: string | null }[];
@@ -115,7 +118,10 @@ export type InvoicePdfData = {
   booking?: InvoiceBookingLink | null;
 };
 
-export async function renderInvoicePdf(data: InvoicePdfData): Promise<Uint8Array> {
+export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {
+  // Beleg im Stand der Ausstellung: spätere Zahlungen/Zahlungslinks ändern das PDF nicht (GoBD, § 14 UStG)
+  const issued = invoiceAsIssued(input.invoice, input.payments);
+  const data: InvoicePdfData = { ...input, invoice: issued.invoice, payments: issued.payments };
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
   const doc = await PDFDocument.create();
   const fonts = await embedFonts(doc);

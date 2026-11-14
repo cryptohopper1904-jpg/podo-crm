@@ -324,11 +324,9 @@ export async function recordProviderPayment(organizationId: string, input: Provi
         status: "new",
         threadKey: `tse-fail:${input.externalRef}`.slice(0, 300),
       });
-    const [sum] = await t
-      .select({ paid: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int` })
-      .from(payments)
-      .where(and(eq(payments.organizationId, organizationId), eq(payments.invoiceId, inv.id)));
-    const paid = Number(sum?.paid ?? 0);
+    // wie applyPayments: auf den bisherigen Stand aufaddieren (Rechnung ist gesperrt). Nicht aus der Summe der
+    // Zahlungszeilen neu rechnen – angerechnete Anzahlungen/Quittungen haben keine Zahlungszeile und gingen sonst verloren.
+    const paid = inv.paidCents + input.amountCents;
     await t
       .update(invoices)
       .set({ paidCents: paid, status: statusFromPayments(inv.totalCents, paid) })

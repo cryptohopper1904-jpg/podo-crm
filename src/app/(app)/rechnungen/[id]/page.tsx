@@ -30,6 +30,7 @@ import {
   formatIban,
   hasExemptNote,
   internalNotes as internalNoteLines,
+  invoiceAsIssued,
   invoiceHeading,
   invoiceService,
   paymentNoteLines,
@@ -102,6 +103,10 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const open = inv.totalCents - inv.paidCents;
   const canPay = auth.can("invoices.write") && (inv.status === "issued" || inv.status === "partially_paid") && open !== 0;
   const canCancel = auth.can("invoices.write") && inv.kind !== "credit_note" && inv.status !== "cancelled" && inv.status !== "draft";
+  // Beleg (Druckansicht) im Stand der Ausstellung: spätere Zahlungen ändern ihn nicht (GoBD, § 14 UStG) – sie stehen
+  // darunter außerhalb des Belegs. Status/Badge/„Zahlung erfassen“ oben zeigen den aktuellen Stand.
+  const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(inv, data.payments);
+  const docOpen = doc.totalCents - doc.paidCents;
   const hasExempt = hasExemptNote(o, inv, lines);
   const publicNotes = publicNoteText(inv.notes);
   const internalNotes = internalNoteLines(inv.notes);
@@ -111,15 +116,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const settings = (o.settings ?? {}) as Record<string, unknown>;
   const docSettings = readDocumentSettings(settings);
   const website = practiceWebsite(settings);
-  const giro = isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
+  const giro = isValidIban(o.iban) ? invoicePaymentQr(doc, o) : null;
   const booking = inv.kind !== "credit_note" ? invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }) : null;
   // qrcode erzeugt reines SVG aus Pfaden (keine Eingabe-Texte im Markup)
   const qrSvg = (payload: string) => QRCode.toString(payload, { type: "svg", errorCorrectionLevel: "M", margin: 2 });
   const qrBlocks = [
-    ...(giro ? [{ key: "giro", title: "Bezahlen per GiroCode", sub: [`${money(open)} an ${o.accountHolder || o.legalName || o.name}`, `Verwendungszweck: Rechnung ${inv.number}`], svg: await qrSvg(giro) }] : []),
+    ...(giro ? [{ key: "giro", title: "Bezahlen per GiroCode", sub: [`${money(docOpen)} an ${o.accountHolder || o.legalName || o.name}`, `Verwendungszweck: Rechnung ${inv.number}`], svg: await qrSvg(giro) }] : []),
     ...(booking ? [{ key: "booking", title: booking.label, sub: [], svg: await qrSvg(booking.url) }] : []),
   ];
-  const payNotes = paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro });
+  const payNotes = paymentNoteLines(doc, docPayments, o, { dateDe, money }, { giroCode: !!giro });
   const receiptBlock = creditedReceiptsBlock(data.credited);
   const canWrite = auth.can("invoices.write");
   const isOpen = (inv.status === "issued" || inv.status === "partially_paid") && open > 0;
@@ -274,7 +279,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <dd className="tabular-nums">{p.number}</dd>
             </div>
           ) : null}
-          {showsDueDate(inv) ? (
+          {showsDueDate(doc) ? (
             <div>
               <dt className="text-xs text-muted">{dueImmediately(inv) ? "Zahlbar" : "Zahlbar bis"}</dt>
               <dd className="font-semibold tabular-nums">{dueLabel(inv, dateDe)}</dd>
@@ -329,16 +334,16 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ))}
           <dt className="border-t border-border-strong pt-1 font-semibold">Gesamtbetrag</dt>
           <dd className="border-t border-border-strong pt-1 text-right font-display text-lg font-bold tabular-nums">{money(inv.totalCents)}</dd>
-          {paymentSummary(inv, data.credited, dateDe, totals.groups).map((r) => (
+          {paymentSummary(doc, data.credited, dateDe, totals.groups).map((r) => (
             <div key={r.label} className="contents">
               <dt>{r.label}</dt>
               <dd className="text-right tabular-nums">{money(r.cents)}</dd>
             </div>
           ))}
-          {inv.status !== "cancelled" && open !== 0 ? (
+          {doc.status !== "cancelled" && docOpen !== 0 ? (
             <>
-              <dt className="font-semibold">{open < 0 ? "zu erstatten" : "offen"}</dt>
-              <dd className="text-right font-semibold tabular-nums">{money(Math.abs(open))}</dd>
+              <dt className="font-semibold">{docOpen < 0 ? "zu erstatten" : "offen"}</dt>
+              <dd className="text-right font-semibold tabular-nums">{money(Math.abs(docOpen))}</dd>
             </>
           ) : null}
         </dl>
@@ -371,7 +376,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                 </tr>
                 <tr>
                   <td className="py-0.5" colSpan={2}>Offener Restbetrag</td>
-                  <td className="py-0.5 text-right">{money(inv.status === "cancelled" ? 0 : inv.totalCents - inv.paidCents)}</td>
+                  <td className="py-0.5 text-right">{money(doc.status === "cancelled" ? 0 : docOpen)}</td>
                   <td />
                 </tr>
               </tbody>
@@ -379,11 +384,11 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           </section>
         ) : null}
 
-        {data.payments.length ? (
+        {docPayments.length ? (
           <section className="print-keep mt-6">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Zahlungen</h3>
             <ul className="mt-1">
-              {data.payments.map((pay) => (
+              {docPayments.map((pay) => (
                 <li key={pay.id} className="flex justify-between gap-4 tabular-nums">
                   <span>
                     {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method]}
@@ -404,7 +409,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {receiptBlock.rows.length ? <p>{creditedReceiptsNote(serviceYear(data.serviceDates, inv.issuedAt))}</p> : null}
           {publicNotes ? <p className="whitespace-pre-line">{publicNotes}</p> : null}
           {payNotes.map((n) => <p key={n}>{n}</p>)}
-          {inv.kind !== "credit_note" && inv.status !== "cancelled" ? <p className="mt-2">Vielen Dank für Ihr Vertrauen</p> : null}
+          {doc.kind !== "credit_note" && doc.status !== "cancelled" ? <p className="mt-2">Vielen Dank für Ihr Vertrauen</p> : null}
         </section>
 
         {qrBlocks.length ? (
@@ -442,6 +447,27 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           {docSettings.qualification ? <p className="text-center italic sm:col-span-3">{docSettings.qualification}</p> : null}
         </footer>
       </article>
+
+      {laterPayments.length ? (
+        <Card className="no-print mx-auto mt-4 max-w-[210mm] text-sm">
+          <h2 className="font-display text-base font-semibold">Zahlungseingang nach Ausstellung</h2>
+          <ul className="mt-2 flex flex-col gap-1">
+            {laterPayments.map((pay) => (
+              <li key={pay.id} className="flex justify-between gap-4 tabular-nums">
+                <span>
+                  Zahlung erfasst am {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}
+                  {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
+                </span>
+                <span>{money(pay.amountCents)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-muted">
+            {open === 0 ? "Vollständig bezahlt." : open > 0 ? `Noch offen: ${money(open)}.` : `Zu erstatten: ${money(-open)}.`} Der Beleg oben bleibt wie
+            ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt.
+          </p>
+        </Card>
+      ) : null}
 
       {data.payments.length === 0 && inv.status === "issued" ? (
         <Card className="no-print mx-auto mt-4 max-w-[210mm] text-sm text-muted">

@@ -11,7 +11,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
-import { dueImmediately, showsDueDate } from "@/lib/invoice-view";
+import { dueImmediately, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
@@ -72,6 +72,9 @@ export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organizatio
     const when = dueImmediately(inv) ? "sofort" : `bis zum ${dateDe(inv.dueAt)}`;
     lines.push(`Bitte überweisen Sie den offenen Betrag von ${money(open)} ${when} unter Angabe der Rechnungsnummer.`);
     if (inv.paymentLinkUrl) lines.push(`Alternativ können Sie bequem online bezahlen: ${inv.paymentLinkUrl}`);
+  } else if (inv.status === "paid" && !isReceiptLike(inv.kind) && inv.kind !== "credit_note" && inv.totalCents > 0) {
+    // Beleg bleibt wie ausgestellt (ggf. mit Zahlungsaufforderung) – der aktuelle Stand steht im Begleittext
+    lines.push("Der Rechnungsbetrag ist bereits vollständig bei uns eingegangen – vielen Dank. Sie müssen nichts mehr überweisen.");
   }
   lines.push("", "Bei Fragen erreichen Sie uns gern" + (o.phone ? ` unter ${o.phone}` : "") + ".", "", "Mit freundlichen Grüßen", o.legalName ?? o.name);
   return { subject: `${label} ${inv.number} – ${o.name}`, body: lines.join("\n") };

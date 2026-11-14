@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
-import { accountingServiceDate, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
+import { accountingServiceDate, invoiceAsIssued, paidAtIssue, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
 const fmt = { dateDe, money };
@@ -146,5 +146,43 @@ describe("Buchhaltungs-Hinweis Leistungszeitraum über Monatsgrenze", () => {
     expect(monthSpanTaxHint(inv, [{ rate: 0, grossCents: 6500 }])).toBeNull();
     expect(monthSpanTaxHint({ ...inv, serviceDateTo: "2026-02-28" }, [{ rate: 19, grossCents: 1190 }])).toBeNull();
     expect(monthSpanTaxHint({ ...inv, serviceDateFixed: false }, [{ rate: 19, grossCents: 1190 }])).toBeNull();
+  });
+});
+
+describe("Beleg im Stand der Ausstellung (GoBD, § 14 UStG)", () => {
+  const created = "2026-11-13T09:15:00.123Z";
+  const atIssue = { paidAt: new Date(created), method: "card", amountCents: 2000 };
+  const later = { paidAt: new Date("2026-11-20T10:00:00Z"), method: "cash", amountCents: 7500 };
+
+  it("trennt Zahlungen beim Ausstellen (gleicher Zeitstempel, Altbestand davor) von späteren", () => {
+    expect(paidAtIssue(atIssue, created)).toBe(true);
+    expect(paidAtIssue({ paidAt: "2026-01-05T12:00:00Z" }, created)).toBe(true);
+    expect(paidAtIssue(later, created)).toBe(false);
+    expect(paidAtIssue(later, null)).toBe(true);
+  });
+
+  it("spätere Zahlung (bar) ändert Status, paidCents und Zahlungshinweis des Belegs nicht", () => {
+    const now = { ...inv, createdAt: created, status: "paid", paidCents: 9500, paymentLinkUrl: "https://pay.example/x" };
+    const doc = invoiceAsIssued(now, [atIssue, later]);
+    expect(doc.invoice).toMatchObject({ status: "partially_paid", paidCents: 2000, paymentLinkUrl: null });
+    expect(doc.payments).toEqual([atIssue]);
+    expect(doc.laterPayments).toEqual([later]);
+    const issuedOnly = invoiceAsIssued({ ...inv, createdAt: created, paidCents: 2000, status: "partially_paid" }, [atIssue]);
+    expect(paymentNoteLines(doc.invoice, doc.payments, iban, fmt)).toEqual(paymentNoteLines(issuedOnly.invoice, issuedOnly.payments, iban, fmt));
+    expect(paymentNoteLines(doc.invoice, doc.payments, iban, fmt).join(" ")).not.toMatch(/in bar/);
+  });
+
+  it("Rechnung ohne Zahlung beim Ausstellen bleibt „offen“; Storno bleibt storniert; Quittung bleibt bezahlt", () => {
+    expect(invoiceAsIssued({ ...inv, createdAt: created, status: "paid", paidCents: 9500 }, [{ ...later, amountCents: 9500 }]).invoice).toMatchObject({ status: "issued", paidCents: 0 });
+    expect(invoiceAsIssued({ ...inv, createdAt: created, status: "cancelled", paidCents: 0 }, []).invoice.status).toBe("cancelled");
+    const rec = invoiceAsIssued({ ...inv, kind: "receipt", createdAt: created, status: "paid", paidCents: 9500 }, [{ ...atIssue, method: "cash", amountCents: 9500 }]);
+    expect(rec.invoice.status).toBe("paid");
+    expect(paymentNoteLines(rec.invoice, rec.payments, iban, fmt)).toEqual(["Zahlung in bar – Betrag dankend erhalten."]);
+  });
+
+  it("angerechnete Anzahlung (ohne Zahlungszeile) bleibt Teil des Ausstellungsstands", () => {
+    // 1500 angerechnet beim Ausstellen, 8000 später per Zahlungslink
+    const doc = invoiceAsIssued({ ...inv, createdAt: created, status: "paid", paidCents: 9500 }, [{ ...later, method: "payment_link", amountCents: 8000 }]);
+    expect(doc.invoice).toMatchObject({ status: "partially_paid", paidCents: 1500 });
   });
 });
