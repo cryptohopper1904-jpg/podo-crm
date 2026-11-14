@@ -2,6 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 import { useActionState, useState, type FormEvent } from "react";
 import type { patients } from "@/db/schema";
 import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, Select, Textarea } from "@/components/ui";
@@ -137,7 +138,10 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
       {/* Optional: eingeklappt, solange leer (kürzeres Formular auf dem Handy) */}
       <Card className="p-0">
         <details open={!!patient?.notes} className="group">
-          <summary className="flex min-h-14 cursor-pointer items-center px-5 font-display text-lg font-semibold">Hinweis (optional)</summary>
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 px-5 font-display text-lg font-semibold [&::-webkit-details-marker]:hidden">
+            Hinweis (optional)
+            <ChevronDown size={20} aria-hidden className="shrink-0 text-muted transition-transform group-open:rotate-180" />
+          </summary>
           <div className="px-5 pb-5">
             <Field label="Hinweis (organisatorisch, keine Befunde)">
               <Textarea name="notes" defaultValue={patient?.notes ?? ""} />

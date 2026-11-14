@@ -3,8 +3,8 @@ import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Empty, Field, Input, PageHeader, Select } from "@/components/ui";
 import { withOrg } from "@/db";
 import { requireAuth } from "@/lib/auth/session";
-import { SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, SERVICE_KIND_HINTS } from "@/lib/catalog";
-import { listServiceCategories } from "@/server/service-catalog";
+import { SERVICE_CATEGORY_LABELS, SERVICE_KIND_HINTS } from "@/lib/catalog";
+import { listServiceCategories, NEW_CATEGORY_KINDS } from "@/server/service-catalog";
 import { createCategoryAction, deleteCategoryAction, moveCategoryAction, moveServicesAction, renameCategoryAction } from "../../actions";
 
 export const metadata = { title: "Kategorien der Leistungen" };
@@ -12,9 +12,10 @@ export const metadata = { title: "Kategorien der Leistungen" };
 const BASE = "/einstellungen/leistungen";
 
 /**
- * Eigene Kategorien der Leistungen: anlegen, umbenennen, sortieren (Reihenfolge in Einstellungen, Website, Auswahl),
- * löschen – nur leere Kategorien; vorher lassen sich alle Leistungen in eine andere Kategorie verschieben.
- * Die Art (Behandlung, Nagelkorrektur …) wird beim Anlegen gewählt: an ihr hängen Online-Buchung, Website, Wegegeld.
+ * Eigene Kategorien der Leistungen: anlegen, umbenennen, sortieren (Reihenfolge der Gruppen in Einstellungen →
+ * Leistungen und im Kategorie-Filter), löschen – nur leere Kategorien; vorher lassen sich alle Leistungen in eine
+ * andere Kategorie verschieben. Die Art (Behandlung, Nagelkorrektur …) wird beim Anlegen gewählt: an ihr hängen
+ * Online-Buchung, Website und Wegegeld. „Verkauf (alt)“ lässt sich nicht neu anlegen (Produkte haben eine eigene Liste).
  */
 export default async function ServiceCategoriesPage() {
   const auth = await requireAuth("settings.manage");
@@ -36,12 +37,12 @@ export default async function ServiceCategoriesPage() {
               hint={
                 <>
                   Bestimmt Online-Buchung, Website und Wegegeld; später nicht änderbar.{" "}
-                  {SERVICE_CATEGORIES.filter((k) => k !== "product").map((k) => SERVICE_KIND_HINTS[k]).join(" · ")}
+                  {NEW_CATEGORY_KINDS.map((k) => SERVICE_KIND_HINTS[k]).join(" · ")}
                 </>
               }
             >
               <Select name="kind" defaultValue="treatment">
-                {SERVICE_CATEGORIES.filter((k) => k !== "product").map((k) => (
+                {NEW_CATEGORY_KINDS.map((k) => (
                   <option key={k} value={k}>{SERVICE_CATEGORY_LABELS[k]}</option>
                 ))}
               </Select>

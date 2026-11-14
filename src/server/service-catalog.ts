@@ -2,12 +2,12 @@ import "server-only";
 import { and, asc, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, appointments, invoiceLines, invoices, products, serviceCategories, services } from "@/db/schema";
+import { appointmentServices, appointments, invoiceLines, invoices, organizations, products, serviceCategories, services } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { assertCan } from "@/lib/auth/assert";
 import { audit } from "@/lib/audit";
-import { SERVICE_CATEGORIES } from "@/lib/catalog";
-import { archivedCodeCandidates, restoredCode } from "@/lib/service-codes";
+import type { ServiceKind } from "@/lib/catalog";
+import { archivedCodeCandidates, MAX_ARCHIVED_CODES, moveServiceCodeRefs, restoredCode } from "@/lib/service-codes";
 
 /**
  * Leistungs-Katalog der Praxis: eigene Kategorien (anlegen, umbenennen, sortieren, löschen), Archivieren mit
@@ -18,9 +18,12 @@ export class ServiceCatalogError extends Error {}
 
 export type ServiceCategory = typeof serviceCategories.$inferSelect;
 
+/** Arten, die sich für neue Kategorien wählen lassen – „product“ nicht (Produkte haben eine eigene Tabelle; bestehende „Verkauf (alt)“-Kategorien bleiben) */
+export const NEW_CATEGORY_KINDS = ["treatment", "brace", "cosmetic", "travel"] as const satisfies readonly ServiceKind[];
+
 export const categoryInput = z.object({
   name: z.string().trim().min(1, "Bitte einen Namen eingeben.").max(60, "Höchstens 60 Zeichen."),
-  kind: z.enum(SERVICE_CATEGORIES).default("treatment"),
+  kind: z.enum(NEW_CATEGORY_KINDS, "Bitte eine gültige Art wählen.").default("treatment"),
 });
 
 /** Startkategorien (wie die früher festen Kategorien) – für Praxen, die noch keine haben */
@@ -57,10 +60,9 @@ export async function listServiceCategories(tx: Tx, org: string) {
     .orderBy(asc(serviceCategories.sort), asc(serviceCategories.name));
 }
 
-const uniqueViolation = (e: unknown) => {
-  const c = (e as { code?: string; cause?: { code?: string } })?.cause?.code ?? (e as { code?: string })?.code;
-  return c === "23505";
-};
+const pgCode = (e: unknown) => (e as { code?: string; cause?: { code?: string } })?.cause?.code ?? (e as { code?: string })?.code;
+const uniqueViolation = (e: unknown) => pgCode(e) === "23505";
+const foreignKeyViolation = (e: unknown) => pgCode(e) === "23503";
 
 export async function createServiceCategory(auth: AuthContext, input: unknown): Promise<{ id: string }> {
   assertCan(auth, "settings.manage");
@@ -100,17 +102,19 @@ export async function renameServiceCategory(auth: AuthContext, id: string, name:
 export async function moveServiceCategory(auth: AuthContext, id: string, dir: -1 | 1): Promise<void> {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
-  await withOrg(org, async (tx) => {
+  const moved = await withOrg(org, async (tx) => {
     const list = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(eq(serviceCategories.organizationId, org)).orderBy(asc(serviceCategories.sort), asc(serviceCategories.name)).for("update");
     const ids = list.map((c) => c.id);
     const i = ids.indexOf(id);
     const j = i + dir;
-    if (i < 0 || j < 0 || j >= ids.length) return;
+    if (i < 0 || j < 0 || j >= ids.length) return false;
     [ids[i], ids[j]] = [ids[j], ids[i]];
     for (const [k, cid] of ids.entries()) {
       await tx.update(serviceCategories).set({ sort: (k + 1) * 10 }).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, cid)));
     }
+    return true;
   });
+  if (moved) await audit({ organizationId: org, userId: auth.user.id, action: "service_category.move", entity: "service_category", entityId: id, meta: { dir: dir < 0 ? "up" : "down" } });
 }
 
 /**
@@ -142,6 +146,10 @@ export async function deleteServiceCategory(auth: AuthContext, id: string): Prom
     if (used.n > 0) throw new ServiceCatalogError(`In „${c.name}“ sind noch ${used.n} Leistung(en) – bitte zuerst in eine andere Kategorie verschieben.`);
     await tx.delete(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, id)));
     return c.name;
+  }).catch((e) => {
+    // gleichzeitig eine Leistung in die Kategorie gelegt (FK services.category_id) → verständliche Meldung statt 500
+    if (foreignKeyViolation(e)) throw new ServiceCatalogError("In der Kategorie ist inzwischen eine Leistung – bitte Seite neu laden und zuerst verschieben.");
+    throw e;
   });
   await audit({ organizationId: org, userId: auth.user.id, action: "service_category.delete", entity: "service_category", entityId: id, meta: { name } });
 }
@@ -157,6 +165,21 @@ async function codeInUse(tx: Tx, org: string, code: string, exceptId?: string): 
   if (s) return true;
   const [p] = await tx.select({ id: products.id }).from(products).where(and(eq(products.organizationId, org), isNotNull(products.code), sql`upper(${products.code}) = ${needle}`)).limit(1);
   return !!p;
+}
+
+/**
+ * Verweise per Kürzel in organizations.settings umschreiben (from → to) bzw. bei `to = null` entfernen
+ * (Regeln: src/lib/service-codes.ts moveServiceCodeRefs). Innerhalb der Transaktion der Kürzel-Änderung, Zeile gesperrt.
+ */
+export async function moveCodeRefsInSettings(tx: Tx, org: string, from: string, to: string | null): Promise<void> {
+  if (from === to) return;
+  const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("update");
+  const patch = moveServiceCodeRefs(o?.settings, from, to);
+  if (!patch) return;
+  await tx
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
+    .where(eq(organizations.id, org));
 }
 
 /**
@@ -182,12 +205,19 @@ export async function setServiceActive(
     let code = s.code;
     let codeConflict: string | null = null;
     if (!active) {
+      let free: string | null = null;
       for (const candidate of archivedCodeCandidates(s.code)) {
         if (!(await codeInUse(tx, org, candidate, id))) {
-          code = candidate;
+          free = candidate;
           break;
         }
       }
+      if (!free) {
+        throw new ServiceCatalogError(
+          `Für „${s.code}“ sind alle ${MAX_ARCHIVED_CODES} Archiv-Kürzel belegt. Bitte der Leistung zuerst ein anderes Kürzel geben und dann archivieren.`,
+        );
+      }
+      code = free;
     } else {
       const original = restoredCode(s.code);
       if (original !== s.code) {
@@ -196,6 +226,9 @@ export async function setServiceActive(
       }
     }
     await tx.update(services).set({ active, code }).where(and(eq(services.organizationId, org), eq(services.id, id)));
+    // Verweise per Kürzel (Online-/Telefonbuchung, Website-Beschreibung, Preis-Hinweis) wandern mit – ein freigegebenes
+    // Kürzel vererbt so nichts an eine neue Leistung
+    await moveCodeRefsInSettings(tx, org, s.code, code);
     return { code, codeConflict, before: s.code };
   });
   if (res) {
@@ -213,21 +246,23 @@ export async function setServiceActive(
 
 /**
  * Wie oft wurde jede Leistung in den letzten 12 Monaten gebucht? (Termine + Rechnungspositionen, ohne abgesagte
- * Termine und stornierte/Entwurfs-Belege) – für die Reihenfolge „häufig gebucht“.
+ * und nicht wahrgenommene Termine und ohne stornierte/Entwurfs-Belege) – für die Reihenfolge „häufig gebucht“.
  */
 export async function serviceUsageCounts(tx: Tx, org: string, now: Date = new Date()): Promise<Map<string, number>> {
   const since = new Date(now.getTime() - 365 * 86_400_000);
+  // Rechnungen nach Ausstellungsdatum (Index invoices_org_issued); Entwürfe haben keins
+  const sinceDay = since.toISOString().slice(0, 10);
   const appt = await tx
     .select({ id: appointmentServices.serviceId, n: sql<number>`count(*)`.mapWith(Number) })
     .from(appointmentServices)
     .innerJoin(appointments, eq(appointments.id, appointmentServices.appointmentId))
-    .where(and(eq(appointments.organizationId, org), gte(appointments.startsAt, since), sql`${appointments.status} not in ('cancelled')`))
+    .where(and(eq(appointments.organizationId, org), gte(appointments.startsAt, since), sql`${appointments.status} not in ('cancelled', 'no_show')`))
     .groupBy(appointmentServices.serviceId);
   const lines = await tx
     .select({ id: invoiceLines.serviceId, n: sql<number>`count(*)`.mapWith(Number) })
     .from(invoiceLines)
     .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(and(eq(invoiceLines.organizationId, org), isNotNull(invoiceLines.serviceId), gte(invoices.createdAt, since), sql`${invoices.status} not in ('cancelled', 'draft')`))
+    .where(and(eq(invoiceLines.organizationId, org), eq(invoices.organizationId, org), isNotNull(invoiceLines.serviceId), gte(invoices.issuedAt, sinceDay), sql`${invoices.status} not in ('cancelled', 'draft')`))
     .groupBy(invoiceLines.serviceId);
   const m = new Map<string, number>();
   for (const r of [...appt, ...lines]) if (r.id) m.set(r.id, (m.get(r.id) ?? 0) + r.n);

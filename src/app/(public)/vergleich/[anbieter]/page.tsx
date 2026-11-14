@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ScrollArea } from "@/components/scroll-area";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink } from "lucide-react";
@@ -61,7 +62,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
 
       <section aria-labelledby="tabelle" className="mt-10">
         <h2 id="tabelle" className="font-display text-2xl font-semibold">Funktionen und Angaben im Überblick</h2>
-        <div className="mt-4 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
+        <ScrollArea label="Funktionen im Vergleich" className="mt-4 rounded-[var(--radius-card)] border border-border bg-surface">
           <table className="w-full min-w-[720px] border-collapse text-left text-[15px]">
             <caption className="sr-only">Gegenüberstellung PodoHero und {c.name} (Angaben zu {c.name} laut Herstellerwebsite, Stand {COMPARISON_STAND})</caption>
             <thead>
@@ -88,7 +89,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
         <p className="mt-3 text-sm text-muted">
           „Nicht angegeben“: Auf den unten genannten Seiten von {c.name} fanden wir dazu keine Angabe – die Funktion kann trotzdem vorhanden sein.
           Preise vergleichen wir hier bewusst nicht; aktuelle Preise finden Sie beim jeweiligen Anbieter bzw. unter{" "}
@@ -96,7 +97,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
         </p>
       </section>
 
-      <div className="mt-12 grid gap-6 md:grid-cols-2">
+      <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2">
         <section aria-labelledby="staerken" className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
           <h2 id="staerken" className="font-display text-xl font-semibold">Schwerpunkte von {c.name}</h2>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-[15px] text-muted">
@@ -119,7 +120,7 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">PodoHero 30 Tage kostenlos testen</h2>
-          <p className="mt-1 opacity-90">
+          <p className="mt-1">
             Keine Zahlungsdaten nötig, endet automatisch. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>).
           </p>

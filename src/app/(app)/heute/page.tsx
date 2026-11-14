@@ -22,7 +22,7 @@ import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
 import { todaySections } from "@/lib/view-level";
 import { currentViewLevel } from "@/server/view-level";
-import { listProducts } from "@/server/products";
+import { lowStockProducts } from "@/server/products";
 import { lowStockSummary } from "@/lib/stock";
 
 export const metadata = { title: "Heute" };
@@ -73,7 +73,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];
   // Bestand knapp (Produkte mit Bestandsführung auf/unter Mindestbestand) – nur wer Produkte sehen darf (invoices.read)
-  const lowStock = auth.can("invoices.read") ? lowStockSummary(await listProducts(auth)) : { shown: [], more: 0 };
+  const lowStock = auth.can("invoices.read") ? lowStockSummary(await lowStockProducts(auth)) : { shown: [], more: 0 };
   // Persönliche Ansicht (Einstellungen → Ansicht): blendet nur Karten aus, die Daten bleiben unverändert
   const show = todaySections(await currentViewLevel());
   const quickActions = [

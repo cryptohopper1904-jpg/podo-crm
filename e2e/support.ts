@@ -77,8 +77,8 @@ export async function insertAppointment(patientId: string, startsAt: Date): Prom
   }
 }
 
-/** Produkt „E2E <name>“ mit Bestandsführung unter Mindestbestand anlegen (Hinweis „Bestand knapp“ auf Heute), RLS über app.org_id */
-export async function insertLowStockProduct(name: string, stock: number, minStock: number): Promise<void> {
+/** SQL in der Demo-Praxis (App-Rolle, RLS über app.org_id) in einer Transaktion – für gezielt herbeigeführte Zustände. */
+export async function withDemoOrg<T>(fn: (q: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>, org: string) => Promise<T>): Promise<T> {
   const pool = new Pool({ connectionString: dbUrl(), max: 1 });
   const c = await pool.connect();
   try {
@@ -88,18 +88,29 @@ export async function insertLowStockProduct(name: string, stock: number, minStoc
     );
     await c.query("begin");
     await c.query("select set_config('app.org_id', $1, true)", [org.rows[0].id]);
-    // Produkte früherer Läufe archivieren (wiederholte Läufe gegen dieselbe Datenbank), damit der Hinweis dieses zeigt
-    await c.query("update products set active = false where organization_id = $1 and name like 'E2E %'", [org.rows[0].id]);
-    const p = await c.query(
-      "insert into products (organization_id, name, price_cents, track_stock, min_stock) values ($1, $2, 990, true, $3) returning id",
-      [org.rows[0].id, `E2E ${name}`, minStock],
-    );
-    if (stock > 0) {
-      await c.query("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1, $2, 'receipt', $3, current_date)", [org.rows[0].id, p.rows[0].id, stock]);
-    }
+    const r = await fn((sql, params) => c.query(sql, params as unknown[]), org.rows[0].id as string);
     await c.query("commit");
+    return r;
+  } catch (e) {
+    await c.query("rollback").catch(() => undefined);
+    throw e;
   } finally {
     c.release();
     await pool.end();
   }
+}
+
+/** Produkt „E2E <name>“ mit Bestandsführung unter Mindestbestand anlegen (Hinweis „Bestand knapp“ auf Heute), RLS über app.org_id */
+export async function insertLowStockProduct(name: string, stock: number, minStock: number): Promise<void> {
+  await withDemoOrg(async (q, org) => {
+    // Produkte früherer Läufe archivieren (wiederholte Läufe gegen dieselbe Datenbank), damit der Hinweis dieses zeigt
+    await q("update products set active = false where organization_id = $1 and name like 'E2E %'", [org]);
+    const p = await q(
+      "insert into products (organization_id, name, price_cents, track_stock, min_stock) values ($1, $2, 990, true, $3) returning id",
+      [org, `E2E ${name}`, minStock],
+    );
+    if (stock > 0) {
+      await q("insert into stock_movements (organization_id, product_id, kind, quantity, occurred_on) values ($1, $2, 'receipt', $3, current_date)", [org, p.rows[0].id, stock]);
+    }
+  });
 }

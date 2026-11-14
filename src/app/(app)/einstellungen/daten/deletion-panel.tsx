@@ -18,7 +18,7 @@ export function DeletionRequest({ practiceName }: { practiceName: string }) {
   }
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-4 rounded-xl border border-danger/40 bg-accent-soft/40 p-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <p className="text-sm font-semibold">Schritt 2 von 2: Bitte bestätigen</p>
       <Checkbox name="acknowledge" required label="Ich habe einen vollständigen Export gesichert und bewahre ihn für die gesetzlichen Fristen auf." />
@@ -37,7 +37,7 @@ export function DeletionCancel() {
   const [state, run, pending] = useActionState(cancelDeletionAction, undefined);
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-3">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <div>
         <Button type="submit" disabled={pending}>{pending ? "…" : "Löschung zurücknehmen"}</Button>

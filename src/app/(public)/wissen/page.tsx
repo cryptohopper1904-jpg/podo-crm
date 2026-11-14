@@ -35,7 +35,7 @@ export default function KnowledgeHub() {
           Steuerberatung.
         </p>
       </header>
-      <ul className="mt-10 grid gap-4 md:grid-cols-2">
+      <ul className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-2">
         {ARTICLES.map((a) => (
           <li key={a.slug}>
             <Link href={`/wissen/${a.slug}`} className="group flex h-full flex-col rounded-[var(--radius-card)] border border-border bg-surface p-6 hover:border-primary">

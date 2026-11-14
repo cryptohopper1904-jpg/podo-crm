@@ -666,6 +666,11 @@ export const reminderLog = pgTable(
     detail: text("detail"),
     dedupeKey: text("dedupe_key").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Wartelisten-Angebote: Zeitpunkt, zu dem das Angebot durch „Rückgängig“ (Absage zurückgenommen) widerrufen wurde.
+     * Eigenes Feld statt status = 'revoked', damit der Versandnachweis (status/detail, z. B. „sent“) erhalten bleibt.
+     */
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("reminder_log_dedupe").on(t.organizationId, t.dedupeKey)],
 );
@@ -1230,6 +1235,28 @@ export const documentArchive = pgTable(
     uniqueIndex("document_archive_payment_receipt").on(t.paymentReceiptId).where(sql`${t.kind} = 'payment_receipt'`),
     index("document_archive_org_invoice").on(t.organizationId, t.invoiceId),
   ],
+);
+
+/**
+ * Nachhol-Versuche des Beleg-Archivs (Cron): je fehlendem Archiv-PDF (Beleg bzw. Zahlungsbeleg) Zähler und Zeitpunkt
+ * des letzten Fehlversuchs – für Backoff und „ältester Versuch zuerst“. Wird nach erfolgreichem Nachholen gelöscht.
+ * Reine Betriebsdaten (keine Belegdaten), daher veränderbar.
+ */
+export const archiveCatchupAttempts = pgTable(
+  "archive_catchup_attempts",
+  {
+    id: id(),
+    organizationId: orgId(),
+    /** invoice | payment_receipt */
+    targetKind: text("target_kind").notNull(),
+    targetId: uuid("target_id").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    /** gekürzte Fehlermeldung (ohne Personendaten) */
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("archive_catchup_attempts_target").on(t.organizationId, t.targetKind, t.targetId)],
 );
 
 export const vouchers = pgTable(

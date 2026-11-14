@@ -220,6 +220,14 @@ test("Plattform-Routen: notFound() liefert eine echte 404 (keine gestreamte 200)
     const r = await page.request.get(p, { maxRedirects: 0 });
     expect(r.status(), p).toBe(404);
   }
+  // Patientenseiten: unbekannte Praxis ebenfalls echte 404 (eigene Segment-404 ohne Manifest, Titel „Seite nicht gefunden“)
+  for (const p of ["/buchen/gibt-es-nicht", "/p/gibt-es-nicht", "/p/gibt-es-nicht/impressum", "/p/gibt-es-nicht/datenschutz"]) {
+    const r = await page.request.get(p, { maxRedirects: 0 });
+    expect(r.status(), p).toBe(404);
+    const html = await r.text();
+    expect(html, p).toContain("<title>Seite nicht gefunden");
+    expect(html, p).not.toContain('rel="manifest"');
+  }
   // Praxis-Seiten dagegen weiter normal
   expect((await page.request.get("/heute", { maxRedirects: 0 })).status()).toBe(200);
   await context.close();

@@ -1,11 +1,11 @@
 "use client";
 
 import { keepValues } from "@/lib/forms";
-import { useActionState, useMemo, useRef, useState } from "react";
+import { useActionState, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, LinkButton, Select, Textarea } from "@/components/ui";
 import type { PickerPatient } from "@/lib/calendar-patient-search";
-import { createAppointmentAction } from "../actions";
+import { createAppointmentAction, createAppointmentInDialogAction, type DialogApptState } from "../actions";
 import { FreeSlotFinder, type PickedSlot } from "../free-slot-finder";
 import { SlotWarning, slotQueryFromForm, type SlotQuery } from "../slot-warning";
 import { PatientPicker } from "./patient-picker";
@@ -25,6 +25,11 @@ export function AppointmentForm({
   defaults,
   cancelHref,
   blocksTab,
+  canCreatePatients = false,
+  variant = "page",
+  onCreated,
+  onCancel,
+  apply,
 }: {
   patients: PickerPatient[];
   services: S[];
@@ -33,8 +38,17 @@ export function AppointmentForm({
   cancelHref: string;
   /** Reiter „Sperrzeit“ vorhanden (Hinweis für Einträge ohne Patient:in) */
   blocksTab: boolean;
+  /** neue Patient:in direkt aus der Suche anlegen (patients.write) */
+  canCreatePatients?: boolean;
+  /** „dialog“: im Fenster über dem Kalender – kein Seitenwechsel nach dem Speichern, ohne „Freien Termin finden“ */
+  variant?: "page" | "dialog";
+  onCreated?: (c: { id: string; date: string; n: number }) => void;
+  onCancel?: () => void;
+  /** Datum/Uhrzeit/Behandler:in übernehmen (z. B. Klick auf einen anderen freien Platz im Kalender); `n` ändert sich je Klick */
+  apply?: { date?: string; time?: string; therapistId?: string; n: number } | null;
 }) {
-  const [state, action, pending] = useActionState(createAppointmentAction, undefined);
+  const dialog = variant === "dialog";
+  const [state, action, pending] = useActionState((dialog ? createAppointmentInDialogAction : createAppointmentAction) as (s: DialogApptState, f: FormData) => Promise<DialogApptState>, undefined);
   const [picked, setPicked] = useState<string[]>(defaults.serviceIds);
   const formRef = useRef<HTMLFormElement>(null);
   const duration = useMemo(() => services.filter((s) => picked.includes(s.id)).reduce((a, s) => a + s.durationMin, 0) || defaults.durationMin, [picked, services, defaults.durationMin]);
@@ -57,9 +71,24 @@ export function AppointmentForm({
     setSlot(slotQueryFromForm(f, duration));
     f.querySelector<HTMLInputElement>("input[name=time]")?.focus();
   };
+  const applySlot = useEffectEvent((a: NonNullable<typeof apply>) => {
+    const f = formRef.current;
+    const cur = (n: string) => (f?.elements.namedItem(n) as HTMLInputElement | null)?.value ?? "";
+    pick({ date: a.date ?? cur("date"), time: a.time ?? cur("time"), therapistId: a.therapistId ?? cur("therapistId") });
+  });
+  useEffect(() => {
+    if (apply) applySlot(apply);
+  }, [apply]);
+  const reported = useRef<unknown>(null);
+  useEffect(() => {
+    if (state?.created && reported.current !== state) {
+      reported.current = state;
+      onCreated?.(state.created);
+    }
+  }, [state, onCreated]);
   return (
     <div className="flex flex-col gap-6">
-      <FreeSlotFinder todayIso={defaults.todayIso} team={team} defaultTherapistId={defaults.therapistId} duration={slotDuration} onPick={pick} />
+      {dialog ? null : <FreeSlotFinder todayIso={defaults.todayIso} team={team} defaultTherapistId={defaults.therapistId} duration={slotDuration} onPick={pick} />}
       <form
         ref={formRef}
         noValidate
@@ -80,6 +109,7 @@ export function AppointmentForm({
               patients={patients}
               defaultId={defaults.patientId}
               name="patientId"
+              canCreate={canCreatePatients}
               hint={blocksTab ? "Pause, Schulung o. Ä. ohne Patient:in: Reiter „Sperrzeit“ oben." : "Ohne Patient:in: unter „Weitere Optionen“ einen Titel angeben."}
             />
           </div>
@@ -97,7 +127,7 @@ export function AppointmentForm({
               </label>
             ))}
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className={`mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 ${dialog ? "" : "lg:grid-cols-4"}`}>
             <Field label="Datum"><Input type="date" name="date" defaultValue={defaults.date} required /></Field>
             <Field label="Uhrzeit"><Input type="time" name="time" step={300} defaultValue={defaults.time} required /></Field>
             <Field label="Dauer"><Input suffix="Min" type="number" name="durationMin" key={duration} defaultValue={duration} min={5} max={480} /></Field>
@@ -126,9 +156,13 @@ export function AppointmentForm({
             <Field label="Notiz" className="sm:col-span-2"><Textarea name="notes" rows={2} maxLength={2000} /></Field>
           </div>
         </details>
-        <FormActions error={error}>
+        <FormActions error={error} sticky={!dialog} className={dialog ? "sticky bottom-0 z-20 -mx-4 border-t border-border bg-surface px-4 py-3 sm:-mx-5 sm:px-5" : undefined}>
           <Button type="submit" disabled={pending}>{pending ? "Wird eingetragen …" : "Termin eintragen"}</Button>
-          <LinkButton variant="ghost" href={cancelHref}>Abbrechen</LinkButton>
+          {dialog ? (
+            <Button type="button" variant="ghost" onClick={onCancel}>Abbrechen</Button>
+          ) : (
+            <LinkButton variant="ghost" href={cancelHref}>Abbrechen</LinkButton>
+          )}
         </FormActions>
       </form>
     </div>

@@ -33,7 +33,7 @@ export default async function OrderListPage() {
           {[...bySupplier].map(([supplier, list]) => (
             <section key={supplier} className="break-inside-avoid">
               <h3 className="mb-2 text-lg font-semibold">{supplier}</h3>
-              <Table>
+              <Table label="Bestellliste">
                 <thead><tr><th>Artikel</th><th className="text-right">Bestand</th><th className="text-right">Mindest</th><th className="text-right">Vorschlag</th><th>Bestell-Link</th></tr></thead>
                 <tbody>
                   {list.map((m) => {

@@ -135,6 +135,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   }
 
   // ───── Leistungen (Upsert über Code) ─────
+  // Nur aktive Leistungen: eine archivierte (Kürzel noch ohne „_archiv“-Zusatz, Altbestand) wird weder geändert noch
+  // zugeordnet – die Positionen behalten Bezeichnung/Preis als Kopie, ohne Verweis.
   const serviceIdByCode = new Map<string, string>();
   for (const part of chunks(result.services)) {
     const rows = await tx
@@ -158,6 +160,7 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
           vatRate: sql`excluded.vat_rate`,
           durationMin: sql`excluded.duration_min`,
         },
+        setWhere: eq(s.services.active, true),
       })
       .returning({ id: s.services.id, code: s.services.code });
     for (const r of rows) serviceIdByCode.set(r.code.toUpperCase(), r.id);
@@ -169,7 +172,7 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
     const rows = await tx
       .select({ id: s.services.id, code: s.services.code })
       .from(s.services)
-      .where(and(eq(s.services.organizationId, organizationId), inArray(s.services.code, missingCodes)));
+      .where(and(eq(s.services.organizationId, organizationId), eq(s.services.active, true), inArray(s.services.code, missingCodes)));
     for (const r of rows) serviceIdByCode.set(r.code.toUpperCase(), r.id);
   }
 

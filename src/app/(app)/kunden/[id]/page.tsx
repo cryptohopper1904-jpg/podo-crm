@@ -74,7 +74,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
   const timeline: Item[] = [
     ...data.appointments.map((a) => ({ at: a.startsAt, kind: "Termin", title: `${a.title ?? "Termin"} · ${APPT_STATUS[a.status]}`, detail: a.notes ?? undefined, href: `/kalender/termin/${a.id}` })),
     ...data.records.map((r) => ({ at: r.treatedAt, kind: "Doku", title: r.servicesText ?? "Behandlung dokumentiert", detail: r.findings ?? undefined, href: `/kunden/${p.id}/doku/${r.id}` })),
-    ...data.invoices.map((i) => ({ at: i.createdAt, kind: "Rechnung", title: `${i.number ?? "Entwurf"} · ${money(i.totalCents)} · ${INVOICE_STATUS[i.status]}`, href: `/rechnungen/${i.id}` })),
+    ...(auth.can("invoices.read") ? data.invoices : []).map((i) => ({ at: i.createdAt, kind: "Rechnung", title: `${i.number ?? "Entwurf"} · ${money(i.totalCents)} · ${INVOICE_STATUS[i.status]}`, href: `/rechnungen/${i.id}` })),
     ...data.consents.map((c) => ({ at: c.recordedAt, kind: "Einwilligung", title: `${CONSENT_LABELS[c.type] ?? c.type}: ${c.granted ? "erteilt" : "widerrufen"}` })),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
 
@@ -152,8 +152,9 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Stat label="Behandlungen" value={data.records.length} sub={`${data.appointments.length} Termine gesamt`} tone="primary" />
-        <Stat label="Umsatz (bezahlt)" value={money(data.revenueCents)} tone="info" />
-        <Stat label="Offener Betrag" value={money(data.openCents)} tone={data.openCents > 0 ? "accent" : "neutral"} />
+        {/* Beträge nur mit Rechnungs-Leserecht (getPatient liefert sonst null) */}
+        {data.revenueCents !== null ? <Stat label="Umsatz (bezahlt)" value={money(data.revenueCents)} tone="info" /> : null}
+        {data.openCents !== null ? <Stat label="Offener Betrag" value={money(data.openCents)} tone={data.openCents > 0 ? "accent" : "neutral"} /> : null}
         <Stat label="Fotos" value={data.media.filter((m) => m.kind === "photo").length} sub="verschlüsselt gespeichert" tone="warn" />
       </div>
 
@@ -170,7 +171,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
             )}
             {timeline.length > TIMELINE_FIRST ? (
               <details className="group border-t border-border">
-                <summary className="flex min-h-11 cursor-pointer items-center gap-1.5 pt-2 text-sm font-semibold text-primary">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 pt-2 text-sm font-semibold text-primary [&::-webkit-details-marker]:hidden">
                   <ChevronDown size={16} aria-hidden className="transition-transform group-open:rotate-180" />
                   Ältere Einträge ({Math.min(timeline.length, TIMELINE_MAX) - TIMELINE_FIRST})
                 </summary>

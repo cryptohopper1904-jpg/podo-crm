@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ScrollArea } from "@/components/scroll-area";
 import { redirect } from "next/navigation";
 import {
   ArrowRight,
@@ -163,7 +164,7 @@ export default async function Landing() {
       <JsonLd data={softwareApplicationLd()} />
       {/* Hero */}
       <section aria-labelledby="hero-title" className="relative overflow-hidden">
-        <div className="mx-auto grid max-w-6xl items-center gap-10 px-4 pb-12 pt-12 sm:px-6 md:pt-16 lg:grid-cols-[1fr_1.05fr] lg:gap-8 lg:pb-16">
+        <div className="mx-auto grid grid-cols-1 max-w-6xl items-center gap-10 px-4 pb-12 pt-12 sm:px-6 md:pt-16 lg:grid-cols-[1fr_1.05fr] lg:gap-8 lg:pb-16">
           <div>
             <Badge tone="primary">Gebaut nur für Podologie</Badge>
             <h1 id="hero-title" className="mt-5 font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3.6rem]">
@@ -206,7 +207,7 @@ export default async function Landing() {
               Alle Funktionen <ArrowRight size={16} aria-hidden />
             </Link>
           </div>
-          <div className="mt-10 grid gap-x-6 gap-y-10 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-10 grid grid-cols-1 gap-x-6 gap-y-10 md:grid-cols-2 xl:grid-cols-4">
             {CAPABILITIES.map(({ group, items }) => (
               <div key={group}>
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{group}</h3>
@@ -254,7 +255,7 @@ export default async function Landing() {
             Alle Screenshots <ArrowRight size={16} aria-hidden />
           </Link>
         </div>
-        <ul className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {LIVE.map(({ shot, title, text, href, tag }) => (
             <li key={title}>
               <Link
@@ -281,7 +282,7 @@ export default async function Landing() {
 
       {/* Gebaut nur für Podologie */}
       <section aria-labelledby="nur-podologie" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
-        <div className="grid items-center gap-10 rounded-[24px] border border-border bg-surface p-6 sm:p-10 lg:grid-cols-[1fr_1fr]">
+        <div className="grid grid-cols-1 items-center gap-10 rounded-[24px] border border-border bg-surface p-6 sm:p-10 lg:grid-cols-[1fr_1fr]">
           <div>
             <Badge tone="primary"><Footprints size={14} aria-hidden className="mr-1" /> Gebaut nur für Podologie</Badge>
             <h2 id="nur-podologie" className="mt-4 font-display text-3xl font-semibold tracking-tight">Von Grund auf für die Podologie entwickelt</h2>
@@ -307,7 +308,7 @@ export default async function Landing() {
       <section aria-labelledby="tag" className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         <h2 id="tag" className="font-display text-3xl font-semibold tracking-tight">Ein Tag mit PodoHero</h2>
         <p className="mt-2 max-w-2xl text-muted">Vom Aufschließen bis zum Feierabend: So greifen die Bausteine im Praxisalltag ineinander.</p>
-        <ol className="mt-10 grid gap-x-8 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
+        <ol className="mt-10 grid grid-cols-1 gap-x-8 gap-y-8 md:grid-cols-2 lg:grid-cols-3">
           {DAY.map((step, i) => (
             <li key={step.time} className="relative flex gap-4">
               <div className="flex flex-col items-center">
@@ -334,8 +335,8 @@ export default async function Landing() {
             einen anderen Weg: Abrechnung über ein Abrechnungszentrum per Export, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
             Sie unter <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
-          <div className="mt-8 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
-            <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">
+          <ScrollArea label="Schwerpunkte von PodoHero" className="mt-8 rounded-[var(--radius-card)] border border-border bg-surface">
+            <table className="w-full border-collapse text-left text-[15px]">
               <caption className="sr-only">Schwerpunkte und Funktionsumfang von PodoHero</caption>
               <thead>
                 <tr className="bg-surface-2 text-sm">
@@ -352,19 +353,19 @@ export default async function Landing() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollArea>
         </div>
       </section>
 
       {/* Sicherheit */}
       <section aria-labelledby="sicherheit-kurz" className="bg-primary-soft text-primary-soft-text">
-        <div className="mx-auto grid max-w-6xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1.4fr]">
+        <div className="mx-auto grid grid-cols-1 max-w-6xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1.4fr]">
           <div>
             <h2 id="sicherheit-kurz" className="font-display text-3xl font-semibold tracking-tight">Gesundheitsdaten verdienen mehr als ein Passwort</h2>
             <p className="mt-3">Wir beschreiben genau, was technisch umgesetzt ist – und was noch nicht.</p>
             <LinkButton href="/sicherheit" variant="primary" className="mt-6">Sicherheit im Detail</LinkButton>
           </div>
-          <ul className="grid gap-4 sm:grid-cols-2">
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {SECURITY.map(({ icon: Icon, title, text }) => (
               <li key={title} className="rounded-[var(--radius-card)] bg-surface p-5 text-text">
                 <Icon size={22} aria-hidden className="text-primary" />
@@ -388,7 +389,7 @@ export default async function Landing() {
           </div>
           <LinkButton href="/preise" variant="secondary">Alle Tarife</LinkButton>
         </div>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
           {PUBLIC_PLANS.map((p) => (
             <div key={p.id} className={`rounded-[var(--radius-card)] border p-5 ${p.highlight ? "border-primary bg-surface" : "border-border bg-surface"}`}>
               <p className="font-semibold">{p.name}</p>
@@ -406,7 +407,7 @@ export default async function Landing() {
         <div className="flex flex-col items-start gap-6 rounded-[24px] bg-primary px-6 py-10 text-on-primary sm:px-10 md:flex-row md:items-center">
           <div className="flex-1">
             <h2 className="font-display text-3xl font-semibold tracking-tight">In zwei Minuten startklar</h2>
-            <p className="mt-2 opacity-90">Praxis anlegen, Leistungskatalog übernehmen, Excel-Liste importieren. Schnittstellen starten im Testmodus.</p>
+            <p className="mt-2">Praxis anlegen, Leistungskatalog übernehmen, Excel-Liste importieren. Schnittstellen starten im Testmodus.</p>
           </div>
           <div className="flex flex-wrap gap-3">
             <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>

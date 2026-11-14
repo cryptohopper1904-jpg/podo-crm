@@ -23,6 +23,7 @@ import {
   createServiceCategory,
   deleteServiceCategory,
   moveServiceCategory,
+  moveCodeRefsInSettings,
   moveServicesToCategory,
   renameServiceCategory,
   ServiceCatalogError,
@@ -194,6 +195,8 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
   let code = d.data.code ?? "";
   try {
     await withOrg(org, async (tx) => {
+      // Kürzel-Vergabe und Verweise per Kürzel serialisieren (wie Archivieren, src/server/service-catalog.ts)
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('service-codes'), hashtext(${org}))`);
       const [cat] = await tx.select({ id: serviceCategories.id }).from(serviceCategories).where(and(eq(serviceCategories.organizationId, org), eq(serviceCategories.id, d.data.categoryId)));
       if (!cat) {
         badCategory = true;
@@ -217,12 +220,20 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
       }
       if (d.data.id) {
         await tx.update(services).set({ ...base, code }).where(and(eq(services.organizationId, org), eq(services.id, d.data.id)));
+        // Kürzel geändert: Verweise (Online-/Telefonbuchung, Website-Beschreibung, Preis-Hinweis) wandern mit
+        if (current && current.code !== code) await moveCodeRefsInSettings(tx, org, current.code, code);
       } else {
         await tx.insert(services).values({ ...base, code, active: true, organizationId: org });
+        // neue Leistung mit (evtl. freigewordenem) Kürzel erbt keine Altverweise
+        await moveCodeRefsInSettings(tx, org, code, null);
       }
     });
-  } catch {
-    return { error: `Das Kürzel ${code} gibt es schon.` };
+  } catch (e) {
+    const pg = (e as { cause?: { code?: string; constraint?: string } })?.cause ?? (e as { code?: string; constraint?: string });
+    if (pg?.code === "23505") return { error: `Das Kürzel ${code} gibt es schon.` };
+    if (pg?.code === "23514" || pg?.code === "23503") return { error: "Kategorie passt nicht – bitte Seite neu laden und erneut wählen." };
+    console.error("[leistungen] Speichern fehlgeschlagen", e);
+    return { error: "Speichern hat nicht geklappt. Bitte erneut versuchen." };
   }
   if (badCategory) return { error: "Kategorie nicht gefunden." };
   if (missingCode) return { error: "Bitte ein Kürzel eingeben." };
@@ -243,9 +254,19 @@ export async function setServiceActiveAction(form: FormData) {
   const id = z.uuid().safeParse(form.get("id"));
   if (!id.success) return;
   const active = form.get("active") === "1";
-  const r = await setServiceActive(auth, id.data, active);
-  revalidatePath("/einstellungen/leistungen");
   const back = String(form.get("back") ?? "");
+  let r: Awaited<ReturnType<typeof setServiceActive>>;
+  try {
+    r = await setServiceActive(auth, id.data, active);
+  } catch (e) {
+    if (!(e instanceof ServiceCatalogError)) throw e;
+    // z. B. alle Archiv-Kürzel belegt: feste Meldung über einen Schlüssel (kein freier Text in der URL)
+    const qs = new URLSearchParams(back.startsWith("?") ? back.slice(1) : "");
+    qs.set("fehler", "archiv-kuerzel");
+    qs.set("edit", id.data);
+    redirect(`/einstellungen/leistungen?${qs}`);
+  }
+  revalidatePath("/einstellungen/leistungen");
   if (r?.codeConflict) {
     const qs = new URLSearchParams(back.startsWith("?") ? back.slice(1) : "");
     qs.set("kuerzel", r.codeConflict);
@@ -436,7 +457,7 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message };
   const v = d.data;
-  if (v.bookingChannel === "doctolib" && !v.doctolibUrl) return { error: "Bitte den Doctolib-Link Ihrer Praxis angeben." };
+  if (v.bookingChannel === "doctolib" && !v.doctolibUrl) return { error: "Bitte den Doctolib-Link deiner Praxis angeben." };
   if (v.bookingChannel === "custom" && !v.customUrl) return { error: "Bitte den Buchungslink angeben." };
   const booking =
     v.bookingChannel === "doctolib"

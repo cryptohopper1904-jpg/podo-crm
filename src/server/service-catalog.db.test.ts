@@ -140,4 +140,105 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await mod.setServiceActive(auth(org), rare, false);
     expect((await mod.servicesByUsage(org)).map((s) => s.code)).toEqual(["OF", "OL"]);
   });
+
+  it("Trigger: Art passt nicht zur Kategorie → Fehler statt stillem Überschreiben; „Weitere (…)“ nur gleicher Art", async () => {
+    const org = await f.org();
+    const sid = await addService(org, "TR", "Behandlung T");
+    // Art ändern, ohne die Kategorie zu wechseln → Fehler
+    await expect(q(org, "update services set category = 'cosmetic' where id = $1", [sid])).rejects.toThrow(/passt nicht zur Kategorie/);
+    expect((await service(org, sid)).category).toBe("treatment");
+    // gleiche Art erneut setzen ist erlaubt
+    await q(org, "update services set category = 'treatment' where id = $1", [sid]);
+
+    // Standardname „Nagelkorrektur“ schon von einer Kategorie anderer Art belegt → „Weitere (Nagelkorrektur)“ der Art brace
+    await q(org, "insert into service_categories (organization_id, name, kind) values ($1, 'Nagelkorrektur', 'treatment')", [org]);
+    const brace = await addService(org, "BR", "Spange", "brace");
+    const [cat] = await q<{ name: string; kind: string }>(org, "select c.name, c.kind from services s join service_categories c on c.id = s.category_id where s.id = $1", [brace]);
+    expect(cat).toEqual({ name: "Weitere (Nagelkorrektur)", kind: "brace" });
+
+    // auch „Weitere (Kosmetik & Wellness)“ mit fremder Art belegt → Fehler statt falscher Zuordnung
+    await q(org, "insert into service_categories (organization_id, name, kind) values ($1, 'Kosmetik & Wellness', 'treatment'), ($1, 'Weitere (Kosmetik & Wellness)', 'travel')", [org]);
+    await expect(addService(org, "KO", "Kosmetik", "cosmetic")).rejects.toThrow(/Keine passende Kategorie/);
+  });
+
+  it("Kategorie-Art „Verkauf (alt)“ lässt sich nicht neu anlegen; Verschieben wird protokolliert", async () => {
+    const org = await f.org();
+    await expect(mod.createServiceCategory(auth(org), { name: "Verkauf neu", kind: "product" })).rejects.toThrow();
+    await mod.createServiceCategory(auth(org), { name: "Zuerst", kind: "treatment" });
+    const { id } = await mod.createServiceCategory(auth(org), { name: "Zuletzt", kind: "treatment" });
+    await mod.moveServiceCategory(auth(org), id, -1);
+    const [a] = await q<{ meta: unknown }>(org, "select meta from audit_log where organization_id = $1 and action = 'service_category.move' and entity_id = $2", [org, id]);
+    expect(a?.meta).toEqual({ dir: "up" });
+  });
+
+  it("Archivieren nimmt Verweise per Kürzel mit; eine neue Leistung mit dem freien Kürzel erbt nichts", async () => {
+    const org = await f.org({
+      settings: {
+        onlineBooking: { enabled: true, serviceCodes: ["VW", "XX"] },
+        voice: { serviceCodes: ["VW"] },
+        website: { enabled: true, serviceDescriptions: { VW: "Alte Beschreibung" } },
+        servicePriceNotes: { VW: "Preis bitte prüfen" },
+      },
+    });
+    const settings = async () => (await f.pool.query("select settings from organizations where id = $1", [org])).rows[0].settings;
+    const old = await addService(org, "VW", "Verweis alt");
+    await mod.setServiceActive(auth(org), old, false);
+    expect(await settings()).toMatchObject({
+      onlineBooking: { enabled: true, serviceCodes: ["VW_archiv", "XX"] },
+      voice: { serviceCodes: ["VW_archiv"] },
+      website: { enabled: true, serviceDescriptions: { VW_archiv: "Alte Beschreibung" } },
+      servicePriceNotes: { VW_archiv: "Preis bitte prüfen" },
+    });
+    // neue Leistung „VW“: kein Verweis zeigt auf sie
+    const fresh = await addService(org, "VW", "Verweis neu");
+    const s1 = await settings();
+    expect(s1.onlineBooking.serviceCodes).not.toContain("VW");
+    expect(s1.website.serviceDescriptions.VW).toBeUndefined();
+    // Wiederherstellen, während „VW“ belegt ist: Verweise bleiben beim Archiv-Kürzel
+    await mod.setServiceActive(auth(org), old, true);
+    expect((await settings()).onlineBooking.serviceCodes).toEqual(["VW_archiv", "XX"]);
+    // „VW“ frei → Wiederherstellen gibt Kürzel und Verweise zurück
+    await mod.setServiceActive(auth(org), fresh, false);
+    await mod.setServiceActive(auth(org), old, false);
+    await mod.setServiceActive(auth(org), old, true);
+    const s2 = await settings();
+    expect(s2.onlineBooking.serviceCodes).toEqual(["VW", "XX"]);
+    expect(s2.website.serviceDescriptions).toEqual({ VW: "Alte Beschreibung" });
+    // aufgeräumte Altverweise beim Anlegen (Liste würde leer → bleibt, denn leer hieße „alle buchbar“)
+    await f.pool.query("update organizations set settings = settings || '{\"voice\": {\"serviceCodes\": [\"NEU\"]}, \"servicePriceNotes\": {\"NEU\": \"alt\"}}'::jsonb where id = $1", [org]);
+    const { withOrg } = await import("@/db");
+    await withOrg(org, (tx) => mod.moveCodeRefsInSettings(tx, org, "NEU", null));
+    const s3 = await settings();
+    expect(s3.voice.serviceCodes).toEqual(["NEU"]);
+    expect(s3.servicePriceNotes).toEqual({});
+  });
+
+  it("alle Archiv-Kürzel belegt → verständlicher Fehler, Leistung bleibt aktiv", async () => {
+    const org = await f.org();
+    const sid = await addService(org, "VO", "Voll");
+    await q(org, "insert into services (organization_id, code, name, price_cents, active) select $1, 'VO_archiv' || case when g = 1 then '' else g::text end, 'x', 1, false from generate_series(1, 99) g", [org]);
+    await expect(mod.setServiceActive(auth(org), sid, false)).rejects.toThrow(/alle 99 Archiv-Kürzel belegt/);
+    expect(await service(org, sid)).toMatchObject({ code: "VO", active: true });
+  });
+
+  it("„häufig gebucht“ zählt nicht wahrgenommene Termine nicht; Rechnungen nach Ausstellungsdatum", async () => {
+    const org = await f.org();
+    const patient = await f.patient(org);
+    const a = await addService(org, "NA", "Aa nicht da");
+    const b = await addService(org, "RB", "Bb Rechnung");
+    for (let i = 0; i < 3; i++) {
+      const [ap] = await q<{ id: string }>(org, "insert into appointments (organization_id, patient_id, starts_at, ends_at, status) values ($1,$2, now() - interval '2 days', now() - interval '2 days' + interval '30 minutes', 'no_show') returning id", [org, patient]);
+      await q(org, "insert into appointment_services (organization_id, appointment_id, service_id) values ($1,$2,$3)", [org, ap.id, a]);
+    }
+    // Rechnung vor langer Zeit angelegt, aber kürzlich ausgestellt → zählt; ausgestellt vor > 12 Monaten → zählt nicht
+    for (const [issued, nr] of [["current_date - 10", "U-1"], ["current_date - 500", "U-2"]] as const) {
+      const [inv] = await q<{ id: string }>(org, "insert into invoices (organization_id, status, created_at) values ($1,'draft', now() - interval '800 days') returning id", [org]);
+      await q(org, "insert into invoice_lines (organization_id, invoice_id, service_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,$3,'RB',5000,5000,0,1)", [org, inv.id, b]);
+      await q(org, `update invoices set status='issued', number=$2, issued_at=${issued}, total_cents=5000, net_cents=5000 where id=$1`, [inv.id, `${nr}-${org.slice(0, 8)}`]);
+    }
+    const { withOrg } = await import("@/db");
+    const usage = await withOrg(org, (tx) => mod.serviceUsageCounts(tx, org));
+    expect(usage.get(a) ?? 0).toBe(0);
+    expect(usage.get(b)).toBe(1);
+  });
 });

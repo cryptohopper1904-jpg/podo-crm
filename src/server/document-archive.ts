@@ -17,6 +17,15 @@ import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
  * Abruf prüft die Prüfsumme – ein beschädigtes Archiv wird nie stillschweigend durch eine Neuerzeugung ersetzt.
  */
 export class ArchiveIntegrityError extends Error {}
+/**
+ * Beleg ab Einführung des Archivs, dessen PDF (noch) nicht archiviert werden konnte: es wird KEINE unarchivierte
+ * Fassung ausgehändigt (Download, E-Mail, Portal), sondern abgelehnt, bis das Nachholen gelingt (HTTP 503).
+ */
+export class ArchivePendingError extends ArchiveIntegrityError {
+  constructor() {
+    super("Das PDF dieses Belegs wird gerade erzeugt – bitte in einer Minute erneut versuchen. Bleibt die Meldung, bitte den Support kontaktieren.");
+  }
+}
 
 export type ArchiveKind = "invoice" | "payment_receipt";
 export type ArchiveRow = typeof documentArchive.$inferSelect;

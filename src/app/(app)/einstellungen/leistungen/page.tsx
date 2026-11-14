@@ -7,7 +7,7 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { filterCatalog, parseCatalogQuery, SORTS, type CatalogView } from "@/lib/catalog";
-import { isArchivedCode } from "@/lib/service-codes";
+import { isArchivedCode, MAX_ARCHIVED_CODES } from "@/lib/service-codes";
 import { listServiceCategories, serviceUsageCounts } from "@/server/service-catalog";
 import { feature } from "@/lib/features";
 import { money } from "@/lib/format";
@@ -89,7 +89,7 @@ function ServiceList({ rows, view, qs, notes, categories }: { rows: Service[]; v
   const note = (s: Service) => (typeof notes[s.code] === "string" ? <Badge tone="warn">{String(notes[s.code])}</Badge> : null);
   if (view === "liste") {
     return (
-      <Table>
+      <Table label="Leistungen">
         <thead><tr><th>Kürzel</th><th>Bezeichnung</th><th>Kategorie</th><th className="text-right">Preis</th><th className="text-right">Dauer</th><th>USt</th><th></th></tr></thead>
         <tbody>
           {rows.map((s) => (
@@ -131,7 +131,7 @@ function ServiceList({ rows, view, qs, notes, categories }: { rows: Service[]; v
         .map(([cat, list]) => (
         <section key={cat}>
           <h2 className="mb-2 font-display text-lg font-semibold">{cat} <span className="text-sm font-normal text-muted">({list.length})</span></h2>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {list.map((s) => (
               <article key={s.id} className={`flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface p-4 ${s.active ? "" : "opacity-60"}`}>
                 <div className="flex items-start justify-between gap-2">
@@ -188,6 +188,12 @@ export default async function ServicesSettings(props: PageProps<"/einstellungen/
         0 % USt nur für Heilbehandlungen mit therapeutischem Ziel (§ 4 Nr. 14 UStG). Kosmetische Fußpflege: 19 %. Salben, Cremes &amp; Co. bitte unter{" "}
         <Link href="/produkte" className="font-semibold underline">Produkte</Link> anlegen. Nicht mehr benötigte Leistungen archivieren statt löschen – alte Termine und Rechnungen bleiben unverändert.
       </p>
+
+      {sp.fehler === "archiv-kuerzel" && editing ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-4 text-sm font-medium text-danger">
+          „{editing.name}“ wurde nicht archiviert: Für das Kürzel {editing.code} sind alle {MAX_ARCHIVED_CODES} Archiv-Kürzel belegt. Bitte unten zuerst ein anderes Kürzel eintragen, speichern und dann archivieren.
+        </p>
+      ) : null}
 
       {codeConflict && editing ? (
         <p role="status" className="rounded-xl bg-warn-soft p-4 text-sm font-medium text-warn-soft-text">

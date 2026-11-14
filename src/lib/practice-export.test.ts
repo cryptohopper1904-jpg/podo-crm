@@ -7,6 +7,7 @@ describe("Praxis-Export", () => {
     const names = tenantTables().map((t) => t.name);
     expect(names).toEqual(expect.arrayContaining(["patients", "treatment_records", "media", "invoices", "memberships", "audit_log", "integration_connections"]));
     expect(names).not.toContain("sessions");
+    expect(names).not.toContain("archive_catchup_attempts");
     expect(names).not.toContain("organizations");
     expect(names).not.toContain("users");
   });

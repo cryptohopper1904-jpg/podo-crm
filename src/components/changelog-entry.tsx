@@ -10,17 +10,22 @@ const tagCls: Record<ChangelogTag, string> = {
   behoben: "bg-warn-soft text-warn-soft-text",
 };
 
-/** Ein Neuigkeiten-Eintrag (Popup und Seite /neuigkeiten). */
-export function ChangelogEntryView({ entry, headingLevel = 3, onNavigate }: { entry: ChangelogEntry; headingLevel?: 2 | 3; onNavigate?: () => void }) {
+/**
+ * Ein Neuigkeiten-Eintrag (Popup und Seite /neuigkeiten). `hideHeader`: Datum und Titel weglassen, wenn sie schon
+ * daneben stehen (z. B. in der Zeile eines aufklappbaren Eintrags).
+ */
+export function ChangelogEntryView({ entry, headingLevel = 3, onNavigate, hideHeader = false }: { entry: ChangelogEntry; headingLevel?: 2 | 3; onNavigate?: () => void; hideHeader?: boolean }) {
   const H = headingLevel === 2 ? "h2" : "h3";
   return (
     <article className="flex flex-col gap-3">
-      <div>
-        <p className="text-sm text-muted">
-          <time dateTime={entry.date}>{formatChangelogDate(entry.date)}</time>
-        </p>
-        <H className="font-display text-lg font-semibold leading-snug">{entry.title}</H>
-      </div>
+      {hideHeader ? null : (
+        <div>
+          <p className="text-sm text-muted">
+            <time dateTime={entry.date}>{formatChangelogDate(entry.date)}</time>
+          </p>
+          <H className="font-display text-lg font-semibold leading-snug">{entry.title}</H>
+        </div>
+      )}
       <ul className="flex flex-col gap-2.5">
         {entry.items.map((item, i) => (
           <li key={i} className="flex items-start gap-3 text-[15px] leading-relaxed">
