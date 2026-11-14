@@ -38,6 +38,8 @@ export default async function NewAppointmentPage(props: PageProps<"/kalender/neu
         />
       ) : null}
       <AppointmentForm
+        cancelHref={`/kalender${typeof sp.datum === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.datum) ? `?datum=${sp.datum}` : ""}`}
+        blocksTab={canCreateBlocks(auth)}
         patients={pts}
         services={svc}
         team={team}

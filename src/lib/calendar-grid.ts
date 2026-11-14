@@ -176,8 +176,47 @@ export function parseMode(v: unknown): CalendarMode | null {
 }
 export const modeParam = (m: CalendarMode) => (m === "full" ? "voll" : "einfach");
 
-export function parseFullView(v: unknown): FullView {
-  return v === "tag" || v === "monat" ? v : "woche";
+/** URL-Parameter → Zeitraum; ohne gültige Angabe der Standard (`fallback`, siehe defaultFullView) */
+export function parseFullView(v: unknown, fallback: FullView = "woche"): FullView {
+  return v === "tag" || v === "woche" || v === "monat" ? v : fallback;
+}
+
+/**
+ * Cookie „schmaler Bildschirm“ (< 640 px, gesetzt von viewport-default.tsx): Der Server kennt die Fensterbreite nicht,
+ * soll auf dem Handy aber die Tagesansicht statt der (dort zu breiten) Woche öffnen.
+ */
+export const NARROW_COOKIE = "podo-schmal";
+/** Breite, unter der der Kalender die Handy-Darstellung nutzt (Tailwind `sm`) */
+export const NARROW_QUERY = "(max-width: 639.98px)";
+export const isNarrowCookie = (v: string | undefined) => v === "1";
+/** Standard-Zeitraum der vollständigen Ansicht ohne `ansicht`: Handy Tag, sonst Woche */
+export const defaultFullView = (narrow: boolean): FullView => (narrow ? "tag" : "woche");
+
+const WD_SHORT_DE = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+const MONTH_SHORT_DE = ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."];
+
+/**
+ * Kurzer Titel für den Kalenderkopf auf dem Handy: „Mo 16.11.“, „9.–15. Nov.“ (Monatswechsel „30. Nov. – 6. Dez.“),
+ * „Nov. 2026“. Datumsangaben als JJJJ-MM-TT (Kalendertag, keine Zeitzone).
+ */
+export function shortCalendarTitle(view: FullView, iso: string): string {
+  const d = Number(iso.slice(8, 10));
+  const m = Number(iso.slice(5, 7));
+  if (view === "tag") return `${WD_SHORT_DE[new Date(`${iso}T12:00:00Z`).getUTCDay()]} ${d}.${m}.`;
+  if (view === "monat") return `${MONTH_SHORT_DE[m - 1]} ${iso.slice(0, 4)}`;
+  const start = mondayOfIso(iso);
+  const end = addDaysIso(start, 6);
+  const [sd, sm, ed, em] = [Number(start.slice(8, 10)), Number(start.slice(5, 7)), Number(end.slice(8, 10)), Number(end.slice(5, 7))];
+  return sm === em ? `${sd}.–${ed}. ${MONTH_SHORT_DE[em - 1]}` : `${sd}. ${MONTH_SHORT_DE[sm - 1]} – ${ed}. ${MONTH_SHORT_DE[em - 1]}`;
+}
+
+/** Initialen für enge Spaltenköpfe („Toni Beispielkraft-Langname“ → „TB“) */
+export function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  const first = parts[0][0] ?? "";
+  const last = parts.length > 1 ? (parts.at(-1)?.[0] ?? "") : (parts[0][1] ?? "");
+  return `${first}${last}`.toUpperCase();
 }
 
 /** Gültige Uhrzeit HH:MM für Vorbelegung (sonst null) */

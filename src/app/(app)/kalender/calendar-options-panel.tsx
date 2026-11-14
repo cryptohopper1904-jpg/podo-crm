@@ -16,13 +16,15 @@ type Props = {
   hidden: Record<string, string>;
   /** Bundesland der Praxis (Klartext) */
   stateName: string;
+  /** Knopf in voller Breite (im „⋯“-Menü auf dem Handy) */
+  wide?: boolean;
 };
 
 /**
  * „Anzeige“: Schalter für Feiertage, Schulferien, Abwesenheiten usw. – je Person gemerkt (sofort beim Umschalten).
  * Im Support-Modus wird nichts gespeichert: die Auswahl landet nur in der Adresse (URL-Parameter).
  */
-export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName }: Props) {
+export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName, wide = false }: Props) {
   const form = useRef<HTMLFormElement>(null);
   const submit = () => form.current?.requestSubmit();
   const full = mode === "full";
@@ -49,11 +51,11 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
   );
 
   const hours = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
-  const select = "h-10 rounded-xl border border-border bg-surface px-2 text-sm";
+  const select = "h-11 rounded-xl border border-border bg-surface px-2 text-[15px]";
 
   return (
-    <details className="relative" onToggle={onToggle}>
-      <summary className="inline-flex h-11 cursor-pointer list-none items-center gap-2 rounded-xl border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
+    <details className={wide ? "relative w-full" : "relative"} onToggle={onToggle}>
+      <summary className={`inline-flex h-11 cursor-pointer list-none items-center gap-2 rounded-xl border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2 [&::-webkit-details-marker]:hidden ${wide ? "w-full" : ""}`}>
         <SlidersHorizontal size={17} aria-hidden /> Anzeige
       </summary>
       <form
@@ -103,14 +105,14 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
           </>
         )}
         <noscript>
-          <button type="submit" className="m-2 h-10 rounded-xl bg-primary px-3 text-sm font-semibold text-on-primary">Übernehmen</button>
+          <button type="submit" className="m-2 h-11 rounded-xl bg-primary px-3 text-[15px] font-semibold text-on-primary max-sm:w-[calc(100%-1rem)]">Übernehmen</button>
         </noscript>
         <p className="px-2 pt-1 text-xs text-muted">
           {persist ? "Wird für dich gemerkt. " : "Support-Modus: nur für diese Adresse, wird nicht gespeichert. "}
           Nur Anzeige – Buchung und freie Termine bleiben unverändert.
         </p>
         {persist ? (
-          <button type="submit" name="reset" value="1" className="mx-2 mb-1 mt-1 h-9 rounded-lg border border-border text-sm font-semibold hover:bg-surface-2">
+          <button type="submit" name="reset" value="1" className="mx-2 mt-1 mb-1 h-11 cursor-pointer rounded-xl border border-border px-3 text-sm font-semibold hover:bg-surface-2">
             Standard wiederherstellen
           </button>
         ) : null}

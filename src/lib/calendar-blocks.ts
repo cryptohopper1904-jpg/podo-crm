@@ -194,12 +194,12 @@ export const blockInput = z
     title: z.preprocess(emptyToNull, z.string().trim().max(120, "Titel höchstens 120 Zeichen").nullable()),
     startsOn: isoDate,
     endsOn: z.preprocess(emptyToNull, isoDate.nullable()),
-    allDay: z.boolean(),
+    allDay: z.boolean({ error: "Bitte „ganztägig“ an- oder abwählen." }),
     startTime: z.preprocess(emptyToNull, hhmm.nullable()),
     endTime: z.preprocess(emptyToNull, z.union([hhmm, z.literal("24:00")]).nullable()),
-    repeat: z.enum(BLOCK_REPEATS),
-    weekdays: z.array(z.number().int().min(1).max(7)).max(7),
-    intervalWeeks: z.number().int().min(1, "Abstand 1–12 Wochen").max(12, "Abstand 1–12 Wochen"),
+    repeat: z.enum(BLOCK_REPEATS, { error: "Wiederholung wählen" }),
+    weekdays: z.array(z.number({ error: "Wochentag ungültig" }).int("Wochentag ungültig").min(1, "Wochentag ungültig").max(7, "Wochentag ungültig")).max(7, "Wochentag ungültig"),
+    intervalWeeks: z.number({ error: "Abstand 1–12 Wochen" }).int("Abstand 1–12 Wochen").min(1, "Abstand 1–12 Wochen").max(12, "Abstand 1–12 Wochen"),
     note: z.preprocess(emptyToNull, z.string().trim().max(1000, "Notiz höchstens 1000 Zeichen").nullable()),
   })
   .superRefine((d, ctx) => {

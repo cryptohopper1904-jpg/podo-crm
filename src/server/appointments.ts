@@ -258,7 +258,7 @@ async function isAppointmentBilled(tx: Tx, org: string, appointmentId: string): 
 }
 
 /** Welche der Termine stehen auf einem ausgestellten Beleg (gleiche Regel wie isAppointmentBilled)? */
-async function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
+export async function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
   if (!appointmentIds.length) return new Set();
   const rows = await tx
     .selectDistinct({ id: invoiceLines.appointmentId })

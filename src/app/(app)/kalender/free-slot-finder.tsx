@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { CalendarSearch } from "lucide-react";
+import { CalendarSearch, ChevronDown } from "lucide-react";
+import { Button, Field, Input, segmentGroupCls, segmentItemCls, Select } from "@/components/ui";
 import { START_CHOICES, startDateFor, type StartChoice } from "@/lib/free-slots";
 
 type T = { id: string; name: string };
@@ -10,6 +11,8 @@ type S = { id: string; code: string; name: string; durationMin: number };
 export type PickedSlot = { date: string; time: string; therapistId: string };
 
 const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+/** zunächst gezeigte Vorschläge (Rest per „Weitere anzeigen“) */
+const FIRST = 8;
 const label = (iso: string) => `${WD[new Date(`${iso}T12:00:00Z`).getUTCDay()]} ${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7))}.`;
 
 /**
@@ -42,6 +45,7 @@ export function FreeSlotFinder({
   const [ownDuration, setOwnDuration] = useState<string | null>(null);
   const [result, setResult] = useState<{ slots: PickedSlot[]; error?: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [all, setAll] = useState(false);
 
   const serviceDuration = services?.find((s) => s.id === serviceId)?.durationMin;
   const typed = ownDuration !== null ? Math.round(Number(ownDuration)) : NaN;
@@ -63,6 +67,7 @@ export function FreeSlotFinder({
       const res = await fetch(`/kalender/freie-termine?${p}`, { signal: ctrl.signal, headers: { accept: "application/json" } });
       const json = res.headers.get("content-type")?.includes("json") ? ((await res.json()) as { slots?: PickedSlot[]; error?: string }) : null;
       setResult(res.ok && json?.slots ? { slots: json.slots } : { slots: [], error: json?.error ?? "Suche nicht möglich – bitte erneut versuchen." });
+      setAll(false);
     } catch {
       if (ctrl.signal.aborted) return;
       setResult({ slots: [], error: "Keine Verbindung – bitte erneut versuchen." });
@@ -76,59 +81,63 @@ export function FreeSlotFinder({
     if (serviceId) p.set("leistung", serviceId);
     return `/kalender/neu?${p}`;
   };
-  const chip = (active: boolean) => `h-10 rounded-xl px-3 text-sm font-semibold ${active ? "bg-primary text-on-primary" : "border border-border bg-surface hover:bg-surface-2"}`;
-
   return (
     <details className="group rounded-[var(--radius-card)] border border-border bg-surface">
-      <summary className="flex h-12 cursor-pointer list-none items-center gap-2 px-4 font-semibold [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-4 font-semibold [&::-webkit-details-marker]:hidden">
         <CalendarSearch size={18} aria-hidden className="text-primary" /> Freien Termin finden
-        <span className="ml-auto text-sm font-normal text-muted group-open:hidden">anzeigen</span>
+        <ChevronDown size={18} aria-hidden className="ml-auto shrink-0 text-muted transition-transform group-open:rotate-180" />
       </summary>
-      <div className="flex flex-col gap-3 border-t border-border p-4">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Ab wann">
-          {START_CHOICES.map(([value, text]) => (
-            <button key={value} type="button" className={chip(choice === value)} aria-pressed={choice === value} onClick={() => { setChoice(value); void search(value); }}>
-              {text}
+      <div className="flex flex-col gap-4 border-t border-border p-4">
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium" id="finder-ab">Ab wann</span>
+          <div className={segmentGroupCls} role="group" aria-labelledby="finder-ab">
+            {START_CHOICES.map(([value, text]) => (
+              <button
+                key={value}
+                type="button"
+                className={`${segmentItemCls(choice === value)} cursor-pointer`}
+                aria-pressed={choice === value}
+                onClick={() => {
+                  setChoice(value);
+                  void search(value);
+                }}
+              >
+                {text}
+              </button>
+            ))}
+            <button type="button" className={`${segmentItemCls(choice === "datum")} cursor-pointer`} aria-pressed={choice === "datum"} onClick={() => setChoice("datum")}>
+              ab Datum …
             </button>
-          ))}
-          <label className={`${chip(choice === "datum")} inline-flex items-center gap-2`}>
-            ab
-            <input
-              type="date"
-              value={custom}
-              min={todayIso}
-              onChange={(e) => { setCustom(e.target.value); setChoice("datum"); }}
-              className="bg-transparent text-sm outline-none"
-              aria-label="ab Datum"
-            />
-          </label>
+          </div>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {choice === "datum" ? (
+            <Field label="Ab Datum">
+              <Input type="date" value={custom} min={todayIso} onChange={(e) => setCustom(e.target.value)} />
+            </Field>
+          ) : null}
           {services?.length ? (
-            <label className="flex flex-col gap-1 text-sm font-medium">
-              Leistung
-              <select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setOwnDuration(null); }} className="h-11 rounded-xl border border-border bg-surface px-3">
+            <Field label="Leistung">
+              <Select value={serviceId} onChange={(e) => { setServiceId(e.target.value); setOwnDuration(null); }}>
                 <option value="">– keine (Dauer frei) –</option>
                 {services.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.durationMin} Min</option>)}
-              </select>
-            </label>
+              </Select>
+            </Field>
           ) : null}
-          <label className="flex flex-col gap-1 text-sm font-medium">
-            Dauer (Min)
-            <input type="number" min={5} max={480} step={5} value={ownDuration ?? dur} onChange={(e) => setOwnDuration(e.target.value)} className="h-11 rounded-xl border border-border bg-surface px-3" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium">
-            Behandler:in
-            <select value={therapist} onChange={(e) => setTherapist(e.target.value)} className="h-11 rounded-xl border border-border bg-surface px-3">
+          <Field label="Dauer">
+            <Input type="number" suffix="Min" min={5} max={480} step={5} value={ownDuration ?? dur} onChange={(e) => setOwnDuration(e.target.value)} />
+          </Field>
+          <Field label="Behandler:in">
+            <Select value={therapist} onChange={(e) => setTherapist(e.target.value)}>
               <option value="">egal</option>
               {team.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-          </label>
+            </Select>
+          </Field>
         </div>
         <div>
-          <button type="button" onClick={() => void search()} disabled={busy} className="inline-flex h-11 items-center justify-center rounded-xl bg-primary px-4 text-[15px] font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50">
+          <Button type="button" onClick={() => void search()} disabled={busy}>
             {busy ? "Suche …" : "Freie Zeiten suchen"}
-          </button>
+          </Button>
         </div>
         {result ? (
           result.error ? (
@@ -136,12 +145,13 @@ export function FreeSlotFinder({
           ) : result.slots.length === 0 ? (
             <p className="text-sm text-muted">In den nächsten 6 Wochen ab diesem Datum ist keine passende Zeit frei (Arbeitszeiten, Abwesenheiten und Termine berücksichtigt).</p>
           ) : (
+            <>
             <ul className="flex flex-wrap gap-2" aria-label="Freie Zeiten">
-              {result.slots.map((s) => {
+              {(all ? result.slots : result.slots.slice(0, FIRST)).map((s) => {
                 const text = (
                   <>
                     <span className="font-semibold tabular-nums">{label(s.date)} {s.time}</span>
-                    {!therapist || team.length > 1 ? <span className="text-xs text-muted">{names.get(s.therapistId)}</span> : null}
+                    {!therapist || team.length > 1 ? <span className="text-[13px] text-muted">{names.get(s.therapistId)}</span> : null}
                   </>
                 );
                 const cls = "flex min-h-11 flex-col items-start justify-center rounded-xl border border-border bg-surface-2 px-3 py-1 text-left text-sm hover:border-primary hover:bg-primary-soft";
@@ -158,6 +168,14 @@ export function FreeSlotFinder({
                 );
               })}
             </ul>
+            {!all && result.slots.length > FIRST ? (
+              <div>
+                <Button type="button" variant="ghost" onClick={() => setAll(true)} className="text-primary">
+                  Weitere {result.slots.length - FIRST} anzeigen
+                </Button>
+              </div>
+            ) : null}
+            </>
           )
         ) : null}
       </div>
