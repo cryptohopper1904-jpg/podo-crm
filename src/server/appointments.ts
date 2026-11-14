@@ -174,7 +174,7 @@ export async function createInternalAppointments(
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
-    // Patient:in nur aus der eigenen Praxis (Fremdschlüssel umgehen RLS; zweite Sicherung: Trigger aus Migration 0050)
+    // Patient:in nur aus der eigenen Praxis (Fremdschlüssel umgehen RLS; zweite Sicherung: DB-Trigger podo_fk_same_org)
     if (input.patientId && !(await patientInOrg(tx, org, input.patientId))) return { ok: false as const, error: PATIENT_NOT_IN_ORG_MSG };
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {

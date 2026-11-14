@@ -1,8 +1,9 @@
 /**
- * Fremdschlüssel nur innerhalb derselben Praxis (Migration 0050, AppSec-Befund „fremde patientId“) gegen eine echte
- * DB (App-Rolle, RLS aktiv, erfundene Daten): Trigger je abgesicherter Spalte (fremd abgelehnt, eigen erlaubt),
- * Vollständigkeit gegenüber allen Fremdschlüsseln zwischen Praxis-Tabellen, UPDATE-Verhalten/Altbestand,
- * App-Prüfung in Terminanlage und Einwilligung, Migration mit Nicht-Superuser-Owner.
+ * Fremdschlüssel nur innerhalb derselben Praxis (Migration *_fk_praxis_abgleich, Trigger podo_fk_same_org; AppSec-Befund
+ * „fremde patientId“) gegen eine echte DB (App-Rolle, RLS aktiv, erfundene Daten): Trigger je abgesicherter Spalte
+ * (fremd abgelehnt, eigen erlaubt), Vollständigkeit gegenüber allen Fremdschlüsseln zwischen Praxis-Tabellen,
+ * UPDATE-Verhalten/Altbestand (auch ON DELETE SET NULL über die Praxisgrenze), Index-Nutzung des Lookups (Excel-Import),
+ * App-Prüfung in Terminanlage und Einwilligung, Migration mit Nicht-Superuser-Owner (zweimal, idempotent).
  */
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -11,10 +12,17 @@ import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+import { drizzle } from "drizzle-orm/node-postgres";
+import { sql } from "drizzle-orm";
+import * as schema from "@/db/schema";
+import { persistImport } from "@/lib/import/excel/persist";
+import type { ImportResult } from "@/lib/import/excel/types";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
 const ownerUrlFrom = (url: string) => url.replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
 const DRIZZLE = path.join(__dirname, "../../drizzle");
+/** Migration dieses Triggers – über den Namen gefunden, nicht über die Nummer (die ändert sich beim Einsortieren) */
+const MIGRATION_SUFFIX = "_fk_praxis_abgleich";
 const FOREIGN = /gehört nicht zu dieser Praxis/;
 
 type World = Record<string, string>;
@@ -168,8 +176,9 @@ const CASES: Case[] = [
 ];
 
 /**
- * Fremdschlüssel zwischen Praxis-Tabellen, die schon vor 0050 ein eigener Trigger auf dieselbe Praxis prüft
- * (Migrationen 0015/0017/0022/0024/0026/0036/0034/0049). Neue Fremdschlüssel müssen hier oder in 0050ff. landen.
+ * Fremdschlüssel zwischen Praxis-Tabellen, die schon vor podo_fk_same_org ein eigener Trigger auf dieselbe Praxis prüft
+ * (Migrationen 0015/0017/0022/0024/0026/0036/0034/0049). Neue Fremdschlüssel müssen hier oder in einen
+ * podo_fk_same_org-Trigger (neue Migration) – sonst schlägt der Vollständigkeitstest fehl.
  */
 const OTHER_GUARDS = [
   "calendar_feed_events.feed_id",
@@ -202,7 +211,7 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
   }
 }
 
-(TEST_DB ? describe : describe.skip)("Fremdschlüssel nur innerhalb der Praxis (DB, Migration 0050)", () => {
+(TEST_DB ? describe : describe.skip)("Fremdschlüssel nur innerhalb der Praxis (DB, Trigger podo_fk_same_org)", () => {
   const f = fixtures(TEST_DB!);
   const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? "");
   const owner = new Pool({ connectionString: ownerUrl, max: 1 });
@@ -362,7 +371,7 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
     const a = await world();
     const b = await world();
-    // Altzeile wie vor 0050: Termin in A zeigt auf Person aus B (Trigger beim Nachstellen aus)
+    // Altzeile wie vor dem Trigger: Termin in A zeigt auf Person aus B (Trigger beim Nachstellen aus)
     const c: PoolClient = await owner.connect();
     let legacy: string;
     try {
@@ -381,6 +390,140 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     // Korrektur auf die eigene Person: erlaubt
     expect(await pgCode(f.asOrg(a.org, (cl) => cl.query("update appointments set patient_id = $2 where id = $1", [legacy, a.patient])))).toBeNull();
   });
+
+  it("Altbestand: ON DELETE SET NULL über die Praxisgrenze funktioniert (B löscht Person, Alt-Termin in A zeigt darauf)", async (ctx) => {
+    const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
+    if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
+    const a = await world();
+    const b = await world();
+    const gone = await f.patient(b.org);
+    const c: PoolClient = await owner.connect();
+    let legacy: string;
+    try {
+      await c.query("begin");
+      await c.query("set local session_replication_role = replica");
+      legacy = (
+        await c.query(
+          "insert into appointments (organization_id, patient_id, location_id, starts_at, ends_at) values ($1,$2,$3, now(), now() + interval '1 hour') returning id",
+          [a.org, gone, a.location],
+        )
+      ).rows[0].id;
+      await c.query("commit");
+    } finally {
+      c.release();
+    }
+    // B löscht die eigene Person; die FK-Aktion setzt patient_id im A-Termin auf NULL – ausgelöst im Kontext von B.
+    // Der Trigger braucht dafür keinen Lookup (NULL, Standort unverändert) und lehnt deshalb auch nicht wegen des
+    // fremden Kontexts ab.
+    expect(await pgCode(f.asOrg(b.org, (cl) => cl.query("delete from patients where id = $1", [gone])))).toBeNull();
+    const row = await f.asOrg(a.org, async (cl) => (await cl.query("select patient_id, location_id from appointments where id = $1", [legacy])).rows[0]);
+    expect(row).toEqual({ patient_id: null, location_id: a.location });
+    // Orakel-Sperre bleibt: sobald ein Lookup nötig wäre, wird eine Zeile der anderen Praxis ohne Lookup abgelehnt
+    const e1 = await tryInsert(a.org, "insert into appointments (organization_id, patient_id, starts_at, ends_at) values ($1,$2, now(), now())", [b.org, b.patient]);
+    const e2 = await tryInsert(a.org, "insert into appointments (organization_id, patient_id, starts_at, ends_at) values ($1,$2, now(), now())", [b.org, randomUUID()]);
+    expect([e1?.code, e2?.code]).toEqual(["42501", "42501"]);
+    expect(e1?.message).toBe(e2?.message);
+  });
+
+  it("Leistung: Excel-Import – Trigger-Lookups auf Rechnungen laufen über den Index (organization_id, id) (auto_explain)", async (ctx) => {
+    const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
+    if (!su.rows[0]?.rolsuper) ctx.skip(); // LOAD 'auto_explain' braucht einen Superuser (TEST_OWNER_DATABASE_URL)
+    const a = await world();
+    const N = 1000;
+    const result: ImportResult = {
+      patients: [
+        {
+          row: 2,
+          legacyId: 1,
+          salutation: null,
+          title: null,
+          lastName: "Import",
+          firstName: "Ida",
+          street: null,
+          zip: null,
+          city: null,
+          route: null,
+          birthDate: null,
+          phoneMobile: null,
+          phoneLandline: null,
+          email: null,
+          preferredChannel: "none",
+          notes: null,
+          legacy: { openAmountCents: null, revenueCents: null, treatments: null, lastTreatment: null, status: null },
+        },
+      ],
+      services: [{ row: 2, legacyId: 1, code: "IMP", name: "Behandlung (Import)", priceCents: 6500, vatRate: 0, durationMin: 45 }],
+      vouchers: [{ row: 2, legacyId: 1, code: `GS2025-${randomUUID().slice(0, 6)}`, issuedAt: "2025-01-05", validUntil: "2029-01-05", amountCents: 100_000, remainingCents: null, note: null }],
+      invoices: Array.from({ length: N }, (_, i) => ({
+        row: i + 2,
+        legacyId: i + 1,
+        number: `R2025-${9000 + i}`,
+        issuedAt: "2025-03-01",
+        kind: "invoice" as const,
+        typeRaw: null,
+        patientLegacyId: 1,
+        lastName: null,
+        firstName: null,
+        paymentRaw: null,
+        status: "paid" as const,
+        voucherLegacyId: null,
+        payments: [i % 20 === 0 ? { method: "voucher" as const, amountCents: 100, voucherLegacyId: 1 } : { method: "cash" as const, amountCents: 100 }],
+        totalCents: 100,
+        netCents: 100,
+        vatCents: 0,
+        lines: [{ position: 1, serviceCode: "IMP", description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 100, vatRate: 0, totalCents: 100 }],
+        statusReceipt: null,
+        statusCollective: null,
+        collectedLegacyIds: [],
+        collectedNumbers: [],
+      })),
+      fixedCosts: [],
+      report: { counts: {} as ImportResult["report"]["counts"], warnings: [], duplicates: [], skippedEmptyRows: 0, collectiveParts: 0 },
+    };
+    // eigene Verbindung: LOAD gilt für die ganze Sitzung, sie wird danach verworfen
+    const pool = new Pool({ connectionString: ownerUrl, max: 1 });
+    const client = await pool.connect();
+    const lookups: string[] = [];
+    client.on("notice", (n) => {
+      if ((n.message ?? "").includes("SELECT EXISTS (SELECT 1 FROM public.")) lookups.push(n.message ?? "");
+    });
+    let ms = 0;
+    try {
+      await client.query("load 'auto_explain'");
+      const db = drizzle(client, { schema });
+      const t0 = performance.now();
+      await db.transaction(async (tx) => {
+        await tx.execute(sql`select set_config('app.org_id', ${a.org}, true)`);
+        await tx.execute(sql`set local auto_explain.log_min_duration = 0`);
+        await tx.execute(sql`set local auto_explain.log_nested_statements = on`);
+        await tx.execute(sql`set local auto_explain.log_level = notice`);
+        const summary = await persistImport(tx as never, a.org, result, a.user);
+        expect(summary).toMatchObject({ invoices: N, invoiceLines: N, payments: N });
+        tx.rollback();
+      }).catch((e: unknown) => {
+        if (!(e instanceof Error && e.message === "Rollback")) throw e;
+      });
+      ms = performance.now() - t0;
+    } finally {
+      client.release(true);
+      await pool.end();
+    }
+    console.info(`Excel-Import ${N} Rechnungen (mit auto_explain): ${Math.round(ms)} ms, ${lookups.length} Trigger-Lookups`);
+    // je Rechnung mindestens: Patient:in (Rechnung), Rechnung + Leistung (Position), Rechnung (Zahlung)
+    expect(lookups.length).toBeGreaterThanOrEqual(4 * N);
+    const tableOf = (m: string) => /FROM public\.(\w+) t/.exec(m)?.[1] ?? "?";
+    expect([...new Set(lookups.map(tableOf))].sort()).toEqual(["invoices", "patients", "services", "vouchers"]);
+    // Formulierung wie der Index: Lookup filtert auf (organization_id, id)
+    for (const m of lookups) expect(m).toMatch(/WHERE t\.organization_id = \$1 AND t\.id = \$2/);
+    // Die Rechnungstabelle wächst während des Imports: Sobald sie nicht mehr winzig ist, muss jeder Lookup über
+    // invoices_org_id laufen. (Vorher Gleichstand möglich: Bei ein paar Zeilen schätzt der Planer jeden Index auf eine
+    // Zeile.) Früher lief er über invoices_org_issued – nur organization_id, dann Filter auf id: je Zeile alle bisherigen
+    // Rechnungen der Praxis, quadratisch im Import.
+    const invoiceLookups = lookups.filter((m) => tableOf(m) === "invoices");
+    const late = invoiceLookups.slice(Math.floor(invoiceLookups.length / 2));
+    expect(late.length).toBeGreaterThanOrEqual(N);
+    for (const m of late) expect(m).toMatch(/Index Only Scan using invoices_org_id on invoices t/);
+  }, 120_000);
 
   it("App: Terminanlage mit fremder Patient:in → verständliche Meldung, nichts angelegt; eigene funktioniert", async () => {
     const a = await world();
@@ -406,13 +549,17 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     expect(await ap.createInternalAppointments(a.org, input(null))).toMatchObject({ ok: true });
   });
 
-  it("App: Einwilligung mit fremder Patient:in oder unbekannter Art abgelehnt; eigene gespeichert", async () => {
+  it("App: Einwilligung mit fremder Patient:in, unbekannter Art oder unbekanntem Erfassungsweg abgelehnt; eigene gespeichert", async () => {
     const a = await world();
     const b = await world();
     const base = { type: "photo_documentation", granted: true, via: "praxis", recordedBy: a.user };
     expect(await cons.recordConsent(a.org, { ...base, patientId: b.patient })).toEqual({ ok: false, error: route.PATIENT_NOT_IN_ORG_MSG });
     expect(await cons.recordConsent(a.org, { ...base, patientId: "x" })).toEqual({ ok: false, error: route.PATIENT_NOT_IN_ORG_MSG });
     expect(await cons.recordConsent(a.org, { ...base, patientId: a.patient, type: "gibt_es_nicht" })).toEqual({ ok: false, error: "Unbekannte Einwilligung." });
+    // „online-anamnese“/„loeschung“ setzen nur die Server-Abläufe selbst – über das Formular nicht vorzutäuschen
+    for (const via of ["online-anamnese", "loeschung", ""]) {
+      expect(await cons.recordConsent(a.org, { ...base, patientId: a.patient, via })).toEqual({ ok: false, error: "Unbekannter Erfassungsweg." });
+    }
     expect(await cons.recordConsent(a.org, { ...base, patientId: a.patient })).toEqual({ ok: true });
     const rows = await f.asOrg(b.org, async (c) => (await c.query("select count(*)::int as n from consents where patient_id = $1", [b.patient])).rows[0].n);
     expect(rows).toBe(0);
@@ -447,25 +594,27 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
       await suDb.end();
       const { drizzle } = await import("drizzle-orm/node-postgres");
       const { migrate } = await import("drizzle-orm/node-postgres/migrator");
-      // Stand vor 0050: Ordner kopieren, Journal kürzen
+      // Stand vor dieser Migration: Ordner kopieren, Journal kürzen
       const before = path.join(tmp, "drizzle");
       cpSync(DRIZZLE, before, { recursive: true });
       const journalPath = path.join(before, "meta/_journal.json");
       const journal = JSON.parse(readFileSync(journalPath, "utf8")) as { entries: { tag: string }[] };
-      const idx = journal.entries.findIndex((e) => e.tag.startsWith("0050_"));
+      const idx = journal.entries.findIndex((e) => e.tag.endsWith(MIGRATION_SUFFIX));
       expect(idx).toBeGreaterThan(0);
+      const tag = journal.entries[idx].tag;
       journal.entries = journal.entries.slice(0, idx);
       writeFileSync(journalPath, JSON.stringify(journal));
       await migrate(drizzle(ns), { migrationsFolder: before });
-      // Altbestand (vor 0050 möglich): Termin in A zeigt auf Person aus B – als Nicht-Superuser je Praxis-Kontext
+      // Altbestand (vor dem Trigger möglich): Termin in A zeigt auf Person aus B – als Nicht-Superuser je Praxis-Kontext
       const c = await ns.connect();
       let orgA: string;
+      let orgB: string;
       let pa: string;
       let pb: string;
       try {
         await c.query("begin");
         orgA = (await c.query("insert into organizations (name, slug) values ('A', $1) returning id", [`a-${sfx}`])).rows[0].id;
-        const orgB = (await c.query("insert into organizations (name, slug) values ('B', $1) returning id", [`b-${sfx}`])).rows[0].id;
+        orgB = (await c.query("insert into organizations (name, slug) values ('B', $1) returning id", [`b-${sfx}`])).rows[0].id;
         await c.query("select set_config('app.org_id', $1, true)", [orgB]);
         pb = (await c.query("insert into patients (organization_id, number, last_name) values ($1, 1, 'Fremd') returning id", [orgB])).rows[0].id;
         await c.query("select set_config('app.org_id', $1, true)", [orgA]);
@@ -478,6 +627,22 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
       notices.length = 0;
       await migrate(drizzle(ns), { migrationsFolder: DRIZZLE });
       expect(notices.join("\n")).toMatch(/1 Zeile\(n\) in appointments\.patient_id verweisen auf patients einer anderen Praxis/);
+      // zweiter Lauf derselben Migration (z. B. nach Umnummerierung): idempotent, gleiche Meldung, gleicher Endzustand
+      const stmts = readFileSync(path.join(DRIZZLE, `${tag}.sql`), "utf8").split("--> statement-breakpoint");
+      notices.length = 0;
+      const again = await ns.connect();
+      try {
+        await again.query("begin");
+        for (const st of stmts) await again.query(st);
+        await again.query("commit");
+      } finally {
+        again.release();
+      }
+      expect(notices.join("\n")).toMatch(/1 Zeile\(n\) in appointments\.patient_id verweisen auf patients einer anderen Praxis/);
+      const triggers = (await ns.query("select count(*)::int as n from pg_trigger t join pg_proc p on p.oid = t.tgfoid where p.proname = 'podo_fk_same_org'")).rows[0].n;
+      expect(triggers).toBe(new Set(CASES.map((c) => c.table)).size);
+      const idxRows = (await ns.query("select tablename from pg_indexes where schemaname = 'public' and indexname like '%\\_org\\_id' and indexdef like 'CREATE UNIQUE INDEX%(organization_id, id)'")).rows;
+      expect(idxRows.map((r: { tablename: string }) => r.tablename).sort()).toEqual(Object.keys(KEY).sort());
       const fn = (await ns.query("select pg_get_userbyid(proowner) as owner, prosecdef from pg_proc where proname = 'podo_fk_same_org'")).rows[0];
       expect(fn).toEqual({ owner: role, prosecdef: true });
       // Trigger greift auch hier (Owner unterliegt FORCE RLS; Funktion setzt den Kontext selbst)
@@ -500,6 +665,25 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
       expect(err?.code).toBe("23503");
       expect(err?.message).toMatch(/Patient:in gehört nicht zu dieser Praxis/);
       expect(await tryInsert(pa)).toBeNull();
+      // B löscht die Person aus dem Altbestand: ON DELETE SET NULL am A-Termin geht durch (kein Lookup nötig)
+      const del = await ns.connect();
+      try {
+        await del.query("begin");
+        await del.query("select set_config('app.org_id', $1, true)", [orgB]);
+        await del.query("delete from patients where id = $1", [pb]);
+        await del.query("commit");
+      } finally {
+        del.release();
+      }
+      const left = await ns.connect();
+      try {
+        await left.query("begin");
+        await left.query("select set_config('app.org_id', $1, true)", [orgA]);
+        expect((await left.query("select count(*)::int as n from appointments where patient_id is null")).rows[0].n).toBe(1);
+        await left.query("commit");
+      } finally {
+        left.release();
+      }
     } finally {
       await ns.end();
       rmSync(tmp, { recursive: true, force: true });

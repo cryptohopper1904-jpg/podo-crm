@@ -21,8 +21,18 @@
 --    Trigger-Funktionen lassen sich nicht direkt aufrufen; EXECUTE wird trotzdem PUBLIC entzogen.
 --
 -- Bestandsdaten: Der Trigger gilt nur für neue Schreibvorgänge (wie NOT VALID). Bei UPDATE wird ein Verweis nur
--- geprüft, wenn er sich ändert (oder die Praxis wechselt) – Altzeilen bleiben bearbeitbar. Inkonsistente Altzeilen
--- werden am Ende als NOTICE gemeldet (scripts/migrate.ts gibt NOTICEs aus), die Migration scheitert daran nicht.
+-- geprüft, wenn er sich ändert (oder die Praxis wechselt) – Altzeilen bleiben bearbeitbar. Auch die Kontextprüfung
+-- (s. u.) läuft erst unmittelbar vor dem ersten nötigen Lookup: ON DELETE SET NULL aus einer anderen Praxis (B löscht
+-- eine Person, auf die ein Alt-Termin in A noch zeigt) setzt nur NULL und bleibt damit erlaubt. Inkonsistente
+-- Altzeilen werden am Ende als NOTICE gemeldet (scripts/migrate.ts gibt NOTICEs aus), die Migration scheitert daran nicht.
+--
+-- Leistung: Der Lookup filtert auf (organization_id, id); dafür gibt es auf jeder Zieltabelle den eindeutigen Index
+-- <tabelle>_org_id (Index-Only-Scan statt Primärschlüssel + Heap-Zugriff, spürbar bei Massenimporten). Normales
+-- CREATE INDEX statt CONCURRENTLY: drizzle führt die Migrationen in einer Transaktion aus, CONCURRENTLY ist dort nicht
+-- erlaubt; die Tabellen sind klein (je Praxis wenige tausend Zeilen), die Sperre ist kurz.
+--
+-- Pflege: Die Trigger-Argumente nennen Spalten und Tabellen als Text. Wer eine dieser Spalten/Tabellen umbenennt, muss
+-- die Trigger mitziehen – der Vollständigkeitstest (src/server/fk-praxis.db.test.ts) schlägt dann bewusst fehl.
 CREATE OR REPLACE FUNCTION podo_fk_same_org() RETURNS trigger
   LANGUAGE plpgsql
   SECURITY DEFINER
@@ -35,9 +45,10 @@ DECLARE
   col text;
   tbl text;
   ref text;
-  found boolean;
+  ok_ref boolean;
   label text;
   prev_org text;
+  ctx_set boolean := false;
 BEGIN
   IF NEW.organization_id IS NULL THEN
     RETURN NEW; -- NOT NULL der Spalte greift
@@ -46,14 +57,6 @@ BEGIN
     old_row := to_jsonb(OLD);
   END IF;
   prev_org := coalesce(current_setting('app.org_id', true), '');
-  -- Zeile für eine andere Praxis als den gesetzten Kontext: ohne Lookup ablehnen. Sonst wäre die Funktion (sie
-  -- liest als Eigentümer im Kontext der NEUEN Zeile) ein Orakel „gehört Datensatz X zu Praxis Y?“ – die RLS-Prüfung
-  -- (WITH CHECK) läuft erst nach den BEFORE-Triggern. Ohne Kontext (Owner-/Superuser-Wartung) wird normal geprüft.
-  IF prev_org <> '' AND prev_org <> NEW.organization_id::text THEN
-    RAISE EXCEPTION 'Zeile gehört nicht zur Praxis des aktuellen Kontexts.' USING ERRCODE = 'insufficient_privilege';
-  END IF;
-  -- nur für die Abfragen dieser Funktion; Wert des Aufrufers am Ende wiederherstellen
-  PERFORM set_config('app.org_id', NEW.organization_id::text, true);
   WHILE i + 1 < TG_NARGS LOOP
     col := TG_ARGV[i];
     tbl := TG_ARGV[i + 1];
@@ -63,9 +66,24 @@ BEGIN
     CONTINUE WHEN TG_OP = 'UPDATE'
       AND ref IS NOT DISTINCT FROM (old_row ->> col)
       AND NEW.organization_id IS NOT DISTINCT FROM OLD.organization_id;
-    EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I t WHERE t.id = $1 AND t.organization_id = $2)', tbl)
-      INTO found USING ref::uuid, NEW.organization_id;
-    IF NOT found THEN
+    IF NOT ctx_set THEN
+      -- Erst hier (vor dem ersten Lookup), nicht am Anfang: Schreibvorgänge ohne Lookup (NULL setzen, Verweis
+      -- unverändert) brauchen keine Prüfung – z. B. ON DELETE SET NULL, ausgelöst aus einer anderen Praxis.
+      -- Zeile für eine andere Praxis als den gesetzten Kontext: ohne Lookup ablehnen. Sonst wäre die Funktion (sie
+      -- liest als Eigentümer im Kontext der NEUEN Zeile) ein Orakel „gehört Datensatz X zu Praxis Y?“ – die
+      -- RLS-Prüfung (WITH CHECK) läuft erst nach den BEFORE-Triggern. Ohne Kontext (Owner-/Superuser-Wartung) wird
+      -- normal geprüft.
+      IF prev_org <> '' AND prev_org <> NEW.organization_id::text THEN
+        RAISE EXCEPTION 'Zeile gehört nicht zur Praxis des aktuellen Kontexts.' USING ERRCODE = 'insufficient_privilege';
+      END IF;
+      -- nur für die Abfragen dieser Funktion; Wert des Aufrufers am Ende wiederherstellen
+      PERFORM set_config('app.org_id', NEW.organization_id::text, true);
+      ctx_set := true;
+    END IF;
+    -- (organization_id, id): passt zum eindeutigen Index <tabelle>_org_id (Index-Only-Scan)
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM public.%I t WHERE t.organization_id = $1 AND t.id = $2)', tbl)
+      INTO ok_ref USING NEW.organization_id, ref::uuid;
+    IF NOT ok_ref THEN
       label := CASE tbl
         WHEN 'patients' THEN 'Patient:in'
         WHEN 'appointments' THEN 'Termin'
@@ -85,11 +103,36 @@ BEGIN
               DETAIL = format('%s.%s → %s', TG_TABLE_NAME, col, tbl);
     END IF;
   END LOOP;
-  PERFORM set_config('app.org_id', prev_org, true);
+  IF ctx_set THEN
+    PERFORM set_config('app.org_id', prev_org, true);
+  END IF;
   RETURN NEW;
 END $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION podo_fk_same_org() FROM PUBLIC;
+--> statement-breakpoint
+-- Eindeutiger Index (organization_id, id) je Zieltabelle für den Lookup des Triggers (s. o., Leistung).
+CREATE UNIQUE INDEX IF NOT EXISTS "patients_org_id" ON "patients" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "locations_org_id" ON "locations" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "services_org_id" ON "services" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "billing_contacts_org_id" ON "billing_contacts" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "appointments_org_id" ON "appointments" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "invoices_org_id" ON "invoices" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "prescriptions_org_id" ON "prescriptions" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "treatment_records_org_id" ON "treatment_records" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "brace_episodes_org_id" ON "brace_episodes" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "vouchers_org_id" ON "vouchers" USING btree ("organization_id","id");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "devices_org_id" ON "devices" USING btree ("organization_id","id");
 --> statement-breakpoint
 -- Argumente: Paare (Spalte, Zieltabelle). UPDATE OF: nur die Verweise und organization_id.
 DROP TRIGGER IF EXISTS appointments_fk_same_org ON appointments;

@@ -27,7 +27,7 @@ export const PATIENT_NOT_IN_ORG_MSG = "Patient:in nicht gefunden. Bitte die Pers
 
 /**
  * Gehört die Patient:in zur Praxis? Vor jedem Schreiben mit einer übergebenen patientId prüfen: Fremdschlüssel prüft
- * Postgres unabhängig von RLS – ohne diese Prüfung (und den Trigger aus Migration 0050) ließe sich eine Zeile anlegen,
+ * Postgres unabhängig von RLS – ohne diese Prüfung (und den DB-Trigger podo_fk_same_org) ließe sich eine Zeile anlegen,
  * die auf eine Patient:in einer anderen Praxis zeigt. Läuft in der Transaktion des Aufrufers (withOrg).
  */
 export async function patientInOrg(tx: Tx, organizationId: string, id: string): Promise<boolean> {
