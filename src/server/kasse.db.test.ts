@@ -197,6 +197,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("Regression: TSE-Meldung erst nach dem Commit – Ausfall lässt den Abschluss bestehen („ausstehend“)", async () => {
     const { auth, closings } = await setup();
     process.env.TSE_PROVIDER = "fiskaly"; // ohne Zugangsdaten → Meldung schlägt fehl
+    process.env.TSE_LIVE_FREIGABE_FORDERUNGSAUFLOESUNG = "1";
     const prevMode = process.env.INTEGRATIONS_MODE;
     delete process.env.INTEGRATIONS_MODE;
     try {
@@ -210,6 +211,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(view!.chainOk).toBe(true);
     } finally {
       delete process.env.TSE_PROVIDER;
+      delete process.env.TSE_LIVE_FREIGABE_FORDERUNGSAUFLOESUNG;
       if (prevMode !== undefined) process.env.INTEGRATIONS_MODE = prevMode;
     }
   });

@@ -6,6 +6,7 @@ import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@
 import { withOrg } from "@/db";
 import { integrationConnections } from "@/db/schema";
 import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
+import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
 import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
@@ -41,6 +42,11 @@ export default async function IntegrationsSettings() {
       {mockEnv ? (
         <p className="rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
           Diese Installation läuft im Testmodus (INTEGRATIONS_MODE=mock): Alle Schnittstellen verwenden Testdaten, es wird nichts an Fremdsysteme gesendet.
+        </p>
+      ) : null}
+      {fiscalLiveBlockedReason() ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-4 text-sm text-danger">
+          <strong>Kasse/TSE: Echtbetrieb gesperrt.</strong> {fiscalLiveBlockedReason()}
         </p>
       ) : null}
       <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">

@@ -1,12 +1,14 @@
 import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { MAX_DUE_DAYS, readDocumentSettings } from "@/lib/practice-documents";
+import { invoiceBookingLink, MAX_DUE_DAYS, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { withOrg, type Tx } from "@/db";
 import {
   appointments,
   billingContacts,
+  fiscalTransactions,
   integrationConnections,
+  invoiceCredits,
   invoiceLines,
   invoices,
   organizations,
@@ -47,6 +49,12 @@ import {
 import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
+import { buildInvoiceSnapshot, readInvoiceSnapshot, smallBusinessNoteFor, withSnapshot } from "@/lib/invoice-snapshot";
+import { bookingDocumentRetentionEnd } from "@/lib/retention";
+import { findInvoiceArchive, reportToInbox, withArchiveCleanup, type PendingFiles } from "./document-archive";
+import { archivePaymentReceipts, paymentReceiptsFor, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
+import { log } from "@/lib/log";
+import { discardStored } from "@/lib/storage";
 
 export class InvoiceError extends Error {}
 
@@ -177,6 +185,60 @@ async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
 }
 
 /**
+ * Momentaufnahme der Belegangaben (Praxis, Bankverbindung, Empfänger:in mit Anschrift, Buchungshinweis) für
+ * invoices.issued_snapshot – beim Ausstellen in derselben Transaktion (src/lib/invoice-snapshot.ts).
+ */
+async function issuedSnapshot(tx: Tx, org: string, o: OrgRow, patientId: string | null, billingContactId: string | null) {
+  const settings = (o.settings ?? {}) as Record<string, unknown>;
+  const doc = readDocumentSettings(settings);
+  const patient = patientId ? ((await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId))))[0] ?? null) : null;
+  const billing = billingContactId
+    ? ((await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, billingContactId))))[0] ?? null)
+    : null;
+  return buildInvoiceSnapshot({
+    organization: o,
+    letter: { website: practiceWebsite(settings), qualification: doc.qualification, whatsapp: doc.whatsapp },
+    booking: invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }),
+    patient,
+    billingContact: billing,
+  });
+}
+
+/**
+ * PDF des eben ausgestellten Belegs erzeugen und archivieren – in der Transaktion des Ausstellens, aber in einem
+ * SAVEPOINT als letzter Schritt: Scheitert die Ablage (Speicher, Schlüssel, Rendern, Guard), wird NUR das Archiv
+ * zurückgerollt (Datei sofort entfernt), die Ausstellung samt Zahlungen und TSE-Signatur bleibt bestehen. So kann ein
+ * Archivfehler nie zu einer erneuten Ausstellung und damit zu einer zweiten TSE-Signatur führen. Das PDF wird danach
+ * aus den festgeschriebenen Daten nachgeholt (beim Abruf, im Hintergrundlauf); die Praxis bekommt eine Meldung.
+ * Gibt false zurück, wenn das Archiv nachgeholt werden muss.
+ */
+async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: string, pending: PendingFiles): Promise<boolean> {
+  // dynamisch: invoice-delivery importiert dieses Modul (loadInvoiceBundle)
+  const { archiveInvoicePdf } = await import("./invoice-delivery");
+  const mark = pending.length;
+  try {
+    await tx.transaction((sp) => archiveInvoicePdf(sp, org, invoiceId, userId, pending));
+    return true;
+  } catch (e) {
+    log.error("invoice.archive_failed", { error: e, invoiceId });
+    // der Savepoint ist zurückgerollt → die eben geschriebenen Dateien sind nirgends verzeichnet
+    await Promise.all(pending.splice(mark).map((k) => discardStored(k).catch(() => undefined)));
+    return false;
+  }
+}
+
+/** Nach dem COMMIT: Meldung, dass das Archiv-PDF nachgeholt wird (Ausstellung selbst ist gültig). */
+async function reportInvoiceArchivePending(org: string, r: { id: string; number: string | null; archived: boolean }) {
+  if (r.archived) return;
+  await reportToInbox(
+    org,
+    `beleg-archiv:${r.id}`,
+    `Beleg ${r.number ?? ""}: PDF konnte nicht archiviert werden`,
+    `Der Beleg ${r.number ?? ""} ist ausgestellt und gültig, das PDF konnte aber nicht im Beleg-Archiv abgelegt werden. Es wird aus den festgeschriebenen Angaben automatisch nachgeholt (beim Öffnen und im regelmäßigen Hintergrundlauf). Bitte den Beleg NICHT erneut ausstellen. Bleibt der Fehler bestehen, bitte den Support kontaktieren.`,
+  );
+}
+
+/**
  * Kassenvorgang (Bar, Karte, Gutschein) über die TSE signieren (KassenSichV: jeder Vorgang des Aufzeichnungssystems).
  * Solange kein zertifizierter TSE-Vertrag besteht, läuft der Mock (Test-Signatur) – für echten Betrieb ist eine echte
  * TSE Pflicht. Die vollständige Signatur landet in fiscal_transactions; bei Bar zusätzlich die Kurzreferenz in
@@ -204,11 +266,12 @@ async function applyPayments(
   today: string,
   vatGroups: { rate: number; grossCents: number }[] = [],
 ) {
-  if (!list.length) return { paidCents: inv.paidCents, status: statusFromPayments(inv.totalCents, inv.paidCents) };
+  if (!list.length) return { paidCents: inv.paidCents, status: statusFromPayments(inv.totalCents, inv.paidCents), paymentIds: [] as string[] };
   const err = validatePayments(inv.totalCents - inv.paidCents, list.map((p) => p.amountCents));
   if (err) throw new InvoiceError(err);
 
   const voucherUse = new Map<string, number>();
+  const paymentIds: string[] = [];
   for (const p of list) {
     let voucherId: string | null = null;
     if (p.method === "voucher") {
@@ -241,16 +304,20 @@ async function applyPayments(
       signed = await signPayment(inv, p.method, p.amountCents, vatGroups);
       if (p.method === "cash") externalRef = fiscalRef(signed.signature);
     }
-    await tx.insert(payments).values({
-      ...(signed ? { id: signed.paymentId } : {}),
-      organizationId: org,
-      invoiceId: inv.id,
-      method: p.method,
-      amountCents: p.amountCents,
-      voucherId,
-      externalRef,
-      createdBy: userId,
-    });
+    const [row] = await tx
+      .insert(payments)
+      .values({
+        ...(signed ? { id: signed.paymentId } : {}),
+        organizationId: org,
+        invoiceId: inv.id,
+        method: p.method,
+        amountCents: p.amountCents,
+        voucherId,
+        externalRef,
+        createdBy: userId,
+      })
+      .returning({ id: payments.id });
+    paymentIds.push(row.id);
     if (signed) await storeSignature(tx, org, signed);
   }
   const paidCents = inv.paidCents + list.reduce((s, p) => s + p.amountCents, 0);
@@ -259,7 +326,7 @@ async function applyPayments(
     .update(invoices)
     .set({ paidCents, status })
     .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.id)));
-  return { paidCents, status };
+  return { paidCents, status, paymentIds };
 }
 
 /**
@@ -609,6 +676,8 @@ async function creditPartials(tx: Tx, org: string, invoiceId: string, partials: 
     .update(invoices)
     .set({ collectiveInvoiceId: invoiceId })
     .where(and(eq(invoices.organizationId, org), inArray(invoices.id, partials.map((d) => d.id))));
+  // Bezug festschreiben (§ 14 Abs. 5 S. 2 UStG): bleibt auch nach einem Storno, wenn collective_invoice_id wieder frei wird
+  await tx.insert(invoiceCredits).values(partials.map((d) => ({ organizationId: org, invoiceId, creditedInvoiceId: d.id, amountCents: d.totalCents })));
   await tx
     .update(invoices)
     .set({ paidCents: sum, status: statusFromPayments(totalCents, sum) })
@@ -646,7 +715,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   const collectiveYear = input.collectiveYear ?? issuedYear;
   if (receiptIds.length && (collectiveYear > issuedYear || collectiveYear < issuedYear - 1)) throw new InvoiceError(`Das Leistungsjahr ${collectiveYear} passt nicht zum Rechnungsdatum.`);
 
-  const result = await withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
     const smallBusiness = o.smallBusiness;
 
@@ -1000,6 +1069,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
         netCents: totals.netCents,
         vatCents: totals.vatCents,
         totalCents: totals.totalCents,
+        issuedSnapshot: await issuedSnapshot(tx, org, o, input.patientId ?? null, input.billingContactId ?? null),
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
 
@@ -1014,10 +1084,15 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
     const receiptCents = partials.receipts.reduce((s, d) => s + d.totalCents, 0);
 
     // 5) Zahlungen (Mischzahlung möglich)
-    const paid = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
+    const { paymentIds: _paymentIds, ...paid } = await applyPayments(tx, org, auth.user.id, { id: draft.id, number, totalCents: totals.totalCents, paidCents: creditedCents }, input.payments, today, payGroups);
+    void _paymentIds;
     const productLines = lines.filter((l) => l.productId).length;
     const productsInTreatment = lines.filter((l) => l.inTreatment).length;
+    // 6) Beleg-Archiv: PDF im Stand der Ausstellung (mit TSE-Angaben der Zahlungen) festschreiben – letzter Schritt,
+    //    im Savepoint (ein Archivfehler rollt die signierten Zahlungen nicht zurück)
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
     return {
+      archived,
       id: draft.id,
       number,
       totalCents: totals.totalCents,
@@ -1029,7 +1104,8 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
       productLines,
       productsInTreatment,
     };
-  });
+  }));
+  await reportInvoiceArchivePending(org, result);
 
   await audit({
     organizationId: org,
@@ -1079,7 +1155,7 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (!isVatRate(input.vatRate)) throw new InvoiceError("Steuersatz muss 0, 7 oder 19 % sein.");
-  const result = await withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
     const [p] = await tx
       .select({ id: patients.id, archivedAt: patients.archivedAt, contactErasedAt: patients.contactErasedAt })
@@ -1149,9 +1225,18 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
     const number = await nextNumber(tx, org, "deposit", Number(today.slice(0, 4)));
     await tx
       .update(invoices)
-      .set({ number, status: "issued", issuedAt: today, dueAt: today, netCents: totals.netCents, vatCents: totals.vatCents, totalCents: totals.totalCents })
+      .set({
+        number,
+        status: "issued",
+        issuedAt: today,
+        dueAt: today,
+        netCents: totals.netCents,
+        vatCents: totals.vatCents,
+        totalCents: totals.totalCents,
+        issuedSnapshot: await issuedSnapshot(tx, org, o, input.patientId, null),
+      })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
-    const paid = await applyPayments(
+    const { paymentIds: _paymentIds, ...paid } = await applyPayments(
       tx,
       org,
       auth.user.id,
@@ -1160,8 +1245,11 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
       today,
       totals.groups,
     );
-    return { id: draft.id, number, totalCents: totals.totalCents, ...paid };
-  });
+    void _paymentIds;
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
+    return { id: draft.id, number, totalCents: totals.totalCents, archived, ...paid };
+  }));
+  await reportInvoiceArchivePending(org, result);
   await audit({
     organizationId: org,
     userId: auth.user.id,
@@ -1187,15 +1275,30 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
     if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Für diese Rechnung kann keine Zahlung erfasst werden.");
     // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
     const groups = (await payableVatGroups(tx, org, [inv.id])).get(inv.id) ?? [];
-    return applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
+    const { paymentIds, ...paid } = await applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
+    // Kassenbeleg über den Zahlungseingang (§ 146a Abs. 2 AO) je Bar-/Karten-/Gutscheinzahlung, mit TSE-Angaben:
+    // Nummer und Angaben in dieser Transaktion, das PDF danach (Ablagefehler verhindern die Buchung nicht)
+    // Savepoint: ein Fehler beim Anlegen des Belegs rollt die eben TSE-signierten Zahlungen nicht zurück (sonst
+    // würde „erneut erfassen“ ein zweites Mal signieren) – stattdessen Meldung im Posteingang
+    let receipts: { id: string; number: string }[] = [];
+    let receiptFailed = false;
+    try {
+      receipts = await tx.transaction((sp) => recordPaymentReceipts(sp, org, inv.id, paymentIds, auth.user.id));
+    } catch (e) {
+      log.error("payment_receipt.record_failed", { error: e, invoiceId: inv.id });
+      receiptFailed = true;
+    }
+    return { ...paid, receipts, receiptFailed, number: inv.number };
   });
+  if (result.receiptFailed) await reportReceiptRecordFailure(org, result.number, list.reduce((sum, p) => sum + p.amountCents, 0));
+  const archived = await archivePaymentReceipts(org, result.receipts, auth.user.id);
   await audit({
     organizationId: org,
     userId: auth.user.id,
     action: "invoice.pay",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { amounts: list.map((p) => p.amountCents), methods: list.map((p) => p.method), status: result.status },
+    meta: { amounts: list.map((p) => p.amountCents), methods: list.map((p) => p.method), status: result.status, receipts: result.receipts.map((r) => r.number), receiptsNotArchived: archived.failed },
   });
   return result;
 }
@@ -1235,7 +1338,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
   const reason = rawReason.replace(/[\r\n]+/g, " ").trim().slice(0, 300);
   const org = auth.organization.id;
   const today = berlinDateIso();
-  const result = await withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const [orig] = await tx
       .select()
       .from(invoices)
@@ -1338,6 +1441,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
         vatCents: totals.vatCents,
         totalCents: totals.totalCents,
         paidCents,
+        issuedSnapshot: await issuedSnapshot(tx, org, await loadOrg(tx, org), orig.patientId, orig.billingContactId),
       })
       .where(and(eq(invoices.organizationId, org), eq(invoices.id, draft.id)));
     // Storno: offene Zahlungslinks/Terminal-Zuordnung entfernen (eine spätere SumUp-Zahlung wird dann nicht gebucht, sondern gemeldet)
@@ -1348,12 +1452,17 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
     // verkaufte Produkte wieder ins Lager (nur was beim Verkauf abgebucht wurde)
     const restoredProducts = await asInvoiceError(() => restoreSaleStock(tx, org, auth.user.id, orig.id, draft.id, today, origLines, opts.restockLineIds));
     if (credited.length) {
+      // Teilbelege für eine neue Anrechnung freigeben; der Bezug zur stornierten Rechnung bleibt in invoice_credits
+      // festgeschrieben (Neudruck mit Anrechnungszeilen, § 14 Abs. 5 S. 2 UStG)
       await tx
         .update(invoices)
         .set({ collectiveInvoiceId: null })
         .where(and(eq(invoices.organizationId, org), inArray(invoices.id, credited.map((d) => d.id))));
     }
+    // Stornorechnung archivieren (das Original bleibt im Archiv unverändert)
+    const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
     return {
+      archived,
       id: draft.id,
       number,
       originalNumber: orig.number,
@@ -1363,7 +1472,8 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
       releasedReceipts: creditedReceipts.length,
       restoredProducts,
     };
-  });
+  }));
+  await reportInvoiceArchivePending(org, result);
   if (result.checkoutRef) await deactivateProviderCheckout(org, result.checkoutRef);
   await audit({
     organizationId: org,
@@ -1454,9 +1564,10 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   if (!inv) return null;
   const lines = await tx.select().from(invoiceLines).where(and(eq(invoiceLines.organizationId, org), eq(invoiceLines.invoiceId, id))).orderBy(asc(invoiceLines.position));
   const pays = await tx
-    .select({ payment: payments, voucherCode: vouchers.code })
+    .select({ payment: payments, voucherCode: vouchers.code, fiscal: fiscalTransactions })
     .from(payments)
     .leftJoin(vouchers, eq(vouchers.id, payments.voucherId))
+    .leftJoin(fiscalTransactions, eq(fiscalTransactions.paymentId, payments.id))
     .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, id)))
     .orderBy(asc(payments.paidAt));
   const o = await loadOrg(tx, org);
@@ -1481,13 +1592,30 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
       ),
     );
   // Teilrechnungen: auf diese Rechnung angerechnete Anzahlungen und Quittungen (mit USt je Satz für den Ausweis nach
-  // § 14 Abs. 5 UStG) bzw. (bei einer Anzahlung/Quittung) die Rechnung, auf die sie angerechnet ist
+  // § 14 Abs. 5 UStG) bzw. (bei einer Anzahlung/Quittung) die Rechnung, auf die sie angerechnet ist. Maßgeblich ist
+  // die festgeschriebene Anrechnung (invoice_credits) – sie bleibt nach einem Storno erhalten, während
+  // collective_invoice_id für eine neue Anrechnung frei wird; dazu (Altbestand ohne Zeile) die aktuelle Verknüpfung.
   const creditedRows =
     inv.kind === "invoice" || inv.kind === "collective"
       ? await tx
           .select({ id: invoices.id, kind: invoices.kind, number: invoices.number, issuedAt: invoices.issuedAt, totalCents: invoices.totalCents, netCents: invoices.netCents, vatCents: invoices.vatCents })
           .from(invoices)
-          .where(and(eq(invoices.organizationId, org), eq(invoices.collectiveInvoiceId, id), inArray(invoices.kind, ["deposit", "receipt"])))
+          .where(
+            and(
+              eq(invoices.organizationId, org),
+              inArray(invoices.kind, ["deposit", "receipt"]),
+              or(
+                eq(invoices.collectiveInvoiceId, id),
+                inArray(
+                  invoices.id,
+                  tx
+                    .select({ id: invoiceCredits.creditedInvoiceId })
+                    .from(invoiceCredits)
+                    .where(and(eq(invoiceCredits.organizationId, org), eq(invoiceCredits.invoiceId, id))),
+                ),
+              ),
+            ),
+          )
           .orderBy(asc(invoices.issuedAt), asc(invoices.number))
       : [];
   const creditedLines = creditedRows.length
@@ -1512,6 +1640,19 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
   const serviceDates = inv.serviceDateFixed ? serviceDays(inv) : await legacyLinkedDays(tx, org, inv.id);
   /** Positionen mit Termin-/Doku-Bezug → Überschrift „… zur Behandlung am …“ */
   const serviceLinked = lines.some((l) => !!l.appointmentId || !!l.treatmentRecordId);
+  // Belegangaben wie beim Ausstellen (Momentaufnahme); Altbelege ohne Momentaufnahme: aktuelle Stammdaten
+  const settings = (o.settings ?? {}) as Record<string, unknown>;
+  const docSettings = readDocumentSettings(settings);
+  const snap = readInvoiceSnapshot(inv.issuedSnapshot);
+  const printed = withSnapshot(snap, {
+    organization: o,
+    patient,
+    billingContact: billing,
+    letter: { website: practiceWebsite(settings), qualification: docSettings.qualification, whatsapp: docSettings.whatsapp },
+    booking: invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }),
+  });
+  const archive = inv.status === "draft" ? null : await findInvoiceArchive(tx, org, id);
+  const receipts = inv.status === "draft" ? [] : await paymentReceiptsFor(tx, org, id);
   return {
     invoice: inv,
     lines,
@@ -1520,10 +1661,48 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
     serviceDates,
     serviceLinked,
     creditedTo,
-    payments: pays.map((p) => ({ ...p.payment, voucherCode: p.voucherCode })),
-    organization: o,
-    patient,
-    billingContact: billing,
+    payments: pays.map((p) => ({
+      ...p.payment,
+      voucherCode: p.voucherCode,
+      fiscal: p.fiscal
+        ? {
+            vendor: p.fiscal.vendor,
+            tssSerial: p.fiscal.tssSerial,
+            txNumber: p.fiscal.txNumber,
+            signatureCounter: p.fiscal.signatureCounter,
+            signature: p.fiscal.signature,
+            startedAt: p.fiscal.startedAt,
+            finishedAt: p.fiscal.finishedAt,
+            processType: p.fiscal.processType,
+            isTest: p.fiscal.isTest,
+          }
+        : null,
+    })),
+    /** Praxisangaben für Beleg/Druckansicht (aus der Momentaufnahme); id/settings/slug bleiben aktuell */
+    organization: printed.organization,
+    /** Person (Belegangaben aus der Momentaufnahme; Kontaktwege für den Versand aktuell) */
+    patient: printed.patient,
+    billingContact: printed.billingContact,
+    /** Website, Berufsbezeichnung, WhatsApp-Hinweis und Buchungshinweis wie auf dem Beleg */
+    letter: printed.letter,
+    booking: printed.booking,
+    /** Belegangaben aus der Momentaufnahme beim Ausstellen (false = Altbeleg, aktuelle Stammdaten) */
+    fromSnapshot: printed.fromSnapshot,
+    /** Kleinunternehmer-Hinweis im Wortlaut des Belegs */
+    smallBusinessNote: smallBusinessNoteFor(snap),
+    /** archiviertes Original (PDF) – null bei Altbelegen vor dem Beleg-Archiv */
+    archive: archive
+      ? {
+          id: archive.id,
+          sha256: archive.sha256,
+          sizeBytes: archive.sizeBytes,
+          createdAt: archive.createdAt,
+          /** frühestes Ende der Aufbewahrung (Buchungsbeleg, 8 Jahre; Ablaufhemmung vorbehalten) – zur Laufzeit berechnet */
+          retainUntil: bookingDocumentRetentionEnd(inv.issuedAt ?? archive.createdAt),
+        }
+      : null,
+    /** Belege über Zahlungseingänge nach Ausstellung (Kassenbelege) */
+    paymentReceipts: receipts,
     cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
     cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,
   };
