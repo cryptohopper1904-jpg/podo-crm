@@ -89,6 +89,7 @@ export function UsageDashboard({ usage }: { usage: PlatformUsage }) {
           <div className="flex flex-col gap-2">
             <HealthBadge label="Migrationsstand" check={health.migrations} />
             <HealthBadge label="Letztes Backup" check={health.backup} />
+            <HealthBadge label="Löschlauf Online-Anfragen" check={health.retention} />
           </div>
         </Card>
       </div>

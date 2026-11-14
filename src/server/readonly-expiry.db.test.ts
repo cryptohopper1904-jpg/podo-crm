@@ -175,7 +175,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(Date.parse(st.deletionAt)).toBe(v.deletionAt.getTime());
     expect(await audits(p.org, "platform.readonly_notice_manual")).toEqual([{ meta: expect.objectContaining({ via: "letter", mail: "not_configured" }) }]);
     // AppSec I-2: Vermerk mit IP des Plattform-Admins im Audit
-    const ip = await f.asOrg(p.org, async (c) => (await c.query("select host(ip) as ip from audit_log where organization_id=$1 and action='platform.readonly_notice_manual'", [p.org])).rows);
+    const ip = await f.asOrg(p.org, async (c) => (await c.query("select ip from audit_log where organization_id=$1 and action='platform.readonly_notice_manual'", [p.org])).rows);
     expect(ip).toEqual([{ ip: "203.0.113.7" }]);
     // jetzt Antrag; der Löschlauf löscht frühestens 30 Tage nach Zugang
     expect(await run([p.org], later)).toMatchObject({ requests: 1, mailNotSent: 0 });

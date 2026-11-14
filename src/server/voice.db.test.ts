@@ -83,6 +83,20 @@ const TUE_0900 = "2030-03-05T08:00:00.000Z"; // Dienstag 09:00 Berlin
     expect((await f.asOrg(org, (c) => c.query("select count(*)::int as n from appointments where organization_id = $1", [org]))).rows[0].n).toBe(1);
   });
 
+  it("AppSec M-2: nach Löschantrag keine Buchung, kein Posteingang, kein Anrufprotokoll", async () => {
+    const org = await practice();
+    await f.pool.query("update organizations set deletion_requested_at = now() where id = $1", [org]);
+    expect(await tool(org, "call-del", "termin_buchen", { vorname: "Max", nachname: "Muster", leistung: "PK", termin: TUE_0900 })).toBe("Praxis nicht gefunden.");
+    expect(await tool(org, "call-del", "rueckruf", { name: "Max Muster", telefon: "+4915100000023", anliegen: "Termin" })).toBe("Praxis nicht gefunden.");
+    await voice.processVoiceEvent(org, "vapi", { type: "call_ended", callId: "call-del", from: "+4915100000023", endedReason: "customer-ended-call", durationSec: 60, summary: "x", transcript: null, startedAt: null } as never);
+    const n = await f.asOrg(org, async (c) => ({
+      appts: (await c.query("select count(*)::int n from appointments where organization_id = $1", [org])).rows[0].n,
+      msgs: (await c.query("select count(*)::int n from messages where organization_id = $1", [org])).rows[0].n,
+      calls: (await c.query("select count(*)::int n from voice_calls where organization_id = $1", [org])).rows[0].n,
+    }));
+    expect(n).toEqual({ appts: 0, msgs: 0, calls: 0 });
+  });
+
   it("termin_absagen ändert nichts, legt nur einen Absagewunsch an", async () => {
     const org = await practice();
     const p = await f.patient(org, { phoneMobile: "+4915100000023" });

@@ -341,7 +341,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(inbox.map((m) => m.subject)).toEqual(["Kündigung bestätigt"]);
     // Bestätigung mit konkretem Vertragsende und 12-Monats-Hinweis (Buchhaltung)
     expect(inbox[0].body).toMatch(/^Dein PodoHero-Abo ist zum \d\d\.\d\d\.\d{4} gekündigt \(Vertragsende\)/);
-    expect(inbox[0].body).toContain("höchstens 12 Monate lesbar – exportiere rechtzeitig");
+    expect(inbox[0].body).toContain("höchstens 12 Monate lesbar und wird dann gelöscht (Ankündigung mindestens 30 Tage vorher) – exportiere rechtzeitig");
   });
 
   it("Löschantrag im Nur-Lesen-Modus (Testphase abgelaufen): erlaubt (allowReadOnly), ohne Stripe-Aufruf", async () => {
@@ -545,7 +545,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     const w = await withdraw();
     expect(w).toEqual({
       ok: "Die Löschung wurde zurückgenommen. Deine Praxis bleibt bestehen.",
-      warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo).",
+      warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo) – höchstens 12 Monate nach Vertragsende.",
     });
   });
 
@@ -793,8 +793,8 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
         run.catch(() => undefined);
         for (let i = 0; i < 100 && !lines.some((l) => l.startsWith("Sperrkonflikt (55P03)")); i++) await new Promise((r) => setTimeout(r, 50));
         expect(lines.some((l) => l.startsWith("Sperrkonflikt (55P03)"))).toBe(true);
-        // während der Sperre: Praxis und Daten vollständig vorhanden
-        expect(await exists(org)).toBe(true);
+        // während der Sperre: Praxis und Daten vollständig vorhanden (App-Pool – der Eigentümer-Pool ist hier ausgelastet)
+        expect((await f.pool.query("select 1 from organizations where id=$1", [org])).rowCount).toBe(1);
         expect((await f.asOrg(org, (cc) => cc.query("select 1 from patients where id=$1", [patient]))).rowCount).toBe(1);
       } finally {
         await holder.query("commit");

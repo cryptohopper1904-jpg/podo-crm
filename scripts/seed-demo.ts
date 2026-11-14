@@ -13,6 +13,7 @@ import { Pool } from "pg";
 import { hash } from "@node-rs/argon2";
 import * as s from "../src/db/schema";
 import { DEMO_PRACTICE_FIELDS, seedDemoPracticeData } from "../src/lib/demo-data";
+import { DEMO_IMPRINT } from "../src/lib/imprint";
 import { DEMO_EMAIL, resolveDemoPassword } from "../src/lib/demo-seed";
 
 async function main() {
@@ -29,7 +30,7 @@ async function main() {
   await db.transaction(async (tx) => {
     const [org] = await tx
       .insert(s.organizations)
-      .values({ name: "Podologie Demo", slug: `demo-${Date.now().toString(36)}`, ...DEMO_PRACTICE_FIELDS })
+      .values({ name: "Podologie Demo", slug: `demo-${Date.now().toString(36)}`, ...DEMO_PRACTICE_FIELDS, settings: { imprint: DEMO_IMPRINT } })
       .returning();
     const [user] = await tx.insert(s.users).values({ email, name: "Dana Demo", passwordHash: await hash(demo.password) }).returning();
     await tx.insert(s.memberships).values({ organizationId: org.id, userId: user.id, role: "owner" });

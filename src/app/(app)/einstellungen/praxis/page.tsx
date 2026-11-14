@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { STATES } from "@/lib/holidays";
+import { imprintSettings } from "@/lib/imprint";
 import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
 import { readDunningSettings } from "@/lib/dunning";
 import { formatIban } from "@/lib/invoice-view";
@@ -17,7 +18,13 @@ import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
 import { removeLogoAction, saveBankTaxAction, saveBillingModeAction, savePracticeAction } from "../actions";
 import { DocumentsForm } from "./documents-form";
 import { DunningForm } from "./dunning-form";
+import { ImprintForm } from "./imprint-form";
+import { ImprintWarning } from "./imprint-warning";
+import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { LogoUpload } from "./logo-upload";
+import { AiRepliesForm } from "./ai-replies-form";
+import { aiReplySettings } from "@/lib/ai-replies";
+import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 
 const LOGO_HINT = {
   compact: "Nur das Zeichen (z. B. der Fuß). Erscheint dezent auf Anamnese- und Doku-Bögen sowie auf Quittungen.",
@@ -35,6 +42,7 @@ export default async function PracticeSettings() {
   const publicUrl = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   return (
     <div className="flex flex-col gap-6">
+    <ImprintWarning org={o} settings={o.settings} />
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Abrechnung</h2>
       <ActionForm action={saveBillingModeAction}>
@@ -48,6 +56,18 @@ export default async function PracticeSettings() {
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
       <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
+      <OnlineRequestRetentionNote active={avvAcceptedAtLeast(o.settings, RETENTION_MIN_AVV)} className="mt-3" />
+    </Card>
+    <Card id="ki-antworten" className="scroll-mt-24">
+      <h2 className="mb-1 font-display text-lg font-semibold">KI-Antwortvorschläge (Posteingang)</h2>
+      <p className="mb-4 text-sm text-muted">
+        Standard: aus. Eingeschaltet erzeugt ein KI-Dienst auf Knopfdruck Antwortentwürfe für E-Mail, SMS und WhatsApp im Posteingang sowie für
+        Antworten auf Google-Bewertungen. KIM-Nachrichten (Arztbriefe) gehen nie an den KI-Dienst. Der Sprachbericht hat eine eigene Freigabe unter
+        Schnittstellen. Den Dienst selbst richtest du unter{" "}
+        <Link className="font-semibold text-primary underline" href="/einstellungen/schnittstellen">Einstellungen → Schnittstellen</Link> ein.
+      </p>
+      {/* Einschalten nur Inhaber:in (Recht M-88-7), Ausschalten jede Person mit settings.manage */}
+      <AiRepliesForm initial={aiReplySettings(o.settings)} disabled={!!auth.support} canEnable={auth.role === "owner" && !auth.support} />
     </Card>
     <Card>
       <ActionForm action={savePracticeAction} stickyActions>
@@ -70,6 +90,14 @@ export default async function PracticeSettings() {
         </p>
         <Checkbox name="smallBusiness" defaultChecked={o.smallBusiness} label="Kleinunternehmer nach § 19 UStG (keine Umsatzsteuer auf Rechnungen)" />
       </ActionForm>
+    </Card>
+    <Card id="impressum" className="scroll-mt-24">
+      <h2 className="mb-1 font-display text-lg font-semibold">Impressum (Pflichtangaben)</h2>
+      <p className="mb-4 text-sm text-muted">
+        Für das Impressum der Praxis-Website und der Online-Buchung (§ 5 DDG). Name, Anschrift, E-Mail und Telefon kommen aus den Praxisdaten oben.
+        Ohne diese Angaben und die mit * markierten Felder ist die Online-Buchung gesperrt.
+      </p>
+      <ImprintForm initial={imprintSettings(o.settings)} />
     </Card>
     <Card>
       <h2 className="mb-1 font-display text-lg font-semibold">Logos</h2>

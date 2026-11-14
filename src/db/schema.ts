@@ -177,7 +177,7 @@ export const organizations = pgTable("organizations", {
   deletionRequestedAt: timestamp("deletion_requested_at", { withTimezone: true }),
   createdAt: createdAt(),
 }, (t) => [
-  // Ein Stripe-Kunde gehört genau einer Praxis (Webhook-Zuordnung über die Kunden-ID, Migration 0052)
+  // Ein Stripe-Kunde gehört genau einer Praxis (Webhook-Zuordnung über die Kunden-ID, Migration 0053)
   uniqueIndex("organizations_stripe_customer_id").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
 ]);
 
@@ -1435,6 +1435,9 @@ export const cashClosingRegistrations = pgTable(
 );
 
 // ───────────────────────── Kommunikation ─────────────────────────
+/** messages.meta – Online-Anfrage: Name der anfragenden Person (strukturiert) */
+export type MessageMeta = { onlineRequest?: { firstName: string; lastName: string } };
+
 export const messages = pgTable(
   "messages",
   {
@@ -1451,6 +1454,11 @@ export const messages = pgTable(
     aiSuggestion: text("ai_suggestion"),
     externalId: text("external_id"),
     threadKey: text("thread_key"),
+    /**
+     * Strukturierte Zusatzangaben zur Nachricht (nie an Dritte): bei Online-Anfragen (/buchen) Vor- und Nachname,
+     * damit sie vor einem KI-Antwortvorschlag zuverlässig entfernt werden (src/lib/online-request.ts).
+     */
+    meta: jsonb("meta").$type<MessageMeta>(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("messages_org_time").on(t.organizationId, t.receivedAt)],
