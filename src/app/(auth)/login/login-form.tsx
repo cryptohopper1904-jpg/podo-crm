@@ -10,7 +10,7 @@ export function LoginForm() {
   const [state, action, pending] = useActionState(loginAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <Field label="E-Mail">
         <Input name="email" type="email" autoComplete="username" required autoFocus />
       </Field>
@@ -20,7 +20,7 @@ export function LoginForm() {
       <Button type="submit" disabled={pending} className="mt-2">
         {pending ? "Anmelden …" : "Anmelden"}
       </Button>
-      <Link href="/login/passwort-vergessen" className="text-center text-sm font-semibold text-primary">Passwort vergessen?</Link>
+      <Link href="/login/passwort-vergessen" className="inline-flex min-h-11 items-center justify-center text-sm font-semibold text-primary">Passwort vergessen?</Link>
     </form>
   );
 }

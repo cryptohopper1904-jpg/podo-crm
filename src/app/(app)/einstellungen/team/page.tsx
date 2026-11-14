@@ -15,6 +15,31 @@ import { therapists } from "@/server/appointments";
 
 export const metadata = { title: "Team" };
 
+/** Rolle ändern (Tabelle und Handy-Karte) */
+function RoleForm({ id, role, idPrefix = "" }: { id: string; role: (typeof ROLES)[number]; idPrefix?: string }) {
+  return (
+    <form action={updateMemberAction} className="flex flex-wrap gap-2">
+      <input type="hidden" name="id" value={id} />
+      <label className="sr-only" htmlFor={`${idPrefix}role-${id}`}>Rolle</label>
+      <select id={`${idPrefix}role-${id}`} name="role" defaultValue={role} className="h-11 min-w-0 rounded-xl border border-border bg-surface px-3 text-[15px]">
+        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+      </select>
+      <button className="h-11 rounded-xl px-3 text-sm font-semibold text-primary hover:bg-surface-2">ändern</button>
+    </form>
+  );
+}
+
+/** Zugang sperren/entsperren */
+function LockForm({ id, active }: { id: string; active: boolean }) {
+  return (
+    <form action={updateMemberAction}>
+      <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="active" value={active ? "0" : "1"} />
+      <button className="h-11 rounded-xl px-3 text-sm font-semibold text-primary hover:bg-surface-2">{active ? "sperren" : "entsperren"}</button>
+    </form>
+  );
+}
+
 export default async function TeamSettings({ searchParams }: PageProps<"/einstellungen/team">) {
   const auth = await requireAuth("users.manage");
   const { plaetze } = await searchParams;
@@ -34,41 +59,45 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
           {plaetze === "voll" ? "Änderung nicht gespeichert: Alle Plätze sind belegt. " : null}
           Plätze belegt: <strong className="tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</strong> {auth.billing.plan === "free" ? "(kostenloser Tarif: 1 Person, Steuerberatung zählt nicht)" : `– Inhaber:in, Podolog:innen und Azubis. ${SEAT_FREE_NOTE}`}
         </span>
-        {auth.role === "owner" && used >= limit ? <Link href="/einstellungen/abo" className="font-semibold text-primary">Weitere Plätze buchen / Tarif wechseln →</Link> : null}
+        {auth.role === "owner" && used >= limit ? <Link href="/einstellungen/abo" className="inline-flex min-h-11 items-center font-semibold text-warn-soft-text underline underline-offset-2">Weitere Plätze buchen / Tarif wechseln →</Link> : null}
       </div>
-      <Table>
-        <thead><tr><th>Name</th><th>Rolle</th><th>2FA</th><th>Status</th><th></th></tr></thead>
-        <tbody>
-          {team.map((t) => (
-            <tr key={t.m.id}>
-              <td><p className="font-semibold">{t.name}</p><p className="text-sm text-muted">{t.email}</p></td>
-              <td>
-                {t.m.userId === auth.user.id ? ROLE_LABELS[t.m.role] : (
-                  <form action={updateMemberAction} className="flex gap-2">
-                    <input type="hidden" name="id" value={t.m.id} />
-                    <label className="sr-only" htmlFor={`role-${t.m.id}`}>Rolle</label>
-                    <select id={`role-${t.m.id}`} name="role" defaultValue={t.m.role} className="h-10 rounded-lg border border-border bg-surface px-2 text-sm">
-                      {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
-                    </select>
-                    <button className="rounded-lg px-2 text-sm font-semibold text-primary">ändern</button>
-                  </form>
-                )}
-              </td>
-              <td>{t.totp ? <Badge tone="primary">aktiv</Badge> : <Badge tone="warn">fehlt</Badge>}</td>
-              <td>{t.m.active ? <Badge tone="primary">aktiv</Badge> : <Badge>gesperrt</Badge>}</td>
-              <td>
-                {t.m.userId !== auth.user.id ? (
-                  <form action={updateMemberAction}>
-                    <input type="hidden" name="id" value={t.m.id} />
-                    <input type="hidden" name="active" value={t.m.active ? "0" : "1"} />
-                    <button className="text-sm font-semibold text-primary">{t.m.active ? "sperren" : "entsperren"}</button>
-                  </form>
-                ) : null}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
+      {/* Handy: Karte je Person (die Tabelle wäre doppelt so breit wie der Bildschirm) */}
+      <ul className="flex flex-col gap-3 md:hidden" aria-label="Team">
+        {team.map((t) => (
+          <li key={t.m.id} className="rounded-[var(--radius-card)] border border-border bg-surface p-4">
+            <p className="font-semibold wrap-break-word">{t.name}</p>
+            <p className="text-sm text-muted [overflow-wrap:anywhere]">{t.email}</p>
+            <p className="mt-2 flex flex-wrap gap-2">
+              {t.totp ? <Badge tone="primary">2FA aktiv</Badge> : <Badge tone="warn">2FA fehlt</Badge>}
+              {t.m.active ? <Badge tone="primary">aktiv</Badge> : <Badge>gesperrt</Badge>}
+            </p>
+            {t.m.userId === auth.user.id ? (
+              <p className="mt-2 text-sm">Rolle: {ROLE_LABELS[t.m.role]}</p>
+            ) : (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <RoleForm id={t.m.id} role={t.m.role} idPrefix="m-" />
+                <LockForm id={t.m.id} active={t.m.active} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="hidden md:block">
+        <Table label="Team">
+          <thead><tr><th>Name</th><th>Rolle</th><th>2FA</th><th>Status</th><th><span className="sr-only">Aktion</span></th></tr></thead>
+          <tbody>
+            {team.map((t) => (
+              <tr key={t.m.id}>
+                <td><p className="font-semibold">{t.name}</p><p className="text-sm text-muted">{t.email}</p></td>
+                <td>{t.m.userId === auth.user.id ? ROLE_LABELS[t.m.role] : <RoleForm id={t.m.id} role={t.m.role} />}</td>
+                <td>{t.totp ? <Badge tone="primary">aktiv</Badge> : <Badge tone="warn">fehlt</Badge>}</td>
+                <td>{t.m.active ? <Badge tone="primary">aktiv</Badge> : <Badge>gesperrt</Badge>}</td>
+                <td>{t.m.userId !== auth.user.id ? <LockForm id={t.m.id} active={t.m.active} /> : null}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </div>
       {calendarTeam.length ? (
         <Card>
           <CardTitle>Kalenderfarben</CardTitle>
@@ -89,7 +118,7 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
       <Card>
         <CardTitle>Person hinzufügen</CardTitle>
         <ActionForm action={inviteMemberAction} submit="Hinzufügen">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Name"><Input name="name" required /></Field>
             <Field label="E-Mail"><Input name="email" type="email" required /></Field>
             <Field label="Rolle" hint={auth.billing.plan === "free" ? undefined : "Empfang und Steuerberatung belegen keinen Platz; nur Inhaber:in und Podolog:in haben eine eigene Kalenderspalte"}><Select name="role" defaultValue="therapist">{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</Select></Field>
@@ -99,11 +128,11 @@ export default async function TeamSettings({ searchParams }: PageProps<"/einstel
       </Card>
       <Card>
         <CardTitle>Was darf welche Rolle?</CardTitle>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {ROLES.map((r) => (
             <div key={r} className="rounded-xl bg-surface-2 p-3 text-sm">
               <p className="font-semibold">{ROLE_LABELS[r]}</p>
-              <p className="text-xs text-muted">{`${hasOwnCalendar(r) ? "eigener Kalender" : "kein eigener Kalender"}, ${seatCounts(r, auth.billing.plan) ? "belegt einen Platz" : "kein Platz"}`}</p>
+              <p className="text-[13px] text-muted">{`${hasOwnCalendar(r) ? "eigener Kalender" : "kein eigener Kalender"}, ${seatCounts(r, auth.billing.plan) ? "belegt einen Platz" : "kein Platz"}`}</p>
               <p className="mt-1 text-muted">{permissionsFor(r).join(", ")}</p>
             </div>
           ))}

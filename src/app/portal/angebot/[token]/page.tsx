@@ -5,7 +5,7 @@ import { clientKey } from "@/lib/rate-limit";
 import { portalFailLimiter, portalLimiter } from "@/server/portal-core";
 import { loadOffer } from "@/server/waitlist";
 import { PortalShell } from "../../shell";
-import { AcceptOfferForm } from "./accept-form";
+import { AcceptOfferForm, OfferAcceptedNotice } from "./accept-form";
 import { AcceptedNotice } from "./accepted-notice";
 
 export const metadata = { title: "Freier Termin", robots: { index: false, follow: false }, referrer: "no-referrer" as const };
@@ -44,7 +44,9 @@ export default async function OfferPage(props: PageProps<"/portal/angebot/[token
       ) : offer.state === "taken" ? (
         <Empty title="Leider schon vergeben">Jemand anderes war schneller. Sie bleiben auf der Warteliste und wir melden uns beim nächsten freien Termin.{tel}</Empty>
       ) : offer.state === "accepted" ? (
-        <AcceptedNotice token={token}>{offer.startsAt ? `Ihr Termin: ${dateDe(offer.startsAt)}, ${timeDe(offer.startsAt)} Uhr.` : ""}{tel}</AcceptedNotice>
+        <OfferAcceptedNotice labelledBy="angebot-angenommen">
+          <AcceptedNotice token={token} titleId="angebot-angenommen">{offer.startsAt ? `Ihr Termin: ${dateDe(offer.startsAt)}, ${timeDe(offer.startsAt)} Uhr.` : ""}{tel}</AcceptedNotice>
+        </OfferAcceptedNotice>
       ) : offer.state === "expired" ? (
         <Empty title="Angebot abgelaufen">Dieses Angebot gilt nicht mehr.{tel}</Empty>
       ) : (

@@ -18,11 +18,11 @@ function readAccepted(token: string): boolean {
  * Angenommenes Angebot: „Termin angenommen“, wenn es in diesem Tab gerade angenommen wurde (nach dem Annehmen lädt die
  * Seite neu und zeigt diesen Zustand), sonst „Termin bereits angenommen“ (z. B. Link später erneut geöffnet).
  */
-export function AcceptedNotice({ token, children }: { token: string; children?: React.ReactNode }) {
+export function AcceptedNotice({ token, titleId, children }: { token: string; titleId?: string; children?: React.ReactNode }) {
   const justNow = useSyncExternalStore(
     () => () => undefined,
     () => readAccepted(token),
     () => false,
   );
-  return <Empty title={justNow ? "Termin angenommen" : "Termin bereits angenommen"}>{children}</Empty>;
+  return <Empty titleId={titleId} title={justNow ? "Termin angenommen" : "Termin bereits angenommen"}>{children}</Empty>;
 }
