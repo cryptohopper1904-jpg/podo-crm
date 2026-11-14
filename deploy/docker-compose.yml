@@ -1,8 +1,17 @@
 # PodoCRM auf eigenem Server (Docker + Caddy für HTTPS)
 # Start:  cp deploy/.env.example deploy/.env  &&  (Werte setzen)  &&  docker compose -f deploy/docker-compose.yml up -d --build
 # Update: bash deploy/update.sh   (siehe docs/BETRIEB.md)
+# Container-Logs: Docker begrenzt nur die Größe; die Aufbewahrung von höchstens 7 Tagen setzt logrotate
+# (deploy/log-retention.sh, von install.sh/update.sh eingerichtet) – so steht es in den Datenschutzhinweisen.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "1"
+
 services:
   db:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -19,6 +28,7 @@ services:
       retries: 5
 
   migrate:
+    logging: *logging
     build: { context: .., dockerfile: deploy/Dockerfile.migrate }
     environment:
       DATABASE_MIGRATION_URL: postgres://podo_owner:${DB_OWNER_PASSWORD}@db:5432/podo
@@ -42,6 +52,7 @@ services:
     restart: "no"
 
   app:
+    logging: *logging
     build: { context: .., dockerfile: Dockerfile, args: { GIT_SHA: "${GIT_SHA:-unknown}" } }
     restart: unless-stopped
     # KEIN env_file: Die App bekommt nur, was sie braucht (Gesamt-Review H2). DB_OWNER_PASSWORD (Tabelleneigentümer,
@@ -120,6 +131,7 @@ services:
       migrate: { condition: service_completed_successfully }
 
   caddy:
+    logging: *logging
     image: caddy:2-alpine
     restart: unless-stopped
     ports: ["80:80", "443:443"]
@@ -132,6 +144,7 @@ services:
 
   # Tägliches verschlüsseltes Backup (erstes direkt beim Start). update.sh erstellt den Container bei jedem Update neu.
   backup:
+    logging: *logging
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
@@ -156,6 +169,7 @@ services:
 
   # Cron (intern, nicht über Caddy): Kalender-Abo alle 5 min, Erinnerungen/Rückholung und KIM alle 15 min
   cron:
+    logging: *logging
     image: alpine:3.20
     restart: unless-stopped
     environment:

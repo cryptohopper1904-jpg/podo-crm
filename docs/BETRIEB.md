@@ -205,6 +205,7 @@ Token: `HEALTH_TOKEN` aus `deploy/.env` (wird von `install.sh` erzeugt). Fehlt e
 | `storage` | Testdatei in `STORAGE_DIR` schreib-/löschbar | – | nicht beschreibbar |
 | `backup` | letztes Backup ≤ 26 h | noch keins erfasst | älter |
 | `cronReminders`, `cronKim` | letzter erfolgreicher Lauf ≤ 45 min | noch keiner erfasst (z. B. ohne `CRON_SECRET`) | älter |
+| `cronAufbewahrung` | letzter vollständiger Löschlauf Online-Anfragen ≤ 26 h | noch keiner erfasst | älter (auch, wenn der Lauf für eine Praxis fehlschlägt: dann HTTP 500, kein Zeitstempel, Logzeile `retention.online_requests.failed`) |
 | `webhooks` | keine Webhook-Ereignisse älter als 1 h offen | endgültig aufgegebene Ereignisse (`dead`, Hinweis im Posteingang der Praxis) | Ereignisse seit über 1 h unverarbeitet |
 
 Antwort: `{ ok, status: "ok"|"warn"|"fail", checkedAt, checks: { … } }` mit Zeiten und Zählern, ohne Personendaten. HTTP 200 bei `ok`/`warn`, **503 bei `fail`** – so kann jeder Uptime-Dienst (z. B. Uptime Kuma, selbst gehostet) einfach den Statuscode überwachen: HTTP-Monitor, Intervall 5 min, Header `Authorization: Bearer …`. Die Zeitstempel schreiben `backup` und `cron` in das Volume `ops_status`, die App liest es nur.
@@ -222,11 +223,7 @@ Gesendet werden ausschließlich: Route-**Muster** (z. B. `/portal/[token]`, nie 
 
 ### 4.4 Logs
 - Eigener Code loggt über `src/lib/log.ts` (eine JSON-Zeile je Ereignis, sensible Felder werden geschwärzt). **Keine Gesundheitsdaten in Logs.**
-- Docker-Logs begrenzen, sonst laufen sie voll – `/etc/docker/daemon.json`:
-  ```json
-  { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
-  ```
-  danach `systemctl restart docker`.
+- **Aufbewahrung der Container-Logs: höchstens 7 Tage.** Das steht so in den Datenschutzhinweisen der Praxis-Websites und Buchungsseiten. `deploy/docker-compose.yml` begrenzt die Größe je Container (`x-logging`: 20 MB, keine Altdateien); `deploy/log-retention.sh` richtet `/etc/logrotate.d/podohero-docker` ein (täglich rotieren, 6 alte Tage, `maxage 7`). `install.sh`, `install-subdomain.sh` und `update.sh` rufen es automatisch auf; `logrotate` muss installiert sein (Ubuntu/Debian: Standard). Nicht länger aufbewahren – sonst die Datenschutzhinweise anpassen.
 - Zugriffslogs eines vorgeschalteten Webservers für `/portal/*` und `/anamnese/*` redigieren oder abschalten (Token im Pfad beim ersten Aufruf). Der mitgelieferte Caddy schreibt standardmäßig keine Zugriffslogs.
 
 ---
@@ -295,7 +292,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 ## 8. Fachliche Dienste
 
 ### Erinnerungen, Rückholung, KIM (Cron)
-- Endpunkte: `POST /api/cron/reminders`, `POST /api/cron/kim` und täglich `POST /api/cron/aufbewahrung` (löscht unbestätigte Online-Terminanfragen ohne zugeordnete Person nach 6 Monaten), jeweils mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
+- Endpunkte: `POST /api/cron/reminders`, `POST /api/cron/kim` und täglich `POST /api/cron/aufbewahrung` (löscht nicht in eine Akte übernommene Online-Terminanfragen aus /buchen 6 Monate nach Eingang: nur mit Kennzeichen `online-request:` – also erst Anfragen ab Einführung dieser Regel –, nur Status geplant/abgesagt, ohne Person, ohne Doku/Rechnungsposition, samt zugehöriger Posteingangsnachricht; Audit `retention.online_requests` je Praxis), jeweils mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
 - Docker: Der Container `cron` ruft beide alle 15 Minuten **intern** über `http://app:3000` auf und schreibt nach jedem erfolgreichen Lauf einen Zeitstempel (für `/api/health/deep`). `install.sh`/`install-subdomain.sh` erzeugen `CRON_SECRET` (auch bei bestehenden Installationen).
 - Einschalten je Praxis unter **Einstellungen → Erinnerungen**: 24-h-Terminerinnerung, Rückholung (überfällig, max. alle 30 Tage), Spangen-Erinnerung. Standard: alles aus.
 - Versand nur mit Einwilligung des Kanals (`email_reminders`/`sms_reminders`/`whatsapp`), Texte ohne medizinische Angaben. Jede Erinnerung wird über `reminder_log` höchstens einmal versendet; Fehler werden protokolliert und nicht automatisch wiederholt.

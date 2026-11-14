@@ -206,6 +206,8 @@ main() {
 
   # ── 5. Starten ────────────────────────────────────────────────────────────
   say "5/6 Container neu starten (migrate spielt neue Migrationen ein)"
+  # Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites); idempotent, Fehler nicht fatal
+  if [ -f deploy/log-retention.sh ]; then run bash deploy/log-retention.sh || warn "Log-Aufbewahrung (logrotate) nicht eingerichtet."; fi
   if [ "$PODO_MODE" = subdomain ]; then
     # falls jemals versehentlich gestartet: eigener Caddy würde 80/443 des vorhandenen Webservers blockieren
     run "${COMPOSE[@]}" rm -sf caddy

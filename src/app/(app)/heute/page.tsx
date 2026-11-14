@@ -20,6 +20,8 @@ import { listAppointments } from "@/server/appointments";
 import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
+import { BookingImprintNotice } from "@/components/booking-imprint-notice";
+import { bookingBlockedByImprint } from "@/server/portal-booking";
 import { todaySections } from "@/lib/view-level";
 import { currentViewLevel } from "@/server/view-level";
 
@@ -62,6 +64,8 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const active = appts.filter((r) => r.a.status !== "cancelled");
   const overlaps = feedOverlapIds(appts);
   const feedErrors = auth.can("integrations.manage") ? await failingCalendarFeeds(org) : [];
+  // Online-Buchung eingeschaltet, aber wegen fehlender Impressumsangaben gesperrt (nur wer es beheben darf)
+  const imprintMissing = auth.can("settings.manage") ? await bookingBlockedByImprint(org) : null;
   const homeVisits = active.filter((r) => r.a.homeVisit).length;
   const holiday = holidayOn(today, auth.organization.state as StateCode);
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
@@ -98,6 +102,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       {isGkvArea(hiddenArea) && !feature(auth.organization, hiddenArea) ? <HiddenAreaNotice area={hiddenArea} settingsLink={auth.can("settings.manage")} /> : null}
       <div className="max-md:order-5"><OnboardingCard auth={auth} /></div>
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
+      {imprintMissing ? <div className="mb-6"><BookingImprintNotice missing={imprintMissing} /></div> : null}
 
       {show.stats ? (
         <section aria-label="Kennzahlen" className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4 max-md:order-3">

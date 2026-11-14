@@ -20,6 +20,7 @@ import { DocumentsForm } from "./documents-form";
 import { DunningForm } from "./dunning-form";
 import { ImprintForm } from "./imprint-form";
 import { ImprintWarning } from "./imprint-warning";
+import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { LogoUpload } from "./logo-upload";
 
 const LOGO_HINT = {
@@ -52,6 +53,7 @@ export default async function PracticeSettings() {
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
       <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
+      <OnlineRequestRetentionNote className="mt-3" />
     </Card>
     <Card>
       <ActionForm action={savePracticeAction} stickyActions>

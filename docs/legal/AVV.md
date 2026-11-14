@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.2 · Stand 13.11.2026
+> Version 0.3 · Stand 14.11.2026
 
 zwischen der Praxis des Kunden (nachfolgend **„Verantwortlicher“**)
 
@@ -28,6 +28,7 @@ und Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener 
 1. Der Auftragsverarbeiter verarbeitet die Daten nur auf **dokumentierte Weisung** des Verantwortlichen, auch in Bezug auf Übermittlungen in Drittländer, sofern er nicht gesetzlich zu einer anderen Verarbeitung verpflichtet ist (Art. 28 Abs. 3 lit. a DSGVO). In diesem Fall teilt er dem Verantwortlichen die rechtlichen Anforderungen vor der Verarbeitung mit, sofern das Recht dies nicht verbietet.
 2. Weisungen erteilt der Verantwortliche grundsätzlich durch die Nutzung und Konfiguration der Software (z. B. Aktivieren einer Schnittstelle, Datenexport, Löschantrag) sowie in Textform an [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com).
 3. Hält der Auftragsverarbeiter eine Weisung für rechtswidrig, informiert er den Verantwortlichen unverzüglich (Art. 28 Abs. 3 UAbs. 2 DSGVO) und darf die Ausführung bis zur Bestätigung aussetzen.
+4. Als Standardweisung gilt: Online-Terminanfragen, die der Verantwortliche nicht innerhalb von 6 Monaten nach Eingang einer Patientenakte zuordnet und auf die sich keine Behandlungsdokumentation oder Rechnung bezieht, löscht der Auftragsverarbeiter automatisch einschließlich der zugehörigen Posteingangsnachricht. Der Verantwortliche kann eine abweichende Weisung in Textform erteilen.
 
 ## § 4 Vertraulichkeit und Berufsgeheimnis (§ 203 StGB)
 

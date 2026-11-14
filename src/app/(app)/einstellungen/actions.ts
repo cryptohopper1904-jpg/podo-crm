@@ -23,7 +23,7 @@ import { codeTaken } from "@/server/products";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
-import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, PROFESSIONS } from "@/lib/imprint";
+import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, isKnownLegalForm, isKnownProfession, requiresRegister } from "@/lib/imprint";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -41,17 +41,20 @@ export async function savePracticeAction(_: SettingsState, form: FormData): Prom
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message };
   const { smallBusiness, materialCost, ...rest } = d.data;
-  const [org] = await db.select().from(organizations).where(eq(organizations.id, auth.organization.id));
+  // settings atomar zusammenführen (||), statt gelesene Einstellungen zurückzuschreiben – sonst überschreibt ein
+  // gleichzeitiges Speichern (z. B. Impressum, Fahrten) die Änderung des anderen (AppSec)
   await db
     .update(organizations)
     .set({
       ...rest,
       smallBusiness: smallBusiness === "on",
-      settings: { ...org.settings, materialCostCents: parseMoney(materialCost ?? "") ?? 350 },
+      settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ materialCostCents: parseMoney(materialCost ?? "") ?? 350 })}::jsonb`,
     })
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.practice" });
-  revalidatePath("/einstellungen/praxis");
+  // Anschrift/Kontakt gehören zum Impressum → Hinweis „Online-Buchung gesperrt“ (Einstellungen, Heute) neu prüfen
+  revalidatePath("/einstellungen", "layout");
+  revalidatePath("/heute");
   return { ok: "Gespeichert." };
 }
 
@@ -66,17 +69,31 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
       professionState: z.string().trim().max(120).optional(),
       regulations: z.string().trim().max(500, "Berufsrechtliche Regelungen: höchstens 500 Zeichen.").optional(),
       authority: z.string().trim().max(500, "Aufsichtsbehörde: höchstens 500 Zeichen.").optional(),
+      legalForm: z.string().trim().max(60).optional().refine((v) => !v || isKnownLegalForm(v), "Bitte eine Rechtsform aus der Liste wählen."),
+      registerCourt: z.string().trim().max(120, "Registergericht ist zu lang.").optional(),
+      registerNumber: z.string().trim().max(60, "Registernummer ist zu lang.").optional(),
+      economicId: z.string().trim().max(40, "Wirtschafts-ID ist zu lang.").optional(),
+      dpo: z.string().trim().max(500, "Datenschutzbeauftragte:r: höchstens 500 Zeichen.").optional(),
     })
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message };
   const v = d.data;
-  const profession = (PROFESSIONS as readonly string[]).includes(v.professionChoice ?? "") ? v.professionChoice! : v.professionChoice ? (v.professionOther ?? "") : "";
+  const known = isKnownProfession(v.professionChoice ?? "");
+  const profession = known ? v.professionChoice! : v.professionChoice ? (v.professionOther ?? "") : "";
+  const legalForm = v.legalForm ?? "";
+  const registered = requiresRegister(legalForm);
   const imprint = {
     owner: v.owner,
     profession,
     professionState: v.professionState || DEFAULT_PROFESSION_STATE,
-    regulations: v.regulations || DEFAULT_REGULATIONS,
+    // PodG-Standardtext nur für „Podologin/Podologe“; bei Freitext nur eigene Angaben der Praxis
+    regulations: known ? v.regulations || DEFAULT_REGULATIONS : v.regulations === DEFAULT_REGULATIONS ? "" : (v.regulations ?? ""),
     authority: v.authority ?? "",
+    legalForm,
+    registerCourt: registered ? (v.registerCourt ?? "") : "",
+    registerNumber: registered ? (v.registerNumber ?? "") : "",
+    economicId: v.economicId ?? "",
+    dpo: v.dpo ?? "",
   };
   // settings atomar zusammenführen (andere Schlüssel bleiben unverändert)
   await db
@@ -84,9 +101,10 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
     .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint })}::jsonb` })
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.imprint" });
-  revalidatePath("/einstellungen/praxis");
-  revalidatePath("/einstellungen/website");
-  return { ok: imprint.owner && imprint.profession ? "Gespeichert." : "Gespeichert. Es fehlen noch Pflichtangaben – die Online-Buchung bleibt gesperrt." };
+  revalidatePath("/einstellungen", "layout");
+  revalidatePath("/heute");
+  const incomplete = !imprint.owner || !imprint.profession || (registered && (!imprint.registerCourt || !imprint.registerNumber));
+  return { ok: incomplete ? "Gespeichert. Es fehlen noch Pflichtangaben – die Online-Buchung bleibt gesperrt." : "Gespeichert." };
 }
 
 /**

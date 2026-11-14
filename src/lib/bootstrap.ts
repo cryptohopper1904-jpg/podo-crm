@@ -355,6 +355,23 @@ async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<Boot
       }
       orgId = existing.id;
       result = "exists";
+      // Ältere Demo ohne Impressums-Pflichtangaben: sonst ist ihre Online-Buchung gesperrt (src/lib/imprint.ts).
+      // Nur fehlende Angaben ergänzen (erfundene Demo-Daten); vorhandene Werte bleiben unverändert.
+      const filled = await tx
+        .update(schema.organizations)
+        .set({
+          settings: sql`coalesce(${schema.organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint: DEMO_IMPRINT })}::jsonb`,
+          street: sql`coalesce(${schema.organizations.street}, ${DEMO_PRACTICE_FIELDS.street})`,
+          zip: sql`coalesce(${schema.organizations.zip}, ${DEMO_PRACTICE_FIELDS.zip})`,
+          city: sql`coalesce(${schema.organizations.city}, ${DEMO_PRACTICE_FIELDS.city})`,
+          phone: sql`coalesce(${schema.organizations.phone}, ${DEMO_PRACTICE_FIELDS.phone})`,
+          email: sql`coalesce(${schema.organizations.email}, ${DEMO_PRACTICE_FIELDS.email})`,
+        })
+        .where(and(eq(schema.organizations.id, orgId), sql`${schema.organizations.settings}->'imprint' is null`))
+        .returning({ id: schema.organizations.id });
+      if (filled.length) {
+        await tx.insert(schema.auditLog).values({ organizationId: orgId, userId: admin.id, action: "bootstrap.demo_imprint", entity: "organization", entityId: orgId, meta: {} });
+      }
     } else {
       const [org] = await tx
         .insert(schema.organizations)

@@ -9,7 +9,7 @@ import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availabi
 import { berlinDateIso, berlinToUtc, dateDe, timeDe } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { practiceHours } from "@/lib/opening-hours";
-import { missingImprintFields } from "@/lib/imprint";
+import { missingImprintFields, type ImprintField } from "@/lib/imprint";
 import { assertEntitled, EntitlementError, entitlements } from "@/lib/plans";
 import { canCancelOnline, type PortalLink } from "@/lib/portal";
 import {
@@ -506,4 +506,15 @@ export async function checkPublicSlot(organizationId: string, serviceId: string,
 export async function publicBookingAvailable(organizationId: string, now = new Date()): Promise<boolean> {
   const o = await loadOrg(organizationId);
   return !!o && !publicBookingBlocked(o, now);
+}
+
+/**
+ * Hinweis in der App (Heute, Einstellungen): Online-Buchung eingeschaltet, aber wegen fehlender Impressumsangaben
+ * gesperrt → fehlende Felder; sonst null (ausgeschaltet oder vollständig).
+ */
+export async function bookingBlockedByImprint(organizationId: string): Promise<ImprintField[] | null> {
+  const o = await loadOrg(organizationId);
+  if (!o || !parseOnlineBookingSettings(o.settings).enabled) return null;
+  const missing = missingImprintFields(o, o.settings);
+  return missing.length ? missing : null;
 }

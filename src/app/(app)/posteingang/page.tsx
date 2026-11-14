@@ -10,6 +10,8 @@ import { isMockMode } from "@/integrations/registry";
 import { mapSequential } from "@/lib/seq";
 import type { PatientSuggestion } from "@/lib/kim-hints";
 import { kimPatientSuggestions, loadKimConnection } from "@/server/kim";
+import { ONLINE_REQUEST_PREFIX } from "@/server/online-request-retention";
+import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction, syncKimAction } from "./actions";
 
 export const metadata = { title: "Posteingang" };
@@ -38,6 +40,8 @@ function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: 
       </div>
       {m.subject ? <p className="font-semibold">{m.subject}</p> : null}
       <p className="whitespace-pre-wrap text-[15px]">{m.body}</p>
+      {/* nur gekennzeichnete /buchen-Anfragen ohne Akte werden nach 6 Monaten gelöscht (src/server/online-request-retention.ts) */}
+      {!patient && m.direction === "inbound" && m.threadKey?.startsWith(ONLINE_REQUEST_PREFIX) ? <OnlineRequestRetentionNote className="mt-3" /> : null}
 
       {open && canWrite ? (
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">

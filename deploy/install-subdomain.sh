@@ -98,6 +98,8 @@ services:
     container_name: podo-app
     ports: ["$BIND:$PORT:3000"]
 YML
+# Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites)
+bash "$APP_DIR/deploy/log-retention.sh"
 COMPOSE=(docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.subdomain.yml --env-file "$ENV")
 "${COMPOSE[@]}" rm -sf caddy >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up -d --build db migrate app backup cron

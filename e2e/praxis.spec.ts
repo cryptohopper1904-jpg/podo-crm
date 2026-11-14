@@ -244,6 +244,13 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
     await expect(pub.getByRole("heading", { level: 1, name: heading })).toBeVisible();
   }
   await ctx.close();
+  // Praxis: Hinweis zur automatischen Löschung nach 6 Monaten an der neuen Anfrage und bei der Online-Buchung
+  const retention = /werden 6 Monate nach Eingang automatisch gelöscht/;
+  await page.goto("/posteingang");
+  await expect(page.getByText(retention).first()).toBeVisible();
+  await page.goto("/einstellungen/praxis");
+  await expect(page.getByText(retention)).toBeVisible();
+  await expect(page.getByText("Online-Buchung gesperrt: Impressumsangaben fehlen")).toHaveCount(0);
 });
 
 test("Patientenportal: Link erzeugen, Termin buchen und verschieben", async ({ browser }) => {

@@ -1,14 +1,19 @@
+import { SOLE_PROPRIETOR } from "@/lib/imprint";
 import type { PracticeLegal } from "@/server/website";
 
 type Legal = Omit<PracticeLegal, "websitePublished" | "slug">;
 
+/** Aufbewahrung der Server-Protokolle (Container-Logs, deploy/log-retention.sh) – bei Änderung dort mitziehen */
+export const SERVER_LOG_RETENTION_DAYS = 7;
+
 /**
  * Impressum (§ 5 DDG): Stammdaten aus Einstellungen → Praxis inkl. strukturierter Pflichtangaben (src/lib/imprint.ts),
  * danach optional der Freitext der Praxis (Einstellungen → Website). Kein Platzhaltertext: Fehlen Pflichtangaben,
- * ist die Online-Buchung gesperrt und die Einstellungen warnen.
+ * ist die Online-Buchung gesperrt und die App warnt. Keine Steuernummer (nicht vorgeschrieben, nur USt-IdNr./W-IdNr.).
  */
 export function ImprintContent({ site }: { site: Legal }) {
   const i = site.imprintInfo;
+  const sole = i.legalForm === SOLE_PROPRIETOR;
   return (
     <article className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <h1 className="font-display text-3xl font-semibold">Impressum</h1>
@@ -17,18 +22,28 @@ export function ImprintContent({ site }: { site: Legal }) {
         {site.legalName ?? site.name}<br />
         {site.street ? <>{site.street}<br />{site.zip} {site.city}<br /></> : null}
       </p>
-      {i.owner ? <p className="mt-2 leading-relaxed">Vertretungsberechtigte Person: {i.owner}</p> : null}
+      {i.legalForm && !sole ? <p className="mt-2 leading-relaxed">Rechtsform: {i.legalForm}</p> : null}
+      {i.owner ? <p className="mt-2 leading-relaxed">{sole ? "Inhaberin/Inhaber" : "Vertretungsberechtigte Person"}: {i.owner}</p> : null}
       <h2 className="mt-6 font-semibold">Kontakt</h2>
       <p className="mt-2 leading-relaxed">
         {site.phone ? <>Telefon: {site.phone}<br /></> : null}
         {site.email ? <>E-Mail: {site.email}</> : null}
       </p>
+      {i.registerCourt || i.registerNumber ? (
+        <>
+          <h2 className="mt-6 font-semibold">Registereintrag</h2>
+          <p className="mt-2 leading-relaxed">
+            {i.registerCourt ? <>Registergericht: {i.registerCourt}<br /></> : null}
+            {i.registerNumber ? <>Registernummer: {i.registerNumber}</> : null}
+          </p>
+        </>
+      ) : null}
       {i.profession ? (
         <>
           <h2 className="mt-6 font-semibold">Berufsbezeichnung und berufsrechtliche Regelungen</h2>
           <p className="mt-2 leading-relaxed">
-            Berufsbezeichnung: {i.profession} (verliehen in {i.professionState})<br />
-            Berufsrechtliche Regelungen: {i.regulations}
+            Berufsbezeichnung: {i.profession} (verliehen in {i.professionState})
+            {i.regulations ? <><br />Berufsrechtliche Regelungen: {i.regulations}</> : null}
           </p>
         </>
       ) : null}
@@ -38,10 +53,19 @@ export function ImprintContent({ site }: { site: Legal }) {
           <p className="mt-2 whitespace-pre-line leading-relaxed">{i.authority}</p>
         </>
       ) : null}
-      {site.vatId || site.taxNumber ? (
+      {site.vatId || i.economicId ? (
         <>
           <h2 className="mt-6 font-semibold">Steuerangaben</h2>
-          <p className="mt-2">{site.vatId ? `USt-IdNr.: ${site.vatId}` : `Steuernummer: ${site.taxNumber}`}</p>
+          <p className="mt-2 leading-relaxed">
+            {site.vatId ? <>Umsatzsteuer-Identifikationsnummer: {site.vatId}{i.economicId ? <br /> : null}</> : null}
+            {i.economicId ? <>Wirtschafts-Identifikationsnummer: {i.economicId}</> : null}
+          </p>
+        </>
+      ) : null}
+      {i.dpo ? (
+        <>
+          <h2 className="mt-6 font-semibold">Datenschutzbeauftragte:r</h2>
+          <p className="mt-2 whitespace-pre-line leading-relaxed">{i.dpo}</p>
         </>
       ) : null}
       {site.imprint ? <p className="mt-6 whitespace-pre-line leading-relaxed">{site.imprint}</p> : null}
@@ -50,15 +74,18 @@ export function ImprintContent({ site }: { site: Legal }) {
 }
 
 /**
- * Pflichtinformationen zur Online-Terminanfrage (Art. 13 DSGVO), aus den Stammdaten erzeugt – stehen immer VOR dem
- * Freitext der Praxis. Speicherdauer „6 Monate“: src/server/online-request-retention.ts (täglicher Lauf).
+ * Pflichtinformationen zur Online-Terminanfrage (Art. 13 DSGVO), aus den Stammdaten erzeugt – stehen VOR dem
+ * Freitext der Praxis, nur solange die Online-Buchung erreichbar ist. Speicherdauer „6 Monate nach Eingang“:
+ * src/server/online-request-retention.ts (täglicher Lauf); Datensicherungen: 30 Tage (deploy/backup.sh).
  */
 export function BookingPrivacyBlock({ site }: { site: Legal }) {
   const controller = [site.legalName ?? site.name, site.street, [site.zip, site.city].filter(Boolean).join(" "), site.email, site.phone].filter(Boolean).join(", ");
+  const dpo = site.imprintInfo.dpo;
   return (
     <section className="mt-6 leading-relaxed">
       <h2 className="font-display text-xl font-semibold">Online-Terminanfrage</h2>
       <p className="mt-3">Verantwortlich für die Verarbeitung Ihrer Terminanfrage ist {controller}.</p>
+      {dpo ? <p className="mt-3 whitespace-pre-line"><strong>Datenschutzbeauftragte:r:</strong> {dpo}</p> : null}
       <p className="mt-3">
         <strong>Zweck und Rechtsgrundlage:</strong> Wir verarbeiten Ihren Namen, Ihre Mobilnummer, optional Ihre E-Mail-Adresse und Ihre Nachricht,
         um Ihre Terminanfrage zu bearbeiten und Sie zur Bestätigung zu kontaktieren (Art. 6 Abs. 1 lit. b DSGVO; soweit sich aus der Anfrage
@@ -66,11 +93,13 @@ export function BookingPrivacyBlock({ site }: { site: Legal }) {
       </p>
       <p className="mt-3">
         <strong>Empfänger:</strong> Die Praxis nutzt die Praxissoftware PodoHero als Auftragsverarbeiter nach Art. 28 DSGVO; die Daten werden auf
-        Servern in Deutschland gespeichert. Eine Übermittlung in Drittländer findet nicht statt.
+        Servern in Deutschland gespeichert. Eine Übermittlung in Drittländer findet nicht statt, sofern die Praxis keine KI-Antwortvorschläge mit
+        einem Anbieter außerhalb der EU nutzt.
       </p>
       <p className="mt-3">
-        <strong>Speicherdauer:</strong> Kommt kein Termin zustande, wird die Anfrage spätestens nach 6 Monaten gelöscht; findet eine Behandlung statt,
-        gelten die gesetzlichen Aufbewahrungsfristen (10 Jahre, § 630f Abs. 3 BGB).
+        <strong>Speicherdauer:</strong> Wird Ihre Anfrage nicht in eine Patientenakte übernommen – etwa weil kein Termin zustande kommt –, löschen wir
+        sie 6 Monate nach Eingang automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben. Kommt es zur
+        Behandlung, gelten die gesetzlichen Aufbewahrungsfristen (10 Jahre nach § 630f Abs. 3 BGB).
       </p>
       <p className="mt-3">
         <strong>Ihre Rechte:</strong> Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit, Widerspruch (Art. 15–21 DSGVO) sowie
@@ -96,8 +125,11 @@ export function PrivacyContent({ site }: { site: Legal }) {
           notwendige Verbindungsdaten (z. B. IP-Adresse, Zeitpunkt), um die Seite auszuliefern und vor Missbrauch zu schützen. Eine gewählte
           Hell-/Dunkel-Darstellung wird nur lokal in Ihrem Browser gespeichert.
         </p>
+        <p className="mt-2">
+          Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO (sicherer Betrieb der Website); die Protokolldaten werden nach {SERVER_LOG_RETENTION_DAYS} Tagen gelöscht.
+        </p>
       </section>
-      <BookingPrivacyBlock site={site} />
+      {site.onlineBooking ? <BookingPrivacyBlock site={site} /> : null}
       {site.privacy ? <div className="mt-6 whitespace-pre-line leading-relaxed">{site.privacy}</div> : null}
     </article>
   );

@@ -5,6 +5,7 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { isPrivateOnly } from "@/lib/features";
 import { imprintSettings, type ImprintSettings } from "@/lib/imprint";
+import { publicBookingAvailable } from "@/server/portal-booking";
 import { defaultServiceDescription, homeVisitAreas, safeUrl, websiteOpeningHours, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
 /**
@@ -20,7 +21,6 @@ export type PublicSite = {
   city: string | null;
   phone: string | null;
   email: string | null;
-  taxNumber: string | null;
   vatId: string | null;
   websiteUrl: string | null;
   claim: string;
@@ -56,7 +56,6 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
       .orderBy(asc(services.name)),
   );
   const practitioner = settings.practitioner as { name?: unknown; qualification?: unknown } | undefined;
-  const booking = settings.onlineBooking as { enabled?: boolean } | undefined;
   return {
     slug: o.slug,
     name: o.name,
@@ -66,7 +65,6 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     city: o.city,
     phone: o.phone,
     email: o.email,
-    taxNumber: o.taxNumber,
     vatId: o.vatId,
     websiteUrl: safeUrl(settings.websiteUrl),
     claim: w.claim,
@@ -77,7 +75,9 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     imprintInfo: imprintSettings(settings),
     privacy: w.privacy,
     showPrices: w.showPrices,
-    onlineBooking: booking?.enabled !== false,
+    // „Termin online buchen“ nur, wenn /buchen wirklich erreichbar ist (eingeschaltet, Impressum vollständig, kein
+    // Nur-Lesen/Löschantrag) – gleiche Regel wie Buchungsseite und Datenschutzblock (src/server/portal-booking.ts)
+    onlineBooking: await publicBookingAvailable(o.id),
     privateOnly: isPrivateOnly(o),
     openingHours: websiteOpeningHours(settings),
     homeVisitAreas: homeVisitAreas(settings),
@@ -93,7 +93,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
 });
 
 /** Angaben für Impressum und Datenschutzhinweise einer Praxis (Website /p und Online-Buchung /buchen) */
-export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "taxNumber" | "vatId" | "imprint" | "imprintInfo" | "privacy"> & {
+export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "vatId" | "imprint" | "imprintInfo" | "privacy" | "onlineBooking"> & {
   /** Praxis-Website veröffentlicht → Impressum/Datenschutz unter /p/<slug>/…, sonst Ersatzseiten unter /buchen/<slug>/… */
   websitePublished: boolean;
 };
@@ -116,11 +116,11 @@ export const loadPracticeLegal = cache(async (slug: string): Promise<PracticeLeg
     city: o.city,
     phone: o.phone,
     email: o.email,
-    taxNumber: o.taxNumber,
     vatId: o.vatId,
     imprint: w.imprint,
     imprintInfo: imprintSettings(o.settings ?? {}),
     privacy: w.privacy,
+    onlineBooking: await publicBookingAvailable(o.id),
     websitePublished: websitePublished(o),
   };
 });

@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
@@ -7,7 +8,7 @@ import { appointmentServices, appointments, messages, organizations } from "@/db
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
-import { ONLINE_REQUEST_SUBJECT } from "@/server/online-request-retention";
+import { ONLINE_REQUEST_SUBJECT, onlineRequestKey } from "@/server/online-request-retention";
 import { checkPublicSlot, publicBookingAvailable, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
@@ -64,9 +65,13 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
     // Sicherheit: Eine öffentliche Anfrage wird NIE automatisch an eine bestehende Akte gehängt
     // (sonst könnte jemand mit Name + Telefonnummer fremde Akten verändern). Die Praxis ordnet im Posteingang zu.
     const initials = `${d.firstName} ${d.lastName.slice(0, 1)}.`;
+    // Kennzeichen „online-request:<id>“ an Termin (external_id) und Nachricht (thread_key): nur so markierte Anfragen
+    // löscht die Aufbewahrung nach 6 Monaten (src/server/online-request-retention.ts), samt genau dieser Nachricht
+    const id = randomUUID();
+    const key = onlineRequestKey(id);
     const [a] = await tx
       .insert(appointments)
-      .values({ organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Patient im Posteingang zuordnen und Termin bestätigen." })
+      .values({ id, organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", externalId: key, title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Patient im Posteingang zuordnen und Termin bestätigen." })
       .returning({ id: appointments.id });
     await tx.insert(appointmentServices).values({ organizationId: org.id, appointmentId: a.id, serviceId: svc.id });
     await tx.insert(messages).values({
@@ -76,6 +81,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
       direction: "inbound",
       fromAddress: d.email || d.phone,
       subject: ONLINE_REQUEST_SUBJECT,
+      threadKey: key,
       body: [
         `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
         `Name: ${d.firstName} ${d.lastName}`,
