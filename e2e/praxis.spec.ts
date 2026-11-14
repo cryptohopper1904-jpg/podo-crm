@@ -1,12 +1,12 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
  * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → Zahlung erfassen (Zahlungsbeleg) → öffentliche Buchung →
- * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
+ * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abo kündigen/zurücknehmen → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp, withDemoOrg } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp, setDemoBilling, withDemoOrg } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -370,6 +370,46 @@ test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () 
   await expect(page.getByText("Im Kassenbuch erfasst.")).toBeVisible();
   await page.getByRole("link", { name: /DSFinV-K-Export/ }).click();
   await expect(page).toHaveURL(/\/kasse\/export/);
+});
+
+test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {
+  await page.goto("/einstellungen/daten");
+  await expect(page.getByText(/Der Löschantrag gilt\s+zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums/)).toBeVisible();
+  await expect(page.getByText(/Ist\s+das Abo bereits beendet, kannst du bis zur Löschung lesen und exportieren\. Ohne Löschantrag bleibt die Praxis nach Vertragsende im\s+Nur-Lesen-Modus, bis du wieder einen Tarif wählst – höchstens 12 Monate\./)).toBeVisible();
+  // Buchhaltung E2/E6: Kassenabmeldung und Inhalt des Exports
+  await expect(page.getByTestId("kassenabmeldung")).toContainText("§ 146a Abs. 4 AO");
+  await expect(page.getByTestId("kassenabmeldung")).toContainText("war die Kasse noch nicht gemeldet, melde Anschaffung und Außerbetriebnahme zusammen");
+  await expect(page.getByTestId("export-belege")).toContainText("Original-PDF mit Prüfsumme");
+  const restore = await setDemoBilling({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toBeVisible();
+    // laufendes (Pseudo-)Abo: Kostenlos-Wechsel verweist auf „Abo kündigen“
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen („Abo kündigen“ auf dieser Seite).", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kostenlos weiter nutzen" })).toBeDisabled();
+    await page.getByRole("button", { name: "Abo kündigen …" }).click();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    // Bestätigung ist Pflicht (required) – erst mit Haken wird gekündigt
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+    await page.getByLabel(/Ich kündige das Abo zum/).check();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    await expect(page.getByTestId("abo-gekuendigt")).toContainText("gekündigt");
+    await page.getByRole("button", { name: "Kündigung zurücknehmen" }).click();
+    await expect(page.getByText("Die Kündigung ist zurückgenommen – dein Abo läuft weiter.").or(page.getByRole("button", { name: "Abo kündigen …" }))).toBeVisible();
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+  } finally {
+    await restore();
+  }
+  // Nebenwirkung der Pseudo-Abo-ID: Ist das Abo beendet, blockiert die verbliebene ID den Kostenlos-Wechsel nicht
+  const restoreEnded = await setDemoBilling({ plan: "praxis", subscriptionStatus: "canceled", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Kostenlos weiter nutzen" })).toBeVisible();
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen", { exact: false })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toHaveCount(0);
+  } finally {
+    await restoreEnded();
+  }
 });
 
 test("Abmelden", async () => {

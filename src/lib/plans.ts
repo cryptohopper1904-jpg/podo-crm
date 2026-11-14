@@ -4,7 +4,8 @@
  * PREISE VORLÄUFIG – Platzhalter, noch nicht kalkuliert/freigegeben. Alle Preise netto pro Monat.
  *
  * Nur-Lesen-Modus: Ist die Testphase abgelaufen oder das Abo gekündigt/überfällig (nach 14 Tagen Kulanz),
- * lehnt die App alle schreibenden Aktionen ab. LESEN UND EXPORTIEREN BLEIBEN IMMER MÖGLICH –
+ * lehnt die App alle schreibenden Aktionen ab. Nach Vertragsende höchstens 12 Monate, dann Löschung mit Ankündigung
+ * (src/lib/readonly-expiry.ts, AGB § 9 Nr. 2). LESEN UND EXPORTIEREN BLEIBEN IMMER MÖGLICH –
  * Patient:innen haben Anspruch auf Einsicht/Kopie (§ 630g BGB, Art. 15/20 DSGVO), die Praxis
  * auf ihre Aufbewahrungspflichten. Durchgesetzt in requireAuth()/getAuth() (src/lib/auth/session.ts).
  */
@@ -323,7 +324,7 @@ export function freeSwitchProblem(org: OrgBilling & { stripeSubscriptionId?: str
   // Testphase ohne Stripe-Abo (auch mit Aktionscode, der einen Tarif-Umfang gewährt: plan = starter|praxis|plus, „trialing“) zählt nicht als Abo
   const codeTrial = org.subscriptionStatus === "trialing" && !org.stripeSubscriptionId;
   if (!subscriptionEnded && !codeTrial && (org.stripeSubscriptionId || org.plan !== "trial")) {
-    return "Bitte zuerst das bezahlte Abo unter „Rechnungen & Zahlungsart“ kündigen. Danach kann die Praxis kostenlos weitergeführt werden.";
+    return "Bitte zuerst das bezahlte Abo kündigen („Abo kündigen“ auf dieser Seite). Nach dem Ende des Abrechnungszeitraums kann die Praxis kostenlos weitergeführt werden.";
   }
   if (patientCount > FREE_MAX_PATIENTS) {
     return `Der kostenlose Tarif erlaubt höchstens ${FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit) – in der Praxis sind ${patientCount}. Bitte einen bezahlten Tarif wählen; alle Daten bleiben lesbar und exportierbar.`;

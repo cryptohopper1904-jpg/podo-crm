@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.4 · Stand 13.11.2026
+> Version 0.5 · Stand 14.11.2026
 
 Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
@@ -48,7 +48,7 @@ Wenn Sie eine Praxis registrieren oder als Mitarbeitende/r ein Konto erhalten, v
 
 - **Zweck:** Bereitstellung des Dienstes, Vertragserfüllung, Datensicherheit
 - **Rechtsgrundlage:** Art. 6 Abs. 1 lit. b DSGVO (Vertrag), Art. 6 Abs. 1 lit. c und f DSGVO (Datensicherheit nach Art. 32 DSGVO)
-- **Speicherdauer:** für die Dauer des Vertrags; nach Kündigung Löschung nach 30 Tagen Karenzzeit (siehe [AGB](/agb) § 9). Rechnungen an die Praxis bewahren wir nach den steuerrechtlichen Fristen auf.
+- **Speicherdauer:** für die Dauer des Vertrags; danach höchstens 12 Monate im Nur-Lesen-Modus, auf Löschantrag nach 30 Tagen Karenzzeit (siehe [AGB](/agb) § 9). Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht. Rechnungen an die Praxis bewahren wir nach den steuerrechtlichen Fristen auf.
 
 ## 5. Abrechnung des Abonnements
 

@@ -176,7 +176,10 @@ export const organizations = pgTable("organizations", {
   /** Löschung beantragt (Kündigung): nach Frist + Aufbewahrungsprüfung endgültig */
   deletionRequestedAt: timestamp("deletion_requested_at", { withTimezone: true }),
   createdAt: createdAt(),
-});
+}, (t) => [
+  // Ein Stripe-Kunde gehört genau einer Praxis (Webhook-Zuordnung über die Kunden-ID, Migration 0053)
+  uniqueIndex("organizations_stripe_customer_id").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
+]);
 
 /**
  * Praxis-Logos (Einstellungen → Praxisdaten): „compact“ = Zeichen (dezent auf Bögen/Quittungen),

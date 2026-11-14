@@ -11,7 +11,7 @@ import {
   singleLine,
 } from "./online-request";
 import { aiReplyChannel, aiReplyDisclosure, aiReplySettings } from "./ai-replies";
-import { avvAcceptedAtLeast, avvReacceptance, RETENTION_MIN_AVV, versionAtLeast } from "./legal";
+import { AVV_READONLY_NOTE, avvAcceptedAtLeast, avvBannerNews, avvReacceptance, RETENTION_MIN_AVV, versionAtLeast } from "./legal";
 
 const body = [
   "Online-Anfrage: Nagelkorrekturspange am 2031-05-06 um 09:30 Uhr.",
@@ -110,7 +110,23 @@ describe("AVV-Zustimmung", () => {
   it("nachträgliche Zustimmung behält den AGB-Stand und die frühere Zustimmung", () => {
     const now = new Date("2026-11-14T10:00:00Z");
     const r = avvReacceptance({ agb: "0.3", avv: "0.2", version: "agb-0.3+avv-0.2", at: "2026-01-01T00:00:00Z", by: "a" }, "b", now);
-    expect(r).toEqual({ agb: "0.3", avv: "0.3", version: "agb-0.3+avv-0.3", at: now.toISOString(), by: "b", previous: { agb: "0.3", avv: "0.2", at: "2026-01-01T00:00:00Z", by: "a" } });
-    expect(avvReacceptance(null, "b", now)).toEqual({ agb: null, avv: "0.3", version: "agb-?+avv-0.3", at: now.toISOString(), by: "b" });
+    expect(r).toEqual({ agb: "0.3", avv: "0.4", version: "agb-0.3+avv-0.4", at: now.toISOString(), by: "b", previous: { agb: "0.3", avv: "0.2", at: "2026-01-01T00:00:00Z", by: "a" } });
+    expect(avvReacceptance(null, "b", now)).toEqual({ agb: null, avv: "0.4", version: "agb-?+avv-0.4", at: now.toISOString(), by: "b" });
+  });
+});
+
+describe("AVV-Banner: Neuerungen je bisheriger Version (Recht R-1)", () => {
+  it("Zustimmung 0.3: Hinweis auf Nur-Lesen-Modus und Löschung nach Vertragsende, ohne Online-Anfragen-Hinweis", () => {
+    expect(avvBannerNews("0.3")).toEqual({
+      retention: false,
+      readonly:
+        "Neu ist u. a.: Nach Vertragsende bleiben deine Daten höchstens 12 Monate im Nur-Lesen-Modus lesbar und exportierbar und werden nach Ankündigung (mindestens 30 Tage vorher) gelöscht (§ 10 Nr. 2).",
+    });
+  });
+  it("ältere Zustimmung: beide Hinweise; ab 0.4 keiner", () => {
+    expect(avvBannerNews("0.2")).toEqual({ retention: true, readonly: `Außerdem neu: ${AVV_READONLY_NOTE}` });
+    expect(avvBannerNews(null).retention).toBe(true);
+    expect(avvBannerNews("0.4")).toEqual({ retention: false, readonly: null });
+    expect(avvBannerNews("0.10")).toEqual({ retention: false, readonly: null });
   });
 });

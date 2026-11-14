@@ -6,10 +6,11 @@
 export type CheckStatus = "ok" | "warn" | "fail" | "skipped";
 export type CheckResult = { status: CheckStatus; hint?: string } & Record<string, string | number | boolean | null | undefined>;
 
-/** Grenzwerte: Backup täglich (+2 h Toleranz), Cron alle 15 min (3 verpasste Läufe), täglicher Cron (+2 h Toleranz). */
+/** Grenzwerte: Backup täglich (+2 h Toleranz), Cron alle 15 min (3 verpasste Läufe), 6-Stunden-Cron (+1 h), täglicher Cron (+2 h Toleranz). */
 export const MAX_AGE_SECONDS = {
   backup: 26 * 3600,
   cron: 45 * 60,
+  cron6h: 7 * 3600,
   dailyCron: 26 * 3600,
 } as const;
 
@@ -38,6 +39,21 @@ export function evaluateTimestamp(
   const lastAt = new Date(epochSeconds * 1000).toISOString();
   if (ageSeconds > maxAgeSeconds) return { status: "fail", hint: "zu alt", lastAt, ageMinutes: Math.round(ageSeconds / 60) };
   return { status: "ok", lastAt, ageMinutes: Math.round(ageSeconds / 60) };
+}
+
+/**
+ * Cron „Ende des Nur-Lesen-Modus“: abgeschaltet (READONLY_EXPIRY_ENABLED ≠ 1) → „deaktiviert“ statt warn/fail;
+ * eingeschaltet wie jeder 6-Stunden-Cron (fehlende Zeitstempel-Datei → warn, zu alt → fail).
+ */
+export function evaluateReadonlyExpiryCron(enabled: boolean, epochSeconds: number | null, nowMs = Date.now()): CheckResult {
+  if (!enabled) return { status: "skipped", hint: "deaktiviert (READONLY_EXPIRY_ENABLED nicht gesetzt)" };
+  return evaluateTimestamp(epochSeconds, MAX_AGE_SECONDS.cron6h, nowMs);
+}
+
+/** Überfällige Löschanträge (Frist + 14 Tage überschritten): 0 → ok, sonst warn – nur die Anzahl, keine IDs/Namen (Recht R-8). */
+export function evaluateOverdueDeletions(overdue: number): CheckResult {
+  if (overdue > 0) return { status: "warn", overdue, hint: "Löschanträge überfällig – Löschlauf ausführen (docs/BETRIEB.md Abschnitt 9)" };
+  return { status: "ok", overdue: 0 };
 }
 
 /** Liest „1731000000“ (ggf. mit Zeilenumbruch) aus einer Status-Datei. */

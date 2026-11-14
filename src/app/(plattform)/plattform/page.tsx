@@ -5,6 +5,8 @@ import { audit } from "@/lib/audit";
 import { listPractices, requirePlatformAdmin } from "@/server/platform";
 import { platformUsage } from "@/server/platform-stats";
 import { UsageDashboard } from "./usage-dashboard";
+import { ManualNoticeForm } from "./manual-notice-form";
+import { MANUAL_NOTICE_VIAS } from "@/lib/readonly-expiry";
 import { OpenDemoButton } from "@/components/org-switcher";
 import { loadSwitcherModel } from "@/server/org-switcher";
 import { ResetButton } from "./reset-button";
@@ -16,6 +18,15 @@ export const metadata = { title: "Plattform" };
 const ERR: Record<string, string> = {
   "keine-freigabe": "Für diese Praxis gibt es keine gültige Support-Freigabe. Ohne Freigabe der Praxis ist kein Zugriff möglich.",
   eingabe: "Eingaben ungültig.",
+};
+
+const MAIL_LABELS: Record<string, string> = {
+  sent: "versendet",
+  not_configured: "kein Plattform-SMTP",
+  failed: "Versand fehlgeschlagen",
+  no_recipient: "keine Inhaber:in",
+  unknown: "Lauf abgebrochen, Versand unklar",
+  none: "noch offen",
 };
 
 export default async function PlatformPage({ searchParams }: PageProps<"/plattform">) {
@@ -40,6 +51,70 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
         Support-Zugriff ist nur mit Freigabe der Praxis möglich.
       </p>
       {typeof fehler === "string" && ERR[fehler] ? <p role="alert" className="mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">{ERR[fehler]}</p> : null}
+      {practices.some((p) => p.readonlyExpiry?.needsManualNotice) ? (
+        <Card className="mt-6 border-2 border-danger" data-testid="ankuendigung-pflichtaktion" role="alert">
+          <h2 className="font-display text-xl font-semibold text-danger">Pflichtaktion: Löschankündigung nicht zugestellt</h2>
+          <p className="mt-1 text-sm">
+            Die E-Mail mit der Ankündigung der Löschung (Ende des Nur-Lesen-Modus, AGB § 9 Nr. 2) ist nicht zugestellt. Bis du die Ankündigung
+            selbst in Textform verschickt und hier vermerkt hast, wird die Praxis <strong>nicht</strong> gelöscht und kein Löschantrag gestellt. Die
+            Löschung erfolgt frühestens 30 Tage nach dem Zugang deiner Ankündigung.
+          </p>
+          <ul className="mt-3 flex flex-col gap-4 text-sm">
+            {practices.filter((p) => p.readonlyExpiry?.needsManualNotice).map((p) => (
+              <li key={p.id}>
+                <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: angekündigt am {dateDe(p.readonlyExpiry!.noticeSentAt)} ·{" "}
+                {MAIL_LABELS[p.readonlyExpiry!.noticeMail ?? "none"]} · Inhaber:innen: {p.owners.map((o) => o.email).join(", ") || "keine"}
+                <ManualNoticeForm organizationId={p.id} today={new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" })} />
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+      {practices.some((p) => p.billingProblem) ? (
+        <Card className="mt-6 border-danger/50" data-testid="abo-kuendigung-probleme">
+          <h2 className="font-display text-xl font-semibold">Abo-Kündigung prüfen</h2>
+          <p className="mt-1 text-sm text-muted">
+            Löschantrag gestellt (gilt als Kündigung, AGB § 8 Nr. 3), aber das Stripe-Abo ist nicht gekündigt: im Stripe-Dashboard zum Periodenende
+            kündigen bzw. die Praxis kontaktieren – der Löschlauf beendet ein noch laufendes Abo sonst sofort. Rücknahme fehlgeschlagen: Die Praxis
+            will weitermachen, ihr Abo endet aber zum Periodenende – Kündigung im Stripe-Dashboard zurücknehmen. Löschlauf begonnen: Abo/Kunde
+            bei Stripe sind ggf. schon beendet – Löschlauf wiederholen oder (Antrag zurückgenommen, Tarif gebucht) mit der Praxis klären.
+          </p>
+          <ul className="mt-3 list-disc pl-5 text-sm">
+            {practices.filter((p) => p.billingProblem).map((p) => (
+              <li key={p.id}>
+                <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: {p.billingProblem}
+                {p.deletionRequestedAt ? ` (Löschantrag vom ${dateDe(p.deletionRequestedAt)})` : ""}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+      {practices.some((p) => p.readonlyExpiry) ? (
+        <Card className="mt-6" data-testid="nur-lesen-ablauf">
+          <h2 className="font-display text-xl font-semibold">Ende des Nur-Lesen-Modus (automatische Löschung)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Praxen, deren Löschung nach 12 Monaten Nur-Lesen-Modus angekündigt ist (AGB § 9 Nr. 2). Gelöscht wird nur durch den Löschlauf; bucht die
+            Praxis vorher einen Tarif, entfällt die Löschung. Ist die E-Mail nicht versendet, bitte selbst in Textform ankündigen und oben vermerken
+            (Pflichtaktion) – ohne zugestellte Ankündigung wird nicht gelöscht.
+          </p>
+          <ul className="mt-3 list-disc pl-5 text-sm">
+            {practices.filter((p) => p.readonlyExpiry).map((p) => {
+              const x = p.readonlyExpiry!;
+              const mailOk = x.noticeMail === "sent";
+              return (
+                <li key={p.id}>
+                  <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: Löschung ab {dateDe(x.deletionAt)}
+                  {x.auto ? " (Löschantrag gestellt)" : ""}
+                  {x.noticeSentAt ? ` · angekündigt am ${dateDe(x.noticeSentAt)}` : ""} ·{" "}
+                  <span className={mailOk || x.manualNoticeAt ? "" : "font-semibold text-danger"}>{mailOk ? "E-Mail versendet" : `E-Mail nicht versendet (${MAIL_LABELS[x.noticeMail ?? "none"]})`}</span>
+                  {x.manualNoticeAt ? ` · von Hand angekündigt (${x.manualNoticeVia ? MANUAL_NOTICE_VIAS[x.manualNoticeVia] : "Textform"}), zugegangen am ${dateDe(x.manualNoticeAt)}` : ""}
+                  {x.reminderMail ? ` · Erinnerung: ${x.reminderMail === "sent" ? "versendet" : MAIL_LABELS[x.reminderMail]}` : ""}
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      ) : null}
       <UsageDashboard usage={usage} />
       <h2 className="mt-10 font-display text-2xl font-semibold">Praxen verwalten</h2>
       <Card className="mt-4 p-0">

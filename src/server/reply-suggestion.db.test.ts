@@ -287,13 +287,13 @@ const AI_ON = { enabled: true, provider: "Beispiel-KI", country: "Frankreich", a
     authState.support = { id: "s" };
     expect((await settings.acceptAvvAction(undefined, fd({})))?.error).toMatch(/Inhaberin bzw. der Inhaber/);
     authState.support = null;
-    expect((await settings.acceptAvvAction(undefined, fd({})))?.ok).toBe("AVV Version 0.3 akzeptiert.");
+    expect((await settings.acceptAvvAction(undefined, fd({})))?.ok).toBe("AVV Version 0.4 akzeptiert.");
     const { legalAcceptance: a } = (await f.pool.query("select settings from organizations where id = $1", [p.org])).rows[0].settings;
-    expect(a).toMatchObject({ agb: "0.3", avv: "0.3", version: "agb-0.3+avv-0.3", by: p.user, previous: { avv: "0.2", by: "alt" } });
+    expect(a).toMatchObject({ agb: "0.3", avv: "0.4", version: "agb-0.3+avv-0.4", by: p.user, previous: { avv: "0.2", by: "alt" } });
     expect(Date.now() - Date.parse(a.at)).toBeLessThan(60_000);
     const { avvAcceptedAtLeast } = await import("@/lib/legal");
     expect(avvAcceptedAtLeast((await f.pool.query("select settings from organizations where id = $1", [p.org])).rows[0].settings, "0.3")).toBe(true);
     const audit = (await f.asOrg(p.org, (c) => c.query("select meta, user_id from audit_log where organization_id = $1 and action = 'legal.avv_accepted'", [p.org]))).rows;
-    expect(audit).toEqual([{ meta: { avv: "0.3", previous: "0.2" }, user_id: p.user }]);
+    expect(audit).toEqual([{ meta: { avv: "0.4", previous: "0.2" }, user_id: p.user }]);
   });
 });

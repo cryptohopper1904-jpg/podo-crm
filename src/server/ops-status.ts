@@ -3,7 +3,9 @@ import { sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/db";
-import { evaluateMigrations, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { evaluateMigrations, evaluateOverdueDeletions, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { overdueCutoff } from "@/lib/org-deletion";
+import { readonlyExpiryEnabled } from "@/lib/readonly-expiry";
 
 /**
  * Betriebs-Zustand (Migrationsstand, Zeitstempel der Backup-/Cron-Läufe) – gemeinsam genutzt von
@@ -53,21 +55,50 @@ export async function checkPaymentRefIndex(): Promise<CheckResult> {
   }
 }
 
+/**
+ * Eindeutiger Index je Stripe-Kunden-ID (Migration 0053 legt ihn bei Dubletten nicht an). Fehlt er: fail – teilen sich
+ * zwei Praxen eine Kunden-ID, träfen Kündigung und Löschlauf auch die andere Praxis (AppSec L-1; beide brechen dann ab).
+ */
+export async function checkStripeCustomerIndex(): Promise<CheckResult> {
+  try {
+    const r = await withTimeout(db.execute(sql`select 1 from pg_indexes where schemaname = 'public' and indexname = 'organizations_stripe_customer_id'`));
+    return r.rows.length ? { status: "ok" } : { status: "fail", hint: "Index organizations_stripe_customer_id fehlt (doppelte Stripe-Kunden-IDs, siehe Deploy-Log)" };
+  } catch {
+    return { status: "fail", hint: "Index-Status nicht lesbar" };
+  }
+}
+
+/**
+ * Überfällige Löschanträge (Recht R-8): Antrag + 30 Tage Karenzzeit + 14 Tage („spätestens 14 Tage danach“, AGB § 9 Nr. 2)
+ * überschritten, Praxis aber noch da – Löschlauf vergessen oder abgebrochen → warn. Nur die Anzahl, keine IDs oder Namen.
+ */
+export async function checkOverdueDeletions(now: Date = new Date()): Promise<CheckResult> {
+  try {
+    const r = await withTimeout(
+      db.execute<{ n: number }>(sql`select count(*)::int as n from organizations where deletion_requested_at is not null and deletion_requested_at < ${overdueCutoff(now).toISOString()}::timestamptz`),
+    );
+    return evaluateOverdueDeletions(Number(r.rows[0]?.n ?? 0));
+  } catch {
+    return { status: "fail", hint: "Löschanträge nicht lesbar" };
+  }
+}
+
 /** Alter des letzten Backups und der Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR). */
-export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim" | "cronAufbewahrung", CheckResult>> {
+export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim" | "cronAufbewahrung" | "cronNurLesen", CheckResult>> {
   const dir = process.env.STATUS_DIR;
   if (!dir) {
     const skipped: CheckResult = { status: "skipped", hint: "STATUS_DIR nicht gesetzt" };
-    return { backup: skipped, cronReminders: skipped, cronKim: skipped, cronAufbewahrung: skipped };
+    return { backup: skipped, cronReminders: skipped, cronKim: skipped, cronAufbewahrung: skipped, cronNurLesen: readonlyExpiryEnabled() ? skipped : evaluateReadonlyExpiryCron(false, null) };
   }
   const now = Date.now();
-  const [backup, reminders, kim, retention, retentionFirst] = await Promise.all([
+  const [backup, reminders, kim, retention, retentionFirst, nurLesen] = await Promise.all([
     readStatus(dir, "backup.last"),
     readStatus(dir, "cron-reminders.last"),
     readStatus(dir, "cron-kim.last"),
     readStatus(dir, "cron-aufbewahrung.last"),
     // vom cron-Container beim ersten Start geschrieben (deploy/docker-compose.yml)
     readStatus(dir, "cron-aufbewahrung.first"),
+    readStatus(dir, "cron-nur-lesen.last"),
   ]);
   return {
     backup: evaluateTimestamp(parseEpoch(backup), MAX_AGE_SECONDS.backup, now, "noch kein Backup erfasst"),
@@ -76,5 +107,7 @@ export async function checkTimestamps(): Promise<Record<"backup" | "cronReminder
     // täglicher Löschlauf Online-Anfragen (/api/cron/aufbewahrung); Fehlschlag einer Praxis → kein Zeitstempel → fail.
     // Noch nie erfolgreich: warn bis 26 h nach dem ersten Start des cron-Containers, danach fail (nicht dauerhaft warn)
     cronAufbewahrung: evaluateTimestamp(parseEpoch(retention), MAX_AGE_SECONDS.dailyCron, now, "noch kein Lauf erfasst", parseEpoch(retentionFirst)),
+    // Ende des Nur-Lesen-Modus (Löschankündigung, gesetzliche Frist): Ausfall muss auffallen
+    cronNurLesen: evaluateReadonlyExpiryCron(readonlyExpiryEnabled(), parseEpoch(nurLesen), now),
   };
 }

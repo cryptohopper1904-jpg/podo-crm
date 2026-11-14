@@ -139,7 +139,9 @@ export default function SecurityPage() {
           <h2 className="font-display text-2xl font-semibold">Ihre Daten bleiben Ihre Daten</h2>
           <p className="mt-3 text-[15px] text-muted">
             Inhaber:innen können jederzeit einen vollständigen Export erstellen: alle Tabellen als JSON und alle Fotos entschlüsselt, als ZIP-Datei.
-            Nach einer Kündigung löschen wir die Praxis frühestens 30 Tage nach dem Antrag vollständig; Datensicherungen laufen spätestens 30 Tage nach der Löschung aus. Ihre gesetzlichen Aufbewahrungspflichten
+            Nach dem Ende Ihres Abos bleibt Ihre Praxis bis zu 12 Monate im Nur-Lesen-Modus: Alle Daten sind lesbar und exportierbar. Danach löschen wir
+            sie automatisch und kündigen das mindestens 30 Tage vorher an. Möchten Sie früher löschen, beantragen Sie die Löschung in der Software; sie
+            erfolgt nach 30 Tagen Karenzzeit. Datensicherungen laufen spätestens 30 Tage nach der Löschung aus. Ihre gesetzlichen Aufbewahrungspflichten
             (z. B. 10 Jahre Behandlungsdokumentation) erfüllen Sie mit dem Export.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">

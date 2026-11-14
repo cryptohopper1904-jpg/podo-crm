@@ -13,4 +13,4 @@
 | Backups | Server 14 Tage rollierend; zweiter Standort (sobald eingerichtet) höchstens 30 Tage | – | Backup-Container, `deploy/offsite-backup.example.sh` |
 
 **Löschbegehren (Art. 17)** während laufender Aufbewahrungspflicht: Sperrung statt Löschung (Art. 17 Abs. 3 lit. b), Patient wird informiert, Vorgang protokolliert.
-**Kündigung eines SaaS-Kunden:** Vollexport (JSON + Fotos) an die Praxis, danach Löschung des Mandanten inkl. Dateien; Backups laufen spätestens 30 Tage nach der Löschung aus.
+**Kündigung eines SaaS-Kunden:** Vollexport (JSON + Fotos) durch die Praxis; nach Vertragsende höchstens 12 Monate Nur-Lesen-Modus, dann automatische Löschung (Ankündigung mindestens 30 Tage vorher, Erinnerung 7 Tage vorher; Cron `/api/cron/nur-lesen`). Auf Löschantrag Löschung des Mandanten inkl. Dateien nach 30 Tagen Karenzzeit. Backups laufen spätestens 30 Tage nach der Löschung aus.

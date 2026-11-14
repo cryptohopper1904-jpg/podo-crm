@@ -2,16 +2,17 @@
 
 import { FileText } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
-import { LEGAL_VERSIONS, RETENTION_MIN_AVV, versionAtLeast } from "@/lib/legal";
+import { avvBannerNews, LEGAL_VERSIONS } from "@/lib/legal";
 import { acceptAvvAction } from "./actions";
 
 /**
  * Aktualisierte AVV bestätigen (nur Inhaber:in; über allen Einstellungs-Bereichen und auf „Heute“). Gespeichert werden
  * Version, Zeitpunkt und Person; erst ab RETENTION_MIN_AVV gilt die Standardweisung zur Löschung unbestätigter
- * Online-Anfragen (§ 3 Nr. 4) – der Hinweis dazu erscheint nur, solange die bisherige Zustimmung älter ist.
+ * Online-Anfragen (§ 3 Nr. 4) – der Hinweis dazu erscheint nur, solange die bisherige Zustimmung älter ist. Ebenso der Hinweis
+ * auf Nur-Lesen-Modus und Löschung nach Vertragsende (§ 10 Nr. 2) bei Zustimmung vor 0.4 (Recht R-1).
  */
 export function AvvBanner({ previous }: { previous: string | null }) {
-  const retentionNew = !versionAtLeast(previous, RETENTION_MIN_AVV);
+  const { retention: retentionNew, readonly: readonlyNote } = avvBannerNews(previous);
   return (
     <div role="status" className="flex gap-3 rounded-xl border border-info-soft-text/40 bg-info-soft p-4 text-sm text-info-soft-text">
       <FileText size={20} aria-hidden className="mt-0.5 shrink-0" />
@@ -27,6 +28,7 @@ export function AvvBanner({ previous }: { previous: string | null }) {
               zugeordnet wurden. Anfragen, die du behalten musst, ordne vorher einer Person zu.{" "}
             </>
           ) : null}
+          {readonlyNote ? <span data-testid="avv-neu-nur-lesen">{readonlyNote} </span> : null}
           <a href="/avv" target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2">AVV lesen</a>
         </p>
         <ActionForm action={acceptAvvAction} submit={`AVV ${LEGAL_VERSIONS.avv} akzeptieren`} className="mt-2 flex flex-col gap-2">

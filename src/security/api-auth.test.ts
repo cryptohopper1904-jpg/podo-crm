@@ -19,6 +19,7 @@ export const PUBLIC_HANDLERS: Record<string, [string, RegExp]> = {
   "src/app/api/cron/kalender-abo/route.ts": ["Cron Kalender-Abo: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/news/route.ts": ["Cron News-Abruf: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/lead-search/route.ts": ["Cron Praxissuche (Vertrieb): Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
+  "src/app/api/cron/nur-lesen/route.ts": ["Cron Ende des Nur-Lesen-Modus: Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/cron/aufbewahrung/route.ts": ["Cron Aufbewahrung (Online-Anfragen löschen): Bearer CRON_SECRET", /safeEqual\([^)]*secret/],
   "src/app/api/health/route.ts": ["Health-Check ohne Daten", /./],
   // Betriebs-Check für Monitoring: kein Sitzungs-Login, sondern Bearer HEALTH_TOKEN (Fallback CRON_SECRET),
@@ -57,7 +58,7 @@ describe("API-Routen: Authentisierung", () => {
   });
 
   it("öffentliche Handler antworten bei fehlender Prüfung nicht mit Daten (fail closed: 401/503 im Code)", () => {
-    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts", "src/app/api/cron/kalender-abo/route.ts", "src/app/api/cron/news/route.ts", "src/app/api/cron/lead-search/route.ts", "src/app/api/cron/aufbewahrung/route.ts", "src/app/api/health/deep/route.ts"]) {
+    for (const f of ["src/app/api/webhooks/[provider]/route.ts", "src/app/api/voice/[provider]/route.ts", "src/app/api/cron/reminders/route.ts", "src/app/api/cron/kim/route.ts", "src/app/api/cron/kalender-abo/route.ts", "src/app/api/cron/news/route.ts", "src/app/api/cron/lead-search/route.ts", "src/app/api/cron/aufbewahrung/route.ts", "src/app/api/cron/nur-lesen/route.ts", "src/app/api/health/deep/route.ts"]) {
       expect(read(path.join(ROOT, f)), f).toMatch(/status:\s*(401|503)/);
     }
   });
