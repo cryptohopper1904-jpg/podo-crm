@@ -430,7 +430,7 @@ export function DndSurface({
 
   return (
     <>
-      <div ref={ref} className={`relative ${className}`} role="region" aria-label={ariaLabel} aria-busy={pending ? true : undefined}>
+      <div ref={ref} className={`relative ${className}`} role="region" aria-label={ariaLabel} aria-busy={pending ? true : undefined} data-dnd-active={dragging ? "" : undefined}>
         {dragging || hidden ? (
           <style>{`${dragging ? `[data-appt="${css(dragging)}"]{opacity:.35}` : ""}${hidden ? `[data-appt="${css(hidden)}"]{visibility:hidden}` : ""}`}</style>
         ) : null}
@@ -460,7 +460,7 @@ export function DndSurface({
 
       {toast ? (
         <div
-          className={`fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-50 mx-auto flex w-[min(34rem,calc(100vw-2rem))] items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-xl ${
+          className={`fixed inset-x-0 bottom-[var(--podo-toast-bottom)] z-50 mx-auto flex w-[min(34rem,calc(100vw-2rem))] items-center gap-3 rounded-xl border px-4 py-3 text-sm shadow-xl ${
             toast.error ? "border-accent bg-accent-soft text-accent-soft-text" : "border-border bg-surface text-text"
           }`}
           data-dnd-toast

@@ -13,6 +13,10 @@ import {
   monthWeeks,
   outsideRanges,
   parseFullView,
+  defaultFullView,
+  isNarrowCookie,
+  shortCalendarTitle,
+  initials,
   parseHhmm,
   parseMode,
   shiftMonthIso,
@@ -123,6 +127,21 @@ describe("Belegung (belegt – nicht verfügbar)", () => {
   });
 });
 
+describe("Kalenderkopf (Handy)", () => {
+  it("kurze Titel je Zeitraum", () => {
+    expect(shortCalendarTitle("tag", "2026-11-16")).toBe("Mo 16.11.");
+    expect(shortCalendarTitle("woche", "2026-11-12")).toBe("9.–15. Nov.");
+    expect(shortCalendarTitle("woche", "2026-12-02")).toBe("30. Nov. – 6. Dez.");
+    expect(shortCalendarTitle("monat", "2026-03-20")).toBe("März 2026");
+  });
+  it("Initialen", () => {
+    expect(initials("Toni Beispielkraft-Langname")).toBe("TB");
+    expect(initials("Demo Praxis Inhaberin")).toBe("DI");
+    expect(initials("Anna")).toBe("AN");
+    expect(initials("  ")).toBe("?");
+  });
+});
+
 describe("URL-Parameter", () => {
   it("Ansicht, Zeitraum und Uhrzeit", () => {
     expect(parseMode("voll")).toBe("full");
@@ -130,6 +149,12 @@ describe("URL-Parameter", () => {
     expect(parseMode("x")).toBeNull();
     expect(parseFullView("monat")).toBe("monat");
     expect(parseFullView(undefined)).toBe("woche");
+    expect(parseFullView(undefined, "tag")).toBe("tag");
+    expect(parseFullView("woche", "tag")).toBe("woche");
+    expect(parseFullView("quatsch", defaultFullView(true))).toBe("tag");
+    expect(defaultFullView(false)).toBe("woche");
+    expect(isNarrowCookie("1")).toBe(true);
+    expect(isNarrowCookie(undefined)).toBe(false);
     expect(parseHhmm("07:45")).toBe("07:45");
     expect(parseHhmm("24:00")).toBeNull();
     expect(parseHhmm(["09:00"])).toBeNull();
