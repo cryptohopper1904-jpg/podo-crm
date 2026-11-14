@@ -109,8 +109,8 @@ async function claimAccountantMail(organizationId: string, kind: AccountantMailK
       and(
         eq(organizations.id, organizationId),
         sql`(case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end
-          or (coalesce(${prev}->>${other}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' and coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
-              and (${prev}->>${other}::text)::timestamptz > (${prev}->>${kind}::text)::timestamptz))`,
+          or case when coalesce(${prev}->>${other}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' and coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                  then (${prev}->>${other}::text)::timestamptz > (${prev}->>${kind}::text)::timestamptz else false end)`,
       ),
     )
     .returning({ id: organizations.id });
