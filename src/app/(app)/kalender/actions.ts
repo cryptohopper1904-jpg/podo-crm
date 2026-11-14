@@ -22,18 +22,20 @@ import { durationFromServices } from "@/lib/appointment-duration";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
+// Meldungen auf Deutsch: das Formular prüft nicht im Browser (noValidate – dessen Blasen sind in der Systemsprache,
+// verschwinden wieder und erscheinen auf dem Handy oft außerhalb des Sichtfelds), sondern hier.
 const schema = z.object({
-  patientId: z.string().uuid().optional(),
-  title: z.string().trim().max(200).optional(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum fehlt"),
-  time: z.string().regex(/^\d{2}:\d{2}$/, "Uhrzeit fehlt"),
-  durationMin: z.coerce.number().int().min(5).max(480).optional(),
-  therapistId: z.string().uuid().optional(),
-  source: z.enum(["manual", "doctolib", "online", "phone", "whatsapp", "email", "voice_agent"]).default("phone"),
+  patientId: z.uuid("Bitte eine Patient:in aus der Liste wählen.").optional(),
+  title: z.string().trim().max(200, "Titel höchstens 200 Zeichen.").optional(),
+  date: z.string({ error: "Bitte ein Datum angeben." }).regex(/^\d{4}-\d{2}-\d{2}$/, "Bitte ein Datum angeben."),
+  time: z.string({ error: "Bitte eine Uhrzeit angeben." }).regex(/^\d{2}:\d{2}$/, "Bitte eine Uhrzeit angeben."),
+  durationMin: z.coerce.number({ error: "Dauer bitte als Zahl (Minuten) angeben." }).int("Dauer bitte in ganzen Minuten.").min(5, "Dauer mindestens 5 Minuten.").max(480, "Dauer höchstens 480 Minuten.").optional(),
+  therapistId: z.uuid("Bitte eine Behandler:in wählen.").optional(),
+  source: z.enum(["manual", "doctolib", "online", "phone", "whatsapp", "email", "voice_agent"], { error: "Bitte eine Quelle wählen." }).default("phone"),
   homeVisit: z.literal("on").optional(),
-  notes: z.string().trim().max(2000).optional(),
-  repeatWeeks: z.coerce.number().int().min(0).max(26).default(0),
-  repeatCount: z.coerce.number().int().min(1).max(12).default(1),
+  notes: z.string().trim().max(2000, "Notiz höchstens 2000 Zeichen.").optional(),
+  repeatWeeks: z.coerce.number({ error: "Wiederholung bitte als Zahl angeben." }).int("Wiederholung bitte in ganzen Wochen.").min(0, "Wiederholung: 0 bis 26 Wochen.").max(26, "Wiederholung: 0 bis 26 Wochen.").default(0),
+  repeatCount: z.coerce.number({ error: "Anzahl bitte als Zahl angeben." }).int("Anzahl bitte als ganze Zahl.").min(1, "Anzahl Termine: 1 bis 12.").max(12, "Anzahl Termine: 1 bis 12.").default(1),
   allowConflict: z.literal("1").optional(),
 });
 
@@ -44,7 +46,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   const parsed = schema.safeParse(Object.fromEntries([...form.entries()].filter(([k, v]) => v !== "" && k !== "serviceId")));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message };
   const d = parsed.data;
-  if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen oder einen Titel (z. B. Blocker) eingeben." };
+  if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen (Termin ohne Patient:in: unter „Weitere Optionen“ einen Titel angeben)." };
 
   const svc = serviceIds.length
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
@@ -82,23 +84,57 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   redirect(`/kalender?datum=${d.date}`);
 }
 
-export async function setAppointmentStatusAction(form: FormData) {
+const STATUSES = ["planned", "confirmed", "done", "cancelled", "no_show"] as const;
+export type AppointmentStatus = (typeof STATUSES)[number];
+export type StatusResult = { ok: true; prev: AppointmentStatus } | { ok: false; error: string };
+
+/**
+ * Zeit, die eine Absage noch per „Rückgängig“ zurückgenommen werden kann, bevor der frei gewordene Termin der
+ * Warteliste angeboten wird. Wird später zurückgenommen, ist das Angebot nicht mehr annehmbar (acceptOffer prüft,
+ * dass der Termin noch abgesagt ist) – die Meldung „schon vergeben“ ist dann richtig.
+ */
+const UNDO_GRACE_MS = 20_000;
+
+const statusSchema = z.object({
+  id: z.uuid("Termin nicht gefunden."),
+  status: z.enum(STATUSES, { error: "Unbekannter Status." }),
+  /** „Rückgängig“: nur zurücksetzen, wenn der Termin noch den Status hat, den die Aktion gesetzt hat */
+  expected: z.enum(STATUSES).optional(),
+});
+
+/**
+ * Status eines Termins setzen (Terminzeile/Terminseite: „Nicht da“, „Absagen“ und deren „Rückgängig“).
+ * Gibt den vorherigen Status zurück, damit die Oberfläche die Änderung rückgängig machen kann.
+ */
+export async function changeAppointmentStatusAction(input: { id: string; status: string; expected?: string }): Promise<StatusResult> {
   const auth = await requireAuth("appointments.write");
   const org = auth.organization.id;
-  const id = z.string().uuid().parse(form.get("id"));
-  const status = z.enum(["planned", "confirmed", "done", "cancelled", "no_show"]).parse(form.get("status"));
+  const parsed = statusSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const { id, status, expected } = parsed.data;
   // Termine aus dem Kalender-Abo werden in der Quelle (z. B. Doctolib) abgesagt – der Abgleich übernimmt die Absage
-  if (status === "cancelled" && (await isFeedAppointment(org, id))) return;
-  const prev = await withOrg(org, async (tx) => {
+  if (status === "cancelled" && (await isFeedAppointment(org, id))) return { ok: false, error: "Termine aus dem Kalender-Abo bitte in der Quelle (z. B. Doctolib) absagen." };
+  const res = await withOrg(org, async (tx) => {
     const [a] = await tx.select({ status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
-    if (a) await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
-    return a?.status ?? null;
+    if (!a) return { ok: false as const, error: "Termin nicht gefunden." };
+    if (expected && a.status !== expected) return { ok: false as const, error: "Termin wurde zwischenzeitlich geändert – bitte neu laden." };
+    await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
+    return { ok: true as const, prev: a.status as AppointmentStatus };
   });
-  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.status", entity: "appointment", entityId: id, meta: { status } });
-  // Absage durch die Praxis (auch nach einem Absagewunsch per KI-Telefon) → frei gewordenen Termin der Warteliste anbieten
-  if (status === "cancelled" && prev && prev !== "cancelled") after(() => offerFreedSlotSafe(org, id));
+  if (!res.ok) return res;
+  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.status", entity: "appointment", entityId: id, meta: { status, ...(expected ? { undo: true } : {}) } });
+  // Absage durch die Praxis (auch nach einem Absagewunsch per KI-Telefon) → frei gewordenen Termin der Warteliste
+  // anbieten – erst nach der Frist für „Rückgängig“; offerFreedSlot prüft dann, ob der Termin noch abgesagt ist
+  if (status === "cancelled" && res.prev !== "cancelled") {
+    after(async () => {
+      await new Promise((r) => setTimeout(r, UNDO_GRACE_MS));
+      await offerFreedSlotSafe(org, id);
+    });
+  }
   revalidatePath("/kalender");
   revalidatePath("/heute");
+  revalidatePath(`/kalender/termin/${id}`);
+  return res;
 }
 
 export type AssignState = { error?: string; ok?: string } | undefined;
@@ -121,11 +157,11 @@ export async function assignFeedPatientAction(_: AssignState, form: FormData): P
 export type RescheduleState = { error?: string; conflict?: boolean; ok?: string } | undefined;
 
 const rescheduleSchema = z.object({
-  id: z.string().uuid(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum fehlt"),
-  time: z.string().regex(/^\d{2}:\d{2}$/, "Uhrzeit fehlt"),
-  durationMin: z.coerce.number().int().min(5, "Dauer mindestens 5 Minuten").max(480, "Dauer höchstens 480 Minuten"),
-  therapistId: z.string().uuid("Bitte Behandler:in wählen"),
+  id: z.uuid("Termin nicht gefunden."),
+  date: z.string({ error: "Datum fehlt" }).regex(/^\d{4}-\d{2}-\d{2}$/, "Datum fehlt"),
+  time: z.string({ error: "Uhrzeit fehlt" }).regex(/^\d{2}:\d{2}$/, "Uhrzeit fehlt"),
+  durationMin: z.coerce.number({ error: "Dauer bitte als Zahl (Minuten) angeben." }).int("Dauer bitte in ganzen Minuten.").min(5, "Dauer mindestens 5 Minuten").max(480, "Dauer höchstens 480 Minuten"),
+  therapistId: z.uuid("Bitte Behandler:in wählen"),
   allowConflict: z.literal("1").optional(),
 });
 

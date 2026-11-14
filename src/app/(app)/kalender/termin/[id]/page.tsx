@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileText, Info, Receipt } from "lucide-react";
+import { ArrowUpRight, ClipboardList, FileText, Info, NotebookPen, Receipt, UserPlus } from "lucide-react";
 import { SOURCE, STATUS } from "@/components/appointment-row";
 import { Badge, Card, CardTitle, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
+import { StatusButtons } from "../../status-buttons";
 import { requireAuth } from "@/lib/auth/session";
 import { durationMinutes } from "@/lib/appointment-edit";
 import { depositAllowed } from "@/lib/deposit-rules";
@@ -37,6 +38,19 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   // (heute/früher bzw. dokumentiert) bekommen Rechnung oder Quittung.
   const depositOk = depositAllowed({ appointmentDay: date, today: berlinDateIso(), hasRecord: !!(billing?.patient && billing.recordId), appointmentStatus: a.status });
 
+  // Aktionsleiste (wie die Terminzeile): offener Termin → Doku (primär), Anamnese, Nicht da, Absagen;
+  // erledigt und noch nicht abgerechnet → Quittung (primär; steht dann nicht noch einmal unter „Abrechnung“)
+  const canEdit = auth.can("appointments.write");
+  const open = a.status !== "cancelled" && a.status !== "done";
+  const showDoc = auth.can("medical.write") && !!patient && open;
+  const assign = canEdit && !!data.feed && !patient && a.status !== "cancelled";
+  const showDrive = canEdit && !!patient && a.homeVisit && open;
+  const showStatus = canEdit && open && !auth.readOnly;
+  const showCancel = showStatus && !data.feed;
+  const receiptFirst = !!billing?.patient && a.status === "done" && !billing.billedBy.length && !openDeposit && !depositOk;
+  const name = patient ? fullName(patient) : (a.title ?? "Termin");
+  const hasActions = showDoc || assign || showDrive || showStatus || receiptFirst;
+
   return (
     <div className="mx-auto max-w-4xl">
       <header className="mb-6 flex flex-wrap items-end gap-3">
@@ -44,12 +58,61 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
           <BackLink {...termBack(backHref(`/kalender?datum=${date}`, von, TERM_PARENTS))} />
           <p className="text-sm text-muted">{weekdayLong(a.startsAt)} · {timeDe(a.startsAt)}–{timeDe(a.endsAt)} Uhr</p>
           <h1 className={pageTitleCls}>
-            {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{fullName(patient)}</Link> : a.title ?? "Termin"}
+            {patient ? (
+              <Link href={`/kunden/${patient.id}`} className="group inline text-primary decoration-2 underline-offset-4 hover:underline" title="Akte öffnen">
+                {name}
+                <ArrowUpRight size={24} aria-hidden className="ml-1 inline-block align-[-0.1em] transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                <span className="sr-only"> – Akte öffnen</span>
+              </Link>
+            ) : (
+              name
+            )}
           </h1>
         </div>
-        <Badge tone="neutral">{SOURCE[a.source] ?? a.source}</Badge>
-        {st ? <Badge tone={st.tone}>{st.label}</Badge> : null}
+        <div className="flex flex-wrap gap-2">
+          <Badge tone="neutral">{SOURCE[a.source] ?? a.source}</Badge>
+          {st ? <Badge tone={st.tone}>{st.label}</Badge> : null}
+        </div>
       </header>
+
+      {hasActions ? (
+        <nav aria-label="Aktionen zum Termin" className="mb-6 flex flex-wrap gap-2">
+          {showDoc && patient ? (
+            <>
+              <LinkButton href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`}>
+                <NotebookPen size={18} aria-hidden /> Doku
+              </LinkButton>
+              <LinkButton variant="secondary" href={`/kunden/${patient.id}/anamnese/bogen?termin=${a.id}`} title="Anamnesebogen am iPad – Datum und Name sind vorausgefüllt">
+                <ClipboardList size={18} aria-hidden /> Anamnese
+              </LinkButton>
+            </>
+          ) : null}
+          {receiptFirst ? (
+            <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} title="Zahlung jetzt annehmen">
+              <Receipt size={18} aria-hidden /> Quittung
+            </LinkButton>
+          ) : null}
+          {assign ? (
+            <LinkButton variant="secondary" href={`/kalender/zuordnen/${a.id}`}>
+              <UserPlus size={18} aria-hidden /> Patient:in zuordnen
+            </LinkButton>
+          ) : null}
+          {showDrive ? (
+            <LinkButton variant="secondary" href={`/touren/losfahren?termin=${a.id}`}>
+              Losfahren
+            </LinkButton>
+          ) : null}
+          {showStatus ? (
+            <StatusButtons
+              id={a.id}
+              label={`${timeDe(a.startsAt)} ${name}`}
+              noShow
+              cancel={showCancel}
+              className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold whitespace-nowrap text-text hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+          ) : null}
+        </nav>
+      ) : null}
 
       <Card className="mb-6">
         <dl className="grid gap-4 sm:grid-cols-2">
@@ -153,12 +216,15 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
               </LinkButton>
             ) : (
               <>
-                <LinkButton href={`/rechnungen/neu?termin=${a.id}`}>
+                <LinkButton href={`/rechnungen/neu?termin=${a.id}`} variant={receiptFirst ? "secondary" : "primary"}>
                   <FileText size={18} aria-hidden /> Rechnung erstellen
                 </LinkButton>
-                <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} variant="secondary">
-                  <Receipt size={18} aria-hidden /> Quittung
-                </LinkButton>
+                {/* erledigt: „Quittung“ steht schon oben in der Aktionsleiste */}
+                {receiptFirst ? null : (
+                  <LinkButton href={`/rechnungen/neu?termin=${a.id}&art=quittung`} variant="secondary">
+                    <Receipt size={18} aria-hidden /> Quittung
+                  </LinkButton>
+                )}
               </>
             )}
           </div>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { RiskFlags } from "@/db/schema";
-import { setAppointmentStatusAction } from "@/app/(app)/kalender/actions";
+import { StatusButtons } from "@/app/(app)/kalender/status-buttons";
 import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
 import { dotStyle, type TherapistColor } from "@/lib/therapist-colors";
@@ -31,18 +31,22 @@ const btnBase = "inline-flex h-10 shrink-0 items-center justify-center whitespac
 const outline = "border border-border hover:bg-surface-2";
 const slotBtn = `${SLOT} ${btnBase}`;
 const slotSecondary = `${slotBtn} ${outline}`;
-/** Leerer Slot: hält den Platz frei, ist unsichtbar und nicht im Tab-Fokus. */
-const Gap = ({ wide = false }: { wide?: boolean }) => <span aria-hidden className={`${wide ? "w-[11.375rem]" : SLOT} h-10 shrink-0`} />;
+/**
+ * Leerer Slot: hält den Platz frei, ist unsichtbar und nicht im Tab-Fokus. Nur in breiten Listen (@xl), wo die Knöpfe
+ * spaltenbündig untereinander stehen – schmal brechen die Knöpfe um, Lücken wären dort nur leere Flächen.
+ */
+const Gap = ({ wide = false }: { wide?: boolean }) => <span aria-hidden className={`${wide ? "w-[11.375rem]" : SLOT} hidden h-10 shrink-0 @xl:inline-block`} />;
 
 /**
  * Terminzeile (Kalender-Liste, Heute, Behandlung): ruhiges, spaltenbündiges Raster.
  * Spalten: Zeit · Farbstreifen · Patient/Infos · Badges (Quelle + Status, feste Breite) · Aktionen.
  * Aktionen stehen in festen Slots gleicher Breite und fester Reihenfolge
- * (Doku · Anamnese · Ändern/Details · Losfahren · Nicht da · Absagen); fehlende lassen ihren Slot leer.
+ * (Doku · Anamnese bzw. Quittung · Ändern/Details · Losfahren · Nicht da · Absagen); fehlende lassen ihren Slot leer.
+ * „Nicht da“/„Absagen“ zeigen danach eine Meldung mit „Rückgängig“ (status-buttons.tsx).
  * Die Umbrüche hängen an der Breite der Liste (Container-Query), nicht des Fensters – so brechen alle Zeilen
  * einer Liste gleich um: schmal Aktionen in eigener Zeile (weiterhin bündig), breit alles in einer Zeile.
  */
-export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color }: {
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color, billable = false }: {
   row: ApptRow;
   canDoc: boolean;
   canEdit: boolean;
@@ -54,6 +58,11 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
   from?: string;
   /** Kalenderfarbe der Behandler:in – als Farbpunkt vor dem Namen (der Statusstreifen bleibt) */
   color?: TherapistColor;
+  /**
+   * Erledigter Termin ist noch nicht abgerechnet und die Person darf Belege ausstellen → „Quittung“ direkt in der Zeile
+   * (die aufrufende Seite prüft Recht und Abrechnungsstand, z. B. billedAppointmentIds).
+   */
+  billable?: boolean;
 }) {
   const { a, patient, feed } = row;
   const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from, !from.startsWith("/kalender")) : `/kalender/termin/${a.id}`;
@@ -65,8 +74,10 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
   const showDrive = canEdit && !!patient && (a.homeVisit || patient.homeVisit) && open;
   const showStatus = canEdit && open;
   const showCancel = showStatus && !feed;
+  const showReceipt = billable && !!patient && a.status === "done";
+  const who = patient ? [patient.firstName, patient.lastName].filter(Boolean).join(" ") : (a.title ?? "");
   return (
-    <div className={`@container border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>
+    <div data-appt-row className={`@container border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>
       <div className="grid grid-cols-[5.75rem_4px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 @xl:grid-cols-[6.75rem_4px_minmax(0,1fr)_7.5rem] @min-[62.5rem]:grid-cols-[6.75rem_4px_minmax(10rem,1fr)_7.5rem_auto]">
         <Link href={apptHref} className="col-start-1 row-start-1 whitespace-nowrap font-semibold tabular-nums hover:text-primary" title="Termin öffnen (verschieben, abrechnen)">
           {timeDe(a.startsAt)}–{timeDe(a.endsAt)}
@@ -82,7 +93,7 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? (
               <>
                 {" · "}
-                <span className="whitespace-nowrap">
+                <span className="wrap-break-word @xl:whitespace-nowrap">
                   {color ? <span className="mr-1 inline-block size-2.5 rounded-full align-[-1px]" style={dotStyle(color)} aria-hidden /> : null}
                   {row.therapist}
                 </span>
@@ -114,6 +125,10 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
               <Link href={`/kunden/${patient.id}/doku/neu?termin=${a.id}`} className={`${slotBtn} bg-primary text-on-primary hover:bg-primary-hover`}>Doku</Link>
               <Link href={`/kunden/${patient.id}/anamnese/bogen?termin=${a.id}`} className={slotSecondary} title="Anamnesebogen am iPad – Datum und Name sind vorausgefüllt">Anamnese</Link>
             </>
+          ) : showReceipt ? (
+            <Link href={`/rechnungen/neu?termin=${a.id}&art=quittung`} className={`w-[11.375rem] ${btnBase} bg-primary text-on-primary hover:bg-primary-hover`} title="Quittung für diese Behandlung ausstellen (Zahlung jetzt annehmen)">
+              Quittung
+            </Link>
           ) : (
             <Gap wide />
           )}
@@ -123,22 +138,14 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           {/* Ohne Bearbeitungsrecht hat keine Zeile Losfahren/Nicht da/Absagen – dann entfallen die drei Slots ganz */}
           {showDrive ? <Link href={`/touren/losfahren?termin=${a.id}`} className={slotSecondary}>Losfahren</Link> : canEdit ? <Gap /> : null}
           {showStatus ? (
-            <form action={setAppointmentStatusAction} className="contents">
-              <input type="hidden" name="id" value={a.id} />
-              <input type="hidden" name="status" value="no_show" />
-              <button className={slotSecondary} title="Nicht erschienen (Ausfallhonorar möglich)">Nicht da</button>
-            </form>
-          ) : canEdit ? (
-            <Gap />
+            <StatusButtons id={a.id} label={`${timeDe(a.startsAt)} ${who}`.trim()} noShow cancel={showCancel} className={`${slotSecondary} cursor-pointer disabled:opacity-50`} />
           ) : null}
-          {showCancel ? (
-            <form action={setAppointmentStatusAction} className="contents">
-              <input type="hidden" name="id" value={a.id} />
-              <input type="hidden" name="status" value="cancelled" />
-              <button className={slotSecondary}>Absagen</button>
-            </form>
-          ) : canEdit ? (
-            <Gap />
+          {showStatus && !showCancel ? <Gap /> : null}
+          {!showStatus && canEdit ? (
+            <>
+              <Gap />
+              <Gap />
+            </>
           ) : null}
         </div>
       </div>

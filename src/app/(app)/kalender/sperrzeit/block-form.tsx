@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { keepValues } from "@/lib/forms";
-import { Button, Card, Checkbox, Field, FieldSlot, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, LinkButton, Select, Textarea } from "@/components/ui";
 import { BLOCK_KINDS, BLOCK_KIND_LABELS, BLOCK_REPEAT_LABELS, BLOCK_REPEATS, type BlockKind, type BlockRepeat } from "@/lib/calendar-blocks";
 import { createBlockAction, updateBlockAction } from "./actions";
 
@@ -51,14 +51,15 @@ export function BlockForm({
   const effRepeat = repeatLocked ? "none" : repeat;
   const dateDefault = edit?.series && scope === "series" ? (seriesStart ?? defaults.startsOn) : defaults.startsOn;
   return (
-    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
+    <form onSubmit={keepValues(action)} noValidate className="flex flex-col gap-6" aria-busy={pending || undefined}>
       {edit ? (
         <>
           <input type="hidden" name="id" value={edit.id} />
           <input type="hidden" name="occurrence" value={edit.occurrence} />
         </>
       ) : null}
-      <FormError message={state?.error} />
+      {/* Prüfung auf dem Server (deutsche Meldungen, werden angesprungen) – nicht per Browser-Blase */}
+      <FormError message={state?.error} revealKey={state} />
       {edit?.series ? (
         <Card>
           <fieldset className="flex flex-col gap-2">
@@ -115,13 +116,13 @@ export function BlockForm({
           </Field>
           {repeatLocked ? <input type="hidden" name="repeat" value="none" /> : null}
           {effRepeat === "weekly" ? (
-            <Field label="Alle">
-              <Input type="number" name="intervalWeeks" min={1} max={12} defaultValue={defaults.intervalWeeks} suffix="Wochen" />
+            <Field label="Alle" hint="1 = jede Woche, 2 = jede zweite …">
+              <Input type="number" stepper name="intervalWeeks" min={1} max={12} defaultValue={defaults.intervalWeeks} suffix="Wochen" />
             </Field>
           ) : null}
           {effRepeat !== "none" ? (
             <Field label="Bis (optional)" hint="leer = ohne Ende">
-              <Input type="date" name="endsOn" defaultValue={defaults.endsOn} />
+              <Input type="date" name="endsOn" defaultValue={defaults.endsOn} min={dateDefault} placeholder="ohne Ende" clearable />
             </Field>
           ) : null}
         </div>
@@ -143,9 +144,10 @@ export function BlockForm({
         </Field>
       </Card>
       <p className="text-sm text-muted">In dieser Zeit ist die gewählte Person (bzw. die ganze Praxis) nicht buchbar – weder online, im Portal noch per KI-Telefon. Interne Termine nur nach Rückfrage.</p>
-      <div>
-        <Button type="submit" disabled={pending}>{pending ? "Speichern …" : edit ? "Änderung speichern" : "Sperrzeit eintragen"}</Button>
-      </div>
+      <FormActions error={pending ? null : state?.error}>
+        <Button type="submit" disabled={pending}>{pending ? "Wird gespeichert …" : edit ? "Änderung speichern" : "Sperrzeit eintragen"}</Button>
+        <LinkButton variant="ghost" href={`/kalender?datum=${defaults.startsOn}`}>Abbrechen</LinkButton>
+      </FormActions>
     </form>
   );
 }
