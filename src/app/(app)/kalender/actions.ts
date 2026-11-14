@@ -130,6 +130,10 @@ export async function quickCreatePatientAction(_: QuickPatientState, form: FormD
   if (form.get("ignoreDuplicates") !== "1") {
     const dups = await findDuplicates(org, values);
     if (dups.length) {
+      // Gleichzeitige Wiederholung derselben Anfrage: die „Dublette“ ist evtl. die gerade von der Schwester-Anfrage
+      // angelegte Person (Patient:in und Audit werden in derselben Transaktion committet) → dieselbe Person zurück
+      const raced = await patientCreatedByRequest(org, auth.user.id, requestId);
+      if (raced) return { patient: raced };
       return {
         error: "Möglicherweise gibt es diese Person schon. Bitte auswählen oder trotzdem anlegen.",
         duplicates: dups.map((d) => ({ id: d.id, number: d.number, firstName: d.firstName, lastName: d.lastName, archived: d.archived })),

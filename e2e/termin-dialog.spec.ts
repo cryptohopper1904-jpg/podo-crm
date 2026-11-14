@@ -243,9 +243,11 @@ test("Desktop: „Neu anlegen“ als letzte Vorschlagszeile, Dublettenwarnung mi
   await first.press("Escape");
   await expect(first).toBeVisible(); // Rückfrage abgelehnt → Schnellformular und Fenster bleiben
   await expect(dlg).toBeVisible();
-  await first.press("Enter");
-  await first.press("Enter");
-  await first.press("Enter");
+  // dreimal Enter direkt auf der Tastatur (ohne Locator-Warten – das Schnellformular schließt sich nach der Antwort)
+  await first.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
   await expect(dlg.getByText(new RegExp(`${fresh}, Erfundine`))).toBeVisible();
   await page.waitForTimeout(500); // etwaige Nachzügler-Anfragen abwarten
   expect(await countPatients(fresh)).toBe(1);
