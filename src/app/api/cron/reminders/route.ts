@@ -23,6 +23,8 @@ const ARCHIVE_CATCHUP_BUDGET_MS = 20_000;
  * gescheitert war) – eigener Fehlerpfad, je Praxis abgesichert, Zeitbudget, Backoff nach Fehlversuchen.
  * Zusätzlich: Wartelisten-Angebote für Absagen aus dem Kalender nachholen, deren verzögerter Versand (Frist für
  * „Rückgängig“) nicht gelaufen ist (runPendingWaitlistOffers, nur letzte 24 h, eigener Fehlerpfad).
+ * Reihenfolge: Webhooks → Aktionscodes → Erinnerungen → Beleg-Archiv → Warteliste; jeder Lauf mit eigenem try/catch,
+ * ein Fehler stoppt die übrigen nicht (Antwort dann 500 mit den Zählern der gelaufenen Teile).
  * Antwort enthält nur Zähler, keine Personendaten.
  */
 
@@ -44,20 +46,14 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.promo_return_free.failed", { error: e });
   }
-  let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
-  try {
-    waitlistOffers = await runPendingWaitlistOffers();
-  } catch (e) {
-    log.error("cron.waitlist_pending.failed", { error: e });
-  }
+  // Erinnerungen vor den Nachläufen (zeitkritisch); jeder Lauf mit eigenem Fehlerpfad – ein Fehler stoppt die anderen nicht
   let result: Awaited<ReturnType<typeof runReminders>> | null = null;
   try {
     result = await runReminders();
   } catch (e) {
     log.error("cron.reminders.failed", { error: e });
   }
-  // Beleg-Archiv nachholen NACH den Erinnerungen (die sind zeitkritisch), mit Zeitbudget und Backoff – läuft auch,
-  // wenn die Erinnerungen fehlschlagen
+  // Beleg-Archiv nachholen NACH den Erinnerungen, mit Zeitbudget und Backoff – läuft auch, wenn die Erinnerungen fehlschlagen
   let archives: Awaited<ReturnType<typeof catchUpArchives>> | null = null;
   try {
     // Startposition je Lauf zufällig: bei erschöpftem Budget kommen beim nächsten Mal andere Praxen zuerst dran
@@ -65,8 +61,15 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.archive_catchup.failed", { error: e });
   }
-  if (!result) return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });
-  if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
+  // Wartelisten-Angebote nachholen (Obergrenze je Lauf)
+  let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
+  try {
+    waitlistOffers = await runPendingWaitlistOffers();
+  } catch (e) {
+    log.error("cron.waitlist_pending.failed", { error: e });
+  }
+  if (!result) return NextResponse.json({ error: "Lauf fehlgeschlagen", webhooks, promoReturns, archives, waitlistOffers }, { status: 500 });
+  if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result, promoReturns, archives, waitlistOffers }, { status: 500 });
   return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, archives, waitlistOffers }, { headers: { "Cache-Control": "no-store" } });
 }
 

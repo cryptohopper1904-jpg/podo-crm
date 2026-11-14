@@ -645,6 +645,11 @@ export const reminderLog = pgTable(
     detail: text("detail"),
     dedupeKey: text("dedupe_key").notNull(),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Wartelisten-Angebote: Zeitpunkt, zu dem das Angebot durch „Rückgängig“ (Absage zurückgenommen) widerrufen wurde.
+     * Eigenes Feld statt status = 'revoked', damit der Versandnachweis (status/detail, z. B. „sent“) erhalten bleibt.
+     */
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("reminder_log_dedupe").on(t.organizationId, t.dedupeKey)],
 );
