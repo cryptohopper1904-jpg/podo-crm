@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOTTOM_BAR_SLOTS, NAV_GROUPS, NAV_KEYS, bottomNavSplit, groupNav, type NavKey } from "./nav";
+import { BOTTOM_BAR_SLOTS, NAV_GROUPS, NAV_KEYS, bottomNavSplit, groupNav, showSettings, type NavKey } from "./nav";
 import { VIEW_LEVELS, splitNav } from "./view-level";
 
 const ALL = [...NAV_KEYS] as NavKey[];
@@ -60,5 +60,14 @@ describe("bottomNavSplit (Handy/Tablet hochkant)", () => {
         expect(s.hidden.every((k) => !visible.includes(k))).toBe(true);
       }
     }
+  });
+});
+
+describe("showSettings (Konto-Eintrag „Einstellungen“)", () => {
+  it("für alle Rollen (persönliche Seiten), im Support-Modus nur mit Praxis-Recht", () => {
+    expect(showSettings(["heute"], true)).toBe(true);
+    expect(showSettings(["heute", "einstellungen"], true)).toBe(true);
+    expect(showSettings(["heute"], false)).toBe(false); // Support-Modus ohne Einstellungs-Recht
+    expect(showSettings(["heute", "einstellungen"], false)).toBe(true);
   });
 });

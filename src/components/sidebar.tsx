@@ -138,9 +138,9 @@ export function Sidebar({
           </div>
         )}
       </div>
-      {/* „Einstellungen“ unten fest – bleibt bei wenig Bildschirmhöhe sichtbar, während die Liste darüber scrollt */}
-      <div className={cx("shrink-0 border-t border-border py-2", collapsed ? "px-3" : "px-4")}>
-        <SettingsLink collapsed={collapsed} />
+      {/* „Einstellungen“ unten fest – bleibt bei wenig Bildschirmhöhe sichtbar, während die Liste darüber scrollt (nicht im Support-Modus ohne Praxis-Recht) */}
+      <div className={cx("shrink-0 border-t border-border py-2 empty:hidden", collapsed ? "px-3" : "px-4")}>
+        <SettingsLink collapsed={collapsed} allowed={allowed} personal={canChangeView} />
       </div>
     </aside>
   );
