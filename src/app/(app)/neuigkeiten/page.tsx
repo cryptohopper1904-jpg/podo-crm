@@ -33,18 +33,17 @@ export default async function NeuigkeitenPage() {
                 {entries.slice(OPEN_ENTRIES).map((e) => (
                   <li key={e.id}>
                     <details className="group">
-                      <summary className="flex min-h-11 cursor-pointer list-none items-start gap-2 rounded-lg px-2 py-2.5 hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
-                        <ChevronRight size={18} aria-hidden className="mt-0.5 shrink-0 text-muted transition-transform group-open:rotate-90" />
-                        <span className="min-w-0">
-                          <span className="block font-semibold leading-snug">{e.title}</span>
-                          <span className="block text-[13px] text-muted">
-                            <time dateTime={e.date}>{formatChangelogDate(e.date)}</time> · {e.items.length} {e.items.length === 1 ? "Punkt" : "Punkte"}
-                          </span>
+                      {/* summary erlaubt Text und eine Überschrift als direkte Kinder → Raster statt verschachtelter Blöcke */}
+                      <summary className="grid min-h-11 cursor-pointer list-none grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-lg px-2 py-2.5 hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
+                        <ChevronRight size={18} aria-hidden className="row-span-2 mt-0.5 shrink-0 text-muted transition-transform group-open:rotate-90" />
+                        <h3 className="font-semibold leading-snug">{e.title}</h3>
+                        <span className="text-[13px] text-muted">
+                          <time dateTime={e.date}>{formatChangelogDate(e.date)}</time> · {e.items.length} {e.items.length === 1 ? "Punkt" : "Punkte"}
                         </span>
                       </summary>
-                      {/* Datum und Titel stehen schon in der Zeile darüber → im Eintrag ausgeblendet */}
-                      <div className="px-2 pt-1 pb-4 pl-9 [&_article>div:first-child]:hidden">
-                        <ChangelogEntryView entry={e} headingLevel={3} />
+                      {/* Datum und Titel stehen schon in der Zeile darüber */}
+                      <div className="px-2 pt-1 pb-4 pl-9">
+                        <ChangelogEntryView entry={e} hideHeader />
                       </div>
                     </details>
                   </li>

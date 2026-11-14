@@ -16,7 +16,7 @@ export async function MailCard({ auth }: { auth: AuthContext }) {
       <div className="mb-4 rounded-xl bg-surface-2 p-4 text-sm">
         <p className="font-semibold">Zustellbarkeit: SPF, DKIM, DMARC</p>
         <ul className="mt-1 list-disc pl-5 text-muted">
-          <li><strong>SPF:</strong> Im DNS der Absenderdomain muss der SMTP-Server erlaubt sein, z. B. <code>v=spf1 include:&lt;dein-Mailanbieter&gt; ~all</code> (Wert liefert Ihr Mailanbieter).</li>
+          <li><strong>SPF:</strong> Im DNS der Absenderdomain muss der SMTP-Server erlaubt sein, z. B. <code>v=spf1 include:&lt;Mailanbieter&gt; ~all</code> (Wert liefert dein Mailanbieter).</li>
           <li><strong>DKIM:</strong> Beim Mailanbieter die DKIM-Signatur aktivieren und den angezeigten TXT-/CNAME-Eintrag im DNS hinterlegen.</li>
           <li><strong>DMARC:</strong> mindestens <code>v=DMARC1; p=none; rua=mailto:…</code> unter <code>_dmarc.&lt;domain&gt;</code>, später <code>p=quarantine</code>.</li>
           <li>Ohne diese Einträge landen Rechnungen und Erinnerungen oft im Spam. Beim Plattform-Server ist die Absenderdomain bereits eingerichtet; Antworten gehen an die E-Mail-Adresse der Praxis.</li>

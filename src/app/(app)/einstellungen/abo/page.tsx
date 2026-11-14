@@ -4,7 +4,7 @@ import { denyAccess, requireAuth } from "@/lib/auth/session";
 import { dateDe, money, moneyShort } from "@/lib/format";
 import { WEBSITE_ADDON_CENTS, WEBSITE_ADDON_PLANS } from "@/lib/website";
 import { withOrg } from "@/db";
-import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
+import { EXTRA_SEAT_CENTS, FEATURE_LABELS, FEATURES, FREE_MAX_PATIENTS, freeSwitchProblem, GRACE_DAYS, grossLabel, isPaidPlan, PAID_PLANS, PLANS, PRICES_NOTE, READONLY_REASON_LABELS, SEAT_FREE_NOTE, seatLimit, VOICE_ADDON_MINUTES, VOICE_ADDON_PLANS } from "@/lib/plans";
 import { activeTeamMembers, loadOrgBilling, usedSeats } from "@/server/billing";
 import { countedPatients } from "@/server/patient-limit";
 import { PROMO_FREE_RETURN_NOTE, PROMO_FREE_RETURN_NOTE_BEFORE, promoRedemptionProblem, trialDaysLabel } from "@/lib/promo-codes";
@@ -165,7 +165,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
       </Table>
       <p className="text-sm font-semibold text-warn-soft-text"><Badge tone="warn">Preise vorläufig</Badge> <span className="ml-2 font-normal text-muted">{PRICES_NOTE}</span></p>
       <p className="text-sm text-muted">
-        Ein Platz ist für eine Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende bleibt die Praxis lesbar und alle Daten exportierbar (Einstellungen → Import/Export, Patientenexport in der Akte).
+        Ein Platz ist für eine Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende des Abos und {GRACE_DAYS} Tagen Kulanz wechselt die Praxis in den Nur-Lesen-Modus; alle Daten bleiben lesbar und exportierbar (Einstellungen → Daten & Kündigung, Patientenexport in der Akte), bis die Praxis auf deinen Löschantrag hin gelöscht wird.
       </p>
     </div>
   );

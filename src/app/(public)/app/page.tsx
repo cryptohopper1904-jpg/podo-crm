@@ -12,7 +12,7 @@ export const metadata = pageMeta({
 const FACTS = [
   ["Ohne App Store", "Sie müssen nichts aus einem App Store laden: PodoHero wird aus dem Browser auf den Home-Bildschirm gelegt."],
   ["Gleicher Stand überall", "iPad in der Behandlung, Computer am Empfang, Smartphone beim Hausbesuch: alle arbeiten mit denselben Daten. Updates kommen automatisch – ein Tipp auf „Neu laden“ genügt."],
-  ["Keine Patientendaten auf dem Gerät", "Termine, Akten und Fotos werden immer frisch vom Server geladen und nicht für die Offline-Nutzung auf dem Gerät gespeichert. Auf dem Gerät liegen nur die Anmeldung und Programmdateien. Ohne Verbindung zeigt die App einen Hinweis."],
+  ["Keine Offline-Speicherung von Patientendaten", "Termine, Akten und Fotos werden immer frisch vom Server geladen und nicht für die Offline-Nutzung auf dem Gerät gespeichert. Auf dem Gerät liegen nur die Anmeldung und Programmdateien. Ausnahme: Dateien, die Sie selbst herunterladen (z. B. PDFs, Exporte). Ohne Verbindung zeigt die App einen Hinweis."],
 ] as const;
 
 /** Kurze, sachliche Infoseite zur installierbaren Web-App (öffentlich, ohne Praxisdaten). */

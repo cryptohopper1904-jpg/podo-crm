@@ -67,7 +67,7 @@ Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn d
 ## § 10 Löschung und Rückgabe nach Ende des Auftrags
 
 1. Der Verantwortliche kann jederzeit einen **vollständigen Datenexport** (JSON je Tabelle, entschlüsselte Fotos/Dokumente) in der Software erstellen. Dies gilt als Rückgabe der Daten.
-2. Nach Ende der Leistungserbringung bzw. nach dem Löschantrag des Verantwortlichen löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen nach einer **Karenzzeit von 30 Tagen** (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen laufen spätestens nach **spätestens nach 14 Tagen** aus.
+2. Nach Ende der Leistungserbringung bzw. nach dem Löschantrag des Verantwortlichen löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen nach einer **Karenzzeit von 30 Tagen** (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen laufen spätestens nach **14 Tagen** aus.
 3. **Aufbewahrungspflichten des Verantwortlichen** (u. a. § 630f Abs. 3 BGB: 10 Jahre Behandlungsdokumentation; § 147 AO, § 14b UStG: 8 bzw. 10 Jahre für Belege und Bücher) bleiben unberührt. Der Verantwortliche stellt durch einen rechtzeitigen Export sicher, dass er diesen Pflichten nachkommen kann.
 4. Die Löschung wird protokolliert und dem Verantwortlichen auf Anfrage bestätigt.
 

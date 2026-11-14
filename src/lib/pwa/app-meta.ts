@@ -10,7 +10,7 @@ export const APP_NAME = "PodoHero";
 /**
  * Markenhinweis unter den Installationsanleitungen (src/components/pwa/install-guide.tsx). Nennt genau die Marken, die
  * auf der Seite vorkommen: Anleitung = iPhone, iPad, Mac, Safari, Android, Chrome, (Microsoft) Edge, Windows, Samsung
- * Internet; „App Store“ steht im Seitentext; `googlePlay` nur dort, wo Google Play erwähnt wird (öffentliche Seite /app).
+ * Internet, Firefox (iPhone-Hinweis für andere Browser); „App Store“ steht im Seitentext; `googlePlay` nur dort, wo Google Play erwähnt wird (öffentliche Seite /app).
  * Bei neuen Nennungen in Anleitung oder Seitentext hier ergänzen.
  */
 export function trademarkNotice({ googlePlay = false }: { googlePlay?: boolean } = {}): string {
@@ -18,7 +18,8 @@ export function trademarkNotice({ googlePlay = false }: { googlePlay?: boolean }
     "iPhone, iPad, Mac, Safari und App Store sind Marken der Apple Inc.; " +
     (googlePlay ? "Android, Chrome und Google Play sind Marken der Google LLC; " : "Android und Chrome sind Marken der Google LLC; ") +
     "Microsoft Edge und Windows sind Marken der Microsoft Corporation; " +
-    "Samsung Internet ist eine Marke der Samsung Electronics Co., Ltd. " +
+    "Samsung Internet ist eine Marke der Samsung Electronics Co., Ltd.; " +
+    "Firefox ist eine Marke der Mozilla Foundation. " +
     "PodoHero steht in keiner Verbindung zu diesen Unternehmen."
   );
 }

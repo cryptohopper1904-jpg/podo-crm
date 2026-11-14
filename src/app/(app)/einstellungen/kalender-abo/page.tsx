@@ -49,9 +49,13 @@ export default async function CalendarFeedSettings() {
           <li>Überschneidungen mit PodoHero-Terminen derselben Behandler:in werden im Kalender und auf „Heute“ markiert.</li>
         </ul>
         <p className="rounded-xl bg-warn-soft p-3 text-sm text-warn-soft-text">
-          <strong>Datenschutz:</strong> Google (Kalender) und Docal.io bzw. CalMedi verarbeiten dabei Termindaten deiner Patient:innen als eigene
-          Auftragsverarbeiter – unabhängig von PodoHero. Schließe mit jedem Anbieter einen Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO),
-          nutze möglichst Google Workspace mit EU-Datenregion und trage in Doctolib-Terminen keine Diagnosen in Titel oder Beschreibung ein.
+          <strong>Datenschutz:</strong> Termine in Doctolib, im Sync-Dienst (Docal.io bzw. CalMedi) und im Google-Kalender enthalten Namen deiner
+          Patient:innen und zeigen, dass sie podologisch behandelt werden. Das sind Gesundheitsdaten (Art. 9 DSGVO), die außerdem der Schweigepflicht
+          (§ 203 StGB) unterliegen. Diese Anbieter sind deine eigenen Auftragsverarbeiter, unabhängig von PodoHero. Nutze dafür nur ein geschäftliches
+          Google-Workspace-Konto, kein privates Google- oder Gmail-Konto, denn nur mit Workspace kannst du einen Auftragsverarbeitungsvertrag (AVV,
+          Art. 28 DSGVO) abschließen. Schließe auch mit dem Sync-Dienst einen AVV und verpflichte beide Anbieter zur Verschwiegenheit (§ 203 Abs. 4
+          StGB). Google verarbeitet Daten auch in den USA. Wähle, wenn deine Workspace-Edition das anbietet, die EU-Datenregion. Trage keine Diagnosen
+          in Titel oder Beschreibung ein. Stimme den Einsatz im Zweifel mit deiner/deinem Datenschutzbeauftragten ab.
           Die private iCal-Adresse ist wie ein Passwort: Sie wird verschlüsselt gespeichert und nie wieder angezeigt. Wurde sie weitergegeben, in
           Google „Zurücksetzen“ wählen und die neue Adresse hier eintragen.
         </p>
@@ -131,7 +135,7 @@ export default async function CalendarFeedSettings() {
               <Field label="Behandler:in für importierte Termine">{therapistSelect("therapistId", null)}</Field>
               <Field label="Termine kennzeichnen als">{sourceSelect("doctolib")}</Field>
             </div>
-            <Checkbox name="avv" label="Mit Google und dem Sync-Dienst (Docal.io/CalMedi) besteht ein AVV bzw. wird vor dem Echtbetrieb abgeschlossen." />
+            <Checkbox name="avv" label="Mit Google (geschäftliches Workspace-Konto) und dem Sync-Dienst (Docal.io/CalMedi) habe ich einen AVV abgeschlossen." />
           </ActionForm>
         </Card>
       ) : null}

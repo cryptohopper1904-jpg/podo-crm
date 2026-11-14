@@ -47,7 +47,7 @@ export default async function BookingPage(props: PageProps<"/buchen/[slug]">) {
       <p className="mt-4 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         {isPrivateOnly(org)
           ? <>Wir behandeln Privatpatient:innen und Selbstzahler. Bei Fragen rufen Sie uns gern an{org.phone ? ` unter ${org.phone}` : ""}.</>
-          : <>Hier buchen Sie Selbstzahler-Leistungen. Für Behandlungen mit ärztlicher Verordnung (Kasse) rufen Sie uns bitte an{org.phone ? ` unter ${org.phone}` : ""}.</>}
+          : <>Hier können Sie Termine für Selbstzahler-Leistungen anfragen. Für Behandlungen mit ärztlicher Verordnung (Kasse) rufen Sie uns bitte an{org.phone ? ` unter ${org.phone}` : ""}.</>}
       </p>
       <BookingForm slug={slug} services={offered} days={days} />
     </main>

@@ -21,7 +21,8 @@ function RetentionNotice() {
       </ul>
       <p className="mt-2">
         Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
-        auf. Wir löschen alle Daten {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig und behalten keine Kopie für dich.
+        auf. Wir löschen alle Daten frühestens {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig. Verschlüsselte Datensicherungen laufen
+        spätestens 14 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
       </p>
     </div>
   );
@@ -80,8 +81,9 @@ export default async function DataSettings() {
           <CardTitle>Praxis kündigen & löschen</CardTitle>
           <p className="mb-4 text-[15px] text-muted">
             Mit der Kündigung beantragst du die vollständige Löschung deiner Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
-            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Ein laufendes Abo
-            verwaltest du unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
+            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Der Löschantrag
+            kündigt zugleich deinen Vertrag. Ein laufendes Abo wird dabei derzeit nicht automatisch beendet – kündige es bitte zusätzlich unter{" "}
+            <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>
           <RetentionNotice />
           <div className="mt-5">

@@ -41,7 +41,7 @@ export function SiteShell({ site, children }: { site: PublicSite; children: Reac
       <main id="inhalt" className="flex-1">{children}</main>
       {/* Handy: Buchen/Anrufen dauerhaft erreichbar (unten, über der Home-Leiste) */}
       {site.onlineBooking || tel ? (
-        <nav aria-label="Termin" className="fixed inset-x-0 bottom-0 z-30 flex gap-2 border-t border-border bg-bg/95 px-[max(1rem,env(safe-area-inset-left))] pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
+        <nav aria-label="Termin und Kontakt" className="fixed inset-x-0 bottom-0 z-30 flex gap-2 border-t border-border bg-bg/95 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
           {site.onlineBooking ? (
             <a href={`/buchen/${site.slug}`} className="inline-flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 text-[15px] font-semibold whitespace-nowrap text-on-accent hover:bg-accent-hover">
               <CalendarCheck size={18} aria-hidden /> Termin buchen
