@@ -82,13 +82,13 @@ export default async function TelefonPage() {
         Absagewünsche ändern nichts automatisch.
       </p>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card>
           <CardTitle action={entitlement.source === "addon" ? <Badge tone="info">Zusatzmodul</Badge> : null}>Nutzung diesen Monat</CardTitle>
           {entitlement.enabled ? (
             <>
               <VoiceUsageBar usage={usage} />
-              <p className="mt-2 text-xs text-muted">
+              <p className="mt-2 text-[13px] text-muted">
                 Gezählt wird die Gesprächsdauer laut Anbieter (angefangene Minuten, Kalendermonat). Ist das Kontingent erschöpft, nimmt der Assistent keine
                 Terminwünsche mehr an, sondern bittet um Geduld und legt eine Rückrufbitte in den Posteingang. Testanrufe zählen nicht.
               </p>
@@ -102,7 +102,7 @@ export default async function TelefonPage() {
         </Card>
         <Card>
           <CardTitle>Monatsbericht</CardTitle>
-          <Table>
+          <Table label="Monatsbericht">
             <thead><tr><th>Monat</th><th>Anrufe</th><th>Gebucht</th><th>Rückrufe</th><th>Ø Dauer</th><th>Minuten</th></tr></thead>
             <tbody>
               {report.map((r) => (
@@ -139,7 +139,7 @@ export default async function TelefonPage() {
                 <>
                   <p className="font-semibold">Server-URL-Secret (Header x-vapi-secret)</p>
                   <CopyField value={setup.vapiSecret} label="Secret kopieren" />
-                  <p className="text-xs text-muted">Wie ein Passwort behandeln. Neu erzeugen: Schritt 1 mit neuem Secret speichern.</p>
+                  <p className="text-[13px] text-muted">Wie ein Passwort behandeln. Neu erzeugen: Schritt 1 mit neuem Secret speichern.</p>
                 </>
               ) : null}
             </Step>
@@ -153,7 +153,7 @@ export default async function TelefonPage() {
                   </p>
                   <div><DownloadButton filename={config.filename} content={config.content} label={`Vorlage für ${VOICE_VENDOR_LABEL[vendor]} herunterladen`} /></div>
                   <details>
-                    <summary className="cursor-pointer text-xs font-semibold">Vorschau</summary>
+                    <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold">Vorschau</summary>
                     <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-surface-2 p-3 text-xs">{config.content}</pre>
                   </details>
                 </>
@@ -174,7 +174,7 @@ export default async function TelefonPage() {
             <Step n={5} title="Live schalten">
               {!entitlement.enabled ? <p className="text-danger">{entitlement.reason}</p> : null}
               <LiveToggle live={status === "connected"} disabled={!entitlement.enabled && status !== "connected"} />
-              <p className="text-xs text-muted">Im Testmodus werden Aufrufe des Anbieters in Produktion abgelehnt. Live nur mit hinterlegtem Zugang und freigeschaltetem Tarif.</p>
+              <p className="text-[13px] text-muted">Im Testmodus werden Aufrufe des Anbieters in Produktion abgelehnt. Live nur mit hinterlegtem Zugang und freigeschaltetem Tarif.</p>
             </Step>
           </ol>
         </Card>
@@ -188,20 +188,20 @@ export default async function TelefonPage() {
 
       <Card>
         <CardTitle>Was der Assistent weiß</CardTitle>
-        <div className="grid gap-4 text-sm md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
           <div>
             <p className="font-semibold">Öffnungszeiten</p>
             <p>{info.opening ? `${info.opening}; an Feiertagen geschlossen.` : `${NO_HOURS_NOTE}. Der Assistent nennt keine Öffnungszeiten.`} Freie Termine richten sich nach den Arbeitszeiten und Abwesenheiten im Team.</p>
-            {canSettings ? <Link className="text-xs underline" href="/einstellungen/oeffnungszeiten">Öffnungszeiten ändern</Link> : null}
+            {canSettings ? <Link className="inline-flex min-h-11 items-center text-sm underline" href="/einstellungen/oeffnungszeiten">Öffnungszeiten ändern</Link> : null}
             <p className="mt-3 font-semibold">Telefonisch buchbare Leistungen</p>
             <p>{info.services.length ? info.services.map((s) => `${s.code} – ${s.name} (${s.durationMin} Min.)`).join(" · ") : "keine"}</p>
-            {canSettings ? <Link className="text-xs underline" href="/einstellungen/leistungen">Leistungen verwalten</Link> : null}
+            {canSettings ? <Link className="inline-flex min-h-11 items-center text-sm underline" href="/einstellungen/leistungen">Leistungen verwalten</Link> : null}
           </div>
           <div>
             {canSettings ? (
               <ActionForm action={saveVoiceSettingsAction} className="flex flex-col gap-2">
                 <Checkbox name="storeTranscripts" defaultChecked={info.settings.storeTranscripts} label="Transkripte speichern" />
-                <p className="text-xs text-muted">
+                <p className="text-[13px] text-muted">
                   Wird nur wirksam, wenn die erste Ansage auf die Aufzeichnung hinweist (Vorlage „firstMessageMitAufzeichnung“ bzw. Retell-Vorlage nach dem Speichern neu herunterladen). Sonst werden nur Zusammenfassung, Dauer und Ergebnis gespeichert.
                   Datenschutz: Zweck, Speicherdauer und AVV mit dem Anbieter im Verzeichnis der Verarbeitungstätigkeiten dokumentieren.
                 </p>
@@ -218,7 +218,7 @@ export default async function TelefonPage() {
         {calls.length === 0 ? (
           <Empty title="Noch keine Anrufe">Sobald der Assistent Anrufe annimmt, erscheinen sie hier.</Empty>
         ) : (
-          <Table>
+          <Table label="Anrufe">
             <thead><tr><th>Zeit</th><th>Anrufer</th><th>Dauer</th><th>Ergebnis</th><th>Zusammenfassung</th><th>Termin</th></tr></thead>
             <tbody>
               {calls.map((c) => (

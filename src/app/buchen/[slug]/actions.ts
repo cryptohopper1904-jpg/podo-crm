@@ -89,5 +89,5 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   });
   if ("error" in result) return { error: result.error };
   await audit({ organizationId: org.id, action: "booking.online", entity: "appointment", entityId: result.appointmentId });
-  return { ok: "Danke! Deine Anfrage ist eingegangen. Die Praxis bestätigt den Termin kurzfristig." };
+  return { ok: "Vielen Dank! Ihre Anfrage ist eingegangen. Die Praxis bestätigt den Termin kurzfristig." };
 }

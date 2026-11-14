@@ -33,7 +33,7 @@ function Step({ n, children }: { n: number; children: ReactNode }) {
 }
 
 const Key = ({ children }: { children: ReactNode }) => (
-  <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 align-middle text-sm font-semibold whitespace-nowrap">{children}</span>
+  <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border bg-surface-2 px-1.5 py-0.5 align-middle text-sm font-semibold [overflow-wrap:anywhere] [&>svg]:shrink-0">{children}</span>
 );
 
 function IosSteps({ otherBrowser }: { otherBrowser: boolean }) {

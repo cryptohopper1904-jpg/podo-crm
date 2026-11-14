@@ -27,13 +27,13 @@ export function VendorSetupForm({ vendor: initial, hasSecret }: { vendor: Vendor
   const h = VENDOR_HINT[vendor];
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-3">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
-      <fieldset className="flex flex-wrap gap-4">
+      <fieldset className="flex flex-wrap gap-x-6">
         <legend className="mb-1 text-sm font-semibold">Anbieter</legend>
         {(Object.keys(VENDOR_HINT) as Vendor[]).map((v) => (
-          <label key={v} className="flex items-center gap-2 text-sm">
-            <input type="radio" name="vendor" value={v} checked={vendor === v} onChange={() => setVendor(v)} />
+          <label key={v} className="flex min-h-11 cursor-pointer items-center gap-2 text-[15px]">
+            <input type="radio" name="vendor" value={v} checked={vendor === v} onChange={() => setVendor(v)} className="size-5 shrink-0 accent-[var(--primary)]" />
             {VENDOR_HINT[v].label}
           </label>
         ))}
@@ -92,7 +92,7 @@ export function LiveToggle({ live, disabled }: { live: boolean; disabled?: boole
   const [state, run, pending] = useActionState(setVoiceLiveAction, undefined);
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-3">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <Checkbox name="live" defaultChecked={live} disabled={disabled} label="Live: echte Anrufe annehmen (sonst Testmodus)" />
       <div><Button type="submit" disabled={pending || disabled}>{pending ? "…" : "Übernehmen"}</Button></div>

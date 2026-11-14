@@ -20,7 +20,7 @@ export default async function NewPasswordPage(props: PageProps<"/login/passwort-
         <p className="mt-3 text-sm text-danger">Der Link ist ungültig, abgelaufen oder wurde bereits verwendet.</p>
       )}
       <p className="mt-6 text-center text-sm text-muted">
-        <Link href={valid ? "/login" : "/login/passwort-vergessen"} className="font-semibold text-primary">{valid ? "Zurück zur Anmeldung" : "Neuen Link anfordern"}</Link>
+        <Link href={valid ? "/login" : "/login/passwort-vergessen"} className="inline-flex min-h-11 items-center font-semibold text-primary">{valid ? "Zurück zur Anmeldung" : "Neuen Link anfordern"}</Link>
       </p>
     </>
   );

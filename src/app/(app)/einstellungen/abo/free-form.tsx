@@ -18,7 +18,7 @@ export function FreePlanForm({ disabledReason, warning }: { disabledReason: stri
       }}
       className="flex flex-col gap-3"
     >
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       {state?.ok ? <p role="status" className="rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">{state.ok}</p> : null}
       {disabledReason ? <p className="text-sm text-muted">{disabledReason}</p> : warning ? <p className="text-sm font-medium text-warn-soft-text">{warning}</p> : null}
       <div>

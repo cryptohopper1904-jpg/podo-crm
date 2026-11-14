@@ -7,9 +7,21 @@ import { startupImages } from "./startup-images";
 
 export const APP_NAME = "PodoHero";
 
-/** Markenhinweis unter den Installationsanleitungen */
-export const TRADEMARKS =
-  "iPhone, iPad, Mac und Safari sind Marken der Apple Inc.; Android und Chrome sind Marken der Google LLC. PodoHero steht in keiner Verbindung zu diesen Unternehmen.";
+/**
+ * Markenhinweis unter den Installationsanleitungen (src/components/pwa/install-guide.tsx). Nennt genau die Marken, die
+ * auf der Seite vorkommen: Anleitung = iPhone, iPad, Mac, Safari, Android, Chrome, (Microsoft) Edge, Windows, Samsung
+ * Internet; „App Store“ steht im Seitentext; `googlePlay` nur dort, wo Google Play erwähnt wird (öffentliche Seite /app).
+ * Bei neuen Nennungen in Anleitung oder Seitentext hier ergänzen.
+ */
+export function trademarkNotice({ googlePlay = false }: { googlePlay?: boolean } = {}): string {
+  return (
+    "iPhone, iPad, Mac, Safari und App Store sind Marken der Apple Inc.; " +
+    (googlePlay ? "Android, Chrome und Google Play sind Marken der Google LLC; " : "Android und Chrome sind Marken der Google LLC; ") +
+    "Microsoft Edge und Windows sind Marken der Microsoft Corporation; " +
+    "Samsung Internet ist eine Marke der Samsung Electronics Co., Ltd. " +
+    "PodoHero steht in keiner Verbindung zu diesen Unternehmen."
+  );
+}
 
 export const PWA_COLORS = {
   /** Seitenhintergrund (--bg) – Startbildschirm Android/iOS */

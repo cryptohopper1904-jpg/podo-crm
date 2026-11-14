@@ -18,7 +18,8 @@ const description = (s: PublicSite) =>
 export async function generateMetadata(props: PageProps<"/p/[slug]">): Promise<Metadata> {
   const { slug } = await props.params;
   const site = await loadPublicSite(slug);
-  if (!site) return { title: "Nicht gefunden", robots: { index: false, follow: false } };
+  // notFound() schon hier: sonst überschreibt dieser Titel den der 404-Seite (../not-found.tsx, ohne Manifest)
+  if (!site) notFound();
   const title = site.city ? `${site.name} – Podologie in ${site.city}` : site.name;
   return {
     title: { absolute: title },
@@ -109,11 +110,11 @@ export default async function PracticeSitePage(props: PageProps<"/p/[slug]">) {
         <section aria-labelledby="leistungen" className="border-y border-border bg-surface">
           <div className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
             <h2 id="leistungen" className="font-display text-2xl font-semibold">Leistungen</h2>
-            <ul className="mt-6 grid gap-4 sm:grid-cols-2">
+            <ul className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
               {site.services.map((s) => (
                 <li key={s.name} className="rounded-[var(--radius-card)] border border-border bg-bg p-5">
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="font-display text-lg font-semibold">{s.name}</h3>
+                    <h3 className="min-w-0 font-display text-lg font-semibold wrap-break-word">{s.name}</h3>
                     {site.showPrices ? <span className="shrink-0 text-sm font-semibold tabular-nums">{s.priceCents !== null ? `ab ${money(s.priceCents)}` : "auf Anfrage"}</span> : null}
                   </div>
                   {s.description ? <p className="mt-2 text-[15px] text-muted">{s.description}</p> : null}
@@ -132,7 +133,7 @@ export default async function PracticeSitePage(props: PageProps<"/p/[slug]">) {
         </section>
       ) : null}
 
-      <section className="mx-auto grid max-w-5xl gap-6 px-4 py-12 sm:px-6 md:grid-cols-3">
+      <section className="mx-auto grid grid-cols-1 max-w-5xl gap-6 px-4 py-12 sm:px-6 md:grid-cols-3">
         <div aria-labelledby="zeiten">
           <h2 id="zeiten" className="flex items-center gap-2 font-display text-xl font-semibold"><Clock size={20} aria-hidden className="text-primary" /> Praxiszeiten</h2>
           {days.length ? (

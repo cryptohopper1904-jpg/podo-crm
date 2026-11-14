@@ -11,7 +11,7 @@ export function SetupForm({ needsToken = false, saas = false, code = "", trialTe
   const [state, action, pending] = useActionState(setupAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       {needsToken ? (
         <Field label="Einrichtungs-Code" hint="Steht als SETUP_TOKEN in der Server-Konfiguration.">
           <Input name="setupToken" required autoComplete="off" />

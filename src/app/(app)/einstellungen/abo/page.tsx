@@ -55,7 +55,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
 
       <Card>
         <CardTitle>Aktueller Tarif</CardTitle>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <p className="text-sm text-muted">Tarif</p>
             <p className="font-display text-2xl font-semibold">{plan.label}</p>
@@ -64,11 +64,11 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
           <div>
             <p className="text-sm text-muted">Plätze belegt / gebucht</p>
             <p className="font-display text-2xl font-semibold tabular-nums">{used} / {Number.isFinite(limit) ? limit : "∞"}</p>
-            <p className="text-xs text-muted">{org?.plan === "free" ? "Kostenloser Tarif: 1 Person, die Steuerberatung zählt nicht." : `Inhaber:in, Podolog:innen und Azubis. ${SEAT_FREE_NOTE}`}</p>
+            <p className="text-[13px] text-muted">{org?.plan === "free" ? "Kostenloser Tarif: 1 Person, die Steuerberatung zählt nicht." : `Inhaber:in, Podolog:innen und Azubis. ${SEAT_FREE_NOTE}`}</p>
           </div>
           <div>
             {a.trialDaysLeft !== undefined ? (
-              <><p className="text-sm text-muted">Testphase</p><p className="font-display text-2xl font-semibold">noch {a.trialDaysLeft} {a.trialDaysLeft === 1 ? "Tag" : "Tage"}</p><p className="text-xs text-muted">bis {dateDe(org?.trialEndsAt ?? null)}</p></>
+              <><p className="text-sm text-muted">Testphase</p><p className="font-display text-2xl font-semibold">noch {a.trialDaysLeft} {a.trialDaysLeft === 1 ? "Tag" : "Tage"}</p><p className="text-[13px] text-muted">bis {dateDe(org?.trialEndsAt ?? null)}</p></>
             ) : org?.currentPeriodEnd ? (
               <><p className="text-sm text-muted">Bezahlt bis</p><p className="font-display text-2xl font-semibold">{dateDe(org.currentPeriodEnd)}</p></>
             ) : null}
@@ -138,7 +138,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         <CheckoutForm defaultPlan={isPaidPlan(org?.plan) ? org.plan : "praxis"} minSeats={used} mock={port.isMock} />
       </Card>
 
-      <Table>
+      <Table label="Tarife im Vergleich">
         <thead>
           <tr><th>Tarif</th><th>Preis pro Monat</th><th>Plätze</th>{FEATURES.map((f) => <th key={f}>{FEATURE_LABELS[f]}</th>)}</tr>
         </thead>
@@ -154,10 +154,10 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
               <td><p className="font-semibold">{PLANS[p].label}</p><p className="text-sm text-muted">{PLANS[p].description}</p></td>
               <td className="tabular-nums">
                 {money(PLANS[p].priceCents)} netto
-                <span className="block text-xs text-muted">{grossLabel(PLANS[p].priceCents)}</span>
-                {PLANS[p].maxSeats !== 1 ? <span className="block text-xs text-muted">+ {money(EXTRA_SEAT_CENTS)} netto ({grossLabel(EXTRA_SEAT_CENTS)}) je weiterem Platz</span> : null}
+                <span className="block text-[13px] text-muted">{grossLabel(PLANS[p].priceCents)}</span>
+                {PLANS[p].maxSeats !== 1 ? <span className="block text-[13px] text-muted">+ {money(EXTRA_SEAT_CENTS)} netto ({grossLabel(EXTRA_SEAT_CENTS)}) je weiterem Platz</span> : null}
               </td>
-              <td>{PLANS[p].includedSeats} inkl.{PLANS[p].maxSeats ? `, max. ${PLANS[p].maxSeats}` : ", unbegrenzt"}<span className="block text-xs text-muted">Empfang kostenlos</span></td>
+              <td>{PLANS[p].includedSeats} inkl.{PLANS[p].maxSeats ? `, max. ${PLANS[p].maxSeats}` : ", unbegrenzt"}<span className="block text-[13px] text-muted">Empfang kostenlos</span></td>
               {FEATURES.map((f) => <td key={f}>{PLANS[p].features.includes(f) ? (f === "voice_agent" ? `✓ (${PLANS[p].voiceMinutesIncluded} Min./Monat)` : "✓") : f === "voice_agent" && VOICE_ADDON_PLANS.includes(p) ? `Zusatzmodul (${VOICE_ADDON_MINUTES} Min./Monat)` : f === "website" && WEBSITE_ADDON_PLANS.includes(p) ? `Zusatzmodul (${money(WEBSITE_ADDON_CENTS)} netto/Monat, ${grossLabel(WEBSITE_ADDON_CENTS)}, vorläufig)` : "–"}</td>)}
             </tr>
           ))}

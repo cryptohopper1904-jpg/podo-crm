@@ -18,7 +18,7 @@ export function CancelAppointmentButton({ appointmentId, label }: { appointmentI
     >
       <input type="hidden" name="appointmentId" value={appointmentId} />
       <Button type="submit" variant="danger" disabled={pending}>{pending ? "Sage ab …" : "Termin absagen"}</Button>
-      <FormError message={state?.error ? `${state.error}${state.phone ? ` Telefon: ${state.phone}` : ""}` : null} />
+      <FormError message={state?.error ? `${state.error}${state.phone ? ` Telefon: ${state.phone}` : ""}` : null} revealKey={state} />
     </form>
   );
 }

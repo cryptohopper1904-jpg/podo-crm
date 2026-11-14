@@ -22,7 +22,7 @@ const BASE = "/einstellungen/leistungen";
 function ServiceFields({ s, gkv = true }: { s?: Service; gkv?: boolean }) {
   const categories = SERVICE_CATEGORIES.filter((c) => c !== "product" || s?.category === "product");
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {s ? <input type="hidden" name="id" value={s.id} /> : null}
       <Field label="Kürzel" hint="für die Schnelleingabe, z. B. PK"><Input name="code" defaultValue={s?.code} required maxLength={10} className="uppercase" /></Field>
       <Field label="Bezeichnung" className="sm:col-span-2 lg:col-span-3"><Input name="name" defaultValue={s?.name} required /></Field>
@@ -77,7 +77,7 @@ function ServiceList({ rows, view, qs, notes }: { rows: Service[]; view: Catalog
   const note = (s: Service) => (typeof notes[s.code] === "string" ? <Badge tone="warn">{String(notes[s.code])}</Badge> : null);
   if (view === "liste") {
     return (
-      <Table>
+      <Table label="Leistungen">
         <thead><tr><th>Kürzel</th><th>Bezeichnung</th><th>Kategorie</th><th className="text-right">Preis</th><th className="text-right">Dauer</th><th>USt</th><th></th></tr></thead>
         <tbody>
           {rows.map((s) => (
@@ -117,7 +117,7 @@ function ServiceList({ rows, view, qs, notes }: { rows: Service[]; view: Catalog
       {groupByCategory(rows, SERVICE_CATEGORIES).map(([cat, list]) => (
         <section key={cat}>
           <h2 className="mb-2 font-display text-lg font-semibold">{SERVICE_CATEGORY_LABELS[cat] ?? cat} <span className="text-sm font-normal text-muted">({list.length})</span></h2>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {list.map((s) => (
               <article key={s.id} className={`flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-surface p-4 ${s.active ? "" : "opacity-60"}`}>
                 <div className="flex items-start justify-between gap-2">
