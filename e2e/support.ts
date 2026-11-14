@@ -77,6 +77,42 @@ export async function insertAppointment(patientId: string, startsAt: Date): Prom
   }
 }
 
+/**
+ * Abo-Felder der Demo-Praxis setzen (organizations hat keine RLS) und eine Funktion zum Wiederherstellen zurückgeben.
+ * Für „Abo kündigen“: eine Pseudo-Abo-ID „sub_mock_…“ läuft gegen StripeMock (ohne STRIPE_SECRET_KEY), nie gegen Stripe.
+ */
+export async function setDemoBilling(patch: { plan: string; subscriptionStatus: string; stripeSubscriptionId: string | null }): Promise<() => Promise<void>> {
+  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  try {
+    const sel = await pool.query(
+      "select o.id, o.plan, o.subscription_status, o.stripe_subscription_id, o.current_period_end, o.settings from organizations o join memberships m on m.organization_id = o.id join users u on u.id = m.user_id where u.email = $1 order by o.created_at limit 1",
+      [DEMO_EMAIL],
+    );
+    const before = sel.rows[0];
+    await pool.query(
+      "update organizations set plan = $2, subscription_status = $3, stripe_subscription_id = $4, current_period_end = now() + interval '20 days' where id = $1",
+      [before.id, patch.plan, patch.subscriptionStatus, patch.stripeSubscriptionId],
+    );
+    return async () => {
+      const p = new Pool({ connectionString: dbUrl(), max: 1 });
+      try {
+        await p.query("update organizations set plan = $2, subscription_status = $3, stripe_subscription_id = $4, current_period_end = $5, settings = $6 where id = $1", [
+          before.id,
+          before.plan,
+          before.subscription_status,
+          before.stripe_subscription_id,
+          before.current_period_end,
+          before.settings,
+        ]);
+      } finally {
+        await p.end();
+      }
+    };
+  } finally {
+    await pool.end();
+  }
+}
+
 /** SQL in der Demo-Praxis (App-Rolle, RLS über app.org_id) in einer Transaktion – für gezielt herbeigeführte Zustände. */
 export async function withDemoOrg<T>(fn: (q: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>, org: string) => Promise<T>): Promise<T> {
   const pool = new Pool({ connectionString: dbUrl(), max: 1 });

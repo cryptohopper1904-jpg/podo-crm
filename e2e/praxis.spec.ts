@@ -1,12 +1,12 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
  * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → Zahlung erfassen (Zahlungsbeleg) → öffentliche Buchung →
- * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
+ * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abo kündigen/zurücknehmen → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
 import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, insertLowStockProduct, resetDemoTotp, withDemoOrg } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, insertLowStockProduct, resetDemoTotp, setDemoBilling, withDemoOrg } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -284,11 +284,35 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await pub.getByLabel("Vorname", { exact: true }).fill("Olga");
   await pub.getByLabel("Nachname", { exact: true }).fill(`Online-${run}`);
   await pub.getByLabel("Mobilnummer", { exact: true }).fill("0151 7654321");
-  await pub.getByLabel("Ich habe die Datenschutzhinweise gelesen.").check();
+  // Datenschutzhinweise der Praxis sind verlinkt (kein Pflicht-Häkchen mehr)
+  await expect(pub.getByRole("link", { name: "Datenschutzhinweisen der Praxis" })).toHaveAttribute("href", /\/(p|buchen)\/[a-z0-9-]+\/datenschutz$/);
   await pub.getByLabel(/Nicht rechtzeitig/).check();
   await pub.getByRole("button", { name: /Termin anfragen/ }).click();
   await expect(pub.getByText(/Ihre Terminanfrage ist eingegangen/)).toBeVisible();
+  // Impressum und Datenschutz der Praxis (Demo ohne Website → Ersatzseiten der Online-Buchung)
+  for (const [link, heading] of [["Impressum", "Impressum"], ["Datenschutz", "Datenschutz"]] as const) {
+    await pub.goto(`/buchen/${await demoSlug()}`);
+    await pub.getByRole("navigation", { name: /^Rechtliches/ }).getByRole("link", { name: link, exact: true }).click();
+    await expect(pub.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+  }
   await ctx.close();
+  // Praxis: Hinweis zur automatischen Löschung nach 6 Monaten an der neuen Anfrage und bei der Online-Buchung – erst,
+  // wenn die Inhaber:in die AVV (ab Version 0.3) akzeptiert hat; vorher „startet, sobald …“ und Hinweis auch auf „Heute“
+  const retention = /werden 6 Monate nach Eingang automatisch gelöscht/;
+  await page.goto("/heute");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  if (await page.getByText(/Auftragsverarbeitungsvertrag \(AVV\) aktualisiert/).isVisible()) {
+    await page.goto("/einstellungen/praxis");
+    const acceptAvv = page.getByRole("button", { name: /^AVV [\d.]+ akzeptieren$/ });
+    await expect(page.getByText(/Die automatische Löschung von Online-Anfragen ohne Termin nach 6 Monaten startet, sobald/)).toBeVisible();
+    await acceptAvv.click();
+    await expect(acceptAvv).toHaveCount(0);
+  }
+  await page.goto("/posteingang");
+  await expect(page.getByText(retention).first()).toBeVisible();
+  await page.goto("/einstellungen/praxis");
+  await expect(page.getByText(retention)).toBeVisible();
+  await expect(page.getByText("Online-Buchung gesperrt: Impressumsangaben fehlen")).toHaveCount(0);
 });
 
 test("Patientenportal: Link erzeugen, Termin buchen und verschieben", async ({ browser }) => {
@@ -401,6 +425,46 @@ test("Heute: Hinweis „Bestand knapp“ mit Link zum Nachbestellen", async () =
   await expect(hint).toContainText(`E2E Fußcreme ${run} (0 von mind. 5)`);
   await hint.getByRole("link", { name: "nachbestellen" }).click();
   await expect(page).toHaveURL(/\/produkte\/nachbestellen$/);
+});
+
+test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {
+  await page.goto("/einstellungen/daten");
+  await expect(page.getByText(/Der Löschantrag gilt\s+zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums/)).toBeVisible();
+  await expect(page.getByText(/Ist\s+das Abo bereits beendet, kannst du bis zur Löschung lesen und exportieren\. Ohne Löschantrag bleibt die Praxis nach Vertragsende im\s+Nur-Lesen-Modus, bis du wieder einen Tarif wählst – höchstens 12 Monate\./)).toBeVisible();
+  // Buchhaltung E2/E6: Kassenabmeldung und Inhalt des Exports
+  await expect(page.getByTestId("kassenabmeldung")).toContainText("§ 146a Abs. 4 AO");
+  await expect(page.getByTestId("kassenabmeldung")).toContainText("war die Kasse noch nicht gemeldet, melde Anschaffung und Außerbetriebnahme zusammen");
+  await expect(page.getByTestId("export-belege")).toContainText("Original-PDF mit Prüfsumme");
+  const restore = await setDemoBilling({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toBeVisible();
+    // laufendes (Pseudo-)Abo: Kostenlos-Wechsel verweist auf „Abo kündigen“
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen („Abo kündigen“ auf dieser Seite).", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kostenlos weiter nutzen" })).toBeDisabled();
+    await page.getByRole("button", { name: "Abo kündigen …" }).click();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    // Bestätigung ist Pflicht (required) – erst mit Haken wird gekündigt
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+    await page.getByLabel(/Ich kündige das Abo zum/).check();
+    await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
+    await expect(page.getByTestId("abo-gekuendigt")).toContainText("gekündigt");
+    await page.getByRole("button", { name: "Kündigung zurücknehmen" }).click();
+    await expect(page.getByText("Die Kündigung ist zurückgenommen – dein Abo läuft weiter.").or(page.getByRole("button", { name: "Abo kündigen …" }))).toBeVisible();
+    await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
+  } finally {
+    await restore();
+  }
+  // Nebenwirkung der Pseudo-Abo-ID: Ist das Abo beendet, blockiert die verbliebene ID den Kostenlos-Wechsel nicht
+  const restoreEnded = await setDemoBilling({ plan: "praxis", subscriptionStatus: "canceled", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Kostenlos weiter nutzen" })).toBeVisible();
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen", { exact: false })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toHaveCount(0);
+  } finally {
+    await restoreEnded();
+  }
 });
 
 test("Abmelden", async () => {

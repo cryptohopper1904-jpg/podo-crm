@@ -24,6 +24,7 @@ import { z } from "zod";
 import * as schema from "../db/schema";
 import { hashPassword, passwordProblem } from "./auth/password";
 import { DEMO_PRACTICE_FIELDS, seedDemoPracticeData } from "./demo-data";
+import { DEMO_IMPRINT, missingImprintFields } from "./imprint";
 import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-practice";
 
 export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
@@ -356,6 +357,34 @@ async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<Boot
       }
       orgId = existing.id;
       result = "exists";
+      // Ältere Demo ohne (vollständige) Impressums-Pflichtangaben – fehlender Schlüssel, leere Strings oder nur
+      // Leerzeichen: sonst ist ihre Online-Buchung gesperrt (src/lib/imprint.ts). Nur Fehlendes ergänzen (erfundene
+      // Demo-Daten); vorhandene, nicht leere Werte bleiben unverändert.
+      const [cur] = await tx
+        .select({ name: schema.organizations.name, street: schema.organizations.street, zip: schema.organizations.zip, city: schema.organizations.city, phone: schema.organizations.phone, email: schema.organizations.email, settings: schema.organizations.settings })
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, orgId));
+      const stored = cur.settings?.imprint && typeof cur.settings.imprint === "object" ? (cur.settings.imprint as Record<string, unknown>) : {};
+      const blank = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+      const keep = Object.fromEntries(Object.entries(stored).filter(([, v]) => !blank(v)));
+      const incomplete = missingImprintFields(cur, cur.settings).length > 0 || Object.keys(DEMO_IMPRINT).some((k) => k in stored && blank(stored[k]) && !blank((DEMO_IMPRINT as Record<string, unknown>)[k]));
+      const filled = incomplete
+        ? await tx
+            .update(schema.organizations)
+            .set({
+              settings: sql`coalesce(${schema.organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint: { ...DEMO_IMPRINT, ...keep } })}::jsonb`,
+              street: sql`case when coalesce(btrim(${schema.organizations.street}), '') = '' then ${DEMO_PRACTICE_FIELDS.street} else ${schema.organizations.street} end`,
+              zip: sql`case when coalesce(btrim(${schema.organizations.zip}), '') = '' then ${DEMO_PRACTICE_FIELDS.zip} else ${schema.organizations.zip} end`,
+              city: sql`case when coalesce(btrim(${schema.organizations.city}), '') = '' then ${DEMO_PRACTICE_FIELDS.city} else ${schema.organizations.city} end`,
+              phone: sql`case when coalesce(btrim(${schema.organizations.phone}), '') = '' then ${DEMO_PRACTICE_FIELDS.phone} else ${schema.organizations.phone} end`,
+              email: sql`case when coalesce(btrim(${schema.organizations.email}), '') = '' then ${DEMO_PRACTICE_FIELDS.email} else ${schema.organizations.email} end`,
+            })
+            .where(eq(schema.organizations.id, orgId))
+            .returning({ id: schema.organizations.id })
+        : [];
+      if (filled.length) {
+        await tx.insert(schema.auditLog).values({ organizationId: orgId, userId: admin.id, action: "bootstrap.demo_imprint", entity: "organization", entityId: orgId, meta: {} });
+      }
     } else {
       const [org] = await tx
         .insert(schema.organizations)
@@ -367,7 +396,7 @@ async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<Boot
           subscriptionStatus: "active",
           trialEndsAt: null,
           seats: 1,
-          settings: { demo: true, bootstrap: { source: "env-demo", at: new Date().toISOString() } },
+          settings: { demo: true, imprint: DEMO_IMPRINT, bootstrap: { source: "env-demo", at: new Date().toISOString() } },
         })
         .returning({ id: schema.organizations.id });
       orgId = org.id;

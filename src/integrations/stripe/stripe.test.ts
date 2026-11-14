@@ -51,7 +51,15 @@ describe("Stripe-Events → Abo", () => {
       ev("checkout.session.completed", { mode: "subscription", client_reference_id: ORG, customer: "cus_1", subscription: "sub_1", metadata: { plan: "praxis", seats: "4", organizationId: ORG } }),
       prices,
     );
-    expect(u).toEqual({ organizationId: ORG, customerId: "cus_1", patch: { subscriptionStatus: "active", plan: "praxis", seats: 4, stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" } });
+    expect(u).toEqual({ organizationId: ORG, customerId: "cus_1", patch: { subscriptionStatus: "active", plan: "praxis", seats: 4, stripeCustomerId: "cus_1", stripeSubscriptionId: "sub_1" }, cancelAtPeriodEnd: false });
+  });
+  it("subscription.updated/deleted: Kündigung zum Periodenende (cancel_at_period_end oder cancel_at)", () => {
+    const base = { id: "sub_1", customer: "cus_1", status: "active", metadata: { organizationId: ORG } };
+    expect(billingUpdateFromEvent(ev("customer.subscription.updated", { ...base, cancel_at_period_end: true }), prices)?.cancelAtPeriodEnd).toBe(true);
+    expect(billingUpdateFromEvent(ev("customer.subscription.updated", { ...base, cancel_at_period_end: false, cancel_at: t + 100 }), prices)?.cancelAtPeriodEnd).toBe(true);
+    expect(billingUpdateFromEvent(ev("customer.subscription.updated", { ...base, cancel_at_period_end: false, cancel_at: null }), prices)?.cancelAtPeriodEnd).toBe(false);
+    expect(billingUpdateFromEvent(ev("customer.subscription.deleted", { ...base, status: "canceled", cancel_at_period_end: true }), prices)?.cancelAtPeriodEnd).toBe(false);
+    expect(billingUpdateFromEvent(ev("invoice.payment_failed", { customer: "cus_1" }), prices)?.cancelAtPeriodEnd).toBeUndefined();
   });
   it("checkout.session.completed ohne Zahlung (z. B. SEPA ausstehend) schaltet nicht frei", () => {
     const u = billingUpdateFromEvent(
@@ -114,6 +122,103 @@ describe("Stripe-Adapter (echt, mit Fake-fetch)", () => {
     expect(sent.get("client_reference_id")).toBe(ORG);
     expect(sent.get("subscription_data[metadata][organizationId]")).toBe(ORG);
     expect(sent.get("mode")).toBe("subscription");
+  });
+  it("Abo kündigen/fortsetzen/sofort beenden, Kunde löschen: Methode, Pfad, Parameter; 404 tolerant", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const subJson = (extra: Record<string, unknown>) =>
+      JSON.stringify({ id: "sub_A1", status: "active", customer: "cus_B2", metadata: {}, items: { data: [{ current_period_start: t, current_period_end: t + 100 }] }, ...extra });
+    let next: Response = new Response(subJson({}), { status: 200 });
+    const a = new StripeAdapter({ secretKey: "sk_test_x", fetch: async (url, init) => (calls.push({ url, init }), next) });
+
+    const got = await a.getSubscription("sub_A1");
+    expect(calls[0].url).toBe("https://api.stripe.com/v1/subscriptions/sub_A1");
+    expect(calls[0].init?.method).toBe("GET");
+    expect(got).toMatchObject({ id: "sub_A1", status: "active", cancelAtPeriodEnd: false, cancelReason: null, customerId: "cus_B2", currentPeriodStart: now, currentPeriodEnd: new Date((t + 100) * 1000) });
+
+    next = new Response(subJson({ cancel_at_period_end: true, metadata: { cancel_reason: "deletion_request" } }), { status: 200 });
+    const c = await a.setCancelAtPeriodEnd("sub_A1", true, "deletion_request");
+    expect(calls[1].init?.method).toBe("POST");
+    const sent = new URLSearchParams(String(calls[1].init?.body));
+    expect(sent.get("cancel_at_period_end")).toBe("true");
+    expect(sent.get("metadata[cancel_reason]")).toBe("deletion_request");
+    expect(c).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "deletion_request" });
+
+    next = new Response(subJson({}), { status: 200 });
+    await a.setCancelAtPeriodEnd("sub_A1", false, null);
+    const sent2 = new URLSearchParams(String(calls[2].init?.body));
+    expect(sent2.get("cancel_at_period_end")).toBe("false");
+    expect(sent2.get("metadata[cancel_reason]")).toBe(""); // leerer Wert entfernt den Schlüssel
+
+    next = new Response(subJson({ status: "canceled" }), { status: 200 });
+    await a.cancelSubscriptionNow("sub_A1");
+    expect(calls[3].init?.method).toBe("DELETE");
+    expect(calls[3].url).toBe("https://api.stripe.com/v1/subscriptions/sub_A1?prorate=false&invoice_now=false");
+
+    next = new Response("{}", { status: 200 });
+    await a.deleteCustomer("cus_B2");
+    expect(calls[4]).toMatchObject({ url: "https://api.stripe.com/v1/customers/cus_B2", init: { method: "DELETE" } });
+
+    next = new Response(JSON.stringify({ error: { code: "resource_missing" } }), { status: 404 });
+    expect(await a.getSubscription("sub_A1")).toBeNull();
+    next = new Response(JSON.stringify({ error: { code: "resource_missing" } }), { status: 404 });
+    await expect(a.deleteCustomer("cus_B2")).resolves.toBeUndefined();
+    next = new Response("boom", { status: 500 });
+    await expect(a.setCancelAtPeriodEnd("sub_A1", true, "owner")).rejects.toThrow(/HTTP 500/);
+    // IDs landen im Pfad: fremdes Format wird abgelehnt, ohne Anfrage
+    const before = calls.length;
+    await expect(a.getSubscription("sub_A1/../../customers")).rejects.toThrow();
+    await expect(a.deleteCustomer("x")).rejects.toThrow();
+    expect(calls.length).toBe(before);
+  });
+  it("Abos des Kunden, offene Rechnungen/Positionen, canceled_at und Intervall", async () => {
+    const calls: string[] = [];
+    const responses: Record<string, unknown>[] = [
+      {
+        data: [
+          { id: "sub_A1", status: "active", customer: "cus_B2", canceled_at: t, cancel_at_period_end: true, items: { data: [{ price: { recurring: { interval: "year", interval_count: 1 } } }] } },
+          { id: "sub_A2", status: "canceled", customer: "cus_B2", plan: { interval: "month", interval_count: 1 } },
+        ],
+      },
+      { data: [{ amount_remaining: 9900 }, { amount_remaining: 100 }], has_more: false },
+      // zwei Seiten: Weiterblättern mit starting_after (Code CR-3)
+      { data: [{ id: "ii_1", amount: 1500 }], has_more: true },
+      { data: [{ id: "ii_2", amount: -400 }], has_more: false },
+      { id: "cus_B2", balance: -2500 },
+    ];
+    const a = new StripeAdapter({ secretKey: "sk_test_x", fetch: async (url) => (calls.push(url), new Response(JSON.stringify(responses.shift()), { status: 200 })) });
+    const subs = await a.listSubscriptions("cus_B2");
+    expect(calls[0]).toBe("https://api.stripe.com/v1/subscriptions?customer=cus_B2&status=all&limit=100");
+    expect(subs).toMatchObject([
+      { id: "sub_A1", canceledAt: t, interval: "year", intervalCount: 1, cancelAtPeriodEnd: true },
+      { id: "sub_A2", canceledAt: null, interval: "month", intervalCount: 1 },
+    ]);
+    // Gutschriften und Belastungen getrennt, Kundensaldo (negativ = Guthaben der Praxis)
+    expect(await a.openBillingItems("cus_B2")).toEqual({
+      openInvoices: 2,
+      openInvoiceCents: 10000,
+      pendingItems: 2,
+      pendingItemCents: 1100,
+      pendingChargeCents: 1500,
+      pendingCreditCents: -400,
+      customerBalanceCents: -2500,
+      truncated: false,
+    });
+    expect(calls.slice(1)).toEqual([
+      "https://api.stripe.com/v1/invoices?customer=cus_B2&status=open&limit=100",
+      "https://api.stripe.com/v1/invoiceitems?customer=cus_B2&pending=true&limit=100",
+      "https://api.stripe.com/v1/invoiceitems?customer=cus_B2&pending=true&limit=100&starting_after=ii_1",
+      "https://api.stripe.com/v1/customers/cus_B2",
+    ]);
+    // bereits gelöschter Kunde: kein Saldo
+    responses.push({ data: [] }, { data: [] }, { id: "cus_B2", deleted: true });
+    expect((await a.openBillingItems("cus_B2")).customerBalanceCents).toBeNull();
+    // mehr als 10 Seiten: abgeschnitten → truncated (Zahlen sind Untergrenzen)
+    responses.push({ data: [] });
+    for (let i = 0; i < 10; i++) responses.push({ data: [{ id: `ii_p${i}`, amount: 100 }], has_more: true });
+    responses.push({ id: "cus_B2", balance: 0 });
+    expect(await a.openBillingItems("cus_B2")).toMatchObject({ pendingItems: 10, pendingItemCents: 1000, truncated: true });
+    await expect(a.listSubscriptions("cus_B2&x=1")).rejects.toThrow();
+    expect(calls).toHaveLength(20);
   });
   it("fehlende Price-ID oder Schlüssel → nicht konfiguriert", () => {
     expect(() => checkoutParams({ organizationId: ORG, plan: "plus", seats: 1, successUrl: "a", cancelUrl: "b" }, {})).toThrow(/STRIPE_PRICE_PLUS/);

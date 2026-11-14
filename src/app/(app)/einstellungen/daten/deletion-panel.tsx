@@ -5,6 +5,10 @@ import { keepValues } from "@/lib/forms";
 import { Button, Checkbox, Field, FormError, FormSuccess, Input } from "@/components/ui";
 import { cancelDeletionAction, requestDeletionAction } from "./actions";
 
+function Warning({ message }: { message?: string }) {
+  return message ? <p role="alert" className="rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text">{message}</p> : null;
+}
+
 /** Zweistufige Kündigung: 1) bewusst starten, 2) Praxisnamen eintippen + Aufbewahrungshinweis bestätigen. */
 export function DeletionRequest({ practiceName }: { practiceName: string }) {
   const [step, setStep] = useState<1 | 2>(1);
@@ -20,6 +24,7 @@ export function DeletionRequest({ practiceName }: { practiceName: string }) {
     <form onSubmit={keepValues(run)} className="flex flex-col gap-4 rounded-xl border border-danger/40 bg-accent-soft/40 p-4">
       <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
+      <Warning message={state?.warning} />
       <p className="text-sm font-semibold">Schritt 2 von 2: Bitte bestätigen</p>
       <Checkbox name="acknowledge" required label="Ich habe einen vollständigen Export gesichert und bewahre ihn für die gesetzlichen Fristen auf." />
       <Field label={`Zur Bestätigung den Praxisnamen eingeben: „${practiceName}“`}>
@@ -39,6 +44,7 @@ export function DeletionCancel() {
     <form onSubmit={keepValues(run)} className="flex flex-col gap-3">
       <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
+      <Warning message={state?.warning} />
       <div>
         <Button type="submit" disabled={pending}>{pending ? "…" : "Löschung zurücknehmen"}</Button>
       </div>

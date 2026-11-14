@@ -27,7 +27,7 @@ Anlage zum Auftragsverarbeitungsvertrag (`docs/legal/AVV.md`). Fassung: Entwurf,
 ## Verfügbarkeit und Belastbarkeit
 | Maßnahme | Umsetzung |
 |---|---|
-| Backup | täglich, verschlüsselt, 14 Tage lokal + Kopie an zweitem Standort (einzurichten) |
+| Backup | täglich, verschlüsselt, 14 Tage lokal + Kopie an zweitem Standort, dort höchstens 30 Tage (einzurichten) |
 | Wiederherstellung | Quartalsweiser Restore-Test (`docs/BETRIEB.md`) |
 | Monitoring | Healthcheck `/api/health`, Docker-Restart-Policy |
 

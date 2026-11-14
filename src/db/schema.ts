@@ -176,7 +176,10 @@ export const organizations = pgTable("organizations", {
   /** Löschung beantragt (Kündigung): nach Frist + Aufbewahrungsprüfung endgültig */
   deletionRequestedAt: timestamp("deletion_requested_at", { withTimezone: true }),
   createdAt: createdAt(),
-});
+}, (t) => [
+  // Ein Stripe-Kunde gehört genau einer Praxis (Webhook-Zuordnung über die Kunden-ID, Migration 0053)
+  uniqueIndex("organizations_stripe_customer_id").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
+]);
 
 /**
  * Praxis-Logos (Einstellungen → Praxisdaten): „compact“ = Zeichen (dezent auf Bögen/Quittungen),
@@ -247,7 +250,7 @@ export const locations = pgTable("locations", {
   zip: text("zip"),
   city: text("city"),
   createdAt: createdAt(),
-});
+}, (t) => [uniqueIndex("locations_org_id").on(t.organizationId, t.id)]);
 
 export const users = pgTable("users", {
   id: id(),
@@ -383,7 +386,7 @@ export const billingContacts = pgTable("billing_contacts", {
   email: text("email"),
   phone: text("phone"),
   createdAt: createdAt(),
-});
+}, (t) => [uniqueIndex("billing_contacts_org_id").on(t.organizationId, t.id)]);
 
 export const patients = pgTable(
   "patients",
@@ -429,6 +432,7 @@ export const patients = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
+    uniqueIndex("patients_org_id").on(t.organizationId, t.id),
     uniqueIndex("patients_org_number").on(t.organizationId, t.number),
     index("patients_org_name").on(t.organizationId, t.lastName, t.firstName),
   ],
@@ -498,7 +502,7 @@ export const services = pgTable(
     active: boolean("active").notNull().default(true),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("services_org_code").on(t.organizationId, t.code), index("services_category_id").on(t.categoryId)],
+  (t) => [uniqueIndex("services_org_code").on(t.organizationId, t.code), index("services_category_id").on(t.categoryId), uniqueIndex("services_org_id").on(t.organizationId, t.id)],
 );
 
 export const appointments = pgTable(
@@ -522,6 +526,7 @@ export const appointments = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
+    uniqueIndex("appointments_org_id").on(t.organizationId, t.id),
     index("appointments_org_time").on(t.organizationId, t.startsAt),
     /** erster Termin je Person (Auswertung: neue vs. wiederkehrende Patient:innen) */
     index("appointments_org_patient").on(t.organizationId, t.patientId, t.startsAt),
@@ -603,7 +608,7 @@ export const prescriptions = pgTable("prescriptions", {
   billingBatchId: uuid("billing_batch_id"),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
-});
+}, (t) => [uniqueIndex("prescriptions_org_id").on(t.organizationId, t.id)]);
 
 /** Abrechnungslauf für GKV-Verordnungen (Übergabe an ein Abrechnungszentrum, § 302 SGB V) */
 export const billingBatches = pgTable("billing_batches", {
@@ -714,7 +719,7 @@ export const devices = pgTable("devices", {
   active: boolean("active").notNull().default(true),
   notes: text("notes"),
   createdAt: createdAt(),
-});
+}, (t) => [uniqueIndex("devices_org_id").on(t.organizationId, t.id)]);
 
 /** Gerätebuch (append-only): Wartung, Validierung, Prüfung, Störung, Einweisung */
 export const deviceEvents = pgTable("device_events", {
@@ -842,7 +847,7 @@ export const treatmentRecords = pgTable(
     hash: text("hash").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index("treatment_records_patient").on(t.organizationId, t.patientId, t.treatedAt)],
+  (t) => [index("treatment_records_patient").on(t.organizationId, t.patientId, t.treatedAt), uniqueIndex("treatment_records_org_id").on(t.organizationId, t.id)],
 );
 
 export const recordAddenda = pgTable("record_addenda", {
@@ -875,7 +880,7 @@ export const braceEpisodes = pgTable("brace_episodes", {
   endedAt: date("ended_at"),
   status: text("status").notNull().default("active"),
   createdAt: createdAt(),
-});
+}, (t) => [uniqueIndex("brace_episodes_org_id").on(t.organizationId, t.id)]);
 
 export const media = pgTable(
   "media",
@@ -972,6 +977,7 @@ export const invoices = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
+    uniqueIndex("invoices_org_id").on(t.organizationId, t.id),
     uniqueIndex("invoices_org_number").on(t.organizationId, t.number),
     index("invoices_org_status").on(t.organizationId, t.status),
     index("invoices_org_collective").on(t.organizationId, t.collectiveInvoiceId),
@@ -1276,7 +1282,7 @@ export const vouchers = pgTable(
     soldInvoiceId: uuid("sold_invoice_id"),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("vouchers_org_code").on(t.organizationId, t.code)],
+  (t) => [uniqueIndex("vouchers_org_code").on(t.organizationId, t.code), uniqueIndex("vouchers_org_id").on(t.organizationId, t.id)],
 );
 
 export const payments = pgTable("payments", {
@@ -1453,6 +1459,9 @@ export const cashClosingRegistrations = pgTable(
 );
 
 // ───────────────────────── Kommunikation ─────────────────────────
+/** messages.meta – Online-Anfrage: Name der anfragenden Person (strukturiert) */
+export type MessageMeta = { onlineRequest?: { firstName: string; lastName: string } };
+
 export const messages = pgTable(
   "messages",
   {
@@ -1469,6 +1478,11 @@ export const messages = pgTable(
     aiSuggestion: text("ai_suggestion"),
     externalId: text("external_id"),
     threadKey: text("thread_key"),
+    /**
+     * Strukturierte Zusatzangaben zur Nachricht (nie an Dritte): bei Online-Anfragen (/buchen) Vor- und Nachname,
+     * damit sie vor einem KI-Antwortvorschlag zuverlässig entfernt werden (src/lib/online-request.ts).
+     */
+    meta: jsonb("meta").$type<MessageMeta>(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("messages_org_time").on(t.organizationId, t.receivedAt)],

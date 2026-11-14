@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.3 · Stand 13.11.2026
+> Version 0.4 · Stand 14.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
@@ -22,7 +22,8 @@
 1. Der Kunde kann den Dienst nach Registrierung **30 Tage kostenlos testen**. Die Testphase endet automatisch; sie verlängert sich nicht ohne aktive Buchung eines kostenpflichtigen Tarifs.
 2. Ein kostenpflichtiger Vertrag kommt zustande, wenn der Kunde einen Tarif bucht und der Anbieter die Buchung bestätigt.
 3. Der Kunde versichert, dass seine Angaben bei der Registrierung richtig und vollständig sind.
-4. Der Anbieter kann Aktionscodes ausgeben, die die Testphase verlängern oder ihren Umfang festlegen. Die Bedingungen (insbesondere Dauer, Umfang, Einlösefrist, Anzahl) werden mit dem Angebot genannt. Je Kunde kann nur ein Aktionscode eingelöst werden, nicht während eines laufenden kostenpflichtigen Vertrags. Ein Anspruch auf Barauszahlung besteht nicht. Nach Ende der Testphase ist der Dienst bis zur Buchung eines Tarifs oder zum Wechsel in den kostenlosen Tarif (§ 3a) nur lesend nutzbar, ein Datenexport bleibt möglich (§ 9); hat der Kunde den Aktionscode im kostenlosen Tarif eingelöst, kehrt er unter den Voraussetzungen des § 3a (insbesondere höchstens 20 Patient:innen; weitere Nutzerzugänge außer dem Zugang für die Steuerberatung werden dabei deaktiviert) automatisch in diesen zurück, spätestens am auf das Ende der Testphase folgenden Tag. Der Anbieter kann nicht eingelöste Codes jederzeit deaktivieren, bereits eingelöste bleiben unberührt.
+4. Der Anbieter kann Aktionscodes ausgeben, die die Testphase verlängern oder ihren Umfang festlegen. Die Bedingungen (insbesondere Dauer, Umfang, Einlösefrist, Anzahl) werden mit dem Angebot genannt. Je Kunde kann nur ein Aktionscode eingelöst werden, nicht während eines laufenden kostenpflichtigen Vertrags. Ein Anspruch auf Barauszahlung besteht nicht. Hat der Kunde den Aktionscode im kostenlosen Tarif eingelöst, kehrt er unter den Voraussetzungen des § 3a (insbesondere höchstens 20 Patient:innen; weitere Nutzerzugänge außer dem Zugang für die Steuerberatung werden dabei deaktiviert) automatisch in diesen zurück, spätestens am auf das Ende der Testphase folgenden Tag. Der Anbieter kann nicht eingelöste Codes jederzeit deaktivieren, bereits eingelöste bleiben unberührt.
+5. Nach Ende der Testphase ist der Dienst bis zur Buchung eines Tarifs oder zum Wechsel in den kostenlosen Tarif (§ 3a) nur lesend nutzbar, längstens jedoch 12 Monate nach Ende der Testphase; ein Datenexport bleibt möglich. Für die Ankündigung und Löschung gilt § 9 Nr. 2 entsprechend.
 
 ## § 3a Kostenloser Tarif
 
@@ -59,12 +60,12 @@
 
 1. Kostenpflichtige Verträge laufen auf unbestimmte Zeit und sind monatlich zum Ende des Abrechnungszeitraums kündbar, sofern im Tarif nichts anderes angegeben ist.
 2. Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt. Für den kostenlosen Tarif gilt § 3a.
-3. Die Kündigung kann in der Software (Einstellungen → Daten & Kündigung) oder in Textform erfolgen.
+3. Die Kündigung kann in Textform oder in der Software erfolgen: unter Einstellungen → Abo (Kündigung zum Ende des laufenden Abrechnungszeitraums; danach Nur-Lesen-Modus nach § 9 Nr. 2) oder unter Einstellungen → Daten & Kündigung. Ein dort gestellter Löschantrag gilt zugleich als Kündigung zum Ende des laufenden Abrechnungszeitraums. Bis zum Ende des Abrechnungszeitraums kann der Kunde eine Kündigung in der Software zurücknehmen; der Vertrag wird dann unverändert fortgesetzt. Nimmt der Kunde einen Löschantrag vor Ende des Abrechnungszeitraums zurück, gilt die damit verbundene Kündigung als zurückgenommen; eine gesondert erklärte Kündigung bleibt bestehen. Der Anbieter bestätigt die Kündigung unter Angabe des Vertragsendes.
 
 ## § 9 Datenexport und Löschung bei Vertragsende
 
 1. Der Kunde kann jederzeit einen **vollständigen Datenexport** (maschinenlesbare JSON-Dateien und entschlüsselte Fotos/Dokumente) in der Software erstellen.
-2. Nach Beantragung der Löschung bzw. nach Vertragsende werden die Daten nach einer **Karenzzeit von 30 Tagen** endgültig gelöscht. Innerhalb der Karenzzeit kann der Kunde die Löschung widerrufen. Sicherungskopien laufen nach dem im AVV genannten Zeitraum aus.
+2. Endet der Vertrag, ohne dass der Kunde die Löschung beantragt hat, bleibt der Zugang unentgeltlich im Nur-Lesen-Modus bestehen: Die Daten sind lesbar und exportierbar, Änderungen sind gesperrt. Der Nur-Lesen-Modus endet, wenn der Kunde einen Tarif bucht oder die Löschung beantragt, spätestens jedoch 12 Monate nach Vertragsende. Der Anbieter kündigt die Löschung mindestens 30 Tage vorher in Textform an die E-Mail-Adressen der Zugänge mit der Rolle Inhaber:in sowie in der Software an; zur Sicherung der Aufbewahrungspflichten informiert er zusätzlich Zugänge der Steuerberatung. Er löscht die Daten mit Ablauf des Nur-Lesen-Modus, spätestens 14 Tage danach, endgültig. Beantragt der Kunde die Löschung (Einstellungen → Daten & Kündigung), werden die Daten nach einer Karenzzeit von 30 Tagen, spätestens jedoch 14 Tage nach deren Ablauf, endgültig gelöscht; innerhalb der Karenzzeit kann der Kunde den Antrag zurücknehmen. Verschlüsselte Datensicherungen laufen spätestens 30 Tage nach der Löschung aus (§ 10 AVV). Während des Nur-Lesen-Modus gilt der AVV fort. Kann die Ankündigung nicht an diese E-Mail-Adressen zugestellt werden, kündigt der Anbieter die Löschung auf anderem Weg in Textform an. Die Löschung erfolgt frühestens 30 Tage nach Zugang einer Ankündigung in Textform; bis dahin verlängert sich der Nur-Lesen-Modus.
 3. Gesetzliche Aufbewahrungspflichten (z. B. 10 Jahre für Behandlungsdokumentation nach § 630f BGB, 8 bzw. 10 Jahre für Buchungsbelege nach § 147 AO) treffen den **Kunden**. Der Kunde ist verpflichtet, vor der Löschung einen Export zu erstellen und für die Dauer der Fristen aufzubewahren. Der Anbieter bewahrt nach der Löschung keine Kopie für den Kunden auf.
 
 ## § 10 Haftung

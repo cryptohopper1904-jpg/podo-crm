@@ -7,6 +7,10 @@ import { getSession, requestMeta } from "@/lib/auth/session";
 import { isPlanId, PLANS, seatCounts, voiceAddonActive, type PlanId } from "@/lib/plans";
 import { websiteAddonActive } from "@/lib/website";
 import { isDemoPractice } from "@/lib/demo-practice";
+import { deletionBillingProblem, resumeBillingProblem } from "@/lib/subscription-cancel";
+import { purgeStartedProblem } from "@/lib/org-deletion";
+import { isAutoDeletion, needsManualNotice, readonlyExpiry, readonlyExpiryState, plannedDeletionDate, type MailOutcome, type ManualNoticeVia } from "@/lib/readonly-expiry";
+import { stopAutoDeletion } from "./readonly-expiry";
 
 /**
  * Plattform-Konsole (SaaS-Betreiber). Zugang NUR für users.is_platform_admin MIT aktiver 2FA – sonst 404.
@@ -37,6 +41,24 @@ export type PracticeOverview = {
   websiteAddon: boolean;
   /** Demo-Praxis mit erfundenen Daten (organizations.settings.demo, Bootstrap) */
   demo: boolean;
+  /**
+   * Löschantrag gestellt, Stripe-Abo aber nicht gekündigt (automatische Kündigung fehlgeschlagen), Rücknahme fehlgeschlagen
+   * oder Löschlauf begonnen und abgebrochen (settings.purgeStartedAt) – Betreiber muss handeln
+   */
+  billingProblem: string | null;
+  deletionRequestedAt: Date | null;
+  /** Ende des Nur-Lesen-Modus angekündigt bzw. automatischer Löschantrag (AGB § 9 Nr. 2) */
+  readonlyExpiry: {
+    deletionAt: Date;
+    auto: boolean;
+    noticeSentAt: Date | null;
+    noticeMail: MailOutcome | null;
+    reminderMail: MailOutcome | null;
+    manualNoticeAt: Date | null;
+    manualNoticeVia: ManualNoticeVia | null;
+    /** Pflichtaktion: Ankündigung nicht zugestellt, kein Vermerk – ohne ihn wird nicht automatisch gelöscht */
+    needsManualNotice: boolean;
+  } | null;
   /** Praxis-Inhaber:innen (Konto, kein Patientendatum) – für „Passwort-Reset senden“ */
   owners: { id: string; name: string; email: string }[];
 };
@@ -86,6 +108,9 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       voiceAddon: voiceAddonActive(o.settings),
       websiteAddon: websiteAddonActive(o.settings),
       demo: isDemoPractice(o.settings),
+      billingProblem: purgeStartedProblem(o.settings) ?? deletionBillingProblem(o) ?? resumeBillingProblem(o),
+      deletionRequestedAt: o.deletionRequestedAt,
+      readonlyExpiry: expiryOverview(o, now),
       owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),
     });
   }
@@ -95,6 +120,23 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
 async function platformAudit(organizationId: string, userId: string, action: string, meta: Record<string, unknown>) {
   const { ip } = await requestMeta().catch(() => ({ ip: null }));
   await db.insert(auditLog).values({ organizationId, userId, action, entity: "organization", entityId: organizationId, meta, ip });
+}
+
+function expiryOverview(o: typeof organizations.$inferSelect, now: Date): PracticeOverview["readonlyExpiry"] {
+  const st = readonlyExpiryState(o.settings);
+  const auto = isAutoDeletion(o.settings);
+  const info = readonlyExpiry(o, now);
+  if (!info || !(st.noticeSentAt || auto)) return null;
+  return {
+    deletionAt: plannedDeletionDate(info, st, auto ? o.deletionRequestedAt : null, now),
+    auto,
+    noticeSentAt: st.noticeSentAt ? new Date(st.noticeSentAt) : null,
+    noticeMail: st.noticeMail,
+    reminderMail: st.reminderMail,
+    manualNoticeAt: st.manualNoticeAt ? new Date(st.manualNoticeAt) : null,
+    manualNoticeVia: st.manualNoticeVia,
+    needsManualNotice: needsManualNotice(st) && !o.deletionRequestedAt,
+  };
 }
 
 export async function setPracticePlan(adminUserId: string, organizationId: string, plan: PlanId, seats: number) {
@@ -110,6 +152,7 @@ export async function setPracticePlan(adminUserId: string, organizationId: strin
     from: { plan: before.plan, seats: before.seats, status: before.subscriptionStatus },
     to: { plan, seats: s, status },
   });
+  await stopAutoDeletion(db, organizationId, { trigger: "platform.plan_changed", userId: adminUserId });
 }
 
 export async function extendTrial(adminUserId: string, organizationId: string, days: number) {
@@ -120,6 +163,7 @@ export async function extendTrial(adminUserId: string, organizationId: string, d
   const trialEndsAt = new Date(base + days * 86_400_000);
   await db.update(organizations).set({ trialEndsAt, plan: "trial", subscriptionStatus: "trialing" }).where(eq(organizations.id, organizationId));
   await platformAudit(organizationId, adminUserId, "platform.trial_extended", { days, from: o.trialEndsAt?.toISOString() ?? null, to: trialEndsAt.toISOString() });
+  await stopAutoDeletion(db, organizationId, { trigger: "platform.trial_extended", userId: adminUserId });
 }
 
 /** Zusatzmodul KI-Telefon an-/abschalten (bis zur Stripe-Anbindung manuell durch den Betreiber). */

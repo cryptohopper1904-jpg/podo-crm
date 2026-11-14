@@ -5,9 +5,10 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { consents, patients } from "@/db/schema";
+import { patients } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
+import { recordConsent } from "@/server/consents";
 import { deletePatient, erasePatientContact, PatientDeletionError } from "@/server/patient-deletion";
 import { findDuplicates, insertPatient, parseBirthDate, patientInput, toPatientValues } from "@/server/patients";
 import { markPatientDeceased, undoPatientDeceased } from "@/server/patient-deceased";
@@ -56,11 +57,12 @@ export async function recordConsentAction(form: FormData) {
   const auth = await requireAuth("patients.write");
   const org = auth.organization.id;
   const patientId = String(form.get("patientId"));
-  const type = String(form.get("type")) as (typeof consents.$inferInsert)["type"];
+  const type = String(form.get("type"));
   const granted = form.get("granted") === "1";
-  await withOrg(org, (tx) =>
-    tx.insert(consents).values({ organizationId: org, patientId, type, granted, via: String(form.get("via") ?? "praxis"), recordedBy: auth.user.id }),
-  );
+  const res = await recordConsent(org, { patientId, type, granted, via: String(form.get("via") ?? "praxis"), recordedBy: auth.user.id });
+  // Das Formular der Akte sendet immer die eigene Patient:in und eine bekannte Art – alles andere ist kein normaler
+  // Bedienfall (z. B. manipulierte Anfrage) und landet bei der Fehlerseite statt still zu scheitern.
+  if (!res.ok) throw new Error(res.error);
   await audit({ organizationId: org, userId: auth.user.id, action: "consent.record", entity: "patient", entityId: patientId, meta: { type, granted } });
   revalidatePath(`/kunden/${patientId}`);
 }

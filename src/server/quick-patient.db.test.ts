@@ -127,7 +127,7 @@ const token = () => `test-token-${Date.now().toString(36)}-${(seq++).toString().
       patientId, therapistId: user, occurrences: [new Date("2031-05-06T08:00:00Z")], durationMin: 30, source: "phone" as const, title: "Behandlung", notes: null, homeVisit: false, serviceIds: [], allowConflict: false,
     });
     expect(await ap.createInternalAppointments(org, input(archived))).toEqual({ ok: false, error: ap.ARCHIVED_PATIENT_MSG });
-    expect(await ap.createInternalAppointments(org, input(foreign))).toEqual({ ok: false, error: "Patient:in nicht gefunden." });
+    expect(await ap.createInternalAppointments(org, input(foreign))).toEqual({ ok: false, error: (await import("./patient-route")).PATIENT_NOT_IN_ORG_MSG });
     expect((await f.asOrg(org, (c) => c.query("select count(*)::int n from appointments where organization_id = $1", [org]))).rows[0].n).toBe(0);
     // über das Formular („Neuer Termin“) kommt dieselbe Meldung an
     const res = await actions.createAppointmentInDialogAction(undefined, fd({ patientId: archived, therapistId: user, date: "2031-05-06", time: "10:00", durationMin: "30" }));

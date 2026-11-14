@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
@@ -7,7 +8,8 @@ import { appointmentServices, appointments, messages, organizations } from "@/db
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
-import { checkPublicSlot, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
+import { ONLINE_REQUEST_SUBJECT, onlineRequestKey, singleLine } from "@/lib/online-request";
+import { checkPublicSlot, publicBookingAvailable, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
 
@@ -29,12 +31,12 @@ const schema = z.object({
   serviceId: z.string().uuid("Bitte eine Leistung wählen."),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Bitte einen Tag wählen."),
   time: z.string().regex(/^\d{2}:\d{2}$/, "Bitte eine Uhrzeit wählen."),
-  firstName: z.string().trim().min(1, "Vorname fehlt").max(80),
-  lastName: z.string().trim().min(1, "Nachname fehlt").max(80),
+  // eine Zeile (der Name steht in einer eigenen Zeile der Posteingangs-Nachricht und in messages.meta)
+  firstName: z.string().transform(singleLine).pipe(z.string().min(1, "Vorname fehlt").max(80)),
+  lastName: z.string().transform(singleLine).pipe(z.string().min(1, "Nachname fehlt").max(80)),
   phone: z.string().trim().min(6, "Telefonnummer fehlt").max(40),
   email: z.string().trim().email("E-Mail ungültig").max(200).optional().or(z.literal("")),
   note: z.string().trim().max(500).optional(),
-  privacy: z.literal("on", { message: "Bitte die Datenschutzhinweise bestätigen." }),
   noShow: z.literal("on", { message: "Bitte die Ausfallregelung bestätigen." }),
   website: z.string().max(0).optional(), // Honeypot
 });
@@ -46,7 +48,8 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   const { ip } = await requestMeta();
   if (limited(ip ?? "unbekannt")) return { error: "Zu viele Anfragen. Bitte später erneut versuchen oder anrufen." };
   const [org] = await db.select().from(organizations).where(eq(organizations.slug, d.slug));
-  if (!org) return { error: "Praxis nicht gefunden." };
+  // Unbekannt, Löschantrag, Online-Buchung aus oder Nur-Lesen: nach außen nicht unterscheidbar (wie die 404 der Seite)
+  if (!org || !(await publicBookingAvailable(org.id))) return { error: "Praxis nicht gefunden." };
   const start = berlinToUtc(d.date, d.time);
   // Serverseitig dieselbe Verfügbarkeit wie Portal/Telefon: Freigabe, Leistungsliste, Arbeitszeiten, Abwesenheiten,
   // Feiertage, Vorlauf und Buchungsfenster – nur exakt angebotene Startzeiten (Gesamt-Review M1)
@@ -63,9 +66,13 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
     // Sicherheit: Eine öffentliche Anfrage wird NIE automatisch an eine bestehende Akte gehängt
     // (sonst könnte jemand mit Name + Telefonnummer fremde Akten verändern). Die Praxis ordnet im Posteingang zu.
     const initials = `${d.firstName} ${d.lastName.slice(0, 1)}.`;
+    // Kennzeichen „online-request:<id>“ an Termin (external_id) und Nachricht (thread_key): nur so markierte Anfragen
+    // löscht die Aufbewahrung nach 6 Monaten (src/server/online-request-retention.ts), samt genau dieser Nachricht
+    const id = randomUUID();
+    const key = onlineRequestKey(id);
     const [a] = await tx
       .insert(appointments)
-      .values({ organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Patient im Posteingang zuordnen und Termin bestätigen." })
+      .values({ id, organizationId: org.id, patientId: null, startsAt: start, endsAt: end, status: "planned", source: "online", externalId: key, title: `Online-Anfrage: ${initials} · ${svc.name}`, notes: "Unbestätigt – Patient im Posteingang zuordnen und Termin bestätigen." })
       .returning({ id: appointments.id });
     await tx.insert(appointmentServices).values({ organizationId: org.id, appointmentId: a.id, serviceId: svc.id });
     await tx.insert(messages).values({
@@ -74,12 +81,15 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
       channel: d.email ? "email" : "sms",
       direction: "inbound",
       fromAddress: d.email || d.phone,
-      subject: "Neue Online-Buchung (unbestätigt)",
+      subject: ONLINE_REQUEST_SUBJECT,
+      threadKey: key,
+      // Name strukturiert: wird vor einem KI-Antwortvorschlag zuverlässig entfernt (src/lib/online-request.ts)
+      meta: { onlineRequest: { firstName: d.firstName, lastName: d.lastName } },
       body: [
         `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
         `Name: ${d.firstName} ${d.lastName}`,
         `Telefon: ${d.phone}${d.email ? ` · E-Mail: ${d.email}` : ""}`,
-        `Datenschutzhinweise und Ausfallregelung bei der Buchung bestätigt (${new Date().toISOString()}).`,
+        `Ausfallregelung bei der Buchung bestätigt; Datenschutzhinweise verlinkt (${new Date().toISOString()}).`,
         d.note ? `Notiz: ${d.note}` : null,
         "Bitte Patient zuordnen (bestehend oder neu) und Termin bestätigen.",
       ].filter(Boolean).join("\n"),

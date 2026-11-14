@@ -19,6 +19,7 @@ import { loadSwitcherModel } from "@/server/org-switcher";
 import type { SwitcherModel } from "@/lib/org-switcher";
 import { logoutAction } from "../(auth)/actions";
 import { assertPatientRouteExists } from "@/server/patient-route";
+import { readonlyDeletionNotice } from "@/server/readonly-expiry";
 import type { Metadata } from "next";
 import { appLayoutMetadata } from "@/lib/pwa/app-meta";
 import { PwaClient } from "@/components/pwa/pwa-client";
@@ -140,6 +141,8 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   // Unbekannte Akte → echte 404 vor der Suspense-Grenze aus ./loading.tsx (Begründung in src/server/patient-route.ts)
   await assertPatientRouteExists(auth, (await headers()).get("x-podo-path"));
   const allowed = navAllowed(auth); // Rechte + Praxis-Schalter (src/server/nav.ts)
+  // Nur-Lesen-Modus nach Vertragsende: voraussichtlicher Löschtermin in der Hinweisleiste (AGB § 9 Nr. 2)
+  const expiry = auth.access.mode === "readonly" && !auth.support ? await readonlyDeletionNotice(auth.organization.id) : null;
 
   const switcher = await loadSwitcherModel({
     userId: auth.user.id,
@@ -191,7 +194,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             className={`lg:hidden ${auth.can("patients.read") ? "" : "ml-auto"}`}
           />
         </header>
-        <AccessBanner auth={auth} />
+        <AccessBanner auth={auth} deletionAt={expiry?.deletionAt ?? null} />
         {auth.support ? null : <InstallBanner />}
         {/* unten Platz für die feste Leiste (BottomNav) samt Home-Indikator des iPhones */}
         <main className="flex-1 pt-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(7rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] lg:px-8 lg:pb-10">{children}</main>

@@ -1,6 +1,6 @@
 {
-  "id": "1ee18869-7c70-4c50-b6a1-a89f2b0f0f11",
-  "prevId": "64a127fc-490a-40c3-8601-ab434e19a315",
+  "id": "70bf924d-ab66-4749-8f4c-e42590e8fc4f",
+  "prevId": "c1e09c81-8eb1-4c34-b657-e768c62d7ade",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -403,6 +403,27 @@
         }
       },
       "indexes": {
+        "appointments_org_id": {
+          "name": "appointments_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "appointments_org_time": {
           "name": "appointments_org_time",
           "columns": [
@@ -909,7 +930,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "billing_contacts_org_id": {
+          "name": "billing_contacts_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "billing_contacts_organization_id_organizations_id_fk": {
           "name": "billing_contacts_organization_id_organizations_id_fk",
@@ -1112,7 +1155,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "brace_episodes_org_id": {
+          "name": "brace_episodes_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "brace_episodes_organization_id_organizations_id_fk": {
           "name": "brace_episodes_organization_id_organizations_id_fk",
@@ -2454,7 +2519,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "devices_org_id": {
+          "name": "devices_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "devices_organization_id_organizations_id_fk": {
           "name": "devices_organization_id_organizations_id_fk",
@@ -3884,6 +3971,27 @@
         }
       },
       "indexes": {
+        "invoices_org_id": {
+          "name": "invoices_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "invoices_org_number": {
           "name": "invoices_org_number",
           "columns": [
@@ -4078,7 +4186,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "locations_org_id": {
+          "name": "locations_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "locations_organization_id_organizations_id_fk": {
           "name": "locations_organization_id_organizations_id_fk",
@@ -4599,6 +4729,12 @@
         "thread_key": {
           "name": "thread_key",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "meta": {
+          "name": "meta",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -5153,7 +5289,24 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "organizations_stripe_customer_id": {
+          "name": "organizations_stripe_customer_id",
+          "columns": [
+            {
+              "expression": "stripe_customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"organizations\".\"stripe_customer_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -5691,6 +5844,27 @@
         }
       },
       "indexes": {
+        "patients_org_id": {
+          "name": "patients_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "patients_org_number": {
           "name": "patients_org_number",
           "columns": [
@@ -6393,7 +6567,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "prescriptions_org_id": {
+          "name": "prescriptions_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "prescriptions_organization_id_organizations_id_fk": {
           "name": "prescriptions_organization_id_organizations_id_fk",
@@ -8309,6 +8505,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "services_org_id": {
+          "name": "services_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -9401,6 +9618,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "treatment_records_org_id": {
+          "name": "treatment_records_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -10341,6 +10579,27 @@
             },
             {
               "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vouchers_org_id": {
+          "name": "vouchers_org_id",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

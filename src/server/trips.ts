@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, isNotNull, lt, ne, notInArray, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointments, invoiceLines, invoices, organizations, patients, services, tripCorrections, trips, tripStartLocations, users } from "@/db/schema";
@@ -39,10 +39,11 @@ export async function loadTripSettings(org: string): Promise<TripSettings> {
 export async function saveTripSettings(auth: AuthContext, input: TripSettings) {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
-  await db.transaction(async (tx) => {
-    const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("update");
-    await tx.update(organizations).set({ settings: { ...(o?.settings ?? {}), trips: input } }).where(eq(organizations.id, org));
-  });
+  // atomar zusammenführen (||): andere Einstellungen bleiben unverändert, auch bei gleichzeitigem Speichern (AppSec)
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ trips: input })}::jsonb` })
+    .where(eq(organizations.id, org));
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.trips", meta: { rateCents: input.rateCents, billing: input.billing, returnToStart: input.returnToStart } });
 }
 
