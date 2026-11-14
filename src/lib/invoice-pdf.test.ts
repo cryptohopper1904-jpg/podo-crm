@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";
@@ -76,7 +76,11 @@ describe("PDF-Rechnung", () => {
 });
 
 describe("PDF im Stand der Ausstellung", () => {
+  afterEach(() => vi.useRealTimers());
   it("spätere Zahlung (bar) und Zahlungslink ändern das PDF nicht; Zahlung beim Ausstellen bleibt", async () => {
+    // pdf-lib legt Erzeugungs-/Änderungsdatum im komprimierten Objekt-Stream ab – dort greift der
+    // Filter unten nicht. Uhr anhalten, sonst weicht ein Byte ab, wenn beide Läufe eine Sekundengrenze überspannen.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-11-14T12:00:00.000Z") });
     const created = "2026-11-02T09:00:00.000Z";
     const issued = data({ invoice: { ...data().invoice, createdAt: created }, payments: [] });
     const paidLater = data({
