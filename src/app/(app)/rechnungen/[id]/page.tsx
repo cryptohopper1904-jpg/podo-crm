@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { FileDown } from "lucide-react";
+import { FileDown, Printer } from "lucide-react";
 import QRCode from "qrcode";
 import { Badge, Card, BackLink, pageTitleCls } from "@/components/ui";
 import { PortalLinkButton } from "@/components/portal-link-button";
@@ -63,13 +63,16 @@ const qty = qtyDe;
 /** Vermerk auf Entwürfen (Seite und Druck) */
 const DRAFT_NOTICE = "ENTWURF – kein gültiger Beleg";
 
+/** Hinweis, solange das Archiv-PDF eines Belegs ab Einführung des Archivs fehlt (Drucken nur über das archivierte PDF) */
+const PDF_PENDING_NOTICE = "PDF wird erzeugt – gleich erneut versuchen.";
+
 /**
  * Druck: immer DIN A4 mit festen Rändern, Papierfarben unabhängig vom Dunkelmodus. Mehrseitig: Tabellenkopf
  * wiederholt sich, Zeilen sowie Summen-, Quittungs-, Zahlungs- und Hinweisblock werden nicht getrennt;
  * Seitenrand-Boxen (Chromium ab 131; andere Browser lassen sie weg – das PDF hat sie immer): Seitenzahl unten rechts,
  * auf Folgeseiten oben rechts Belegart und Nr.; Entwürfe tragen auf jeder Seite oben links den Entwurfsvermerk.
  */
-const printCss = (runningHead: string, draft: boolean) => `
+const printCss = (runningHead: string, draft: boolean, blocked: boolean) => `
 @page {
   size: A4;
   margin: 15mm 17mm 18mm 20mm;
@@ -90,6 +93,7 @@ const printCss = (runningHead: string, draft: boolean) => `
   .invoice-sheet h2 { break-after: avoid; page-break-after: avoid; }
   .invoice-sheet .draft-notice { border-color: #000 !important; }
   .invoice-sheet .cancel-stamp, .invoice-sheet .cancel-stamp * { color: #b00 !important; border-color: #b00 !important; }
+  ${blocked ? ".invoice-sheet { display: none !important; } .print-blocked { display: block !important; }" : ""}
 }`;
 
 export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) {
@@ -111,6 +115,9 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   // darunter außerhalb des Belegs. Status/Badge/„Zahlung erfassen“ oben zeigen den aktuellen Stand.
   // Stornierte Rechnung: Beleg wie ausgestellt (Zahlungsaufforderung usw.) mit Stornovermerk, ohne GiroCode
   const cancelledOriginal = inv.status === "cancelled" && inv.kind !== "credit_note";
+  // Beleg ab Einführung des Archivs ohne Archiv-PDF (Ablage gescheitert, wird nachgeholt): die HTML-Ansicht nicht als
+  // Beleg drucken – gedruckt/ausgehändigt wird nur das archivierte PDF. Ausnahme: Storno-Neudruck (Vermerk „ungültig“).
+  const printViaPdf = !isDraft && data.fromSnapshot && !data.archive && !cancelledOriginal;
   const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(cancelledOriginal ? { ...inv, status: "issued" as const } : inv, data.payments);
   const docOpen = doc.totalCents - doc.paidCents;
   const docOpenRow = openSumRow(doc);
@@ -147,7 +154,10 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
 
   return (
     <div className="mx-auto max-w-5xl">
-      <style>{printCss(runningHead, isDraft)}</style>
+      <style>{printCss(runningHead, isDraft, printViaPdf)}</style>
+      {printViaPdf ? (
+        <p className="print-blocked hidden">Dieser Beleg wird nur über das archivierte PDF gedruckt. {PDF_PENDING_NOTICE}</p>
+      ) : null}
       <div className="no-print mb-6 flex flex-col gap-4">
         <BackLink href={backHref("/rechnungen", von)} label="Rechnungen" className="-mb-4 self-start" />
         <div className="flex flex-wrap items-center gap-3">
@@ -180,7 +190,20 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : null}
         </div>
         <div className="flex flex-wrap items-start gap-2">
-          <PrintButton />
+          {printViaPdf ? (
+            // kein Druck der HTML-Ansicht: das PDF holt das Archiv nach (oder meldet „PDF wird erzeugt“)
+            <a
+              href={`/api/invoices/${inv.id}/pdf`}
+              target="_blank"
+              rel="noreferrer"
+              data-print-via-pdf
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-border bg-surface px-4 text-[15px] font-semibold hover:bg-surface-2"
+            >
+              <Printer size={18} aria-hidden /> Drucken (über PDF)
+            </a>
+          ) : (
+            <PrintButton />
+          )}
           {inv.status !== "draft" ? (
             <a
               href={`/api/invoices/${inv.id}/pdf`}
@@ -218,13 +241,13 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           <Card className="w-full border-2 border-danger" role="alert">
             <h2 className="mb-1 font-display text-lg font-semibold text-danger">Zahlung gebucht – Zahlungsbeleg fehlt</h2>
             <p className="mb-3 text-sm">
-              Die Zahlung ist gebucht und TSE-signiert, der Beleg über den Zahlungseingang konnte aber nicht erstellt werden. Bitte die Zahlung
+              Die Zahlung ist gebucht, der Beleg über den Zahlungseingang konnte aber nicht erstellt werden. Bitte die Zahlung
               <strong> nicht erneut erfassen</strong> und Support bzw. Praxisinhaber:in informieren.
-              {canWrite ? " Der Beleg lässt sich hier nachträglich erstellen (eigene Nummer, Vermerk „nachträglich erstellt“)." : ""}
+              {canWrite && data.paymentsMissingReceipt.length ? " Der Beleg lässt sich hier nachträglich erstellen (eigene Nummer, Vermerk „nachträglich erstellt“)." : ""}
             </p>
             <ul className="flex flex-col gap-2">
               {data.paymentsMissingReceipt.map((mp) => {
-                const label = `${PAYMENT_METHOD_LABEL[mp.method] ?? mp.method} ${money(mp.amountCents)} vom ${dateTimeDe(mp.paidAt)}`;
+                const label = `${PAYMENT_METHOD_LABEL[mp.method] ?? mp.method} ${money(mp.amountCents)} vom ${dateTimeDe(mp.paidAt)}${mp.tseFailed ? " (TSE-Ausfall, ohne Signatur)" : ""}`;
                 return (
                   <li key={mp.id} className="flex flex-wrap items-center gap-3 text-sm">
                     <span>{label}</span>
@@ -251,7 +274,11 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           <p className="text-xs text-muted">
             {data.archive
               ? `Beleg-Archiv: Original vom ${dateTimeDe(data.archive.createdAt)} (SHA-256 ${data.archive.sha256.slice(0, 16)}…), aufzubewahren mindestens bis ${dateDe(data.archive.retainUntil)} (8 Jahre ab Ende des Ausstellungsjahres, ${RETENTION_HEMMUNG_NOTE}). ${cancelledOriginal ? "„PDF“ ist der Neudruck mit Stornovermerk." : "„PDF“ liefert genau dieses Original."}`
-              : "Altbeleg ohne archiviertes Original – das PDF wird aus den gespeicherten Daten neu erzeugt und als „Reproduktion“ gekennzeichnet."}
+              : data.fromSnapshot
+                ? cancelledOriginal
+                  ? "Beleg-Archiv: Das Original-PDF wird nachgeholt (Ablage beim Ausstellen gescheitert). „PDF“ ist der Neudruck mit Stornovermerk."
+                  : `Beleg-Archiv: Das Original-PDF wird nachgeholt (Ablage beim Ausstellen gescheitert, aus den festgeschriebenen Angaben). Drucken, Download und E-Mail erst danach – ${PDF_PENDING_NOTICE}`
+                : "Altbeleg ohne archiviertes Original – das PDF wird aus den gespeicherten Daten neu erzeugt und als „Reproduktion“ gekennzeichnet."}
             {data.fromSnapshot ? "" : " Belegangaben (Praxis, Anschrift) aus den aktuellen Stammdaten."}
           </p>
         ) : null}
@@ -549,7 +576,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                         Beleg {receipt.number}
                         {receipt.isTest ? " · TSE-Testmodus" : ""}
                         {receipt.tseFailed ? " · TSE ausgefallen" : ""}
-                        {receipt.archived ? "" : " · PDF noch nicht archiviert (wird beim Öffnen nachgeholt)"}
+                        {receipt.archived ? "" : ` · ${PDF_PENDING_NOTICE} (wird beim Öffnen und automatisch nachgeholt; bis dahin keine Ausgabe)`}
                       </span>
                       <a
                         href={`/api/invoices/${inv.id}/zahlungsbelege/${receipt.id}/pdf`}

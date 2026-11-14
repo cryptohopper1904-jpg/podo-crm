@@ -7,8 +7,11 @@ import { getTableConfig, PgTable } from "drizzle-orm/pg-core";
 import * as schema from "@/db/schema";
 import { berlinDateIso } from "./format";
 
-/** Tabellen, die nicht in den Export gehören (Sitzungen, plattformweite Technik-Protokolle). */
-export const EXCLUDED_TABLES = new Set(["sessions", "billing_events", "webhook_events"]);
+/**
+ * Tabellen, die nicht in den Export gehören (Sitzungen, plattformweite Technik-Protokolle, interner Zustand des
+ * Archiv-Nachhol-Laufs – archive_catchup_attempts ist kein Geschäftsvorfall).
+ */
+export const EXCLUDED_TABLES = new Set(["sessions", "billing_events", "webhook_events", "archive_catchup_attempts"]);
 
 /** Spalten (SQL-Namen), die nie exportiert werden: Geheimnisse, Hashes von Zugangstoken, interne Speicherpfade. */
 export const STRIPPED_COLUMNS = new Set(["password_hash", "totp_secret_enc", "totp_last_step", "secret_enc", "token_hash", "storage_key"]);

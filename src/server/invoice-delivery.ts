@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
+import { appointmentServices, archiveCatchupAttempts, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
 import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
 import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
@@ -36,7 +36,7 @@ export type InvoicePdfVariant = "archive" | "storno" | "reproduction";
  * Angaben archiviert, dann das Archiv ausgeliefert). Scheitert auch das, wird abgelehnt (ArchivePendingError) –
  * es wird nie eine unarchivierte Fassung ausgehändigt.
  */
-export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean } = {}) {
+export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean; userId?: string | null } = {}) {
   if (!z.uuid().safeParse(invoiceId).success) return null;
   const bundle = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, invoiceId));
   if (!bundle || bundle.invoice.status === "draft") return null;
@@ -47,7 +47,7 @@ export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { p
   // Beleg mit Momentaufnahme, aber ohne Archiv (Ablage beim Ausstellen gescheitert): jetzt nachholen
   if (!archived && bundle.fromSnapshot) {
     try {
-      archived = await ensureInvoiceArchived(org, invoiceId);
+      archived = await ensureInvoiceArchived(org, invoiceId, opts.userId ?? null);
     } catch (e) {
       log.error("invoice.archive_retry_failed", { error: e, invoiceId });
     }
@@ -99,10 +99,20 @@ export async function ensureInvoiceArchived(org: string, invoiceId: string, user
         .from(invoices)
         .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
       if (!inv || inv.status === "draft" || !inv.number || !inv.snapshot) return false;
-      if (await findInvoiceArchive(tx, org, invoiceId)) return true;
+      // Nachhol-Versuche (Cron-Backoff) entfernen – egal, welcher Weg archiviert hat
+      const clearAttempt = () =>
+        tx
+          .delete(archiveCatchupAttempts)
+          .where(and(eq(archiveCatchupAttempts.organizationId, org), eq(archiveCatchupAttempts.targetKind, "invoice"), eq(archiveCatchupAttempts.targetId, invoiceId)));
+      if (await findInvoiceArchive(tx, org, invoiceId)) {
+        await clearAttempt();
+        return true;
+      }
       const row = await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
-      // erfolgreiches Nachholen protokollieren (GoBD: Nachvollziehbarkeit, wann das Archiv-PDF entstand)
-      await audit({ organizationId: org, userId, action: "invoice.archive_catchup", entity: "invoice", entityId: invoiceId, meta: { number: inv.number, sha256: row.sha256 } });
+      // erfolgreiches Nachholen protokollieren (GoBD: Nachvollziehbarkeit, wann das Archiv-PDF entstand) – in derselben
+      // Transaktion: kein Archiv-PDF ohne Protokolleintrag
+      await audit({ organizationId: org, userId, action: "invoice.archive_catchup", entity: "invoice", entityId: invoiceId, meta: { number: inv.number, sha256: row.sha256 } }, tx);
+      await clearAttempt();
       return true;
     }),
   );
@@ -175,7 +185,7 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
-  const pdf = await invoicePdfForOrg(org, invoiceId);
+  const pdf = await invoicePdfForOrg(org, invoiceId, { userId: auth.user.id });
   if (!pdf) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
   const { bundle } = pdf;
   const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();

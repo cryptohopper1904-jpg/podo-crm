@@ -18,8 +18,7 @@ import {
 } from "../actions";
 import { newPaymentRow, PaymentsEditor, paymentsToJson, type PaymentRow } from "../payments-editor";
 
-/** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
-/** Zahlungsbeleg für eine gebuchte, TSE-signierte Zahlung nachträglich erstellen (Anlegen war gescheitert) */
+/** Zahlungsbeleg für eine gebuchte Kassenzahlung nachträglich erstellen (Anlegen war gescheitert) */
 export function CreateMissingReceiptButton({ invoiceId, paymentId, label }: { invoiceId: string; paymentId: string; label: string }) {
   const [state, action, pending] = useActionState(createMissingReceiptAction, undefined);
   return (
@@ -67,6 +66,7 @@ export function ReceiptLinks({ invoiceId, receipts, recipientEmail }: { invoiceI
   );
 }
 
+/** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
 export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; openCents: number }) {
   const refund = openCents < 0;
   const abs = Math.abs(openCents);

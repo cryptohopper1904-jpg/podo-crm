@@ -366,7 +366,8 @@ export async function recordProviderPayment(organizationId: string, input: Provi
   });
   if (res.status === "nicht zugeordnet") await reportUnassignedPayment(organizationId, input, res);
   if ("receipts" in res && res.receipts?.length) await archivePaymentReceipts(organizationId, res.receipts, null);
-  if ("receiptFailed" in res && res.receiptFailed && res.invoiceId) await reportReceiptRecordFailure(organizationId, { id: res.invoiceId, number: res.number ?? null }, input.amountCents);
+  // auch ohne Rechnungs-ID melden (dann ohne Link) – eine gebuchte Kassenzahlung ohne Beleg darf nicht untergehen
+  if ("receiptFailed" in res && res.receiptFailed) await reportReceiptRecordFailure(organizationId, { id: res.invoiceId, number: res.number ?? null }, input.amountCents);
   return { status: res.status, invoiceId: res.invoiceId, reason: res.reason };
 }
 

@@ -1704,7 +1704,7 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
       : null,
     /** Belege über Zahlungseingänge nach Ausstellung (Kassenbelege) */
     paymentReceipts: receipts,
-    /** TSE-signierte Zahlungen nach Ausstellung ohne Zahlungsbeleg (Anlegen bei der Buchung gescheitert) */
+    /** Kassenzahlungen nach Ausstellung ohne Zahlungsbeleg (Anlegen bei der Buchung gescheitert; auch bei TSE-Ausfall) */
     paymentsMissingReceipt: missingReceipts,
     cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,
     cancels: related.find((r) => r.id === inv.cancelsInvoiceId) ?? null,

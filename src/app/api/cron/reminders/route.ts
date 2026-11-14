@@ -5,10 +5,10 @@ import { runReminders } from "@/server/reminders";
 import { retryDueWebhooks } from "@/server/webhooks";
 import { runPromoTrialReturns } from "@/server/promo-codes";
 import { catchUpArchives } from "@/server/archive-catchup";
+import { runPendingWaitlistOffers } from "@/server/calendar-status";
 
 /** Zeitbudget je Lauf für das Nachholen des Beleg-Archivs (der Rest folgt im nächsten Lauf) */
 const ARCHIVE_CATCHUP_BUDGET_MS = 20_000;
-import { runPendingWaitlistOffers } from "@/server/calendar-status";
 
 /**
  * Erinnerungs-Lauf (alle 15 Minuten): POST /api/cron/reminders mit `Authorization: Bearer ${CRON_SECRET}`.
@@ -60,7 +60,8 @@ async function handle(req: NextRequest) {
   // wenn die Erinnerungen fehlschlagen
   let archives: Awaited<ReturnType<typeof catchUpArchives>> | null = null;
   try {
-    archives = await catchUpArchives({ budgetMs: ARCHIVE_CATCHUP_BUDGET_MS, respectBackoff: true });
+    // Startposition je Lauf zufällig: bei erschöpftem Budget kommen beim nächsten Mal andere Praxen zuerst dran
+    archives = await catchUpArchives({ budgetMs: ARCHIVE_CATCHUP_BUDGET_MS, respectBackoff: true, startAt: Math.floor(Math.random() * 1_000_000) });
   } catch (e) {
     log.error("cron.archive_catchup.failed", { error: e });
   }

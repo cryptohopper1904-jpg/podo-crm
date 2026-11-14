@@ -129,12 +129,24 @@ async function catchUpOne(org: string, t: Target): Promise<boolean> {
 }
 
 export async function catchUpArchives(
-  opts: { organizationIds?: string[]; limitPerOrg?: number; budgetMs?: number; respectBackoff?: boolean } = {},
+  opts: {
+    organizationIds?: string[];
+    limitPerOrg?: number;
+    budgetMs?: number;
+    respectBackoff?: boolean;
+    /**
+     * Startposition in der Praxisliste (Cron: je Lauf zufällig), damit bei knappem Zeitbudget nicht immer dieselben
+     * Praxen zuerst drankommen und spätere leer ausgehen. Ohne Angabe: von vorn.
+     */
+    startAt?: number;
+  } = {},
 ): Promise<CatchUpResult> {
   const out: CatchUpResult = { invoices: { ok: 0, failed: 0 }, receipts: { ok: 0, failed: 0 }, orgErrors: 0, truncated: false };
   const started = Date.now();
   const overBudget = () => opts.budgetMs !== undefined && Date.now() - started > opts.budgetMs;
-  const orgs = opts.organizationIds?.map((id) => ({ id })) ?? (await db.select({ id: organizations.id }).from(organizations));
+  const all = opts.organizationIds?.map((id) => ({ id })) ?? (await db.select({ id: organizations.id }).from(organizations).orderBy(organizations.id));
+  const start = all.length && opts.startAt ? ((Math.trunc(opts.startAt) % all.length) + all.length) % all.length : 0;
+  const orgs = [...all.slice(start), ...all.slice(0, start)];
   for (const { id: org } of orgs) {
     if (overBudget()) {
       out.truncated = true;

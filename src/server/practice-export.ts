@@ -9,10 +9,10 @@ import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/li
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 import { readArchivedPdf } from "./document-archive";
 import { catchUpArchives, missingArchives } from "./archive-catchup";
+import { log } from "@/lib/log";
 
 /** Nachholen fehlender Archiv-PDFs vor dem Export: höchstens so viele je Art */
 const EXPORT_CATCHUP_LIMIT = 200;
-import { log } from "@/lib/log";
 
 type Row = Record<string, unknown>;
 

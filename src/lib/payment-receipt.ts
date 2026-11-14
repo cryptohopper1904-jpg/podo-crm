@@ -17,6 +17,13 @@ import { dateTimeSecondsDe, TSE_FAILED_NOTICE, TSE_TEST_NOTICE, tseLines, type F
 
 export const PAYMENT_RECEIPT_VERSION = 1;
 
+/**
+ * Stichtag der Zahlungsbelege: Einführung des Beleg-Archivs (Migration 0049, `when` im drizzle-Journal). Nur
+ * Kassenzahlungen ab diesem Zeitpunkt gelten als „Zahlungsbeleg fehlt“ – ältere Zahlungen (Altbestand, vor der
+ * Einführung) bekommen keinen nachträglichen Beleg. Fest, nicht aus Daten abgeleitet (ein Test hält ihn am Journal).
+ */
+export const PAYMENT_RECEIPTS_SINCE = new Date(1794643215894);
+
 export type PaymentReceiptSnapshot = {
   v: number;
   organization: SnapshotOrganization;
@@ -52,6 +59,16 @@ export function readPaymentReceiptSnapshot(raw: unknown): PaymentReceiptSnapshot
   const r = raw as PaymentReceiptSnapshot;
   if (r.v !== PAYMENT_RECEIPT_VERSION || !r.organization || !r.invoice || !r.payment) return null;
   return r;
+}
+
+/** Vermerk auf einem nachgeholten Archiv-PDF (Ablage nach der Buchung gescheitert) */
+export const latePaymentReceiptPdfNote = (at: Date | string) =>
+  `PDF nachträglich erzeugt am ${dateTimeDe(at)} aus den bei der Zahlung festgeschriebenen Angaben (Logo: zum Erzeugungszeitpunkt hinterlegt).`;
+
+/** Vermerk auf einem nachträglich erstellten Zahlungsbeleg (Anlegen bei der Buchung war gescheitert) */
+export function belatedReceiptNote(d: Pick<PaymentReceiptSnapshot, "belatedAt" | "payment" | "tseFailed" | "fiscal">): string {
+  const source = d.tseFailed || !d.fiscal ? "Angaben aus der gebuchten Zahlung (ohne TSE-Signatur, siehe TSE-Ausfall)" : "Angaben aus der gebuchten Zahlung und ihrer TSE-Signatur";
+  return `Zahlungsbeleg nachträglich erstellt am ${dateTimeDe(d.belatedAt!)} (Zahlung vom ${dateTimeDe(d.payment.paidAt)}; ${source}).`;
 }
 
 export const isRefund = (d: Pick<PaymentReceiptSnapshot, "payment">) => d.payment.amountCents < 0;
@@ -123,8 +140,10 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     ["Belegnummer:", input.number],
     ["Datum/Uhrzeit:", dateTimeDe(input.issuedAt)],
   ];
+  // nachträglich erstellter Beleg: sichtbar im Kopf (eigene Zeile), nicht nur als Fußvermerk
+  if (d.belatedAt) meta.push(["Belegart:", "nachträglich erstellt"], ["Zahlung vom:", dateTimeDe(d.payment.paidAt)]);
   if (d.recipient?.patientNumber) meta.push(["Patientennummer:", String(d.recipient.patientNumber)]);
-  y = drawAddressBlock(writer, fonts, safe, y, { senderLine, recipientLines, meta, boldMeta: (l) => l.startsWith("Belegnummer"), org: o });
+  y = drawAddressBlock(writer, fonts, safe, y, { senderLine, recipientLines, meta, boldMeta: (l) => l.startsWith("Belegnummer") || l.startsWith("Belegart"), org: o });
 
   for (const l of wrap(title, width, 12.5, bold)) {
     text(l, ML, y, { size: 12.5, font: bold });
@@ -182,20 +201,25 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
       y -= 10;
     }
     y -= 2;
-    text(`Erzeugt: ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
+    // Zeitpunkt der Belegerstellung (nicht der PDF-Erzeugung – die steht ggf. im Vermerk darunter)
+    text(`Beleg erstellt: ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
     y -= 14;
   }
   if (!input.reproduction && input.generatedAt && new Date(input.generatedAt).getTime() - new Date(input.issuedAt).getTime() > LATE_PDF_MS) {
-    ensure(12);
-    text(`PDF nachträglich erzeugt am ${dateTimeDe(input.generatedAt)} aus den bei der Zahlung festgeschriebenen Angaben.`, ML, y, { size: 7.5, color: GRAY });
-    y -= 12;
+    for (const l of wrap(latePaymentReceiptPdfNote(input.generatedAt), width, 7.5)) {
+      ensure(10);
+      text(l, ML, y, { size: 7.5, color: GRAY });
+      y -= 10;
+    }
+    y -= 2;
   }
   if (d.belatedAt) {
     y -= 4;
-    for (const l of wrap(`Zahlungsbeleg nachträglich erstellt am ${dateTimeDe(d.belatedAt)} (Zahlung vom ${dateTimeDe(d.payment.paidAt)}; Angaben aus der gebuchten Zahlung und ihrer TSE-Signatur).`, width, 8.5)) {
-      ensure(11);
-      text(l, ML, y, { size: 8.5, color: GRAY });
-      y -= 11;
+    // gut lesbar (nicht grau): der Beleg ist nicht zum Zeitpunkt der Zahlung ausgegeben worden
+    for (const l of wrap(belatedReceiptNote(d), width, 9, bold)) {
+      ensure(12);
+      text(l, ML, y, { size: 9, font: bold });
+      y -= 12;
     }
   }
   if (input.reproduction) {

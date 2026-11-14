@@ -7,17 +7,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFPage } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 import { renderDunningPdf, type DunningPdfData } from "./dunning-pdf";
-import { paymentReceiptVatNote, renderPaymentReceiptPdf } from "./payment-receipt";
-import { embedFonts, makeSafe, makeWriter } from "./pdf-letter";
+import { PAYMENT_RECEIPTS_SINCE, paymentReceiptVatNote, renderPaymentReceiptPdf, type PaymentReceiptSnapshot } from "./payment-receipt";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { embedFonts, GRAY, makeSafe, makeWriter } from "./pdf-letter";
 
-type Drawn = { page: number; x: number; y: number; size: number; text: string };
+type Drawn = { page: number; x: number; y: number; size: number; text: string; gray: boolean };
 let drawn: Drawn[] = [];
 
 beforeEach(() => {
   drawn = [];
   const orig = PDFPage.prototype.drawText;
   vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: PDFPage, text, options) {
-    drawn.push({ page: this.doc.getPages().indexOf(this), x: options?.x ?? 0, y: options?.y ?? 0, size: Number(options?.size ?? 0), text });
+    drawn.push({ page: this.doc.getPages().indexOf(this), x: options?.x ?? 0, y: options?.y ?? 0, size: Number(options?.size ?? 0), text, gray: JSON.stringify(options?.color) === JSON.stringify(GRAY) });
     return orig.call(this, text, options);
   });
 });
@@ -317,6 +319,58 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
       /Steuerbefreiung für Kleinunternehmer \(§ 19 UStG\)/,
     );
     expect(n).toBe(1);
+  });
+
+  const receiptData = (patch: Partial<PaymentReceiptSnapshot> = {}): PaymentReceiptSnapshot => ({
+    v: 1,
+    organization: { ...ORG, bic: ORG.bic ?? null, bankName: ORG.bankName ?? null, accountHolder: null, website: ORG.website ?? null, qualification: ORG.qualification ?? null, whatsapp: false },
+    recipient: { name: "Frau Erika Mustermann", patientNumber: 17 },
+    invoice: { id: "00000000-0000-4000-8000-000000000001", number: "R2026-0042", kind: "invoice", issuedAt: "2026-11-02", totalCents: 6500 },
+    payment: { id: "p1", paidAt: "2026-11-14T10:00:03Z", method: "cash", amountCents: 6500, voucherCode: null },
+    openAfterCents: 0,
+    fiscal: { ...FISCAL, startedAt: "2026-11-14T10:00:01Z", finishedAt: "2026-11-14T10:00:03Z" },
+    tseFailed: false,
+    ...patch,
+  });
+
+  it("nachträglich erstellter Zahlungsbeleg: „Belegart: nachträglich erstellt“ im Kopf, Vermerk gut lesbar (nicht grau), „Beleg erstellt:“", async () => {
+    await renderPaymentReceiptPdf({ number: "ZB2026-0007", issuedAt: "2026-11-16T08:00:00Z", data: receiptData({ belatedAt: "2026-11-16T08:00:00Z" }), generatedAt: "2026-11-16T08:00:01Z" });
+    const texts = drawn.map((t) => t.text);
+    const i = texts.indexOf("Belegart:");
+    expect(i).toBeGreaterThan(-1);
+    expect(texts[i + 1]).toBe("nachträglich erstellt");
+    expect(texts).toContain("Zahlung vom:");
+    expect(texts).toContain("14.11.2026, 11:00");
+    const note = drawn.find((t) => t.text.startsWith("Zahlungsbeleg nachträglich erstellt am 16.11.2026, 09:00"));
+    expect(note, "Vermerk").toBeTruthy();
+    expect(note!.gray, "Vermerk nicht grau").toBe(false);
+    expect(texts.join(" ")).toMatch(/Zahlungsbeleg nachträglich erstellt am 16\.11\.2026, 09:00 \(Zahlung vom 14\.11\.2026, 11:00; Angaben aus der gebuchten Zahlung und ihrer\s+TSE-Signatur\)/);
+    expect(texts).toContain("Beleg erstellt: 16.11.2026, 09:00:00");
+    expect(texts.some((t) => t.startsWith("Erzeugt:"))).toBe(false);
+    // sofort archiviert: kein „PDF nachträglich erzeugt“
+    expect(texts.join(" ")).not.toMatch(/PDF nachträglich erzeugt/);
+  });
+
+  it("nachträglich erstellt bei TSE-Ausfall: Ausfall-Hinweis statt TSE-Angaben, Vermerk ohne Signatur", async () => {
+    await renderPaymentReceiptPdf({ number: "ZB2026-0008", issuedAt: "2026-11-16T08:00:00Z", data: receiptData({ fiscal: null, tseFailed: true, belatedAt: "2026-11-16T08:00:00Z" }) });
+    const body = drawn.map((t) => t.text).join(" ");
+    expect(body).toMatch(/TSE/);
+    expect(body).toContain("ohne TSE-Signatur, siehe TSE-Ausfall");
+    expect(body).not.toContain("Beleg erstellt:");
+  });
+
+  it("nachgeholtes Archiv-PDF eines Zahlungsbelegs: Vermerk mit Logo-Zusatz", async () => {
+    await renderPaymentReceiptPdf({ number: "ZB2026-0009", issuedAt: "2026-11-14T10:00:05Z", data: receiptData(), generatedAt: "2026-11-14T12:00:00Z" });
+    const body = drawn.map((t) => t.text).join(" ");
+    expect(body).toMatch(/PDF nachträglich erzeugt am 14\.11\.2026, 13:00 aus den bei der Zahlung festgeschriebenen Angaben/);
+    expect(body).toContain("Logo: zum Erzeugungszeitpunkt hinterlegt");
+    expect(body).not.toContain("Belegart:");
+  });
+
+  it("Stichtag der Zahlungsbelege = Migration 0049 im drizzle-Journal", () => {
+    const journal = JSON.parse(readFileSync(path.join(__dirname, "../../drizzle/meta/_journal.json"), "utf8")) as { entries: { tag: string; when: number }[] };
+    const m = journal.entries.find((e) => e.tag === "0049_beleg_archiv");
+    expect(m?.when).toBe(PAYMENT_RECEIPTS_SINCE.getTime());
   });
 });
 

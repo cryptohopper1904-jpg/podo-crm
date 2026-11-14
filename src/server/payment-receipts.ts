@@ -1,8 +1,8 @@
 import "server-only";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, notExists, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { billingContacts, documentArchive, fiscalTransactions, invoices, messages, organizations, patients, paymentReceipts, payments, vouchers } from "@/db/schema";
+import { archiveCatchupAttempts, billingContacts, fiscalTransactions, invoices, messages, organizations, patients, paymentReceipts, payments, vouchers } from "@/db/schema";
 import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
 import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
@@ -11,11 +11,12 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { buildInvoiceSnapshot, readInvoiceSnapshot } from "@/lib/invoice-snapshot";
-import { invoiceRecipient } from "@/lib/invoice-view";
-import { isRegisterMethod } from "@/lib/kasse/model";
+import { invoiceRecipient, paidAtIssue } from "@/lib/invoice-view";
+import { isRegisterMethod, REGISTER_METHODS } from "@/lib/kasse/model";
 import { nextNumber } from "@/lib/numbering";
 import {
   PAYMENT_RECEIPT_VERSION,
+  PAYMENT_RECEIPTS_SINCE,
   paymentReceiptFilename,
   paymentReceiptTitle,
   readPaymentReceiptSnapshot,
@@ -144,17 +145,29 @@ export async function archiveReceipt(org: string, receiptId: string, userId: str
       const [r] = await tx.select().from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.id, receiptId)));
       if (!r) return false;
       const done = (await findReceiptArchives(tx, org, r.invoiceId)).some((a) => a.paymentReceiptId === r.id);
-      if (done) return true;
+      if (done) {
+        await clearCatchupAttempt(tx, org, r.id);
+        return true;
+      }
       const data = readPaymentReceiptSnapshot(r.data);
       if (!data) return false;
       const bytes = await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos: await loadLogos(org, tx), generatedAt: new Date() });
       const row = await archivePdf(tx, org, { kind: "payment_receipt", invoiceId: r.invoiceId, paymentReceiptId: r.id, bytes, filename: paymentReceiptFilename(r.number), userId }, pending);
       if (opts.catchUp) {
-        await audit({ organizationId: org, userId, action: "payment_receipt.archive_catchup", entity: "invoice", entityId: r.invoiceId, meta: { receipt: r.number, sha256: row.sha256 } });
+        // in derselben Transaktion: kein Archiv-PDF ohne Protokolleintrag (und umgekehrt)
+        await audit({ organizationId: org, userId, action: "payment_receipt.archive_catchup", entity: "invoice", entityId: r.invoiceId, meta: { receipt: r.number, sha256: row.sha256 } }, tx);
       }
+      await clearCatchupAttempt(tx, org, r.id);
       return true;
     }),
   );
+}
+
+/** Nachhol-Versuche (Cron-Backoff) eines nun archivierten Zahlungsbelegs entfernen – egal, welcher Weg archiviert hat */
+async function clearCatchupAttempt(tx: Tx, org: string, receiptId: string) {
+  await tx
+    .delete(archiveCatchupAttempts)
+    .where(and(eq(archiveCatchupAttempts.organizationId, org), eq(archiveCatchupAttempts.targetKind, "payment_receipt"), eq(archiveCatchupAttempts.targetId, receiptId)));
 }
 
 /**
@@ -190,14 +203,14 @@ async function reportArchiveFailure(org: string, r: { id: string; number: string
 }
 
 /** Beleg-Zeile konnte bei der Buchung nicht angelegt werden (Zahlung und TSE-Signatur bleiben gebucht). */
-export async function reportReceiptRecordFailure(org: string, inv: { id: string; number: string | null }, amountCents: number) {
+export async function reportReceiptRecordFailure(org: string, inv: { id: string | null; number: string | null }, amountCents: number) {
   await reportToInbox(
     org,
-    `zb-fehlt:${inv.id}:${amountCents}:${Date.now()}`,
+    `zb-fehlt:${inv.id ?? "?"}:${amountCents}:${Date.now()}`,
     `Zahlungsbeleg zu Rechnung ${inv.number ?? "?"} konnte nicht angelegt werden`,
     [
-      `Die Zahlung über ${money(amountCents)} zu Rechnung ${inv.number ?? "?"} ist gebucht und TSE-signiert, der Beleg über den Zahlungseingang konnte aber nicht angelegt werden. Die Zahlung bitte NICHT erneut erfassen.`,
-      `Nachholen: Rechnung öffnen (/rechnungen/${inv.id}) → Karte „Zahlungsbeleg fehlt“ → „Zahlungsbeleg nachträglich erstellen“ (Recht: Rechnungen bearbeiten). Bleibt der Fehler, bitte den Support bzw. die Praxisinhaber:in informieren.`,
+      `Die Zahlung über ${money(amountCents)} zu Rechnung ${inv.number ?? "?"} ist gebucht (bei erreichbarer TSE auch signiert), der Beleg über den Zahlungseingang konnte aber nicht angelegt werden. Die Zahlung bitte NICHT erneut erfassen.`,
+      `Nachholen: Rechnung ${inv.id ? `öffnen (/rechnungen/${inv.id})` : `${inv.number ?? ""} öffnen`} → Karte „Zahlungsbeleg fehlt“ → „Zahlungsbeleg nachträglich erstellen“ (Recht: Rechnungen bearbeiten). Bleibt der Fehler, bitte den Support bzw. die Praxisinhaber:in informieren.`,
     ].join("\n\n"),
   );
 }
@@ -245,7 +258,7 @@ export async function paymentReceiptsFor(tx: Tx, org: string, invoiceId: string)
  * wird es jetzt nachgeholt und archiviert; scheitert auch das, wird abgelehnt (ArchivePendingError) – keine
  * unarchivierte Fassung.
  */
-export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, receiptId: string) {
+export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, receiptId: string, userId: string | null = null) {
   if (!z.uuid().safeParse(invoiceId).success || !z.uuid().safeParse(receiptId).success) return null;
   const found = await withOrg(org, async (tx) => {
     const [r] = await tx
@@ -263,7 +276,7 @@ export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, re
   if (!archive) {
     // Nachholen (z. B. Ablage nach der Buchung gescheitert)
     try {
-      if (await archiveReceipt(org, r.id, null, { catchUp: true })) {
+      if (await archiveReceipt(org, r.id, userId, { catchUp: true })) {
         archive = await withOrg(org, async (tx) => (await findReceiptArchives(tx, org, invoiceId)).find((a) => a.paymentReceiptId === r.id) ?? null);
       }
     } catch (e) {
@@ -275,32 +288,53 @@ export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, re
 }
 
 /**
- * Zahlungen der Rechnung, die einen Zahlungsbeleg haben müssten, aber keinen haben: TSE-signierte Kassenvorgänge
- * NACH dem Ausstellen (paid_at > Rechnung.created_at), ohne payment_receipts-Zeile – und erst seit Einführung der
- * Zahlungsbelege in dieser Praxis (frühester Archiveintrag), damit Altzahlungen nicht als fehlend gelten.
+ * Zahlungen der Rechnung, die einen Zahlungsbeleg haben müssten, aber keinen haben – einzige Quelle der Wahrheit für
+ * die Anzeige („Zahlungsbeleg fehlt“) UND für das nachträgliche Erstellen (createMissingPaymentReceipt):
+ *  - Kassenvorgänge (Bar/Karte/Gutschein) ohne payment_receipts-Zeile,
+ *  - NACH dem Ausstellen (nicht `paidAtIssue` – Zahlungen beim Ausstellen stehen auf dem Beleg selbst; SumUp-Zahlungen
+ *    gelten nie als beim Ausstellen erfasst),
+ *  - in PodoHero ausgestellt (kein übernommener Altbestand) und bezahlt ab dem Stichtag PAYMENT_RECEIPTS_SINCE,
+ *  - mit TSE-Signatur oder ohne (TSE-Ausfall, z. B. SumUp-Terminalzahlung bei gestörter TSE → `tseFailed`).
  */
 export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: string) {
-  const [since] = await tx.select({ at: sql<Date | null>`min(${documentArchive.createdAt})` }).from(documentArchive).where(eq(documentArchive.organizationId, org));
-  if (!since?.at) return [];
-  const sinceAt = new Date(since.at);
-  const [inv] = await tx.select({ createdAt: invoices.createdAt }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
-  if (!inv) return [];
+  const [inv] = await tx
+    .select({ createdAt: invoices.createdAt, source: invoices.source, status: invoices.status, number: invoices.number })
+    .from(invoices)
+    .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
+  if (!inv || inv.status === "draft" || !inv.number) return [];
+  if (inv.source && inv.source !== "crm") return [];
   const rows = await tx
-    .select({ id: payments.id, paidAt: payments.paidAt, method: payments.method, amountCents: payments.amountCents, receiptId: paymentReceipts.id })
+    .select({
+      id: payments.id,
+      paidAt: payments.paidAt,
+      method: payments.method,
+      amountCents: payments.amountCents,
+      externalRef: payments.externalRef,
+      fiscalId: fiscalTransactions.id,
+    })
     .from(payments)
-    .innerJoin(fiscalTransactions, eq(fiscalTransactions.paymentId, payments.id))
-    .leftJoin(paymentReceipts, eq(paymentReceipts.paymentId, payments.id))
-    .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, invoiceId)));
+    .leftJoin(fiscalTransactions, and(eq(fiscalTransactions.organizationId, org), eq(fiscalTransactions.paymentId, payments.id)))
+    .where(
+      and(
+        eq(payments.organizationId, org),
+        eq(payments.invoiceId, invoiceId),
+        inArray(payments.method, [...REGISTER_METHODS]),
+        gte(payments.paidAt, PAYMENT_RECEIPTS_SINCE),
+        notExists(tx.select({ one: sql`1` }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.paymentId, payments.id)))),
+      ),
+    )
+    .orderBy(asc(payments.paidAt), asc(payments.id));
   return rows
-    .filter((p) => !p.receiptId && isRegisterMethod(p.method) && p.paidAt > inv.createdAt && p.paidAt >= sinceAt)
-    .map((p) => ({ id: p.id, paidAt: p.paidAt, method: p.method, amountCents: p.amountCents }));
+    .filter((p) => !paidAtIssue(p, { createdAt: inv.createdAt, source: inv.source }))
+    .map((p) => ({ id: p.id, paidAt: p.paidAt, method: p.method, amountCents: p.amountCents, tseFailed: !p.fiscalId }));
 }
 
 /**
- * Zahlungsbeleg für eine TSE-signierte Zahlung nachträglich anlegen (Anlegen bei der Buchung war gescheitert) –
- * gezielt je Zahlung, Recht invoices.write, idempotent (gibt den vorhandenen Beleg zurück). Nur für Kassenvorgänge
- * nach dem Ausstellen mit TSE-Signatur; laufende Nummer im Nummernkreis ZB, Vermerk „nachträglich erstellt“.
- * Keine automatische Massennachholung für Altzahlungen.
+ * Zahlungsbeleg für eine Kassenzahlung nachträglich anlegen (Anlegen bei der Buchung war gescheitert) – gezielt je
+ * Zahlung, Recht invoices.write, idempotent (gibt den vorhandenen Beleg zurück). Erlaubt ist nur, was
+ * `paymentsMissingReceipt` liefert (serverseitig, unter Rechnungssperre) – keine Altzahlungen, keine Zahlungen beim
+ * Ausstellen, keine Überweisungen. Laufende Nummer im Nummernkreis ZB (Jahr der Erstellung), Vermerk „nachträglich
+ * erstellt“; bei TSE-Ausfall mit dem Ausfallvermerk.
  */
 export async function createMissingPaymentReceipt(auth: AuthContext, invoiceId: string, paymentId: string) {
   assertCan(auth, "invoices.write");
@@ -308,27 +342,32 @@ export async function createMissingPaymentReceipt(auth: AuthContext, invoiceId: 
   if (!z.uuid().safeParse(invoiceId).success || !z.uuid().safeParse(paymentId).success) throw new PaymentReceiptError("Zahlung nicht gefunden.");
   const res = await withOrg(org, async (tx) => {
     // Rechnung sperren: keine gleichzeitige Buchung/Nachholung auf derselben Rechnung
-    const [inv] = await tx.select({ id: invoices.id, createdAt: invoices.createdAt }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId))).for("update");
+    const [inv] = await tx.select({ id: invoices.id }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId))).for("update");
     if (!inv) throw new PaymentReceiptError("Rechnung nicht gefunden.");
     const [existing] = await tx.select({ id: paymentReceipts.id, number: paymentReceipts.number }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.paymentId, paymentId)));
     if (existing) return { ...existing, created: false };
-    const [p] = await tx
-      .select({ payment: payments, fiscalId: fiscalTransactions.id })
-      .from(payments)
-      .leftJoin(fiscalTransactions, eq(fiscalTransactions.paymentId, payments.id))
-      .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, invoiceId), eq(payments.id, paymentId)));
-    if (!p) throw new PaymentReceiptError("Zahlung nicht gefunden.");
-    if (!isRegisterMethod(p.payment.method)) throw new PaymentReceiptError("Für Überweisungen und Zahlungslinks gibt es keinen Kassenbeleg.");
-    if (!p.fiscalId) throw new PaymentReceiptError("Die Zahlung hat keine TSE-Signatur – bitte den Support kontaktieren.");
-    if (!(p.payment.paidAt > inv.createdAt)) throw new PaymentReceiptError("Diese Zahlung wurde beim Ausstellen erfasst und steht auf dem Beleg selbst.");
+    const missing = (await paymentsMissingReceipt(tx, org, invoiceId)).find((m) => m.id === paymentId);
+    if (!missing) {
+      // nur für eine verständliche Meldung: was ist das für eine Zahlung?
+      const [p] = await tx
+        .select({ method: payments.method })
+        .from(payments)
+        .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, invoiceId), eq(payments.id, paymentId)));
+      if (!p) throw new PaymentReceiptError("Zahlung nicht gefunden.");
+      if (!isRegisterMethod(p.method)) throw new PaymentReceiptError("Für Überweisungen und Zahlungslinks gibt es keinen Kassenbeleg.");
+      throw new PaymentReceiptError(
+        "Für diese Zahlung wird kein nachträglicher Zahlungsbeleg erstellt: sie wurde beim Ausstellen erfasst (steht auf dem Beleg selbst) oder vor Einführung der Zahlungsbelege gebucht.",
+      );
+    }
     const [r] = await recordPaymentReceipts(tx, org, invoiceId, [paymentId], auth.user.id, { belated: true });
     if (!r) throw new PaymentReceiptError("Zahlungsbeleg konnte nicht angelegt werden.");
+    await audit(
+      { organizationId: org, userId: auth.user.id, action: "payment_receipt.create_belated", entity: "invoice", entityId: invoiceId, meta: { receipt: r.number, paymentId, tseFailed: missing.tseFailed } },
+      tx,
+    );
     return { ...r, created: true };
   });
-  if (res.created) {
-    await audit({ organizationId: org, userId: auth.user.id, action: "payment_receipt.create_belated", entity: "invoice", entityId: invoiceId, meta: { receipt: res.number, paymentId } });
-    await archivePaymentReceipts(org, [{ id: res.id, number: res.number }], auth.user.id);
-  }
+  if (res.created) await archivePaymentReceipts(org, [{ id: res.id, number: res.number }], auth.user.id);
   return res;
 }
 
@@ -338,7 +377,7 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 export async function sendPaymentReceiptEmail(auth: AuthContext, invoiceId: string, receiptId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
-  const pdf = await paymentReceiptPdfForOrg(org, invoiceId, receiptId);
+  const pdf = await paymentReceiptPdfForOrg(org, invoiceId, receiptId, auth.user.id);
   if (!pdf) throw new PaymentReceiptError("Zahlungsbeleg nicht gefunden.");
   const contact = await withOrg(org, async (tx) => {
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));

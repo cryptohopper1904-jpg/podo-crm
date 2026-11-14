@@ -2,11 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requestMeta } from "@/lib/auth/session";
 import { clientKey } from "@/lib/rate-limit";
 import { pdfResponseHeaders } from "@/server/invoice-delivery";
+import { archivePendingResponse } from "@/server/archive-pending-response";
 import { ArchivePendingError } from "@/server/document-archive";
 import { currentPortalLink, portalFailLimiter, portalInvoicePdf, portalLimiter } from "@/server/portal-core";
 
 /** Rechnungs-PDF im Patientenportal (Sitzungs-Cookie) – nur, wenn die Rechnung zur Person des Links gehört. */
-export async function GET(_req: NextRequest, ctx: RouteContext<"/portal/rechnung/[id]">) {
+export async function GET(req: NextRequest, ctx: RouteContext<"/portal/rechnung/[id]">) {
   const { id } = await ctx.params;
   const key = clientKey(await requestMeta());
   const headers = { "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" };
@@ -18,7 +19,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/portal/rechnung
     pdf = await portalInvoicePdf(link, id);
   } catch (e) {
     // PDF noch nicht archiviert: keine unarchivierte Fassung ausgeben
-    if (e instanceof ArchivePendingError) return NextResponse.json({ error: e.message }, { status: 503, headers: { ...headers, "Retry-After": "60" } });
+    if (e instanceof ArchivePendingError) return archivePendingResponse(req, e.message, headers);
     throw e;
   }
   if (!pdf) {
