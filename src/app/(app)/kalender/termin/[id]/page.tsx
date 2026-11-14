@@ -46,7 +46,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   const assign = canEdit && !!data.feed && !patient && a.status !== "cancelled";
   const showDrive = canEdit && !!patient && a.homeVisit && open;
   const showStatus = canEdit && open && !auth.readOnly;
-  const showCancel = showStatus && !data.feed;
+  const showCancel = showStatus && !data.feed && a.source !== "doctolib" && a.source !== "extern";
   const receiptFirst = !!billing?.patient && a.status === "done" && !billing.billedBy.length && !openDeposit && !depositOk;
   const name = patient ? fullName(patient) : (a.title ?? "Termin");
   const hasActions = showDoc || assign || showDrive || showStatus || receiptFirst;

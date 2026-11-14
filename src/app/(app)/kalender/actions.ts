@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
-import { appointments, services } from "@/db/schema";
+import { services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { requireAuth } from "@/lib/auth/session";
@@ -15,9 +15,9 @@ import { conflictMessage, createInternalAppointments, moveAppointment, reschedul
 import { saveCalendarMode, saveCalendarOptions } from "@/server/calendar-board";
 import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
-import { assignFeedAppointmentPatient, isFeedAppointment } from "@/server/calendar-feeds";
-import { offerFreedSlotSafe } from "@/server/waitlist";
+import { assignFeedAppointmentPatient } from "@/server/calendar-feeds";
 import { seriesStarts } from "@/lib/appointment-series";
+import { changeAppointmentStatus, offerAfterCancel, UNDO_GRACE_MS, type StatusResult } from "@/server/calendar-status";
 import { durationFromServices } from "@/lib/appointment-duration";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
@@ -84,56 +84,29 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   redirect(`/kalender?datum=${d.date}`);
 }
 
-const STATUSES = ["planned", "confirmed", "done", "cancelled", "no_show"] as const;
-export type AppointmentStatus = (typeof STATUSES)[number];
-export type StatusResult = { ok: true; prev: AppointmentStatus } | { ok: false; error: string };
-
-/**
- * Zeit, die eine Absage noch per „Rückgängig“ zurückgenommen werden kann, bevor der frei gewordene Termin der
- * Warteliste angeboten wird. Wird später zurückgenommen, ist das Angebot nicht mehr annehmbar (acceptOffer prüft,
- * dass der Termin noch abgesagt ist) – die Meldung „schon vergeben“ ist dann richtig.
- */
-const UNDO_GRACE_MS = 20_000;
-
-const statusSchema = z.object({
-  id: z.uuid("Termin nicht gefunden."),
-  status: z.enum(STATUSES, { error: "Unbekannter Status." }),
-  /** „Rückgängig“: nur zurücksetzen, wenn der Termin noch den Status hat, den die Aktion gesetzt hat */
-  expected: z.enum(STATUSES).optional(),
-});
+export type { AppointmentStatus, StatusResult } from "@/server/calendar-status";
 
 /**
  * Status eines Termins setzen (Terminzeile/Terminseite: „Nicht da“, „Absagen“ und deren „Rückgängig“).
+ * Regeln (erlaubte Übergänge, Abrechnung, Doctolib/Kalender-Abo, Zeit inzwischen vergeben) in changeAppointmentStatus.
  * Gibt den vorherigen Status zurück, damit die Oberfläche die Änderung rückgängig machen kann.
  */
 export async function changeAppointmentStatusAction(input: { id: string; status: string; expected?: string }): Promise<StatusResult> {
   const auth = await requireAuth("appointments.write");
   const org = auth.organization.id;
-  const parsed = statusSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
-  const { id, status, expected } = parsed.data;
-  // Termine aus dem Kalender-Abo werden in der Quelle (z. B. Doctolib) abgesagt – der Abgleich übernimmt die Absage
-  if (status === "cancelled" && (await isFeedAppointment(org, id))) return { ok: false, error: "Termine aus dem Kalender-Abo bitte in der Quelle (z. B. Doctolib) absagen." };
-  const res = await withOrg(org, async (tx) => {
-    const [a] = await tx.select({ status: appointments.status }).from(appointments).where(and(eq(appointments.organizationId, org), eq(appointments.id, id))).for("update");
-    if (!a) return { ok: false as const, error: "Termin nicht gefunden." };
-    if (expected && a.status !== expected) return { ok: false as const, error: "Termin wurde zwischenzeitlich geändert – bitte neu laden." };
-    await tx.update(appointments).set({ status, updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, id)));
-    return { ok: true as const, prev: a.status as AppointmentStatus };
-  });
+  const res = await changeAppointmentStatus(auth, input);
   if (!res.ok) return res;
-  await audit({ organizationId: org, userId: auth.user.id, action: "appointment.status", entity: "appointment", entityId: id, meta: { status, ...(expected ? { undo: true } : {}) } });
-  // Absage durch die Praxis (auch nach einem Absagewunsch per KI-Telefon) → frei gewordenen Termin der Warteliste
-  // anbieten – erst nach der Frist für „Rückgängig“; offerFreedSlot prüft dann, ob der Termin noch abgesagt ist
-  if (status === "cancelled" && res.prev !== "cancelled") {
+  // Absage → frei gewordenen Termin der Warteliste anbieten, erst nach der Frist für „Rückgängig“ (offerFreedSlot
+  // prüft dann, ob der Termin noch abgesagt ist). Läuft dieser Nachlauf nicht (Neustart), übernimmt der Cron.
+  if (input.status === "cancelled" && res.prev !== "cancelled") {
     after(async () => {
       await new Promise((r) => setTimeout(r, UNDO_GRACE_MS));
-      await offerFreedSlotSafe(org, id);
+      await offerAfterCancel(org, input.id);
     });
   }
   revalidatePath("/kalender");
   revalidatePath("/heute");
-  revalidatePath(`/kalender/termin/${id}`);
+  revalidatePath(`/kalender/termin/${input.id}`);
   return res;
 }
 

@@ -73,7 +73,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
   const assign = canEdit && !!feed && !patient && !cancelled;
   const showDrive = canEdit && !!patient && (a.homeVisit || patient.homeVisit) && open;
   const showStatus = canEdit && open;
-  const showCancel = showStatus && !feed;
+  // Doctolib/Kalender-Abo/extern: Absage in der Quelle (Server lehnt sie hier ab)
+  const showCancel = showStatus && !feed && a.source !== "doctolib" && a.source !== "extern";
   const showReceipt = billable && !!patient && a.status === "done";
   const who = patient ? [patient.firstName, patient.lastName].filter(Boolean).join(" ") : (a.title ?? "");
   return (
