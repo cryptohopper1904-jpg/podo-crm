@@ -4,7 +4,7 @@
  * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
-import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
+import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
 import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp } from "./support";
 
@@ -87,6 +87,58 @@ test("Behandlung dokumentieren mit 2D-Fußpunkt", async () => {
   await page.getByRole("button", { name: /Prüfen und abschließen/ }).click();
   await expect(page).toHaveURL(/\/doku\/[0-9a-f-]{36}\?gespeichert=1/);
   await expect(page.getByText(/Nagel D1/).first()).toBeVisible();
+});
+
+test("Pflichtfelder: Meldung am Feld statt Browser-Blase (Doku-Bestätigung, Nachname)", async () => {
+  await page.goto(`${patientUrl}/doku/neu`);
+  await page.getByLabel("Befund", { exact: true }).fill("Ohne Bestätigung (E2E)");
+  await page.getByRole("button", { name: /Prüfen und abschließen/ }).click();
+  const confirm = page.getByLabel(/Ich habe die Angaben geprüft/);
+  await expect(confirm).toHaveAttribute("aria-invalid", "true");
+  await expect(confirm).toBeFocused();
+  await expect(page.getByText("Bitte bestätige, dass du die Angaben geprüft hast.")).toBeVisible();
+  await expect(page).toHaveURL(/\/doku\/neu$/);
+
+  await page.goto("/kunden/neu");
+  await page.getByLabel("Vorname", { exact: true }).fill("Ohne");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  const last = page.locator('input[name="lastName"]');
+  await expect(last).toHaveAttribute("aria-invalid", "true");
+  await expect(last).toBeFocused();
+  await expect(page.getByText("Bitte einen Nachnamen eintragen.")).toBeVisible();
+  await expect(page).toHaveURL(/\/kunden\/neu$/);
+});
+
+test("Echte 404: unbekannte oder kaputte Akte, /anamnese ohne Token ohne App-Manifest", async () => {
+  // Status per Request (kein Konsolenfehler im Seiten-Tab)
+  for (const url of ["/kunden/00000000-0000-4000-8000-000000000000", "/kunden/gibt-es-nicht", "/kunden/00000000-0000-4000-8000-000000000000/doku/neu"]) {
+    expect((await page.request.get(url)).status(), url).toBe(404);
+  }
+  expect((await page.request.get(patientUrl)).status()).toBe(200);
+  expect((await page.request.get(`${patientUrl}/doku/neu`)).status()).toBe(200);
+  const res = await page.request.get("/anamnese");
+  expect(res.status()).toBe(404);
+  const html = await res.text();
+  expect(html).not.toMatch(/rel="manifest"/);
+  expect(html).toContain("Seite nicht gefunden");
+});
+
+test("Akte auf dem iPhone SE: Hauptaktionen oben, Rest im Menü „Weitere Aktionen“", async ({ browser }) => {
+  const { defaultBrowserType, ...se } = devices["iPhone SE (3rd gen)"];
+  void defaultBrowserType;
+  const context = await browser.newContext({ ...se, storageState: await page.context().storageState(), locale: "de-DE", timezoneId: "Europe/Berlin" });
+  const p = await context.newPage();
+  await p.goto(patientUrl);
+  if (await p.locator("dialog[open]").count()) await p.keyboard.press("Escape");
+  await expect(p.getByRole("link", { name: "Behandlung dokumentieren" })).toBeVisible();
+  // Seltene Aktionen erst nach dem Aufklappen
+  await expect(p.getByRole("link", { name: "Sammelrechnung" })).toBeHidden();
+  await p.getByText("Weitere Aktionen").click();
+  for (const name of ["Anamnese", "Rechnung", "Sammelrechnung", "Anzahlung (Vorauszahlung)", "Bearbeiten"]) {
+    await expect(p.getByRole("link", { name, exact: true })).toBeVisible();
+  }
+  expect(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  await context.close();
 });
 
 test("Rechnung erstellen und ausstellen", async () => {

@@ -15,9 +15,9 @@ export function CheckoutForm({ defaultPlan, minSeats, mock }: { defaultPlan: Pai
   const effSeats = Math.max(seats, info.includedSeats);
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Tarif">
           <Select name="plan" value={plan} onChange={(e) => setPlan(e.target.value as PaidPlan)}>
             {PAID_PLANS.map((p) => (

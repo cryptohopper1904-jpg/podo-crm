@@ -14,7 +14,7 @@ export const metadata = { title: "Daten & Kündigung" };
 function RetentionNotice() {
   return (
     <div className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
-      <p className="font-semibold">Ihre Aufbewahrungspflichten bleiben bestehen</p>
+      <p className="font-semibold">Deine Aufbewahrungspflichten bleiben bestehen</p>
       <ul className="mt-2 list-disc pl-5">
         <li>Behandlungsdokumentation: <strong>10 Jahre</strong> nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)</li>
         <li>
@@ -36,12 +36,13 @@ function RetentionNotice() {
         Abs. 3 lit. b DSGVO, § 147 AO). Die Löschung nach Fristablauf erfolgt derzeit nicht automatisch, sondern auf Antrag.
       </p>
       <p className="mt-2">
-        Diese Pflichten treffen die Praxis. Erstellen Sie deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahren Sie ihn sicher
-        auf. Wir löschen alle Daten {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig und behalten keine Kopie für Sie.
+        Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
+        auf. Wir löschen alle Daten frühestens {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig. Verschlüsselte Datensicherungen laufen
+        spätestens 14 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
       </p>
       <p className="mt-2">
         Der Komplett-Export enthält <strong>nicht</strong> den DSFinV-K-Export (Kasse → DSFinV-K-Export) und den TSE-Export (beim TSE-Anbieter):
-        Erstellen Sie beide für <strong>alle Zeiträume bis zur Kündigung</strong> separat und bewahren Sie sie 10 Jahre auf – nach der Löschung lassen
+        Erstelle beide für <strong>alle Zeiträume bis zur Kündigung</strong> separat und bewahre sie 10 Jahre auf – nach der Löschung lassen
         sie sich nicht mehr erzeugen.
       </p>
     </div>
@@ -68,7 +69,7 @@ export default async function DataSettings() {
           <CardTitle>Löschung beantragt <Badge tone="accent">Karenzzeit</Badge></CardTitle>
           <p className="text-[15px]">
             Beantragt am <strong>{dateDe(requestedAt)}</strong>. Die Praxis wird frühestens am <strong>{dateDe(deletionDueAt(requestedAt))}</strong> mit allen
-            Daten, Fotos und Zugängen endgültig gelöscht. Bis dahin können Sie weiterarbeiten und exportieren.
+            Daten, Fotos und Zugängen endgültig gelöscht. Bis dahin kannst du weiterarbeiten und exportieren.
           </p>
           <div className="mt-4">
             {isWithinGrace(requestedAt) ? (
@@ -83,7 +84,7 @@ export default async function DataSettings() {
       <Card>
         <CardTitle>Vollständiger Datenexport</CardTitle>
         <p className="text-[15px] text-muted">
-          ZIP-Datei mit allen Daten Ihrer Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Patientennummer) und eine
+          ZIP-Datei mit allen Daten deiner Praxis: jede Tabelle als JSON, alle Fotos und Dokumente entschlüsselt (Ordner je Patientennummer) und eine
           Erläuterung (README.txt). Zugangsdaten, Passwörter und 2FA-Geheimnisse sind nicht enthalten. Der Export wird im Zugriffsprotokoll vermerkt.
         </p>
         <p className="mt-2 text-sm text-muted">Enthält Gesundheitsdaten – nur auf einem verschlüsselten, geschützten Gerät speichern. Höchstens ein Export alle 10 Minuten.</p>
@@ -100,9 +101,10 @@ export default async function DataSettings() {
         <Card>
           <CardTitle>Praxis kündigen & löschen</CardTitle>
           <p className="mb-4 text-[15px] text-muted">
-            Mit der Kündigung beantragen Sie die vollständige Löschung Ihrer Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
-            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin können Sie den Antrag zurücknehmen. Ein laufendes Abo
-            verwalten Sie unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
+            Mit der Kündigung beantragst du die vollständige Löschung deiner Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
+            Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Der Löschantrag
+            kündigt zugleich deinen Vertrag. Ein laufendes Abo wird dabei derzeit nicht automatisch beendet – kündige es bitte zusätzlich unter{" "}
+            <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>
           <RetentionNotice />
           <div className="mt-5">

@@ -54,8 +54,8 @@ export default async function PracticeSettings() {
       <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
     </Card>
     <Card>
-      <ActionForm action={savePracticeAction}>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <ActionForm action={savePracticeAction} stickyActions>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Praxisname"><Input name="name" defaultValue={o.name} required /></Field>
           <Field label="Rechtlicher Name (Rechnung)"><Input name="legalName" defaultValue={o.legalName ?? ""} /></Field>
           <Field label="Bundesland">
@@ -86,7 +86,7 @@ export default async function PracticeSettings() {
     <Card>
       <h2 className="mb-1 font-display text-lg font-semibold">Logos</h2>
       <p className="mb-4 text-sm text-muted">Ohne Logo erscheinen Belege und E-Mails wie bisher mit dem Praxisnamen.</p>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {LOGO_KINDS.map((kind) => {
           const l = logos[kind];
           return (
@@ -97,7 +97,7 @@ export default async function PracticeSettings() {
                 <div className="flex items-center gap-4">
                   {/* eslint-disable-next-line @next/next/no-img-element -- geschützte API-Route */}
                   <img src={`/api/praxis/logo/${kind}?v=${l.sha256.slice(0, 12)}`} alt={LOGO_LABEL[kind]} className="h-20 max-w-48 rounded-lg bg-white object-contain p-1" />
-                  <div className="text-xs text-muted">
+                  <div className="text-[13px] text-muted">
                     <p>{l.mime === "image/png" ? "PNG" : "JPEG"} · {l.width} × {l.height} px · {Math.ceil(l.sizeBytes / 1024)} KB</p>
                     <form action={removeLogoAction} className="mt-2">
                       <input type="hidden" name="kind" value={kind} />
@@ -118,7 +118,7 @@ export default async function PracticeSettings() {
       <h2 className="mb-1 font-display text-lg font-semibold">Bankverbindung & Steuer (Rechnungen)</h2>
       <p className="mb-4 text-sm text-muted">Erscheint in der Fußzeile jeder Rechnung. Mit gültiger IBAN druckt PodoHero auf offene Rechnungen einen GiroCode zum Bezahlen per Banking-App.</p>
       <ActionForm action={saveBankTaxAction}>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Kontoinhaber:in" hint="Leer = rechtlicher Name bzw. Praxisname"><Input name="accountHolder" defaultValue={o.accountHolder ?? ""} maxLength={70} /></Field>
           <Field label="IBAN"><Input name="iban" defaultValue={o.iban ? formatIban(o.iban) : ""} autoComplete="off" spellCheck={false} /></Field>
           <Field label="BIC (optional)"><Input name="bic" defaultValue={o.bic ?? ""} autoComplete="off" spellCheck={false} /></Field>

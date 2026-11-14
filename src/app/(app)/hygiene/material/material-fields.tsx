@@ -5,7 +5,7 @@ type Material = typeof materials.$inferSelect;
 
 export function MaterialFields({ material }: { material?: Material }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {material ? <input type="hidden" name="id" value={material.id} /> : null}
       <Field label="Bezeichnung *" className="lg:col-span-2">
         <Input name="name" defaultValue={material?.name ?? ""} required maxLength={120} placeholder="z. B. Einmal-Skalpellklingen Nr. 15" />

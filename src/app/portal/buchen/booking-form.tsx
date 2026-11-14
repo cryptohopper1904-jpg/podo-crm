@@ -32,19 +32,19 @@ export function PortalBookingForm({ services, days, reschedule, phone }: { servi
       <input type="hidden" name="serviceId" value={svc?.id ?? ""} />
       <input type="hidden" name="appointmentId" value={reschedule?.id ?? ""} />
       <input type="hidden" name="startsAt" value={slot ?? ""} />
-      <FormError message={state?.error ? `${state.error}${state.phone ? ` Telefon: ${state.phone}` : ""}` : null} />
+      <FormError message={state?.error ? `${state.error}${state.phone ? ` Telefon: ${state.phone}` : ""}` : null} revealKey={state} />
       {!reschedule ? (
         <Card>
           <h2 className="mb-3 font-display text-lg font-semibold">1. Leistung</h2>
           {services.length === 0 ? (
             <p className="text-sm text-muted">Derzeit sind keine Leistungen online buchbar.{phone ? ` Telefon: ${phone}` : ""}</p>
           ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {services.map((s) => (
                 <button key={s.id} type="button" aria-pressed={svc?.id === s.id} onClick={() => { setSvc(s); setSlot(null); }}
                   className={cx("rounded-xl p-4 text-left", svc?.id === s.id ? "bg-primary text-on-primary" : "border border-border bg-surface hover:bg-surface-2")}>
                   <span className="block font-semibold">{s.name}</span>
-                  <span className="text-sm opacity-80">{s.durationMin} Min · {eur.format(s.priceCents / 100)}</span>
+                  <span className="text-sm">{s.durationMin} Min · {eur.format(s.priceCents / 100)}</span>
                 </button>
               ))}
             </div>

@@ -30,6 +30,14 @@ export function DateInput({ className, placeholder, clearable, onInput, onBlur, 
   const empty = controlled ? str(props.value) === "" : emptyState;
   const sync = () => setEmptyState((ref.current?.value ?? "") === "");
 
+  // Nach dem Mounten einmal den echten Wert lesen: Autofill bzw. vom Browser wiederhergestellte Werte (Zurück)
+  // kommen ohne input-Ereignis – sonst sähe ein gesetztes Feld leer aus.
+  useEffect(() => {
+    if (controlled) return;
+    const t = setTimeout(() => setEmptyState((ref.current?.value ?? "") === ""), 0);
+    return () => clearTimeout(t);
+  }, [controlled]);
+
   useEffect(() => {
     const form = ref.current?.form;
     if (!form) return;
@@ -57,7 +65,7 @@ export function DateInput({ className, placeholder, clearable, onInput, onBlur, 
         {...props}
       />
       {empty ? (
-        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-[15px] text-muted peer-focus:hidden">
+        <span aria-hidden className="podo-date-empty pointer-events-none absolute inset-y-0 left-3.5 items-center text-[15px] text-muted peer-focus:hidden">
           {text}
         </span>
       ) : null}

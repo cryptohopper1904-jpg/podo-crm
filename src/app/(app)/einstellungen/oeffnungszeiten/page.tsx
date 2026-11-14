@@ -33,9 +33,9 @@ export default async function OpeningHoursSettings() {
           {NO_HOURS_NOTE}. Website und Telefon-Assistent nennen erst nach dem Speichern Öffnungszeiten.
         </p>
       )}
-      <ActionForm action={saveOpeningHoursAction}>
+      <ActionForm action={saveOpeningHoursAction} stickyActions>
         <OpeningHoursEditor name="hours" initial={stored ?? DEFAULT_WEEK} />
-        <p className="text-xs text-muted">
+        <p className="text-[13px] text-muted">
           Eigene Arbeitszeiten und Abwesenheiten je Person unter <Link className="underline" href="/team">Team</Link>, Website-Zeiten unter{" "}
           <Link className="underline" href="/einstellungen/website">Einstellungen → Website</Link>.
         </p>

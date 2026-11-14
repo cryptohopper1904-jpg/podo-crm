@@ -56,13 +56,13 @@ export default async function WebsiteSettingsPage() {
           <strong>Eigene Domain</strong> (z. B. www.eure-praxis.de): beim Domain-Anbieter einen CNAME-Eintrag auf <code className="font-mono">{host}</code> anlegen
           und uns die Domain mitteilen – wir schalten sie für eure Website frei. (Nur Information, die Einrichtung erfolgt durch den Support.)
         </p>
-        <p className="mt-3 text-xs text-muted">
+        <p className="mt-3 text-[13px] text-muted">
           Zusatzmodul im Tarif Starter: {money(WEBSITE_ADDON_CENTS)}/Monat (vorläufig); in Praxis und Plus enthalten. Ein Praxisfoto kann in einer späteren Version ergänzt werden.
         </p>
       </Card>
 
       <Card>
-        <ActionForm action={saveWebsiteAction}>
+        <ActionForm action={saveWebsiteAction} stickyActions>
           <Checkbox name="enabled" defaultChecked={w.enabled} label="Website veröffentlichen" />
           <Field label="Claim (Untertitel unter dem Praxisnamen)" hint={`höchstens ${LIMITS.claim} Zeichen, z. B. „Podologie in Hohen Neuendorf – in der Praxis und bei Ihnen zu Hause“`}>
             <Input name="claim" defaultValue={w.claim} maxLength={LIMITS.claim} />
@@ -81,14 +81,14 @@ export default async function WebsiteSettingsPage() {
           {shown.length ? (
             <fieldset className="min-w-0 rounded-xl border border-border p-4">
               <legend className="px-1 text-sm font-semibold">Kurzbeschreibungen der Leistungen</legend>
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {shown.map((s) => (
                   <Field key={s.code} label={s.name}>
                     <Textarea name={`desc_${s.code}`} defaultValue={w.serviceDescriptions[s.code] ?? ""} placeholder={defaultServiceDescription(s.name) || "Kurz beschreiben …"} maxLength={LIMITS.serviceDescription} rows={2} />
                   </Field>
                 ))}
               </div>
-              <p className="mt-2 text-xs text-muted">Leer gelassen: der grau angezeigte Vorschlag wird verwendet. Leistungen selbst unter Einstellungen → Leistungen.</p>
+              <p className="mt-2 text-[13px] text-muted">Leer gelassen: der grau angezeigte Vorschlag wird verwendet. Leistungen selbst unter Einstellungen → Leistungen.</p>
             </fieldset>
           ) : null}
 

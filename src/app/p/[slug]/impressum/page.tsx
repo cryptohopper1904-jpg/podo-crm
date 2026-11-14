@@ -6,7 +6,9 @@ import { SiteShell } from "../_site/shell";
 
 export async function generateMetadata(props: PageProps<"/p/[slug]/impressum">): Promise<Metadata> {
   const site = await loadPublicSite((await props.params).slug);
-  return site ? { title: { absolute: `Impressum · ${site.name}` }, robots: { index: false, follow: true } } : { robots: { index: false, follow: false } };
+  // notFound() schon hier, damit Titel und Metadaten der 404-Seite (../../not-found.tsx) gelten
+  if (!site) notFound();
+  return { title: { absolute: `Impressum · ${site.name}` }, robots: { index: false, follow: true } };
 }
 
 /** Impressum der Praxis-Website (Inhalt: _site/legal-content.tsx, auch für /buchen/<slug>/impressum). */

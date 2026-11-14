@@ -42,6 +42,9 @@ const LEGAL = [
   ["/unterauftragnehmer", "Unterauftragnehmer"],
 ] as const;
 
+/** Seitenabstand inkl. Safe-Area (iPhone quer: Kamera-Aussparung links/rechts, viewport-fit=cover) */
+const SAFE_X = "pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]";
+
 export default function PublicLayout({ children }: LayoutProps<"/">) {
   return (
     <div className="flex min-h-screen flex-col">
@@ -49,7 +52,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
         Zum Inhalt springen
       </a>
       <header className="sticky top-0 z-40 border-b border-border bg-bg/90 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-4 px-4 sm:px-6">
+        <div className={`mx-auto flex h-16 max-w-6xl items-center gap-4 ${SAFE_X}`}>
           <Link href="/" aria-label="PodoHero – Startseite" className="shrink-0 rounded-lg">
             <Logo />
           </Link>
@@ -86,7 +89,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
       <main id="inhalt" className="flex-1">{children}</main>
 
       <footer className="border-t border-border bg-surface">
-        <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-2 sm:px-6 lg:grid-cols-[2fr_1fr_1.3fr_1fr]">
+        <div className={`mx-auto grid max-w-6xl grid-cols-1 gap-8 py-10 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1.3fr_1fr] ${SAFE_X}`}>
           <div>
             <Logo />
             <p className="mt-3 max-w-sm text-sm text-muted">
@@ -114,7 +117,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
             ))}
           </nav>
         </div>
-        <p className="mx-auto max-w-6xl px-4 pb-8 text-xs text-muted sm:px-6">
+        <p className={`mx-auto max-w-6xl pb-8 text-xs text-muted ${SAFE_X}`}>
           Alle Preise zzgl. USt., Preise vorläufig. Rechtstexte sind Entwürfe und werden vor dem Start anwaltlich geprüft.
         </p>
       </footer>

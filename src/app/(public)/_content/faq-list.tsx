@@ -25,11 +25,11 @@ export function Breadcrumbs({ trail }: { trail: readonly { name: string; path: s
   return (
     <nav aria-label="Brotkrumen" className="text-sm text-muted">
       <ol className="flex flex-wrap items-center gap-1.5">
-        <li><Link href="/" className="hover:text-text hover:underline">Startseite</Link></li>
+        <li><Link href="/" className="inline-flex min-h-11 items-center hover:text-text hover:underline">Startseite</Link></li>
         {trail.map((t, i) => (
           <li key={t.path} className="flex items-center gap-1.5">
             <span aria-hidden>›</span>
-            {i === trail.length - 1 ? <span aria-current="page" className="text-text">{t.name}</span> : <Link href={t.path} className="hover:text-text hover:underline">{t.name}</Link>}
+            {i === trail.length - 1 ? <span aria-current="page" className="text-text">{t.name}</span> : <Link href={t.path} className="inline-flex min-h-11 items-center hover:text-text hover:underline">{t.name}</Link>}
           </li>
         ))}
       </ol>

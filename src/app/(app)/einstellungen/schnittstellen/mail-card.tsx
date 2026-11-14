@@ -16,15 +16,15 @@ export async function MailCard({ auth }: { auth: AuthContext }) {
       <div className="mb-4 rounded-xl bg-surface-2 p-4 text-sm">
         <p className="font-semibold">Zustellbarkeit: SPF, DKIM, DMARC</p>
         <ul className="mt-1 list-disc pl-5 text-muted">
-          <li><strong>SPF:</strong> Im DNS der Absenderdomain muss der SMTP-Server erlaubt sein, z. B. <code>v=spf1 include:&lt;Ihr-Mailanbieter&gt; ~all</code> (Wert liefert Ihr Mailanbieter).</li>
+          <li><strong>SPF:</strong> Im DNS der Absenderdomain muss der SMTP-Server erlaubt sein, z. B. <code>v=spf1 include:&lt;Mailanbieter&gt; ~all</code> (Wert liefert dein Mailanbieter).</li>
           <li><strong>DKIM:</strong> Beim Mailanbieter die DKIM-Signatur aktivieren und den angezeigten TXT-/CNAME-Eintrag im DNS hinterlegen.</li>
           <li><strong>DMARC:</strong> mindestens <code>v=DMARC1; p=none; rua=mailto:…</code> unter <code>_dmarc.&lt;domain&gt;</code>, später <code>p=quarantine</code>.</li>
           <li>Ohne diese Einträge landen Rechnungen und Erinnerungen oft im Spam. Beim Plattform-Server ist die Absenderdomain bereits eingerichtet; Antworten gehen an die E-Mail-Adresse der Praxis.</li>
         </ul>
-        <p className="mt-2 text-xs text-muted">Höchstens {m.ratePerHour} E-Mails pro Stunde je Praxis. Verbindung nur verschlüsselt (TLS ab Version 1.2). Das Passwort wird verschlüsselt gespeichert und nie angezeigt.</p>
+        <p className="mt-2 text-[13px] text-muted">Höchstens {m.ratePerHour} E-Mails pro Stunde je Praxis. Verbindung nur verschlüsselt (TLS ab Version 1.2). Das Passwort wird verschlüsselt gespeichert und nie angezeigt.</p>
       </div>
       <ActionForm action={sendTestMailAction} submit="Testmail senden" className="flex flex-col gap-3">
-        <Field label="Empfänger" hint="Leer lassen: an Ihre Anmeldeadresse">
+        <Field label="Empfänger" hint="Leer lassen: an deine Anmeldeadresse">
           <Input name="to" type="email" autoComplete="email" placeholder={auth.user.email} />
         </Field>
       </ActionForm>

@@ -45,11 +45,11 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
           <CardTitle>Neue Charge (Sterilisationszyklus)</CardTitle>
           {/* key: nach dem Anlegen neu aufbauen, damit der nächste Nummernvorschlag erscheint */}
           <ActionForm key={suggestion} action={createBatchAction} submit="Charge anlegen">
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <Field label="Chargennummer *" hint="Vorschlag: ST-JJJJMMTT-NN">
                 <Input name="code" defaultValue={suggestion} required maxLength={60} className="font-mono" />
               </Field>
-              <Field label="Sterilisator" hint={sterilizers.length ? undefined : <Link href="/hygiene/geraete" className="underline">Gerät anlegen</Link>}>
+              <Field label="Sterilisator" hint={sterilizers.length ? undefined : <Link href="/hygiene/geraete" className="inline-flex min-h-11 items-center underline">Gerät anlegen</Link>}>
                 <Select name="deviceId" defaultValue={sterilizers[0]?.id ?? ""}>
                   <option value="">– ohne Gerät –</option>
                   {sterilizers.map((d) => (
@@ -61,7 +61,7 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
                 <Input name="cycleNo" maxLength={40} inputMode="numeric" />
               </Field>
               <Field label="Lagerfrist bis" hint="Standard 6 Monate (Sterilgutverpackung)">
-                <Input type="date" name="expiresAt" defaultValue={addMonthsIso(today, 6)} min={today} />
+                <Input type="date" name="expiresAt" defaultValue={addMonthsIso(today, 6)} min={today} clearable />
               </Field>
               <Field label="Bemerkung" className="sm:col-span-2 lg:col-span-3">
                 <Input name="note" maxLength={500} placeholder="z. B. Programm 134 °C, Beladung" />
@@ -78,7 +78,7 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
         <Card>
           <CardTitle>Freigabe ausstehend ({pending.length})</CardTitle>
           {!release ? <p className="mb-3 text-sm text-muted">Freigabe/Sperre nur durch Inhaber:in oder Podolog:in.</p> : null}
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {pending.map((b) => (
               <div key={b.b.id} className="rounded-xl border border-border p-4">
                 <p className="font-mono text-lg font-semibold">{b.b.code}</p>
@@ -98,7 +98,7 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
         {batches.length === 0 ? (
           <Empty title="Noch keine Chargen" />
         ) : (
-          <Table>
+          <Table label="Chargen">
             <thead>
               <tr><th>Charge</th><th>Aufbereitet</th><th>Gerät / Zyklus</th><th>Status</th><th>Lagerfrist</th><th>Entschieden</th><th></th></tr>
             </thead>
@@ -110,7 +110,7 @@ export default async function BatchesPage(props: PageProps<"/hygiene/chargen">) 
                   <td>{b.device ?? b.b.sterilizer ?? "–"}{b.b.cycleNo ? ` · ${b.b.cycleNo}` : ""}</td>
                   <td><BatchBadge result={b.b.result} expiresAt={b.b.expiresAt} today={today} /></td>
                   <td>{dateDe(b.b.expiresAt)}</td>
-                  <td>{b.b.releasedAt ? <>{dateDe(b.b.releasedAt)}<span className="block text-xs text-muted">{b.releasedByName}</span></> : "–"}</td>
+                  <td>{b.b.releasedAt ? <>{dateDe(b.b.releasedAt)}<span className="block text-[13px] text-muted">{b.releasedByName}</span></> : "–"}</td>
                   <td className="whitespace-nowrap text-sm">
                     <Link href={`/hygiene/charge/${encodeURIComponent(b.b.code)}`} className="font-semibold text-primary">Details</Link>
                     {" · "}

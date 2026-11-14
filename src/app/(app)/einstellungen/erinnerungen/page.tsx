@@ -50,7 +50,7 @@ export default async function ReminderSettingsPage() {
         {log.length === 0 ? (
           <Empty title="Noch keine Erinnerungen versendet" />
         ) : (
-          <Table>
+          <Table label="Letzte Erinnerungen">
             <thead>
               <tr>
                 <th>Zeit</th>

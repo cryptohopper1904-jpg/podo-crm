@@ -385,7 +385,7 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message };
   const v = d.data;
-  if (v.bookingChannel === "doctolib" && !v.doctolibUrl) return { error: "Bitte den Doctolib-Link Ihrer Praxis angeben." };
+  if (v.bookingChannel === "doctolib" && !v.doctolibUrl) return { error: "Bitte den Doctolib-Link deiner Praxis angeben." };
   if (v.bookingChannel === "custom" && !v.customUrl) return { error: "Bitte den Buchungslink angeben." };
   const booking =
     v.bookingChannel === "doctolib"
