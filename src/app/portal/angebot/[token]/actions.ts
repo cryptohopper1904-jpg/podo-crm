@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { requestMeta } from "@/lib/auth/session";
 import { clientKey } from "@/lib/rate-limit";
 import { portalFailLimiter, portalLimiter } from "@/server/portal-core";
@@ -18,5 +18,8 @@ export async function acceptOfferAction(_: OfferAcceptState, form: FormData): Pr
     return { error: r.error, taken: r.state === "taken" };
   }
   revalidatePath("/kalender");
+  // Angebotsseite ausdrücklich neu laden: sie zeigt danach die Ansicht „angenommen“ (OfferAcceptedNotice übernimmt
+  // den Fokus) – nicht auf den Nebeneffekt von revalidatePath("/kalender") verlassen
+  refresh();
   return { ok: r.message };
 }

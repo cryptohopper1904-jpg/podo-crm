@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
-import { Children, cloneElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { DateInput } from "./date-input";
 import { FormError, FormSuccess } from "./form-error";
 import { StepButton } from "./number-stepper";
@@ -160,26 +160,74 @@ export const hintCls = "text-[13px] leading-5 text-muted";
 
 /**
  * Feld = Beschriftung · Eingabe · optionaler Hinweis darunter.
- * `error`: Feldfehler unter der Eingabe (rot, mit Symbol); die Eingabe bekommt `aria-invalid` und `aria-describedby`
- * (gilt für ein einzelnes Element als Kind, z. B. <Input>/<Select>/<Textarea>). `id` des Feldes nötig für describedby.
+ * Ist das Kind eine einzelne Eingabe (<Input>, <Select>, <Textarea>, <SearchInput> oder ein natives Element), steht
+ * nur die Beschriftung im <label> (htmlFor); Hinweis und Fehler sind Geschwister und per `aria-describedby` an der
+ * Eingabe verknüpft – so werden sie als Beschreibung vorgelesen, nicht als Teil des Namens. Ohne `id` erzeugt Field
+ * eine (useId); hat die Eingabe selbst eine `id`, gewinnt diese (vor der `id` von Field). `error` setzt zusätzlich
+ * `aria-invalid`. Eine Einheit (<Input suffix="Min">) schreibt Field als „in Minuten“ (sr-only) mit ins <label> – der
+ * zugängliche Name bleibt „Dauer in Minuten“; Input lässt seinen eigenen sr-only-Text dann weg.
+ * Andere Kinder (eigene Komponenten, Wrapper, mehrere Elemente): wie bisher alles in einem umschließenden <label>
+ * (Hinweis und Fehler sind dort Teil des Namens). Bei `error` bekommt ein einzelnes Element-Kind trotzdem
+ * `aria-invalid` und `aria-describedby` auf den Fehlertext (reicht es die Props an seine Eingabe weiter, wirkt das dort).
  */
 export function Field({ label, hint, error, id, children, className }: { label: string; hint?: ReactNode; error?: string | null; id?: string; children: ReactNode; className?: string }) {
-  const errId = error && id ? `${id}-fehler` : undefined;
+  const autoId = useId();
   const only = Children.count(children) === 1 && isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
-  const control = error && only ? cloneElement(only, { "aria-invalid": true, ...(errId ? { "aria-describedby": errId } : {}), ...(id && !only.props.id ? { id } : {}) }) : children;
+  const direct = !!only && FIELD_CONTROLS.has(only.type);
+  if (!direct) {
+    const fbErrId = error ? `${id ?? autoId}-fehler` : undefined;
+    const content =
+      error && only
+        ? cloneElement(only, { "aria-invalid": true, "aria-describedby": [only.props["aria-describedby"], fbErrId].filter(Boolean).join(" ") })
+        : children;
+    return (
+      <label className={cx(fieldCls, className)}>
+        <span className={fieldLabelCls}>{label}</span>
+        <span className="flex min-w-0 flex-col gap-1.5">
+          {content}
+          {error ? (
+            <span id={fbErrId} className="text-[13px] leading-5 font-medium text-danger">
+              {error}
+            </span>
+          ) : null}
+          {hint ? <span className={hintCls}>{hint}</span> : null}
+        </span>
+      </label>
+    );
+  }
+  const controlId = (only.props.id as string | undefined) ?? id ?? autoId;
+  const errId = error ? `${controlId}-fehler` : undefined;
+  const hintId = hint ? `${controlId}-hinweis` : undefined;
+  const describedBy = [only.props["aria-describedby"], errId, hintId].filter(Boolean).join(" ") || undefined;
+  // Einheit einer <Input suffix> gehört zum Namen: im <label> statt verwaist neben der Eingabe
+  const suffix = only.type === Input && typeof only.props.suffix === "string" ? only.props.suffix : null;
+  const unit = suffix ? spokenUnit(suffix, only.props.suffixSpoken as string | undefined) : null;
+  const control = cloneElement(only, {
+    id: controlId,
+    ...(error ? { "aria-invalid": true } : {}),
+    ...(describedBy ? { "aria-describedby": describedBy } : {}),
+    ...(unit ? { unitInLabel: true } : {}),
+  });
   return (
-    <label className={cx(fieldCls, className)}>
-      <span className={fieldLabelCls}>{label}</span>
-      <span className="flex min-w-0 flex-col gap-1.5">
+    <div className={cx(fieldCls, className)}>
+      <label htmlFor={controlId} className={fieldLabelCls}>
+        {label}
+        {unit ? <span className="sr-only">{` in ${unit}`}</span> : null}
+      </label>
+      <div className="flex min-w-0 flex-col gap-1.5">
         {control}
         {error ? (
           <span id={errId} className="text-[13px] leading-5 font-medium text-danger">
             {error}
           </span>
         ) : null}
-        {hint ? <span className={hintCls}>{hint}</span> : null}
-      </span>
-    </label>
+        {hint ? (
+          <span id={hintId} className={hintCls}>
+            {hint}
+          </span>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -199,6 +247,11 @@ export function FieldSlot({ children, className, spacer = "block" }: { children:
 
 /** Gesprochene Form gängiger Einheiten (für Screenreader) */
 const UNIT_SPOKEN: Record<string, string> = { "€": "Euro", Min: "Minuten", Tage: "Tagen", km: "Kilometer", "%": "Prozent" };
+
+/** Einheit, wie Screenreader sie hören sollen („Min“ → „Minuten“) */
+export function spokenUnit(suffix: string, suffixSpoken?: string): string {
+  return suffixSpoken ?? UNIT_SPOKEN[suffix] ?? suffix;
+}
 
 const DATE_TYPES = new Set(["date", "time", "datetime-local", "month", "week"]);
 
@@ -229,13 +282,21 @@ export function Input({
   suffixSpoken,
   stepper,
   clearable,
+  unitInLabel,
   ...props
-}: ComponentProps<"input"> & { suffix?: string; suffixSpoken?: string; stepper?: boolean; clearable?: boolean }) {
+}: ComponentProps<"input"> & {
+  suffix?: string;
+  suffixSpoken?: string;
+  stepper?: boolean;
+  clearable?: boolean;
+  /** intern (Field): die Einheit steht schon im <label> – keinen eigenen sr-only-Text ausgeben */
+  unitInLabel?: boolean;
+}) {
   const isNumber = props.type === "number";
   if (props.type && DATE_TYPES.has(props.type) && suffix == null) return <DateInput className={cx(inputCls, className)} clearable={clearable} {...props} />;
   if (suffix == null && !(stepper && isNumber)) return <input className={cx(inputCls, className)} {...props} />;
   const inputMode = isNumber ? numberInputMode(props.step, props.inputMode) : props.inputMode;
-  const unit = suffix ? (suffixSpoken ?? UNIT_SPOKEN[suffix] ?? suffix) : "";
+  const unit = suffix ? spokenUnit(suffix, suffixSpoken) : "";
   const withStepper = !!stepper && isNumber;
   return (
     <span className={affixCls}>
@@ -256,7 +317,7 @@ export function Input({
           {suffix}
         </span>
       ) : null}
-      {suffix ? <span className="sr-only">{` in ${unit}`}</span> : null}
+      {suffix && !unitInLabel ? <span className="sr-only">{` in ${unit}`}</span> : null}
       {withStepper ? <StepButton dir={1} label={`Mehr${unit ? ` ${unit}` : ""}`} disabled={props.disabled} /> : null}
     </span>
   );
@@ -296,11 +357,11 @@ export function Checkbox({ label, className, ...props }: ComponentProps<"input">
   );
 }
 
-/** Leerer Zustand; `action` zeigt den nächsten Schritt (z. B. „+ Termin“, „Alle anzeigen“). */
-export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
+/** Leerer Zustand; `action` zeigt den nächsten Schritt (z. B. „+ Termin“, „Alle anzeigen“). `titleId`: id der Überschrift (für aria-labelledby). */
+export function Empty({ title, children, action, titleId }: { title: string; children?: ReactNode; action?: ReactNode; titleId?: string }) {
   return (
     <div className="rounded-[var(--radius-card)] border border-dashed border-border-strong p-8 text-center">
-      <p className="font-semibold">{title}</p>
+      <p id={titleId} className="font-semibold">{title}</p>
       {children ? <div className="mt-2 text-sm text-muted">{children}</div> : null}
       {action ? <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div> : null}
     </div>
@@ -386,3 +447,6 @@ export function SegmentedControl({
 }
 
 export { FormError, FormSuccess };
+
+/** Kinder, denen Field id/aria-* direkt geben kann (die Props landen am <input>/<select>/<textarea>) */
+const FIELD_CONTROLS = new Set<unknown>(["input", "select", "textarea", Input, Select, Textarea, SearchInput]);
