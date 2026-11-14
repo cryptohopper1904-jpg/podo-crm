@@ -53,7 +53,7 @@ export default async function OcrSettingsPage() {
               </Select>
             </Field>
             {s.envMock ? <p className="text-sm text-muted">Diese Installation läuft mit INTEGRATIONS_MODE=mock – es wird immer der Testmodus verwendet.</p> : null}
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="Adresse (OpenAI-kompatibel, https)" hint={`Vorschlag (EU): ${OCR_DEFAULT_PROVIDER.label} – ${OCR_DEFAULT_PROVIDER.baseUrl}`}>
                 <Input name="baseUrl" type="url" defaultValue={s.baseUrl} placeholder={OCR_DEFAULT_PROVIDER.baseUrl} />
               </Field>

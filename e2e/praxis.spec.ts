@@ -1,10 +1,10 @@
 /**
  * Durchgang durch die wichtigsten Abläufe mit der Demo-Praxis (scripts/seed-demo.ts):
- * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → öffentliche Buchung →
+ * Login → Patient anlegen → Doku mit 2D-Fußpunkt → Rechnung ausstellen → Zahlung erfassen (Zahlungsbeleg) → öffentliche Buchung →
  * Patientenportal per Link (buchen + verschieben) → Posteingang → Kasse (Kassenbuch, Export-Seite) → Abmelden.
  * Dazu: geschützte Routen leiten ohne Sitzung zum Login um, und im Browser gibt es keine Konsolenfehler.
  */
-import { expect, test, type ConsoleMessage, type Page } from "@playwright/test";
+import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
 import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp } from "./support";
 
@@ -89,6 +89,58 @@ test("Behandlung dokumentieren mit 2D-Fußpunkt", async () => {
   await expect(page.getByText(/Nagel D1/).first()).toBeVisible();
 });
 
+test("Pflichtfelder: Meldung am Feld statt Browser-Blase (Doku-Bestätigung, Nachname)", async () => {
+  await page.goto(`${patientUrl}/doku/neu`);
+  await page.getByLabel("Befund", { exact: true }).fill("Ohne Bestätigung (E2E)");
+  await page.getByRole("button", { name: /Prüfen und abschließen/ }).click();
+  const confirm = page.getByLabel(/Ich habe die Angaben geprüft/);
+  await expect(confirm).toHaveAttribute("aria-invalid", "true");
+  await expect(confirm).toBeFocused();
+  await expect(page.getByText("Bitte bestätige, dass du die Angaben geprüft hast.")).toBeVisible();
+  await expect(page).toHaveURL(/\/doku\/neu$/);
+
+  await page.goto("/kunden/neu");
+  await page.getByLabel("Vorname", { exact: true }).fill("Ohne");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  const last = page.locator('input[name="lastName"]');
+  await expect(last).toHaveAttribute("aria-invalid", "true");
+  await expect(last).toBeFocused();
+  await expect(page.getByText("Bitte einen Nachnamen eintragen.")).toBeVisible();
+  await expect(page).toHaveURL(/\/kunden\/neu$/);
+});
+
+test("Echte 404: unbekannte oder kaputte Akte, /anamnese ohne Token ohne App-Manifest", async () => {
+  // Status per Request (kein Konsolenfehler im Seiten-Tab)
+  for (const url of ["/kunden/00000000-0000-4000-8000-000000000000", "/kunden/gibt-es-nicht", "/kunden/00000000-0000-4000-8000-000000000000/doku/neu"]) {
+    expect((await page.request.get(url)).status(), url).toBe(404);
+  }
+  expect((await page.request.get(patientUrl)).status()).toBe(200);
+  expect((await page.request.get(`${patientUrl}/doku/neu`)).status()).toBe(200);
+  const res = await page.request.get("/anamnese");
+  expect(res.status()).toBe(404);
+  const html = await res.text();
+  expect(html).not.toMatch(/rel="manifest"/);
+  expect(html).toContain("Seite nicht gefunden");
+});
+
+test("Akte auf dem iPhone SE: Hauptaktionen oben, Rest im Menü „Weitere Aktionen“", async ({ browser }) => {
+  const { defaultBrowserType, ...se } = devices["iPhone SE (3rd gen)"];
+  void defaultBrowserType;
+  const context = await browser.newContext({ ...se, storageState: await page.context().storageState(), locale: "de-DE", timezoneId: "Europe/Berlin" });
+  const p = await context.newPage();
+  await p.goto(patientUrl);
+  if (await p.locator("dialog[open]").count()) await p.keyboard.press("Escape");
+  await expect(p.getByRole("link", { name: "Behandlung dokumentieren" })).toBeVisible();
+  // Seltene Aktionen erst nach dem Aufklappen
+  await expect(p.getByRole("link", { name: "Sammelrechnung" })).toBeHidden();
+  await p.getByText("Weitere Aktionen").click();
+  for (const name of ["Anamnese", "Rechnung", "Sammelrechnung", "Anzahlung (Vorauszahlung)", "Bearbeiten"]) {
+    await expect(p.getByRole("link", { name, exact: true })).toBeVisible();
+  }
+  expect(await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+  await context.close();
+});
+
 test("Rechnung erstellen und ausstellen", async () => {
   await page.goto(`/rechnungen/neu?patient=${patientUrl.split("/").pop()}`);
   const pos = page.getByLabel("Pos. 1: Leistung auswählen");
@@ -101,6 +153,31 @@ test("Rechnung erstellen und ausstellen", async () => {
   await page.getByRole("button", { name: "Rechnung ausstellen" }).click();
   await expect(page).toHaveURL(/\/rechnungen\/[0-9a-f-]{36}$/);
   await expect(page.getByText(/R\d{4}-\d{4}/).first()).toBeVisible();
+});
+
+test("Zahlung erfassen (bar): Beleg über den Zahlungseingang, Rechnungs-PDF aus dem Beleg-Archiv", async () => {
+  const invoiceUrl = page.url().split("?")[0];
+  await page.getByRole("button", { name: "Zahlung erfassen" }).click();
+  await page.getByLabel("Zahlung 1: Methode").selectOption("cash");
+  await page.getByRole("button", { name: "Buchen" }).click();
+  // Zahlungsbeleg wird direkt zum Aushändigen angeboten
+  await expect(page).toHaveURL(/\?beleg=[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Zahlung erfasst – Zahlungsbeleg aushändigen" })).toBeVisible();
+  const printHref = await page.getByRole("link", { name: /^Zahlungsbeleg ZB\d{4}-\d{4} drucken$/ }).getAttribute("href");
+  expect((await page.request.get(printHref!)).status()).toBe(200);
+  await expect(page.getByRole("heading", { name: "Zahlungseingang nach Ausstellung" })).toBeVisible();
+  await expect(page.getByText(/Beleg ZB\d{4}-\d{4}/)).toBeVisible();
+  const receiptHref = await page.getByRole("link", { name: "Anzeigen / Drucken" }).getAttribute("href");
+  const receipt = await page.request.get(receiptHref!);
+  expect(receipt.status()).toBe(200);
+  expect(receipt.headers()["content-type"]).toBe("application/pdf");
+  // Rechnung: archiviertes Original (zweimal abgerufen byte-gleich)
+  const id = invoiceUrl.split("/").pop();
+  const a = await page.request.get(`/api/invoices/${id}/pdf`);
+  const b = await page.request.get(`/api/invoices/${id}/pdf`);
+  expect(a.status()).toBe(200);
+  expect(Buffer.compare(await a.body(), await b.body())).toBe(0);
+  await expect(page.getByText(/Beleg-Archiv: Original vom/)).toBeVisible();
 });
 
 test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", async () => {
@@ -158,7 +235,7 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await pub.getByLabel("Ich habe die Datenschutzhinweise gelesen.").check();
   await pub.getByLabel(/Nicht rechtzeitig/).check();
   await pub.getByRole("button", { name: /Termin anfragen/ }).click();
-  await expect(pub.getByText(/Deine Anfrage ist eingegangen/)).toBeVisible();
+  await expect(pub.getByText(/Ihre Terminanfrage ist eingegangen/)).toBeVisible();
   await ctx.close();
 });
 

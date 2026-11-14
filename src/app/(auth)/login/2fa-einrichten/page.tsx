@@ -19,8 +19,8 @@ export default async function TotpEnrollPage() {
   const { twoFactorSetupRequired } = await getAuthState();
   return (
     <>
-      <h1 className="text-center font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung einrichten</h1>
-      <p className="mt-1 mb-6 text-center text-sm text-muted">
+      <h1 className="font-display text-2xl font-semibold">Zwei-Faktor-Anmeldung einrichten</h1>
+      <p className="mt-1 mb-6 text-sm text-muted">
         {!row.session.organizationId
           ? "Die Plattform-Konsole ist nur mit aktiver Zwei-Faktor-Anmeldung zugänglich."
           : twoFactorSetupRequired
@@ -28,9 +28,11 @@ export default async function TotpEnrollPage() {
             : "Für den Zugriff auf Gesundheitsdaten dringend empfohlen."}{" "}
         Funktioniert mit jeder Authenticator-App (z. B. Apple Passwörter, Google Authenticator, 1Password).
       </p>
-      <TotpSetup email={row.user.email} startAction={startOwnTotpAction} confirmAction={confirmOwnTotpAction} />
-      <LogoutForm action={logoutAction} className="mt-6 text-center">
-        <button type="submit" className="text-sm font-semibold text-muted hover:text-text">Abmelden</button>
+      <TotpSetup email={row.user.email} startAction={startOwnTotpAction} confirmAction={confirmOwnTotpAction} fullWidth />
+      <LogoutForm action={logoutAction} className="mt-4">
+        <button type="submit" className="inline-flex min-h-11 w-full items-center justify-center rounded-xl text-sm font-semibold text-muted hover:bg-surface-2 hover:text-text">
+          Abmelden
+        </button>
       </LogoutForm>
     </>
   );

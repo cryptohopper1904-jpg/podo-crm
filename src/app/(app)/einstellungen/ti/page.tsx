@@ -59,7 +59,7 @@ export default async function TiSettingsPage() {
     <div className="flex flex-col gap-4">
       <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
         <strong>Wichtig:</strong> PodoHero ist <strong>kein zertifiziertes TI-Produkt</strong> und stellt selbst keine Verbindung zur
-        Telematikinfrastruktur her. Für den echten Anschluss braucht Ihre Praxis SMC-B (Praxisausweis), ggf. eHBA, einen Konnektor oder ein
+        Telematikinfrastruktur her. Für den echten Anschluss braucht deine Praxis SMC-B (Praxisausweis), ggf. eHBA, einen Konnektor oder ein
         TI-Gateway und einen KIM-Anbieter. PodoHero nutzt die Standard-Schnittstellen dieser Komponenten (KIM: POP3/SMTP über TLS;
         eVerordnung: Import von FHIR-Dateien). Hintergrund und Ablauf: <code>docs/TI.md</code>.
       </p>
@@ -67,12 +67,12 @@ export default async function TiSettingsPage() {
       <Card>
         <CardTitle action={<Badge tone={progress.done === progress.total ? "primary" : "info"}>{progress.done} von {progress.total} erledigt</Badge>}>Checkliste TI-Anschluss</CardTitle>
         <p className="mb-4 text-sm text-muted">Selbstauskunft der Praxis zur Orientierung – wird nicht gegen die TI geprüft. Kosten bitte beim jeweiligen Anbieter erfragen.</p>
-        <ActionForm action={saveTiChecklistAction}>
+        <ActionForm action={saveTiChecklistAction} stickyActions>
           <div className="flex flex-col gap-4">
             {TI_ITEMS.map((i) => {
               const it = ti.items[i.key];
               return (
-                <div key={i.key} className="grid gap-3 rounded-xl border border-border p-3 md:grid-cols-[1fr_12rem_16rem]">
+                <div key={i.key} className="grid grid-cols-1 gap-3 rounded-xl border border-border p-3 md:grid-cols-[1fr_12rem_16rem]">
                   <div>
                     <p className="font-semibold">
                       {i.label} <Badge tone={tone[it.state]}>{TI_STATE_LABEL[it.state]}</Badge>
@@ -94,7 +94,7 @@ export default async function TiSettingsPage() {
             <Field label="TI-/KIM-Anbieter (Freitext)" className="max-w-md">
               <Input name="provider" defaultValue={ti.provider} maxLength={120} placeholder="z. B. Name des Gateway- bzw. KIM-Anbieters" />
             </Field>
-            {ti.updatedAt ? <p className="text-xs text-muted">Zuletzt geändert: {dateTimeDe(new Date(ti.updatedAt))}</p> : null}
+            {ti.updatedAt ? <p className="text-[13px] text-muted">Zuletzt geändert: {dateTimeDe(new Date(ti.updatedAt))}</p> : null}
           </div>
         </ActionForm>
       </Card>
@@ -117,7 +117,7 @@ export default async function TiSettingsPage() {
           <li>Anhänge (z. B. PDF-Arztbriefe) werden nicht übernommen, nur ihre Namen. Antworten per KIM: nur Text.</li>
           <li>Das Clientmodul muss für den PodoHero-Server per TLS über einen öffentlichen Hostnamen erreichbar sein (z. B. TI-Gateway-Dienst); lokale Adressen im Praxisnetz sind aus Sicherheitsgründen gesperrt.</li>
         </ul>
-        {lastSync?.lastSyncAt ? <p className="mb-2 text-xs text-muted">Zuletzt erfolgreich: {dateTimeDe(lastSync.lastSyncAt)}</p> : null}
+        {lastSync?.lastSyncAt ? <p className="mb-2 text-[13px] text-muted">Zuletzt erfolgreich: {dateTimeDe(lastSync.lastSyncAt)}</p> : null}
         {lastSync?.lastError ? <p className="mb-2 text-sm text-danger">Letzter Fehler: {lastSync.lastError}</p> : null}
         <ActionForm action={testKimAction} submit="KIM-Verbindung testen" className="flex flex-col gap-2">
           <span className="text-sm text-muted">Meldet sich am KIM-Postfach an und zählt die Nachrichten – es wird nichts gelesen oder gelöscht.</span>
@@ -127,8 +127,8 @@ export default async function TiSettingsPage() {
       <Card>
         <CardTitle>eVerordnung (Heilmittel)</CardTitle>
         <p className="text-sm">
-          Die Heilmittel-eVerordnung ist laut gematik geplant – <strong>Stand prüfen</strong>, sie ist noch nicht überall verfügbar. Sobald Sie
-          Verordnungen als FHIR-Datei erhalten, können Sie sie unter <Link className="underline" href="/verordnungen/import">Verordnungen → eVerordnung importieren</Link> übernehmen.
+          Die Heilmittel-eVerordnung ist laut gematik geplant – <strong>Stand prüfen</strong>, sie ist noch nicht überall verfügbar. Sobald du
+          Verordnungen als FHIR-Datei erhältst, kannst du sie unter <Link className="underline" href="/verordnungen/import">Verordnungen → eVerordnung importieren</Link> übernehmen.
         </p>
       </Card>
     </div>

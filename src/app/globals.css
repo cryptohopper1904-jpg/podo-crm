@@ -253,17 +253,20 @@ body {
  * Unsichtbar vergrößerte Trefffläche (mind. 44 × 44 px) ohne Layout-Änderung – für kleine Inline-Links und
  * Symbole („Route öffnen“, „Ansehen ›“, Tageszahlen im Monatsraster). Das Element bekommt position: relative.
  */
-.touch-target {
-  position: relative;
-}
-.touch-target::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: max(100%, 44px);
-  height: max(100%, 44px);
-  transform: translate(-50%, -50%);
+@layer components {
+  /* in @layer components: Utilities (z. B. `absolute` am selben Element) gehen vor */
+  .touch-target {
+    position: relative;
+  }
+  .touch-target::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
 }
 
 /*
@@ -305,6 +308,21 @@ body {
  * Browser-Platzhalters, der wie ein Wert aussieht (Safari/iPadOS: Datum in Akzentfarbe, Chromium „TT.MM.JJJJ“).
  * Beim Fokus erscheinen die Eingabesegmente wieder. Picker-Symbol einheitlich gedämpft; Wert linksbündig (iOS).
  */
+/*
+ * Der Text „Kein Datum“ (date-input.tsx, .podo-date-empty) erscheint nur, wo sich die Browser-Anzeige ausblenden lässt
+ * (Chromium, Safari). Firefox kennt die -webkit-Pseudo-Elemente nicht und zeigt seinen eigenen grauen Platzhalter
+ * „TT.MM.JJJJ“ – ohne doppelten Text. In @layer components, damit `peer-focus:hidden` (Utility) beim Fokus gewinnt.
+ */
+@layer components {
+  .podo-date-empty {
+    display: none;
+  }
+  @supports selector(::-webkit-datetime-edit) or selector(::-webkit-date-and-time-value) {
+    .podo-date-empty {
+      display: flex;
+    }
+  }
+}
 input[data-empty]:not(:focus)::-webkit-datetime-edit {
   color: transparent;
 }

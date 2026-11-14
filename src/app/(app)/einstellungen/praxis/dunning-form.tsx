@@ -30,7 +30,7 @@ export function DunningForm({ settings }: { settings: DunningSettings }) {
         return (
           <fieldset key={s} className="flex flex-col gap-3 rounded-xl border border-border p-4">
             <legend className="px-1 font-semibold">{DUNNING_STAGE_LABEL[s]}{s === "dunning2" ? " (letzte Mahnung)" : ""}</legend>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label={i === 0 ? "Fällig … Tage nach dem Zahlungsziel" : `Fällig … Tage nach der ${DUNNING_STAGE_LABEL[DUNNING_STAGES[i - 1]]}`}>
                 <Input name={`${s}.days`} type="number" inputMode="numeric" min={1} max={MAX_STAGE_DAYS} defaultValue={st.days} required />
               </Field>

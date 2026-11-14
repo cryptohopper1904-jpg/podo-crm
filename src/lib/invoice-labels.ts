@@ -66,7 +66,14 @@ export const NOTE_VAT_EXEMPT_WITH_PRODUCTS =
 /** Steuerbefreiungs-Hinweis passend zu den Positionen */
 export const vatExemptNote = (lines: readonly { inTreatment?: boolean | null }[]) =>
   lines.some((l) => !!l.inTreatment) ? NOTE_VAT_EXEMPT_WITH_PRODUCTS : NOTE_VAT_EXEMPT;
-export const NOTE_SMALL_BUSINESS = "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).";
+/** Kleinunternehmer-Hinweis für neue Belege (§ 34a UStDV, seit 2025: „Steuerbefreiung für Kleinunternehmer“) */
+export const NOTE_SMALL_BUSINESS = "Steuerbefreiung für Kleinunternehmer (§ 19 UStG).";
+/**
+ * Bisheriger Wortlaut – für Belege ohne Momentaufnahme (ausgestellt vor dem Beleg-Archiv), damit Neudruck und
+ * Druckansicht bereits ausgestellter Belege unverändert bleiben. Neue Belege halten ihren Wortlaut in
+ * invoices.issued_snapshot.smallBusinessNote fest.
+ */
+export const NOTE_SMALL_BUSINESS_LEGACY = "Gemäß § 19 UStG wird keine Umsatzsteuer berechnet (Kleinunternehmerregelung).";
 export const NOTE_NO_SHOW =
   "Ausfallhonorar gemäß § 615 BGB für einen nicht wahrgenommenen und nicht rechtzeitig abgesagten Termin. Als Schadensersatz nicht umsatzsteuerbar.";
 /** Interne Notizzeilen mit diesem Präfix werden nicht gedruckt. */

@@ -20,7 +20,7 @@ export function ExcelImportForm({ action }: { action: (s: ExcelImportState, f: F
   const p = state?.preview;
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <input
         type="file"
@@ -38,7 +38,7 @@ export function ExcelImportForm({ action }: { action: (s: ExcelImportState, f: F
       {p ? (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted">Vorschau für <strong>{state?.fileName}</strong> – noch nichts gespeichert. Summe aller Rechnungen: {money(p.invoicesTotalCents)}.</p>
-          <Table>
+          <Table label="Import-Vorschau">
             <thead><tr><th>Blatt</th><th>Zeilen</th><th>Übernommen</th><th>Leer</th><th>Fehlerhaft</th></tr></thead>
             <tbody>
               {Object.entries(p.counts).map(([sheet, c]) => (
@@ -98,7 +98,7 @@ export function DoctolibImportForm({ action }: { action: (s: DoctolibImportState
   const p = state?.preview;
   return (
     <form onSubmit={keepValues(run)} className="flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       <input type="file" name="file" required accept=".csv,text/csv" className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface file:px-4 file:font-semibold" />
       {state?.previewToken ? <input type="hidden" name="previewToken" value={state.previewToken} /> : null}

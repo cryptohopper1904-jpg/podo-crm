@@ -66,11 +66,18 @@ function tzOffsetMinutes(d: Date): number {
   return Math.round((asUtc - d.getTime()) / 60_000);
 }
 
+/**
+ * Alter in Jahren am Berliner Kalendertag von `at` (nicht nach Server-Zeitzone/UTC: kurz nach Mitternacht wäre der
+ * Geburtstag sonst noch „gestern“). Rechnet nur mit den Datumsteilen „YYYY-MM-DD“.
+ */
 export function ageYears(birthDate: string | null | undefined, at = new Date()): number | null {
   if (!birthDate) return null;
-  const b = new Date(birthDate);
-  let a = at.getFullYear() - b.getFullYear();
-  if (at.getMonth() < b.getMonth() || (at.getMonth() === b.getMonth() && at.getDate() < b.getDate())) a--;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(birthDate);
+  if (!m) return null;
+  const [ty, tm, td] = berlinDateIso(at).split("-").map(Number);
+  const [by, bm, bd] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  let a = ty - by;
+  if (tm < bm || (tm === bm && td < bd)) a--;
   return a;
 }
 

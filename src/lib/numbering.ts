@@ -11,6 +11,8 @@ const PREFIX: Record<string, string> = {
   deposit: "AZ",
   no_show_fee: "R",
   voucher: "G",
+  /** Beleg über einen Zahlungseingang nach Ausstellung (Kassenbeleg, § 146a Abs. 2 AO) */
+  payment_receipt: "ZB",
 };
 
 /**

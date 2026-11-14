@@ -6,6 +6,7 @@ import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@
 import { withOrg } from "@/db";
 import { integrationConnections } from "@/db/schema";
 import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
+import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
 import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
@@ -43,6 +44,11 @@ export default async function IntegrationsSettings() {
           Diese Installation läuft im Testmodus (INTEGRATIONS_MODE=mock): Alle Schnittstellen verwenden Testdaten, es wird nichts an Fremdsysteme gesendet.
         </p>
       ) : null}
+      {fiscalLiveBlockedReason() ? (
+        <p role="alert" className="rounded-xl bg-danger-soft p-4 text-sm text-danger">
+          <strong>Kasse/TSE: Echtbetrieb gesperrt.</strong> {fiscalLiveBlockedReason()}
+        </p>
+      ) : null}
       <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
         Für jede echte Schnittstelle, über die Patientendaten fließen, ist ein Auftragsverarbeitungsvertrag (AVV, Art. 28 DSGVO) nötig.
         Zugangsdaten werden verschlüsselt gespeichert und nie wieder angezeigt.
@@ -70,9 +76,9 @@ export default async function IntegrationsSettings() {
             <p className="mb-2 text-sm">{info.description}</p>
             <p className="mb-4 text-sm text-muted"><strong>Datenschutz:</strong> {info.privacy}{info.docs ? <> · <a className="underline" href={info.docs} target="_blank" rel="noreferrer">Doku</a></> : null}</p>
             {row?.lastError ? <p className="mb-3 text-sm text-danger">Letzter Fehler: {row.lastError}</p> : null}
-            {row?.lastSyncAt ? <p className="mb-3 text-xs text-muted">Zuletzt erfolgreich: {dateTimeDe(row.lastSyncAt)}</p> : null}
+            {row?.lastSyncAt ? <p className="mb-3 text-[13px] text-muted">Zuletzt erfolgreich: {dateTimeDe(row.lastSyncAt)}</p> : null}
             {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) || HMAC_WEBHOOK_SECRET[info.provider] ? (
-              <div className="mb-3 text-xs text-muted">
+              <div className="mb-3 text-[13px] text-muted">
                 Webhook-Adresse:{" "}
                 {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) ? (
                   secretValues.webhookToken ? (
@@ -92,7 +98,7 @@ export default async function IntegrationsSettings() {
             ) : null}
             <ActionForm action={saveIntegrationAction}>
               <input type="hidden" name="provider" value={info.provider} />
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <Field label="Modus">
                   <Select name="status" defaultValue={status === "error" ? "connected" : status}>
                     <option value="disconnected">aus</option>
@@ -140,10 +146,10 @@ export default async function IntegrationsSettings() {
 
       <Card>
         <CardTitle>Kalender-Feed (iCal, ausgehend)</CardTitle>
-        <p className="mb-2 text-sm">Ihre Termine in Apple-, Google- oder Outlook-Kalender abonnieren. Der Feed enthält keine Namen – nur Initialen und Leistung.</p>
+        <p className="mb-2 text-sm">Deine Termine in Apple-, Google- oder Outlook-Kalender abonnieren. Der Feed enthält keine Namen – nur Initialen und Leistung.</p>
         <p className="mb-2 text-sm text-muted">Doctolib- oder Google-Termine <em>in</em> PodoHero übernehmen: <Link href="/einstellungen/kalender-abo" className="font-semibold underline">Einstellungen → Kalender-Abo</Link>.</p>
         {feedUrl ? <code className="block break-all rounded-xl bg-surface-2 p-3 text-xs">{feedUrl}</code> : <p className="text-sm text-danger">APP_ENCRYPTION_KEY fehlt – Feed nicht verfügbar.</p>}
-        <p className="mt-2 text-xs text-muted">Den Link wie ein Passwort behandeln und nicht weitergeben.</p>
+        <p className="mt-2 text-[13px] text-muted">Den Link wie ein Passwort behandeln und nicht weitergeben.</p>
       </Card>
 
       <Card>
@@ -160,7 +166,7 @@ export default async function IntegrationsSettings() {
           <Badge tone="accent">aufgegeben: {hooks.counts.dead ?? 0}</Badge>
         </div>
         {hooks.problems.length ? (
-          <Table>
+          <Table label="Eingehende Ereignisse">
             <thead><tr><th>Eingang</th><th>Schnittstelle</th><th>Status</th><th>Versuche</th><th>Nächster Versuch</th><th>Fehler</th></tr></thead>
             <tbody>
               {hooks.problems.map((h) => (
@@ -183,7 +189,7 @@ export default async function IntegrationsSettings() {
         {log.length === 0 ? (
           <p className="text-sm text-muted">Noch keine Einträge.</p>
         ) : (
-          <Table>
+          <Table label="Letzte Synchronisationen">
             <thead><tr><th>Zeit</th><th>Schnittstelle</th><th>Richtung</th><th>Ergebnis</th><th>Meldung</th></tr></thead>
             <tbody>
               {log.map((l) => (

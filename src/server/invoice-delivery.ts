@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lt, ne, notInArray } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { withOrg } from "@/db";
+import { withOrg, type Tx } from "@/db";
 import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
 import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
 import { describeError } from "@/integrations/test-connection";
@@ -12,40 +12,112 @@ import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
-import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
+import { archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
+import { log } from "@/lib/log";
 import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
 import { mailMessagingPort } from "./mail";
 import { InvoiceError, loadInvoiceBundle, type InvoiceBundle } from "./invoices";
 
+/** Welche Fassung ausgeliefert wurde (Audit, Anzeige) */
+export type InvoicePdfVariant = "archive" | "storno" | "reproduction";
+
 /**
  * PDF einer Rechnung für einen Mandanten. Mit `patientId` (Patientenportal) wird zusätzlich geprüft,
  * dass die Rechnung genau dieser Person gehört. Entwürfe werden nie ausgeliefert.
+ *
+ * Ausgeliefert wird (Download, E-Mail-Anhang, Patientenportal):
+ *  - das archivierte Original (byte-gleich wie beim Ausstellen, Prüfsumme geprüft) – Normalfall;
+ *  - bei einer stornierten Rechnung der Neudruck wie ausgestellt (festgeschriebene Angaben, Anrechnungen, Zahlungen
+ *    beim Ausstellen) mit Vermerk „STORNIERT durch Stornorechnung Nr. … vom …“ und ohne GiroCode
+ *    (`original: true` liefert stattdessen das archivierte Original);
+ *  - nur bei Altbelegen ohne Archiv eine Neuerzeugung, gekennzeichnet als „Reproduktion“ (Fußnote).
  */
-export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string } = {}) {
+export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean } = {}) {
   if (!z.uuid().safeParse(invoiceId).success) return null;
   const bundle = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, invoiceId));
   if (!bundle || bundle.invoice.status === "draft") return null;
   if (opts.patientId !== undefined && bundle.invoice.patientId !== opts.patientId) return null;
-  const bytes = await renderInvoicePdf(await invoicePdfData(bundle));
-  return { bytes, filename: invoicePdfFilename(bundle.invoice), bundle };
+  const filename = invoicePdfFilename(bundle.invoice);
+  let archived = !!bundle.archive;
+  const cancelled = bundle.invoice.status === "cancelled" && bundle.invoice.kind !== "credit_note";
+  // Beleg mit Momentaufnahme, aber ohne Archiv (Ablage beim Ausstellen gescheitert): jetzt nachholen
+  if (!archived && bundle.fromSnapshot) {
+    try {
+      archived = await ensureInvoiceArchived(org, invoiceId);
+    } catch (e) {
+      log.error("invoice.archive_retry_failed", { error: e, invoiceId });
+    }
+  }
+  if (archived && (!cancelled || opts.original)) {
+    const row = await withOrg(org, (tx) => findInvoiceArchive(tx, org, invoiceId));
+    if (!row) throw new InvoiceError("Archivierter Beleg nicht gefunden.");
+    return { bytes: await readArchivedPdf(row), filename, bundle, variant: "archive" as InvoicePdfVariant };
+  }
+  const data = await invoicePdfData(bundle);
+  const bytes = await renderInvoicePdf({
+    ...data,
+    cancellation: cancelled ? { number: bundle.cancelledBy?.number ?? null, issuedAt: bundle.cancelledBy?.issuedAt ?? null } : null,
+    reproduction: archived ? null : { generatedAt: new Date() },
+  });
+  return { bytes, filename, bundle, variant: (cancelled ? "storno" : "reproduction") as InvoicePdfVariant };
 }
 
 /**
  * Belegdaten + Praxis-Angaben für das PDF: Logos, Website, Berufsbezeichnung, WhatsApp-Hinweis und
- * Buchungshinweis (Einstellungen → Praxisdaten → Belege). Fehlt etwas, sieht der Beleg aus wie ohne.
+ * Buchungshinweis – wie beim Ausstellen festgehalten (Momentaufnahme; Altbelege: aktuelle Einstellungen).
+ * Fehlt etwas, sieht der Beleg aus wie ohne. `tx`: in einer laufenden Transaktion (Archivierung beim Ausstellen).
  */
-export async function invoicePdfData(bundle: InvoiceBundle): Promise<InvoicePdfData> {
+export async function invoicePdfData(bundle: InvoiceBundle, tx?: Tx): Promise<InvoicePdfData> {
   const o = bundle.organization;
-  const settings = (o.settings ?? {}) as Record<string, unknown>;
-  const doc = readDocumentSettings(settings);
-  const logos = await loadLogos(o.id);
+  const logos = await loadLogos(o.id, tx);
   return {
     ...bundle,
-    organization: { ...o, website: practiceWebsite(settings), qualification: doc.qualification, whatsapp: doc.whatsapp },
+    organization: { ...o, ...bundle.letter },
     logos,
-    booking: invoiceBookingLink(settings, { slug: o.slug, publicUrl: process.env.PUBLIC_URL }),
+    booking: bundle.booking,
   };
+}
+
+/**
+ * Archiv eines ausgestellten Belegs nachholen (Ablage beim Ausstellen gescheitert). Nur für Belege mit Momentaufnahme
+ * (ab Einführung des Beleg-Archivs) – Altbelege bleiben „Reproduktion“. Idempotent, gegen gleichzeitiges Nachholen
+ * per Advisory-Lock gesperrt. true = danach archiviert.
+ */
+export async function ensureInvoiceArchived(org: string, invoiceId: string, userId: string | null = null): Promise<boolean> {
+  return withArchiveCleanup(org, (pending) =>
+    withOrg(org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`beleg-archiv:${invoiceId}`}, 0))`);
+      const [inv] = await tx
+        .select({ status: invoices.status, number: invoices.number, snapshot: invoices.issuedSnapshot })
+        .from(invoices)
+        .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
+      if (!inv || inv.status === "draft" || !inv.number || !inv.snapshot) return false;
+      if (await findInvoiceArchive(tx, org, invoiceId)) return true;
+      await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+      return true;
+    }),
+  );
+}
+
+/**
+ * Beleg-Archiv: PDF des eben ausgestellten Belegs (im Stand der Ausstellung, inkl. TSE-Angaben der Zahlungen beim
+ * Ausstellen) erzeugen und verschlüsselt archivieren – in der Transaktion des Ausstellens (createInvoice,
+ * createDeposit, cancelInvoice).
+ */
+export async function archiveInvoicePdf(tx: Tx, org: string, invoiceId: string, userId: string | null, pending: PendingFiles) {
+  const bundle = await loadInvoiceBundle(tx, org, invoiceId);
+  if (!bundle || !bundle.invoice.number || !bundle.invoice.issuedAt) throw new InvoiceError("Beleg zum Archivieren nicht gefunden.");
+  const data = await invoicePdfData(bundle, tx);
+  // Nachholen für eine inzwischen stornierte Rechnung: das Original zeigt den Stand der Ausstellung (nicht „storniert“)
+  if (data.invoice.status === "cancelled" && data.invoice.kind !== "credit_note") data.invoice = { ...data.invoice, status: "issued" };
+  const bytes = await renderInvoicePdf(data);
+  return archivePdf(
+    tx,
+    org,
+    { kind: "invoice", invoiceId, bytes, filename: invoicePdfFilename(bundle.invoice), userId },
+    pending,
+  );
 }
 
 export function pdfResponseHeaders(filename: string, disposition: "inline" | "attachment" = "inline") {

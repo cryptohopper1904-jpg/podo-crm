@@ -22,14 +22,16 @@ export function shouldReveal(prev: { message?: string | null; key?: unknown }, n
 
 /**
  * Fehlermeldung eines Formulars. Steht oben im Formular – auf dem Handy ist man beim Absenden aber unten am Knopf.
- * Deshalb wird eine neue Meldung in die Bildschirmmitte gescrollt und fokussiert (role="alert" liest sie vor).
+ * Deshalb wird eine neue Meldung in die Bildschirmmitte gescrollt und fokussiert (role="alert" liest sie vor) – nicht
+ * eine Meldung, die schon beim ersten Rendern da ist (Seite lädt nicht „springend“, Fokus bleibt am Seitenanfang).
  * `revealKey`: Ergebnis-Objekt der Server Action übergeben (`revealKey={state}`), dann wird auch eine unveränderte
  * Meldung nach erneutem Absenden wieder angesprungen. Das Element bleibt (versteckt) im DOM, damit die Live-Region
  * schon vor der ersten Meldung besteht.
  */
 export function FormError({ message, revealKey, id }: { message?: string | null; revealKey?: unknown; id?: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  const prev = useRef<{ message?: string | null; key?: unknown }>({ message: null, key: undefined });
+  // Mit der Anfangsmeldung starten: eine schon beim Laden vorhandene Meldung (z. B. ?fehler=…) wird nicht angesprungen
+  const prev = useRef<{ message?: string | null; key?: unknown }>({ message, key: revealKey });
   useEffect(() => {
     const next = { message, key: revealKey };
     if (ref.current && shouldReveal(prev.current, next)) revealMessage(ref.current);
@@ -56,21 +58,25 @@ export function FormError({ message, revealKey, id }: { message?: string | null;
 
 /**
  * Erfolgsmeldung eines Formulars (role="status"). Erscheint sie nach dem Absenden außerhalb des Sichtfelds, wird sie
- * sichtbar gescrollt (ohne Fokus – der bleibt am Formular).
+ * sichtbar gescrollt (ohne Fokus – der bleibt am Formular). `focus`: Meldung fokussieren – nötig, wenn der Absende-Knopf
+ * mit der Meldung verschwindet (sonst fiele der Fokus auf <body>). Wie FormError: nicht für eine Meldung beim Laden.
  */
-export function FormSuccess({ message }: { message?: string | null }) {
+export function FormSuccess({ message, focus }: { message?: string | null; focus?: boolean }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  const last = useRef<string | null | undefined>(null);
+  const last = useRef<string | null | undefined>(message);
   useEffect(() => {
     const el = ref.current;
     if (el && message && message !== last.current) {
-      const r = el.getBoundingClientRect();
-      if (r.top < 64 || r.bottom > innerHeight - 80) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      if (focus) revealMessage(el);
+      else {
+        const r = el.getBoundingClientRect();
+        if (r.top < 64 || r.bottom > innerHeight - 80) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      }
     }
     last.current = message;
-  }, [message]);
+  }, [message, focus]);
   return (
-    <p ref={ref} role="status" hidden={!message} className="scroll-m-24 rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">
+    <p ref={ref} role="status" tabIndex={focus ? -1 : undefined} hidden={!message} className="scroll-m-24 rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">
       {message ? (
         <span className="flex items-start gap-2">
           <CircleCheck size={18} aria-hidden className="mt-px shrink-0" />

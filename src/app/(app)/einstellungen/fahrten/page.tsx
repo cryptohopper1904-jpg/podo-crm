@@ -14,7 +14,7 @@ function LocationFields({ l }: { l?: { id?: string; name: string; street: string
   return (
     <>
       {l?.id ? <input type="hidden" name="id" value={l.id} /> : null}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Name"><Input name="name" defaultValue={l?.name ?? ""} placeholder="z. B. Praxis, Zuhause, Lager" required maxLength={60} /></Field>
         <Field label="Straße"><Input name="street" defaultValue={l?.street ?? ""} maxLength={120} /></Field>
         <Field label="PLZ"><Input name="zip" defaultValue={l?.zip ?? ""} maxLength={10} inputMode="numeric" /></Field>
@@ -49,7 +49,7 @@ export default async function TripSettingsPage() {
       <Card>
         <CardTitle>Fahrzeug & Wegegeld</CardTitle>
         <ActionForm action={saveTripSettingsAction}>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Fahrzeug (optional)"><Input name="vehicleLabel" defaultValue={settings.vehicleLabel ?? ""} placeholder="z. B. VW Polo" maxLength={60} /></Field>
             <Field label="Kennzeichen (optional)"><Input name="plate" defaultValue={settings.plate ?? ""} placeholder="z. B. P-AB 123" maxLength={15} /></Field>
             <Field label="Wegegeld je km (€)" hint="Selbst festlegen (Preisliste/Vereinbarung) – es gibt hier keinen voreingestellten Satz.">
@@ -94,7 +94,7 @@ export default async function TripSettingsPage() {
           </div>
         </div>
       </Card>
-      <p className="text-xs text-muted">{TRIP_LOG_DISCLAIMER}</p>
+      <p className="text-[13px] text-muted">{TRIP_LOG_DISCLAIMER}</p>
     </div>
   );
 }

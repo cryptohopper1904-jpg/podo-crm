@@ -41,7 +41,7 @@ export default function PricingPage() {
         <p className="mt-3"><Badge tone="warn">{PRICE_NOTE}</Badge></p>
       </header>
 
-      <div className="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {PUBLIC_PLANS.map((p) => (
           <section
             key={p.id}
@@ -70,7 +70,7 @@ export default function PricingPage() {
 
       <section aria-labelledby="zusatzmodule" className="mt-12">
         <h2 id="zusatzmodule" className="font-display text-2xl font-semibold">Zusatzmodule</h2>
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {ADDONS.map((a) => (
             <section key={a.id} aria-labelledby={`addon-${a.id}`} className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
               <div className="flex flex-wrap items-center gap-2">
@@ -86,7 +86,7 @@ export default function PricingPage() {
 
       <section aria-labelledby="inklusive" className="mt-12 rounded-[var(--radius-card)] border border-border bg-surface p-6">
         <h2 id="inklusive" className="font-display text-2xl font-semibold">In allen Tarifen enthalten</h2>
-        <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           {INCLUDED.map((t) => (
             <li key={t} className="flex gap-2.5 text-[15px]">
               <Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> {t}
