@@ -76,6 +76,55 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
     expect(idx.rowCount).toBe(1);
   });
 
+  it("Korrektur: stornierte Teilbelege zählen nicht; Überzahlung wird im Audit markiert", async () => {
+    const org = await f.org();
+    const auth = authFor(org, await f.user());
+    const patient = await f.patient(org);
+    const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amountCents: 1500, vatRate: 0, method: "cash", notes: null });
+    const inv = await invoices.createInvoice(auth, base(patient, { depositIds: [dep.id] }));
+    await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:ueber-${inv.id}`, amountCents: 5000, method: "card" });
+    // erfundener Altzustand: Anzahlung als storniert markiert (dürfte so nicht vorkommen – Härtung der Korrektur) …
+    await f.asOrg(org, (c) => c.query("update invoices set status = 'cancelled' where id = $1", [dep.id]));
+    await f.asOrg(org, (c) => c.query("update invoices set paid_cents = 9000, status = 'paid' where id = $1", [inv.id]));
+    await owner.query(MIGRATION);
+    expect(await row(org, inv.id)).toEqual({ paid_cents: 5000, status: "partially_paid" });
+    expect((await corrections(org, inv.id))[0]).not.toHaveProperty("overpaid");
+
+    // … Überzahlung (zweite SumUp-Zahlung, Altbestand) → overpaid: true
+    const inv2 = await invoices.createInvoice(auth, base(patient));
+    await webhooks.recordProviderPayment(org, { invoiceId: inv2.id, externalRef: `sumup:u1-${inv2.id}`, amountCents: 6500, method: "card" });
+    await f.asOrg(org, (c) => c.query("insert into payments (organization_id, invoice_id, method, amount_cents, external_ref) values ($1,$2,'card',1000,$3)", [org, inv2.id, `sumup:u2-${inv2.id}`]));
+    await owner.query(MIGRATION);
+    expect(await row(org, inv2.id)).toEqual({ paid_cents: 7500, status: "paid" });
+    expect((await corrections(org, inv2.id))[0]).toMatchObject({ overpaid: true, new: { paidCents: 7500, status: "paid" } });
+  });
+
+  it("manuelle Zahlung mit Referenz „sumup:“ (jede Schreibweise) wird abgelehnt", async () => {
+    const org = await f.org();
+    const auth = authFor(org, await f.user());
+    const patient = await f.patient(org);
+    const inv = await invoices.createInvoice(auth, base(patient));
+    for (const ref of ["sumup:fake-1", "SumUp:fake-2", "  SUMUP:fake-3"]) {
+      await expect(invoices.addPayments(auth, inv.id, [{ method: "transfer", amountCents: 100, voucherCode: null, externalRef: ref } as never])).rejects.toThrow(/nicht mit „sumup:“ beginnen/);
+    }
+    await expect(invoices.createInvoice(auth, base(patient, { payments: [{ method: "transfer", amountCents: 100, voucherCode: null, externalRef: "sumup:x" }] }))).rejects.toThrow(/sumup:/);
+    expect(await row(org, inv.id)).toEqual({ paid_cents: 0, status: "issued" });
+  });
+
+  it("Unique-Verletzung auf payments_org_sumup_ref wird als „bereits gebucht“ erkannt", async () => {
+    const org = await f.org();
+    const patient = await f.patient(org);
+    const inv = await f.invoice(org, patient, 6500);
+    const ref = `sumup:dup-${inv}`;
+    await f.asOrg(org, (c) => c.query("insert into payments (organization_id, invoice_id, method, amount_cents, external_ref) values ($1,$2,'card',100,$3)", [org, inv, ref]));
+    // echter Fehler aus der App-DB-Schicht (Drizzle verpackt den pg-Fehler)
+    const { payments } = await import("@/db/schema");
+    const err = await withOrg(org, (tx) => tx.insert(payments).values({ organizationId: org, invoiceId: inv, method: "card", amountCents: 100, externalRef: ref })).catch((e: unknown) => e);
+    expect(webhooks.isDuplicateProviderRef(err)).toBe(true);
+    expect(webhooks.isDuplicateProviderRef(new Error("x"))).toBe(false);
+    expect(webhooks.isDuplicateProviderRef({ code: "23505", constraint: "prescriptions_external_ref_org" })).toBe(false);
+  });
+
   it("5 gleichzeitige Zustellungen derselben Transaktion → genau eine Zahlung", async () => {
     const org = await f.org();
     const auth = authFor(org, await f.user());

@@ -231,8 +231,11 @@ async function applyPayments(
       voucherId = v.id;
     }
     let externalRef = p.externalRef ?? null;
-    // TSE-Kurzreferenzen vergibt nur der Server (sonst ließe sich eine Signatur vortäuschen)
-    if (externalRef?.toLowerCase().startsWith("tse:")) throw new InvoiceError("Die Referenz darf nicht mit „tse:“ beginnen.");
+    // TSE-Kurzreferenzen vergibt nur der Server (sonst ließe sich eine Signatur vortäuschen); „sumup:“ nur der
+    // SumUp-Webhook (sonst ließe sich eine Anbieterzahlung vortäuschen bzw. eine echte später als Dublette ablehnen)
+    const refLower = externalRef?.trim().toLowerCase() ?? "";
+    if (refLower.startsWith("tse:")) throw new InvoiceError("Die Referenz darf nicht mit „tse:“ beginnen.");
+    if (refLower.startsWith("sumup:")) throw new InvoiceError("Die Referenz darf nicht mit „sumup:“ beginnen.");
     let signed: SignedPayment | null = null;
     if (needsSignature(p.method)) {
       signed = await signPayment(inv, p.method, p.amountCents, vatGroups);

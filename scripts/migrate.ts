@@ -3,10 +3,40 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool } from "pg";
 
+/**
+ * Migration 0048 legt den eindeutigen Index je SumUp-Transaktion nur an, wenn es keine doppelten Referenzen gibt.
+ * Fehlt er, laut warnen (Deploy läuft weiter) – die Dubletten müssen fachlich geklärt werden.
+ */
+async function warnMissingPaymentRefIndex(pool: Pool) {
+  const r = await pool.query("select 1 from pg_indexes where schemaname = 'public' and indexname = 'payments_org_sumup_ref'");
+  if (r.rowCount) return;
+  console.error(
+    [
+      "",
+      "WARNUNG: Index payments_org_sumup_ref fehlt – doppelte SumUp-Referenzen in payments vorhanden (Migration 0048).",
+      "SumUp-Zahlungen sind dann nur über die Zeilensperre gegen Doppelbuchung geschützt. Dubletten prüfen",
+      "(als Superuser bzw. Rolle mit BYPASSRLS, RLS ist erzwungen):",
+      "  select organization_id, external_ref, count(*), array_agg(invoice_id) from payments",
+      "  where external_ref like 'sumup:%' group by 1, 2 having count(*) > 1;",
+      "Nach der Klärung (Storno/Gegenbuchung, Steuerberatung) Migration erneut ausführen oder den Index anlegen:",
+      "  create unique index payments_org_sumup_ref on payments (organization_id, external_ref) where external_ref like 'sumup:%';",
+      "",
+    ].join("\n"),
+  );
+}
+
 async function main() {
   const url = process.env.DATABASE_MIGRATION_URL ?? process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_MIGRATION_URL fehlt");
   const pool = new Pool({ connectionString: url });
+  // NOTICEs aus Migrationen (z. B. 0048: Index wegen Dubletten nicht angelegt) im Deploy-Log ausgeben
+  pool.on("connect", (client) => {
+    client.on("notice", (n) => {
+      // harmlose Meldungen idempotenter DDL („… does not exist, skipping“ / „already exists, skipping“) auslassen
+      if (/, skipping$/.test(n.message ?? "")) return;
+      console.warn(`[migrate] NOTICE: ${n.message}`);
+    });
+  });
   await pool.query("create extension if not exists pgcrypto");
   // Trigramm-Suche (Patientensuche „Meinten Sie“, Migration 0044) – auch dort idempotent angelegt
   await pool.query("create extension if not exists pg_trgm");
@@ -29,6 +59,7 @@ async function main() {
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);
   }
+  await warnMissingPaymentRefIndex(pool);
   await pool.end();
   console.log("Migrationen ausgeführt.");
 }

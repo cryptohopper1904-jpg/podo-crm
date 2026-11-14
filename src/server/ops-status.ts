@@ -43,6 +43,16 @@ export async function checkMigrations(): Promise<CheckResult> {
   return evaluateMigrations(applied, journal);
 }
 
+/** Eindeutiger Index je SumUp-Transaktion (Migration 0048 legt ihn bei Dubletten nicht an) – fehlt er: warn. */
+export async function checkPaymentRefIndex(): Promise<CheckResult> {
+  try {
+    const r = await withTimeout(db.execute(sql`select 1 from pg_indexes where schemaname = 'public' and indexname = 'payments_org_sumup_ref'`));
+    return r.rows.length ? { status: "ok" } : { status: "warn", hint: "Index payments_org_sumup_ref fehlt (doppelte SumUp-Referenzen, siehe Deploy-Log)" };
+  } catch {
+    return { status: "fail", hint: "Index-Status nicht lesbar" };
+  }
+}
+
 /** Alter des letzten Backups und der Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR). */
 export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim", CheckResult>> {
   const dir = process.env.STATUS_DIR;

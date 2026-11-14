@@ -4,7 +4,8 @@
 --    neu berechnet. Angerechnete Anzahlungen/Quittungen (collective_invoice_id) haben keine Zahlungszeile und gingen
 --    dabei verloren. Betroffen: Rechnung/Sammelrechnung aus PodoHero (source = 'crm'), ausgestellt (nicht Entwurf/
 --    Storno), mit mindestens einer SumUp-Zahlung. Soll = Σ angerechnete Belege + Σ Zahlungen; Status wie
---    statusFromPayments (src/lib/invoice-math.ts). Je geänderter Rechnung ein Audit-Eintrag (alter/neuer Wert).
+--    statusFromPayments (src/lib/invoice-math.ts). Je geänderter Rechnung ein Audit-Eintrag (alter/neuer Wert,
+--    bei Überzahlung zusätzlich overpaid: true). Stornierte Teilbelege zählen nicht.
 --    RLS ist auch für den Eigentümer erzwungen → je Praxis app.org_id setzen.
 -- 2) Eindeutiger Index je SumUp-Transaktion (payments.external_ref 'sumup:%') – nur, wenn keine Dubletten vorhanden
 --    sind (sonst NOTICE und kein Index; Dubletten bitte fachlich klären, Zahlungen sind unveränderbar).
@@ -21,7 +22,8 @@ BEGIN
     FOR r IN
       SELECT i.id, i.number, i.total_cents, i.paid_cents, i.status,
              (SELECT coalesce(sum(d.total_cents), 0) FROM invoices d
-               WHERE d.organization_id = i.organization_id AND d.collective_invoice_id = i.id AND d.kind IN ('deposit', 'receipt'))
+               WHERE d.organization_id = i.organization_id AND d.collective_invoice_id = i.id AND d.kind IN ('deposit', 'receipt')
+                 AND d.status <> 'cancelled')
            + (SELECT coalesce(sum(p.amount_cents), 0) FROM payments p
                WHERE p.organization_id = i.organization_id AND p.invoice_id = i.id) AS soll
       FROM invoices i
@@ -45,7 +47,9 @@ BEGIN
         VALUES (o.id, NULL, 'invoice.paid_correction', 'invoice', r.id::text,
                 jsonb_build_object('number', r.number, 'migration', '0048_sumup_zahlungen_korrektur',
                                    'old', jsonb_build_object('paidCents', r.paid_cents, 'status', r.status),
-                                   'new', jsonb_build_object('paidCents', soll, 'status', neu_status)));
+                                   'new', jsonb_build_object('paidCents', soll, 'status', neu_status))
+                || CASE WHEN r.total_cents <> 0 AND soll * sign(r.total_cents) > r.total_cents * sign(r.total_cents)
+                        THEN jsonb_build_object('overpaid', true) ELSE '{}'::jsonb END);
       END IF;
     END LOOP;
     dubletten := dubletten + (
