@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointmentServices, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
+import { appointmentServices, archiveCatchupAttempts, billingContacts, invoiceLines, invoices, messages, patients, services, treatmentRecords } from "@/db/schema";
 import { MailNotConfiguredError, MailSendError } from "@/integrations/mail/mail";
 import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
@@ -12,7 +12,7 @@ import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
-import { archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
+import { ArchivePendingError, archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
 import { log } from "@/lib/log";
 import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
@@ -31,9 +31,12 @@ export type InvoicePdfVariant = "archive" | "storno" | "reproduction";
  *  - bei einer stornierten Rechnung der Neudruck wie ausgestellt (festgeschriebene Angaben, Anrechnungen, Zahlungen
  *    beim Ausstellen) mit Vermerk „STORNIERT durch Stornorechnung Nr. … vom …“ und ohne GiroCode
  *    (`original: true` liefert stattdessen das archivierte Original);
- *  - nur bei Altbelegen ohne Archiv eine Neuerzeugung, gekennzeichnet als „Reproduktion“ (Fußnote).
+ *  - nur bei Altbelegen ohne Archiv (vor Einführung) eine Neuerzeugung, gekennzeichnet als „Reproduktion“ (Fußnote).
+ * Belege ab Einführung des Archivs, deren Ablage gescheitert ist, werden zuerst nachgeholt (aus den festgeschriebenen
+ * Angaben archiviert, dann das Archiv ausgeliefert). Scheitert auch das, wird abgelehnt (ArchivePendingError) –
+ * es wird nie eine unarchivierte Fassung ausgehändigt.
  */
-export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean } = {}) {
+export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { patientId?: string; original?: boolean; userId?: string | null } = {}) {
   if (!z.uuid().safeParse(invoiceId).success) return null;
   const bundle = await withOrg(org, (tx) => loadInvoiceBundle(tx, org, invoiceId));
   if (!bundle || bundle.invoice.status === "draft") return null;
@@ -44,7 +47,7 @@ export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { p
   // Beleg mit Momentaufnahme, aber ohne Archiv (Ablage beim Ausstellen gescheitert): jetzt nachholen
   if (!archived && bundle.fromSnapshot) {
     try {
-      archived = await ensureInvoiceArchived(org, invoiceId);
+      archived = await ensureInvoiceArchived(org, invoiceId, opts.userId ?? null);
     } catch (e) {
       log.error("invoice.archive_retry_failed", { error: e, invoiceId });
     }
@@ -54,11 +57,14 @@ export async function invoicePdfForOrg(org: string, invoiceId: string, opts: { p
     if (!row) throw new InvoiceError("Archivierter Beleg nicht gefunden.");
     return { bytes: await readArchivedPdf(row), filename, bundle, variant: "archive" as InvoicePdfVariant };
   }
+  // Beleg ab Einführung des Archivs ohne Archiv-PDF: nicht unarchiviert aushändigen (auch nicht als „Original“).
+  // Ausnahme: Neudruck einer stornierten Rechnung mit Stornovermerk (ungültig gekennzeichnet, keine Zahlungsaufforderung).
+  if (!archived && bundle.fromSnapshot && (!cancelled || opts.original)) throw new ArchivePendingError();
   const data = await invoicePdfData(bundle);
   const bytes = await renderInvoicePdf({
     ...data,
     cancellation: cancelled ? { number: bundle.cancelledBy?.number ?? null, issuedAt: bundle.cancelledBy?.issuedAt ?? null } : null,
-    reproduction: archived ? null : { generatedAt: new Date() },
+    reproduction: archived ? null : { generatedAt: new Date(), fromSnapshot: bundle.fromSnapshot },
   });
   return { bytes, filename, bundle, variant: (cancelled ? "storno" : "reproduction") as InvoicePdfVariant };
 }
@@ -93,8 +99,20 @@ export async function ensureInvoiceArchived(org: string, invoiceId: string, user
         .from(invoices)
         .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
       if (!inv || inv.status === "draft" || !inv.number || !inv.snapshot) return false;
-      if (await findInvoiceArchive(tx, org, invoiceId)) return true;
-      await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+      // Nachhol-Versuche (Cron-Backoff) entfernen – egal, welcher Weg archiviert hat
+      const clearAttempt = () =>
+        tx
+          .delete(archiveCatchupAttempts)
+          .where(and(eq(archiveCatchupAttempts.organizationId, org), eq(archiveCatchupAttempts.targetKind, "invoice"), eq(archiveCatchupAttempts.targetId, invoiceId)));
+      if (await findInvoiceArchive(tx, org, invoiceId)) {
+        await clearAttempt();
+        return true;
+      }
+      const row = await archiveInvoicePdf(tx, org, invoiceId, userId, pending);
+      // erfolgreiches Nachholen protokollieren (GoBD: Nachvollziehbarkeit, wann das Archiv-PDF entstand) – in derselben
+      // Transaktion: kein Archiv-PDF ohne Protokolleintrag
+      await audit({ organizationId: org, userId, action: "invoice.archive_catchup", entity: "invoice", entityId: invoiceId, meta: { number: inv.number, sha256: row.sha256 } }, tx);
+      await clearAttempt();
       return true;
     }),
   );
@@ -111,7 +129,8 @@ export async function archiveInvoicePdf(tx: Tx, org: string, invoiceId: string, 
   const data = await invoicePdfData(bundle, tx);
   // Nachholen für eine inzwischen stornierte Rechnung: das Original zeigt den Stand der Ausstellung (nicht „storniert“)
   if (data.invoice.status === "cancelled" && data.invoice.kind !== "credit_note") data.invoice = { ...data.invoice, status: "issued" };
-  const bytes = await renderInvoicePdf(data);
+  // Erzeugungszeitpunkt: beim Nachholen (> 10 min nach dem Ausstellen) dezenter Vermerk auf dem PDF
+  const bytes = await renderInvoicePdf({ ...data, generatedAt: new Date() });
   return archivePdf(
     tx,
     org,
@@ -166,7 +185,7 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
-  const pdf = await invoicePdfForOrg(org, invoiceId);
+  const pdf = await invoicePdfForOrg(org, invoiceId, { userId: auth.user.id });
   if (!pdf) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
   const { bundle } = pdf;
   const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
