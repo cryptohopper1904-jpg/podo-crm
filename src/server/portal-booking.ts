@@ -40,6 +40,8 @@ type OrgRow = {
   state: string;
   settings: Record<string, unknown>;
   billing: { plan: string; subscriptionStatus: string; trialEndsAt: Date | null; currentPeriodEnd: Date | null; seats: number };
+  /** Kündigung/Löschung beantragt (Daten & Kündigung) → keine Buchungen mehr von außen */
+  deletionRequestedAt: Date | null;
 };
 
 async function loadOrg(org: string): Promise<OrgRow | null> {
@@ -52,6 +54,7 @@ async function loadOrg(org: string): Promise<OrgRow | null> {
     state: o.state,
     settings: (o.settings ?? {}) as Record<string, unknown>,
     billing: { plan: o.plan, subscriptionStatus: o.subscriptionStatus, trialEndsAt: o.trialEndsAt, currentPeriodEnd: o.currentPeriodEnd, seats: o.seats },
+    deletionRequestedAt: o.deletionRequestedAt,
   };
 }
 
@@ -145,11 +148,17 @@ async function bookableServicesFor(o: OrgRow, cfg: OnlineBookingSettings) {
   return rows.filter((s) => isBookableOnline(s, cfg));
 }
 
-function bookingBlocked(o: OrgRow): string | null {
+/**
+ * Darf von außen (/buchen, Patientenportal) gebucht werden? Nein, wenn die Online-Buchung aus ist, das Abo die
+ * Funktion nicht (mehr) enthält bzw. die Praxis im Nur-Lesen-Modus ist (Testphase/Abo abgelaufen) oder die Löschung
+ * der Praxis beantragt ist. Gleiche Regel für Anzeige (Optionen) und Speichern (Slot-Prüfung, Buchung, Verschieben).
+ */
+function bookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
   const cfg = parseOnlineBookingSettings(o.settings);
   if (!cfg.enabled) return "Die Online-Buchung ist in dieser Praxis derzeit ausgeschaltet.";
+  if (o.deletionRequestedAt) return "Die Online-Buchung ist derzeit nicht verfügbar.";
   try {
-    assertEntitled(o.billing, "portal");
+    assertEntitled(o.billing, "portal", now);
   } catch (e) {
     if (e instanceof EntitlementError) return "Die Online-Buchung ist derzeit nicht verfügbar.";
     throw e;
@@ -173,7 +182,7 @@ export async function portalBookingOptions(link: PortalLink, opts: { rescheduleI
   const now = opts.now ?? new Date();
   const cfg = parseOnlineBookingSettings(o.settings);
   const practice = { name: o.name, phone: o.phone };
-  const blocked = bookingBlocked(o);
+  const blocked = bookingBlocked(o, now);
   if (blocked) return { practice, blocked, services: [], days: [], reschedule: null };
   let reschedule: PortalBookingOptions["reschedule"] = null;
   if (opts.rescheduleId) {
@@ -264,7 +273,7 @@ export async function bookPortalAppointment(link: PortalLink, input: { serviceId
   if (!start) return { ok: false, error: "Bitte eine Uhrzeit wählen." };
   const o = await loadOrg(org);
   if (!o) return { ok: false, error: "Praxis nicht gefunden." };
-  const blocked = bookingBlocked(o);
+  const blocked = bookingBlocked(o, now);
   if (blocked) return { ok: false, error: blocked };
   const cfg = parseOnlineBookingSettings(o.settings);
   const svc = (await bookableServicesFor(o, cfg)).find((s) => s.id === input.serviceId);
@@ -337,7 +346,7 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
   if (!start) return { ok: false, error: "Bitte eine neue Uhrzeit wählen." };
   const o = await loadOrg(org);
   if (!o) return { ok: false, error: "Praxis nicht gefunden." };
-  const blocked = bookingBlocked(o);
+  const blocked = bookingBlocked(o, now);
   if (blocked) return { ok: false, error: blocked };
   const cfg = parseOnlineBookingSettings(o.settings);
   const [cur] = await withOrg(org, (tx) =>
@@ -431,9 +440,9 @@ const inPublicWindow = (dateIso: string, now: Date) => {
  */
 export async function publicBookingOptions(organizationId: string, now = new Date()): Promise<PublicBookingOptions | null> {
   const o = await loadOrg(organizationId);
-  if (!o) return null;
+  // Abo abgelaufen/gesperrt oder Löschung beantragt wie „Online-Buchung aus“: null → dieselbe 404 wie unbekannte Praxis
+  if (!o || bookingBlocked(o, now)) return null;
   const cfg = parseOnlineBookingSettings(o.settings);
-  if (!cfg.enabled) return null;
   const svc = await bookableServicesFor(o, cfg);
   const byDay = new Map<string, Record<number, string[]>>();
   for (const dur of [...new Set(svc.map((s) => s.durationMin))]) {
@@ -460,8 +469,9 @@ export type PublicSlotCheck = { ok: true; service: { id: string; name: string; d
 export async function checkPublicSlot(organizationId: string, serviceId: string, start: Date, now = new Date()): Promise<PublicSlotCheck> {
   const o = await loadOrg(organizationId);
   if (!o) return { ok: false, error: "Praxis nicht gefunden." };
+  const blocked = bookingBlocked(o, now);
+  if (blocked) return { ok: false, error: blocked };
   const cfg = parseOnlineBookingSettings(o.settings);
-  if (!cfg.enabled) return { ok: false, error: "Die Online-Buchung ist in dieser Praxis derzeit ausgeschaltet." };
   const svc = (await bookableServicesFor(o, cfg)).find((x) => x.id === serviceId);
   if (!svc) return { ok: false, error: "Diese Leistung ist online nicht buchbar." };
   if (Number.isNaN(start.getTime()) || !inPublicWindow(berlinDateIso(start), now)) return { ok: false, error: "Bitte einen Termin in den nächsten zwei Wochen wählen." };

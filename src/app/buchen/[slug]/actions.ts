@@ -46,7 +46,8 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   const { ip } = await requestMeta();
   if (limited(ip ?? "unbekannt")) return { error: "Zu viele Anfragen. Bitte später erneut versuchen oder anrufen." };
   const [org] = await db.select().from(organizations).where(eq(organizations.slug, d.slug));
-  if (!org) return { error: "Praxis nicht gefunden." };
+  // Löschung beantragt wie unbekannte Praxis; Abo/Freigabe prüft checkPublicSlot (bookingBlocked)
+  if (!org || org.deletionRequestedAt) return { error: "Praxis nicht gefunden." };
   const start = berlinToUtc(d.date, d.time);
   // Serverseitig dieselbe Verfügbarkeit wie Portal/Telefon: Freigabe, Leistungsliste, Arbeitszeiten, Abwesenheiten,
   // Feiertage, Vorlauf und Buchungsfenster – nur exakt angebotene Startzeiten (Gesamt-Review M1)

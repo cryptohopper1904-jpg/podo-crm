@@ -11,6 +11,7 @@ import { dateDe, timeDe } from "@/lib/format";
 import { hashPortalToken, isPortalToken, newPortalToken } from "@/lib/portal";
 import { chooseChannel, grantedConsents, type ReminderChannel } from "@/lib/reminders";
 import { isDeceased } from "@/lib/patient-deceased";
+import { entitlements } from "@/lib/plans";
 import { notDeceased } from "./patient-deceased";
 import {
   describeWishes,
@@ -70,8 +71,9 @@ export type OfferSummary = { offered: number; manual: number; skipped?: string }
 export async function offerFreedSlot(org: string, appointmentId: string, deps: OfferDeps = {}): Promise<OfferSummary> {
   const now = deps.now ?? new Date();
   if (!z.uuid().safeParse(appointmentId).success) return { offered: 0, manual: 0, skipped: "invalid" };
-  const [o] = await db.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, org));
-  if (!o) return { offered: 0, manual: 0, skipped: "org" };
+  const [o] = await db.select({ name: organizations.name, phone: organizations.phone, deletionRequestedAt: organizations.deletionRequestedAt }).from(organizations).where(eq(organizations.id, org));
+  // Löschung beantragt: niemandem mehr Termine anbieten
+  if (!o || o.deletionRequestedAt) return { offered: 0, manual: 0, skipped: "org" };
   const base = offerBaseUrl(deps.baseUrl ?? process.env.PUBLIC_URL);
   if (!base) return { offered: 0, manual: 0, skipped: "no_https_url" };
 
@@ -265,7 +267,7 @@ export type OfferView =
   | { state: "taken" | "expired" | "accepted"; practice: { name: string; phone: string | null }; startsAt?: Date }
   | { state: "invalid" };
 
-async function findOffer(token: string) {
+async function findOffer(token: string, now: Date) {
   if (!isPortalToken(token)) return null;
   // patient_links hat bewusst keine RLS (Lookup nur über den Token-Hash, wie sessions; drizzle/0007) – danach wird
   // ausschließlich im Mandantenkontext der gefundenen Praxis gelesen.
@@ -275,8 +277,14 @@ async function findOffer(token: string) {
     .where(eq(patientLinks.tokenHash, hashPortalToken(token)))
     .limit(1);
   if (!l || l.purpose !== OFFER_PURPOSE || !l.appointmentId) return null;
-  const [o] = await db.select({ name: organizations.name, phone: organizations.phone }).from(organizations).where(eq(organizations.id, l.organizationId));
-  if (!o) return null;
+  const [row] = await db
+    .select({ name: organizations.name, phone: organizations.phone, deletionRequestedAt: organizations.deletionRequestedAt, plan: organizations.plan, subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, currentPeriodEnd: organizations.currentPeriodEnd, seats: organizations.seats })
+    .from(organizations)
+    .where(eq(organizations.id, l.organizationId));
+  if (!row) return null;
+  const o = { name: row.name, phone: row.phone };
+  // Löschung beantragt oder Praxis im Nur-Lesen-Modus (Abo/Testphase abgelaufen): Angebot nicht mehr annehmbar
+  const blocked = !!row.deletionRequestedAt || entitlements(row, now).readOnly;
   const slot = await withOrg(l.organizationId, async (tx) => {
     const [a] = await tx
       .select({ id: appointments.id, startsAt: appointments.startsAt, endsAt: appointments.endsAt, therapistId: appointments.therapistId, locationId: appointments.locationId, title: appointments.title })
@@ -285,14 +293,15 @@ async function findOffer(token: string) {
     return a ?? null;
   });
   if (!slot) return null;
-  return { link: l, practice: o, slot };
+  return { link: l, practice: o, slot, blocked };
 }
 
 /** Anzeige der Angebotsseite (ohne Annahme – Link-Vorschauen/Scanner lösen nichts aus). */
 export async function loadOffer(token: string, now = new Date()): Promise<OfferView> {
-  const f = await findOffer(token);
+  const f = await findOffer(token, now);
   if (!f) return { state: "invalid" };
   const { link, practice, slot } = f;
+  if (f.blocked) return { state: "expired", practice };
   if (link.usedAt) return { state: "accepted", practice, startsAt: slot.startsAt };
   if (link.revokedAt) return { state: "taken", practice };
   if (link.expiresAt <= now || slot.startsAt <= now) return { state: "expired", practice };
@@ -318,8 +327,9 @@ const TAKEN_MSG = "Leider schon vergeben – jemand anderes war schneller. Sie b
  * für diesen Termin widerrufen.
  */
 export async function acceptOffer(token: string, now = new Date()): Promise<AcceptResult> {
-  const f = await findOffer(token);
+  const f = await findOffer(token, now);
   if (!f) return { ok: false, state: "invalid", error: "Der Link ist ungültig." };
+  if (f.blocked) return { ok: false, state: "expired", error: "Das Angebot ist abgelaufen." };
   const { practice } = f;
   const org = f.link.organizationId;
   let slot = f.slot;

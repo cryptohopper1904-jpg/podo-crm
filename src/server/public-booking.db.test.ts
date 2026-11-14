@@ -1,6 +1,7 @@
 /**
  * Gesamt-Review M1: Öffentliche Buchung /buchen prüft serverseitig Freigabe, Leistungsliste, Arbeitszeiten,
  * Abwesenheiten und Buchungsfenster – nur exakt angebotene Startzeiten (wie Portal und Telefon).
+ * AppSec L1: Praxis mit abgelaufenem Abo/Testphase oder beantragter Löschung ist von außen nicht mehr buchbar.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
@@ -69,5 +70,36 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const tue = o?.days.find((d) => d.date === "2030-03-05");
     expect(tue?.slots[60]).toEqual(["10:00", "10:30", "11:00"]);
     expect((await pb.checkPublicSlot(p.org, p.pk, at("2030-03-05", "09:00"), now)).ok).toBe(false);
+  });
+
+  describe("AppSec L1: gesperrte oder gekündigte Praxis", () => {
+    const slot = () => at("2030-03-05", "09:00");
+
+    it("Testphase abgelaufen (Nur-Lesen): keine Optionen, Slot-Prüfung abgelehnt", async () => {
+      const p = await practice();
+      await f.pool.query("update organizations set plan = 'trial', subscription_status = 'trialing', trial_ends_at = '2030-03-01T00:00:00Z' where id = $1", [p.org]);
+      expect(await pb.publicBookingOptions(p.org, now)).toBeNull();
+      expect(await pb.checkPublicSlot(p.org, p.pk, slot(), now)).toEqual({ ok: false, error: "Die Online-Buchung ist derzeit nicht verfügbar." });
+    });
+
+    it("Abo gekündigt und Kulanz vorbei: keine Optionen, Slot-Prüfung abgelehnt", async () => {
+      const p = await practice();
+      await f.pool.query("update organizations set plan = 'praxis', subscription_status = 'canceled', current_period_end = '2030-01-01T00:00:00Z' where id = $1", [p.org]);
+      expect(await pb.publicBookingOptions(p.org, now)).toBeNull();
+      expect((await pb.checkPublicSlot(p.org, p.pk, slot(), now)).ok).toBe(false);
+    });
+
+    it("Löschung beantragt: keine Optionen, Slot-Prüfung abgelehnt", async () => {
+      const p = await practice();
+      await f.pool.query("update organizations set deletion_requested_at = now() where id = $1", [p.org]);
+      expect(await pb.publicBookingOptions(p.org, now)).toBeNull();
+      expect(await pb.checkPublicSlot(p.org, p.pk, slot(), now)).toEqual({ ok: false, error: "Die Online-Buchung ist derzeit nicht verfügbar." });
+    });
+
+    it("normale Praxis unverändert buchbar", async () => {
+      const p = await practice();
+      expect((await pb.publicBookingOptions(p.org, now))?.days.length).toBeGreaterThan(0);
+      expect((await pb.checkPublicSlot(p.org, p.pk, slot(), now)).ok).toBe(true);
+    });
   });
 });
