@@ -7,8 +7,7 @@ import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWha
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
-import { withArchiveCleanup } from "./document-archive";
-import { issuePaymentReceipts } from "./payment-receipts";
+import { archivePaymentReceipts, recordPaymentReceipts } from "./payment-receipts";
 import { adapterFor, logSync } from "./integrations";
 import { matchPatientByAddress } from "./messages";
 import { payableVatGroups } from "./partial-vat";
@@ -280,7 +279,7 @@ export function isDuplicateProviderRef(e: unknown): boolean {
 }
 
 export async function recordProviderPayment(organizationId: string, input: ProviderPaymentInput): Promise<ProviderPaymentResult> {
-  const res = await withArchiveCleanup((pending) => withOrg(organizationId, async (t): Promise<ProviderPaymentResult & { number?: string | null; patientId?: string | null }> => {
+  const res = await withOrg(organizationId, async (t): Promise<ProviderPaymentResult & { number?: string | null; patientId?: string | null; receipts?: { id: string; number: string }[] }> => {
     if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) return { status: "nicht zugeordnet", invoiceId: null, reason: "Betrag ungültig" };
     const byId = isUuid(input.invoiceId)
       ? await t.select().from(invoices).where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, input.invoiceId))).for("update")
@@ -345,16 +344,19 @@ export async function recordProviderPayment(organizationId: string, input: Provi
       .update(invoices)
       .set({ paidCents: paid, status: statusFromPayments(inv.totalCents, paid) })
       .where(and(eq(invoices.organizationId, organizationId), eq(invoices.id, inv.id)));
-    // Terminalzahlung (Kassenvorgang): Beleg über den Zahlungseingang mit TSE-Angaben bzw. Ausfallvermerk
-    await issuePaymentReceipts(t, organizationId, inv.id, [payRow.id], null, pending);
-    return { status: "gebucht", invoiceId: inv.id };
-  })).catch((e: unknown): ProviderPaymentResult => {
+    // Terminalzahlung (Kassenvorgang): Beleg über den Zahlungseingang mit TSE-Angaben bzw. Ausfallvermerk – hier nur
+    // Nummer + Angaben; das PDF wird nach dem COMMIT abgelegt (ein Ablagefehler darf die Zahlung nicht zurückrollen,
+    // eine erneute Zustellung würde sonst neu TSE-signieren)
+    const receipts = await recordPaymentReceipts(t, organizationId, inv.id, [payRow.id], null);
+    return { status: "gebucht", invoiceId: inv.id, receipts };
+  }).catch((e: unknown): ProviderPaymentResult => {
     // Rennen mit einer parallelen Zustellung, die die Sperre umgangen hat: der eindeutige Index hat die zweite Zeile
     // abgewiesen (Transaktion zurückgerollt) → dieselbe Transaktion ist bereits gebucht
     if (isDuplicateProviderRef(e)) return { status: "bereits gebucht", invoiceId: isUuid(input.invoiceId) ? input.invoiceId : null };
     throw e;
   });
   if (res.status === "nicht zugeordnet") await reportUnassignedPayment(organizationId, input, res);
+  if ("receipts" in res && res.receipts?.length) await archivePaymentReceipts(organizationId, res.receipts, null);
   return { status: res.status, invoiceId: res.invoiceId, reason: res.reason };
 }
 

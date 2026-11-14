@@ -1181,7 +1181,9 @@ export const paymentReceipts = pgTable(
  * Stornorechnung/Sammelrechnung („invoice“) und jedes Zahlungsbelegs („payment_receipt“), verschlüsselt in der
  * Dateiablage (src/lib/storage.ts) mit SHA-256 des Klartexts. Download, E-Mail-Anhang und Patientenportal liefern
  * genau diese Bytes aus. Append-only (Trigger gegen UPDATE/DELETE/TRUNCATE), RLS je Praxis.
- * `retain_until`: Ende der Aufbewahrungsfrist (31.12. des 10. Jahres nach dem Ausstellungsjahr).
+ * Die Aufbewahrungsfrist wird bewusst nicht gespeichert, sondern zur Laufzeit berechnet (src/lib/retention.ts:
+ * Buchungsbelege 8 Jahre ab Ende des Ausstellungsjahres, vorbehaltlich Ablaufhemmung § 147 Abs. 3 S. 5 AO).
+ * `storage_key` beginnt immer mit „<organization_id>/“ (Trigger/Constraint; beim Lesen erneut geprüft).
  */
 export const documentArchive = pgTable(
   "document_archive",
@@ -1199,7 +1201,6 @@ export const documentArchive = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     sha256: text("sha256").notNull(),
     filename: text("filename").notNull(),
-    retainUntil: date("retain_until").notNull(),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
   },

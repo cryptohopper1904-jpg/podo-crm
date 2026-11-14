@@ -17,8 +17,20 @@ function RetentionNotice() {
       <p className="font-semibold">Ihre Aufbewahrungspflichten bleiben bestehen</p>
       <ul className="mt-2 list-disc pl-5">
         <li>Behandlungsdokumentation: <strong>10 Jahre</strong> nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)</li>
-        <li>Rechnungen und Buchungsbelege: <strong>8 Jahre</strong>, Bücher und Jahresabschlüsse: <strong>10 Jahre</strong> (§ 147 AO, § 14b UStG)</li>
+        <li>
+          Rechnungen, Quittungen, Zahlungsbelege und andere Buchungsbelege: <strong>8 Jahre</strong> ab Ende des Ausstellungsjahres (§ 147 AO, § 14b UStG)
+        </li>
+        <li>Bücher, Jahresabschlüsse und Kassenaufzeichnungen (Einzelaufzeichnungen, TSE-/DSFinV-K-Export): <strong>10 Jahre</strong> (§ 147 AO)</li>
       </ul>
+      <p className="mt-2">
+        Steuerliche Fristen enden frühestens zu diesem Zeitpunkt – solange die Unterlagen für eine noch offene Steuerfestsetzung von Bedeutung sind, laufen
+        sie nicht ab (Ablaufhemmung, § 147 Abs. 3 S. 5 AO).
+      </p>
+      <p className="mt-2">
+        Datenschutz: Archivierte Belege (Original-PDF) und die beim Ausstellen festgehaltenen Empfängerangaben bleiben auch nach dem Löschen der
+        Kontaktdaten einer Person bis zum Fristende erhalten – sie werden nur noch für diese Aufbewahrungspflicht verarbeitet (Art. 17 Abs. 3 lit. b
+        DSGVO, § 147 AO).
+      </p>
       <p className="mt-2">
         Diese Pflichten treffen die Praxis. Erstellen Sie deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahren Sie ihn sicher
         auf. Wir löschen alle Daten {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig und behalten keine Kopie für Sie.

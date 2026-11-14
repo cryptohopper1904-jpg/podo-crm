@@ -153,7 +153,7 @@ export const CANCELLATION_SUB = "Neudruck des ausgestellten Belegs – dieser Be
 
 /** Fußnote eines aus gespeicherten Daten neu erzeugten Altbelegs */
 export function reproductionNote(at: Date | string): string {
-  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten neu erzeugt. Ein archiviertes Original liegt nicht vor (ausgestellt vor Einführung des Beleg-Archivs).`;
+  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich versandte Beleg.`;
 }
 
 export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {

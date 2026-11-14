@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFPage } from "pdf-lib";
 import { renderInvoicePdf, type InvoicePdfData } from "./invoice-pdf";
 import { renderDunningPdf, type DunningPdfData } from "./dunning-pdf";
-import { renderPaymentReceiptPdf } from "./payment-receipt";
+import { paymentReceiptVatNote, renderPaymentReceiptPdf } from "./payment-receipt";
 import { embedFonts, makeSafe, makeWriter } from "./pdf-letter";
 
 type Drawn = { page: number; x: number; y: number; size: number; text: string };
@@ -259,7 +259,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     const n = await pages(await renderInvoicePdf({ ...invoice(1), reproduction: { generatedAt: "2026-11-14T10:00:00Z" } }));
     const body = bodyTexts(drawn);
     expect(body).toMatchSnapshot("Belegtext");
-    expect(body.join(" ")).toContain("Reproduktion: Dieser Beleg wurde am 14.11.2026, 11:00 aus den gespeicherten Belegdaten neu erzeugt.");
+    expect(body.join(" ")).toContain("Reproduktion: Dieser Beleg wurde am 14.11.2026, 11:00 aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich versandte Beleg.");
     expect(n).toBe(1);
     expectInsideBody(n);
   });
@@ -285,6 +285,10 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     expect(body).toMatchSnapshot("Belegtext");
     expect(body).toContain("Beleg über Zahlungseingang zu Rechnung Nr. R2026-0042 vom 02.11.2026");
     expect(body.join(" ")).not.toMatch(/USt \d+ %|Netto/);
+    // Kleinunternehmer: ausdrücklicher Hinweis statt Steuerausweis
+    expect(paymentReceiptVatNote({ invoice: { id: "i", number: "R2026-0042", kind: "invoice", issuedAt: "2026-11-02", totalCents: 6500 }, organization: { ...ORG, smallBusiness: true } as never })).toMatch(
+      /Keine Umsatzsteuerberechnung gemäß § 19 UStG/,
+    );
     expect(n).toBe(1);
   });
 });

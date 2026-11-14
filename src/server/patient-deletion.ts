@@ -1,7 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, inArray, isNotNull, isNull, max, sql } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { anamneses, consents, invoices, media, patientLinks, patients, paymentReceipts, treatmentRecords, waitlist } from "@/db/schema";
+import { anamneses, consents, invoices, media, patientLinks, patients, paymentReceipts, payments, treatmentRecords, waitlist } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { ERASABLE_CONSENTS, retentionDecision, type RetentionDecision, type RetentionFacts } from "@/lib/patient-retention";
@@ -38,6 +38,12 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
       .innerJoin(invoices, eq(invoices.id, paymentReceipts.invoiceId))
       .where(and(eq(paymentReceipts.organizationId, org), eq(invoices.patientId, patientId)));
     const lastDocs = [i?.at ? new Date(i.at) : null, pr?.at ? new Date(pr.at) : null].filter((d): d is Date => !!d);
+    // Kassenvorgänge (Bar/Karte/Gutschein) sind Kassen-Einzelaufzeichnungen (10 Jahre)
+    const [rp] = await tx
+      .select({ at: max(payments.paidAt) })
+      .from(payments)
+      .innerJoin(invoices, eq(invoices.id, payments.invoiceId))
+      .where(and(eq(payments.organizationId, org), eq(invoices.patientId, patientId), inArray(payments.method, ["cash", "card", "voucher"])));
     return {
       number: p.number,
       contactErasedAt: p.contactErasedAt,
@@ -45,6 +51,7 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
       lastAnamnesisAt: a?.at ?? null,
       recordMediaCount: Number(m?.n ?? 0),
       lastInvoiceAt: lastDocs.length ? new Date(Math.max(...lastDocs.map((d) => d.getTime()))) : null,
+      lastRegisterPaymentAt: rp?.at ? new Date(rp.at) : null,
     };
   });
 }

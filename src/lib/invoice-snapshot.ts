@@ -151,9 +151,3 @@ export function withSnapshot<
     fromSnapshot: true as const,
   };
 }
-
-/** Ende der Aufbewahrungsfrist eines Belegs: 31.12. des 10. Jahres nach dem Ausstellungsjahr (§ 147 Abs. 3, 4 AO, § 14b UStG). */
-export function retainUntilFor(issuedAt: string | Date): string {
-  const year = typeof issuedAt === "string" ? Number(issuedAt.slice(0, 4)) : issuedAt.getUTCFullYear();
-  return `${year + 10}-12-31`;
-}

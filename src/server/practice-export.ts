@@ -7,6 +7,7 @@ import { withOrg } from "@/db";
 import { documentArchive, media, memberships, organizations, patients, users } from "@/db/schema";
 import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
+import { readArchivedPdf } from "./document-archive";
 
 type Row = Record<string, unknown>;
 
@@ -192,7 +193,16 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     }
 
     // 1b) Beleg-Archiv (GoBD): archivierte Original-PDFs entschlüsselt, Prüfsumme in tables/document_archive.json
-    const archiveCols = { id: documentArchive.id, storageKey: documentArchive.storageKey, kind: documentArchive.kind, filename: documentArchive.filename, createdAt: documentArchive.createdAt };
+    const archiveCols = {
+      id: documentArchive.id,
+      organizationId: documentArchive.organizationId,
+      storageKey: documentArchive.storageKey,
+      sha256: documentArchive.sha256,
+      sizeBytes: documentArchive.sizeBytes,
+      kind: documentArchive.kind,
+      filename: documentArchive.filename,
+      createdAt: documentArchive.createdAt,
+    };
     const archivePages = pages(
       (after, limit) =>
         withOrg(org, (tx) =>
@@ -207,13 +217,15 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     );
     for await (const page of archivePages) {
       for (const a of page) {
+        // Beleg-PDFs sind klein: vollständig lesen und gegen die gespeicherte SHA-256 prüfen (nicht nur GCM)
+        let bytes: Uint8Array;
         try {
-          await verifyStored(a.storageKey);
+          bytes = await readArchivedPdf(a);
         } catch {
           archiveErrors.add(a.id);
           continue;
         }
-        await add(readDecryptedStream(a.storageKey), { name: archivePath(a), store: false, date: new Date(a.createdAt) });
+        await add(Readable.from([Buffer.from(bytes)]), { name: archivePath(a), store: false, date: new Date(a.createdAt) });
         archiveFiles++;
       }
     }
@@ -230,7 +242,7 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
           if (isArchive) {
             if (archiveErrors.has(r.id as string)) {
               clean.exportFile = null;
-              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
+              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden oder Prüfsumme stimmt nicht";
             } else clean.exportFile = archivePath(r);
           }
           if (hadFile && numbers) {
@@ -303,7 +315,8 @@ function readme(p: {
     "                       Die Prüfsumme (sha256) in tables/media.json belegt die Unversehrtheit der Datei.",
     "belege/rechnungen/     Beleg-Archiv: die beim Ausstellen gespeicherten Original-PDFs (Rechnungen, Quittungen,",
     "                       Anzahlungen, Stornorechnungen, Sammelrechnungen) – byte-gleich, Prüfsumme (sha256) und",
-    "                       Aufbewahrungsfrist (retain_until) in tables/document_archive.json (Feld exportFile).",
+    "                       Zuordnung in tables/document_archive.json (Feld exportFile). Jede Datei wurde beim Export",
+    "                       gegen ihre Prüfsumme geprüft.",
     "belege/zahlungsbelege/ Belege über Zahlungseingänge nach Ausstellung (Kassenbelege mit TSE-Angaben).",
     "                       Belege ohne Archiv (vor Einführung) lassen sich aus den Tabellen reproduzieren.",
     "",
@@ -326,7 +339,9 @@ function readme(p: {
     "",
     "Gesetzliche Aufbewahrungsfristen gelten für die Praxis weiter, auch nach einer Kündigung:",
     "- Behandlungsdokumentation: 10 Jahre nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)",
-    "- Rechnungen und Buchungsbelege: 8 Jahre, Bücher und Jahresabschlüsse: 10 Jahre (§ 147 AO, § 14b UStG)",
+    "- Rechnungen, Quittungen, Zahlungsbelege und andere Buchungsbelege: 8 Jahre ab Ende des Ausstellungsjahres (§ 147 AO, § 14b UStG)",
+    "- Bücher, Jahresabschlüsse und Kassenaufzeichnungen (Einzelaufzeichnungen, TSE-/DSFinV-K-Export): 10 Jahre (§ 147 AO)",
+    "- Steuerliche Fristen enden frühestens dann – Ablaufhemmung nach § 147 Abs. 3 S. 5 AO beachten.",
     "Nach der Löschung der Praxis in PodoHero ist dieser Export Ihre einzige Kopie.",
     "",
   ];

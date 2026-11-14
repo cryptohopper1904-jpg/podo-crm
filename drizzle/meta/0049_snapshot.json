@@ -1,5 +1,5 @@
 {
-  "id": "7616f252-afea-4ddc-a115-02f78554bdd2",
+  "id": "2d93bcec-c35b-4f87-a90d-baf00f4b69b9",
   "prevId": "36cdceee-068c-41ae-a328-2a327ec3c29d",
   "version": "7",
   "dialect": "postgresql",
@@ -2433,12 +2433,6 @@
         "filename": {
           "name": "filename",
           "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "retain_until": {
-          "name": "retain_until",
-          "type": "date",
           "primaryKey": false,
           "notNull": true
         },

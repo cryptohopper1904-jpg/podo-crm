@@ -50,8 +50,9 @@ import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, INTERNAL_NOTE_PRE
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 import { buildInvoiceSnapshot, readInvoiceSnapshot, withSnapshot } from "@/lib/invoice-snapshot";
+import { bookingDocumentRetentionEnd } from "@/lib/retention";
 import { findInvoiceArchive, withArchiveCleanup, type PendingFiles } from "./document-archive";
-import { issuePaymentReceipts, paymentReceiptsFor } from "./payment-receipts";
+import { archivePaymentReceipts, paymentReceiptsFor, recordPaymentReceipts } from "./payment-receipts";
 
 export class InvoiceError extends Error {}
 
@@ -685,7 +686,7 @@ export async function createInvoice(auth: AuthContext, input: InvoiceInput) {
   const collectiveYear = input.collectiveYear ?? issuedYear;
   if (receiptIds.length && (collectiveYear > issuedYear || collectiveYear < issuedYear - 1)) throw new InvoiceError(`Das Leistungsjahr ${collectiveYear} passt nicht zum Rechnungsdatum.`);
 
-  const result = await withArchiveCleanup((pending) => withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
     const smallBusiness = o.smallBusiness;
 
@@ -1122,7 +1123,7 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (!isVatRate(input.vatRate)) throw new InvoiceError("Steuersatz muss 0, 7 oder 19 % sein.");
-  const result = await withArchiveCleanup((pending) => withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const o = await loadOrg(tx, org);
     const [p] = await tx
       .select({ id: patients.id, archivedAt: patients.archivedAt, contactErasedAt: patients.contactErasedAt })
@@ -1231,7 +1232,7 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
   if (!list.length) throw new InvoiceError("Keine Zahlung angegeben.");
-  const result = await withArchiveCleanup((pending) => withOrg(org, async (tx) => {
+  const result = await withOrg(org, async (tx) => {
     const [inv] = await tx
       .select()
       .from(invoices)
@@ -1242,17 +1243,19 @@ export async function addPayments(auth: AuthContext, invoiceId: string, list: Pa
     // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
     const groups = (await payableVatGroups(tx, org, [inv.id])).get(inv.id) ?? [];
     const { paymentIds, ...paid } = await applyPayments(tx, org, auth.user.id, inv, list, berlinDateIso(), groups);
-    // Kassenbeleg über den Zahlungseingang (§ 146a Abs. 2 AO) je Bar-/Karten-/Gutscheinzahlung, mit TSE-Angaben
-    const receipts = await issuePaymentReceipts(tx, org, inv.id, paymentIds, auth.user.id, pending);
+    // Kassenbeleg über den Zahlungseingang (§ 146a Abs. 2 AO) je Bar-/Karten-/Gutscheinzahlung, mit TSE-Angaben:
+    // Nummer und Angaben in dieser Transaktion, das PDF danach (Ablagefehler verhindern die Buchung nicht)
+    const receipts = await recordPaymentReceipts(tx, org, inv.id, paymentIds, auth.user.id);
     return { ...paid, receipts };
-  }));
+  });
+  const archived = await archivePaymentReceipts(org, result.receipts, auth.user.id);
   await audit({
     organizationId: org,
     userId: auth.user.id,
     action: "invoice.pay",
     entity: "invoice",
     entityId: invoiceId,
-    meta: { amounts: list.map((p) => p.amountCents), methods: list.map((p) => p.method), status: result.status, receipts: result.receipts.map((r) => r.number) },
+    meta: { amounts: list.map((p) => p.amountCents), methods: list.map((p) => p.method), status: result.status, receipts: result.receipts.map((r) => r.number), receiptsNotArchived: archived.failed },
   });
   return result;
 }
@@ -1292,7 +1295,7 @@ export async function cancelInvoice(auth: AuthContext, invoiceId: string, rawRea
   const reason = rawReason.replace(/[\r\n]+/g, " ").trim().slice(0, 300);
   const org = auth.organization.id;
   const today = berlinDateIso();
-  const result = await withArchiveCleanup((pending) => withOrg(org, async (tx) => {
+  const result = await withArchiveCleanup(org, (pending) => withOrg(org, async (tx) => {
     const [orig] = await tx
       .select()
       .from(invoices)
@@ -1640,7 +1643,16 @@ export async function loadInvoiceBundle(tx: Tx, org: string, id: string) {
     /** Belegangaben aus der Momentaufnahme beim Ausstellen (false = Altbeleg, aktuelle Stammdaten) */
     fromSnapshot: printed.fromSnapshot,
     /** archiviertes Original (PDF) – null bei Altbelegen vor dem Beleg-Archiv */
-    archive: archive ? { id: archive.id, sha256: archive.sha256, sizeBytes: archive.sizeBytes, createdAt: archive.createdAt, retainUntil: archive.retainUntil } : null,
+    archive: archive
+      ? {
+          id: archive.id,
+          sha256: archive.sha256,
+          sizeBytes: archive.sizeBytes,
+          createdAt: archive.createdAt,
+          /** frühestes Ende der Aufbewahrung (Buchungsbeleg, 8 Jahre; Ablaufhemmung vorbehalten) – zur Laufzeit berechnet */
+          retainUntil: bookingDocumentRetentionEnd(inv.issuedAt ?? archive.createdAt),
+        }
+      : null,
     /** Belege über Zahlungseingänge nach Ausstellung (Kassenbelege) */
     paymentReceipts: receipts,
     cancelledBy: related.find((r) => r.cancelsInvoiceId === id) ?? null,

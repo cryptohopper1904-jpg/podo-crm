@@ -36,6 +36,8 @@ export type PaymentReceiptPdfData = {
   issuedAt: Date | string;
   data: PaymentReceiptSnapshot;
   logos?: { full?: PdfImage | null; compact?: PdfImage | null };
+  /** kein archiviertes Original (Ablage gescheitert): Neuerzeugung aus den festgeschriebenen Angaben, gekennzeichnet */
+  reproduction?: { generatedAt: Date | string } | null;
 };
 
 export function readPaymentReceiptSnapshot(raw: unknown): PaymentReceiptSnapshot | null {
@@ -57,7 +59,7 @@ export function paymentReceiptTitle(d: Pick<PaymentReceiptSnapshot, "payment" | 
 export function paymentReceiptVatNote(d: Pick<PaymentReceiptSnapshot, "invoice" | "organization">): string {
   const doc = INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung";
   return d.organization.smallBusiness
-    ? `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung und Entgelt siehe ${doc} Nr. ${d.invoice.number}.`
+    ? `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung und Entgelt siehe ${doc} Nr. ${d.invoice.number}. Keine Umsatzsteuerberechnung gemäß § 19 UStG (Kleinunternehmerregelung).`
     : `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung, Entgelt und Umsatzsteuer sind in der ${doc} Nr. ${d.invoice.number} ausgewiesen – hier erfolgt kein gesonderter Steuerausweis.`;
 }
 
@@ -66,6 +68,10 @@ export function paymentReceiptBalance(d: Pick<PaymentReceiptSnapshot, "openAfter
   if (d.openAfterCents === 0) return "Die Rechnung ist damit vollständig beglichen.";
   if (d.openAfterCents > 0) return `Noch offen: ${money(d.openAfterCents)}.`;
   return `Zu erstatten: ${money(-d.openAfterCents)}.`;
+}
+
+export function paymentReceiptReproductionNote(at: Date | string): string {
+  return `Reproduktion: Dieser Zahlungsbeleg wurde am ${dateTimeDe(at)} aus den gespeicherten Angaben neu erzeugt (kein archiviertes Original). Maßgeblich ist der ursprünglich ausgegebene Beleg.`;
 }
 
 export function paymentReceiptFilename(number: string) {
@@ -168,6 +174,15 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     }
     y -= 2;
     text(`Erzeugt: ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
+    y -= 14;
+  }
+  if (input.reproduction) {
+    y -= 8;
+    for (const l of wrap(paymentReceiptReproductionNote(input.reproduction.generatedAt), width, 9, bold)) {
+      ensure(12);
+      text(l, ML, y, { size: 9, font: bold });
+      y -= 12;
+    }
   }
 
   drawFooters(doc, fonts, safe, o, `Zahlungsbeleg Nr. ${input.number}`);

@@ -82,7 +82,7 @@ export async function archiveInvoicePdf(tx: Tx, org: string, invoiceId: string, 
   return archivePdf(
     tx,
     org,
-    { kind: "invoice", invoiceId, bytes, filename: invoicePdfFilename(bundle.invoice), issuedAt: bundle.invoice.issuedAt, userId },
+    { kind: "invoice", invoiceId, bytes, filename: invoicePdfFilename(bundle.invoice), userId },
     pending,
   );
 }

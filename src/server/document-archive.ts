@@ -1,9 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
-import type { Tx } from "@/db";
+import { and, asc, eq, inArray } from "drizzle-orm";
+import { withOrg, type Tx } from "@/db";
 import { documentArchive } from "@/db/schema";
-import { retainUntilFor } from "@/lib/invoice-snapshot";
 import { log } from "@/lib/log";
 import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
 
@@ -11,7 +10,10 @@ import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
  * Beleg-Archiv (GoBD, § 14b UStG): Das beim Ausstellen erzeugte PDF wird verschlüsselt in der Dateiablage gespeichert
  * (src/lib/storage.ts, AES-256-GCM je Praxis) und in document_archive mit SHA-256 des Klartexts verzeichnet – in der
  * Transaktion des Ausstellens. Die Datei wird VOR dem Eintrag geschrieben; scheitert die Transaktion danach, räumt
- * `withArchiveCleanup` die nicht verzeichneten Dateien wieder weg (unverzeichnete Dateien wären harmlos, aber Ballast).
+ * `withArchiveCleanup` nur die Dateien weg, die nachweislich NICHT in document_archive verzeichnet sind (eigene
+ * Abfrage nach dem Fehler – z. B. bei einem Fehler erst beim COMMIT bleibt eine verzeichnete Datei erhalten). Was
+ * dabei übrig bleibt (Abfrage scheitert, Prozessabbruch), findet scripts/archive-orphans.ts.
+ * Die Aufbewahrungsfrist wird zur Laufzeit berechnet (src/lib/retention.ts), nicht gespeichert.
  * Abruf prüft die Prüfsumme – ein beschädigtes Archiv wird nie stillschweigend durch eine Neuerzeugung ersetzt.
  */
 export class ArchiveIntegrityError extends Error {}
@@ -22,15 +24,37 @@ export type ArchiveRow = typeof documentArchive.$inferSelect;
 /** Sammelt die in einer Transaktion geschriebenen Dateien, um sie bei einem Fehler wieder zu entfernen. */
 export type PendingFiles = string[];
 
-export async function withArchiveCleanup<T>(fn: (pending: PendingFiles) => Promise<T>): Promise<T> {
+export async function withArchiveCleanup<T>(org: string, fn: (pending: PendingFiles) => Promise<T>): Promise<T> {
   const pending: PendingFiles = [];
   try {
     return await fn(pending);
   } catch (e) {
-    await Promise.all(pending.map((k) => discardStored(k).catch(() => undefined)));
+    if (pending.length) await discardUnreferenced(org, pending);
     throw e;
   }
 }
+
+/** Entfernt nur Dateien, die in document_archive nicht verzeichnet sind; im Zweifel (Abfrage scheitert) bleibt alles. */
+async function discardUnreferenced(org: string, keys: string[]) {
+  try {
+    const referenced = new Set(
+      (
+        await withOrg(org, (tx) =>
+          tx
+            .select({ key: documentArchive.storageKey })
+            .from(documentArchive)
+            .where(and(eq(documentArchive.organizationId, org), inArray(documentArchive.storageKey, keys))),
+        )
+      ).map((r) => r.key),
+    );
+    await Promise.all(keys.filter((k) => !referenced.has(k)).map((k) => discardStored(k).catch(() => undefined)));
+  } catch (e) {
+    log.warn("archive.cleanup_skipped", { error: e, files: keys.length });
+  }
+}
+
+/** Speicherschlüssel liegt im Ablagebereich der Praxis („<org>/…“) – wie der DB-Constraint, zusätzlich beim Lesen. */
+export const keyBelongsTo = (storageKey: string, org: string) => storageKey.startsWith(`${org}/`) && !storageKey.includes("..");
 
 export async function archivePdf(
   tx: Tx,
@@ -41,8 +65,6 @@ export async function archivePdf(
     paymentReceiptId?: string | null;
     bytes: Uint8Array;
     filename: string;
-    /** Ausstellungstag (YYYY-MM-DD) – Grundlage der Aufbewahrungsfrist */
-    issuedAt: string;
     userId: string | null;
   },
   pending: PendingFiles,
@@ -61,7 +83,6 @@ export async function archivePdf(
       sizeBytes: stored.sizeBytes,
       sha256: stored.sha256,
       filename: entry.filename,
-      retainUntil: retainUntilFor(entry.issuedAt),
       createdBy: entry.userId,
     })
     .returning();
@@ -86,6 +107,10 @@ export async function findReceiptArchives(tx: Tx, org: string, invoiceId: string
 
 /** Liest das archivierte PDF und prüft Größe und SHA-256 (byte-gleich wie beim Ausstellen). */
 export async function readArchivedPdf(row: Pick<ArchiveRow, "id" | "storageKey" | "sha256" | "sizeBytes" | "organizationId">): Promise<Uint8Array> {
+  if (!keyBelongsTo(row.storageKey, row.organizationId)) {
+    log.error("archive.foreign_key", { archiveId: row.id });
+    throw new ArchiveIntegrityError("Der archivierte Beleg ist ungültig verzeichnet. Bitte den Support kontaktieren.");
+  }
   let buf: Buffer;
   try {
     buf = await readDecrypted(row.storageKey);

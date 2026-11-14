@@ -48,6 +48,7 @@ import {
 import { shortUrl } from "@/lib/practice-documents";
 import { CANCELLATION_SUB, cancellationStamp } from "@/lib/invoice-pdf";
 import { TSE_TEST_NOTICE, tseLines } from "@/lib/tse-receipt";
+import { RETENTION_HEMMUNG_NOTE } from "@/lib/retention";
 import { loadConnection } from "@/server/integrations";
 import { getInvoice } from "@/server/invoices";
 import { invoiceDunningList } from "@/server/dunning";
@@ -217,7 +218,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         {inv.status !== "draft" ? (
           <p className="text-xs text-muted">
             {data.archive
-              ? `Beleg-Archiv: Original vom ${dateTimeDe(data.archive.createdAt)} (SHA-256 ${data.archive.sha256.slice(0, 16)}…), aufzubewahren bis ${dateDe(data.archive.retainUntil)}. ${cancelledOriginal ? "„PDF“ ist der Neudruck mit Stornovermerk." : "„PDF“ liefert genau dieses Original."}`
+              ? `Beleg-Archiv: Original vom ${dateTimeDe(data.archive.createdAt)} (SHA-256 ${data.archive.sha256.slice(0, 16)}…), aufzubewahren mindestens bis ${dateDe(data.archive.retainUntil)} (8 Jahre ab Ende des Ausstellungsjahres, ${RETENTION_HEMMUNG_NOTE}). ${cancelledOriginal ? "„PDF“ ist der Neudruck mit Stornovermerk." : "„PDF“ liefert genau dieses Original."}`
               : "Altbeleg ohne archiviertes Original – das PDF wird aus den gespeicherten Daten neu erzeugt und als „Reproduktion“ gekennzeichnet."}
             {data.fromSnapshot ? "" : " Belegangaben (Praxis, Anschrift) aus den aktuellen Stammdaten."}
           </p>
@@ -515,6 +516,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                         Beleg {receipt.number}
                         {receipt.isTest ? " · TSE-Testmodus" : ""}
                         {receipt.tseFailed ? " · TSE ausgefallen" : ""}
+                        {receipt.archived ? "" : " · PDF noch nicht archiviert (wird beim Öffnen nachgeholt)"}
                       </span>
                       <a
                         href={`/api/invoices/${inv.id}/zahlungsbelege/${receipt.id}/pdf`}

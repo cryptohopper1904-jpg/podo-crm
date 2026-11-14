@@ -5,7 +5,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PDFPage } from "pdf-lib";
 import { Pool } from "pg";
@@ -34,6 +35,8 @@ afterEach(() => vi.restoreAllMocks());
   let webhooks: typeof import("./webhooks");
   let withOrg: typeof import("@/db").withOrg;
   let today: string;
+  /** Ablage wie LocalDriver (Dateien unter STORAGE_DIR), aber mit schaltbarem Schreibfehler */
+  let failPut = false;
   const authFor = (org: string, user: string) =>
     ({ organization: { id: org, name: "Testpraxis Fuß", smallBusiness: false }, user: { id: user, name: "Test" }, can: () => true }) as never;
   const line = { serviceId: null, description: "Podologische Komplexbehandlung", quantity: 1, factor: 1, unitPriceCents: 6500, vatRate: 0 };
@@ -53,7 +56,8 @@ afterEach(() => vi.restoreAllMocks());
       err = e;
     }
     expect(err, "Fehler erwartet").not.toBeNull();
-    expect(String((err as Error).message)).toMatch(re);
+    const e = err as Error & { cause?: { message?: string } };
+    expect(`${e.message} ${e.cause?.message ?? ""}`).toMatch(re);
   };
 
   async function setup() {
@@ -81,6 +85,16 @@ afterEach(() => vi.restoreAllMocks());
     webhooks = await import("./webhooks");
     ({ withOrg } = await import("@/db"));
     today = (await import("@/lib/format")).berlinDateIso();
+    const root = process.env.STORAGE_DIR!;
+    (await import("@/lib/storage")).setStorageDriver({
+      put: async (k, d) => {
+        if (failPut) throw new Error("Ablage nicht erreichbar (Test)");
+        await mkdir(path.dirname(path.join(root, k)), { recursive: true });
+        await writeFile(path.join(root, k), d, { flag: "wx" });
+      },
+      get: (k) => readFile(path.join(root, k)),
+      remove: (k) => rm(path.join(root, k), { force: true }),
+    });
   });
   afterAll(async () => {
     await f.end();
@@ -94,8 +108,9 @@ afterEach(() => vi.restoreAllMocks());
     const inv = await invoices.createInvoice(auth, base(patient));
     const [row] = await archiveRows(org, inv.id);
     expect(row).toMatchObject({ kind: "invoice", mime: "application/pdf", filename: `${inv.number}.pdf`, payment_receipt_id: null });
-    expect(row.retain_until).toBeTruthy();
-    expect(Number(String(new Date(row.retain_until).getFullYear()))).toBe(Number(today.slice(0, 4)) + 10);
+    // Aufbewahrung zur Laufzeit berechnet: Buchungsbeleg 8 Jahre ab Ende des Ausstellungsjahres (nicht gespeichert)
+    expect(row.retain_until).toBeUndefined();
+    expect((await bundle(org, inv.id)).archive?.retainUntil).toBe(`${Number(today.slice(0, 4)) + 8}-12-31`);
 
     const a = await delivery.invoicePdfForOrg(org, inv.id);
     expect(a?.variant).toBe("archive");
@@ -167,8 +182,8 @@ afterEach(() => vi.restoreAllMocks());
     await rejects(
       f.asOrg(b.org, (c) =>
         c.query(
-          "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename, retain_until) values ($1,'invoice',$2,'x/y.bin',1,$3,'x.pdf','2036-12-31')",
-          [b.org, inv.id, "0".repeat(64)],
+          "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename) values ($1,'invoice',$2,$4,1,$3,'x.pdf')",
+          [b.org, inv.id, "0".repeat(64), `${b.org}/2026/01/x.bin`],
         ),
       ),
       /Rechnung nicht gefunden|row-level security|duplicate/,
@@ -177,11 +192,22 @@ afterEach(() => vi.restoreAllMocks());
     await rejects(
       f.asOrg(b.org, (c) =>
         c.query(
-          "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename, retain_until) values ($1,'invoice',$2,'x/y.bin',1,$3,'x.pdf','2036-12-31')",
-          [a.org, inv.id, "0".repeat(64)],
+          "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename) values ($1,'invoice',$2,$4,1,$3,'x.pdf')",
+          [a.org, inv.id, "0".repeat(64), `${a.org}/2026/01/x.bin`],
         ),
       ),
       /Rechnung nicht gefunden|row-level security/,
+    );
+    // eigene Rechnung, aber Datei im Ablagebereich einer anderen Praxis: abgelehnt (Trigger + Constraint)
+    const own = await invoices.createInvoice(b.auth, base(b.patient));
+    await rejects(
+      f.asOrg(b.org, (c) =>
+        c.query(
+          "insert into document_archive (organization_id, kind, invoice_id, storage_key, size_bytes, sha256, filename) values ($1,'invoice',$2,$4,1,$3,'x.pdf')",
+          [b.org, own.id, "0".repeat(64), `${a.org}/2026/01/x.bin`],
+        ),
+      ),
+      /Ablagebereich/,
     );
   });
 
@@ -275,6 +301,97 @@ afterEach(() => vi.restoreAllMocks());
     expect((await bundle(org, again.id)).credited.map((c) => c.number)).toEqual([dep.number]);
     // die stornierte Rechnung zeigt sie weiterhin
     expect((await bundle(org, inv.id)).credited.map((c) => c.number)).toEqual([dep.number]);
+    // nachträgliche Anrechnung auf die stornierte Rechnung: nur in der Migration (podo.backfill), nie aus der App
+    const dep2 = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: zweite", amountCents: 1000, vatRate: 0, method: "cash", notes: null });
+    await rejects(
+      f.asOrg(org, (c) => c.query("insert into invoice_credits (organization_id, invoice_id, credited_invoice_id, amount_cents) values ($1,$2,$3,1000)", [org, inv.id, dep2.id])),
+      /nicht auf diese Rechnung angerechnet/,
+    );
+  });
+
+  it("Fehler nach dem Ablegen: Rollback entfernt die Datei, die Rechnungsnummer ist nicht verbraucht", async () => {
+    const { org, auth, patient } = await setup();
+    const fn = `test_fail_archive_${org.replace(/-/g, "")}`;
+    await owner.query(`create function ${fn}() returns trigger language plpgsql as $$ begin raise exception 'Testfehler nach Ablage'; end $$`);
+    await owner.query(`create trigger ${fn} before insert on document_archive for each row when (new.organization_id = '${org}'::uuid) execute function ${fn}()`);
+    try {
+      await rejects(invoices.createInvoice(auth, base(patient)), /Testfehler nach Ablage/);
+    } finally {
+      await owner.query(`drop trigger ${fn} on document_archive`);
+      await owner.query(`drop function ${fn}()`);
+    }
+    // keine Datei der Praxis übrig, keine Rechnung, Nummernkreis unberührt
+    const dir = path.join(process.env.STORAGE_DIR!, org);
+    const files = existsSync(dir) ? (await import("node:fs")).readdirSync(dir, { recursive: true }).filter((x) => String(x).endsWith(".bin")) : [];
+    expect(files).toEqual([]);
+    expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from invoices")).rows[0].n)).toBe(0);
+    const ok = await invoices.createInvoice(auth, base(patient));
+    expect(ok.number).toMatch(/-0001$/);
+  });
+
+  it("parallele Barzahlungen: Zahlungsbelege lückenlos und eindeutig nummeriert", async () => {
+    const { org, auth, patient } = await setup();
+    const list = [];
+    for (let i = 0; i < 6; i++) list.push(await invoices.createInvoice(auth, base(patient)));
+    const res = await Promise.all(list.map((inv) => invoices.addPayments(auth, inv.id, [pay("cash", 6500)])));
+    const numbers = res.flatMap((r) => r.receipts.map((x) => x.number)).sort();
+    const y = today.slice(0, 4);
+    expect(numbers).toEqual([1, 2, 3, 4, 5, 6].map((n) => `ZB${y}-000${n}`));
+    const archived = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from document_archive where kind = 'payment_receipt'")).rows[0].n);
+    expect(archived).toBe(6);
+  });
+
+  it("SumUp-Terminal bei Ablagefehler: Zahlung gebucht (einmal signiert), Beleg-Daten gespeichert, PDF später nachgeholt", async () => {
+    const { org, auth, patient } = await setup();
+    const inv = await invoices.createInvoice(auth, base(patient));
+    const ref = `sumup:fail-${inv.id}`;
+    failPut = true;
+    try {
+      const r = await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: ref, amountCents: 6500, method: "card" });
+      expect(r.status).toBe("gebucht");
+      // erneute Zustellung: nicht doppelt gebucht, nicht erneut signiert
+      expect((await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: ref, amountCents: 6500, method: "card" })).status).toBe("bereits gebucht");
+    } finally {
+      failPut = false;
+    }
+    const counts = await f.asOrg(org, async (c) =>
+      (
+        await c.query(
+          `select (select count(*)::int from payments where invoice_id = $1) as pays,
+                  (select count(*)::int from fiscal_transactions ft join payments p on p.id = ft.payment_id where p.invoice_id = $1) as sigs,
+                  (select count(*)::int from payment_receipts where invoice_id = $1) as receipts,
+                  (select count(*)::int from document_archive where invoice_id = $1 and kind = 'payment_receipt') as archived,
+                  (select count(*)::int from messages where subject like 'Zahlungsbeleg % konnte nicht abgelegt werden') as inbox`,
+          [inv.id],
+        )
+      ).rows[0],
+    );
+    expect(counts).toEqual({ pays: 1, sigs: 1, receipts: 1, archived: 0, inbox: 1 });
+    const b = await bundle(org, inv.id);
+    expect(b.invoice.status).toBe("paid");
+    expect(b.paymentReceipts[0]).toMatchObject({ archived: false, tseFailed: false });
+    // Abruf holt die Ablage nach – danach archiviertes Original (byte-gleich bei jedem Abruf)
+    const p1 = await receipts.paymentReceiptPdfForOrg(org, inv.id, b.paymentReceipts[0].id);
+    expect(p1?.variant).toBe("archive");
+    const p2 = await receipts.paymentReceiptPdfForOrg(org, inv.id, b.paymentReceipts[0].id);
+    expect(Buffer.from(p2!.bytes).equals(Buffer.from(p1!.bytes))).toBe(true);
+    expect((await bundle(org, inv.id)).paymentReceipts[0].archived).toBe(true);
+  });
+
+  it("Zahlungsbeleg ohne Archiv und weiter gestörter Ablage: Reproduktion mit Kennzeichnung", async () => {
+    const { org, auth, patient } = await setup();
+    const inv = await invoices.createInvoice(auth, base(patient));
+    failPut = true;
+    try {
+      const res = await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
+      expect(res.status).toBe("paid");
+      drawn = [];
+      const pdf = await receipts.paymentReceiptPdfForOrg(org, inv.id, res.receipts[0].id);
+      expect(pdf?.variant).toBe("reproduction");
+      expect(drawn.join(" ")).toMatch(/Reproduktion: Dieser Zahlungsbeleg wurde am/);
+    } finally {
+      failPut = false;
+    }
   });
 
   it("Altbeleg ohne Archiv/Momentaufnahme: Reproduktion mit Fußnote, aktuelle Stammdaten", async () => {
@@ -283,7 +400,7 @@ afterEach(() => vi.restoreAllMocks());
     drawn = [];
     const pdf = await delivery.invoicePdfForOrg(org, id);
     expect(pdf?.variant).toBe("reproduction");
-    expect(drawn.join(" ")).toMatch(/Reproduktion: Dieser Beleg wurde am .* aus den gespeicherten Belegdaten neu erzeugt/);
+    expect(drawn.join(" ")).toMatch(/Reproduktion: Dieser Beleg wurde am .* aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt/);
     const view = await bundle(org, id);
     expect(view.fromSnapshot).toBe(false);
     expect(view.archive).toBeNull();

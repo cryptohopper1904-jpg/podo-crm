@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { billingContacts, fiscalTransactions, invoices, messages, organizations, patients, paymentReceipts, payments, vouchers } from "@/db/schema";
@@ -23,7 +23,8 @@ import {
   type PaymentReceiptSnapshot,
 } from "@/lib/payment-receipt";
 import { invoiceBookingLink, practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
-import { archivePdf, findReceiptArchives, readArchivedPdf, type PendingFiles } from "./document-archive";
+import { log } from "@/lib/log";
+import { archivePdf, findReceiptArchives, readArchivedPdf, withArchiveCleanup } from "./document-archive";
 import { logSync } from "./integrations";
 import { mailMessagingPort } from "./mail";
 import { loadLogos } from "./practice-logos";
@@ -38,11 +39,14 @@ import { loadLogos } from "./practice-logos";
 export class PaymentReceiptError extends Error {}
 
 /**
- * Legt für die angegebenen (eben gebuchten) Zahlungen einer ausgestellten Rechnung die Zahlungsbelege an.
+ * Legt für die angegebenen (eben gebuchten) Zahlungen einer ausgestellten Rechnung die Zahlungsbelege an – IN der
+ * Buchungstransaktion, aber nur als Datenzeile (Nummer + festgeschriebene Angaben); kein Rendern, keine Datei.
+ * So kann ein Ablage-/Schlüssel-/Renderfehler die Zahlung (und ihre TSE-Signatur) nie verhindern. Das PDF erzeugt
+ * und archiviert danach `archivePaymentReceipts` (wiederholbar; Nachholen beim Abruf).
  * Nur Kassenvorgänge (Bar/Karte/Gutschein); Überweisung/Zahlungslink brauchen keinen Kassenbeleg.
  * Die Rechnung muss in der laufenden Transaktion bereits gesperrt und paid_cents aktualisiert sein.
  */
-export async function issuePaymentReceipts(tx: Tx, org: string, invoiceId: string, paymentIds: string[], userId: string | null, pending: PendingFiles) {
+export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: string, paymentIds: string[], userId: string | null) {
   if (!paymentIds.length) return [];
   const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
   if (!inv?.number) return [];
@@ -74,7 +78,6 @@ export async function issuePaymentReceipts(tx: Tx, org: string, invoiceId: strin
     ? (await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId))))[0] ?? null
     : null;
   const recipient = patient || billing ? { name: invoiceRecipient(patient, billing).name, patientNumber: patient?.number ?? null } : null;
-  const logos = await loadLogos(org, tx);
 
   // Stand nach der jeweiligen Zahlung: vom aktuellen paid_cents rückwärts (alle eben gebuchten Zahlungen – auch
   // Überweisungen derselben Erfassung – sind bereits enthalten)
@@ -110,16 +113,68 @@ export async function issuePaymentReceipts(tx: Tx, org: string, invoiceId: strin
       .insert(paymentReceipts)
       .values({ organizationId: org, invoiceId: inv.id, paymentId: p.payment.id, number, issuedAt, amountCents: p.payment.amountCents, method: p.payment.method, data, createdBy: userId })
       .returning({ id: paymentReceipts.id });
-    const bytes = await renderPaymentReceiptPdf({ number, issuedAt, data, logos });
-    await archivePdf(
-      tx,
-      org,
-      { kind: "payment_receipt", invoiceId: inv.id, paymentReceiptId: row.id, bytes, filename: paymentReceiptFilename(number), issuedAt: berlinDateIso(issuedAt), userId },
-      pending,
-    );
     out.push({ id: row.id, number });
   }
   return out;
+}
+
+/**
+ * PDF eines Zahlungsbelegs erzeugen und archivieren (eigene Transaktion). Idempotent: schon archiviert → nichts zu
+ * tun. Gegen gleichzeitiges Nachholen sperrt ein Advisory-Lock je Beleg (die Zeile selbst ist unveränderbar).
+ * Gibt true zurück, wenn der Beleg danach archiviert ist.
+ */
+async function archiveReceipt(org: string, receiptId: string, userId: string | null): Promise<boolean> {
+  return withArchiveCleanup(org, (pending) =>
+    withOrg(org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`zb-archiv:${receiptId}`}, 0))`);
+      const [r] = await tx.select().from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.id, receiptId)));
+      if (!r) return false;
+      const done = (await findReceiptArchives(tx, org, r.invoiceId)).some((a) => a.paymentReceiptId === r.id);
+      if (done) return true;
+      const data = readPaymentReceiptSnapshot(r.data);
+      if (!data) return false;
+      const bytes = await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos: await loadLogos(org, tx) });
+      await archivePdf(tx, org, { kind: "payment_receipt", invoiceId: r.invoiceId, paymentReceiptId: r.id, bytes, filename: paymentReceiptFilename(r.number), userId }, pending);
+      return true;
+    }),
+  );
+}
+
+/**
+ * Nach der Buchung (außerhalb ihrer Transaktion): PDFs der Zahlungsbelege erzeugen und archivieren. Wirft nie –
+ * ein Fehler wird protokolliert und einmal je Beleg im Posteingang gemeldet; der Beleg wird beim nächsten Abruf
+ * nachgeholt (paymentReceiptPdfForOrg).
+ */
+export async function archivePaymentReceipts(org: string, receipts: { id: string; number: string }[], userId: string | null) {
+  const failed: string[] = [];
+  for (const r of receipts) {
+    try {
+      if (!(await archiveReceipt(org, r.id, userId))) failed.push(r.number);
+    } catch (e) {
+      log.error("payment_receipt.archive_failed", { error: e, receipt: r.number });
+      failed.push(r.number);
+      await reportArchiveFailure(org, r).catch(() => undefined);
+    }
+  }
+  return { failed };
+}
+
+async function reportArchiveFailure(org: string, r: { id: string; number: string }) {
+  const threadKey = `zb-archiv:${r.id}`;
+  await withOrg(org, async (tx) => {
+    const [exists] = await tx.select({ id: messages.id }).from(messages).where(and(eq(messages.organizationId, org), eq(messages.threadKey, threadKey))).limit(1);
+    if (exists) return;
+    await tx.insert(messages).values({
+      organizationId: org,
+      patientId: null,
+      channel: "none",
+      direction: "inbound",
+      subject: `Zahlungsbeleg ${r.number}: PDF konnte nicht abgelegt werden`,
+      body: `Die Zahlung ist gebucht und der Zahlungsbeleg ${r.number} mit allen Angaben (inkl. TSE) gespeichert, aber das PDF konnte nicht im Beleg-Archiv abgelegt werden. Es wird beim nächsten Öffnen des Belegs automatisch nachgeholt. Bleibt der Fehler bestehen, bitte den Support kontaktieren.`,
+      status: "new",
+      threadKey,
+    });
+  });
 }
 
 export type PaymentReceiptListItem = {
@@ -161,8 +216,9 @@ export async function paymentReceiptsFor(tx: Tx, org: string, invoiceId: string)
 }
 
 /**
- * PDF eines Zahlungsbelegs: immer das archivierte Original (byte-gleich). Fehlt die Archivdatei (sollte nicht
- * vorkommen), wird aus den festgeschriebenen Angaben neu erzeugt.
+ * PDF eines Zahlungsbelegs: das archivierte Original (byte-gleich). Fehlt es (Ablage nach der Buchung gescheitert),
+ * wird es jetzt nachgeholt und archiviert; scheitert auch das, wird aus den festgeschriebenen Angaben neu erzeugt
+ * und als „Reproduktion“ gekennzeichnet.
  */
 export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, receiptId: string) {
   if (!z.uuid().safeParse(invoiceId).success || !z.uuid().safeParse(receiptId).success) return null;
@@ -172,15 +228,27 @@ export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, re
       .from(paymentReceipts)
       .where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.id, receiptId), eq(paymentReceipts.invoiceId, invoiceId)));
     if (!r) return null;
-    const archive = (await findReceiptArchives(tx, org, invoiceId)).find((a) => a.paymentReceiptId === r.id) ?? null;
-    return { r, archive, logos: archive ? null : await loadLogos(org, tx) };
+    return { r, archive: (await findReceiptArchives(tx, org, invoiceId)).find((a) => a.paymentReceiptId === r.id) ?? null };
   });
   if (!found) return null;
-  const { r, archive } = found;
+  const { r } = found;
+  let archive = found.archive;
   const data = readPaymentReceiptSnapshot(r.data);
   if (!data) return null;
-  const bytes = archive ? await readArchivedPdf(archive) : await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos: found.logos ?? undefined });
-  return { bytes, filename: paymentReceiptFilename(r.number), receipt: r, data };
+  if (!archive) {
+    // Nachholen (z. B. Ablage nach der Buchung gescheitert)
+    try {
+      if (await archiveReceipt(org, r.id, null)) {
+        archive = await withOrg(org, async (tx) => (await findReceiptArchives(tx, org, invoiceId)).find((a) => a.paymentReceiptId === r.id) ?? null);
+      }
+    } catch (e) {
+      log.error("payment_receipt.archive_retry_failed", { error: e, receipt: r.number });
+    }
+  }
+  if (archive) return { bytes: await readArchivedPdf(archive), filename: paymentReceiptFilename(r.number), receipt: r, data, variant: "archive" as const };
+  const logos = await loadLogos(org);
+  const bytes = await renderPaymentReceiptPdf({ number: r.number, issuedAt: r.issuedAt, data, logos, reproduction: { generatedAt: new Date() } });
+  return { bytes, filename: paymentReceiptFilename(r.number), receipt: r, data, variant: "reproduction" as const };
 }
 
 const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;

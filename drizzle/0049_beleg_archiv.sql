@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS "document_archive" (
 	"size_bytes" integer NOT NULL,
 	"sha256" text NOT NULL,
 	"filename" text NOT NULL,
-	"retain_until" date NOT NULL,
 	"created_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -85,7 +84,9 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'document_archive_file_check') THEN
     ALTER TABLE "document_archive" ADD CONSTRAINT "document_archive_file_check" CHECK (
       mime = 'application/pdf' AND size_bytes > 0 AND sha256 ~ '^[0-9a-f]{64}$' AND length(storage_key) BETWEEN 1 AND 300
-      AND filename ~ '^[A-Za-z0-9._-]{1,120}$');
+      AND filename ~ '^[A-Za-z0-9._-]{1,120}$'
+      -- Datei liegt im Ablagebereich der eigenen Praxis (Schlüssel „<organization_id>/…/<uuid>.bin“, src/lib/storage.ts)
+      AND starts_with(storage_key, organization_id::text || '/') AND storage_key ~ '^[a-z0-9/-]+\.bin$');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payment_receipts_values_check') THEN
     ALTER TABLE "payment_receipts" ADD CONSTRAINT "payment_receipts_values_check" CHECK (
@@ -144,8 +145,9 @@ END $$;
 --> statement-breakpoint
 -- Anlegen nur passend zur Praxis (FK-Prüfungen umgehen RLS, daher hier explizit):
 -- Anrechnung: Endrechnung (Rechnung/Sammelrechnung) und Teilbeleg (Anzahlung/Quittung) derselben Praxis und Person,
--- Betrag = Gesamtbetrag des Teilbelegs; der Teilbeleg ist gerade auf diese Rechnung angerechnet (collective_invoice_id)
--- oder die Rechnung ist bereits storniert (Rückverknüpfung von Altbeständen aus der Stornorechnung).
+-- Betrag = Gesamtbetrag des Teilbelegs; der Teilbeleg ist gerade auf diese Rechnung angerechnet (collective_invoice_id).
+-- Einzige Ausnahme: Rückverknüpfung von Altbeständen stornierter Rechnungen – nur in dieser Migration
+-- (Sitzungsvariable podo.backfill = '1', transaktionslokal gesetzt), nie aus der App.
 CREATE OR REPLACE FUNCTION podo_invoice_credit_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   i invoices%ROWTYPE;
@@ -162,7 +164,8 @@ BEGIN
   IF NEW.amount_cents <> c.total_cents THEN
     RAISE EXCEPTION 'Anrechnung: Betrag passt nicht zum Teilbeleg.' USING ERRCODE = 'P0001';
   END IF;
-  IF c.collective_invoice_id IS DISTINCT FROM NEW.invoice_id AND i.status <> 'cancelled' THEN
+  IF c.collective_invoice_id IS DISTINCT FROM NEW.invoice_id
+     AND NOT (i.status = 'cancelled' AND coalesce(current_setting('podo.backfill', true), '') = '1') THEN
     RAISE EXCEPTION 'Anrechnung: Der Teilbeleg ist nicht auf diese Rechnung angerechnet.' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
@@ -205,6 +208,9 @@ BEGIN
   END IF;
   IF i.status = 'draft' OR i.number IS NULL THEN
     RAISE EXCEPTION 'Beleg-Archiv: Entwürfe werden nicht archiviert.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NOT starts_with(NEW.storage_key, NEW.organization_id::text || '/') THEN
+    RAISE EXCEPTION 'Beleg-Archiv: Datei liegt nicht im Ablagebereich der Praxis.' USING ERRCODE = 'P0001';
   END IF;
   IF NEW.payment_receipt_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM payment_receipts r WHERE r.id = NEW.payment_receipt_id AND r.organization_id = NEW.organization_id AND r.invoice_id = NEW.invoice_id) THEN
@@ -259,6 +265,7 @@ DO $$
 DECLARE
   o record;
 BEGIN
+  PERFORM set_config('podo.backfill', '1', true);
   FOR o IN SELECT id FROM organizations LOOP
     PERFORM set_config('app.org_id', o.id::text, true);
     INSERT INTO invoice_credits (organization_id, invoice_id, credited_invoice_id, amount_cents)
@@ -291,4 +298,5 @@ BEGIN
     ON CONFLICT (invoice_id, credited_invoice_id) DO NOTHING;
   END LOOP;
   PERFORM set_config('app.org_id', '', true);
+  PERFORM set_config('podo.backfill', '', true);
 END $$;
