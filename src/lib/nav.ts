@@ -83,3 +83,12 @@ export const NAV_GROUPS: readonly { id: string; label: string; keys: readonly Na
 export function groupNav<K extends NavKey>(keys: readonly K[]): { id: string; label: string; keys: K[] }[] {
   return NAV_GROUPS.map((g) => ({ id: g.id, label: g.label, keys: keys.filter((k) => g.keys.includes(k)) })).filter((g) => g.keys.length);
 }
+
+/**
+ * „Einstellungen“ als Konto-Eintrag zeigen? Persönliche Seiten (Ansicht, Sicherheit, App) gibt es für alle Rollen –
+ * außer im Support-Modus (`personal` = false, wie im Konto-Menü der Kopfzeile). Wer das Recht zur Praxis-Verwaltung hat
+ * (Schlüssel in `allowed`), sieht den Eintrag immer.
+ */
+export function showSettings(allowed: readonly NavKey[], personal: boolean): boolean {
+  return personal || allowed.includes("einstellungen");
+}

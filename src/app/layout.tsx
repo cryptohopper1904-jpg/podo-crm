@@ -14,7 +14,7 @@ export const metadata: Metadata = {
     ],
     apple: { url: PWA_ICONS.apple, sizes: "180x180" },
   },
-  // Startbilder nur in den App-Layouts ((auth), (app)) – siehe src/lib/pwa/app-meta.ts
+  // Startbilder nur in den App-Layouts ((auth), (app), (plattform) – Letzteres übernimmt das (app)-Layout) – siehe src/lib/pwa/app-meta.ts
   appleWebApp: appleWebApp(false),
   robots: { index: false, follow: false },
 };

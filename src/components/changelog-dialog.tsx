@@ -79,7 +79,7 @@ export function ChangelogDialog({ selection }: { selection: ChangelogSelection }
   return (
     <>
     {wide === false && !chipClosed ? (
-      <div role="status" aria-label="Neu in PodoHero" className="no-print fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex justify-end md:hidden">
+      <div role="region" aria-label="Neu in PodoHero" className="no-print fixed bottom-[calc(4.75rem+env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] left-[max(1rem,env(safe-area-inset-left))] z-30 flex justify-end md:hidden">
         <div className="flex max-w-full items-center rounded-full border border-border bg-surface pl-1 shadow-lg">
           <button type="button" onClick={open} className="inline-flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-full px-3 text-sm font-semibold">
             <Sparkles size={17} aria-hidden className="shrink-0 text-primary" />

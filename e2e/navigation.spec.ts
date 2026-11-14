@@ -138,6 +138,12 @@ test("„Mehr“ führt zur Kasse; Konto-Menü mit Neuigkeiten, Einstellungen, H
   await expect(menu).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Abmelden" })).toBeHidden();
+  // Tab aus dem Menü heraus schließt es
+  await menu.click();
+  await page.getByRole("button", { name: "Abmelden" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Abmelden" })).toBeHidden();
   // Link im Menü schließt es und navigiert
   await menu.click();
   await page.getByRole("link", { name: "Neuigkeiten", exact: true }).click();
@@ -147,16 +153,30 @@ test("„Mehr“ führt zur Kasse; Konto-Menü mit Neuigkeiten, Einstellungen, H
   await context.close();
 });
 
-test("Bildschirmtastatur: untere Leiste verschwindet, solange ein Eingabefeld den Fokus hat (A5)", async ({ browser }) => {
+test("Bildschirmtastatur: untere Leiste verschwindet, solange ein Schreibfeld den Fokus hat (A5)", async ({ browser }) => {
+  // Regeln (welche Felder) und Entprellung beim Feldwechsel prüft der Unit-Test src/lib/keyboard.test.ts
   const { context, page, errors } = await newDevice(browser, iphoneSE);
-  await page.goto("/kunden/neu");
+  await page.goto("/kalender/neu");
   const bar = page.getByRole("navigation", { name: "Schnellnavigation" });
   await expect(bar).toBeVisible();
-  const field = page.locator("main input[type=text], main input:not([type])").first();
-  await field.focus();
+  // Datum/Uhrzeit öffnen eine Auswahl, keine Schreibtastatur → Leiste bleibt
+  for (const label of ["Datum", "Uhrzeit"]) {
+    await page.getByLabel(label, { exact: true }).focus();
+    await page.waitForTimeout(50);
+    await expect(bar, label).toBeVisible();
+    await expect(page.locator("html[data-keyboard]")).toHaveCount(0);
+  }
+  // Schreibfeld → Leiste weg, html[data-keyboard=open]
+  const text = page.locator("main input[type=text], main input[type=search], main input:not([type]), main textarea").first();
+  await text.focus();
   await expect(bar).toBeHidden();
   await expect(page.locator("html[data-keyboard=open]")).toHaveCount(1);
-  await field.blur();
+  // zurück auf ein Datumsfeld → Leiste wieder da
+  await page.getByLabel("Datum", { exact: true }).focus();
+  await expect(bar).toBeVisible();
+  await text.focus();
+  await expect(bar).toBeHidden();
+  await text.blur();
   await expect(bar).toBeVisible();
   await expect(page.locator("html[data-keyboard]")).toHaveCount(0);
   expect(errors).toEqual([]);
@@ -188,4 +208,43 @@ test("Desktop 1280×800: Bereiche gruppiert, „Einstellungen“ ohne Scrollen s
   await expect(page.getByRole("button", { name: "Konto-Menü" })).toBeHidden();
   expect(errors).toEqual([]);
   await context.close();
+});
+
+test("Plattform-Routen: notFound() liefert eine echte 404 (keine gestreamte 200)", async ({ browser }) => {
+  // Demo-Inhaber:in ist kein Plattform-Admin → requirePlatformAdmin() ruft notFound()
+  const { context, page } = await newDevice(browser, { viewport: { width: 1280, height: 800 } });
+  for (const p of ["/plattform", "/plattform/vertrieb", "/plattform/vertrieb/kein-lead", "/plattform/vertrieb/kampagnen/00000000-0000-0000-0000-000000000000"]) {
+    const r = await page.request.get(p, { maxRedirects: 0 });
+    expect(r.status(), p).toBe(404);
+  }
+  // Praxis-Seiten dagegen weiter normal
+  expect((await page.request.get("/heute", { maxRedirects: 0 })).status()).toBe(200);
+  await context.close();
+});
+
+test("Plattform-Admin: /plattform mit 200 in der App-Hülle (Kopfzeile, Navigation mit „Plattform“)", async ({ browser }) => {
+  const pool = new Pool({ connectionString: process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL, max: 1 });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "de-DE", timezoneId: "Europe/Berlin" });
+  try {
+    await pool.query("update users set is_platform_admin = true where email = $1", [DEMO_EMAIL]);
+    // neue Sitzung als Plattform-Admin (inkl. 2FA – die Konsole verlangt sie)
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await loginDemoWithFreshTotp(page);
+    if (await page.locator("dialog[open]").count()) await page.keyboard.press("Escape");
+    const res = await page.goto("/plattform");
+    expect(res?.status()).toBe(200);
+    await expect(page.getByRole("heading", { level: 1, name: "Plattform" })).toBeVisible();
+    // App-Hülle: Kopfzeile mit Suche/Abmelden, linke Navigation mit dem Punkt „Plattform“ als aktuelle Seite
+    await expect(page.getByRole("button", { name: "Abmelden" })).toBeVisible();
+    const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
+    await expect(nav.getByRole("link", { name: "Plattform", exact: true })).toHaveAttribute("aria-current", "page");
+    expect((await page.request.get("/plattform/vertrieb", { maxRedirects: 0 })).status()).toBe(200);
+    expect(errors).toEqual([]);
+  } finally {
+    await pool.query("update users set is_platform_admin = false where email = $1", [DEMO_EMAIL]).catch(() => undefined);
+    await pool.end();
+    await context.close();
+  }
 });

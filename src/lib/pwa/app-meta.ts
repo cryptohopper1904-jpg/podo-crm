@@ -62,7 +62,7 @@ export function appleWebApp(withStartupImages: boolean): NonNullable<Metadata["a
 }
 
 /**
- * Metadaten der App-Layouts ((auth), (app)): Apple-Angaben mit Startbildern. Next.js schreibt für `capable` nur noch
+ * Metadaten der App-Layouts ((auth), (app); (plattform) übernimmt das (app)-Layout samt Metadaten): Apple-Angaben mit Startbildern. Next.js schreibt für `capable` nur noch
  * „mobile-web-app-capable“; ältere iOS-Versionen werten für Vollbild und Startbilder aber nur
  * „apple-mobile-web-app-capable“ aus – deshalb zusätzlich gesetzt.
  */
