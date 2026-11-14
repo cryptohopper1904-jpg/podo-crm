@@ -23,6 +23,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Android/Chrome: die Bildschirmtastatur verkleinert das Layout (statt Inhalte zu überdecken) – zusammen mit der
+  // ausgeblendeten unteren Leiste (src/components/app-nav.tsx) bleibt das fokussierte Feld samt Umgebung sichtbar.
+  // iOS Safari ignoriert den Wert und verschiebt ohnehin nur den sichtbaren Ausschnitt.
+  interactiveWidget: "resizes-content",
   // Farbe der Kopfzeile (--surface): Statusleiste der installierten App bzw. Browserleiste. Der Hell/Dunkel-Umschalter
   // überschreibt sie zur Laufzeit (themeScript), wenn die Wahl von der Systemeinstellung abweicht.
   themeColor: [
