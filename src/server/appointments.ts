@@ -15,6 +15,7 @@ import { lockBooking } from "./portal-booking";
 import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
 import { blockClashesInTx } from "./calendar-blocks";
 import { DECEASED_BLOCKED_MSG, patientIsDeceased } from "./patient-deceased";
+import { PATIENT_NOT_IN_ORG_MSG, patientInOrg } from "./patient-route";
 
 export async function listAppointments(auth: AuthContext, fromIso: string, days: number) {
   const org = auth.organization.id;
@@ -176,11 +177,12 @@ export async function createInternalAppointments(
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
     // Patient:in muss zur Praxis gehören und darf nicht archiviert sein (Auswahl im Formular zeigt Archivierte nicht an –
-    // hier serverseitig, falls eine Kennung von woanders kommt, z. B. „Meinten Sie …?“ oder ein veraltetes Formular)
+    // hier serverseitig, falls eine Kennung von woanders kommt, z. B. „Meinten Sie …?“ oder ein veraltetes Formular).
+    // Fremdschlüssel umgehen RLS; zweite Sicherung: DB-Trigger podo_fk_same_org.
     if (input.patientId) {
+      if (!(await patientInOrg(tx, org, input.patientId))) return { ok: false as const, error: PATIENT_NOT_IN_ORG_MSG };
       const [pt] = await tx.select({ archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId))).limit(1);
-      if (!pt) return { ok: false as const, error: "Patient:in nicht gefunden." };
-      if (pt.archivedAt) return { ok: false as const, error: ARCHIVED_PATIENT_MSG };
+      if (pt?.archivedAt) return { ok: false as const, error: ARCHIVED_PATIENT_MSG };
     }
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {

@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
-import { withOrg } from "@/db";
+import { withOrg, type Tx } from "@/db";
 import { patients } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 
@@ -19,9 +19,20 @@ export function akteIdFromPath(path: string | null | undefined): string | null {
 /** Gibt es die Akte im eigenen Mandanten? (nur `select id`; fremde Praxis = RLS/withOrg = nicht gefunden) */
 export async function patientExists(organizationId: string, id: string): Promise<boolean> {
   if (!UUID.test(id)) return false;
-  const found = await withOrg(organizationId, (tx) =>
-    tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, organizationId), eq(patients.id, id))).limit(1),
-  );
+  return withOrg(organizationId, (tx) => patientInOrg(tx, organizationId, id));
+}
+
+/** Meldung, wenn eine übergebene Patient:in nicht (mehr) zur eigenen Praxis gehört – unbekannt und fremd gleich. */
+export const PATIENT_NOT_IN_ORG_MSG = "Patient:in nicht gefunden. Bitte die Person neu auswählen.";
+
+/**
+ * Gehört die Patient:in zur Praxis? Vor jedem Schreiben mit einer übergebenen patientId prüfen: Fremdschlüssel prüft
+ * Postgres unabhängig von RLS – ohne diese Prüfung (und den DB-Trigger podo_fk_same_org) ließe sich eine Zeile anlegen,
+ * die auf eine Patient:in einer anderen Praxis zeigt. Läuft in der Transaktion des Aufrufers (withOrg).
+ */
+export async function patientInOrg(tx: Tx, organizationId: string, id: string): Promise<boolean> {
+  if (!UUID.test(id)) return false;
+  const found = await tx.select({ id: patients.id }).from(patients).where(and(eq(patients.organizationId, organizationId), eq(patients.id, id))).limit(1);
   return found.length > 0;
 }
 
