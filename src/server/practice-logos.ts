@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { PDFDocument } from "pdf-lib";
-import { withOrg } from "@/db";
+import { withOrg, type Tx } from "@/db";
 import { organizationLogos } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
@@ -111,13 +111,14 @@ export async function logoInfo(org: string) {
  * Logo-Datei einer Praxis (entschlüsselt) oder null. Mit `fallback` wird bei fehlendem Logo die andere Art
  * genommen. Lesefehler (z. B. Datei fehlt) führen nie zum Abbruch eines Belegs – dann ohne Logo.
  */
-export async function loadLogo(org: string, kind: LogoKind, opts: { fallback?: boolean } = {}): Promise<LogoImage | null> {
-  const rows = await withOrg(org, (tx) =>
+export async function loadLogo(org: string, kind: LogoKind, opts: { fallback?: boolean; tx?: Tx } = {}): Promise<LogoImage | null> {
+  const query = (tx: Tx) =>
     tx
       .select({ kind: organizationLogos.kind, storageKey: organizationLogos.storageKey, mime: organizationLogos.mime, width: organizationLogos.width, height: organizationLogos.height })
       .from(organizationLogos)
-      .where(eq(organizationLogos.organizationId, org)),
-  );
+      .where(eq(organizationLogos.organizationId, org));
+  // in einer laufenden Transaktion (z. B. Archivierung beim Ausstellen) keine zweite Verbindung belegen
+  const rows = opts.tx ? await query(opts.tx) : await withOrg(org, query);
   const row = rows.find((r) => r.kind === kind) ?? (opts.fallback ? rows.find((r) => r.kind !== kind) : undefined);
   if (!row) return null;
   try {
@@ -129,7 +130,8 @@ export async function loadLogo(org: string, kind: LogoKind, opts: { fallback?: b
 }
 
 /** Beide Logos für einen Beleg (ohne Rückfall – das PDF entscheidet selbst). */
-export async function loadLogos(org: string): Promise<{ full: LogoImage | null; compact: LogoImage | null }> {
+export async function loadLogos(org: string, tx?: Tx): Promise<{ full: LogoImage | null; compact: LogoImage | null }> {
+  if (tx) return { full: await loadLogo(org, "full", { tx }), compact: await loadLogo(org, "compact", { tx }) };
   const [full, compact] = await Promise.all([loadLogo(org, "full"), loadLogo(org, "compact")]);
   return { full, compact };
 }

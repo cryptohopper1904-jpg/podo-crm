@@ -26,9 +26,9 @@ export default async function UnlockPage() {
       </p>
       <UnlockForm hasPin={!!row.user.unlockPinHash} />
       <LogoutForm action={logoutAction}>
-        <button type="submit" className="text-sm font-semibold text-muted hover:text-text">Stattdessen abmelden</button>
+        <button type="submit" className="inline-flex min-h-11 items-center text-sm font-semibold text-muted hover:text-text">Stattdessen abmelden</button>
       </LogoutForm>
-      <p className="text-xs text-muted">Nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig.</p>
+      <p className="text-[13px] leading-5 text-muted">Nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig.</p>
     </div>
   );
 }
