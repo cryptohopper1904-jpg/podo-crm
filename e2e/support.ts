@@ -76,3 +76,26 @@ export async function insertAppointment(patientId: string, startsAt: Date): Prom
     await pool.end();
   }
 }
+
+/** SQL in der Demo-Praxis (App-Rolle, RLS über app.org_id) in einer Transaktion – für gezielt herbeigeführte Zustände. */
+export async function withDemoOrg<T>(fn: (q: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>, org: string) => Promise<T>): Promise<T> {
+  const pool = new Pool({ connectionString: dbUrl(), max: 1 });
+  const c = await pool.connect();
+  try {
+    const org = await c.query(
+      "select o.id from organizations o join memberships m on m.organization_id = o.id join users u on u.id = m.user_id where u.email = $1 order by o.created_at limit 1",
+      [DEMO_EMAIL],
+    );
+    await c.query("begin");
+    await c.query("select set_config('app.org_id', $1, true)", [org.rows[0].id]);
+    const r = await fn((sql, params) => c.query(sql, params as unknown[]), org.rows[0].id as string);
+    await c.query("commit");
+    return r;
+  } catch (e) {
+    await c.query("rollback").catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+    await pool.end();
+  }
+}

@@ -1,28 +1,20 @@
 "use server";
 
-import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { and, eq, max, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { patients } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { recordConsent } from "@/server/consents";
 import { deletePatient, erasePatientContact, PatientDeletionError } from "@/server/patient-deletion";
-import { findDuplicates, patientInput, toPatientValues } from "@/server/patients";
+import { findDuplicates, insertPatient, parseBirthDate, patientInput, toPatientValues } from "@/server/patients";
 import { markPatientDeceased, undoPatientDeceased } from "@/server/patient-deceased";
 import { offerFreedSlotSafe } from "@/server/waitlist";
 
 export type PatientFormState = { error?: string; duplicates?: { id: string; number: number; name: string }[] } | undefined;
-
-function parseBirthDate(raw: FormDataEntryValue | null) {
-  const s = String(raw ?? "").trim();
-  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  return s;
-}
 
 export async function savePatientAction(_: PatientFormState, form: FormData): Promise<PatientFormState> {
   const auth = await requireAuth("patients.write");
@@ -39,7 +31,7 @@ export async function savePatientAction(_: PatientFormState, form: FormData): Pr
     if (dups.length) {
       return {
         error: "Möglicherweise gibt es diese Person schon. Bitte prüfen oder trotzdem anlegen.",
-        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") })),
+        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") + (d.archived ? " (archiviert)" : "") })),
       };
     }
   }
@@ -51,19 +43,9 @@ export async function savePatientAction(_: PatientFormState, form: FormData): Pr
     );
     await audit({ organizationId: org, userId: auth.user.id, action: "patient.update", entity: "patient", entityId: id });
   } else {
-    let row: { id: string };
-    try {
-      [row] = await withOrg(org, async (tx) => {
-      // Patientennummern lückenlos und ohne Kollision vergeben (gleiche Sperre wie Import/Buchung)
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
-      await assertPatientCapacity(tx, org);
-      const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
-      return tx.insert(patients).values({ ...values, organizationId: org, number: (m?.n ?? 0) + 1, source: "manual" }).returning({ id: patients.id });
-      });
-    } catch (e) {
-      if (e instanceof PatientLimitError) return { error: e.message };
-      throw e;
-    }
+    // Patientennummern lückenlos und ohne Kollision vergeben (gleiche Sperre wie Import/Buchung) – siehe insertPatient
+    const row = await insertPatient(org, values);
+    if (!row.ok) return { error: row.error };
     savedId = row.id;
     await audit({ organizationId: org, userId: auth.user.id, action: "patient.create", entity: "patient", entityId: row.id });
   }

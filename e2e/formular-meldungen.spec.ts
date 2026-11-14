@@ -120,8 +120,9 @@ test("Portal-Angebot annehmen: Knopf weg, Bestätigung fokussiert", async ({ bro
     await page.goto(`/portal/angebot/${offer.token}`);
     const accept = page.getByRole("button", { name: /^Termin annehmen/ });
     await accept.click();
-    // Die Annahme lädt die Seite neu (refresh()) → Ansicht „angenommen“ statt Formular; sie bekommt den Fokus
-    const done = page.getByRole("region", { name: "Termin bereits angenommen" });
+    // Die Annahme lädt die Seite neu (refresh()) → Ansicht „angenommen“ statt Formular; sie bekommt den Fokus.
+    // Titel „Termin angenommen“ (in diesem Tab eben angenommen, Merker im sessionStorage), nicht „bereits angenommen“.
+    const done = page.getByRole("region", { name: "Termin angenommen", exact: true });
     await expect(done).toBeVisible();
     await expect(done).toBeFocused();
     await expect(accept).toHaveCount(0);

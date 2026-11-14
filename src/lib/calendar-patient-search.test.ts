@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchPatients } from "./calendar-patient-search";
+import { matchPatients, splitNewName } from "./calendar-patient-search";
 
 const P = [
   { id: "1", number: 12, firstName: "Erika", lastName: "Beispiel" },
@@ -24,5 +24,15 @@ describe("matchPatients", () => {
   });
   it("höchstens max Treffer", () => {
     expect(matchPatients(P, "e", 2)).toHaveLength(2);
+  });
+});
+
+describe("splitNewName", () => {
+  it("Vorname Nachname, Nachname, Vorname; nur Nachname; Nummer", () => {
+    expect(splitNewName("Erika  Musterfrau")).toEqual({ firstName: "Erika", lastName: "Musterfrau" });
+    expect(splitNewName("Anna Maria Beispiel")).toEqual({ firstName: "Anna Maria", lastName: "Beispiel" });
+    expect(splitNewName("Beispiel, Erika")).toEqual({ firstName: "Erika", lastName: "Beispiel" });
+    expect(splitNewName("Probe")).toEqual({ firstName: "", lastName: "Probe" });
+    expect(splitNewName("123")).toEqual({ firstName: "", lastName: "" });
   });
 });

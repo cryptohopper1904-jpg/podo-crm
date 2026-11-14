@@ -2,9 +2,10 @@ import "server-only";
 import { UUID } from "./patient-route";
 import { and, asc, desc, eq, ilike, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { withOrg } from "@/db";
+import { withOrg, type Tx } from "@/db";
 import {
   appointments,
+  auditLog,
   billingContacts,
   consents,
   invoices,
@@ -14,6 +15,7 @@ import {
 } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { assertPatientCapacity, PatientLimitError } from "./patient-limit";
 import { patientStatus } from "@/lib/patient-status";
 import { deceasedInfo, isDeceased } from "@/lib/patient-deceased";
 import { sequential } from "@/lib/seq";
@@ -221,7 +223,7 @@ export async function nextPatientNumber(org: string) {
   });
 }
 
-/** Mögliche Dubletten: gleicher Name+Geburtsdatum oder gleiche E-Mail/Mobilnummer. */
+/** Mögliche Dubletten: gleicher Name+Geburtsdatum oder gleiche E-Mail/Mobilnummer – auch archivierte (`archived`). */
 export async function findDuplicates(org: string, d: { lastName: string; firstName?: string | null; birthDate?: string | null; email?: string | null; phoneMobile?: string | null }, excludeId?: string) {
   return withOrg(org, async (tx) => {
     const conds = [];
@@ -230,10 +232,78 @@ export async function findDuplicates(org: string, d: { lastName: string; firstNa
     if (d.phoneMobile) conds.push(eq(patients.phoneMobile, d.phoneMobile));
     if (!conds.length) return [];
     const rows = await tx
-      .select({ id: patients.id, number: patients.number, lastName: patients.lastName, firstName: patients.firstName })
+      .select({ id: patients.id, number: patients.number, lastName: patients.lastName, firstName: patients.firstName, archivedAt: patients.archivedAt })
       .from(patients)
       .where(and(eq(patients.organizationId, org), or(...conds)))
+      .orderBy(sql`${patients.archivedAt} is not null`, asc(patients.number))
       .limit(5);
-    return rows.filter((r) => r.id !== excludeId);
+    return rows.filter((r) => r.id !== excludeId).map(({ archivedAt, ...r }) => ({ ...r, archived: archivedAt !== null }));
   });
+}
+
+/** Geburtsdatum aus Formularen: „TT.MM.JJJJ“ → JJJJ-MM-TT, sonst unverändert (Prüfung in patientInput) */
+export function parseBirthDate(raw: FormDataEntryValue | null) {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return s;
+}
+
+/** Kennung einer Anlage-Anfrage (Formular-Token gegen Doppel-Absenden): 16–64 Zeichen aus Buchstaben, Ziffern, „-“ */
+export const CREATE_REQUEST_ID = /^[A-Za-z0-9-]{16,64}$/;
+/** Bereits mit dieser Anfrage-Kennung (von derselben Person) angelegte Patient:in (Audit „patient.create“ der letzten Minuten), sonst null */
+async function createdByRequest(tx: Tx, org: string, userId: string, requestId: string) {
+  const [row] = await tx
+    .select({ id: patients.id, number: patients.number, firstName: patients.firstName, lastName: patients.lastName })
+    .from(auditLog)
+    .innerJoin(patients, and(eq(patients.organizationId, org), sql`${patients.id}::text = ${auditLog.entityId}`))
+    .where(
+      and(
+        eq(auditLog.organizationId, org),
+        eq(auditLog.action, "patient.create"),
+        eq(auditLog.userId, userId),
+        sql`${auditLog.meta} ->> 'requestId' = ${requestId}`,
+        // Wiederholungen derselben Anfrage innerhalb von 10 Minuten liefern dieselbe Patient:in
+        sql`${auditLog.at} > now() - interval '10 minutes'`,
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/** Schon mit dieser Anfrage-Kennung angelegt? (Vorabprüfung ohne Sperre – die verbindliche Prüfung macht insertPatient) */
+export async function patientCreatedByRequest(org: string, userId: string, requestId: string) {
+  return withOrg(org, (tx) => createdByRequest(tx, org, userId, requestId));
+}
+
+/**
+ * Neue Patient:in anlegen (Akte „Patienten → Neu“ und Terminformular): Patientennummer lückenlos unter der Sperre
+ * vergeben, Tarif-Obergrenze prüfen. Audit macht der Aufrufer – außer mit `request`: dann schreibt insertPatient den
+ * Audit-Eintrag (mit `requestId`) in derselben Transaktion und liefert bei einer Wiederholung derselben Anfrage
+ * (Doppel-Enter, erneutes Absenden) die schon angelegte Person (`existing: true`) statt einer zweiten.
+ */
+export async function insertPatient(
+  org: string,
+  values: ReturnType<typeof toPatientValues>,
+  request?: { requestId: string; userId: string; meta?: Record<string, unknown> },
+): Promise<{ ok: true; id: string; number: number; existing: boolean } | { ok: false; error: string }> {
+  try {
+    return await withOrg(org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
+      if (request) {
+        const prev = await createdByRequest(tx, org, request.userId, request.requestId);
+        if (prev) return { ok: true as const, id: prev.id, number: prev.number, existing: true };
+      }
+      await assertPatientCapacity(tx, org);
+      const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
+      const [row] = await tx.insert(patients).values({ ...values, organizationId: org, number: (m?.n ?? 0) + 1, source: "manual" }).returning({ id: patients.id, number: patients.number });
+      if (request) {
+        await audit({ organizationId: org, userId: request.userId, action: "patient.create", entity: "patient", entityId: row.id, meta: { ...request.meta, requestId: request.requestId } }, tx);
+      }
+      return { ok: true as const, id: row.id, number: row.number, existing: false };
+    });
+  } catch (e) {
+    if (e instanceof PatientLimitError) return { ok: false, error: e.message };
+    throw e;
+  }
 }
