@@ -508,10 +508,13 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(toAcc()).toHaveLength(3);
     expect((await audits(org, "org.deletion_request_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "sent", "throttled"]);
     // nach 24 h wieder (auch ohne Statuswechsel)
-    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb((now() - interval '25 hours')::text)) where id=$1", [org]);
-    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_withdrawn}', to_jsonb((now() - interval '26 hours')::text)) where id=$1", [org]);
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb($2::text)) where id=$1", [org, new Date(Date.now() - 25 * 3600_000).toISOString()]);
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_withdrawn}', to_jsonb($2::text)) where id=$1", [org, new Date(Date.now() - 26 * 3600_000).toISOString()]);
     expect(await mailMod0.notifyAccountantsOfDeletionRequest(org, "Testpraxis Fuß", new Date())).toBe("sent");
     expect(toAcc()).toHaveLength(4);
+    // Gegenprobe Zeitvergleich: 23 h alt (ISO-Format) bleibt gedrosselt
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb($2::text)) where id=$1", [org, new Date(Date.now() - 23 * 3600_000).toISOString()]);
+    expect(await mailMod0.notifyAccountantsOfDeletionRequest(org, "Testpraxis Fuß", new Date())).toBe("throttled");
     // gleichzeitige Anträge (Rennen) senden höchstens einmal
     const mailMod = await import("./org-mail");
     await owner.query("update organizations set settings = settings - 'accountantMailAt' where id=$1", [org]);

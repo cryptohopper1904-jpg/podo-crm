@@ -292,6 +292,22 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     mailMode = "ok";
     await run([r.org], new Date(t0.getTime() + 25 * H));
     expect(sent.slice(1).map((m) => m.to).sort()).toEqual([r.email, (await f.pool.query("select email from users where id=$1", [acc2])).rows[0].email].sort());
+    // d) Mailserver lehnt alles ab (auch die Steuerberatung): sie gilt nicht als benachrichtigt, der nächste Versuch schreibt sie erneut an
+    const s = await practice({ deleteInDays: 40, now: t0 });
+    const acc3 = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [s.org, acc3]);
+    const acc3Email = (await f.pool.query("select email from users where id=$1", [acc3])).rows[0].email as string;
+    rejectTo.add(s.email);
+    rejectTo.add(acc3Email);
+    await run([s.org], t0);
+    expect((await row(s.org)).settings.readonlyExpiry).toMatchObject({ noticeMail: "failed", noticeAttempts: 1 });
+    expect((await row(s.org)).settings.readonlyExpiry.accountantNotified).toBeUndefined();
+    rejectTo.delete(s.email);
+    rejectTo.delete(acc3Email);
+    const before = sent.length;
+    await run([s.org], new Date(t0.getTime() + 25 * H));
+    expect(sent.slice(before).map((m) => m.to).sort()).toEqual([s.email, acc3Email].sort());
+    expect((await row(s.org)).settings.readonlyExpiry).toMatchObject({ noticeMail: "sent", accountantNotified: true });
   });
 
   it("Code CR-1: begonnener Löschlauf (purgeStartedAt) – Tarifbuchung setzt die automatische Löschung nicht zurück, Betreiber-Hinweis", async () => {

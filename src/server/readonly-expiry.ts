@@ -105,12 +105,16 @@ export const readonlySql = (now: Date) => {
  * Sicherung der Aufbewahrungspflichten, zählt aber nicht als Zugang (Recht B-1). `withAccountant: false` bei
  * Wiederholungen, die sie schon erreicht haben (Code CR-2).
  */
-function deliver(organizationId: string, subject: string, text: string, deps: Deps, withAccountant = true): Promise<MailOutcome> {
-  return sendOrgMail(organizationId, subject, text, { primary: ["owner"], additional: withAccountant ? ["accountant"] : [], mail: deps.mail, logKey: "cron.readonly_expiry" });
+function deliver(
+  organizationId: string,
+  subject: string,
+  text: string,
+  deps: Deps,
+  withAccountant = true,
+  onAdditional?: (accepted: number, total: number) => void,
+): Promise<MailOutcome> {
+  return sendOrgMail(organizationId, subject, text, { primary: ["owner"], additional: withAccountant ? ["accountant"] : [], mail: deps.mail, logKey: "cron.readonly_expiry", onAdditional });
 }
-
-/** Der Versand hat den Mailserver erreicht (an Inhaber:innen zugestellt oder abgelehnt) – die Steuerberatung wurde mit angeschrieben */
-const reachedMailServer = (m: MailOutcome) => m === "sent" || m === "failed";
 
 async function inbox(organizationId: string, subject: string, body: string) {
   await withOrg(organizationId, (tx) =>
@@ -254,8 +258,13 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
     // Posteingang nur bei der Erstankündigung (Wiederholungen ändern nur den Termin; die Hinweisleiste zeigt ihn aktuell)
     if (!retry) await inbox(o.id, `Löschung der Praxis am ${dateDe(deletionAt)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
     // Steuerberatung nur, solange sie die Ankündigung noch nicht erhalten hat (Erstversuch bzw. bisher nichts versendet)
-    const mail = await deliver(o.id, subject, text, deps, !state.accountantNotified);
-    await setState(o.id, { noticeMail: mail, ...(reachedMailServer(mail) ? { accountantNotified: true } : {}) });
+    // „benachrichtigt“ nur, wenn alle Adressen der Steuerberatung angenommen haben (oder keine eingetragen ist) und der
+    // Versand den Mailserver erreicht hat – bei SMTP-Ausfall bekommt sie die Ankündigung beim nächsten Versuch (Code-Review)
+    let accountantDone = false;
+    const mail = await deliver(o.id, subject, text, deps, !state.accountantNotified, (accepted, total) => {
+      accountantDone = accepted === total;
+    });
+    await setState(o.id, { noticeMail: mail, ...(accountantDone && (mail === "sent" || mail === "failed") ? { accountantNotified: true } : {}) });
     // Wiederholung ohne Versand (kein Plattform-SMTP, kein Empfänger): keine weitere Audit-Zeile je Versuch
     if (!retry || !["not_configured", "no_recipient"].includes(mail)) {
       await db.insert(auditLog).values({

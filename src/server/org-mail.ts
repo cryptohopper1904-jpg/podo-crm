@@ -37,6 +37,8 @@ export type OrgMailOptions = {
   mail?: () => MailPort;
   /** Schlüssel für das Betriebsprotokoll */
   logKey?: string;
+  /** Rückmeldung zu den zusätzlichen Empfängern: angenommen / vorhanden (nur wenn der Versand den Mailserver erreicht hat) */
+  onAdditional?: (accepted: number, total: number) => void;
 };
 
 /**
@@ -66,9 +68,14 @@ export async function sendOrgMail(organizationId: string, subject: string, text:
         log.warn(`${key}.mail_failed`, { organizationId, error: e });
       }
     }
+    let extraOk = 0;
     for (const addr of extra) {
-      await port.send({ to: addr, subject, text }).catch((e) => log.warn(`${key}.mail_failed`, { organizationId, error: e }));
+      await port.send({ to: addr, subject, text }).then(
+        () => void extraOk++,
+        (e) => log.warn(`${key}.mail_failed`, { organizationId, error: e }),
+      );
     }
+    opts.onAdditional?.(extraOk, extra.length);
     return ok ? "sent" : "failed";
   } catch (e) {
     log.warn(`${key}.mail_failed`, { organizationId, error: e });
