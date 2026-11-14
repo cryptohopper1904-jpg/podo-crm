@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ActionForm } from "@/components/action-form";
 import { Field, Input, Select, Textarea } from "@/components/ui";
-import { AUTHORITY_PLACEHOLDER, DEFAULT_REGULATIONS, LEGAL_FORMS, PROFESSIONS, requiresRegister, type ImprintSettings } from "@/lib/imprint";
+import { AUTHORITY_PLACEHOLDER, DEFAULT_REGULATIONS, LEGAL_FORMS, PROFESSIONS, registerApplicable, requiresRegister, type ImprintSettings } from "@/lib/imprint";
 import { saveImprintAction } from "../actions";
 
 const OTHER = "__andere";
@@ -29,13 +29,17 @@ export function ImprintForm({ initial }: { initial: ImprintSettings }) {
         <Field label="Inhaber:in bzw. vertretungsberechtigte Person *" id="imprint-owner">
           <Input name="owner" defaultValue={initial.owner} maxLength={200} autoComplete="name" />
         </Field>
-        {/* Pflicht bei registerpflichtiger Rechtsform, sonst freiwillig (Werte bleiben beim Wechsel der Rechtsform erhalten) */}
-        <Field label={register ? "Registergericht *" : "Registergericht (optional)"} id="imprint-register-court" hint="z. B. Amtsgericht Neuruppin">
-          <Input name="registerCourt" defaultValue={initial.registerCourt} maxLength={120} />
-        </Field>
-        <Field label={register ? "Registernummer *" : "Registernummer (optional)"} id="imprint-register-number" hint="z. B. HRB 12345, PR 123 oder GsR 45">
-          <Input name="registerNumber" defaultValue={initial.registerNumber} maxLength={60} />
-        </Field>
+        {/* Pflicht bei registerpflichtiger Rechtsform, ohne Rechtsform freiwillig; bei Einzelpraxis/GbR ausgeblendet und beim Speichern geleert */}
+        {registerApplicable(legalForm) ? (
+          <>
+            <Field label={register ? "Registergericht *" : "Registergericht (optional)"} id="imprint-register-court" hint="z. B. Amtsgericht Neuruppin">
+              <Input name="registerCourt" defaultValue={initial.registerCourt} maxLength={120} />
+            </Field>
+            <Field label={register ? "Registernummer *" : "Registernummer (optional)"} id="imprint-register-number" hint="z. B. HRB 12345, PR 123 oder GsR 45">
+              <Input name="registerNumber" defaultValue={initial.registerNumber} maxLength={60} />
+            </Field>
+          </>
+        ) : null}
         <Field label="Berufsbezeichnung *" id="imprint-profession">
           <Select name="professionChoice" value={choice} onChange={(e) => setChoice(e.target.value)}>
             <option value="">– wählen –</option>

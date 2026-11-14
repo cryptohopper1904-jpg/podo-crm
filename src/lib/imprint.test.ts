@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_REGULATIONS, imprintSettings, missingImprintFields, PROFESSIONS, requiresRegister } from "./imprint";
+import { DEFAULT_REGULATIONS, imprintSettings, missingImprintFields, PROFESSIONS, registerApplicable, requiresRegister } from "./imprint";
 
 const base = { name: "Praxis", street: "Weg 1", zip: "12345", city: "Ort", phone: "030 1", email: "a@example.org" };
 
@@ -13,8 +13,15 @@ describe("Impressum (§ 5 DDG)", () => {
     expect(missingImprintFields(base, s({ legalForm: "GmbH", registerCourt: "AG X", registerNumber: "HRB 1" }))).toEqual([]);
     expect(missingImprintFields(base, s({ legalForm: "Einzelpraxis" }))).toEqual([]);
     expect(missingImprintFields(base, s({ legalForm: "eGbR" }))).toEqual(["register"]);
-    // nicht registerpflichtig: Register freiwillig, bleibt gespeichert
-    expect(imprintSettings(s({ legalForm: "GbR", registerCourt: "AG X", registerNumber: "GsR 1" }))).toMatchObject({ registerCourt: "AG X", registerNumber: "GsR 1" });
+    // Rechtsform ohne Register (Einzelpraxis, GbR): alte Registerangaben entfallen (Code-Review N3)
+    for (const legalForm of ["GbR", "Einzelpraxis"]) {
+      expect(imprintSettings(s({ legalForm, registerCourt: "AG X", registerNumber: "HRB 1" })), legalForm).toMatchObject({ registerCourt: "", registerNumber: "" });
+    }
+    // ohne Angabe der Rechtsform: freiwillig, bleibt gespeichert
+    expect(imprintSettings(s({ registerCourt: "AG X", registerNumber: "HRA 1" }))).toMatchObject({ registerCourt: "AG X", registerNumber: "HRA 1" });
+    expect(registerApplicable("")).toBe(true);
+    expect(registerApplicable("GmbH")).toBe(true);
+    expect(registerApplicable("GbR")).toBe(false);
     expect(missingImprintFields(base, s({ legalForm: "GbR" }))).toEqual([]);
   });
 

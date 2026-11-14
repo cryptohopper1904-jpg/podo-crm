@@ -18,6 +18,21 @@ export function onlineRequestAppointmentId(threadKey: string | null | undefined)
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id.toLowerCase() : null;
 }
 
+/**
+ * Termin-ID, wenn die Nachricht eine echte /buchen-Anfrage ist (AppSec I-4): eingehend, Kennzeichen im thread_key,
+ * ohne external_id (Formular-Eingang, kein Anbieter) und mit dem festen Betreff. Sonst null – dann wird die Nachricht
+ * wie jede andere behandelt (kein Mitzuordnen eines Termins, kein Neuaufbau des Textes).
+ */
+export function onlineRequestMessageAppointmentId(m: {
+  direction: string;
+  threadKey: string | null;
+  externalId: string | null;
+  subject: string | null;
+}): string | null {
+  if (m.direction !== "inbound" || m.externalId != null || m.subject !== ONLINE_REQUEST_SUBJECT) return null;
+  return onlineRequestAppointmentId(m.threadKey);
+}
+
 /** Ersatz für die freie Notiz der anfragenden Person – sie geht nie an einen KI-Dienst */
 export const NOTE_REMOVED = "[Notiz entfernt]";
 /** Ersatz für den Leistungsnamen (kann gesundheitsbezogen sein, z. B. „Nagelkorrekturspange“) */

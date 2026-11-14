@@ -1453,7 +1453,7 @@ export const messages = pgTable(
     threadKey: text("thread_key"),
     /**
      * Strukturierte Zusatzangaben zur Nachricht (nie an Dritte): bei Online-Anfragen (/buchen) Vor- und Nachname,
-     * damit sie vor einem KI-Antwortvorschlag zuverlässig entfernt werden (src/lib/online-request-llm.ts).
+     * damit sie vor einem KI-Antwortvorschlag zuverlässig entfernt werden (src/lib/online-request.ts).
      */
     meta: jsonb("meta").$type<MessageMeta>(),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),

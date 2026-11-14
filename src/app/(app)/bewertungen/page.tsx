@@ -2,8 +2,9 @@ import { desc, eq } from "drizzle-orm";
 import { Star } from "lucide-react";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Empty, Field, PageHeader, Textarea } from "@/components/ui";
-import { withOrg } from "@/db";
-import { reviews } from "@/db/schema";
+import { db, withOrg } from "@/db";
+import { organizations, reviews } from "@/db/schema";
+import { aiReplySettings } from "@/lib/ai-replies";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { loadConnection } from "@/server/integrations";
@@ -32,6 +33,9 @@ export default async function ReviewsPage() {
   const rated = rows.filter((r) => r.rating !== null);
   const avg = rated.length ? rated.reduce((a, r) => a + (r.rating ?? 0), 0) / rated.length : null;
   const canWrite = auth.can("messages.write");
+  // KI-Vorschlag nur bei eingeschalteten KI-Antwortvorschlägen (Einstellungen → Praxis)
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+  const aiEnabled = aiReplySettings(o?.settings).enabled;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -78,9 +82,11 @@ export default async function ReviewsPage() {
                 <p className="mt-3 whitespace-pre-wrap rounded-xl bg-surface-2 p-3 text-sm"><strong>Ihre Antwort:</strong> {r.reply}</p>
               ) : canWrite ? (
                 <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
-                  <ActionForm action={suggestReviewReplyAction} submit="KI-Antwortvorschlag" className="flex flex-col gap-2">
-                    <input type="hidden" name="id" value={r.id} />
-                  </ActionForm>
+                  {aiEnabled ? (
+                    <ActionForm action={suggestReviewReplyAction} submit="KI-Antwortvorschlag" className="flex flex-col gap-2">
+                      <input type="hidden" name="id" value={r.id} />
+                    </ActionForm>
+                  ) : null}
                   <ActionForm action={publishReviewReplyAction} submit="Antwort veröffentlichen">
                     <input type="hidden" name="id" value={r.id} />
                     <Field label="Antwort" hint="Ohne Behandlungs- oder Gesundheitsbezug.">

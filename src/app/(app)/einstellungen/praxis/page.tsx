@@ -24,6 +24,7 @@ import { OnlineRequestRetentionNote } from "@/components/online-request-retentio
 import { LogoUpload } from "./logo-upload";
 import { AiRepliesForm } from "./ai-replies-form";
 import { aiReplySettings } from "@/lib/ai-replies";
+import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 
 const LOGO_HINT = {
   compact: "Nur das Zeichen (z. B. der Fuß). Erscheint dezent auf Anamnese- und Doku-Bögen sowie auf Quittungen.",
@@ -55,15 +56,18 @@ export default async function PracticeSettings() {
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
       <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
-      <OnlineRequestRetentionNote className="mt-3" />
+      <OnlineRequestRetentionNote active={avvAcceptedAtLeast(o.settings, RETENTION_MIN_AVV)} className="mt-3" />
     </Card>
     <Card id="ki-antworten" className="scroll-mt-24">
       <h2 className="mb-1 font-display text-lg font-semibold">KI-Antwortvorschläge (Posteingang)</h2>
       <p className="mb-4 text-sm text-muted">
-        Standard: aus. Eingeschaltet erzeugt ein KI-Dienst auf Knopfdruck Antwortentwürfe für E-Mail, SMS, WhatsApp und KIM. Den Dienst selbst
-        richtest du unter <Link className="font-semibold text-primary underline" href="/einstellungen/schnittstellen">Einstellungen → Schnittstellen</Link> ein.
+        Standard: aus. Eingeschaltet erzeugt ein KI-Dienst auf Knopfdruck Antwortentwürfe für E-Mail, SMS und WhatsApp im Posteingang sowie für
+        Antworten auf Google-Bewertungen. KIM-Nachrichten (Arztbriefe) gehen nie an den KI-Dienst. Der Sprachbericht hat eine eigene Freigabe unter
+        Schnittstellen. Den Dienst selbst richtest du unter{" "}
+        <Link className="font-semibold text-primary underline" href="/einstellungen/schnittstellen">Einstellungen → Schnittstellen</Link> ein.
       </p>
-      <AiRepliesForm initial={aiReplySettings(o.settings)} disabled={!!auth.support} />
+      {/* Einschalten nur Inhaber:in (Recht M-88-7), Ausschalten jede Person mit settings.manage */}
+      <AiRepliesForm initial={aiReplySettings(o.settings)} disabled={!!auth.support} canEnable={auth.role === "owner" && !auth.support} />
     </Card>
     <Card>
       <ActionForm action={savePracticeAction} stickyActions>

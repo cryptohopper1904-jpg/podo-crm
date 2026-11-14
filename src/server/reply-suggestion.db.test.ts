@@ -127,6 +127,7 @@ const AI_ON = { enabled: true, provider: "Beispiel-KI", country: "Frankreich", a
     const p = await practice({ aiReplies: AI_ON });
     const id = await message(p.org, {
       threadKey: "online-request:7a0c1f5e-2f4b-4c1e-9d3a-6b2a1c0d9e8f",
+      subject: "Neue Online-Buchung (unbestätigt)",
       from: "0170 1112223",
       channel: "sms",
       body: [
@@ -155,19 +156,29 @@ const AI_ON = { enabled: true, provider: "Beispiel-KI", country: "Frankreich", a
     expect(m.patient_id).toBeNull();
   });
 
-  it("keine Vorschläge für interne Hinweise und KI-Telefon-Notizen; KIM erst nach Zuordnung", async () => {
+  it("keine Vorschläge für interne Hinweise, KI-Telefon-Notizen und KIM – auch nicht nach Zuordnung (Recht/AppSec L-2)", async () => {
     const p = await practice({ aiReplies: AI_ON });
     const phone = await message(p.org, { channel: "phone", body: "Terminwunsch per KI-Telefon\nName laut Anrufer: Max Muster" });
     const none = await message(p.org, { channel: "none", body: "Warteliste: Angebot verschickt an: Max Muster" });
     const kim = await message(p.org, { channel: "kim", from: "praxis@arzt.kim.telematik", body: "Arztbrief zu Frau Kunz" });
     expect((await inbox.suggestReplyAction(undefined, fd({ id: phone })))?.error).toMatch(/keine KI-Antwortvorschläge/);
     expect((await inbox.suggestReplyAction(undefined, fd({ id: none })))?.error).toMatch(/keine KI-Antwortvorschläge/);
-    expect((await inbox.suggestReplyAction(undefined, fd({ id: kim })))?.error).toMatch(/zuerst einer Person zuordnen/);
-    expect(llm.sent).toHaveLength(0);
+    expect((await inbox.suggestReplyAction(undefined, fd({ id: kim })))?.error).toMatch(/KIM-Nachrichten gibt es keine KI-Antwortvorschläge/);
     const patient = await f.patient(p.org, { firstName: "Gerda", lastName: "Kunz" });
     await f.asOrg(p.org, (c) => c.query("update messages set patient_id = $2 where id = $1", [kim, patient]));
-    expect((await inbox.suggestReplyAction(undefined, fd({ id: kim })))?.ok).toBeTruthy();
-    expect(llm.sent[0].text).not.toContain("Kunz");
+    expect((await inbox.suggestReplyAction(undefined, fd({ id: kim })))?.error).toMatch(/KIM-Nachrichten gibt es keine KI-Antwortvorschläge/);
+    expect(llm.sent).toHaveLength(0);
+  });
+
+  it("AppSec I-4: Nachricht mit Kennzeichen, aber external_id (kein Formular-Eingang) ordnet keinen Termin mit zu", async () => {
+    const p = await practice();
+    const { appointmentId } = await onlineRequest(p);
+    const forged = await message(p.org, { threadKey: `online-request:${appointmentId}`, subject: "Neue Online-Buchung (unbestätigt)", body: "Hallo" });
+    await f.asOrg(p.org, (c) => c.query("update messages set external_id = 'wamid.1' where id = $1", [forged]));
+    const patient = await f.patient(p.org, { lastName: "Fremd" });
+    const [{ number }] = (await f.asOrg(p.org, (c) => c.query("select number from patients where id = $1", [patient]))).rows;
+    expect(await inbox.matchPatientAction(undefined, fd({ id: forged, patientNumber: String(number) }))).toEqual({ ok: "Zugeordnet." });
+    expect((await f.asOrg(p.org, (c) => c.query("select patient_id from appointments where id = $1", [appointmentId]))).rows[0].patient_id).toBeNull();
   });
 
   it("Zuordnung einer Online-Anfrage ordnet den vorgemerkten Termin derselben Praxis mit zu (nur, wenn noch ohne Person)", async () => {
@@ -209,6 +220,63 @@ const AI_ON = { enabled: true, provider: "Beispiel-KI", country: "Frankreich", a
     expect(await aiOf()).toMatchObject({ enabled: false, provider: "Beispiel-KI", country: "Frankreich" });
     const actions = (await f.asOrg(p.org, (c) => c.query("select action from audit_log where organization_id = $1 and action like 'settings.ai_replies.%' order by id", [p.org]))).rows.map((r) => r.action);
     expect(actions).toEqual(["settings.ai_replies.on", "settings.ai_replies.off"]);
+  });
+
+  it("Recht N-88-7: nach Aus sind die Bestätigungen verfallen – Häkchen nicht vorausgefüllt, Einschalten nur mit neuer Bestätigung", async () => {
+    const p = await practice({ aiReplies: AI_ON });
+    const { aiReplySettings } = await import("@/lib/ai-replies");
+    const current = async () => aiReplySettings((await f.pool.query("select settings from organizations where id = $1", [p.org])).rows[0].settings);
+    expect((await current()).enabled).toBe(true);
+    expect((await settings.saveAiRepliesAction(undefined, fd({})))?.ok).toMatch(/ausgeschaltet/);
+    // gespeicherte Bestätigungen verfallen → das Formular füllt keine Häkchen vor (defaultChecked nur bei enabled)
+    expect(await current()).toMatchObject({ enabled: false, provider: "Beispiel-KI", country: "Frankreich", avvConfirmed: false, confidentialityConfirmed: false, transferConfirmed: false });
+    // Einschalten ohne erneute Häkchen: abgelehnt
+    expect((await settings.saveAiRepliesAction(undefined, fd({ enabled: "on", provider: "Beispiel-KI", country: "Frankreich" })))?.error).toMatch(/beide Punkte/);
+    expect((await current()).enabled).toBe(false);
+    expect((await settings.saveAiRepliesAction(undefined, fd({ enabled: "on", provider: "Beispiel-KI", country: "Frankreich", avvConfirmed: "on", confidentialityConfirmed: "on" })))?.ok).toMatch(/eingeschaltet/);
+    expect((await current()).enabled).toBe(true);
+  });
+
+  it("Recht M-88-7: einschalten nur Inhaber:in; ausschalten auch andere Rollen mit settings.manage", async () => {
+    const p = await practice();
+    const aiOf = async () => (await f.pool.query("select settings->'aiReplies' a from organizations where id = $1", [p.org])).rows[0].a;
+    const on = fd({ enabled: "on", provider: "Beispiel-KI", country: "Frankreich", avvConfirmed: "on", confidentialityConfirmed: "on" });
+    authState.role = "therapist";
+    expect((await settings.saveAiRepliesAction(undefined, on))?.error).toMatch(/nur die Inhaberin bzw. der Inhaber/);
+    expect(await aiOf()).toBeNull();
+    authState.role = "owner";
+    expect((await settings.saveAiRepliesAction(undefined, on))?.ok).toMatch(/eingeschaltet/);
+    authState.role = "therapist";
+    expect((await settings.saveAiRepliesAction(undefined, fd({})))?.ok).toMatch(/ausgeschaltet/);
+    expect(await aiOf()).toMatchObject({ enabled: false, offBy: p.user });
+  });
+
+  it("Recht M-88-6: Land nur aus der Liste; Drittland ohne Garantie-Häkchen abgelehnt, mit Häkchen Garantie-Satz im Datenschutztext", async () => {
+    const p = await practice();
+    const base = { enabled: "on", provider: "Beispiel-KI", avvConfirmed: "on", confidentialityConfirmed: "on" };
+    expect((await settings.saveAiRepliesAction(undefined, fd({ ...base, country: "Atlantis" })))?.error).toMatch(/aus der Liste/);
+    expect((await settings.saveAiRepliesAction(undefined, fd({ ...base, country: "USA" })))?.error).toMatch(/außerhalb von EU\/EWR/);
+    expect((await f.pool.query("select settings->'aiReplies' a from organizations where id = $1", [p.org])).rows[0].a).toBeNull();
+    expect((await settings.saveAiRepliesAction(undefined, fd({ ...base, country: "USA", transferConfirmed: "on" })))?.ok).toMatch(/eingeschaltet/);
+    const audit = (await f.asOrg(p.org, (c) => c.query("select meta from audit_log where organization_id = $1 and action = 'settings.ai_replies.on'", [p.org]))).rows;
+    expect(audit[0].meta).toMatchObject({ country: "USA", transferConfirmed: true });
+    // EU-Land: kein drittes Häkchen nötig
+    expect((await settings.saveAiRepliesAction(undefined, fd({ ...base, country: "Frankreich" })))?.ok).toMatch(/eingeschaltet/);
+  });
+
+  it("AppSec L-1: KI-Vorschlag für Google-Bewertungen nur bei eingeschaltetem Schalter", async () => {
+    const p = await practice();
+    const reviewActions = await import("@/app/(app)/bewertungen/actions");
+    const review = (
+      await f.asOrg(p.org, (c) =>
+        c.query("insert into reviews (organization_id, external_id, author, rating, text) values ($1, 'g-1', 'Max Muster', 5, 'Sehr freundlich!') returning id", [p.org]),
+      )
+    ).rows[0].id as string;
+    expect((await reviewActions.suggestReviewReplyAction(undefined, fd({ id: review })))?.error).toMatch(/KI-Antwortvorschläge sind ausgeschaltet/);
+    expect(llm.sent).toHaveLength(0);
+    await f.pool.query("update organizations set settings = settings || jsonb_build_object('aiReplies', $2::jsonb) where id = $1", [p.org, JSON.stringify(AI_ON)]);
+    expect((await reviewActions.suggestReviewReplyAction(undefined, fd({ id: review })))?.ok).toBeTruthy();
+    expect(llm.sent).toHaveLength(1);
   });
 
   it("AVV nachträglich akzeptieren: nur Inhaber:in, speichert Version, Zeitpunkt, Person und die frühere Zustimmung", async () => {

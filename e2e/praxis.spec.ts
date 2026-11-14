@@ -296,8 +296,18 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
     await expect(pub.getByRole("heading", { level: 1, name: heading })).toBeVisible();
   }
   await ctx.close();
-  // Praxis: Hinweis zur automatischen Löschung nach 6 Monaten an der neuen Anfrage und bei der Online-Buchung
+  // Praxis: Hinweis zur automatischen Löschung nach 6 Monaten an der neuen Anfrage und bei der Online-Buchung – erst,
+  // wenn die Inhaber:in die AVV (ab Version 0.3) akzeptiert hat; vorher „startet, sobald …“ und Hinweis auch auf „Heute“
   const retention = /werden 6 Monate nach Eingang automatisch gelöscht/;
+  await page.goto("/heute");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  if (await page.getByText(/Auftragsverarbeitungsvertrag \(AVV\) aktualisiert/).isVisible()) {
+    await page.goto("/einstellungen/praxis");
+    const acceptAvv = page.getByRole("button", { name: /^AVV [\d.]+ akzeptieren$/ });
+    await expect(page.getByText(/Die automatische Löschung von Online-Anfragen ohne Termin nach 6 Monaten startet, sobald/)).toBeVisible();
+    await acceptAvv.click();
+    await expect(acceptAvv).toHaveCount(0);
+  }
   await page.goto("/posteingang");
   await expect(page.getByText(retention).first()).toBeVisible();
   await page.goto("/einstellungen/praxis");

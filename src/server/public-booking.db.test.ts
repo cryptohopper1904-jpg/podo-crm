@@ -193,18 +193,62 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       const [{ slug }] = (await f.pool.query("select slug from organizations where id = $1", [p.org])).rows;
       const setAi = (a: Record<string, unknown>) => f.pool.query("update organizations set settings = settings || jsonb_build_object('aiReplies', $2::jsonb) where id = $1", [p.org, JSON.stringify(a)]);
       const render = async () => renderToStaticMarkup(createElement(PrivacyContent, { site: (await web.loadPracticeLegal(slug))! }));
-      await setAi({ enabled: true, provider: "Beispiel-KI <b>Inc.</b>", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
+      await setAi({ enabled: true, provider: "Beispiel-KI <b>Inc.</b>", country: "USA", avvConfirmed: true, confidentialityConfirmed: true, transferConfirmed: true });
       const on = await render();
       expect(on).toContain("Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst Beispiel-KI &lt;b&gt;Inc.&lt;/b&gt; (USA) als Auftragsverarbeiter.");
-      expect(on).toContain("Dabei kann der Inhalt Ihrer Nachricht ohne Ihren Namen und Ihre Kontaktdaten in USA verarbeitet werden.");
+      // Recht H-88-5: Wortlaut zur Übermittlung und zur Grenze der automatischen Entfernung
+      expect(on).toContain(
+        "Dabei wird der Inhalt Ihrer Nachricht an Beispiel-KI &lt;b&gt;Inc.&lt;/b&gt; in den USA übermittelt. Ihr Name, Ihre Telefonnummer und Ihre E-Mail-Adresse werden vorher automatisch entfernt. Namen oder andere persönliche Angaben, die Sie selbst in den Nachrichtentext schreiben, können dabei nicht in jedem Fall erkannt werden.",
+      );
+      expect(on).toContain("Bitte geben Sie im Freitext keine Diagnosen an.");
+      // Recht M-88-6: Garantie-Satz nur bei Drittland
       expect(on).toContain("Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine Kopie der Garantien erhalten Sie bei der Praxis.");
       expect(on).not.toContain("findet nicht statt");
-      expect((await web.loadPracticeLegal(slug))!.aiReplies).toEqual({ provider: "Beispiel-KI <b>Inc.</b>", country: "USA" });
-      // ohne Bestätigung § 203 (z. B. von Hand gesetzt) gilt der Schalter als aus
-      await setAi({ enabled: true, provider: "X", country: "USA", avvConfirmed: true });
+      expect((await web.loadPracticeLegal(slug))!.aiReplies).toEqual({ provider: "Beispiel-KI <b>Inc.</b>", country: "USA", countryIn: "in den USA", thirdCountry: true });
+      await setAi({ enabled: true, provider: "Mistral AI", country: "Frankreich", avvConfirmed: true, confidentialityConfirmed: true });
+      const eu = await render();
+      expect(eu).toContain("Dabei wird der Inhalt Ihrer Nachricht an Mistral AI in Frankreich übermittelt.");
+      expect(eu).not.toContain("Standardvertragsklauseln");
+      expect(eu).not.toContain("außerhalb der EU");
+      // Drittland ohne Bestätigung der Garantien oder ohne Bestätigung § 203 (z. B. von Hand gesetzt) gilt als aus
+      await setAi({ enabled: true, provider: "X", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
       expect(await render()).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
-      await setAi({ enabled: false, provider: "X", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
+      await setAi({ enabled: true, provider: "X", country: "Frankreich", avvConfirmed: true });
+      expect(await render()).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      await setAi({ enabled: false, provider: "X", country: "Frankreich", avvConfirmed: true, confidentialityConfirmed: true });
       expect(await render()).not.toContain("KI-Dienst");
+    });
+
+    it("Recht H-88-6: fester Löschzeitraum im Datenschutztext nur, wenn der Löschlauf aktiv ist (AVV ab RETENTION_MIN_AVV)", async () => {
+      const web = await import("./website");
+      const { renderToStaticMarkup } = await import("react-dom/server");
+      const { createElement } = await import("react");
+      const { PrivacyContent } = await import("@/app/p/[slug]/_site/legal-content");
+      const p = await practice();
+      const [{ slug }] = (await f.pool.query("select slug from organizations where id = $1", [p.org])).rows;
+      const render = async () => renderToStaticMarkup(createElement(PrivacyContent, { site: (await web.loadPracticeLegal(slug))! }));
+      const SIX = "Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löschen wir 6 Monate nach Eingang automatisch.";
+      const OTHERWISE = "Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löscht die Praxis, sobald sie für die Bearbeitung Ihrer Anfrage nicht mehr erforderlich sind.";
+      const BACKUP = "Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben.";
+      const accept = (avv: string | null) =>
+        f.pool.query(
+          avv ? "update organizations set settings = settings || jsonb_build_object('legalAcceptance', jsonb_build_object('avv', $2::text)) where id = $1" : "update organizations set settings = settings - 'legalAcceptance' where id = $1",
+          avv ? [p.org, avv] : [p.org],
+        );
+      for (const avv of ["0.3", "0.4"]) {
+        await accept(avv);
+        const t = await render();
+        expect(t, avv).toContain(`${SIX} ${BACKUP}`);
+        expect(t, avv).not.toContain(OTHERWISE);
+        expect((await web.loadPracticeLegal(slug))!.onlineRequestRetention, avv).toBe(true);
+      }
+      for (const avv of [null, "0.2"]) {
+        await accept(avv);
+        const t = await render();
+        expect(t, String(avv)).toContain(`${OTHERWISE} ${BACKUP}`);
+        expect(t, String(avv)).not.toContain("6 Monate nach Eingang");
+        expect((await web.loadPracticeLegal(slug))!.onlineRequestRetention, String(avv)).toBe(false);
+      }
     });
 
     it("Art.-13-Block nur bei aktiver Online-Buchung; Website-Knopf „Termin buchen“ folgt derselben Regel", async () => {

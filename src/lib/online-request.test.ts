@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { redact } from "@/integrations/llm/redact";
-import { NOTE_REMOVED, SERVICE_REMOVED, onlineRequestAppointmentId, onlineRequestLlmText, onlineRequestNames, singleLine } from "./online-request";
+import {
+  NOTE_REMOVED,
+  ONLINE_REQUEST_SUBJECT,
+  SERVICE_REMOVED,
+  onlineRequestAppointmentId,
+  onlineRequestLlmText,
+  onlineRequestMessageAppointmentId,
+  onlineRequestNames,
+  singleLine,
+} from "./online-request";
 import { aiReplyChannel, aiReplyDisclosure, aiReplySettings } from "./ai-replies";
-import { avvAcceptedAtLeast, avvReacceptance, versionAtLeast } from "./legal";
+import { avvAcceptedAtLeast, avvReacceptance, RETENTION_MIN_AVV, versionAtLeast } from "./legal";
 
 const body = [
   "Online-Anfrage: Nagelkorrekturspange am 2031-05-06 um 09:30 Uhr.",
@@ -41,20 +50,44 @@ describe("Online-Anfrage für KI-Antwortvorschläge (AppSec M-1)", () => {
     expect(onlineRequestAppointmentId("waitlist:1")).toBeNull();
     expect(singleLine(" Olga\nNotiz:\tX ")).toBe("Olga Notiz: X");
   });
+
+  it("AppSec I-4: Online-Anfrage nur bei eingehender Nachricht mit Kennzeichen, ohne external_id und mit festem Betreff", () => {
+    const id = "7a0c1f5e-2f4b-4c1e-9d3a-6b2a1c0d9e8f";
+    const m = { direction: "inbound", threadKey: `online-request:${id}`, externalId: null, subject: ONLINE_REQUEST_SUBJECT };
+    expect(onlineRequestMessageAppointmentId(m)).toBe(id);
+    expect(onlineRequestMessageAppointmentId({ ...m, externalId: "wamid.1" })).toBeNull();
+    expect(onlineRequestMessageAppointmentId({ ...m, subject: "Re: Termin" })).toBeNull();
+    expect(onlineRequestMessageAppointmentId({ ...m, subject: null })).toBeNull();
+    expect(onlineRequestMessageAppointmentId({ ...m, direction: "outbound" })).toBeNull();
+    expect(onlineRequestMessageAppointmentId({ ...m, threadKey: "online-request:kaputt" })).toBeNull();
+  });
 });
 
-describe("Schalter KI-Antwortvorschläge (Recht H-88-4)", () => {
-  it("Standard aus; an nur mit Anbieter, Land und beiden Bestätigungen", () => {
+describe("Schalter KI-Antwortvorschläge (Recht H-88-4, M-88-6, L-2)", () => {
+  it("Standard aus; an nur mit Anbieter, Land aus der Liste und beiden Bestätigungen", () => {
     expect(aiReplySettings({}).enabled).toBe(false);
     const full = { enabled: true, provider: "Mistral AI", country: "Frankreich", avvConfirmed: true, confidentialityConfirmed: true };
     expect(aiReplySettings({ aiReplies: full }).enabled).toBe(true);
-    expect(aiReplyDisclosure({ aiReplies: full })).toEqual({ provider: "Mistral AI", country: "Frankreich" });
+    expect(aiReplyDisclosure({ aiReplies: full })).toEqual({ provider: "Mistral AI", country: "Frankreich", countryIn: "in Frankreich", thirdCountry: false });
     for (const k of ["provider", "country", "avvConfirmed", "confidentialityConfirmed"] as const) {
       expect(aiReplySettings({ aiReplies: { ...full, [k]: k.endsWith("Confirmed") ? "true" : " " } }).enabled, k).toBe(false);
     }
+    // Land nicht aus der Liste (z. B. alter Freitext) → aus
+    expect(aiReplySettings({ aiReplies: { ...full, country: "France" } }).enabled).toBe(false);
     expect(aiReplyDisclosure({ aiReplies: { ...full, enabled: false } })).toBeNull();
-    expect(["email", "sms", "whatsapp", "kim"].every(aiReplyChannel)).toBe(true);
-    expect(["phone", "none", "letter"].some(aiReplyChannel)).toBe(false);
+  });
+
+  it("Drittland nur mit Bestätigung der Garantien; Ortsangabe mit Artikel", () => {
+    const usa = { enabled: true, provider: "X", country: "USA", avvConfirmed: true, confidentialityConfirmed: true };
+    expect(aiReplySettings({ aiReplies: usa })).toMatchObject({ enabled: false, thirdCountry: true });
+    expect(aiReplyDisclosure({ aiReplies: { ...usa, transferConfirmed: true } })).toEqual({ provider: "X", country: "USA", countryIn: "in den USA", thirdCountry: true });
+    expect(aiReplyDisclosure({ aiReplies: { ...usa, country: "Schweiz", transferConfirmed: true } })?.countryIn).toBe("in der Schweiz");
+    expect(aiReplyDisclosure({ aiReplies: { ...usa, country: "Niederlande" } })).toMatchObject({ countryIn: "in den Niederlanden", thirdCountry: false });
+  });
+
+  it("KIM nie an den KI-Dienst (L-2); nur E-Mail, SMS, WhatsApp", () => {
+    expect(["email", "sms", "whatsapp"].every(aiReplyChannel)).toBe(true);
+    expect(["kim", "phone", "none", "letter"].some(aiReplyChannel)).toBe(false);
   });
 });
 
@@ -68,6 +101,10 @@ describe("AVV-Zustimmung", () => {
     expect(versionAtLeast("0.3-beta", "0.3")).toBe(false);
     expect(avvAcceptedAtLeast({ legalAcceptance: { agb: "0.3", avv: "0.3" } }, "0.3")).toBe(true);
     expect(avvAcceptedAtLeast({}, "0.3")).toBe(false);
+    // Löschlauf: eine gemeinsame Mindestversion, unabhängig von der aktuellen AVV-Version
+    expect(RETENTION_MIN_AVV).toBe("0.3");
+    expect(avvAcceptedAtLeast({ legalAcceptance: { avv: "0.4" } }, RETENTION_MIN_AVV)).toBe(true);
+    expect(avvAcceptedAtLeast({ legalAcceptance: { avv: "0.2" } }, RETENTION_MIN_AVV)).toBe(false);
   });
 
   it("nachträgliche Zustimmung behält den AGB-Stand und die frühere Zustimmung", () => {

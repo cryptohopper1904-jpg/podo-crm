@@ -32,6 +32,12 @@ export type LegalForm = (typeof LEGAL_FORMS)[number]["value"];
 
 export const isKnownLegalForm = (v: string): v is LegalForm => LEGAL_FORMS.some((f) => f.value === v);
 export const requiresRegister = (legalForm: string) => LEGAL_FORMS.some((f) => f.value === legalForm && f.register);
+/**
+ * Registerangaben möglich: bei registerpflichtiger Rechtsform (Pflicht) oder ohne Angabe der Rechtsform (freiwillig).
+ * Bei einer Rechtsform ohne Register (Einzelpraxis, GbR) werden sie geleert – sonst stünde z. B. eine alte HRB-Nummer
+ * im Impressum einer Einzelpraxis (Code-Review N3).
+ */
+export const registerApplicable = (legalForm: string) => !legalForm || requiresRegister(legalForm);
 export const isKnownProfession = (v: string) => (PROFESSIONS as readonly string[]).includes(v);
 
 export type ImprintSettings = {
@@ -47,7 +53,7 @@ export type ImprintSettings = {
   authority: string;
   /** Rechtsform (optional; LEGAL_FORMS), leer = keine Angabe */
   legalForm: string;
-  /** Registergericht und Registernummer (Pflicht bei registerpflichtiger Rechtsform, sonst freiwillig) */
+  /** Registergericht und Registernummer (Pflicht bei registerpflichtiger Rechtsform, ohne Rechtsform freiwillig, sonst leer) */
   registerCourt: string;
   registerNumber: string;
   /** Wirtschafts-Identifikationsnummer (§ 139c AO, optional) */
@@ -73,8 +79,8 @@ export function imprintSettings(settings: Record<string, unknown> | null | undef
       : storedRegulations === DEFAULT_REGULATIONS ? "" : storedRegulations,
     authority: str(i.authority, 500),
     legalForm: isKnownLegalForm(legalForm) ? legalForm : "",
-    registerCourt: str(i.registerCourt, 120),
-    registerNumber: str(i.registerNumber, 60),
+    registerCourt: registerApplicable(isKnownLegalForm(legalForm) ? legalForm : "") ? str(i.registerCourt, 120) : "",
+    registerNumber: registerApplicable(isKnownLegalForm(legalForm) ? legalForm : "") ? str(i.registerNumber, 60) : "",
     economicId: str(i.economicId, 40),
     dpo: str(i.dpo, 500),
   };

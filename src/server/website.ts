@@ -5,7 +5,8 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { isPrivateOnly } from "@/lib/features";
 import { imprintSettings, type ImprintSettings } from "@/lib/imprint";
-import { aiReplyDisclosure } from "@/lib/ai-replies";
+import { aiReplyDisclosure, type AiReplyDisclosure } from "@/lib/ai-replies";
+import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 import { publicBookingAvailable } from "@/server/portal-booking";
 import { defaultServiceDescription, homeVisitAreas, safeUrl, websiteOpeningHours, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
@@ -33,7 +34,12 @@ export type PublicSite = {
   imprintInfo: ImprintSettings;
   privacy: string;
   /** KI-Antwortvorschläge eingeschaltet: Anbieter und Land für die Datenschutzhinweise (src/lib/ai-replies.ts), sonst null */
-  aiReplies: { provider: string; country: string } | null;
+  aiReplies: AiReplyDisclosure | null;
+  /**
+   * Automatische Löschung unbestätigter Online-Anfragen nach 6 Monaten aktiv (AVV ab RETENTION_MIN_AVV akzeptiert –
+   * dieselbe Prüfung wie der Löschlauf, src/server/online-request-retention.ts); sonst kein fester Zeitraum im Text
+   */
+  onlineRequestRetention: boolean;
   showPrices: boolean;
   onlineBooking: boolean;
   /** Praxis nur für Privatpatient:innen & Selbstzahler (src/lib/features.ts): Badge, keine Kassen-Hinweise */
@@ -78,6 +84,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     imprintInfo: imprintSettings(settings),
     privacy: w.privacy,
     aiReplies: aiReplyDisclosure(settings),
+    onlineRequestRetention: avvAcceptedAtLeast(settings, RETENTION_MIN_AVV),
     showPrices: w.showPrices,
     // „Termin online buchen“ nur, wenn /buchen wirklich erreichbar ist (eingeschaltet, Impressum vollständig, kein
     // Nur-Lesen/Löschantrag) – gleiche Regel wie Buchungsseite und Datenschutzblock (src/server/portal-booking.ts)
@@ -97,7 +104,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
 });
 
 /** Angaben für Impressum und Datenschutzhinweise einer Praxis (Website /p und Online-Buchung /buchen) */
-export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "vatId" | "imprint" | "imprintInfo" | "privacy" | "aiReplies" | "onlineBooking"> & {
+export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "vatId" | "imprint" | "imprintInfo" | "privacy" | "aiReplies" | "onlineRequestRetention" | "onlineBooking"> & {
   /** Praxis-Website veröffentlicht → Impressum/Datenschutz unter /p/<slug>/…, sonst Ersatzseiten unter /buchen/<slug>/… */
   websitePublished: boolean;
 };
@@ -125,6 +132,7 @@ export const loadPracticeLegal = cache(async (slug: string): Promise<PracticeLeg
     imprintInfo: imprintSettings(o.settings ?? {}),
     privacy: w.privacy,
     aiReplies: aiReplyDisclosure(o.settings ?? {}),
+    onlineRequestRetention: avvAcceptedAtLeast(o.settings ?? {}, RETENTION_MIN_AVV),
     onlineBooking: await publicBookingAvailable(o.id),
     websitePublished: websitePublished(o),
   };

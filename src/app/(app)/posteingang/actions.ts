@@ -17,7 +17,7 @@ import { matchPatientByAddress } from "@/server/messages";
 import { replyFacts } from "@/server/reply-context";
 import { replySuggestionInput } from "@/server/reply-suggestion";
 import { aiReplySettings } from "@/lib/ai-replies";
-import { onlineRequestAppointmentId } from "@/lib/online-request";
+import { onlineRequestMessageAppointmentId } from "@/lib/online-request";
 
 export type InboxState = { error?: string; ok?: string } | undefined;
 
@@ -52,7 +52,8 @@ export async function matchPatientAction(_: InboxState, form: FormData): Promise
   }
   // Online-Anfrage (/buchen): den vorgemerkten Termin derselben Praxis gleich mit zuordnen, sofern noch ohne Person –
   // sonst bliebe er „unbestätigt ohne Akte“ und fiele nach 6 Monaten unter die automatische Löschung
-  const requestAppointmentId = onlineRequestAppointmentId(m.threadKey);
+  // nur echte Formular-Eingänge (thread_key, ohne external_id, fester Betreff – AppSec I-4)
+  const requestAppointmentId = onlineRequestMessageAppointmentId(m);
   const linked = await withOrg(org, async (tx) => {
     await tx.update(messages).set({ patientId }).where(and(eq(messages.organizationId, org), eq(messages.id, m.id)));
     if (!requestAppointmentId || !m.threadKey) return [];

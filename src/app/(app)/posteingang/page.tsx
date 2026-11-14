@@ -10,7 +10,8 @@ import { isMockMode } from "@/integrations/registry";
 import { mapSequential } from "@/lib/seq";
 import type { PatientSuggestion } from "@/lib/kim-hints";
 import { kimPatientSuggestions, loadKimConnection } from "@/server/kim";
-import { onlineRequestAppointmentId } from "@/lib/online-request";
+import { onlineRequestMessageAppointmentId } from "@/lib/online-request";
+import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 import { aiReplyChannel, aiReplySettings } from "@/lib/ai-replies";
 import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction, syncKimAction } from "./actions";
@@ -29,11 +30,19 @@ type CardProps = {
   aiEnabled?: boolean;
   /** Online-Anfrage, deren Termin noch unter die automatische Löschung fällt (ohne Person, geplant/abgesagt) */
   pendingRequest?: boolean;
+  /** Löschlauf für die Praxis aktiv (AVV ab RETENTION_MIN_AVV akzeptiert) */
+  retentionActive?: boolean;
 };
 
-function MessageCard({ row, canWrite, suggestions = [], aiEnabled = false, pendingRequest = false }: CardProps) {
+function MessageCard({ row, canWrite, suggestions = [], aiEnabled = false, pendingRequest = false, retentionActive = false }: CardProps) {
   const { m, patient } = row;
   const open = m.status === "new" || m.status === "suggested";
+  const matchForm = (
+    <ActionForm action={matchPatientAction} submit="Zuordnen" className="flex flex-wrap items-end gap-2">
+      <input type="hidden" name="id" value={m.id} />
+      <Field label={m.channel === "kim" ? "Patientennummer" : "Patientennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
+    </ActionForm>
+  );
   return (
     <Card>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
@@ -52,7 +61,9 @@ function MessageCard({ row, canWrite, suggestions = [], aiEnabled = false, pendi
       {m.subject ? <p className="font-semibold">{m.subject}</p> : null}
       <p className="whitespace-pre-wrap text-[15px]">{m.body}</p>
       {/* nur gekennzeichnete /buchen-Anfragen ohne Akte, deren Termin noch löschbar ist (src/server/online-request-retention.ts) */}
-      {!patient && m.direction === "inbound" && !m.externalId && pendingRequest ? <OnlineRequestRetentionNote className="mt-3" /> : null}
+      {!patient && pendingRequest ? <OnlineRequestRetentionNote active={retentionActive} className="mt-3" /> : null}
+      {/* beantwortete Online-Anfrage ohne Person: weiterhin zuordnen können (sonst fällt sie unter die Löschung, Code-Review N4) */}
+      {!open && canWrite && !patient && pendingRequest ? <div className="mt-4 border-t border-border pt-4">{matchForm}</div> : null}
 
       {open && canWrite ? (
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
@@ -70,13 +81,9 @@ function MessageCard({ row, canWrite, suggestions = [], aiEnabled = false, pendi
               ))}
             </div>
           ) : null}
-          {!patient ? (
-            <ActionForm action={matchPatientAction} submit="Zuordnen" className="flex flex-wrap items-end gap-2">
-              <input type="hidden" name="id" value={m.id} />
-              <Field label={m.channel === "kim" ? "Patientennummer" : "Patientennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
-            </ActionForm>
-          ) : null}
-          {aiEnabled && aiReplyChannel(m.channel) && (m.channel !== "kim" || patient) ? (
+          {!patient ? matchForm : null}
+          {/* nie für KIM (aiReplyChannel, Recht/AppSec L-2) */}
+          {aiEnabled && aiReplyChannel(m.channel) ? (
             <ActionForm action={suggestReplyAction} submit={m.aiSuggestion ? "Neuen KI-Vorschlag erzeugen" : "KI-Vorschlag erzeugen"} className="flex flex-col gap-2">
               <input type="hidden" name="id" value={m.id} />
             </ActionForm>
@@ -128,8 +135,11 @@ export default async function InboxPage() {
   );
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
   const aiEnabled = aiReplySettings(o?.settings).enabled;
-  // Hinweis „wird nach 6 Monaten gelöscht“ nur, solange der Termin der Anfrage noch darunter fällt (ohne Person, geplant/abgesagt)
-  const requestIds = [...new Set(open.map((r) => onlineRequestAppointmentId(r.m.threadKey)).filter((id): id is string => !!id))];
+  // gleiche Prüfung wie Löschlauf und Datenschutzhinweise
+  const retentionActive = avvAcceptedAtLeast(o?.settings, RETENTION_MIN_AVV);
+  // Hinweis zur Löschung (und Zuordnung bei beantworteten Anfragen) nur, solange der Termin der Anfrage noch darunter
+  // fällt (ohne Person, geplant/abgesagt)
+  const requestIds = [...new Set([...open, ...answered].map((r) => onlineRequestMessageAppointmentId(r.m)).filter((id): id is string => !!id))];
   const pendingKeys = new Set(
     requestIds.length
       ? (
@@ -150,6 +160,7 @@ export default async function InboxPage() {
         ).map((a) => a.externalId)
       : [],
   );
+  const isPending = (r: Row) => onlineRequestMessageAppointmentId(r.m) !== null && !!r.m.threadKey && pendingKeys.has(r.m.threadKey);
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader title="Posteingang" subtitle={`${open.length} offen`} />
@@ -174,13 +185,18 @@ export default async function InboxPage() {
                 canWrite={canWrite}
                 suggestions={suggestionMap.get(r.m.id)}
                 aiEnabled={aiEnabled}
-                pendingRequest={!!r.m.threadKey && pendingKeys.has(r.m.threadKey)}
+                pendingRequest={isPending(r)}
+                retentionActive={retentionActive}
               />
             )) : <Empty title="Keine offenen Nachrichten" />}
       </section>
       <section className="mt-8 flex flex-col gap-4">
         <h2 className="font-display text-xl font-semibold">Beantwortet</h2>
-        {answered.length ? answered.map((r) => <MessageCard key={r.m.id} row={r} canWrite={false} />) : <p className="text-sm text-muted">Noch nichts beantwortet.</p>}
+        {answered.length ? (
+          answered.map((r) => <MessageCard key={r.m.id} row={r} canWrite={canWrite} pendingRequest={isPending(r)} retentionActive={retentionActive} />)
+        ) : (
+          <p className="text-sm text-muted">Noch nichts beantwortet.</p>
+        )}
       </section>
     </div>
   );

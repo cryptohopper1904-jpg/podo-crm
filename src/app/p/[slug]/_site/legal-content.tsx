@@ -76,8 +76,10 @@ export function ImprintContent({ site }: { site: Legal }) {
 /**
  * Pflichtinformationen zur Online-Terminanfrage (Art. 13 DSGVO), aus den Stammdaten erzeugt – stehen VOR dem
  * Freitext der Praxis, nur solange die Online-Buchung erreichbar ist. Empfänger: Drittland-Satz je nach Schalter
- * „KI-Antwortvorschläge“ (Anbieter und Land aus den Einstellungen). Speicherdauer „6 Monate nach Eingang“:
- * src/server/online-request-retention.ts (täglicher Lauf); Datensicherungen: 30 Tage (deploy/backup.sh).
+ * „KI-Antwortvorschläge“ (Anbieter und Land aus den Einstellungen; Garantie-Satz nur bei Drittland). Speicherdauer
+ * „6 Monate nach Eingang“ nur, wenn der Löschlauf für die Praxis aktiv ist (AVV ab RETENTION_MIN_AVV akzeptiert,
+ * src/server/online-request-retention.ts), sonst ohne festen Zeitraum; Datensicherungen: spätestens 30 Tage
+ * (lokal 14 Tage, Zweitkopie 29 Tage – deploy/backup.sh, AVV § 10 Nr. 2).
  */
 export function BookingPrivacyBlock({ site }: { site: Legal }) {
   const controller = [site.legalName ?? site.name, site.street, [site.zip, site.city].filter(Boolean).join(" "), site.email, site.phone].filter(Boolean).join(", ");
@@ -99,18 +101,27 @@ export function BookingPrivacyBlock({ site }: { site: Legal }) {
         Servern in Deutschland gespeichert.{" "}
         {ai ? (
           <>
-            Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst {ai.provider} ({ai.country}) als Auftragsverarbeiter. Dabei kann der
-            Inhalt Ihrer Nachricht ohne Ihren Namen und Ihre Kontaktdaten in {ai.country} verarbeitet werden. Liegt das Land außerhalb der EU bzw. des
-            EWR, stützt sich die Übermittlung auf einen Angemessenheitsbeschluss oder Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine
-            Kopie der Garantien erhalten Sie bei der Praxis.
+            Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst {ai.provider} ({ai.country}) als Auftragsverarbeiter. Dabei wird
+            der Inhalt Ihrer Nachricht an {ai.provider} {ai.countryIn} übermittelt. Ihr Name, Ihre Telefonnummer und Ihre E-Mail-Adresse werden
+            vorher automatisch entfernt. Namen oder andere persönliche Angaben, die Sie selbst in den Nachrichtentext schreiben, können dabei nicht in
+            jedem Fall erkannt werden.
+            {ai.thirdCountry ? (
+              <>
+                {" "}Die Übermittlung in dieses Land außerhalb der EU bzw. des EWR stützt sich auf einen Angemessenheitsbeschluss (Art. 45 DSGVO) oder
+                Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine Kopie der Garantien erhalten Sie bei der Praxis.
+              </>
+            ) : null}
           </>
         ) : (
           "Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt."
         )}
       </p>
       <p className="mt-3">
-        <strong>Speicherdauer:</strong> Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löschen wir 6 Monate nach Eingang
-        automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben. Kommt es zur
+        <strong>Speicherdauer:</strong>{" "}
+        {site.onlineRequestRetention
+          ? "Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löschen wir 6 Monate nach Eingang automatisch."
+          : "Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löscht die Praxis, sobald sie für die Bearbeitung Ihrer Anfrage nicht mehr erforderlich sind."}{" "}
+        Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben. Kommt es zur
         Behandlung, gelten die gesetzlichen Aufbewahrungsfristen (10 Jahre nach § 630f Abs. 3 BGB).
       </p>
       <p className="mt-3">

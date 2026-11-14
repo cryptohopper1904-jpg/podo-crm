@@ -23,8 +23,8 @@ import { codeTaken } from "@/server/products";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
-import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, isKnownLegalForm, isKnownProfession, requiresRegister } from "@/lib/imprint";
-import { AI_COUNTRY_MAX, AI_PROVIDER_MAX, aiReplySettings } from "@/lib/ai-replies";
+import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, isKnownLegalForm, isKnownProfession, registerApplicable, requiresRegister } from "@/lib/imprint";
+import { AI_PROVIDER_MAX, aiCountry, aiReplySettings } from "@/lib/ai-replies";
 import { avvReacceptance, LEGAL_VERSIONS, storedLegalAcceptance } from "@/lib/legal";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
@@ -92,9 +92,10 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
     regulations: known ? v.regulations || DEFAULT_REGULATIONS : v.regulations === DEFAULT_REGULATIONS ? "" : (v.regulations ?? ""),
     authority: v.authority ?? "",
     legalForm,
-    // Pflicht nur bei registerpflichtiger Rechtsform; sonst freiwillig (z. B. eingetragene Einzelkaufleute ohne Angabe der Rechtsform)
-    registerCourt: v.registerCourt ?? "",
-    registerNumber: v.registerNumber ?? "",
+    // Pflicht bei registerpflichtiger Rechtsform, ohne Angabe der Rechtsform freiwillig; bei Rechtsform ohne Register
+    // (Einzelpraxis, GbR) geleert (Code-Review N3)
+    registerCourt: registerApplicable(legalForm) ? (v.registerCourt ?? "") : "",
+    registerNumber: registerApplicable(legalForm) ? (v.registerNumber ?? "") : "",
     economicId: v.economicId ?? "",
     dpo: v.dpo ?? "",
   };
@@ -111,29 +112,40 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
 }
 
 /**
- * KI-Antwortvorschläge (Posteingang) an/aus – Standard aus. Einschalten nur mit beiden Bestätigungen (AVV mit dem
- * KI-Anbieter, Verschwiegenheit nach § 203 Abs. 4 StGB) sowie Anbieter-Name und Land; beides steht danach in den
- * Datenschutzhinweisen der Online-Buchung. Nicht per Support-Freigabe: das sind Erklärungen der Praxis.
+ * KI-Antwortvorschläge (Posteingang, Google-Bewertungen) an/aus – Standard aus. Einschalten nur durch die
+ * Inhaber:in (Recht M-88-7) mit den Bestätigungen (AVV mit dem KI-Anbieter, Geheimhaltung nach § 203 Abs. 3 und 4
+ * StGB, bei Drittland zusätzlich Angemessenheitsbeschluss/Standardvertragsklauseln) sowie Anbieter-Name und Land aus der
+ * Liste; beides steht danach in den Datenschutzhinweisen der Online-Buchung. Ausschalten darf jede Person mit
+ * settings.manage; dabei verfallen die Bestätigungen (nach erneutem Einschalten neu bestätigen, Recht N-88-7).
+ * Nicht per Support-Freigabe: das sind Erklärungen der Praxis.
  */
 export async function saveAiRepliesAction(_: SettingsState, form: FormData): Promise<SettingsState> {
   const auth = await requireAuth("settings.manage");
   if (auth.support) return { error: "Nur die Praxis selbst kann KI-Antwortvorschläge ein- oder ausschalten." };
   const enable = form.get("enabled") === "on";
+  if (enable && auth.role !== "owner") return { error: "KI-Antwortvorschläge einschalten kann nur die Inhaberin bzw. der Inhaber der Praxis." };
   const provider = String(form.get("provider") ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
-  const country = String(form.get("country") ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  const countryRaw = String(form.get("country") ?? "").trim();
   if (provider.length > AI_PROVIDER_MAX) return { error: `Anbieter: höchstens ${AI_PROVIDER_MAX} Zeichen.` };
-  if (country.length > AI_COUNTRY_MAX) return { error: `Land: höchstens ${AI_COUNTRY_MAX} Zeichen.` };
+  const country = aiCountry(countryRaw);
   const avv = form.get("avvConfirmed") === "on";
   const confidentiality = form.get("confidentialityConfirmed") === "on";
+  const transfer = form.get("transferConfirmed") === "on";
   if (enable) {
-    if (!provider || !country) return { error: "Bitte Anbieter und Land des KI-Dienstes angeben." };
-    if (!avv || !confidentiality) return { error: "Bitte beide Punkte bestätigen (AVV und Verschwiegenheit) – sonst bleiben KI-Antwortvorschläge aus." };
+    if (!provider || !countryRaw) return { error: "Bitte Anbieter und Land des KI-Dienstes angeben." };
+    if (!country) return { error: "Bitte das Land der Verarbeitung aus der Liste wählen." };
+    if (!avv || !confidentiality) return { error: "Bitte beide Punkte bestätigen (AVV und Geheimhaltung) – sonst bleiben KI-Antwortvorschläge aus." };
+    if (!country.euEea && !transfer) {
+      return { error: "Für ein Land außerhalb von EU/EWR bitte bestätigen, dass ein Angemessenheitsbeschluss oder Standardvertragsklauseln bestehen." };
+    }
   }
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
   const before = aiReplySettings(o?.settings);
+  const now = new Date().toISOString();
   const aiReplies = enable
-    ? { enabled: true, provider, country, avvConfirmed: true, confidentialityConfirmed: true, at: new Date().toISOString(), by: auth.user.id }
-    : { ...before, enabled: false, provider: provider || before.provider, country: country || before.country, offAt: new Date().toISOString(), offBy: auth.user.id };
+    ? { enabled: true, provider, country: country!.name, avvConfirmed: true, confidentialityConfirmed: true, transferConfirmed: !country!.euEea, at: now, by: auth.user.id }
+    : // Anbieter/Land als Vorbelegung behalten, Bestätigungen nicht (gelten nur für die jeweilige Einschaltung)
+      { enabled: false, provider: before.provider, country: before.country, avvConfirmed: false, confidentialityConfirmed: false, transferConfirmed: false, at: before.at, by: before.by, offAt: now, offBy: auth.user.id };
   await db
     .update(organizations)
     .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ aiReplies })}::jsonb` })
@@ -142,10 +154,13 @@ export async function saveAiRepliesAction(_: SettingsState, form: FormData): Pro
     organizationId: auth.organization.id,
     userId: auth.user.id,
     action: enable ? "settings.ai_replies.on" : "settings.ai_replies.off",
-    meta: enable ? { provider, country, avvConfirmed: true, confidentialityConfirmed: true } : {},
+    meta: enable
+      ? { provider, country: country!.name, avvConfirmed: true, confidentialityConfirmed: true, ...(country!.euEea ? {} : { transferConfirmed: true }) }
+      : {},
   });
   revalidatePath("/einstellungen/praxis");
   revalidatePath("/posteingang");
+  revalidatePath("/bewertungen");
   return { ok: enable ? "KI-Antwortvorschläge eingeschaltet. Die Datenschutzhinweise deiner Buchungsseite nennen jetzt den Anbieter." : "KI-Antwortvorschläge ausgeschaltet." };
 }
 
@@ -167,6 +182,8 @@ export async function acceptAvvAction(_: SettingsState, form: FormData): Promise
     .where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "legal.avv_accepted", meta: { avv: LEGAL_VERSIONS.avv, previous: prev?.avv ?? null } });
   revalidatePath("/einstellungen", "layout");
+  revalidatePath("/heute");
+  revalidatePath("/posteingang");
   return { ok: `AVV Version ${LEGAL_VERSIONS.avv} akzeptiert.` };
 }
 
