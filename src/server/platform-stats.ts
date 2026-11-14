@@ -93,7 +93,7 @@ export type PlatformSummary = {
   adoption: Record<ModuleKey, number>;
 };
 
-export type PlatformHealth = { migrations: CheckResult; backup: CheckResult };
+export type PlatformHealth = { migrations: CheckResult; backup: CheckResult; retention: CheckResult };
 
 export type PlatformUsage = { generatedAt: string; summary: PlatformSummary; practices: PracticeUsage[]; health: PlatformHealth };
 
@@ -319,5 +319,5 @@ export async function platformUsage(limit = 500): Promise<PlatformUsage> {
   const practices: PracticeUsage[] = [];
   for (const o of orgs) practices.push(await usageOf(o, logins.get(o.id)));
   const [migrations, stamps] = [await checkMigrations(), await checkTimestamps()];
-  return { generatedAt: new Date().toISOString(), summary: summarize(practices), practices, health: { migrations, backup: stamps.backup } };
+  return { generatedAt: new Date().toISOString(), summary: summarize(practices), practices, health: { migrations, backup: stamps.backup, retention: stamps.cronAufbewahrung } };
 }

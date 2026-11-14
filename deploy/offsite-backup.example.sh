@@ -23,12 +23,14 @@
 #        rclone copy storagebox:podo-backups/db-….dump.gpg /root/restore/
 #        bash /opt/podo-crm/deploy/restore-test.sh --file /root/restore/db-….dump.gpg
 #
-# Aufbewahrung: lokal BACKUP_RETENTION_DAYS (Standard 14). Offsite hier 90 Tage (--min-age … delete unten).
+# Aufbewahrung: lokal BACKUP_RETENTION_DAYS (Standard 14). Offsite höchstens 30 Tage (AVV § 10 Nr. 2, AGB § 9 Nr. 2:
+# Sicherungen laufen spätestens 30 Tage nach einer Löschung aus): gelöscht wird, was älter als OFFSITE_RETENTION (29 Tage)
+# ist – bei täglichem Lauf ist keine Kopie älter als 30 Tage. Nicht erhöhen, ohne AVV/AGB anzupassen.
 # Die Passphrase NICHT auf der Storage Box ablegen.
 set -euo pipefail
 
 RCLONE_REMOTE="${RCLONE_REMOTE:-storagebox:podo-backups}"   # <remote>:<ordner>
-OFFSITE_RETENTION="${OFFSITE_RETENTION:-90d}"
+OFFSITE_RETENTION="${OFFSITE_RETENTION:-29d}"
 APP_DIR="${APP_DIR:-/opt/podo-crm}"
 RCLONE_IMAGE="rclone/rclone:1.68"
 

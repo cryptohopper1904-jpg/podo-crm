@@ -90,7 +90,7 @@ function leaves(v: unknown, out: unknown[] = []): unknown[] {
       return !ALLOWED_KEYS.has(k) && PII_KEY.test(k) && !/byPlan|byStatus/.test(p);
     });
     expect(suspicious).toEqual([]);
-    expect(Object.keys(all.health).sort()).toEqual(["backup", "migrations"]);
+    expect(Object.keys(all.health).sort()).toEqual(["backup", "migrations", "retention"]);
   });
 
   it("lastMonths: Monatsfolge über den Jahreswechsel", () => {

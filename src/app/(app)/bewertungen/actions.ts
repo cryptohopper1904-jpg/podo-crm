@@ -3,9 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { withOrg } from "@/db";
-import { reviews } from "@/db/schema";
+import { db, withOrg } from "@/db";
+import { organizations, reviews } from "@/db/schema";
 import { describeError } from "@/integrations/test-connection";
+import { aiReplySettings } from "@/lib/ai-replies";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { neutralReviewReply, reviewReplyProblems } from "@/lib/review-guard";
@@ -47,6 +48,11 @@ export async function suggestReviewReplyAction(_: ReviewState, form: FormData): 
   const org = auth.organization.id;
   const id = z.string().uuid().safeParse(form.get("id"));
   if (!id.success) return { error: "Bewertung nicht gefunden." };
+  // gleicher Schalter wie im Posteingang (Einstellungen → Praxis → KI-Antwortvorschläge; Standard aus, AppSec L-1)
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+  if (!aiReplySettings(o?.settings).enabled) {
+    return { error: "KI-Antwortvorschläge sind ausgeschaltet. Einschalten kann sie die Inhaberin bzw. der Inhaber unter Einstellungen → Praxis." };
+  }
   const [r] = await withOrg(org, (tx) => tx.select().from(reviews).where(and(eq(reviews.organizationId, org), eq(reviews.id, id.data))));
   if (!r) return { error: "Bewertung nicht gefunden." };
   let suggestion: string;

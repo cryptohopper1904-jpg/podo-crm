@@ -7,7 +7,10 @@ import { organizations } from "@/db/schema";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { isPrivateOnly } from "@/lib/features";
+import { websitePublished } from "@/lib/website";
 import { publicBookingOptions } from "@/server/portal-booking";
+import { practiceLegalLinks } from "@/server/website";
+import { BookingLegalFooter } from "./_legal/shell";
 import { BookingForm } from "./booking-form";
 
 /** Praxis + buchbare Termine (einmal je Anfrage, für Metadaten und Seite) */
@@ -36,6 +39,8 @@ export default async function BookingPage(props: PageProps<"/buchen/[slug]">) {
   const { org, options } = data;
   const offered = options.services;
   const days = options.days;
+  // Impressum/Datenschutz der Praxis: Website-Seiten, sonst Ersatzseiten unter /buchen/<slug>/… (Rechtsbefund H2)
+  const legal = practiceLegalLinks({ slug, websitePublished: websitePublished(org) });
   return (
     <main className="mx-auto min-h-screen max-w-3xl py-8 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
       <header className="mb-8 flex items-center justify-between">
@@ -49,7 +54,10 @@ export default async function BookingPage(props: PageProps<"/buchen/[slug]">) {
           ? <>Wir behandeln Privatpatient:innen und Selbstzahler. Bei Fragen rufen Sie uns gern an{org.phone ? ` unter ${org.phone}` : ""}.</>
           : <>Hier können Sie Termine für Selbstzahler-Leistungen anfragen. Für Behandlungen mit ärztlicher Verordnung (Kasse) rufen Sie uns bitte an{org.phone ? ` unter ${org.phone}` : ""}.</>}
       </p>
-      <BookingForm slug={slug} services={offered} days={days} />
+      <BookingForm slug={slug} services={offered} days={days} privacyHref={legal.privacy} />
+      <div className="mt-10 -mx-4">
+        <BookingLegalFooter links={legal} name={org.name} />
+      </div>
     </main>
   );
 }

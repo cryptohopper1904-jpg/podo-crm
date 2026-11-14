@@ -284,11 +284,35 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await pub.getByLabel("Vorname", { exact: true }).fill("Olga");
   await pub.getByLabel("Nachname", { exact: true }).fill(`Online-${run}`);
   await pub.getByLabel("Mobilnummer", { exact: true }).fill("0151 7654321");
-  await pub.getByLabel("Ich habe die Datenschutzhinweise gelesen.").check();
+  // Datenschutzhinweise der Praxis sind verlinkt (kein Pflicht-Häkchen mehr)
+  await expect(pub.getByRole("link", { name: "Datenschutzhinweisen der Praxis" })).toHaveAttribute("href", /\/(p|buchen)\/[a-z0-9-]+\/datenschutz$/);
   await pub.getByLabel(/Nicht rechtzeitig/).check();
   await pub.getByRole("button", { name: /Termin anfragen/ }).click();
   await expect(pub.getByText(/Ihre Terminanfrage ist eingegangen/)).toBeVisible();
+  // Impressum und Datenschutz der Praxis (Demo ohne Website → Ersatzseiten der Online-Buchung)
+  for (const [link, heading] of [["Impressum", "Impressum"], ["Datenschutz", "Datenschutz"]] as const) {
+    await pub.goto(`/buchen/${await demoSlug()}`);
+    await pub.getByRole("navigation", { name: /^Rechtliches/ }).getByRole("link", { name: link, exact: true }).click();
+    await expect(pub.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+  }
   await ctx.close();
+  // Praxis: Hinweis zur automatischen Löschung nach 6 Monaten an der neuen Anfrage und bei der Online-Buchung – erst,
+  // wenn die Inhaber:in die AVV (ab Version 0.3) akzeptiert hat; vorher „startet, sobald …“ und Hinweis auch auf „Heute“
+  const retention = /werden 6 Monate nach Eingang automatisch gelöscht/;
+  await page.goto("/heute");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  if (await page.getByText(/Auftragsverarbeitungsvertrag \(AVV\) aktualisiert/).isVisible()) {
+    await page.goto("/einstellungen/praxis");
+    const acceptAvv = page.getByRole("button", { name: /^AVV [\d.]+ akzeptieren$/ });
+    await expect(page.getByText(/Die automatische Löschung von Online-Anfragen ohne Termin nach 6 Monaten startet, sobald/)).toBeVisible();
+    await acceptAvv.click();
+    await expect(acceptAvv).toHaveCount(0);
+  }
+  await page.goto("/posteingang");
+  await expect(page.getByText(retention).first()).toBeVisible();
+  await page.goto("/einstellungen/praxis");
+  await expect(page.getByText(retention)).toBeVisible();
+  await expect(page.getByText("Online-Buchung gesperrt: Impressumsangaben fehlen")).toHaveCount(0);
 });
 
 test("Patientenportal: Link erzeugen, Termin buchen und verschieben", async ({ browser }) => {

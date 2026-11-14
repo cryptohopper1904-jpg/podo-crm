@@ -10,7 +10,7 @@
 | Kommunikation (Nachrichten) | 3 Jahre | Verjährung § 195 BGB | Löschlauf |
 | Audio der Sprachberichte | nicht gespeichert | Datensparsamkeit | nur flüchtig im Arbeitsspeicher |
 | Audit-Log | 2 Jahre (prüfen) | Art. 32 | Löschlauf |
-| Backups | 14 Tage rollierend | – | Backup-Container |
+| Backups | Server 14 Tage rollierend; zweiter Standort (sobald eingerichtet) höchstens 30 Tage | – | Backup-Container, `deploy/offsite-backup.example.sh` |
 
 **Löschbegehren (Art. 17)** während laufender Aufbewahrungspflicht: Sperrung statt Löschung (Art. 17 Abs. 3 lit. b), Patient wird informiert, Vorgang protokolliert.
-**Kündigung eines SaaS-Kunden:** Vollexport (JSON + Fotos) an die Praxis, danach Löschung des Mandanten inkl. Dateien; Backups laufen nach 14 Tagen aus.
+**Kündigung eines SaaS-Kunden:** Vollexport (JSON + Fotos) an die Praxis, danach Löschung des Mandanten inkl. Dateien; Backups laufen spätestens 30 Tage nach der Löschung aus.

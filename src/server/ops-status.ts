@@ -54,17 +54,27 @@ export async function checkPaymentRefIndex(): Promise<CheckResult> {
 }
 
 /** Alter des letzten Backups und der Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR). */
-export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim", CheckResult>> {
+export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim" | "cronAufbewahrung", CheckResult>> {
   const dir = process.env.STATUS_DIR;
   if (!dir) {
     const skipped: CheckResult = { status: "skipped", hint: "STATUS_DIR nicht gesetzt" };
-    return { backup: skipped, cronReminders: skipped, cronKim: skipped };
+    return { backup: skipped, cronReminders: skipped, cronKim: skipped, cronAufbewahrung: skipped };
   }
   const now = Date.now();
-  const [backup, reminders, kim] = await Promise.all([readStatus(dir, "backup.last"), readStatus(dir, "cron-reminders.last"), readStatus(dir, "cron-kim.last")]);
+  const [backup, reminders, kim, retention, retentionFirst] = await Promise.all([
+    readStatus(dir, "backup.last"),
+    readStatus(dir, "cron-reminders.last"),
+    readStatus(dir, "cron-kim.last"),
+    readStatus(dir, "cron-aufbewahrung.last"),
+    // vom cron-Container beim ersten Start geschrieben (deploy/docker-compose.yml)
+    readStatus(dir, "cron-aufbewahrung.first"),
+  ]);
   return {
     backup: evaluateTimestamp(parseEpoch(backup), MAX_AGE_SECONDS.backup, now, "noch kein Backup erfasst"),
     cronReminders: evaluateTimestamp(parseEpoch(reminders), MAX_AGE_SECONDS.cron, now),
     cronKim: evaluateTimestamp(parseEpoch(kim), MAX_AGE_SECONDS.cron, now),
+    // täglicher Löschlauf Online-Anfragen (/api/cron/aufbewahrung); Fehlschlag einer Praxis → kein Zeitstempel → fail.
+    // Noch nie erfolgreich: warn bis 26 h nach dem ersten Start des cron-Containers, danach fail (nicht dauerhaft warn)
+    cronAufbewahrung: evaluateTimestamp(parseEpoch(retention), MAX_AGE_SECONDS.dailyCron, now, "noch kein Lauf erfasst", parseEpoch(retentionFirst)),
   };
 }

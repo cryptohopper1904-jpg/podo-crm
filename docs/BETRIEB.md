@@ -173,7 +173,7 @@ Erinnerung einrichten, z. B. `/etc/cron.d/podo-restore-test`:
 ```
 
 ### 3.3 Zweiter Standort (Pflicht)
-Backups auf demselben Server helfen nicht, wenn der Server weg ist. Beispiel für eine **Hetzner Storage Box** per `rclone` (SFTP): `deploy/offsite-backup.example.sh` – Einrichtung steht im Kopf der Datei (SSH-Schlüssel, `rclone.conf`, Cron-Eintrag täglich nach dem Backup). Es wird mit `copy` (nicht `sync`) kopiert und offsite 90 Tage aufbewahrt. Die Dateien sind schon verschlüsselt; die Passphrase gehört **nicht** auf die Storage Box. AVV mit dem Anbieter abschließen.
+Backups auf demselben Server helfen nicht, wenn der Server weg ist. Beispiel für eine **Hetzner Storage Box** per `rclone` (SFTP): `deploy/offsite-backup.example.sh` – Einrichtung steht im Kopf der Datei (SSH-Schlüssel, `rclone.conf`, Cron-Eintrag täglich nach dem Backup). Es wird mit `copy` (nicht `sync`) kopiert und offsite höchstens 30 Tage aufbewahrt (`OFFSITE_RETENTION` 29 Tage; AVV § 10 Nr. 2 – nicht erhöhen, ohne AVV/AGB anzupassen). Die Dateien sind schon verschlüsselt; die Passphrase gehört **nicht** auf die Storage Box. AVV mit dem Anbieter abschließen.
 
 ### 3.4 Backup in die laufende Installation einspielen
 ```bash
@@ -205,6 +205,7 @@ Token: `HEALTH_TOKEN` aus `deploy/.env` (wird von `install.sh` erzeugt). Fehlt e
 | `storage` | Testdatei in `STORAGE_DIR` schreib-/löschbar | – | nicht beschreibbar |
 | `backup` | letztes Backup ≤ 26 h | noch keins erfasst | älter |
 | `cronReminders`, `cronKim` | letzter erfolgreicher Lauf ≤ 45 min | noch keiner erfasst (z. B. ohne `CRON_SECRET`) | älter |
+| `cronAufbewahrung` | letzter vollständiger Löschlauf Online-Anfragen ≤ 26 h | noch keiner erfasst, aber der cron-Container läuft seit weniger als 26 h (`cron-aufbewahrung.first`) | älter, oder seit dem ersten Start des cron-Containers über 26 h kein erfolgreicher Lauf (auch, wenn der Lauf für eine Praxis fehlschlägt: dann HTTP 500, kein Zeitstempel, Logzeile `retention.online_requests.failed`) |
 | `webhooks` | keine Webhook-Ereignisse älter als 1 h offen | endgültig aufgegebene Ereignisse (`dead`, Hinweis im Posteingang der Praxis) | Ereignisse seit über 1 h unverarbeitet |
 
 Antwort: `{ ok, status: "ok"|"warn"|"fail", checkedAt, checks: { … } }` mit Zeiten und Zählern, ohne Personendaten. HTTP 200 bei `ok`/`warn`, **503 bei `fail`** – so kann jeder Uptime-Dienst (z. B. Uptime Kuma, selbst gehostet) einfach den Statuscode überwachen: HTTP-Monitor, Intervall 5 min, Header `Authorization: Bearer …`. Die Zeitstempel schreiben `backup` und `cron` in das Volume `ops_status`, die App liest es nur.
@@ -222,11 +223,8 @@ Gesendet werden ausschließlich: Route-**Muster** (z. B. `/portal/[token]`, nie 
 
 ### 4.4 Logs
 - Eigener Code loggt über `src/lib/log.ts` (eine JSON-Zeile je Ereignis, sensible Felder werden geschwärzt). **Keine Gesundheitsdaten in Logs.**
-- Docker-Logs begrenzen, sonst laufen sie voll – `/etc/docker/daemon.json`:
-  ```json
-  { "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "5" } }
-  ```
-  danach `systemctl restart docker`.
+- **Aufbewahrung der Container-Logs: höchstens 7 Tage.** Das steht so in den Datenschutzhinweisen der Praxis-Websites und Buchungsseiten. `deploy/docker-compose.yml` begrenzt die Größe je Container (`x-logging`: 20 MB, keine Altdateien); `deploy/log-retention.sh` (als root) richtet `/etc/logrotate.d/podohero-docker` ein (täglich rotieren, 6 alte Tage, `maxage 7`) – **nur für die Container dieser Installation** (Compose-Label `com.docker.compose.project.working_dir` = `…/deploy`), nicht für andere Container des Hosts; das Docker-Verzeichnis kommt aus `docker info -f '{{.DockerRootDir}}'`. Weil sich Container-IDs beim Neuerstellen ändern, rufen `install.sh`, `install-subdomain.sh` und `update.sh` das Skript **nach** dem Start auf; zusätzlich erneuert `/etc/cron.daily/0podohero-log-retention` die Liste täglich (z. B. nach einem manuellen `docker compose up`). Prüfen: `cat /etc/logrotate.d/podohero-docker`, `logrotate -d /etc/logrotate.d/podohero-docker`. `logrotate` muss installiert sein (Ubuntu/Debian: Standard). Nicht länger aufbewahren – sonst die Datenschutzhinweise anpassen.
+- **Subdomain-Modus (`install-subdomain.sh`): Logs des vorhandenen Webservers selbst begrenzen.** Der Host-Proxy (vorhandener Caddy, nginx o. Ä.) gehört nicht zu PodoHero; seine Zugriffs- und Fehlerlogs erfasst `log-retention.sh` nicht. Dort Zugriffslogs für die PodoHero-Domain abschalten oder auf höchstens 7 Tage begrenzen (z. B. Caddy: kein `log` im Site-Block oder `log { output file … { roll_keep_for 168h } }`; nginx: `access_log off;` bzw. logrotate mit `maxage 7`), sonst stimmt die Angabe in den Datenschutzhinweisen nicht.
 - Zugriffslogs eines vorgeschalteten Webservers für `/portal/*` und `/anamnese/*` redigieren oder abschalten (Token im Pfad beim ersten Aufruf). Der mitgelieferte Caddy schreibt standardmäßig keine Zugriffslogs.
 
 ---
@@ -282,7 +280,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 ## 7. Datenschutz-Hinweise für den Betrieb
 - **Backups enthalten Gesundheitsdaten** (Art. 9 DSGVO): nur verschlüsselt speichern und übertragen, Offsite-Anbieter mit AVV und Standort DE/EU, Passphrase getrennt aufbewahren.
 - **Restore-Tests** laufen in einem Wegwerf-Container auf dem Produktionsserver und werden danach gelöscht. Backups nicht auf Arbeitsplatz-Rechnern oder Laptops entschlüsseln.
-- **Löschfristen**: Nach dem endgültigen Löschen einer Praxis (Abschnitt 9) sind ihre Daten noch so lange in Backups vorhanden, wie diese aufbewahrt werden – lokal `BACKUP_RETENTION_DAYS` (14 Tage), offsite 90 Tage (Beispielskript). Diese Fristen im Löschkonzept/AVV so angeben; bei einer Wiederherstellung bereits gelöschte Praxen erneut mit `scripts/purge-organizations.ts` löschen.
+- **Löschfristen**: Nach dem endgültigen Löschen einer Praxis (Abschnitt 9) sind ihre Daten noch so lange in Backups vorhanden, wie diese aufbewahrt werden – lokal `BACKUP_RETENTION_DAYS` (14 Tage), offsite höchstens 30 Tage (Beispielskript, `OFFSITE_RETENTION` 29 Tage). Diese Fristen im Löschkonzept/AVV so angeben; bei einer Wiederherstellung bereits gelöschte Praxen erneut mit `scripts/purge-organizations.ts` löschen.
 - **Aufbewahrungspflichten** (Behandlungsdoku 10 Jahre, § 630f BGB; Rechnungen GoBD) erfüllt die Datenbank selbst, nicht das Backup.
 - **Kund:in löschen** (Inhaber:in, *Kunde bearbeiten → Kund:in löschen*): ohne Behandlungsdoku, Anamnese, Behandlungsfotos und Rechnungen vollständige Löschung (DB-Funktion `podo_delete_patient`, Audit `patient.deleted`); sonst Löschung der Kontaktdaten, Widerruf der Werbe-/Kanal-Einwilligungen, Löschen der Marketing-Fotos und Archivierung (Audit `patient.contact_erased`). Die endgültige Löschung nach Fristablauf ist noch ein Betreiber-Schritt (offen, siehe `docs/reviews/GESAMT-REVIEW.md` H3).
 - **Webhook-Rohdaten** (`webhook_events`, RLS je Praxis): Inhalt nur bis zur erfolgreichen Verarbeitung, Einträge werden nach 30 Tagen gelöscht (Cron).
@@ -295,7 +293,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 ## 8. Fachliche Dienste
 
 ### Erinnerungen, Rückholung, KIM (Cron)
-- Endpunkte: `POST /api/cron/reminders` und `POST /api/cron/kim` mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
+- Endpunkte: `POST /api/cron/reminders`, `POST /api/cron/kim` und täglich `POST /api/cron/aufbewahrung` (löscht nicht in eine Akte übernommene Online-Terminanfragen aus /buchen 6 Monate nach Eingang: nur mit Kennzeichen `online-request:` – also erst Anfragen ab Einführung dieser Regel –, nur Status geplant/abgesagt, ohne Person, ohne Doku/Rechnungsposition, samt zugehöriger Posteingangsnachrichten ohne Person – auch Antworten der Praxis – und verwaister Nachrichten, deren Termin nicht mehr existiert; nur Praxen, deren Inhaber:in die AVV ab Version 0.3 akzeptiert hat (Hinweis in den Einstellungen), übrige werden als `skipped` gezählt; Audit `retention.online_requests` je Praxis), jeweils mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
 - Docker: Der Container `cron` ruft beide alle 15 Minuten **intern** über `http://app:3000` auf und schreibt nach jedem erfolgreichen Lauf einen Zeitstempel (für `/api/health/deep`). `install.sh`/`install-subdomain.sh` erzeugen `CRON_SECRET` (auch bei bestehenden Installationen).
 - Einschalten je Praxis unter **Einstellungen → Erinnerungen**: 24-h-Terminerinnerung, Rückholung (überfällig, max. alle 30 Tage), Spangen-Erinnerung. Standard: alles aus.
 - Versand nur mit Einwilligung des Kanals (`email_reminders`/`sms_reminders`/`whatsapp`), Texte ohne medizinische Angaben. Jede Erinnerung wird über `reminder_log` höchstens einmal versendet; Fehler werden protokolliert und nicht automatisch wiederholt.
