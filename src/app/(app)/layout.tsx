@@ -5,7 +5,7 @@ import { AccessBanner } from "@/components/access-banner";
 import { cookies } from "next/headers";
 import { BottomNav } from "@/components/app-nav";
 import { Sidebar } from "@/components/sidebar";
-import { NAV_COOKIE } from "@/lib/nav";
+import { NAV_COOKIE, showSettings } from "@/lib/nav";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LoginChangelog } from "@/components/login-changelog";
@@ -60,22 +60,22 @@ const initialsOf = (name: string) =>
  * Konto-Menü unter lg (Handy, Tablet hochkant): ersetzt Praxis-Umschalter, Neuigkeiten, Hell/Dunkel und Abmelden in
  * der Kopfzeile – so bleibt sie auch auf 320 px einzeilig (Logo · Suche · Konto). Ab lg stehen die Knöpfe einzeln da.
  */
-function HeaderAccountMenu({ name, meta, switcher, level, className = "" }: { name: string; meta: string; switcher: SwitcherModel | null; level?: ViewLevel; className?: string }) {
+function HeaderAccountMenu({ name, meta, switcher, level, settings = false, className = "" }: { name: string; meta: string; switcher: SwitcherModel | null; level?: ViewLevel; settings?: boolean; className?: string }) {
   return (
     <AccountMenu initials={initialsOf(name)} name={name} meta={meta} className={className}>
       {switcher ? <OrgSwitcher model={switcher} variant="menu" /> : null}
       <Link href="/neuigkeiten" className={menuItemCls}>
         <Sparkles size={19} aria-hidden /> Neuigkeiten
       </Link>
+      {settings ? (
+        <Link href="/einstellungen" className={menuItemCls}>
+          <Settings size={19} aria-hidden /> Einstellungen
+        </Link>
+      ) : null}
       {level ? (
-        <>
-          <Link href="/einstellungen" className={menuItemCls}>
-            <Settings size={19} aria-hidden /> Einstellungen
-          </Link>
-          <Link href="/einstellungen/ansicht" className={menuItemCls}>
-            <SlidersHorizontal size={19} aria-hidden /> Ansicht: {VIEW_LEVEL_LABELS[level]}
-          </Link>
-        </>
+        <Link href="/einstellungen/ansicht" className={menuItemCls}>
+          <SlidersHorizontal size={19} aria-hidden /> Ansicht: {VIEW_LEVEL_LABELS[level]}
+        </Link>
       ) : null}
       <ThemeToggle labelled className={menuItemCls} />
       <LogoutForm action={logoutAction} className="mt-1.5 border-t border-border pt-1.5">
@@ -184,6 +184,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
             meta={`${ROLE_LABELS[auth.role]} · ${auth.organization.name}`}
             switcher={switcher.show || switcher.platformLink ? switcher : null}
             level={auth.support ? undefined : level}
+            settings={showSettings(allowed, !auth.support)}
             className={`lg:hidden ${auth.can("patients.read") ? "" : "ml-auto"}`}
           />
         </header>
@@ -192,7 +193,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         {/* unten Platz für die feste Leiste (BottomNav) samt Home-Indikator des iPhones */}
         <main className="flex-1 pt-6 pr-[max(1rem,env(safe-area-inset-right))] pb-[calc(7rem+env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] lg:px-8 lg:pb-10">{children}</main>
       </div>
-      <BottomNav allowed={allowed} level={level} badges={badges} />
+      <BottomNav allowed={allowed} level={level} badges={badges} personal={!auth.support} />
       {auth.support ? null : <LoginChangelog />}
       <PwaClient />
     </div>
