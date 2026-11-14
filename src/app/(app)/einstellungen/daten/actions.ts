@@ -1,16 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
-import { confirmsPracticeName, isWithinGrace } from "@/lib/org-deletion";
+import { confirmsPracticeName, isWithinGrace, purgeCutoff } from "@/lib/org-deletion";
 import { accessMode } from "@/lib/plans";
-import { isAutoDeletion } from "@/lib/readonly-expiry";
+import { AUTO_DELETION_REASON, isAutoDeletion } from "@/lib/readonly-expiry";
 import { CANCEL_FAILED_MESSAGE } from "@/lib/subscription-cancel";
+import { notifyAccountantsOfDeletionRequest } from "@/server/org-mail";
 import { cancelSubscriptionAtPeriodEnd, resumeSubscription } from "@/server/subscription-cancel";
 
 export type DataState = { error?: string; ok?: string; warning?: string } | undefined;
@@ -44,6 +45,8 @@ export async function requestDeletionAction(_: DataState, form: FormData): Promi
   // AGB § 8 Nr. 3: Der Löschantrag gilt als Kündigung → Stripe-Abo zum Periodenende kündigen. Ein Fehler verhindert den
   // (bereits gespeicherten) Antrag nicht, wird aber protokolliert, im Posteingang und beim Betreiber angezeigt.
   const c = await cancelSubscriptionAtPeriodEnd(auth.organization.id, auth.user.id, "deletion_request");
+  // Steuerberatung informieren (Löschtermin, Export für die Aufbewahrung) – wirft nie, ohne Plattform-SMTP nichts
+  await notifyAccountantsOfDeletionRequest(auth.organization.id, auth.organization.name, row.at!);
   revalidatePath("/einstellungen/daten");
   revalidatePath("/einstellungen/abo");
   if (c.status === "failed") return { ok: "Kündigung und Löschung beantragt.", warning: CANCEL_FAILED_MESSAGE };
@@ -81,7 +84,20 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
     return { error: "Diese Löschung erfolgt automatisch, weil der Nur-Lesen-Modus nach 12 Monaten endet. Wähle unter Einstellungen → Abo einen Tarif (bis 20 Patient:innen auch kostenlos), dann entfällt sie." };
   }
   if (!isWithinGrace(org.at)) return { error: "Die Karenzzeit ist abgelaufen. Bitte wende dich an den Support." };
-  await db.update(organizations).set({ deletionRequestedAt: null }).where(eq(organizations.id, auth.organization.id));
+  // bedingt: nur ein noch zurücknehmbarer, selbst gestellter Antrag (Karenzzeit läuft, kein automatischer Antrag) –
+  // schützt gegen einen gleichzeitig startenden Löschlauf bzw. Cron
+  const withdrawn = await db
+    .update(organizations)
+    .set({ deletionRequestedAt: null })
+    .where(
+      and(
+        eq(organizations.id, auth.organization.id),
+        gt(organizations.deletionRequestedAt, purgeCutoff()),
+        sql`coalesce(${organizations.settings}->>'deletionReason', '') <> ${AUTO_DELETION_REASON}`,
+      ),
+    )
+    .returning({ id: organizations.id });
+  if (!withdrawn.length) return { error: "Der Löschantrag lässt sich nicht mehr zurücknehmen. Bitte lade die Seite neu oder wende dich an den Support." };
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_cancelled", entity: "organization", entityId: auth.organization.id });
   // Rücknahme gilt auch für die Kündigung – aber nur, wenn sie durch den Löschantrag kam (eine separat, z. B. über das
   // Stripe-Kundenportal ausgesprochene Kündigung bleibt bestehen).
@@ -99,7 +115,7 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
   // Abo schon beendet (Rücknahme nach Ende des Abrechnungszeitraums): Kündigung lässt sich nicht mehr zurücknehmen
   if (r.status === "no_subscription" && org.plan !== "free" && org.plan !== "internal") {
     if (accessMode(org).mode === "readonly") {
-      return { ok: base, warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo)." };
+      return { ok: base, warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo) – höchstens 12 Monate nach Vertragsende." };
     }
     if (org.stripeSubscriptionId && ["canceled", "none"].includes(org.subscriptionStatus)) {
       return { ok: base, warning: "Dein Abo ist bereits beendet. Wähle unter Einstellungen → Abo einen Tarif, sonst wechselt die Praxis in den Nur-Lesen-Modus." };

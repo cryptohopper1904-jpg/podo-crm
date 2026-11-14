@@ -22,7 +22,11 @@
  * Stripe (vorab, außerhalb der Transaktion – siehe settleStripe): Ein noch laufendes Abo wird sofort beendet (ohne
  * anteilige Erstattung, ohne Abschlussrechnung), der Stripe-Kunde gelöscht. Ist Stripe nicht erreichbar oder nicht
  * konfiguriert, wird der Löschlauf für diese Praxis abgebrochen und protokolliert – nie löschen, während weiter abgebucht wird.
- * Offene Rechnungen und nicht abgerechnete Positionen meldet schon der Probelauf (Buchhaltung: docs/BETRIEB.md Abschnitt 9).
+ * Offene Rechnungen, nicht abgerechnete Positionen und ein Guthaben beim Kunden meldet schon der Probelauf (Buchhaltung:
+ * docs/BETRIEB.md Abschnitt 9). Gehört das hinterlegte Abo zu einem anderen Stripe-Kunden oder teilt sich die Praxis ihre
+ * Stripe-Kunden-ID mit einer anderen Praxis, bricht der Lauf ab, bevor bei Stripe etwas geändert wird (AppSec M-1/L-1).
+ * Bricht die Löschung NACH dem Stripe-Abschluss ab (z. B. Sperrkonflikte), steht der Stripe-Stand im Protokoll
+ * (platform.org_purge_aborted) und als settings.purgeStartedAt an der Praxis – der nächste Lauf setzt fort.
  *
  * Automatischer Löschantrag (Ende des Nur-Lesen-Modus, src/lib/readonly-expiry.ts): gelöscht wird nur, wenn die Praxis
  * weiterhin nach Vertragsende im Nur-Lesen-Modus ist, die Ankündigung nachweislich in Textform zugegangen ist (E-Mail
@@ -78,7 +82,8 @@ export type PurgeReport = {
  *    | would_cancel (Probelauf) | unchecked (Probelauf ohne Stripe-Zugang)
  *  - customer: none | deleted | would_delete | unchecked
  *  - refundCheck: Das laufende Abo hat eine Abrechnungsperiode NACH dem Löschantrag begonnen (die automatische Kündigung
- *    hat also nicht gegriffen) → Betreiber prüft eine Erstattung dieser Periode im Stripe-Dashboard.
+ *    hat also nicht gegriffen), ist nicht monatlich, oder der Kunde hat ein Guthaben bzw. nicht abgerechnete Gutschriften
+ *    (verfallen mit dem Löschen des Kunden) → Betreiber prüft eine Erstattung im Stripe-Dashboard.
  */
 export type StripeSettlement = {
   subscription: "none" | "ended" | "canceled_now" | "would_cancel" | "unchecked";
@@ -219,14 +224,17 @@ export async function purgeOrganization(
       return { ...(await purgeOnce(client, orgId, { ...opts, stripe }, log)), stripe };
     } catch (e) {
       const code = (e as { code?: string }).code;
-      // Tabellen gerade belegt (NOWAIT, 55P03) bzw. Deadlock/Sperr-Timeout: andere Sitzungen hielten Sperren – kurz warten
-      // und neu versuchen. Mit NOWAIT wartet der Löschlauf nie auf Tabellensperren und kann so keinen Deadlock mit
-      // laufenden App-Transaktionen auslösen (sonst bricht PostgreSQL womöglich die App-Transaktion ab).
+      // Tabellen gerade belegt (NOWAIT bzw. lock_timeout: 55P03) oder Deadlock (40P01): andere Sitzungen hielten Sperren –
+      // kurz warten und neu versuchen (alles bis dahin ist zurückgerollt). NOWAIT verhindert das Warten auf die
+      // Tabellensperren; Zeilensperren beim Löschen können aber weiter mit App-Transaktionen kollidieren – ein Deadlock ist
+      // damit seltener, nicht ausgeschlossen. Der kurze lock_timeout danach begrenzt, wie lange App-Sitzungen warten.
       if ((code === "40P01" || code === "55P03") && attempt < 20) {
         log(`Sperrkonflikt (${code}), Versuch ${attempt + 1} …`);
         await new Promise((r) => setTimeout(r, Math.min(200 * attempt, 2000) + Math.floor(Math.random() * 200)));
         continue;
       }
+      // Abbruch NACH dem Stripe-Abschluss: Stripe-Stand mitprotokollieren (Buchhaltung/Erstattung, Code C-1)
+      if (opts.execute) await logPurgeAborted(client, orgId, purgeErrorKind(e), stripe).catch(() => {});
       throw e;
     }
   }
@@ -317,10 +325,21 @@ async function settleStripe(
   }
   if (subId && !SUB_ID.test(subId)) throw new PurgeAbortError("invalid_subscription_id", `Praxis ${org.slug}: unerwartete Stripe-Abo-ID`);
   if (cusId && !CUS_ID.test(cusId)) throw new PurgeAbortError("invalid_customer_id", `Praxis ${org.slug}: unerwartete Stripe-Kunden-ID`);
+  // dieselbe Kunden-ID bei einer anderen Praxis (Altbestand ohne Unique-Index): Kündigen/Löschen träfe auch sie (AppSec L-1)
+  if (cusId && (await client.query("select 1 from organizations where stripe_customer_id = $1 and id <> $2 limit 1", [cusId, orgId])).rowCount) {
+    throw new PurgeAbortError("shared_stripe_customer", `Praxis ${org.slug}: Stripe-Kunden-ID gehört mehreren Praxen – bitte von Hand klären`);
+  }
   // alle noch laufenden Abos: das der Praxis und weitere desselben Kunden
   const subs = new Map<string, Awaited<ReturnType<BillingPort["getSubscription"]>>>();
-  if (subId) subs.set(subId, await port.getSubscription(subId));
-  if (cusId && !port.isMock) for (const x of await port.listSubscriptions(cusId)) if (!subs.has(x.id)) subs.set(x.id, x);
+  if (subId) {
+    const own = await port.getSubscription(subId);
+    // hinterlegtes Abo gehört einem anderen Stripe-Kunden (vertauschte ID): nichts kündigen, nichts löschen (AppSec M-1)
+    if (own?.customerId && own.customerId !== cusId) {
+      throw new PurgeAbortError("subscription_customer_mismatch", `Praxis ${org.slug}: hinterlegtes Stripe-Abo gehört zu einem anderen Stripe-Kunden – bitte prüfen`);
+    }
+    subs.set(subId, own);
+  }
+  if (cusId && !port.isMock) for (const x of await port.listSubscriptions(cusId)) if (!subs.has(x.id) && (!x.customerId || x.customerId === cusId)) subs.set(x.id, x);
   const liveSubs = [...subs.values()].filter((x): x is NonNullable<typeof x> => !!x && (STRIPE_LIVE_STATUSES as readonly string[]).includes(x.status));
   out.subscriptionStatus = subs.get(subId ?? "")?.status ?? liveSubs[0]?.status ?? null;
   // automatische Löschung (Ende des Nur-Lesen-Modus) setzt ein beendetes Abo voraus – läuft bei Stripe doch noch eins,
@@ -329,11 +348,24 @@ async function settleStripe(
     throw new PurgeAbortError("auto_deletion_live_subscription", `Praxis ${org.slug}: automatische Löschung, aber bei Stripe läuft noch ein Abo – bitte prüfen`);
   }
   if (cusId && !port.isMock) out.openItems = await port.openBillingItems(cusId);
+  // Guthaben beim Kunden bzw. nicht abgerechnete Gutschriften verfallen mit dem Löschen → Erstattung prüfen (Buchhaltung E1)
+  if ((out.openItems?.customerBalanceCents ?? 0) < 0 || (out.openItems?.pendingCreditCents ?? 0) < 0) out.refundCheck = true;
   const requestedAt = new Date(org.deletion_requested_at).getTime();
   for (const sub of liveSubs) {
     const newPeriod = !!sub.currentPeriodStart && sub.currentPeriodStart.getTime() > requestedAt;
     const notMonthly = !!sub.interval && (sub.interval !== "month" || (sub.intervalCount ?? 1) !== 1);
     if (newPeriod || notMonthly) out.refundCheck = true;
+  }
+  if (opts.execute && (liveSubs.length || cusId)) {
+    // Marke VOR der ersten Änderung bei Stripe, nur solange der Antrag noch fällig ist (bedingtes UPDATE: ein inzwischen
+    // zurückgenommener bzw. per Tarifbuchung entfernter automatischer Antrag bricht hier ab)
+    const marked = await client.query(
+      `update organizations set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('purgeStartedAt', $2::text)
+        where id = $1 and deletion_requested_at is not null and deletion_requested_at < $3
+          and coalesce(settings->>'deletionReason', '') = $4`,
+      [orgId, new Date().toISOString(), purgeCutoff(opts.now), typeof org.settings?.deletionReason === "string" ? org.settings.deletionReason : ""],
+    );
+    if (!marked.rowCount) throw new PurgeAbortError("state_changed", `Praxis ${org.slug}: Löschantrag hat sich geändert – nichts bei Stripe geändert`);
   }
   if (liveSubs.length) {
     if (opts.execute) {
@@ -356,14 +388,35 @@ async function settleStripe(
   return out;
 }
 
-/** Plattform-Protokoll: Löschlauf für eine Praxis abgebrochen (ohne Inhalte, nur Art des Fehlers – siehe purgeErrorKind) */
-async function logPurgeAborted(client: PoolClient, orgId: string, reason: string) {
+/** Stripe-Abschluss fürs Plattform-Protokoll (IDs pseudonym, Beträge in Cent, keine Inhalte) */
+function stripeMeta(st: StripeSettlement) {
+  return {
+    subscription: st.subscription,
+    customer: st.customer,
+    refundCheck: st.refundCheck,
+    subscriptionId: st.subscriptionId ?? null,
+    customerId: st.customerId ?? null,
+    subscriptionStatus: st.subscriptionStatus ?? null,
+    openInvoices: st.openItems?.openInvoices ?? null,
+    openInvoiceCents: st.openItems?.openInvoiceCents ?? null,
+    pendingItems: st.openItems?.pendingItems ?? null,
+    pendingChargeCents: st.openItems?.pendingChargeCents ?? null,
+    pendingCreditCents: st.openItems?.pendingCreditCents ?? null,
+    customerBalanceCents: st.openItems?.customerBalanceCents ?? null,
+  };
+}
+
+/**
+ * Plattform-Protokoll: Löschlauf für eine Praxis abgebrochen (ohne Inhalte, nur Art des Fehlers – siehe purgeErrorKind);
+ * mit `stripe`, wenn der Abbruch nach dem Stripe-Abschluss kam (Abo beendet/Kunde gelöscht, Praxis aber noch da).
+ */
+async function logPurgeAborted(client: PoolClient, orgId: string, reason: string, stripe?: StripeSettlement) {
   await client.query("begin");
   try {
     await client.query("select set_config('app.org_id', '', true)");
     await client.query(
       "insert into audit_log (organization_id, user_id, action, entity, entity_id, meta) values (null, null, 'platform.org_purge_aborted', 'organization', $1, $2)",
-      [orgId, JSON.stringify({ reason: reason.slice(0, 80) })],
+      [orgId, JSON.stringify({ reason: reason.slice(0, 80), ...(stripe ? { stripe: stripeMeta(stripe) } : {}) })],
     );
     await client.query("commit");
   } catch (e) {
@@ -401,6 +454,9 @@ async function purgeOnce(
 
     const altered = order.map((t) => meta.get(t)!).filter((m) => m.triggers.length || (m.forceRls && !m.hasDeletePolicy));
     if (altered.length) await client.query(`lock table ${altered.map((m) => q(m.name)).join(", ")} in access exclusive mode nowait`);
+    // ab hier hält der Lauf exklusive Sperren: auf Zeilensperren nur kurz warten (sonst 55P03 → Wiederholung), damit
+    // App-Sitzungen nicht lange hinter dem Löschlauf hängen
+    await client.query("set local lock_timeout = '2s'");
     for (const m of altered) {
       for (const tg of m.triggers) await client.query(`alter table ${q(m.name)} disable trigger ${q(tg)}`);
       if (m.forceRls && !m.hasDeletePolicy) await client.query(`alter table ${q(m.name)} no force row level security`);
@@ -445,18 +501,7 @@ async function purgeOnce(
           usersDeleted,
           usersKept,
           reason: isAutoDeletion(org.settings) ? "auto_readonly_expiry" : "request",
-          stripe: st
-            ? {
-                subscription: st.subscription,
-                customer: st.customer,
-                refundCheck: st.refundCheck,
-                subscriptionId: st.subscriptionId ?? null,
-                customerId: st.customerId ?? null,
-                subscriptionStatus: st.subscriptionStatus ?? null,
-                openInvoices: st.openItems?.openInvoices ?? null,
-                pendingItems: st.openItems?.pendingItems ?? null,
-              }
-            : null,
+          stripe: st ? stripeMeta(st) : null,
         }),
       ],
     );

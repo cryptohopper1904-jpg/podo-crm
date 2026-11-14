@@ -6,6 +6,7 @@ import { BillingHttpError, BillingNotConfiguredError, getBillingPort, type Billi
 import { mapSubscriptionStatus } from "@/integrations/stripe/events";
 import { audit } from "@/lib/audit";
 import { dateDe } from "@/lib/format";
+import { CASH_REGISTER_NOTE, deletionDueAt } from "@/lib/org-deletion";
 import {
   CANCEL_FAILED_MESSAGE,
   cancelStateFromSettings,
@@ -14,6 +15,7 @@ import {
   type CancelMark,
   type CancelReason,
 } from "@/lib/subscription-cancel";
+import { sendOrgMail } from "./org-mail";
 
 /**
  * Kündigung des Stripe-Abos zum Periodenende und deren Rücknahme (Zustand: src/lib/subscription-cancel.ts).
@@ -47,6 +49,7 @@ async function loadOrg(organizationId: string) {
       stripeSubscriptionId: organizations.stripeSubscriptionId,
       stripeCustomerId: organizations.stripeCustomerId,
       currentPeriodEnd: organizations.currentPeriodEnd,
+      deletionRequestedAt: organizations.deletionRequestedAt,
       settings: organizations.settings,
     })
     .from(organizations)
@@ -67,6 +70,9 @@ async function writeCancelState(
   organizationId: string,
   s: { cancelAtPeriodEnd: boolean; reason?: CancelReason | null; marks?: CancelMark[] | null; periodEnd?: Date; status?: string },
 ) {
+  // Marken in SQL zusammenführen (nicht aus einem vorher gelesenen Stand): vorhandene Marken anderer Abos bleiben, Marken
+  // derselben Abos werden ersetzt – zwei gleichzeitige Aufrufe überschreiben sich so nicht gegenseitig.
+  const ids = JSON.stringify((s.marks ?? []).map((m) => m.id));
   const reasonSql =
     s.reason === undefined
       ? sql``
@@ -78,7 +84,7 @@ async function writeCancelState(
       ? sql``
       : s.marks === null || !s.marks.length
         ? sql` - 'billingCancelMarks'`
-        : sql` || jsonb_build_object('billingCancelMarks', ${JSON.stringify(s.marks)}::jsonb)`;
+        : sql` || jsonb_build_object('billingCancelMarks', coalesce((select jsonb_agg(m) from jsonb_array_elements(case when jsonb_typeof(${organizations.settings}->'billingCancelMarks') = 'array' then ${organizations.settings}->'billingCancelMarks' else '[]'::jsonb end) m where not (${ids}::jsonb @> coalesce(m->'id', 'null'::jsonb))), '[]'::jsonb) || ${JSON.stringify(s.marks)}::jsonb)`;
   const status = s.status ? mapSubscriptionStatus(s.status) : undefined;
   await db
     .update(organizations)
@@ -104,6 +110,19 @@ async function clearCancelError(organizationId: string) {
     .where(eq(organizations.id, organizationId));
 }
 
+/**
+ * Kündigungsbestätigung (AGB § 8 Nr. 3, Recht E-4) mit Vertragsende; beim Löschantrag mit frühestem Löschtermin
+ * (Antrag + 30 Tage), sonst mit dem Hinweis auf den Nur-Lesen-Modus. Dazu der Kassen-Hinweis (Buchhaltung E2).
+ */
+export function cancelConfirmationText(reason: CancelReason, periodEnd: Date | null, deletionRequestedAt: Date | null): string {
+  const end = periodEnd ? dateDe(periodEnd) : "Ende des Abrechnungszeitraums";
+  const main =
+    reason === "deletion_request" && deletionRequestedAt
+      ? `Mit deinem Löschantrag ist dein PodoHero-Abo zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Deine Praxis wird frühestens am ${dateDe(deletionDueAt(deletionRequestedAt))} endgültig gelöscht. Nimmst du den Löschantrag bis dahin zurück (Einstellungen → Daten & Kündigung), gilt auch die Kündigung als zurückgenommen, solange der Abrechnungszeitraum noch läuft.`
+      : `Dein PodoHero-Abo ist zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen. Danach bleibt die Praxis höchstens 12 Monate lesbar und wird dann gelöscht (Ankündigung mindestens 30 Tage vorher) – exportiere rechtzeitig (Einstellungen → Daten & Kündigung).`;
+  return `${main} ${CASH_REGISTER_NOTE}`;
+}
+
 /** Fehlerbeschreibung ohne Antworttext von Stripe (kann Kundendaten enthalten) */
 export const errorKind = (e: unknown) => (e instanceof BillingHttpError ? `HTTP ${e.status}` : e instanceof Error ? e.name : "Fehler");
 
@@ -119,6 +138,12 @@ function assertRealPort(port: BillingPort, subId: string) {
   if (port.isMock && !subId.startsWith("sub_mock_")) throw new BillingNotConfiguredError("STRIPE_SECRET_KEY fehlt.");
 }
 
+/** Hat eine ANDERE Praxis dieselbe Stripe-Kunden-ID? (organizations hat keine RLS) */
+export async function sharesStripeCustomer(organizationId: string, customerId: string): Promise<boolean> {
+  const r = await db.execute(sql`select 1 from organizations where stripe_customer_id = ${customerId} and id <> ${organizationId} limit 1`);
+  return r.rows.length > 0;
+}
+
 const live = (status: string) => (STRIPE_LIVE_STATUSES as readonly string[]).includes(status);
 
 /**
@@ -131,7 +156,12 @@ const ownedBy = (sub: SubscriptionInfo, org: OrgRow) => !sub.customerId || sub.c
  * Alle noch nicht beendeten Abos der Praxis: das hinterlegte (falls laut lokalem Stand laufend) und – mit echtem
  * Stripe-Zugang – alle weiteren des Stripe-Kunden. Das hinterlegte Abo steht vorn.
  */
-async function liveSubscriptions(org: OrgRow, port: BillingPort): Promise<SubscriptionInfo[]> {
+async function liveSubscriptions(organizationId: string, org: OrgRow, port: BillingPort): Promise<SubscriptionInfo[]> {
+  // dieselbe Stripe-Kunden-ID bei einer anderen Praxis (Unique-Index fehlt, Altbestand): nichts kündigen oder fortsetzen –
+  // sonst träfe es die Abos der anderen Praxis (AppSec L-1). Betreiber-Hinweis über billingCancelError.
+  if (org.stripeCustomerId && (await sharesStripeCustomer(organizationId, org.stripeCustomerId))) {
+    throw Object.assign(new Error("Stripe-Kunden-ID gehört mehreren Praxen"), { name: "SharedStripeCustomer" });
+  }
   const found = new Map<string, SubscriptionInfo>();
   if (hasRunningSubscription(org)) {
     assertRealPort(port, org.stripeSubscriptionId!);
@@ -157,7 +187,7 @@ export async function cancelSubscriptionAtPeriodEnd(
   if (!org || (!hasRunningSubscription(org) && !org.stripeCustomerId)) return { status: "no_subscription" };
   const marks: CancelMark[] = [];
   try {
-    const subs = await liveSubscriptions(org, port);
+    const subs = await liveSubscriptions(organizationId, org, port);
     if (!subs.length) return { status: "no_subscription" };
     const after = new Map<string, SubscriptionInfo>();
     for (const sub of subs) {
@@ -179,7 +209,7 @@ export async function cancelSubscriptionAtPeriodEnd(
     await writeCancelState(organizationId, {
       cancelAtPeriodEnd: true,
       reason,
-      marks: [...cancelStateFromSettings(org.settings).marks.filter((m) => !after.has(m.id)), ...marks],
+      marks,
       periodEnd: own ? main.currentPeriodEnd : undefined,
       status: own ? main.status : undefined,
     });
@@ -191,21 +221,23 @@ export async function cancelSubscriptionAtPeriodEnd(
       entityId: organizationId,
       meta: { trigger: reason, periodEnd: periodEnd?.toISOString() ?? null, subscriptions: marks.map((m) => m.id) },
     });
-    // Bestätigung mit Vertragsende (AGB § 8 Nr. 3) – zusätzlich zur Meldung auf der Seite dauerhaft im Posteingang
-    const end = periodEnd ? dateDe(periodEnd) : "Ende des Abrechnungszeitraums";
-    await inboxNotice(
-      organizationId,
-      "Kündigung bestätigt",
-      reason === "deletion_request"
-        ? `Mit deinem Löschantrag ist dein PodoHero-Abo zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen.`
-        : `Dein PodoHero-Abo ist zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen. Danach bleibt die Praxis höchstens 12 Monate lesbar – exportiere rechtzeitig (Einstellungen → Daten & Kündigung).`,
-    ).catch((err) => console.error("[billing] Posteingang-Hinweis fehlgeschlagen", organizationId, errorKind(err)));
+    // Bestätigung mit Vertragsende (AGB § 8 Nr. 3) – zusätzlich zur Meldung auf der Seite dauerhaft im Posteingang und,
+    // mit Plattform-SMTP, per E-Mail an die Inhaber:innen (Textform)
+    const body = cancelConfirmationText(reason, periodEnd, reason === "deletion_request" ? (org.deletionRequestedAt ?? new Date()) : null);
+    await inboxNotice(organizationId, "Kündigung bestätigt", body).catch((err) => console.error("[billing] Posteingang-Hinweis fehlgeschlagen", organizationId, errorKind(err)));
+    const mail = await sendOrgMail(organizationId, `Kündigung bestätigt – Vertragsende ${periodEnd ? dateDe(periodEnd) : "zum Ende des Abrechnungszeitraums"} – PodoHero`, ["Hallo,", "", body, "", "Viele Grüße", "PodoHero"].join("\n"), {
+      primary: ["owner"],
+      logKey: "billing.cancel_confirmation",
+    });
+    if (mail !== "not_configured") {
+      await audit({ organizationId, userId, action: "billing.cancel_confirmation_mail", entity: "organization", entityId: organizationId, meta: { trigger: reason, mail } }).catch(() => undefined);
+    }
     return { status: "canceled", periodEnd };
   } catch (e) {
     console.error("[billing] Kündigung zum Periodenende fehlgeschlagen", organizationId, reason, errorKind(e));
     // Teilerfolg (mehrere Abos): bereits gekündigte Abos mit Marke festhalten, damit eine Rücknahme sie findet
     if (marks.length) {
-      await writeCancelState(organizationId, { cancelAtPeriodEnd: true, reason, marks: [...cancelStateFromSettings(org.settings).marks, ...marks] }).catch(() => undefined);
+      await writeCancelState(organizationId, { cancelAtPeriodEnd: true, reason, marks }).catch(() => undefined);
     }
     await markCancelError(organizationId, reason);
     await audit({ organizationId, userId, action: "billing.cancel_failed", entity: "organization", entityId: organizationId, meta: { trigger: reason, error: errorKind(e) } });

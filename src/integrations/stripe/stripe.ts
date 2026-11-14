@@ -170,13 +170,18 @@ export class StripeAdapter implements BillingPort {
     const customer = stripeId(customerId, "cus_");
     const inv = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoices", { customer, status: "open", limit: 100 });
     const items = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoiceitems", { customer, pending: "true", limit: 100 });
+    // Kundensaldo (negativ = Guthaben); ein gelöschter Kunde liefert { deleted: true } ohne Saldo
+    const cus = await this.request<{ balance?: unknown; deleted?: unknown }>("GET", `/customers/${customer}`);
     const invoices = inv.data ?? [];
-    const pending = items.data ?? [];
+    const pending = (items.data ?? []).map((i) => cents(i.amount));
     return {
       openInvoices: invoices.length,
       openInvoiceCents: invoices.reduce((s, i) => s + cents(i.amount_remaining), 0),
       pendingItems: pending.length,
-      pendingItemCents: pending.reduce((s, i) => s + cents(i.amount), 0),
+      pendingItemCents: pending.reduce((s, a) => s + a, 0),
+      pendingChargeCents: pending.filter((a) => a > 0).reduce((s, a) => s + a, 0),
+      pendingCreditCents: pending.filter((a) => a < 0).reduce((s, a) => s + a, 0),
+      customerBalanceCents: cus.deleted === true ? null : cents(cus.balance),
       truncated: inv.has_more === true || items.has_more === true,
     };
   }

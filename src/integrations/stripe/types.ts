@@ -49,7 +49,17 @@ export interface OpenBillingItems {
   openInvoiceCents: number;
   /** noch nicht abgerechnete Rechnungspositionen (invoiceitems, pending=true), z. B. anteilige Beträge nach Tarifwechsel */
   pendingItems: number;
+  /** Summe aller nicht abgerechneten Positionen (Saldo) */
   pendingItemCents: number;
+  /** davon Belastungen (positive Positionen) und Gutschriften (negative Positionen, als negativer Betrag) */
+  pendingChargeCents: number;
+  pendingCreditCents: number;
+  /**
+   * Kundensaldo bei Stripe (customer.balance): negativ = Guthaben der Praxis (wird mit künftigen Rechnungen verrechnet und
+   * verfällt mit dem Löschen des Kunden), positiv = Betrag, der der nächsten Rechnung zugeschlagen würde. null = Kunde
+   * schon gelöscht.
+   */
+  customerBalanceCents: number | null;
   /** true = mehr als eine Seite (100) – Zahlen sind Untergrenzen */
   truncated: boolean;
 }
@@ -76,7 +86,7 @@ export interface BillingPort {
   setCancelAtPeriodEnd(subscriptionId: string, cancel: boolean, reason: string | null): Promise<SubscriptionInfo>;
   /** Alle Abos eines Stripe-Kunden (jeder Status, höchstens 100). */
   listSubscriptions(customerId: string): Promise<SubscriptionInfo[]>;
-  /** Offene Rechnungen und nicht abgerechnete Positionen eines Kunden (nur lesen). */
+  /** Offene Rechnungen, nicht abgerechnete Positionen und Kundensaldo eines Kunden (nur lesen). */
   openBillingItems(customerId: string): Promise<OpenBillingItems>;
   /** Abo sofort beenden – ohne anteilige Gutschrift und ohne Abschlussrechnung (prorate=false, invoice_now=false). */
   cancelSubscriptionNow(subscriptionId: string): Promise<SubscriptionInfo | null>;

@@ -35,3 +35,19 @@ describe("checkTimestamps: cronNurLesen", () => {
     expect((await checkTimestamps()).cronNurLesen.status).toBe("ok");
   });
 });
+
+describe("checkStripeCustomerIndex (AppSec L-1)", () => {
+  it("fehlender Unique-Index auf stripe_customer_id → fail, vorhanden → ok, nicht lesbar → fail", async () => {
+    const { db } = (await import("@/db")) as unknown as { db: { execute?: () => Promise<unknown> } };
+    const { checkStripeCustomerIndex } = await import("./ops-status");
+    db.execute = async () => ({ rows: [] });
+    expect(await checkStripeCustomerIndex()).toMatchObject({ status: "fail", hint: expect.stringMatching(/organizations_stripe_customer_id/) });
+    db.execute = async () => ({ rows: [{ x: 1 }] });
+    expect(await checkStripeCustomerIndex()).toEqual({ status: "ok" });
+    db.execute = async () => {
+      throw new Error("weg");
+    };
+    expect((await checkStripeCustomerIndex()).status).toBe("fail");
+    delete db.execute;
+  });
+});

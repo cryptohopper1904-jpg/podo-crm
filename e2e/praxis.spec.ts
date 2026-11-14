@@ -351,7 +351,10 @@ test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () 
 test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {
   await page.goto("/einstellungen/daten");
   await expect(page.getByText(/Der Löschantrag gilt\s+zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums/)).toBeVisible();
-  await expect(page.getByText(/Ist\s+das Abo bereits beendet, bleibt die Praxis im Nur-Lesen-Modus, bis du wieder einen Tarif wählst\./)).toBeVisible();
+  await expect(page.getByText(/Ist\s+das Abo bereits beendet, bleibt die Praxis im Nur-Lesen-Modus, bis du wieder einen Tarif wählst – höchstens 12 Monate nach Vertragsende\./)).toBeVisible();
+  // Buchhaltung E2/E6: Kassenabmeldung und Inhalt des Exports
+  await expect(page.getByTestId("kassenabmeldung")).toContainText("§ 146a Abs. 4 AO");
+  await expect(page.getByTestId("export-belege")).toContainText("Original-PDF mit Prüfsumme");
   const restore = await setDemoBilling({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: `sub_mock_e2e${run}` });
   try {
     await page.goto("/einstellungen/abo");

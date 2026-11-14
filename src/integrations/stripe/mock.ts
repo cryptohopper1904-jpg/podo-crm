@@ -53,7 +53,7 @@ export class StripeMock implements BillingPort {
 
   async openBillingItems(_customerId: string): Promise<OpenBillingItems> {
     void _customerId;
-    return { openInvoices: 0, openInvoiceCents: 0, pendingItems: 0, pendingItemCents: 0, truncated: false };
+    return { openInvoices: 0, openInvoiceCents: 0, pendingItems: 0, pendingItemCents: 0, pendingChargeCents: 0, pendingCreditCents: 0, customerBalanceCents: 0, truncated: false };
   }
 
   async cancelSubscriptionNow(subscriptionId: string) {

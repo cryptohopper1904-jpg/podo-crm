@@ -55,7 +55,7 @@ export async function recordManualNoticeAction(_: ManualNoticeState, form: FormD
       organizationId: z.string().uuid(),
       receivedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       via: z.string().refine((v): v is ManualNoticeVia => Object.hasOwn(MANUAL_NOTICE_VIAS, v)),
-      note: z.string().max(2000),
+      note: z.string().max(300),
       confirm: z.literal("on"),
     })
     .safeParse(Object.fromEntries(form));
@@ -63,7 +63,7 @@ export async function recordManualNoticeAction(_: ManualNoticeState, form: FormD
   try {
     const r = await recordManualNotice(row.user.id, d.data.organizationId, { receivedOn: d.data.receivedOn, via: d.data.via as ManualNoticeVia, note: d.data.note });
     revalidatePath("/plattform");
-    return { ok: `Vermerkt. Löschung frühestens ab ${r.deletionAt.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" })}.` };
+    return { ok: `Vermerkt. Angekündigter Löschtermin: ${r.deletionAt.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" })}.` };
   } catch (e) {
     if (e instanceof ManualNoticeError) return { error: e.message };
     throw e;

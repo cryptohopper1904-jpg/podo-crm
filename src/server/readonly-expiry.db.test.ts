@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { MailNotConfiguredError, type MailMessage, type MailPort } from "@/integrations/mail/mail";
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
-vi.mock("@/lib/auth/session", async (orig) => ({ ...(await orig<typeof import("@/lib/auth/session")>()), requestMeta: async () => ({ ip: null }) }));
+vi.mock("@/lib/auth/session", async (orig) => ({ ...(await orig<typeof import("@/lib/auth/session")>()), requestMeta: async () => ({ ip: "203.0.113.7", userAgent: null }) }));
 
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
@@ -26,10 +26,21 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
   let promo: typeof import("./promo-codes");
   let sent: MailMessage[];
   let mailMode: "ok" | "unconfigured" | "crash";
+  /** Adressen, an die der Versand scheitert (SMTP lehnt ab) */
+  let rejectTo: Set<string>;
   const mail = (): MailPort => {
     if (mailMode === "unconfigured") throw new MailNotConfiguredError();
     if (mailMode === "crash") throw new Error("SMTP-Verbindung abgebrochen");
-    return { kind: "smtp", isMock: false, source: "platform", send: async (m) => (sent.push(m), { messageId: `m-${sent.length}` }) } as MailPort;
+    return {
+      kind: "smtp",
+      isMock: false,
+      source: "platform",
+      send: async (m) => {
+        if (rejectTo.has(m.to)) throw new Error("550 Postfach unbekannt");
+        sent.push(m);
+        return { messageId: `m-${sent.length}` };
+      },
+    } as MailPort;
   };
 
   beforeAll(async () => {
@@ -49,6 +60,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
   beforeEach(() => {
     sent = [];
     mailMode = "ok";
+    rejectTo = new Set();
   });
 
   /** Praxis mit Inhaber:in; Vertragsende so gewählt, dass der späteste Löschtermin `deleteInDays` Tage ab `now` liegt */
@@ -88,7 +100,14 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(await run([p.org], t1)).toMatchObject({ notices: 0, requests: 0 });
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toBe(p.email);
-    expect(sent[0].subject).toMatch(/Ankündigung: Löschung deiner Praxis ab dem \d\d\.\d\d\.\d{4}/);
+    expect(sent[0].subject).toMatch(/Ankündigung: Löschung deiner Praxis am \d\d\.\d\d\.\d{4}/);
+    // einheitlich mit AGB § 9 Nr. 2 (Recht E-2), Verweis AGB § 3 Nr. 5 (E-1), TSE-Export beim Anbieter (E-7), Kassenabmeldung (Buchhaltung E2)
+    expect(sent[0].text).toMatch(/Wir löschen deine Praxis deshalb am \d\d\.\d\d\.\d{4} endgültig \(spätestens 14 Tage danach\)/);
+    expect(sent[0].text).toContain("(AGB § 3 Nr. 5, § 9 Nr. 2)");
+    expect(sent[0].text).toContain("und den TSE-Export bei deinem TSE-Anbieter; nach der Löschung lassen sie sich über PodoHero nicht mehr erzeugen.");
+    expect(sent[0].text).toContain("§ 146a Abs. 4 AO, über „Mein ELSTER“");
+    expect(sent[0].text).toContain("Du kannst die Löschung auch sofort beantragen (Einstellungen → Daten & Kündigung).");
+    expect(sent[0].text).not.toMatch(/ab dem|frühestens am/);
     // Testphase: eigener Satz, kostenloser Tarif als Ausweg, Aufbewahrungs-Hinweis (Buchhaltung)
     expect(sent[0].text).toMatch(/deine Testphase für die Praxis „.+“ in PodoHero endete am \d\d\.\d\d\.\d{4}\./);
     expect(sent[0].text).toMatch(/12 Monate nach Ende der Testphase/);
@@ -115,7 +134,8 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     const t3 = new Date(t2.getTime() + 23 * DAY);
     expect(await run([p.org], t3)).toMatchObject({ reminders: 1 });
     expect(await run([p.org], new Date(t3.getTime() + DAY))).toMatchObject({ reminders: 0 });
-    expect(sent.map((m) => m.subject)).toEqual([expect.stringMatching(/^Ankündigung/), expect.stringMatching(/^Erinnerung: Deine Praxis wird ab dem/)]);
+    expect(sent.map((m) => m.subject)).toEqual([expect.stringMatching(/^Ankündigung/), expect.stringMatching(/^Erinnerung: Wir löschen deine Praxis am \d\d\.\d\d\.\d{4}/)]);
+    expect(sent[1].text).toMatch(/löschen wir deine Praxis „.+“ in PodoHero am \d\d\.\d\d\.\d{4} endgültig \(spätestens 14 Tage danach\)\./);
     expect((await inbox(p.org)).length).toBe(2);
   });
 
@@ -138,22 +158,27 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect((await row(p.org)).settings.readonlyExpiry.noticeMail).toBe("not_configured");
     expect((await row(p.org)).deletion_requested_at).toBeNull();
     expect(await inbox(p.org)).toHaveLength(1);
-    // spätere Läufe (auch Wochen danach) stellen ohne Zugang keinen Antrag
-    expect(await run([p.org], new Date(now.getTime() + 60 * DAY))).toMatchObject({ requests: 0, mailNotSent: 1 });
+    // spätere Läufe (auch Wochen danach) stellen ohne Zugang keinen Antrag (der erneute Versuch scheitert ebenfalls)
+    const later = new Date(now.getTime() + 60 * DAY);
+    expect(await run([p.org], later)).toMatchObject({ requests: 0, mailNotSent: 1 });
     expect((await row(p.org)).deletion_requested_at).toBeNull();
+    expect(await inbox(p.org)).toHaveLength(1);
     // Vermerk: Datum in der Zukunft / ohne Nachweis abgelehnt
     const admin = await f.user();
     const day = (d: Date) => d.toISOString().slice(0, 10);
-    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(new Date(now.getTime() + 3 * DAY)), via: "letter", note: "Brief an Inhaberin" }, now)).rejects.toThrow(/Zukunft/);
-    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(now), via: "letter", note: "" }, now)).rejects.toThrow(/Nachweis/);
-    const v = await mod.recordManualNotice(admin, p.org, { receivedOn: day(now), via: "letter", note: "Einschreiben an Praxisanschrift, Kopie im Ordner" }, now);
-    expect(v.deletionAt.getTime()).toBeGreaterThanOrEqual(now.getTime() + 30 * DAY);
+    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(new Date(later.getTime() + 3 * DAY)), via: "letter", note: "Brief an Inhaberin" }, later)).rejects.toThrow(/Zukunft/);
+    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(later), via: "letter", note: "" }, later)).rejects.toThrow(/Nachweis/);
+    const v = await mod.recordManualNotice(admin, p.org, { receivedOn: day(later), via: "letter", note: "Einschreiben an Praxisanschrift, Kopie im Ordner" }, later);
+    expect(v.deletionAt.getTime()).toBeGreaterThanOrEqual(later.getTime() + 30 * DAY);
     const st = (await row(p.org)).settings.readonlyExpiry;
     expect(st).toMatchObject({ manualNoticeVia: "letter", manualNoticeBy: admin, noticeMail: "not_configured" });
     expect(Date.parse(st.deletionAt)).toBe(v.deletionAt.getTime());
     expect(await audits(p.org, "platform.readonly_notice_manual")).toEqual([{ meta: expect.objectContaining({ via: "letter", mail: "not_configured" }) }]);
+    // AppSec I-2: Vermerk mit IP des Plattform-Admins im Audit
+    const ip = await f.asOrg(p.org, async (c) => (await c.query("select host(ip) as ip from audit_log where organization_id=$1 and action='platform.readonly_notice_manual'", [p.org])).rows);
+    expect(ip).toEqual([{ ip: "203.0.113.7" }]);
     // jetzt Antrag; der Löschlauf löscht frühestens 30 Tage nach Zugang
-    expect(await run([p.org], now)).toMatchObject({ requests: 1, mailNotSent: 0 });
+    expect(await run([p.org], later)).toMatchObject({ requests: 1, mailNotSent: 0 });
     expect(new Date((await row(p.org)).deletion_requested_at).getTime() + 30 * DAY).toBeGreaterThanOrEqual(Date.parse(st.manualNoticeAt) + 30 * DAY);
   });
 
@@ -182,10 +207,76 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       "update organizations set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('readonlyExpiry', jsonb_build_object('noticeSentAt', $2::text, 'deletionAt', $3::text, 'noticeMail', 'unknown')) where id=$1",
       [b.org, new Date(now.getTime() - 40 * DAY).toISOString(), new Date(now.getTime() - 10 * DAY).toISOString()],
     );
+    // erneuter Versuch (Lauf abgebrochen, Status „unknown“): jetzt zugestellt → neuer Termin = jetzt + 30 Tage, Antrag sofort
+    // (der Löschlauf löscht 30 Tage nach dem Antrag = 30 Tage nach Zugang)
     mailMode = "ok";
-    expect(await run([b.org], now)).toMatchObject({ notices: 0, requests: 0, mailNotSent: 1 });
-    expect((await row(b.org)).deletion_requested_at).toBeNull();
+    expect(await run([b.org], now)).toMatchObject({ notices: 1, requests: 1, mailNotSent: 0 });
+    const ob = await row(b.org);
+    expect(ob.settings.readonlyExpiry).toMatchObject({ noticeSentAt: now.toISOString(), noticeMail: "sent" });
+    expect(Date.parse(ob.settings.readonlyExpiry.deletionAt)).toBe(now.getTime() + 30 * DAY);
+    expect(new Date(ob.deletion_requested_at).getTime()).toBe(now.getTime());
+    expect(sent.map((m) => m.to)).toEqual([b.email]);
+    expect(await audits(b.org, "org.readonly_expiry_notice")).toEqual([{ meta: expect.objectContaining({ retry: true, previousMail: "unknown", mail: "sent" }) }]);
+  });
+
+  it("nicht zugestellte Ankündigung wird höchstens einmal je 24 h erneut versucht, mit Termin ≥ Versuch + 30 Tage", async () => {
+    mailMode = "crash";
+    const t0 = new Date();
+    const p = await practice({ deleteInDays: 40, now: t0 });
+    expect(await run([p.org], t0)).toMatchObject({ notices: 1, requests: 0, mailNotSent: 1 });
+    expect((await row(p.org)).settings.readonlyExpiry.noticeMail).toBe("failed");
+    // nach 6 Stunden (nächster Cron): noch kein neuer Versuch
+    mailMode = "ok";
+    expect(await run([p.org], new Date(t0.getTime() + 6 * 3600_000))).toMatchObject({ notices: 0, mailNotSent: 1 });
     expect(sent).toEqual([]);
+    // nach 25 Stunden: erneuter Versuch, jetzt zugestellt; Termin bleibt der späteste (≥ Versuch + 30 Tage)
+    const t1 = new Date(t0.getTime() + 25 * 3600_000);
+    expect(await run([p.org], t1)).toMatchObject({ notices: 1, requests: 0, mailNotSent: 0 });
+    const st = (await row(p.org)).settings.readonlyExpiry;
+    expect(st).toMatchObject({ noticeSentAt: t1.toISOString(), noticeMail: "sent" });
+    expect(Date.parse(st.deletionAt)).toBe(Math.max(p.deletionAt.getTime(), t1.getTime() + 30 * DAY));
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain(new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(Date.parse(st.deletionAt))));
+    // Posteingang nur einmal (Erstankündigung); danach keine weiteren Versuche
+    expect(await inbox(p.org)).toHaveLength(1);
+    expect(await run([p.org], new Date(t1.getTime() + 2 * DAY))).toMatchObject({ notices: 0 });
+    expect(sent).toHaveLength(1);
+    // mit Betreiber-Vermerk kein erneuter Versuch
+    mailMode = "unconfigured";
+    const q = await practice({ deleteInDays: 40, now: t0 });
+    await run([q.org], t0);
+    const admin = await f.user();
+    await mod.recordManualNotice(admin, q.org, { receivedOn: t0.toISOString().slice(0, 10), via: "letter", note: "Brief an die Praxisanschrift" }, t0);
+    const before = (await row(q.org)).settings.readonlyExpiry.noticeSentAt;
+    mailMode = "ok";
+    expect(await run([q.org], new Date(t0.getTime() + 3 * DAY))).toMatchObject({ notices: 0 });
+    expect((await row(q.org)).settings.readonlyExpiry.noticeSentAt).toBe(before);
+  });
+
+  it("Recht B-1: nur an die Steuerberatung zugestellt gilt NICHT als Zugang – kein Antrag, Pflichtaktion", async () => {
+    const now = new Date();
+    const p = await practice({ deleteInDays: 5, now });
+    const acc = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [p.org, acc]);
+    const accEmail = (await f.pool.query("select email from users where id=$1", [acc])).rows[0].email as string;
+    rejectTo.add(p.email);
+    expect(await run([p.org], now)).toMatchObject({ notices: 1, requests: 0, mailNotSent: 1 });
+    expect(sent.map((m) => m.to)).toEqual([accEmail]);
+    expect((await row(p.org)).settings.readonlyExpiry.noticeMail).toBe("failed");
+    expect((await row(p.org)).deletion_requested_at).toBeNull();
+    // ohne Inhaber:in (nur Steuerberatung): ebenfalls nicht zugestellt
+    const q = await practice({ deleteInDays: 5, now });
+    await f.pool.query("update memberships set role='accountant' where organization_id=$1", [q.org]);
+    await run([q.org], now);
+    expect((await row(q.org)).settings.readonlyExpiry.noticeMail).toBe("no_recipient");
+    expect((await row(q.org)).deletion_requested_at).toBeNull();
+    // Inhaber:in angenommen, Steuerberatung abgelehnt: zugestellt
+    const r = await practice({ deleteInDays: 5, now });
+    const acc2 = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [r.org, acc2]);
+    rejectTo.add((await f.pool.query("select email from users where id=$1", [acc2])).rows[0].email);
+    expect(await run([r.org], now)).toMatchObject({ notices: 1, requests: 1 });
+    expect((await row(r.org)).settings.readonlyExpiry.noticeMail).toBe("sent");
   });
 
   it("Empfänger: Inhaber:innen und Steuerberatung (accountant), nicht andere Rollen", async () => {

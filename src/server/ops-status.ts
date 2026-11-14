@@ -54,6 +54,19 @@ export async function checkPaymentRefIndex(): Promise<CheckResult> {
   }
 }
 
+/**
+ * Eindeutiger Index je Stripe-Kunden-ID (Migration 0052 legt ihn bei Dubletten nicht an). Fehlt er: fail – teilen sich
+ * zwei Praxen eine Kunden-ID, träfen Kündigung und Löschlauf auch die andere Praxis (AppSec L-1; beide brechen dann ab).
+ */
+export async function checkStripeCustomerIndex(): Promise<CheckResult> {
+  try {
+    const r = await withTimeout(db.execute(sql`select 1 from pg_indexes where schemaname = 'public' and indexname = 'organizations_stripe_customer_id'`));
+    return r.rows.length ? { status: "ok" } : { status: "fail", hint: "Index organizations_stripe_customer_id fehlt (doppelte Stripe-Kunden-IDs, siehe Deploy-Log)" };
+  } catch {
+    return { status: "fail", hint: "Index-Status nicht lesbar" };
+  }
+}
+
 /** Alter des letzten Backups und der Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR). */
 export async function checkTimestamps(): Promise<Record<"backup" | "cronReminders" | "cronKim" | "cronNurLesen", CheckResult>> {
   const dir = process.env.STATUS_DIR;

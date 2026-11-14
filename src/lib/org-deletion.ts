@@ -26,3 +26,14 @@ export function confirmsPracticeName(input: string, practiceName: string): boole
   const norm = (s: string) => s.normalize("NFC").trim().replace(/\s+/g, " ").toLocaleLowerCase("de-DE");
   return norm(input).length > 0 && norm(input) === norm(practiceName);
 }
+
+/**
+ * Kassen-Hinweise für Ankündigung, Kündigungsbestätigung und „Daten & Kündigung“ (Buchhaltung E2/E5, Recht E-7):
+ * DSFinV-K-Export (höchstens 3 Jahre je Export) und TSE-Export (beim TSE-Anbieter) separat erstellen.
+ */
+export const EXPORT_CASH_NOTE =
+  "Hast du die Kasse genutzt, erstelle auch den DSFinV-K-Export – ggf. mehrere Zeiträume (max. 3 Jahre je Export) – und den TSE-Export bei deinem TSE-Anbieter; nach der Löschung lassen sie sich über PodoHero nicht mehr erzeugen.";
+
+/** Abmeldung des Kassensystems beim Finanzamt (§ 146a Abs. 4 AO, Buchhaltung E2) */
+export const CASH_REGISTER_NOTE =
+  "Hast du deine Kasse beim Finanzamt gemeldet, melde ihre Außerbetriebnahme innerhalb eines Monats (§ 146a Abs. 4 AO, über „Mein ELSTER“); nimm die TSE bei deinem TSE-Anbieter erst nach dem TSE-Export außer Betrieb.";

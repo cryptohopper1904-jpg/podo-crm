@@ -1,15 +1,17 @@
 import "server-only";
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, withOrg, type Db, type Tx } from "@/db";
-import { auditLog, memberships, messages, organizations, users } from "@/db/schema";
-import { MailNotConfiguredError, type MailPort } from "@/integrations/mail/mail";
+import { auditLog, messages, organizations } from "@/db/schema";
+import type { MailPort } from "@/integrations/mail/mail";
+import { audit } from "@/lib/audit";
 import { dateDe } from "@/lib/format";
 import { log } from "@/lib/log";
-import { deletionDueAt, DELETION_GRACE_DAYS } from "@/lib/org-deletion";
+import { CASH_REGISTER_NOTE, deletionDueAt, DELETION_GRACE_DAYS, EXPORT_CASH_NOTE } from "@/lib/org-deletion";
 import { GRACE_DAYS } from "@/lib/plans";
 import {
   AUTO_DELETION_REASON,
   isAutoDeletion,
+  needsManualNotice,
   plannedDeletionDate,
   readonlyExpiry,
   readonlyExpiryState,
@@ -19,7 +21,7 @@ import {
   type ManualNoticeVia,
   type ReadonlyExpiry,
 } from "@/lib/readonly-expiry";
-import { platformMailPort } from "./mail";
+import { sendOrgMail } from "./org-mail";
 
 /**
  * Cron „Ende des Nur-Lesen-Modus“ (Fristen und Ablauf: src/lib/readonly-expiry.ts). Je Praxis eigener Fehlerpfad.
@@ -32,6 +34,10 @@ import { platformMailPort } from "./mail";
  */
 
 const DAY = 86_400_000;
+/** Abstand zwischen zwei Versuchen einer nicht zugestellten Ankündigung */
+export const NOTICE_RETRY_HOURS = 24;
+/** Praxen je Seite (Keyset-Paginierung über die ID) */
+const PAGE_SIZE = 1000;
 
 export type ReadonlyExpiryRun = { checked: number; notices: number; requests: number; reminders: number; stopped: number; failed: number; mailNotSent: number };
 
@@ -76,47 +82,13 @@ export const readonlySql = (now: Date) => {
         and coalesce(${organizations.currentPeriodEnd}, ${organizations.trialEndsAt}) + make_interval(days => ${GRACE_DAYS}) <= ${t} end)`;
 };
 
-/** Empfänger: Inhaber:innen und – für die Aufbewahrung der Belege – die Steuerberatung (Rolle accountant) */
-async function recipientEmails(organizationId: string): Promise<string[]> {
-  const rows = await db
-    .select({ email: users.email })
-    .from(memberships)
-    .innerJoin(users, eq(users.id, memberships.userId))
-    .where(and(eq(memberships.organizationId, organizationId), eq(memberships.active, true), inArray(memberships.role, ["owner", "accountant"])));
-  return [...new Set(rows.map((r) => r.email))];
-}
-
-/** Versand; wirft nie – jeder unerwartete Fehler gilt als „failed“ (nicht versendet) */
-async function deliver(organizationId: string, subject: string, text: string, deps: Deps): Promise<MailOutcome> {
-  try {
-    return await deliverOrThrow(organizationId, subject, text, deps);
-  } catch (e) {
-    log.warn("cron.readonly_expiry.mail_failed", { organizationId, error: e });
-    return "failed";
-  }
-}
-
-async function deliverOrThrow(organizationId: string, subject: string, text: string, deps: Deps): Promise<MailOutcome> {
-  const to = await recipientEmails(organizationId);
-  if (!to.length) return "no_recipient";
-  let port: MailPort;
-  try {
-    port = (deps.mail ?? (() => platformMailPort()))();
-  } catch (e) {
-    if (e instanceof MailNotConfiguredError) return "not_configured";
-    throw e;
-  }
-  if (port.isMock) return "not_configured";
-  let ok = 0;
-  for (const addr of to) {
-    try {
-      await port.send({ to: addr, subject, text });
-      ok++;
-    } catch (e) {
-      log.warn("cron.readonly_expiry.mail_failed", { organizationId, error: e });
-    }
-  }
-  return ok ? "sent" : "failed";
+/**
+ * Versand der Ankündigung/Erinnerung; wirft nie. „sent“ nur, wenn mindestens eine Inhaber:innen-Adresse angenommen hat
+ * (AGB § 9 Nr. 2: Ankündigung an die Inhaber:innen) – die Steuerberatung (Rolle accountant) erhält sie zusätzlich zur
+ * Sicherung der Aufbewahrungspflichten, zählt aber nicht als Zugang (Recht B-1).
+ */
+function deliver(organizationId: string, subject: string, text: string, deps: Deps): Promise<MailOutcome> {
+  return sendOrgMail(organizationId, subject, text, { primary: ["owner"], additional: ["accountant"], mail: deps.mail, logKey: "cron.readonly_expiry" });
 }
 
 async function inbox(organizationId: string, subject: string, body: string) {
@@ -129,23 +101,25 @@ function noticeText(name: string, info: ReadonlyExpiry, deletionAt: Date, remind
   const date = dateDe(deletionAt);
   const url = publicUrl();
   const trial = info.kind === "trial";
-  const subject = reminder ? `Erinnerung: Deine Praxis wird ab dem ${date} gelöscht – PodoHero` : `Ankündigung: Löschung deiner Praxis ab dem ${date} – PodoHero`;
+  // einheitlich mit AGB § 9 Nr. 2 / AVV § 10 Nr. 2: Löschung mit Ablauf des Nur-Lesen-Modus, spätestens 14 Tage danach (Recht E-2)
+  const subject = reminder ? `Erinnerung: Wir löschen deine Praxis am ${date} – PodoHero` : `Ankündigung: Löschung deiner Praxis am ${date} – PodoHero`;
   const body = [
     reminder
-      ? `wie angekündigt löschen wir deine Praxis „${name}“ in PodoHero ab dem ${date} endgültig.`
+      ? `wie angekündigt löschen wir deine Praxis „${name}“ in PodoHero am ${date} endgültig (spätestens 14 Tage danach).`
       : `${trial ? `deine Testphase für die Praxis „${name}“ in PodoHero endete am ${dateDe(info.contractEnd)}.` : `dein Vertrag für die Praxis „${name}“ in PodoHero endete am ${dateDe(info.contractEnd)}.`} Seitdem ist die Praxis im Nur-Lesen-Modus: Alle Daten sind lesbar und exportierbar, Änderungen sind gesperrt.`,
     "",
     ...(reminder
       ? []
       : [
-          `Der Nur-Lesen-Modus endet spätestens 12 Monate nach ${trial ? "Ende der Testphase (AGB § 3 Nr. 4, § 9 Nr. 2)" : "Vertragsende (AGB § 9 Nr. 2)"}. Wir löschen deine Praxis deshalb ab dem ${date} endgültig – mit allen Patient:innen, Dokumentation, Fotos, Rechnungen, Terminen und Zugängen. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht.`,
+          `Der Nur-Lesen-Modus endet spätestens 12 Monate nach ${trial ? "Ende der Testphase (AGB § 3 Nr. 5, § 9 Nr. 2)" : "Vertragsende (AGB § 9 Nr. 2)"}. Wir löschen deine Praxis deshalb am ${date} endgültig (spätestens 14 Tage danach) – mit allen Patient:innen, Dokumentation, Fotos, Rechnungen, Terminen und Zugängen. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht.`,
           "",
         ]),
-    "Bitte erstelle vorher einen vollständigen Export (Einstellungen → Daten & Kündigung). Den Export brauchst du, um deine Aufbewahrungspflichten zu erfüllen. Bewahre ihn unverändert, lesbar und maschinell auswertbar bis zum Fristende auf und stimme die Ablage mit deiner Steuerberatung ab. Hast du die Kasse genutzt, erstelle auch den DSFinV-K-Export – ggf. mehrere Zeiträume (max. 3 Jahre je Export) – und den TSE-Export; nach der Löschung lassen sie sich nicht mehr erzeugen.",
+    `Bitte erstelle vorher einen vollständigen Export (Einstellungen → Daten & Kündigung). Den Export brauchst du, um deine Aufbewahrungspflichten zu erfüllen. Bewahre ihn unverändert, lesbar und maschinell auswertbar bis zum Fristende auf und stimme die Ablage mit deiner Steuerberatung ab. ${EXPORT_CASH_NOTE} ${CASH_REGISTER_NOTE}`,
     "",
     trial
       ? "Möchtest du PodoHero weiter nutzen, wähle unter Einstellungen → Abo einen Tarif. Für kleine Praxen gibt es den kostenlosen Tarif (bis 20 Patient:innen, ein Zugang) – auch damit entfällt die Löschung."
       : "Möchtest du PodoHero weiter nutzen, wähle unter Einstellungen → Abo einen Tarif (bis 20 Patient:innen auch den kostenlosen Tarif) – dann entfällt die Löschung.",
+    ...(reminder ? [] : ["Du kannst die Löschung auch sofort beantragen (Einstellungen → Daten & Kündigung)."]),
   ].join("\n");
   const text = ["Hallo,", "", body, ...(url ? ["", `${url}/einstellungen/daten`] : []), "", "Viele Grüße", "PodoHero"].join("\n");
   return { subject, body, text };
@@ -160,7 +134,8 @@ async function setState(organizationId: string, patch: Record<string, string | n
 
 type OrgRow = Awaited<ReturnType<typeof candidates>>[number];
 
-async function candidates(only?: string[]) {
+/** Eine Seite Kandidaten (Keyset über die ID – keine Obergrenze für die Gesamtzahl) */
+async function candidates(only: string[] | undefined, afterId: string | null) {
   return db
     .select({
       id: organizations.id,
@@ -180,10 +155,11 @@ async function candidates(only?: string[]) {
         sql`((${organizations.plan} not in ('free', 'internal') and ${organizations.subscriptionStatus} in ('canceled', 'none', 'trialing', 'paused'))
           or ${organizations.settings} ? 'readonlyExpiry' or (${organizations.settings}->>'deletionReason') = ${AUTO_DELETION_REASON})`,
         only ? inArray(organizations.id, only.length ? only : ["00000000-0000-0000-0000-000000000000"]) : undefined,
+        afterId ? gt(organizations.id, afterId) : undefined,
       ),
     )
-    .orderBy(organizations.createdAt)
-    .limit(5000);
+    .orderBy(organizations.id)
+    .limit(PAGE_SIZE);
 }
 
 /** Ankündigung nachweislich in Textform zugegangen (E-Mail versendet oder Betreiber-Vermerk) – SQL-Gegenstück zu noticeDeliveredAt */
@@ -215,7 +191,7 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
       .returning({ id: organizations.id });
     if (!claimed.length) return "none";
     const { subject, body, text } = noticeText(o.name, info, due, true);
-    await inbox(o.id, `Erinnerung: Löschung der Praxis ab dem ${dateDe(due)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
+    await inbox(o.id, `Erinnerung: Löschung der Praxis am ${dateDe(due)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
     const mail = await deliver(o.id, subject, text, deps);
     await setState(o.id, { reminderMail: mail });
     await db.insert(auditLog).values({ organizationId: o.id, action: "org.readonly_expiry_reminder", entity: "organization", entityId: o.id, meta: { deletionAt: due.toISOString(), mail } });
@@ -224,7 +200,12 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
 
   let did: "none" | "notice" = "none";
   let current = state;
-  if (!state.noticeSentAt) {
+  // Erstankündigung – oder erneuter Versuch, wenn die letzte Ankündigung nicht zugestellt wurde (Versandfehler, kein
+  // Plattform-SMTP, kein Empfänger, abgebrochener Lauf) und der Betreiber noch nichts vermerkt hat: höchstens einmal je
+  // NOTICE_RETRY_HOURS, mit neuem Termin (frühestens 30 Tage nach diesem Versuch).
+  const retry =
+    !!state.noticeSentAt && needsManualNotice(state) && now.getTime() - Date.parse(state.noticeSentAt) >= NOTICE_RETRY_HOURS * 3600_000;
+  if (!state.noticeSentAt || retry) {
     if (now < info.noticeAt) return "none";
     // angekündigter Termin: spätester Termin, aber nie weniger als 30 Tage nach der Ankündigung
     const deletionAt = plannedDeletionDate(info, state, null, now);
@@ -232,14 +213,30 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
       .update(organizations)
       // „unknown“, bis das Versandergebnis feststeht: bricht der Lauf ab, gilt die Ankündigung als nicht zugestellt
       .set({ settings: stateSql({ noticeSentAt: now.toISOString(), deletionAt: deletionAt.toISOString(), noticeMail: "unknown" }) })
-      .where(and(eq(organizations.id, o.id), isNull(organizations.deletionRequestedAt), still, sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' is null`))
+      .where(
+        and(
+          eq(organizations.id, o.id),
+          isNull(organizations.deletionRequestedAt),
+          still,
+          retry
+            ? sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' = ${state.noticeSentAt} and not ${deliveredSql}`
+            : sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' is null`,
+        ),
+      )
       .returning({ id: organizations.id });
     if (!claimed.length) return "none";
     const { subject, body, text } = noticeText(o.name, info, deletionAt, false);
-    await inbox(o.id, `Löschung der Praxis ab dem ${dateDe(deletionAt)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
+    // Posteingang nur bei der Erstankündigung (Wiederholungen ändern nur den Termin; die Hinweisleiste zeigt ihn aktuell)
+    if (!retry) await inbox(o.id, `Löschung der Praxis am ${dateDe(deletionAt)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
     const mail = await deliver(o.id, subject, text, deps);
     await setState(o.id, { noticeMail: mail });
-    await db.insert(auditLog).values({ organizationId: o.id, action: "org.readonly_expiry_notice", entity: "organization", entityId: o.id, meta: { deletionAt: deletionAt.toISOString(), contractEnd: info.contractEnd.toISOString(), mail } });
+    await db.insert(auditLog).values({
+      organizationId: o.id,
+      action: "org.readonly_expiry_notice",
+      entity: "organization",
+      entityId: o.id,
+      meta: { deletionAt: deletionAt.toISOString(), contractEnd: info.contractEnd.toISOString(), mail, ...(retry ? { retry: true, previousMail: state.noticeMail } : {}) },
+    });
     did = "notice";
     current = { ...state, noticeSentAt: now.toISOString(), deletionAt: deletionAt.toISOString(), noticeMail: mail };
   }
@@ -274,35 +271,42 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
 
 export async function runReadonlyExpiry(deps: Deps = {}): Promise<ReadonlyExpiryRun> {
   const now = deps.now ?? new Date();
-  const rows = await candidates(deps.organizationIds);
-  const out: ReadonlyExpiryRun = { checked: rows.length, notices: 0, requests: 0, reminders: 0, stopped: 0, failed: 0, mailNotSent: 0 };
-  for (const o of rows) {
-    try {
-      const r = await step(o, now, deps);
-      if (r === "notice" || r === "notice+request") out.notices++;
-      if (r === "request" || r === "notice+request") out.requests++;
-      if (r === "reminder") out.reminders++;
-      if (r === "stopped") out.stopped++;
-    } catch (e) {
-      out.failed++;
-      log.error("cron.readonly_expiry.failed", { organizationId: o.id, error: e });
+  const out: ReadonlyExpiryRun = { checked: 0, notices: 0, requests: 0, reminders: 0, stopped: 0, failed: 0, mailNotSent: 0 };
+  for (let afterId: string | null = null; ; ) {
+    const rows = await candidates(deps.organizationIds, afterId);
+    if (!rows.length) break;
+    out.checked += rows.length;
+    for (const o of rows) {
+      try {
+        const r = await step(o, now, deps);
+        if (r === "notice" || r === "notice+request") out.notices++;
+        if (r === "request" || r === "notice+request") out.requests++;
+        if (r === "reminder") out.reminders++;
+        if (r === "stopped") out.stopped++;
+      } catch (e) {
+        out.failed++;
+        log.error("cron.readonly_expiry.failed", { organizationId: o.id, error: e });
+      }
     }
+    out.mailNotSent += Number(
+      (
+        await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(organizations)
+          .where(and(inArray(organizations.id, rows.map((r) => r.id)), sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' is not null and not ${deliveredSql}`))
+      )[0]?.n ?? 0,
+    );
+    if (rows.length < PAGE_SIZE) break;
+    afterId = rows[rows.length - 1].id;
   }
-  out.mailNotSent = rows.length
-    ? Number(
-        (
-          await db
-            .select({ n: sql<number>`count(*)::int` })
-            .from(organizations)
-            .where(and(inArray(organizations.id, rows.map((r) => r.id)), sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' is not null and not ${deliveredSql}`))
-        )[0]?.n ?? 0,
-      )
-    : 0;
   return out;
 }
 
 /** Hinweis für die App (Hinweisleiste, Abo-/Daten-Seite): voraussichtlicher Löschtermin, sonst null. */
-export async function readonlyDeletionNotice(organizationId: string, now: Date = new Date()): Promise<{ deletionAt: Date; auto: boolean } | null> {
+export async function readonlyDeletionNotice(
+  organizationId: string,
+  now: Date = new Date(),
+): Promise<{ deletionAt: Date; auto: boolean; kind: ReadonlyExpiry["kind"] } | null> {
   const [o] = await db
     .select({
       plan: organizations.plan,
@@ -321,7 +325,7 @@ export async function readonlyDeletionNotice(organizationId: string, now: Date =
   if (!info) return null;
   const auto = isAutoDeletion(o.settings);
   if (o.deletionRequestedAt && !auto) return null;
-  return { deletionAt: plannedDeletionDate(info, readonlyExpiryState(o.settings), o.deletionRequestedAt, now), auto };
+  return { deletionAt: plannedDeletionDate(info, readonlyExpiryState(o.settings), o.deletionRequestedAt, now), auto, kind: info.kind };
 }
 
 export class ManualNoticeError extends Error {}
@@ -372,7 +376,8 @@ export async function recordManualNotice(
     .where(and(eq(organizations.id, organizationId), isNull(organizations.deletionRequestedAt), readonlySql(now), sql`${organizations.settings}->'readonlyExpiry'->>'noticeSentAt' is not null`))
     .returning({ id: organizations.id });
   if (!rows.length) throw new ManualNoticeError("Zustand der Praxis hat sich geändert – bitte neu laden.");
-  await db.insert(auditLog).values({
+  // mit IP des Plattform-Admins (audit() liest sie aus dem Request – AppSec I-2)
+  await audit({
     organizationId,
     userId: adminUserId,
     action: "platform.readonly_notice_manual",

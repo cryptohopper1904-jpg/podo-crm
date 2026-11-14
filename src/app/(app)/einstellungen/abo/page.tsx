@@ -85,7 +85,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         {a.mode === "readonly" ? (
           <p className="mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">
             {READONLY_REASON_LABELS[a.reason]} Die Praxis ist im Nur-Lesen-Modus: Alle Daten bleiben lesbar und exportierbar, Änderungen sind bis zur Wahl eines Tarifs gesperrt.
-            {expiry ? <> Ohne Tarif wird die Praxis ab dem <strong>{dateDe(expiry.deletionAt)}</strong> gelöscht (höchstens 12 Monate nach Vertragsende) – erstelle vorher den Export unter Daten & Kündigung.</> : null}
+            {expiry ? <> Ohne Tarif löschen wir die Praxis am <strong>{dateDe(expiry.deletionAt)}</strong> endgültig (spätestens 14 Tage danach; höchstens 12 Monate nach Vertragsende) – erstelle vorher den Export unter Daten & Kündigung.</> : null}
           </p>
         ) : a.graceEndsAt ? (
           <p className="mt-4 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text">

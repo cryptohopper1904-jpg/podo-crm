@@ -61,12 +61,24 @@ async function main() {
         }
         if (r.stripe.refundCheck) {
           console.log(
-            `    ACHTUNG: Erstattung prüfen – nach dem Löschantrag wurde eine neue Abo-Periode abgerechnet oder das Abo ist nicht monatlich (Praxis ${o.id}, Abo ${r.stripe.subscriptionId ?? "?"}). Erstattung als Rechnungskorrektur (Credit Note) im Stripe-Dashboard, nicht als bloße Rückzahlung.`,
+            `    ACHTUNG: Erstattung prüfen – nach dem Löschantrag wurde eine neue Abo-Periode abgerechnet, das Abo ist nicht monatlich oder der Kunde hat ein Guthaben bzw. Gutschriften (Praxis ${o.id}, Abo ${r.stripe.subscriptionId ?? "?"}). Erstattung als Rechnungskorrektur (Credit Note) im Stripe-Dashboard, nicht als bloße Rückzahlung.`,
           );
         }
         const open = r.stripe.openItems;
         if (open?.openInvoices) console.log(`    ACHTUNG: ${open.openInvoices} offene Stripe-Rechnung(en) über ${(open.openInvoiceCents / 100).toFixed(2)} € (Abo-Status ${r.stripe.subscriptionStatus ?? "?"}) – vor dem Löschen klären (Forderung/Ausbuchung).`);
-        if (open?.pendingItems) console.log(`    ACHTUNG: ${open.pendingItems} nicht abgerechnete Position(en) über ${(open.pendingItemCents / 100).toFixed(2)} € – werden beim sofortigen Beenden nicht mehr abgerechnet (invoice_now=false).`);
+        const eur = (c: number) => `${(c / 100).toFixed(2)} €`;
+        if (open?.pendingItems) {
+          console.log(
+            `    ACHTUNG: ${open.pendingItems} nicht abgerechnete Position(en): Belastungen ${eur(open.pendingChargeCents)}, Gutschriften ${eur(open.pendingCreditCents)} – werden beim sofortigen Beenden nicht mehr abgerechnet (invoice_now=false).`,
+          );
+        }
+        if (open && open.customerBalanceCents !== null && open.customerBalanceCents !== 0) {
+          console.log(
+            open.customerBalanceCents < 0
+              ? `    ACHTUNG: Guthaben der Praxis bei Stripe ${eur(-open.customerBalanceCents)} – verfällt mit dem Löschen des Kunden; Erstattung prüfen (Credit Note/Rückzahlung, Steuerberatung).`
+              : `    ACHTUNG: Kundensaldo bei Stripe ${eur(open.customerBalanceCents)} (würde der nächsten Rechnung zugeschlagen) – Forderung klären.`,
+          );
+        }
         if (open?.truncated) console.log("    Hinweis: mehr als 100 offene Posten – Zahlen sind Untergrenzen, bitte im Stripe-Dashboard prüfen.");
         if (r.stripe.customerId) console.log(`    Buchhaltung: Stripe-Rechnungen des Kunden ${r.stripe.customerId} vor dem Löschen exportieren (Lexoffice/Steuerberatung).`);
         if (!execute) for (const [t, n] of Object.entries(r.rows)) if (n) console.log(`    ${t.padEnd(26)} ${n}`);
