@@ -357,11 +357,11 @@ export function Checkbox({ label, className, ...props }: ComponentProps<"input">
   );
 }
 
-/** Leerer Zustand; `action` zeigt den nächsten Schritt (z. B. „+ Termin“, „Alle anzeigen“). */
-export function Empty({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
+/** Leerer Zustand; `action` zeigt den nächsten Schritt (z. B. „+ Termin“, „Alle anzeigen“). `titleId`: id der Überschrift (für aria-labelledby). */
+export function Empty({ title, children, action, titleId }: { title: string; children?: ReactNode; action?: ReactNode; titleId?: string }) {
   return (
     <div className="rounded-[var(--radius-card)] border border-dashed border-border-strong p-8 text-center">
-      <p className="font-semibold">{title}</p>
+      <p id={titleId} className="font-semibold">{title}</p>
       {children ? <div className="mt-2 text-sm text-muted">{children}</div> : null}
       {action ? <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div> : null}
     </div>

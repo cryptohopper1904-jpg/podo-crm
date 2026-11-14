@@ -7,7 +7,7 @@ import { keepValues } from "@/lib/forms";
 import { acceptOfferAction } from "./actions";
 
 /**
- * In diesem Tab gerade angenommen? Die Annahme ruft revalidatePath auf – Next lädt die Seite dabei neu vom Server, und
+ * In diesem Tab gerade angenommen? Die Annahme ruft refresh() auf – Next lädt die Seite dabei neu vom Server, und
  * statt des Formulars erscheint die Ansicht „angenommen“ (OfferAcceptedNotice). Der Knopf ist dann weg; ohne dieses
  * Merkmal fiele der Fokus auf <body>.
  */
@@ -39,7 +39,7 @@ export function AcceptOfferForm({ token, label }: { token: string; label: string
  * Ansicht „Termin angenommen“: wurde der Termin gerade in diesem Tab angenommen, bekommt sie den Fokus (Screenreader
  * lesen sie vor). Beim normalen Aufruf des Links (z. B. später erneut geöffnet) wird nichts fokussiert.
  */
-export function OfferAcceptedNotice({ children }: { children: ReactNode }) {
+export function OfferAcceptedNotice({ children, labelledBy }: { children: ReactNode; labelledBy?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!submittedHere || !ref.current) return;
@@ -47,7 +47,7 @@ export function OfferAcceptedNotice({ children }: { children: ReactNode }) {
     revealMessage(ref.current);
   }, []);
   return (
-    <div ref={ref} tabIndex={-1} data-offer-accepted className="rounded-[var(--radius-card)]">
+    <div ref={ref} tabIndex={-1} role="region" aria-labelledby={labelledBy} data-offer-accepted className="rounded-[var(--radius-card)]">
       {children}
     </div>
   );

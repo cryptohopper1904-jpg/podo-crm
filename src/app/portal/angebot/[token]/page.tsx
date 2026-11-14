@@ -43,8 +43,8 @@ export default async function OfferPage(props: PageProps<"/portal/angebot/[token
       ) : offer.state === "taken" ? (
         <Empty title="Leider schon vergeben">Jemand anderes war schneller. Sie bleiben auf der Warteliste und wir melden uns beim nächsten freien Termin.{tel}</Empty>
       ) : offer.state === "accepted" ? (
-        <OfferAcceptedNotice>
-          <Empty title="Termin bereits angenommen">{offer.startsAt ? `Ihr Termin: ${dateDe(offer.startsAt)}, ${timeDe(offer.startsAt)} Uhr.` : ""}{tel}</Empty>
+        <OfferAcceptedNotice labelledBy="angebot-angenommen">
+          <Empty titleId="angebot-angenommen" title="Termin bereits angenommen">{offer.startsAt ? `Ihr Termin: ${dateDe(offer.startsAt)}, ${timeDe(offer.startsAt)} Uhr.` : ""}{tel}</Empty>
         </OfferAcceptedNotice>
       ) : offer.state === "expired" ? (
         <Empty title="Angebot abgelaufen">Dieses Angebot gilt nicht mehr.{tel}</Empty>

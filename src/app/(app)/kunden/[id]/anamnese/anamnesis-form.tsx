@@ -23,8 +23,9 @@ export function AnamnesisForm({ patientId, initial, touch = false }: { patientId
       <FormError message={state?.error} revealKey={state} />
       <AnamnesisFields mode="practice" initial={initial} />
       <Checkbox name="updateRiskFlags" defaultChecked label="Risikomerkmale der Patientenakte (Diabetes, Blutverdünner, pAVK, Neuropathie, MRSA, Allergien) aus dieser Anamnese übernehmen" />
-      {/* Meldung oben (wird angesprungen und vorgelesen); hier nur die Kurzfassung neben dem Knopf */}
-      <FormActions sticky={false} error={pending ? null : state?.error}>
+      {/* Klebende Aktionsleiste: Speichern bleibt im langen Bogen erreichbar (ui.tsx FormActions); die Meldung steht
+          oben (wird angesprungen und vorgelesen), hier nur die Kurzfassung neben dem Knopf */}
+      <FormActions error={pending ? null : state?.error}>
         <Button type="submit" disabled={pending}>{pending ? "Wird gespeichert …" : "Als neue Version speichern"}</Button>
       </FormActions>
     </form>

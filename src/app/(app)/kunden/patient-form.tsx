@@ -2,9 +2,9 @@
 
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState, type FormEvent } from "react";
 import type { patients } from "@/db/schema";
-import { Button, Card, Checkbox, Field, FieldSlot, FormError, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, Select, Textarea } from "@/components/ui";
 import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { savePatientAction } from "./actions";
 
@@ -20,6 +20,21 @@ function toDe(iso?: string | null) {
 export function PatientForm({ patient, privateOnly = false }: { patient?: P; privateOnly?: boolean }) {
   const [state, action, pending] = useActionState(savePatientAction, undefined);
   const r = patient?.riskFlags ?? {};
+  // Pflichtfeld Nachname: Meldung am Feld (statt Browser-Blase in Systemsprache), Fokus dorthin
+  const [lastNameError, setLastNameError] = useState<string | null>(null);
+  const submit = keepValues(action);
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    const input = e.currentTarget.elements.namedItem("lastName") as HTMLInputElement | null;
+    if (input && !input.value.trim()) {
+      e.preventDefault();
+      setLastNameError("Bitte einen Nachnamen eintragen.");
+      input.scrollIntoView({ block: "center" });
+      input.focus({ preventScroll: true });
+      return;
+    }
+    setLastNameError(null);
+    submit(e);
+  }
   const kassenFields = (
     <>
       <Field label={privateOnly ? "Krankenkasse (optional)" : "Krankenkasse"}><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
@@ -27,9 +42,9 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
     </>
   );
   return (
-    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
+    <form onSubmit={onSubmit} className="flex flex-col gap-6">
       {patient ? <input type="hidden" name="id" value={patient.id} /> : null}
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       {state?.duplicates?.length ? (
         <Card className="border-accent">
           <p className="font-semibold">Mögliche Dubletten:</p>
@@ -57,7 +72,9 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
           </Field>
           <Field label="Titel"><Input name="title" defaultValue={patient?.title ?? ""} /></Field>
           <Field label="Vorname"><Input name="firstName" defaultValue={patient?.firstName ?? ""} autoComplete="off" /></Field>
-          <Field label="Nachname *"><Input name="lastName" required defaultValue={patient?.lastName ?? ""} autoComplete="off" /></Field>
+          <Field label="Nachname *" id="patient-lastName" error={lastNameError}>
+            <Input name="lastName" aria-required="true" defaultValue={patient?.lastName ?? ""} autoComplete="off" onChange={(e) => lastNameError && e.target.value.trim() && setLastNameError(null)} />
+          </Field>
           <Field label="Geburtsdatum" hint="TT.MM.JJJJ"><Input name="birthDate" defaultValue={toDe(patient?.birthDate)} placeholder="01.02.1950" inputMode="numeric" /></Field>
           <Field label="Straße" className="sm:col-span-2"><AddressAutocomplete name="street" defaultValue={patient?.street ?? ""} placeholder="z. B. Friedrich-Herder-Str. 12" /></Field>
           <Field label="PLZ"><ZipInput name="zip" defaultValue={patient?.zip ?? ""} /></Field>
@@ -117,16 +134,23 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
         </div>
       </Card>
 
-      <Card>
-        <Field label="Hinweis (organisatorisch, keine Befunde)">
-          <Textarea name="notes" defaultValue={patient?.notes ?? ""} />
-        </Field>
+      {/* Optional: eingeklappt, solange leer (kürzeres Formular auf dem Handy) */}
+      <Card className="p-0">
+        <details open={!!patient?.notes} className="group">
+          <summary className="flex min-h-14 cursor-pointer items-center px-5 font-display text-lg font-semibold">Hinweis (optional)</summary>
+          <div className="px-5 pb-5">
+            <Field label="Hinweis (organisatorisch, keine Befunde)">
+              <Textarea name="notes" defaultValue={patient?.notes ?? ""} />
+            </Field>
+          </div>
+        </details>
       </Card>
 
-      <div className="flex gap-3">
+      {/* Klebende Aktionsleiste (ui.tsx FormActions): Speichern ohne Scrollen ans Ende erreichbar */}
+      <FormActions error={state?.error}>
         <Button type="submit" disabled={pending}>{pending ? "Speichern …" : "Speichern"}</Button>
-        <Link href={patient ? `/kunden/${patient.id}` : "/kunden"} className="inline-flex h-11 items-center px-4 font-semibold text-muted">Abbrechen</Link>
-      </div>
+        <Link href={patient ? `/kunden/${patient.id}` : "/kunden"} className="inline-flex h-11 items-center rounded-xl px-4 font-semibold text-muted hover:bg-surface-2">Abbrechen</Link>
+      </FormActions>
     </form>
   );
 }
