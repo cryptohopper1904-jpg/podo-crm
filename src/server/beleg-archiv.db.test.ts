@@ -466,6 +466,9 @@ afterEach(() => vi.restoreAllMocks());
     await owner.query(`create database ${dbName}`);
     const url = (process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? "")).replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
     const alt = new Pool({ connectionString: url, max: 1 });
+    // Beim DROP … WITH (FORCE) beendet Postgres evtl. noch offene Verbindungen (57P01); ohne Listener
+    // wäre das ein „Unhandled Error“, der den ganzen vitest-Lauf rot macht.
+    alt.on("error", () => {});
     try {
       await alt.query("create extension if not exists pgcrypto");
       await alt.query("create extension if not exists pg_trgm");
