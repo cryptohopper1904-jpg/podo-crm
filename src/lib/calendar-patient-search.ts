@@ -17,3 +17,19 @@ export function matchPatients(patients: readonly PickerPatient[], query: string,
   const starts = (p: PickerPatient) => p.lastName.toLowerCase().startsWith(first) || (p.firstName ?? "").toLowerCase().startsWith(first) || String(p.number) === first;
   return [...hits.filter(starts), ...hits.filter((p) => !starts(p))].slice(0, max);
 }
+
+/**
+ * Suchtext → Vorschlag für eine neue Patient:in: letztes Wort = Nachname, davor Vorname(n); „Nachname, Vorname“
+ * wird erkannt. Ziffern (Patientennummer gesucht) ergeben keinen Namen.
+ */
+export function splitNewName(query: string): { firstName: string; lastName: string } {
+  const q = query.trim().replace(/\s+/g, " ");
+  if (!q || /^\d+$/.test(q)) return { firstName: "", lastName: "" };
+  if (q.includes(",")) {
+    const [last, ...rest] = q.split(",");
+    return { firstName: rest.join(" ").trim(), lastName: last.trim() };
+  }
+  const words = q.split(" ");
+  if (words.length === 1) return { firstName: "", lastName: words[0] };
+  return { firstName: words.slice(0, -1).join(" "), lastName: words.at(-1)! };
+}

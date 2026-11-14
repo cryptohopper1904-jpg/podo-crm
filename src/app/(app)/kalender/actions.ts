@@ -17,6 +17,7 @@ import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient } from "@/server/calendar-feeds";
 import { seriesStarts } from "@/lib/appointment-series";
+import { findDuplicates, insertPatient, parseBirthDate, patientInput, toPatientValues } from "@/server/patients";
 import { changeAppointmentStatus, offerAfterCancel, UNDO_GRACE_MS, type StatusResult } from "@/server/calendar-status";
 import { durationFromServices } from "@/lib/appointment-duration";
 
@@ -39,14 +40,16 @@ const schema = z.object({
   allowConflict: z.literal("1").optional(),
 });
 
-export async function createAppointmentAction(_: ApptFormState, form: FormData): Promise<ApptFormState> {
+/** Termin(e) aus dem Formular anlegen – gemeinsam für die Seite /kalender/neu und das Fenster im Kalender. */
+async function createFromForm(form: FormData): Promise<{ ok: false; state: NonNullable<ApptFormState> } | { ok: true; id: string; date: string; n: number }> {
   const auth = await requireAuth("appointments.write");
   const org = auth.organization.id;
+  const fail = (state: NonNullable<ApptFormState>) => ({ ok: false as const, state });
   const serviceIds = form.getAll("serviceId").map(String).filter(Boolean);
   const parsed = schema.safeParse(Object.fromEntries([...form.entries()].filter(([k, v]) => v !== "" && k !== "serviceId")));
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message };
+  if (!parsed.success) return fail({ error: parsed.error.issues[0]?.message });
   const d = parsed.data;
-  if (!d.patientId && !d.title) return { error: "Bitte eine Patient:in wählen (Termin ohne Patient:in: unter „Weitere Optionen“ einen Titel angeben)." };
+  if (!d.patientId && !d.title) return fail({ error: "Bitte eine Patient:in wählen (Termin ohne Patient:in: unter „Weitere Optionen“ einen Titel angeben)." });
 
   const svc = serviceIds.length
     ? await withOrg(org, (tx) => tx.select().from(services).where(and(eq(services.organizationId, org), inArray(services.id, serviceIds), eq(services.active, true))))
@@ -55,7 +58,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
   let duration = d.durationMin;
   if (duration === undefined) {
     const fromSvc = durationFromServices(svc.reduce((s, x) => s + x.durationMin, 0));
-    if (!fromSvc.ok) return { error: fromSvc.error };
+    if (!fromSvc.ok) return fail({ error: fromSvc.error });
     duration = fromSvc.durationMin;
   }
   // Wanduhrzeit in Berlin bleibt über Zeitumstellungen gleich (Datum weiterzählen, dann in UTC umrechnen)
@@ -63,7 +66,7 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
 
   // Ohne Auswahl: eigene Spalte – nur wer selbst einen Kalender hat (Empfang/Azubis müssen eine Behandler:in wählen)
   const therapistId = d.therapistId ?? (hasOwnCalendar(auth.role) ? auth.user.id : null);
-  if (!therapistId) return { error: "Bitte eine Behandler:in wählen." };
+  if (!therapistId) return fail({ error: "Bitte eine Behandler:in wählen." });
   const res = await createInternalAppointments(org, {
     patientId: d.patientId ?? null,
     therapistId,
@@ -76,12 +79,59 @@ export async function createAppointmentAction(_: ApptFormState, form: FormData):
     serviceIds: svc.map((x) => x.id),
     allowConflict: !!d.allowConflict,
   });
-  if (!res.ok && "deceased" in res) return { error: DECEASED_BLOCKED_MSG };
-  if (!res.ok) return res.conflict ? { error: conflictMessage(res), conflict: true } : { error: res.error };
+  if (!res.ok && "deceased" in res) return fail({ error: DECEASED_BLOCKED_MSG });
+  if (!res.ok) return fail(res.conflict ? { error: conflictMessage(res), conflict: true } : { error: res.error });
   await audit({ organizationId: org, userId: auth.user.id, action: "appointment.create", meta: { n: occurrences.length, allowConflict: !!d.allowConflict } });
   revalidatePath("/kalender");
   revalidatePath("/heute");
-  redirect(`/kalender?datum=${d.date}`);
+  return { ok: true, id: res.ids[0], date: d.date, n: res.ids.length };
+}
+
+/** Seite /kalender/neu (auch ohne JavaScript): nach dem Anlegen zum Kalender am Tag des Termins */
+export async function createAppointmentAction(_: ApptFormState, form: FormData): Promise<ApptFormState> {
+  const r = await createFromForm(form);
+  if (!r.ok) return r.state;
+  redirect(`/kalender?datum=${r.date}`);
+}
+
+export type DialogApptState = (NonNullable<ApptFormState> & { created?: { id: string; date: string; n: number } }) | undefined;
+
+/** Fenster „Neuer Termin“ im Kalender: kein Seitenwechsel – das Fenster schließt sich und meldet den neuen Termin */
+export async function createAppointmentInDialogAction(_: DialogApptState, form: FormData): Promise<DialogApptState> {
+  const r = await createFromForm(form);
+  if (!r.ok) return r.state;
+  return { created: { id: r.id, date: r.date, n: r.n } };
+}
+
+export type QuickPatientState =
+  | { error?: string; duplicates?: { id: string; number: number; name: string }[]; patient?: { id: string; number: number; firstName: string | null; lastName: string } }
+  | undefined;
+
+/**
+ * Neue Patient:in direkt aus dem Terminformular (Name, Telefon, optional Geburtsdatum/E-Mail). Gleiche Rechte
+ * (patients.write), Prüfung (patientInput) und Dublettenprüfung wie /kunden/neu; „trotzdem anlegen“ mit ignoreDuplicates.
+ */
+export async function quickCreatePatientAction(_: QuickPatientState, form: FormData): Promise<QuickPatientState> {
+  const auth = await requireAuth("patients.write");
+  const org = auth.organization.id;
+  const pick = (k: string) => String(form.get(k) ?? "").trim();
+  const parsed = patientInput.safeParse({ firstName: pick("firstName"), lastName: pick("lastName"), phoneMobile: pick("phoneMobile"), email: pick("email"), birthDate: parseBirthDate(pick("birthDate")) });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const values = toPatientValues(parsed.data);
+  if (form.get("ignoreDuplicates") !== "1") {
+    const dups = await findDuplicates(org, values);
+    if (dups.length) {
+      return {
+        error: "Möglicherweise gibt es diese Person schon. Bitte auswählen oder trotzdem anlegen.",
+        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") })),
+      };
+    }
+  }
+  const created = await insertPatient(org, values);
+  if (!created.ok) return { error: created.error };
+  await audit({ organizationId: org, userId: auth.user.id, action: "patient.create", entity: "patient", entityId: created.id, meta: { via: "termin" } });
+  revalidatePath("/kunden");
+  return { patient: { id: created.id, number: created.number, firstName: values.firstName ?? null, lastName: values.lastName } };
 }
 
 export type { AppointmentStatus, StatusResult } from "@/server/calendar-status";

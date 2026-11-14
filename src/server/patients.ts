@@ -13,6 +13,7 @@ import {
 } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { audit } from "@/lib/audit";
+import { assertPatientCapacity, PatientLimitError } from "./patient-limit";
 import { patientStatus } from "@/lib/patient-status";
 import { deceasedInfo, isDeceased } from "@/lib/patient-deceased";
 import { sequential } from "@/lib/seq";
@@ -221,4 +222,31 @@ export async function findDuplicates(org: string, d: { lastName: string; firstNa
       .limit(5);
     return rows.filter((r) => r.id !== excludeId);
   });
+}
+
+/** Geburtsdatum aus Formularen: „TT.MM.JJJJ“ → JJJJ-MM-TT, sonst unverändert (Prüfung in patientInput) */
+export function parseBirthDate(raw: FormDataEntryValue | null) {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return s;
+}
+
+/**
+ * Neue Patient:in anlegen (Akte „Patienten → Neu“ und Terminformular): Patientennummer lückenlos unter der Sperre
+ * vergeben, Tarif-Obergrenze prüfen. Audit macht der Aufrufer.
+ */
+export async function insertPatient(org: string, values: ReturnType<typeof toPatientValues>): Promise<{ ok: true; id: string; number: number } | { ok: false; error: string }> {
+  try {
+    const [row] = await withOrg(org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
+      await assertPatientCapacity(tx, org);
+      const [m] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
+      return tx.insert(patients).values({ ...values, organizationId: org, number: (m?.n ?? 0) + 1, source: "manual" }).returning({ id: patients.id, number: patients.number });
+    });
+    return { ok: true, id: row.id, number: row.number };
+  } catch (e) {
+    if (e instanceof PatientLimitError) return { ok: false, error: e.message };
+    throw e;
+  }
 }
