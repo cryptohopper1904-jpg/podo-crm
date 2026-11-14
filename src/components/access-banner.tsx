@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { AuthContext } from "@/lib/auth/session";
 import { dateDe, timeDe } from "@/lib/format";
 import { READONLY_REASON_LABELS } from "@/lib/plans";
-import { exitSupportAction } from "@/app/(app)/plattform/actions";
+import { exitSupportAction } from "@/app/(plattform)/plattform/actions";
 
 /** Hinweisleiste im App-Layout: Support-Zugriff (rot), Nur-Lesen-Modus, Zahlung offen, Testphase. */
 export function AccessBanner({ auth }: { auth: AuthContext }) {
