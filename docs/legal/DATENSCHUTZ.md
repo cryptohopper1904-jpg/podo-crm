@@ -48,7 +48,7 @@ Wenn Sie eine Praxis registrieren oder als Mitarbeitende/r ein Konto erhalten, v
 
 - **Zweck:** Bereitstellung des Dienstes, Vertragserfüllung, Datensicherheit
 - **Rechtsgrundlage:** Art. 6 Abs. 1 lit. b DSGVO (Vertrag), Art. 6 Abs. 1 lit. c und f DSGVO (Datensicherheit nach Art. 32 DSGVO)
-- **Speicherdauer:** für die Dauer des Vertrags; danach höchstens 12 Monate im Nur-Lesen-Modus, auf Löschantrag nach 30 Tagen Karenzzeit (siehe [AGB](/agb) § 9). Rechnungen an die Praxis bewahren wir nach den steuerrechtlichen Fristen auf.
+- **Speicherdauer:** für die Dauer des Vertrags; danach höchstens 12 Monate im Nur-Lesen-Modus, auf Löschantrag nach 30 Tagen Karenzzeit (siehe [AGB](/agb) § 9). Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht. Rechnungen an die Praxis bewahren wir nach den steuerrechtlichen Fristen auf.
 
 ## 5. Abrechnung des Abonnements
 

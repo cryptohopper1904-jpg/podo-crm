@@ -11,7 +11,8 @@
  * Löscht anschließend <STORAGE_DIR>/<org-id>/. Verschlüsselte Backups laufen nach ihrer Frist aus (Server 14 Tage, zweiter
  * Standort höchstens 30 Tage, docs/BETRIEB.md Abschnitt 7).
  * Automatische Löschanträge (Ende des Nur-Lesen-Modus, Grund „auto_readonly_expiry“) werden nur ausgeführt, wenn die
- * Praxis weiterhin keinen Tarif hat und die Löschung angekündigt wurde.
+ * Praxis weiterhin keinen Tarif hat, die Ankündigung zugestellt ist (E-Mail versendet oder Vermerk in der Plattform-Konsole),
+ * der angekündigte Termin erreicht ist und bei Stripe kein Abo mehr läuft. Der Probelauf zeigt den Zustellstatus.
  * Buchhaltung: VOR dem Lauf mit --execute die Stripe-Rechnungen der Praxis exportieren (docs/BETRIEB.md Abschnitt 9);
  * der Probelauf meldet offene Rechnungen und nicht abgerechnete Positionen.
  * Stripe: Vorher wird ein noch laufendes Abo sofort beendet und der Stripe-Kunde gelöscht (STRIPE_SECRET_KEY nötig,
@@ -42,6 +43,13 @@ async function main() {
     console.log(`${execute ? "LÖSCHLAUF" : "PROBELAUF (nichts wird gelöscht, --execute zum Ausführen)"} · ${targets.length} fällige Praxis(en) · Ablage: ${storageRoot}`);
     let failed = 0;
     for (const o of targets) {
+      if (o.autoNotice) {
+        // automatische Löschung (Ende des Nur-Lesen-Modus): Zustellung der Ankündigung zeigen – ohne Zustellung bricht der Lauf ab
+        const n = o.autoNotice;
+        console.log(
+          `${o.slug} (${o.id}): automatische Löschung (Ende Nur-Lesen-Modus) · angekündigt ${n.noticeSentAt ?? "–"} · E-Mail: ${n.noticeMail ?? "–"} · Vermerk von Hand: ${n.manualNoticeAt ?? "–"} · angekündigter Termin: ${n.deletionAt ?? "–"}${n.noticeMail !== "sent" && !n.manualNoticeAt ? " · ACHTUNG: Ankündigung NICHT zugestellt – wird nicht gelöscht" : ""}`,
+        );
+      }
       try {
         const r = await purgeOrganization(client, o.id, { execute, storageRoot, billing, log: (l) => console.log(l) });
         const total = Object.values(r.rows).reduce((a, b) => a + b, 0);

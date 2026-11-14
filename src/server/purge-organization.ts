@@ -25,8 +25,11 @@
  * Offene Rechnungen und nicht abgerechnete Positionen meldet schon der Probelauf (Buchhaltung: docs/BETRIEB.md Abschnitt 9).
  *
  * Automatischer Löschantrag (Ende des Nur-Lesen-Modus, src/lib/readonly-expiry.ts): gelöscht wird nur, wenn die Praxis
- * weiterhin nach Vertragsende im Nur-Lesen-Modus ist und die Löschung angekündigt wurde – hat sie inzwischen einen Tarif
- * gebucht, bricht der Lauf für sie ab (auch wenn der Cron den Antrag noch nicht entfernt hat).
+ * weiterhin nach Vertragsende im Nur-Lesen-Modus ist, die Ankündigung nachweislich in Textform zugegangen ist (E-Mail
+ * versendet oder Betreiber-Vermerk) und der angekündigte Termin (mindestens Zugang + 30 Tage) erreicht ist – hat sie
+ * inzwischen einen Tarif gebucht, bricht der Lauf für sie ab (auch wenn der Cron den Antrag noch nicht entfernt hat).
+ * Läuft bei Stripe noch ein Abo, wird eine automatische Löschung abgebrochen (nichts gekündigt): Das widerspricht dem
+ * Nur-Lesen-Modus nach Vertragsende und muss vom Betreiber geklärt werden.
  *
  * Bewusst behalten: billing_events (Abo-Abrechnung des Betreibers, eigene Aufbewahrungspflicht; die
  * Verknüpfung zur Praxis wird per FK auf NULL gesetzt).
@@ -36,7 +39,7 @@ import path from "node:path";
 import type { PoolClient } from "pg";
 import { BillingHttpError, type BillingPort, type OpenBillingItems } from "../integrations/stripe/types";
 import { purgeCutoff } from "../lib/org-deletion";
-import { isAutoDeletion, readonlyExpiry, readonlyExpiryState } from "../lib/readonly-expiry";
+import { earliestAutoDeletion, isAutoDeletion, readonlyExpiry, readonlyExpiryState } from "../lib/readonly-expiry";
 import { STRIPE_LIVE_STATUSES } from "../lib/subscription-cancel";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,7 +52,13 @@ const q = (ident: string) => {
   return `"${ident}"`;
 };
 
-export type DueOrganization = { id: string; slug: string; deletionRequestedAt: Date };
+export type DueOrganization = {
+  id: string;
+  slug: string;
+  deletionRequestedAt: Date;
+  /** automatischer Antrag (Ende des Nur-Lesen-Modus): Zustand der Ankündigung für den Probelauf, sonst null */
+  autoNotice: { noticeSentAt: string | null; noticeMail: string | null; manualNoticeAt: string | null; deletionAt: string | null } | null;
+};
 
 export type PurgeReport = {
   organizationId: string;
@@ -104,10 +113,18 @@ export function purgeErrorKind(e: unknown): string {
 
 export async function findDueOrganizations(client: PoolClient, now: Date = new Date()): Promise<DueOrganization[]> {
   const r = await client.query(
-    "select id, slug, deletion_requested_at from organizations where deletion_requested_at is not null and deletion_requested_at < $1 order by deletion_requested_at",
+    "select id, slug, deletion_requested_at, settings from organizations where deletion_requested_at is not null and deletion_requested_at < $1 order by deletion_requested_at",
     [purgeCutoff(now)],
   );
-  return r.rows.map((x) => ({ id: x.id, slug: x.slug, deletionRequestedAt: x.deletion_requested_at }));
+  return r.rows.map((x) => {
+    const st = readonlyExpiryState(x.settings);
+    return {
+      id: x.id,
+      slug: x.slug,
+      deletionRequestedAt: x.deletion_requested_at,
+      autoNotice: isAutoDeletion(x.settings) ? { noticeSentAt: st.noticeSentAt, noticeMail: st.noticeMail, manualNoticeAt: st.manualNoticeAt, deletionAt: st.deletionAt } : null,
+    };
+  });
 }
 
 /** Bricht ab, wenn die Verbindung nicht Eigentümer aller Mandanten-Tabellen ist (z. B. App-Rolle). */
@@ -202,10 +219,12 @@ export async function purgeOrganization(
       return { ...(await purgeOnce(client, orgId, { ...opts, stripe }, log)), stripe };
     } catch (e) {
       const code = (e as { code?: string }).code;
-      // Deadlock / Sperr-Timeout: andere Sitzungen hielten Sperren – kurz warten und neu versuchen
-      if ((code === "40P01" || code === "55P03") && attempt < 3) {
+      // Tabellen gerade belegt (NOWAIT, 55P03) bzw. Deadlock/Sperr-Timeout: andere Sitzungen hielten Sperren – kurz warten
+      // und neu versuchen. Mit NOWAIT wartet der Löschlauf nie auf Tabellensperren und kann so keinen Deadlock mit
+      // laufenden App-Transaktionen auslösen (sonst bricht PostgreSQL womöglich die App-Transaktion ab).
+      if ((code === "40P01" || code === "55P03") && attempt < 20) {
         log(`Sperrkonflikt (${code}), Versuch ${attempt + 1} …`);
-        await new Promise((r) => setTimeout(r, 500 * attempt));
+        await new Promise((r) => setTimeout(r, Math.min(200 * attempt, 2000) + Math.floor(Math.random() * 200)));
         continue;
       }
       throw e;
@@ -237,7 +256,16 @@ function assertDue(org: Record<string, unknown> & { slug: string; deletion_reque
       now,
     );
     if (!info) throw new PurgeAbortError("auto_deletion_obsolete", `Praxis ${org.slug}: automatische Löschung entfällt (Tarif gebucht bzw. nicht mehr im Nur-Lesen-Modus)`);
-    if (!readonlyExpiryState(settings).noticeSentAt) throw new PurgeAbortError("auto_deletion_not_announced", `Praxis ${org.slug}: automatische Löschung nicht angekündigt`);
+    const state = readonlyExpiryState(settings);
+    if (!state.noticeSentAt) throw new PurgeAbortError("auto_deletion_not_announced", `Praxis ${org.slug}: automatische Löschung nicht angekündigt`);
+    // Ankündigung muss in Textform zugegangen sein (AGB § 9 Nr. 2): E-Mail versendet oder Betreiber-Vermerk
+    const earliest = earliestAutoDeletion(state);
+    if (!earliest) {
+      throw new PurgeAbortError("auto_deletion_notice_not_delivered", `Praxis ${org.slug}: Ankündigung nicht zugestellt – erst von Hand ankündigen und in der Plattform-Konsole vermerken`);
+    }
+    if ((now ?? new Date()).getTime() < earliest.getTime()) {
+      throw new PurgeAbortError("auto_deletion_too_early", `Praxis ${org.slug}: angekündigter Löschtermin ${earliest.toISOString()} noch nicht erreicht`);
+    }
   }
 }
 
@@ -295,6 +323,11 @@ async function settleStripe(
   if (cusId && !port.isMock) for (const x of await port.listSubscriptions(cusId)) if (!subs.has(x.id)) subs.set(x.id, x);
   const liveSubs = [...subs.values()].filter((x): x is NonNullable<typeof x> => !!x && (STRIPE_LIVE_STATUSES as readonly string[]).includes(x.status));
   out.subscriptionStatus = subs.get(subId ?? "")?.status ?? liveSubs[0]?.status ?? null;
+  // automatische Löschung (Ende des Nur-Lesen-Modus) setzt ein beendetes Abo voraus – läuft bei Stripe doch noch eins,
+  // nichts kündigen und nicht löschen: Betreiber klärt (z. B. Webhook verpasst, doppeltes Abo)
+  if (isAutoDeletion(org.settings) && liveSubs.length) {
+    throw new PurgeAbortError("auto_deletion_live_subscription", `Praxis ${org.slug}: automatische Löschung, aber bei Stripe läuft noch ein Abo – bitte prüfen`);
+  }
   if (cusId && !port.isMock) out.openItems = await port.openBillingItems(cusId);
   const requestedAt = new Date(org.deletion_requested_at).getTime();
   for (const sub of liveSubs) {
@@ -367,7 +400,7 @@ async function purgeOnce(
     }
 
     const altered = order.map((t) => meta.get(t)!).filter((m) => m.triggers.length || (m.forceRls && !m.hasDeletePolicy));
-    if (altered.length) await client.query(`lock table ${altered.map((m) => q(m.name)).join(", ")} in access exclusive mode`);
+    if (altered.length) await client.query(`lock table ${altered.map((m) => q(m.name)).join(", ")} in access exclusive mode nowait`);
     for (const m of altered) {
       for (const tg of m.triggers) await client.query(`alter table ${q(m.name)} disable trigger ${q(tg)}`);
       if (m.forceRls && !m.hasDeletePolicy) await client.query(`alter table ${q(m.name)} no force row level security`);

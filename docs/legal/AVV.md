@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.3 · Stand 14.11.2026
+> Version 0.4 · Stand 14.11.2026
 
 zwischen der Praxis des Kunden (nachfolgend **„Verantwortlicher“**)
 
@@ -67,7 +67,7 @@ Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn d
 ## § 10 Löschung und Rückgabe nach Ende des Auftrags
 
 1. Der Verantwortliche kann jederzeit einen **vollständigen Datenexport** (JSON je Tabelle, entschlüsselte Fotos/Dokumente) in der Software erstellen. Dies gilt als Rückgabe der Daten.
-2. Nach Ende der Leistungserbringung stellt der Auftragsverarbeiter die Daten höchstens 12 Monate im Nur-Lesen-Modus zur Einsicht und zum Export bereit (Rückgabe nach Nr. 1) und verarbeitet sie in dieser Zeit ausschließlich zur Speicherung, Anzeige und zum Export. Mindestens 30 Tage vor Ablauf kündigt er die Löschung in Textform an. Mit Ablauf dieses Zeitraums oder nach einem Löschantrag des Verantwortlichen nach einer Karenzzeit von 30 Tagen, spätestens jedoch 14 Tage nach deren Ablauf, löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht oder überschrieben; bis dahin werden sie nur zur Wiederherstellung des Gesamtsystems verwendet. Wird eine Sicherung wiederhergestellt, werden bereits gelöschte Daten unverzüglich erneut gelöscht.
+2. Nach Ende der Leistungserbringung stellt der Auftragsverarbeiter die Daten höchstens 12 Monate im Nur-Lesen-Modus zur Einsicht und zum Export bereit (Rückgabe nach Nr. 1) und verarbeitet sie in dieser Zeit ausschließlich zur Speicherung, Anzeige und zum Export; verzögert sich die Ankündigung in Textform, verlängert sich dieser Zeitraum bis zum Ablauf von 30 Tagen nach der Ankündigung. Mindestens 30 Tage vor Ablauf kündigt er die Löschung in Textform an. Mit Ablauf dieses Zeitraums oder nach einem Löschantrag des Verantwortlichen nach einer Karenzzeit von 30 Tagen, spätestens jedoch 14 Tage nach deren Ablauf, löscht der Auftragsverarbeiter alle personenbezogenen Daten des Verantwortlichen (Art. 28 Abs. 3 lit. g DSGVO), sofern nicht eine gesetzliche Pflicht zur Speicherung beim Auftragsverarbeiter besteht. Die Löschung umfasst Datenbankeinträge und gespeicherte Dateien. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht oder überschrieben; bis dahin werden sie nur zur Wiederherstellung des Gesamtsystems verwendet. Wird eine Sicherung wiederhergestellt, werden bereits gelöschte Daten unverzüglich erneut gelöscht.
 3. **Aufbewahrungspflichten des Verantwortlichen** (u. a. § 630f Abs. 3 BGB: 10 Jahre Behandlungsdokumentation; § 147 AO, § 14b UStG: 8 bzw. 10 Jahre für Belege und Bücher) bleiben unberührt. Der Verantwortliche stellt durch einen rechtzeitigen Export sicher, dass er diesen Pflichten nachkommen kann.
 4. Die Löschung wird protokolliert und dem Verantwortlichen auf Anfrage bestätigt.
 

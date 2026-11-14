@@ -29,7 +29,9 @@ export function AccessBanner({ auth, deletionAt }: { auth: AuthContext; deletion
       <div role="status" className="no-print flex flex-wrap items-center gap-3 bg-accent-soft px-4 py-2.5 text-sm font-medium text-accent-soft-text lg:px-8">
         <span className="flex-1">
           <strong>Nur-Lesen-Modus:</strong> {READONLY_REASON_LABELS[a.reason]} Alle Daten bleiben lesbar und exportierbar; Änderungen sind gesperrt.
-          {deletionAt ? <> Ohne Tarif wird die Praxis ab dem <strong>{dateDe(deletionAt)}</strong> gelöscht – vorher exportieren.</> : null}
+          {deletionAt ? (
+            <> Die Praxis bleibt höchstens 12 Monate lesbar – exportiere rechtzeitig: Ohne Tarif wird sie ab dem <strong>{dateDe(deletionAt)}</strong> gelöscht.</>
+          ) : null}
         </span>
         {owner ? <Link href="/einstellungen/abo" className="font-semibold underline">Tarif wählen – auch kostenlos bis 20 Patient:innen</Link> : null}
       </div>

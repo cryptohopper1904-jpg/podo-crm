@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { MailNotConfiguredError, type MailMessage, type MailPort } from "@/integrations/mail/mail";
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("@/lib/auth/session", async (orig) => ({ ...(await orig<typeof import("@/lib/auth/session")>()), requestMeta: async () => ({ ip: null }) }));
 
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
@@ -21,10 +22,13 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
   let mod: typeof import("./readonly-expiry");
   let billing: typeof import("./billing");
   let purge: typeof import("./purge-organization");
+  let platform: typeof import("./platform");
+  let promo: typeof import("./promo-codes");
   let sent: MailMessage[];
-  let mailMode: "ok" | "unconfigured";
+  let mailMode: "ok" | "unconfigured" | "crash";
   const mail = (): MailPort => {
     if (mailMode === "unconfigured") throw new MailNotConfiguredError();
+    if (mailMode === "crash") throw new Error("SMTP-Verbindung abgebrochen");
     return { kind: "smtp", isMock: false, source: "platform", send: async (m) => (sent.push(m), { messageId: `m-${sent.length}` }) } as MailPort;
   };
 
@@ -33,6 +37,8 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     mod = await import("./readonly-expiry");
     billing = await import("./billing");
     purge = await import("./purge-organization");
+    platform = await import("./platform");
+    promo = await import("./promo-codes");
   });
   afterAll(async () => {
     await f.end();
@@ -83,7 +89,13 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toBe(p.email);
     expect(sent[0].subject).toMatch(/Ankündigung: Löschung deiner Praxis ab dem \d\d\.\d\d\.\d{4}/);
-    expect(sent[0].text).toMatch(/12 Monate nach Vertragsende/);
+    // Testphase: eigener Satz, kostenloser Tarif als Ausweg, Aufbewahrungs-Hinweis (Buchhaltung)
+    expect(sent[0].text).toMatch(/deine Testphase für die Praxis „.+“ in PodoHero endete am \d\d\.\d\d\.\d{4}\./);
+    expect(sent[0].text).toMatch(/12 Monate nach Ende der Testphase/);
+    expect(sent[0].text).toMatch(/kostenlosen Tarif \(bis 20 Patient:innen/);
+    expect(sent[0].text).toContain("Den Export brauchst du, um deine Aufbewahrungspflichten zu erfüllen.");
+    expect(sent[0].text).toContain("ggf. mehrere Zeiträume (max. 3 Jahre je Export)");
+    expect(sent[0].text).not.toMatch(/ist am .* geendet/);
     expect(sent[0].text).toMatch(/Export/);
     expect((await inbox(p.org)).map((m) => m.thread_key)).toEqual(["podohero-loeschung"]);
     let o = await row(p.org);
@@ -117,14 +129,103 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(sent[0].subject).toContain(new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(now.getTime() + 30 * DAY)));
   });
 
-  it("ohne Plattform-SMTP: Posteingang und Status „not_configured“ (Konsole), Antrag folgt trotzdem", async () => {
+  it("ohne Plattform-SMTP: KEIN Löschantrag; erst nach Betreiber-Vermerk, Termin ≥ Zugang + 30 Tage", async () => {
     mailMode = "unconfigured";
     const now = new Date();
     const p = await practice({ deleteInDays: 10, now });
     const r = await run([p.org], now);
-    expect(r).toMatchObject({ notices: 1, requests: 1, mailNotSent: 1 });
+    expect(r).toMatchObject({ notices: 1, requests: 0, mailNotSent: 1 });
     expect((await row(p.org)).settings.readonlyExpiry.noticeMail).toBe("not_configured");
+    expect((await row(p.org)).deletion_requested_at).toBeNull();
     expect(await inbox(p.org)).toHaveLength(1);
+    // spätere Läufe (auch Wochen danach) stellen ohne Zugang keinen Antrag
+    expect(await run([p.org], new Date(now.getTime() + 60 * DAY))).toMatchObject({ requests: 0, mailNotSent: 1 });
+    expect((await row(p.org)).deletion_requested_at).toBeNull();
+    // Vermerk: Datum in der Zukunft / ohne Nachweis abgelehnt
+    const admin = await f.user();
+    const day = (d: Date) => d.toISOString().slice(0, 10);
+    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(new Date(now.getTime() + 3 * DAY)), via: "letter", note: "Brief an Inhaberin" }, now)).rejects.toThrow(/Zukunft/);
+    await expect(mod.recordManualNotice(admin, p.org, { receivedOn: day(now), via: "letter", note: "" }, now)).rejects.toThrow(/Nachweis/);
+    const v = await mod.recordManualNotice(admin, p.org, { receivedOn: day(now), via: "letter", note: "Einschreiben an Praxisanschrift, Kopie im Ordner" }, now);
+    expect(v.deletionAt.getTime()).toBeGreaterThanOrEqual(now.getTime() + 30 * DAY);
+    const st = (await row(p.org)).settings.readonlyExpiry;
+    expect(st).toMatchObject({ manualNoticeVia: "letter", manualNoticeBy: admin, noticeMail: "not_configured" });
+    expect(Date.parse(st.deletionAt)).toBe(v.deletionAt.getTime());
+    expect(await audits(p.org, "platform.readonly_notice_manual")).toEqual([{ meta: expect.objectContaining({ via: "letter", mail: "not_configured" }) }]);
+    // jetzt Antrag; der Löschlauf löscht frühestens 30 Tage nach Zugang
+    expect(await run([p.org], now)).toMatchObject({ requests: 1, mailNotSent: 0 });
+    expect(new Date((await row(p.org)).deletion_requested_at).getTime() + 30 * DAY).toBeGreaterThanOrEqual(Date.parse(st.manualNoticeAt) + 30 * DAY);
+  });
+
+  it("Vermerk mit zurückliegendem Zugang: Antrag erst 30 Tage vor (Zugang + 30 Tage), nicht vorher", async () => {
+    mailMode = "unconfigured";
+    const now = new Date();
+    const p = await practice({ deleteInDays: -20, now });
+    await run([p.org], now);
+    const admin = await f.user();
+    // Zugang 40 Tage nach der (gescheiterten) Ankündigung
+    const later = new Date(now.getTime() + 40 * DAY);
+    const v = await mod.recordManualNotice(admin, p.org, { receivedOn: later.toISOString().slice(0, 10), via: "email", note: "aus eigenem Postfach, Lesebestätigung" }, later);
+    expect(v.deletionAt.getTime()).toBe(later.getTime() + 30 * DAY);
+    expect(await run([p.org], later)).toMatchObject({ requests: 1 });
+  });
+
+  it("Versandfehler und abgebrochener Lauf gelten als „nicht versendet“ (kein Antrag, Pflichtaktion)", async () => {
+    mailMode = "crash";
+    const now = new Date();
+    const a = await practice({ deleteInDays: 5, now });
+    expect(await run([a.org], now)).toMatchObject({ notices: 1, requests: 0, failed: 0, mailNotSent: 1 });
+    expect((await row(a.org)).settings.readonlyExpiry.noticeMail).toBe("failed");
+    // Lauf nach dem Beanspruchen abgebrochen (Status blieb „unknown“)
+    const b = await practice({ deleteInDays: 5, now });
+    await owner.query(
+      "update organizations set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('readonlyExpiry', jsonb_build_object('noticeSentAt', $2::text, 'deletionAt', $3::text, 'noticeMail', 'unknown')) where id=$1",
+      [b.org, new Date(now.getTime() - 40 * DAY).toISOString(), new Date(now.getTime() - 10 * DAY).toISOString()],
+    );
+    mailMode = "ok";
+    expect(await run([b.org], now)).toMatchObject({ notices: 0, requests: 0, mailNotSent: 1 });
+    expect((await row(b.org)).deletion_requested_at).toBeNull();
+    expect(sent).toEqual([]);
+  });
+
+  it("Empfänger: Inhaber:innen und Steuerberatung (accountant), nicht andere Rollen", async () => {
+    const now = new Date();
+    const p = await practice({ deleteInDays: 40, now });
+    const acc = await f.user();
+    const recep = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant'), ($1,$3,'reception')", [p.org, acc, recep]);
+    const email = async (u: string) => (await f.pool.query("select email from users where id=$1", [u])).rows[0].email as string;
+    await run([p.org], now);
+    expect(sent.map((m) => m.to).sort()).toEqual([p.email, await email(acc)].sort());
+    expect(sent[0].text).toMatch(/dein Vertrag für die Praxis „.+“ in PodoHero endete am/);
+  });
+
+  it("Stopp über Plattform-Konsole (Test verlängern) und Aktionscode", async () => {
+    const now = new Date();
+    const a = await practice({ deleteInDays: 5, now, kind: "trial" });
+    const b = await practice({ deleteInDays: 5, now, kind: "trial" });
+    await run([a.org, b.org], now);
+    expect((await row(a.org)).deletion_requested_at).not.toBeNull();
+    const admin = await f.user();
+    await platform.extendTrial(admin, a.org, 14);
+    let o = await row(a.org);
+    expect(o.deletion_requested_at).toBeNull();
+    expect(o.settings.readonlyExpiry).toBeUndefined();
+    expect(await audits(a.org, "org.readonly_expiry_stopped")).toEqual([{ meta: { trigger: "platform.trial_extended" } }]);
+    // Aktionscode (Abo-Seite) startet eine neue Testphase
+    const code = `TRO${sfx().toUpperCase()}`;
+    await promo.createPromoCode(admin, { code, label: "Test Nur-Lesen", trialDays: 30, grantPlan: null, maxRedemptions: 1, validUntil: new Date(Date.now() + 10 * DAY), campaignId: null });
+    try {
+      await promo.redeemPromoCodeForOrganization(b.org, b.user, code);
+      o = await row(b.org);
+      expect(o.deletion_requested_at).toBeNull();
+      expect(o.settings.readonlyExpiry).toBeUndefined();
+      expect(await audits(b.org, "org.readonly_expiry_stopped")).toEqual([{ meta: { trigger: "promo.redeemed" } }]);
+      expect(await run([b.org], now)).toMatchObject({ notices: 0, requests: 0 });
+    } finally {
+      await owner.query("delete from promo_redemptions where code_id in (select id from promo_codes where code = $1)", [code]);
+      await owner.query("delete from promo_codes where code = $1", [code]);
+    }
   });
 
   it("Tarifbuchung stoppt: Checkout (Webhook) und Kostenlos-Tarif entfernen den automatischen Antrag; eigener Antrag bleibt", async () => {
@@ -161,7 +262,11 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     const now = new Date();
     const p = await practice({ deleteInDays: 5, now });
     await run([p.org], now);
-    await owner.query("update organizations set deletion_requested_at = now() - interval '31 days' where id=$1", [p.org]);
+    // angekündigter Termin erreicht (Antrag vor 31 Tagen)
+    await owner.query(
+      "update organizations set deletion_requested_at = now() - interval '31 days', settings = jsonb_set(jsonb_set(settings, '{readonlyExpiry,deletionAt}', to_jsonb((now() - interval '1 day')::text)), '{readonlyExpiry,noticeSentAt}', to_jsonb((now() - interval '45 days')::text)) where id=$1",
+      [p.org],
+    );
     // Tarif gebucht, ohne dass Cron/Webhook den Antrag schon entfernt hat (z. B. Plattform-Konsole direkt in der DB)
     await owner.query("update organizations set subscription_status='active', current_period_end = now() + interval '30 days' where id=$1", [p.org]);
     const c = await owner.connect();
@@ -171,6 +276,20 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       await owner.query("update organizations set subscription_status='canceled', current_period_end = $2 where id=$1", [p.org, p.end]);
       const dry = await purge.purgeOrganization(c, p.org, { execute: false, billing: null });
       expect(dry.executed).toBe(false);
+      // Probelauf-Liste zeigt den Zustellstatus
+      const due = (await purge.findDueOrganizations(c)).find((x) => x.id === p.org);
+      expect(due?.autoNotice).toMatchObject({ noticeMail: "sent", manualNoticeAt: null });
+      // angekündigter Termin noch nicht erreicht → kein Löschen
+      await owner.query("update organizations set settings = jsonb_set(settings, '{readonlyExpiry,deletionAt}', to_jsonb((now() + interval '3 days')::text)) where id=$1", [p.org]);
+      await expect(purge.purgeOrganization(c, p.org, { execute: false, billing: null })).rejects.toMatchObject({ kind: "auto_deletion_too_early" });
+      await owner.query("update organizations set settings = jsonb_set(settings, '{readonlyExpiry,deletionAt}', to_jsonb((now() - interval '1 day')::text)) where id=$1", [p.org]);
+      // Ankündigung nicht zugestellt (ohne Vermerk) → kein Löschen; mit Vermerk vor > 30 Tagen → zulässig
+      await owner.query("update organizations set settings = jsonb_set(settings, '{readonlyExpiry,noticeMail}', '\"failed\"') where id=$1", [p.org]);
+      await expect(purge.purgeOrganization(c, p.org, { execute: false, billing: null })).rejects.toMatchObject({ kind: "auto_deletion_notice_not_delivered" });
+      await owner.query("update organizations set settings = jsonb_set(settings, '{readonlyExpiry,manualNoticeAt}', to_jsonb((now() - interval '5 days')::text)) where id=$1", [p.org]);
+      await expect(purge.purgeOrganization(c, p.org, { execute: false, billing: null })).rejects.toMatchObject({ kind: "auto_deletion_too_early" });
+      await owner.query("update organizations set settings = jsonb_set(settings, '{readonlyExpiry,manualNoticeAt}', to_jsonb((now() - interval '31 days')::text)) where id=$1", [p.org]);
+      expect((await purge.purgeOrganization(c, p.org, { execute: false, billing: null })).executed).toBe(false);
       // ohne Ankündigung keine automatische Löschung
       await owner.query("update organizations set settings = settings - 'readonlyExpiry' where id=$1", [p.org]);
       await expect(purge.purgeOrganization(c, p.org, { execute: false, billing: null })).rejects.toMatchObject({ kind: "auto_deletion_not_announced" });

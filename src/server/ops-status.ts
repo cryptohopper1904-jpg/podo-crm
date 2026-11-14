@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/db";
-import { evaluateMigrations, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { evaluateMigrations, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { readonlyExpiryEnabled } from "@/lib/readonly-expiry";
 
 /**
  * Betriebs-Zustand (Migrationsstand, Zeitstempel der Backup-/Cron-Läufe) – gemeinsam genutzt von
@@ -58,7 +59,7 @@ export async function checkTimestamps(): Promise<Record<"backup" | "cronReminder
   const dir = process.env.STATUS_DIR;
   if (!dir) {
     const skipped: CheckResult = { status: "skipped", hint: "STATUS_DIR nicht gesetzt" };
-    return { backup: skipped, cronReminders: skipped, cronKim: skipped, cronNurLesen: skipped };
+    return { backup: skipped, cronReminders: skipped, cronKim: skipped, cronNurLesen: readonlyExpiryEnabled() ? skipped : evaluateReadonlyExpiryCron(false, null) };
   }
   const now = Date.now();
   const [backup, reminders, kim, nurLesen] = await Promise.all([
@@ -72,6 +73,6 @@ export async function checkTimestamps(): Promise<Record<"backup" | "cronReminder
     cronReminders: evaluateTimestamp(parseEpoch(reminders), MAX_AGE_SECONDS.cron, now),
     cronKim: evaluateTimestamp(parseEpoch(kim), MAX_AGE_SECONDS.cron, now),
     // Ende des Nur-Lesen-Modus (Löschankündigung, gesetzliche Frist): Ausfall muss auffallen
-    cronNurLesen: evaluateTimestamp(parseEpoch(nurLesen), MAX_AGE_SECONDS.cron6h, now),
+    cronNurLesen: evaluateReadonlyExpiryCron(readonlyExpiryEnabled(), parseEpoch(nurLesen), now),
   };
 }

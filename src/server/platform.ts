@@ -8,7 +8,7 @@ import { isPlanId, PLANS, seatCounts, voiceAddonActive, type PlanId } from "@/li
 import { websiteAddonActive } from "@/lib/website";
 import { isDemoPractice } from "@/lib/demo-practice";
 import { deletionBillingProblem, resumeBillingProblem } from "@/lib/subscription-cancel";
-import { isAutoDeletion, readonlyExpiry, readonlyExpiryState, plannedDeletionDate, type MailOutcome } from "@/lib/readonly-expiry";
+import { isAutoDeletion, needsManualNotice, readonlyExpiry, readonlyExpiryState, plannedDeletionDate, type MailOutcome, type ManualNoticeVia } from "@/lib/readonly-expiry";
 import { stopAutoDeletion } from "./readonly-expiry";
 
 /**
@@ -44,7 +44,17 @@ export type PracticeOverview = {
   billingProblem: string | null;
   deletionRequestedAt: Date | null;
   /** Ende des Nur-Lesen-Modus angekündigt bzw. automatischer Löschantrag (AGB § 9 Nr. 2) */
-  readonlyExpiry: { deletionAt: Date; auto: boolean; noticeSentAt: Date | null; noticeMail: MailOutcome | null; reminderMail: MailOutcome | null } | null;
+  readonlyExpiry: {
+    deletionAt: Date;
+    auto: boolean;
+    noticeSentAt: Date | null;
+    noticeMail: MailOutcome | null;
+    reminderMail: MailOutcome | null;
+    manualNoticeAt: Date | null;
+    manualNoticeVia: ManualNoticeVia | null;
+    /** Pflichtaktion: Ankündigung nicht zugestellt, kein Vermerk – ohne ihn wird nicht automatisch gelöscht */
+    needsManualNotice: boolean;
+  } | null;
   /** Praxis-Inhaber:innen (Konto, kein Patientendatum) – für „Passwort-Reset senden“ */
   owners: { id: string; name: string; email: string }[];
 };
@@ -119,6 +129,9 @@ function expiryOverview(o: typeof organizations.$inferSelect, now: Date): Practi
     noticeSentAt: st.noticeSentAt ? new Date(st.noticeSentAt) : null,
     noticeMail: st.noticeMail,
     reminderMail: st.reminderMail,
+    manualNoticeAt: st.manualNoticeAt ? new Date(st.manualNoticeAt) : null,
+    manualNoticeVia: st.manualNoticeVia,
+    needsManualNotice: needsManualNotice(st) && !o.deletionRequestedAt,
   };
 }
 

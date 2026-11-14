@@ -21,10 +21,12 @@ function ownerUrlFrom(appUrl: string): string {
   return u.toString();
 }
 const d = ownerUrl ? describe : describe.skip;
+/** Löschlauf sperrt Tabellen mit NOWAIT und wiederholt bei belegten Tabellen (parallele DB-Tests) */
+const PURGE_TIMEOUT = { timeout: 30_000 };
 
 type Seed = { org: string; user: string; patient: string; record: string; invoice: string };
 
-d("Löschlauf gekündigter Praxen", () => {
+d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
   let pool: Pool;
   let storageRoot: string;
   let a: Seed, b: Seed;

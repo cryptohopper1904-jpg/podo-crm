@@ -9,10 +9,11 @@ import type { BillingPort, OpenBillingItems, SubscriptionInfo } from "@/integrat
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
-const authState = vi.hoisted(() => ({ org: "", user: "", role: "owner", support: false, perms: [] as string[] }));
+const authState = vi.hoisted(() => ({ org: "", user: "", role: "owner", support: false, perms: [] as string[], opts: [] as unknown[] }));
 vi.mock("@/lib/auth/session", () => ({
-  requireAuth: async (perm?: string) => {
+  requireAuth: async (perm?: string, opts?: unknown) => {
     if (perm) authState.perms.push(perm);
+    authState.opts.push(opts);
     return {
       organization: { id: authState.org, name: "Testpraxis Fuß", state: "BE" },
       user: { id: authState.user, email: "inhaber@example.org" },
@@ -145,6 +146,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     authState.role = "owner";
     authState.support = false;
     authState.perms = [];
+    authState.opts = [];
   });
 
   /** Praxis mit laufendem Stripe-Abo (Tarif Praxis) und Inhaber:in */
@@ -322,8 +324,51 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     stripe.fail = true;
     expect((await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" })))?.error).toMatch(/konnte gerade nicht gekündigt werden/);
     // kein Fehler-Hinweis im Posteingang beim Abo-Weg (Nutzer:in sieht die Meldung direkt); Kündigungen werden bestätigt
-    const inbox = await f.asOrg(org, async (cl) => (await cl.query("select subject from messages where organization_id=$1", [org])).rows);
+    const inbox = await f.asOrg(org, async (cl) => (await cl.query("select subject, body from messages where organization_id=$1", [org])).rows);
     expect(inbox.map((m) => m.subject)).toEqual(["Kündigung bestätigt"]);
+    // Bestätigung mit konkretem Vertragsende und 12-Monats-Hinweis (Buchhaltung)
+    expect(inbox[0].body).toMatch(/^Dein PodoHero-Abo ist zum \d\d\.\d\d\.\d{4} gekündigt \(Vertragsende\)/);
+    expect(inbox[0].body).toContain("höchstens 12 Monate lesbar – exportiere rechtzeitig");
+  });
+
+  it("Löschantrag im Nur-Lesen-Modus (Testphase abgelaufen): erlaubt (allowReadOnly), ohne Stripe-Aufruf", async () => {
+    const { org } = await setup({ sub: null });
+    await f.pool.query("update organizations set plan='trial', subscription_status='trialing', trial_ends_at = now() - interval '40 days' where id=$1", [org]);
+    expect(await request()).toEqual({ ok: "Kündigung und Löschung beantragt." });
+    expect(authState.opts).toContainEqual(expect.objectContaining({ allowReadOnly: true }));
+    expect((await orgRow(org)).deletion_requested_at).not.toBeNull();
+    expect((await orgRow(org)).settings?.deletionReason).toBeUndefined();
+    expect(stripe.calls).toEqual([]);
+    // Rücknahme ebenfalls im Nur-Lesen-Modus möglich
+    expect((await withdraw())?.ok).toMatch(/Die Löschung wurde zurückgenommen/);
+  });
+
+  it("automatischer Löschantrag (Ende Nur-Lesen-Modus) lässt sich nicht zurücknehmen – nur mit Tarif", async () => {
+    const { org } = await setup({ sub: null });
+    await f.pool.query(
+      "update organizations set plan='trial', subscription_status='trialing', trial_ends_at = now() - interval '13 months', deletion_requested_at = now() - interval '2 days', settings = coalesce(settings, '{}'::jsonb) || '{\"deletionReason\":\"auto_readonly_expiry\"}'::jsonb where id=$1",
+      [org],
+    );
+    const w = await withdraw();
+    expect(w?.error).toMatch(/erfolgt automatisch, weil der Nur-Lesen-Modus nach 12 Monaten endet/);
+    expect((await orgRow(org)).deletion_requested_at).not.toBeNull();
+    expect(stripe.calls).toEqual([]);
+  });
+
+  it("fremdes Abo (anderer Stripe-Kunde) wird weder gekündigt noch fortgesetzt (AppSec L-4)", async () => {
+    const { org, subId } = await setup();
+    stripe.subs.get(subId)!.customerId = `cus_fremd${sfx()}`;
+    const r = await request();
+    expect(r?.warning).toBeTruthy();
+    expect(stripe.calls.filter((c) => c.startsWith("set:"))).toEqual([]);
+    expect(await audits(org, "billing.cancel_failed")).toEqual([expect.objectContaining({ meta: expect.objectContaining({ error: "SubscriptionCustomerMismatch" }) })]);
+    // Rücknahme über die Abo-Seite: fremdes, gekündigtes Abo bleibt unangetastet
+    await withdraw();
+    stripe.subs.get(subId)!.cancelAtPeriodEnd = true;
+    await f.pool.query("update organizations set settings = coalesce(settings, '{}'::jsonb) || '{\"billingCancelAtPeriodEnd\":true}'::jsonb where id=$1", [org]);
+    await abo.resumeSubscriptionAction();
+    expect(stripe.calls.filter((c) => c.startsWith("set:"))).toEqual([]);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
   });
 
   it("Abo-Seite: ohne laufendes Abo nichts zu kündigen", async () => {
@@ -419,7 +464,8 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(o).toEqual({ stripe_subscription_id: other, subscription_status: "active" });
   });
 
-  describe("Löschlauf", () => {
+  // Löschlauf sperrt Tabellen nur mit NOWAIT und versucht es bei belegten Tabellen erneut (parallele DB-Tests) – mehr Zeit
+  describe("Löschlauf", { timeout: 30_000 }, () => {
     async function dueOrg(sub: Partial<SubscriptionInfo> | null) {
       const { org, subId, cusId } = await setup({ sub });
       await owner.query("update organizations set deletion_requested_at = now() - interval '31 days' where id=$1", [org]);
@@ -500,6 +546,37 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
         c.release();
       }
       expect(stripe.subs.get(second)?.status).toBe("canceled");
+    });
+
+    it("automatische Löschung, aber bei Stripe läuft noch ein Abo → Abbruch, nichts gekündigt", async () => {
+      const { org, subId, cusId } = await dueOrg({});
+      // lokal: Abo beendet, Vertragsende vor 13 Monaten, Ankündigung zugestellt, angekündigter Termin erreicht
+      await owner.query(
+        `update organizations set subscription_status='canceled', current_period_end = now() - interval '13 months',
+           settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('deletionReason', 'auto_readonly_expiry',
+             'readonlyExpiry', jsonb_build_object('noticeSentAt', (now() - interval '45 days')::text, 'noticeMail', 'sent', 'deletionAt', (now() - interval '1 day')::text))
+         where id=$1`,
+        [org],
+      );
+      const c = await owner.connect();
+      try {
+        await expect(purge.purgeOrganization(c, org, { execute: false, billing: stripe as unknown as BillingPort })).rejects.toMatchObject({ kind: "auto_deletion_live_subscription" });
+        await expect(purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort })).rejects.toMatchObject({ kind: "auto_deletion_live_subscription" });
+      } finally {
+        c.release();
+      }
+      expect(stripe.calls.some((x) => x.startsWith("cancel_now:") || x.startsWith("delete_customer:"))).toBe(false);
+      expect(stripe.subs.get(subId)?.status).toBe("active");
+      expect(stripe.deletedCustomers).not.toContain(cusId);
+      expect(await exists(org)).toBe(true);
+      // ohne laufendes Abo bei Stripe: Probelauf zulässig
+      stripe.subs.get(subId)!.status = "canceled";
+      const c2 = await owner.connect();
+      try {
+        expect((await purge.purgeOrganization(c2, org, { execute: false, billing: stripe as unknown as BillingPort })).stripe).toMatchObject({ subscription: "ended" });
+      } finally {
+        c2.release();
+      }
     });
 
     it("Stripe nicht erreichbar oder nicht konfiguriert → Abbruch, Praxis bleibt, Protokoll", async () => {

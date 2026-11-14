@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { addMonthsUtc, isAutoDeletion, NOTICE_LEAD_DAYS, plannedDeletionDate, readonlyExpiry, readonlyExpiryState } from "./readonly-expiry";
+import {
+  addMonthsUtc,
+  earliestAutoDeletion,
+  isAutoDeletion,
+  needsManualNotice,
+  noticeDeliveredAt,
+  NOTICE_LEAD_DAYS,
+  plannedDeletionDate,
+  readonlyExpiry,
+  readonlyExpiryEnabled,
+  readonlyExpiryState,
+} from "./readonly-expiry";
 
 const DAY = 86_400_000;
 const now = new Date("2026-11-14T10:00:00Z");
@@ -16,6 +27,7 @@ describe("Ende des Nur-Lesen-Modus: Fristen", () => {
     const end = new Date("2026-03-01T00:00:00Z");
     const x = readonlyExpiry({ ...base, currentPeriodEnd: end }, now)!;
     expect(x.contractEnd).toEqual(end);
+    expect(x.kind).toBe("contract");
     expect(x.deletionAt.toISOString()).toBe("2027-03-01T00:00:00.000Z");
     expect(x.requestAt.getTime()).toBe(x.deletionAt.getTime() - 30 * DAY);
     expect(x.noticeAt.getTime()).toBe(x.deletionAt.getTime() - NOTICE_LEAD_DAYS * DAY);
@@ -29,6 +41,7 @@ describe("Ende des Nur-Lesen-Modus: Fristen", () => {
     const trialEnd = new Date("2026-06-10T12:00:00Z");
     const t = readonlyExpiry({ ...base, plan: "trial", subscriptionStatus: "trialing", trialEndsAt: trialEnd }, now)!;
     expect(t.contractEnd).toEqual(trialEnd);
+    expect(t.kind).toBe("trial");
     expect(t.deletionAt.toISOString()).toBe("2027-06-10T12:00:00.000Z");
     expect(readonlyExpiry({ ...base, plan: "trial", subscriptionStatus: "none", trialEndsAt: trialEnd }, now)?.contractEnd).toEqual(trialEnd);
     expect(readonlyExpiry({ ...base, plan: "praxis", subscriptionStatus: "trialing", trialEndsAt: trialEnd }, now)?.contractEnd).toEqual(trialEnd);
@@ -64,9 +77,40 @@ describe("Ende des Nur-Lesen-Modus: Fristen", () => {
       noticeMail: null,
       reminderSentAt: null,
       reminderMail: "sent",
+      manualNoticeAt: null,
+      manualNoticeVia: null,
     });
     expect(isAutoDeletion({ deletionReason: "auto_readonly_expiry" })).toBe(true);
     expect(isAutoDeletion({ deletionReason: "owner" })).toBe(false);
     expect(isAutoDeletion(null)).toBe(false);
+  });
+
+  it("Zugang der Ankündigung: E-Mail versendet oder Betreiber-Vermerk; Termin nie vor Zugang + 30 Tagen", () => {
+    const noticed = "2026-11-01T00:00:00.000Z";
+    const st = (x: Record<string, unknown>) => readonlyExpiryState({ readonlyExpiry: { noticeSentAt: noticed, deletionAt: "2026-12-01T00:00:00.000Z", ...x } });
+    // nicht zugestellt (inkl. abgebrochenem Lauf „unknown“): kein Zugang, Pflichtaktion
+    for (const mail of ["not_configured", "failed", "no_recipient", "unknown"]) {
+      expect(noticeDeliveredAt(st({ noticeMail: mail }))).toBeNull();
+      expect(earliestAutoDeletion(st({ noticeMail: mail }))).toBeNull();
+      expect(needsManualNotice(st({ noticeMail: mail }))).toBe(true);
+    }
+    expect(needsManualNotice(readonlyExpiryState({}))).toBe(false);
+    // E-Mail versendet
+    expect(noticeDeliveredAt(st({ noticeMail: "sent" }))?.toISOString()).toBe(noticed);
+    expect(earliestAutoDeletion(st({ noticeMail: "sent" }))?.toISOString()).toBe("2026-12-01T00:00:00.000Z");
+    // von Hand angekündigt, Zugang später → Termin verschiebt sich auf Zugang + 30 Tage
+    const manual = st({ noticeMail: "not_configured", manualNoticeAt: "2026-11-20T10:00:00.000Z", manualNoticeVia: "letter" });
+    expect(needsManualNotice(manual)).toBe(false);
+    expect(manual.manualNoticeVia).toBe("letter");
+    expect(earliestAutoDeletion(manual)?.toISOString()).toBe("2026-12-20T10:00:00.000Z");
+    const x = readonlyExpiry({ ...base, currentPeriodEnd: new Date("2025-10-01T00:00:00Z") }, now)!;
+    expect(plannedDeletionDate(x, manual, null, now).toISOString()).toBe("2026-12-20T10:00:00.000Z");
+    expect(readonlyExpiryState({ readonlyExpiry: { manualNoticeVia: "taube" } }).manualNoticeVia).toBeNull();
+  });
+
+  it("Schalter READONLY_EXPIRY_ENABLED: nur „1“ schaltet ein", () => {
+    expect(readonlyExpiryEnabled({})).toBe(false);
+    expect(readonlyExpiryEnabled({ READONLY_EXPIRY_ENABLED: "true" })).toBe(false);
+    expect(readonlyExpiryEnabled({ READONLY_EXPIRY_ENABLED: "1" })).toBe(true);
   });
 });

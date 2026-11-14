@@ -22,6 +22,15 @@ export function evaluateTimestamp(epochSeconds: number | null, maxAgeSeconds: nu
   return { status: "ok", lastAt, ageMinutes: Math.round(ageSeconds / 60) };
 }
 
+/**
+ * Cron „Ende des Nur-Lesen-Modus“: abgeschaltet (READONLY_EXPIRY_ENABLED ≠ 1) → „deaktiviert“ statt warn/fail;
+ * eingeschaltet wie jeder 6-Stunden-Cron (fehlende Zeitstempel-Datei → warn, zu alt → fail).
+ */
+export function evaluateReadonlyExpiryCron(enabled: boolean, epochSeconds: number | null, nowMs = Date.now()): CheckResult {
+  if (!enabled) return { status: "skipped", hint: "deaktiviert (READONLY_EXPIRY_ENABLED nicht gesetzt)" };
+  return evaluateTimestamp(epochSeconds, MAX_AGE_SECONDS.cron6h, nowMs);
+}
+
 /** Liest „1731000000“ (ggf. mit Zeilenumbruch) aus einer Status-Datei. */
 export function parseEpoch(text: string | null): number | null {
   if (text === null) return null;

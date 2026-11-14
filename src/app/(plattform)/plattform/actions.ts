@@ -7,6 +7,8 @@ import { getSession } from "@/lib/auth/session";
 import { isPlanId } from "@/lib/plans";
 import { extendTrial, requirePlatformAdmin, setPracticePlan, setVoiceAddon, setWebsiteAddon } from "@/server/platform";
 import { enterSupport, exitSupport } from "@/server/support";
+import { ManualNoticeError, recordManualNotice } from "@/server/readonly-expiry";
+import { MANUAL_NOTICE_VIAS, type ManualNoticeVia } from "@/lib/readonly-expiry";
 
 export async function setPlanAction(form: FormData) {
   const row = await requirePlatformAdmin();
@@ -38,6 +40,34 @@ export async function setWebsiteAddonAction(form: FormData) {
   if (!d.success) redirect("/plattform?fehler=eingabe");
   await setWebsiteAddon(row.user.id, d.data.organizationId, d.data.on === "1");
   revalidatePath("/plattform");
+}
+
+export type ManualNoticeState = { error?: string; ok?: string } | undefined;
+
+/**
+ * Pflichtaktion „Ankündigung in Textform von Hand verschickt“ (Ende des Nur-Lesen-Modus, E-Mail nicht zugestellt):
+ * nur Plattform-Admin mit 2FA; Audit platform.readonly_notice_manual an der Praxis.
+ */
+export async function recordManualNoticeAction(_: ManualNoticeState, form: FormData): Promise<ManualNoticeState> {
+  const row = await requirePlatformAdmin();
+  const d = z
+    .object({
+      organizationId: z.string().uuid(),
+      receivedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      via: z.string().refine((v): v is ManualNoticeVia => Object.hasOwn(MANUAL_NOTICE_VIAS, v)),
+      note: z.string().max(2000),
+      confirm: z.literal("on"),
+    })
+    .safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: "Bitte Datum, Weg und Nachweis angeben und die Ankündigung bestätigen." };
+  try {
+    const r = await recordManualNotice(row.user.id, d.data.organizationId, { receivedOn: d.data.receivedOn, via: d.data.via as ManualNoticeVia, note: d.data.note });
+    revalidatePath("/plattform");
+    return { ok: `Vermerkt. Löschung frühestens ab ${r.deletionAt.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin" })}.` };
+  } catch (e) {
+    if (e instanceof ManualNoticeError) return { error: e.message };
+    throw e;
+  }
 }
 
 /** Support-Zugriff starten – nur mit gültiger Freigabe der Praxis (sonst kein Zutritt). */

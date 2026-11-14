@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatLog, sanitizeFields, scrubText } from "./log";
 import { buildErrorReport, parseSentryDsn, scrubRoute, sentryEnvelope } from "./error-report";
-import { evaluateMigrations, evaluateTimestamp, overallStatus, parseEpoch } from "./ops-health";
+import { evaluateMigrations, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, overallStatus, parseEpoch } from "./ops-health";
 
 describe("Logs ohne Personendaten", () => {
   it("filtert E-Mail, Telefon, IBAN, Query-Strings und Token-Pfade", () => {
@@ -66,6 +66,15 @@ describe("Deep-Health-Bewertung", () => {
     expect(evaluateTimestamp(now / 1000 - 3600, 60, now).status).toBe("fail");
     expect(parseEpoch("1731000000\n")).toBe(1731000000);
     expect(parseEpoch("kaputt")).toBeNull();
+  });
+
+  it("Cron Nur-Lesen: deaktiviert → skipped (kein warn/fail); eingeschaltet ohne Datei → warn, zu alt → fail", () => {
+    expect(evaluateReadonlyExpiryCron(false, null, now)).toMatchObject({ status: "skipped", hint: expect.stringMatching(/deaktiviert/) });
+    expect(evaluateReadonlyExpiryCron(false, now / 1000 - 100 * 3600, now).status).toBe("skipped");
+    expect(evaluateReadonlyExpiryCron(true, null, now)).toMatchObject({ status: "warn", hint: "noch kein Lauf erfasst" });
+    expect(evaluateReadonlyExpiryCron(true, now / 1000 - 6 * 3600, now).status).toBe("ok");
+    expect(evaluateReadonlyExpiryCron(true, now / 1000 - MAX_AGE_SECONDS.cron6h - 60, now).status).toBe("fail");
+    expect(overallStatus({ a: { status: "ok" }, nurLesen: evaluateReadonlyExpiryCron(false, null, now) })).toBe("ok");
   });
 
   it("bewertet den Migrationsstand", () => {

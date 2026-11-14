@@ -122,6 +122,12 @@ function assertRealPort(port: BillingPort, subId: string) {
 const live = (status: string) => (STRIPE_LIVE_STATUSES as readonly string[]).includes(status);
 
 /**
+ * Gehört das Abo zum Stripe-Kunden der Praxis? (AppSec L-4) Eine fremde bzw. vertauschte Abo-ID wird nie gekündigt oder
+ * fortgesetzt. Ohne Kunden-ID am Abo (Mock) zählt es als zugehörig.
+ */
+const ownedBy = (sub: SubscriptionInfo, org: OrgRow) => !sub.customerId || sub.customerId === org.stripeCustomerId;
+
+/**
  * Alle noch nicht beendeten Abos der Praxis: das hinterlegte (falls laut lokalem Stand laufend) und – mit echtem
  * Stripe-Zugang – alle weiteren des Stripe-Kunden. Das hinterlegte Abo steht vorn.
  */
@@ -130,10 +136,12 @@ async function liveSubscriptions(org: OrgRow, port: BillingPort): Promise<Subscr
   if (hasRunningSubscription(org)) {
     assertRealPort(port, org.stripeSubscriptionId!);
     const sub = await port.getSubscription(org.stripeSubscriptionId!);
+    // fremdes Abo hinterlegt: nichts ändern, als Fehler melden (Betreiber-Hinweis über billingCancelError)
+    if (sub && !ownedBy(sub, org)) throw Object.assign(new Error("Abo gehört nicht zum Stripe-Kunden der Praxis"), { name: "SubscriptionCustomerMismatch" });
     if (sub) found.set(sub.id, sub);
   }
   if (org.stripeCustomerId && !port.isMock) {
-    for (const sub of await port.listSubscriptions(org.stripeCustomerId)) if (!found.has(sub.id)) found.set(sub.id, sub);
+    for (const sub of await port.listSubscriptions(org.stripeCustomerId)) if (!found.has(sub.id) && ownedBy(sub, org)) found.set(sub.id, sub);
   }
   return [...found.values()].filter((x) => live(x.status));
 }
@@ -188,7 +196,9 @@ export async function cancelSubscriptionAtPeriodEnd(
     await inboxNotice(
       organizationId,
       "Kündigung bestätigt",
-      `${reason === "deletion_request" ? "Mit deinem Löschantrag ist dein PodoHero-Abo" : "Dein PodoHero-Abo ist"} zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen.`,
+      reason === "deletion_request"
+        ? `Mit deinem Löschantrag ist dein PodoHero-Abo zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen.`
+        : `Dein PodoHero-Abo ist zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen. Danach bleibt die Praxis höchstens 12 Monate lesbar – exportiere rechtzeitig (Einstellungen → Daten & Kündigung).`,
     ).catch((err) => console.error("[billing] Posteingang-Hinweis fehlgeschlagen", organizationId, errorKind(err)));
     return { status: "canceled", periodEnd };
   } catch (e) {
@@ -244,7 +254,7 @@ export async function resumeSubscription(
     for (const [id, at] of targets) {
       assertRealPort(port, id);
       const sub = await port.getSubscription(id);
-      if (!sub || !live(sub.status)) continue;
+      if (!sub || !live(sub.status) || !ownedBy(sub, org)) continue;
       anyLive = true;
       let state = sub;
       if (sub.cancelAtPeriodEnd) {
@@ -260,7 +270,7 @@ export async function resumeSubscription(
     // Abo der Praxis nicht unter den Zielen (z. B. separat im Portal gekündigt): Zustand trotzdem frisch übernehmen
     if (running && !targets.has(org.stripeSubscriptionId!)) {
       const sub = await port.getSubscription(org.stripeSubscriptionId!);
-      if (sub && live(sub.status)) {
+      if (sub && live(sub.status) && ownedBy(sub, org)) {
         main = sub;
         anyLive = true;
         if (sub.cancelAtPeriodEnd) kept++;

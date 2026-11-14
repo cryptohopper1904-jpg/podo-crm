@@ -3,7 +3,7 @@
  * hochzählen – die Zustimmung wird je Praxis mit Version, Zeitpunkt und Person gespeichert
  * (organizations.settings.legalAcceptance).
  */
-export const LEGAL_VERSIONS = { agb: "0.4", avv: "0.3", datenschutz: "0.5" } as const;
+export const LEGAL_VERSIONS = { agb: "0.4", avv: "0.4", datenschutz: "0.5" } as const;
 export const LEGAL_VERSION = `agb-${LEGAL_VERSIONS.agb}+avv-${LEGAL_VERSIONS.avv}`;
 
 export type LegalAcceptance = { agb: string; avv: string; version: string; at: string; by: string };

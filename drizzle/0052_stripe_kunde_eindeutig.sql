@@ -1,6 +1,7 @@
 -- Ein Stripe-Kunde gehört genau einer Praxis (Webhook-Zuordnung über die Kunden-ID, src/server/billing.ts findOrg).
 -- Idempotent. organizations hat keine RLS. Gibt es schon doppelte Kunden-IDs, wird der Index NICHT angelegt (die
--- Migration bricht den Deploy nicht ab) – Hinweis im Deploy-Log, Dubletten bereinigen und Migration erneut ausführen:
+-- Migration bricht den Deploy nicht ab) – Hinweis im Deploy-Log (scripts/migrate.ts); Dubletten bereinigen und den Index
+-- danach von Hand anlegen (Befehl steht im Deploy-Log; die Migration gilt als ausgeführt):
 --   select stripe_customer_id, array_agg(id) from organizations where stripe_customer_id is not null group by 1 having count(*) > 1;
 DO $$
 DECLARE dubletten integer;
