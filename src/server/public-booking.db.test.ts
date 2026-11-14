@@ -102,4 +102,18 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect((await pb.checkPublicSlot(p.org, p.pk, slot(), now)).ok).toBe(true);
     });
   });
+
+  it("Rechtsbefund H2: Impressum/Datenschutz der Praxis auch ohne Website; Links auf Ersatzseiten, nach Löschantrag keine Daten", async () => {
+    const web = await import("./website");
+    const p = await practice();
+    const [{ slug }] = (await f.pool.query("select slug from organizations where id = $1", [p.org])).rows;
+    const legal = await web.loadPracticeLegal(slug);
+    expect(legal).toMatchObject({ slug, name: "Testpraxis Fuß", websitePublished: false });
+    expect(web.practiceLegalLinks(legal!)).toEqual({ imprint: `/buchen/${slug}/impressum`, privacy: `/buchen/${slug}/datenschutz` });
+    expect(web.practiceLegalLinks({ slug, websitePublished: true })).toEqual({ imprint: `/p/${slug}/impressum`, privacy: `/p/${slug}/datenschutz` });
+    expect(await pb.publicBookingAvailable(p.org, now)).toBe(true);
+    await f.pool.query("update organizations set deletion_requested_at = now() where id = $1", [p.org]);
+    expect(await pb.publicBookingAvailable(p.org, now)).toBe(false);
+    expect(await web.loadPracticeLegal(slug)).toBeNull();
+  });
 });

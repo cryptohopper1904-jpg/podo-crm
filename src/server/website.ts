@@ -87,3 +87,41 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     })),
   };
 });
+
+/** Angaben für Impressum und Datenschutzhinweise einer Praxis (Website /p und Online-Buchung /buchen) */
+export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "taxNumber" | "vatId" | "imprint" | "privacy"> & {
+  /** Praxis-Website veröffentlicht → Impressum/Datenschutz unter /p/<slug>/…, sonst Ersatzseiten unter /buchen/<slug>/… */
+  websitePublished: boolean;
+};
+
+/**
+ * Impressum/Datenschutz der Praxis ohne Website-Pflicht (für die Online-Buchung): dieselben Stammdaten und Texte wie
+ * die Praxis-Website (Einstellungen → Praxis bzw. Website). null bei unbekannter Praxis oder beantragter Löschung.
+ */
+export const loadPracticeLegal = cache(async (slug: string): Promise<PracticeLegal | null> => {
+  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null;
+  const [o] = await db.select().from(organizations).where(eq(organizations.slug, slug));
+  if (!o || o.deletionRequestedAt) return null;
+  const w = websiteSettings(o.settings ?? {});
+  return {
+    slug: o.slug,
+    name: o.name,
+    legalName: o.legalName,
+    street: o.street,
+    zip: o.zip,
+    city: o.city,
+    phone: o.phone,
+    email: o.email,
+    taxNumber: o.taxNumber,
+    vatId: o.vatId,
+    imprint: w.imprint,
+    privacy: w.privacy,
+    websitePublished: websitePublished(o),
+  };
+});
+
+/** Links zu Impressum und Datenschutzhinweisen der Praxis (Website, sonst Ersatzseiten der Online-Buchung) */
+export function practiceLegalLinks(p: Pick<PracticeLegal, "slug" | "websitePublished">) {
+  const base = p.websitePublished ? `/p/${p.slug}` : `/buchen/${p.slug}`;
+  return { imprint: `${base}/impressum`, privacy: `${base}/datenschutz` };
+}

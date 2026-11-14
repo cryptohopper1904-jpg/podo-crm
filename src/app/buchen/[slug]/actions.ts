@@ -34,7 +34,6 @@ const schema = z.object({
   phone: z.string().trim().min(6, "Telefonnummer fehlt").max(40),
   email: z.string().trim().email("E-Mail ungültig").max(200).optional().or(z.literal("")),
   note: z.string().trim().max(500).optional(),
-  privacy: z.literal("on", { message: "Bitte die Datenschutzhinweise bestätigen." }),
   noShow: z.literal("on", { message: "Bitte die Ausfallregelung bestätigen." }),
   website: z.string().max(0).optional(), // Honeypot
 });

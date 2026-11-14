@@ -5,7 +5,10 @@ import { organizations } from "@/db/schema";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { isPrivateOnly } from "@/lib/features";
+import { websitePublished } from "@/lib/website";
 import { publicBookingOptions } from "@/server/portal-booking";
+import { practiceLegalLinks } from "@/server/website";
+import { BookingLegalFooter } from "./_legal/shell";
 import { BookingForm } from "./booking-form";
 
 export const metadata = { title: "Termin buchen", robots: { index: true, follow: false } };
@@ -23,6 +26,8 @@ export default async function BookingPage(props: PageProps<"/buchen/[slug]">) {
   if (!options) notFound();
   const offered = options.services;
   const days = options.days;
+  // Impressum/Datenschutz der Praxis: Website-Seiten, sonst Ersatzseiten unter /buchen/<slug>/… (Rechtsbefund H2)
+  const legal = practiceLegalLinks({ slug, websitePublished: websitePublished(org) });
   return (
     <main className="mx-auto min-h-screen max-w-3xl px-4 py-8">
       <header className="mb-8 flex items-center justify-between">
@@ -36,7 +41,10 @@ export default async function BookingPage(props: PageProps<"/buchen/[slug]">) {
           ? <>Wir behandeln Privatpatient:innen und Selbstzahler. Bei Fragen ruf uns gern an{org.phone ? ` unter ${org.phone}` : ""}.</>
           : <>Hier buchst du Selbstzahler-Leistungen. Für Behandlungen mit ärztlicher Verordnung (Kasse) ruf uns bitte an{org.phone ? ` unter ${org.phone}` : ""}.</>}
       </p>
-      <BookingForm slug={slug} services={offered} days={days} />
+      <BookingForm slug={slug} services={offered} days={days} privacyHref={legal.privacy} />
+      <div className="mt-10 -mx-4">
+        <BookingLegalFooter links={legal} name={org.name} />
+      </div>
     </main>
   );
 }

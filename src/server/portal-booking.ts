@@ -478,3 +478,9 @@ export async function checkPublicSlot(organizationId: string, serviceId: string,
   if (!(await isFreeSlot(o, start, svc.durationMin, now))) return { ok: false, error: "Dieser Termin ist nicht (mehr) frei. Bitte einen anderen wählen." };
   return { ok: true, service: { id: svc.id, name: svc.name, durationMin: svc.durationMin }, cfg };
 }
+
+/** Ist die Online-Buchung /buchen dieser Praxis von außen erreichbar? (gleiche Regel wie publicBookingOptions) */
+export async function publicBookingAvailable(organizationId: string, now = new Date()): Promise<boolean> {
+  const o = await loadOrg(organizationId);
+  return !!o && !bookingBlocked(o, now);
+}
