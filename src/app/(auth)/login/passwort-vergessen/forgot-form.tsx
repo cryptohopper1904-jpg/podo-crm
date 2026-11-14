@@ -10,7 +10,7 @@ export function ForgotPasswordForm() {
   if (state?.ok) return <div className="mt-6"><FormSuccess message={state.ok} /></div>;
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <Field label="E-Mail">
         <Input name="email" type="email" autoComplete="username" required autoFocus />
       </Field>

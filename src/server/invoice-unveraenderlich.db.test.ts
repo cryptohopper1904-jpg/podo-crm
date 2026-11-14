@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 vi.mock("server-only", () => ({}));
 import { PDFPage } from "pdf-lib";
 import { invoiceAsIssued } from "@/lib/invoice-view";
+import { renderInvoicePdf } from "@/lib/invoice-pdf";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
 let drawn: string[] = [];
@@ -32,12 +33,20 @@ afterEach(() => vi.restoreAllMocks());
   const base = (patientId: string, patch: Record<string, unknown> = {}) =>
     ({ kind: "invoice", patientId, billingContactId: null, issuedAt: "2026-11-13", dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [], lines: [line], ...patch }) as never;
   const pay = (method: string, amountCents: number) => ({ method, amountCents, voucherCode: null, externalRef: null }) as never;
-  /** Belegtext des PDFs, wie es Download, E-Mail-Versand und Patientenportal ausliefern (invoicePdfForOrg) */
+  /**
+   * Belegtext (aus den gespeicherten Daten im Stand der Ausstellung gezeichnet). Download, E-Mail-Versand und
+   * Patientenportal liefern seit dem Beleg-Archiv das archivierte Original (pdfBytes, byte-gleich) – der Belegtext
+   * prüft zusätzlich, dass auch jede Neuerzeugung (Druckansicht, Neudruck) dem ausgestellten Beleg entspricht.
+   */
   const pdfText = async (org: string, id: string) => {
     drawn = [];
-    const pdf = await delivery.invoicePdfForOrg(org, id);
-    expect(pdf).not.toBeNull();
+    await renderInvoicePdf(await delivery.invoicePdfData(await bundle(org, id)));
     return [...drawn];
+  };
+  const pdfBytes = async (org: string, id: string) => {
+    const pdf = await delivery.invoicePdfForOrg(org, id);
+    expect(pdf?.variant).toBe("archive");
+    return Buffer.from(pdf!.bytes);
   };
   const bundle = (org: string, id: string) => withOrg(org, (tx) => invoices.loadInvoiceBundle(tx, org, id)).then((b) => b!);
 
@@ -62,6 +71,7 @@ afterEach(() => vi.restoreAllMocks());
     await f.asOrg(org, (c) => c.query("update organizations set iban = 'DE02120300000000202051' where id = $1", [org]));
     const inv = await invoices.createInvoice(auth, base(patient));
     const before = await pdfText(org, inv.id);
+    const beforeBytes = await pdfBytes(org, inv.id);
     expect(before).toContain("Zahlbar bis:");
     expect(before.join("\n")).toMatch(/Bitte überweisen Sie den Betrag bis zum 27\.11\.2026/);
     expect(before).toContain("Bezahlen per GiroCode");
@@ -69,6 +79,7 @@ afterEach(() => vi.restoreAllMocks());
     await invoices.addPayments(auth, inv.id, [pay("cash", 6500)]);
     const after = await pdfText(org, inv.id);
     expect(after).toEqual(before);
+    expect((await pdfBytes(org, inv.id)).equals(beforeBytes)).toBe(true);
     expect(after.join("\n")).not.toMatch(/in bar|erhalten|bezahlt – vielen Dank/);
     // erneuter E-Mail-Versand: PDF wie ausgestellt, der Begleittext nennt den aktuellen Stand
     const mail = delivery.invoiceEmailText(await bundle(org, inv.id)).body;
@@ -103,10 +114,12 @@ afterEach(() => vi.restoreAllMocks());
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient, { payments: [pay("card", 2000)] }));
     const before = await pdfText(org, inv.id);
+    const beforeBytes = await pdfBytes(org, inv.id);
     expect(before).toContain("Bereits bezahlt per Karte: 20,00 €. Offen: 45,00 €.");
 
     await invoices.addPayments(auth, inv.id, [pay("cash", 4500)]);
     expect(await pdfText(org, inv.id)).toEqual(before);
+    expect((await pdfBytes(org, inv.id)).equals(beforeBytes)).toBe(true);
     expect((await bundle(org, inv.id)).invoice).toMatchObject({ status: "paid", paidCents: 6500 });
   });
 
@@ -117,6 +130,7 @@ afterEach(() => vi.restoreAllMocks());
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amountCents: 1500, vatRate: 0, method: "cash", notes: null });
     const inv = await invoices.createInvoice(auth, base(patient, { depositIds: [dep.id] }));
     const before = await pdfText(org, inv.id);
+    const beforeBytes = await pdfBytes(org, inv.id);
     expect(before.some((t) => t.startsWith("abzgl. Anzahlung"))).toBe(true);
 
     const res = await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:test-${inv.id}`, amountCents: 5000, method: "payment_link" });
@@ -124,6 +138,7 @@ afterEach(() => vi.restoreAllMocks());
     // paid_cents = Anzahlung + Zahlung (früher: nur Summe der Zahlungszeilen → angerechnete Anzahlung ging verloren)
     expect((await bundle(org, inv.id)).invoice).toMatchObject({ status: "paid", paidCents: 6500 });
     expect(await pdfText(org, inv.id)).toEqual(before);
+    expect((await pdfBytes(org, inv.id)).equals(beforeBytes)).toBe(true);
   });
 
   it("Anzahlungs-Quittung: Zahlung beim Ausstellen gehört zum Beleg", async () => {

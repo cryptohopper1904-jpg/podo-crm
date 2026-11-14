@@ -4,6 +4,7 @@ import { log } from "@/lib/log";
 import { runReminders } from "@/server/reminders";
 import { retryDueWebhooks } from "@/server/webhooks";
 import { runPromoTrialReturns } from "@/server/promo-codes";
+import { catchUpArchives } from "@/server/archive-catchup";
 import { runPendingWaitlistOffers } from "@/server/calendar-status";
 
 /**
@@ -15,8 +16,11 @@ import { runPendingWaitlistOffers } from "@/server/calendar-status";
  * Ereignisse (Gesamt-Review H4/H7) – eigener Fehlerpfad, damit Erinnerungen davon unabhängig laufen.
  * Zusätzlich: abgelaufene Aktionscode-Testphasen aus dem Kostenlos-Tarif zurückstellen (runPromoTrialReturns, eigener
  * Fehlerpfad; läuft auch im nächtlichen Cron – die Hinweise versprechen „spätestens in der folgenden Nacht“).
+ * Zusätzlich: Beleg-Archiv nachholen (PDFs von Belegen/Zahlungsbelegen, deren Ablage gescheitert war; eigener Fehlerpfad).
  * Zusätzlich: Wartelisten-Angebote für Absagen aus dem Kalender nachholen, deren verzögerter Versand (Frist für
  * „Rückgängig“) nicht gelaufen ist (runPendingWaitlistOffers, nur letzte 24 h, eigener Fehlerpfad).
+ * Reihenfolge: Webhooks → Aktionscodes → Erinnerungen → Beleg-Archiv → Warteliste; jeder Lauf mit eigenem try/catch,
+ * ein Fehler stoppt die übrigen nicht (Antwort dann 500 mit den Zählern der gelaufenen Teile).
  * Antwort enthält nur Zähler, keine Personendaten.
  */
 
@@ -38,21 +42,29 @@ async function handle(req: NextRequest) {
   } catch (e) {
     log.error("cron.promo_return_free.failed", { error: e });
   }
+  // Erinnerungen vor den Nachläufen (zeitkritisch); jeder Lauf mit eigenem Fehlerpfad – ein Fehler stoppt die anderen nicht
+  let result: Awaited<ReturnType<typeof runReminders>> | null = null;
   try {
-    const result = await runReminders();
-    // nach den Erinnerungen (eigener Fehlerpfad, Obergrenze je Lauf): Wartelisten-Angebote nachholen
-    let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
-    try {
-      waitlistOffers = await runPendingWaitlistOffers();
-    } catch (e) {
-      log.error("cron.waitlist_pending.failed", { error: e });
-    }
-    if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result }, { status: 500 });
-    return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, waitlistOffers }, { headers: { "Cache-Control": "no-store" } });
+    result = await runReminders();
   } catch (e) {
     log.error("cron.reminders.failed", { error: e });
-    return NextResponse.json({ error: "Lauf fehlgeschlagen" }, { status: 500 });
   }
+  let archives: Awaited<ReturnType<typeof catchUpArchives>> | null = null;
+  try {
+    archives = await catchUpArchives();
+  } catch (e) {
+    log.error("cron.archive_catchup.failed", { error: e });
+  }
+  // Wartelisten-Angebote nachholen (Obergrenze je Lauf)
+  let waitlistOffers: Awaited<ReturnType<typeof runPendingWaitlistOffers>> | null = null;
+  try {
+    waitlistOffers = await runPendingWaitlistOffers();
+  } catch (e) {
+    log.error("cron.waitlist_pending.failed", { error: e });
+  }
+  if (!result) return NextResponse.json({ error: "Lauf fehlgeschlagen", webhooks, promoReturns, archives, waitlistOffers }, { status: 500 });
+  if (!webhooks) return NextResponse.json({ error: "Webhook-Wiederholung fehlgeschlagen", ...result, promoReturns, archives, waitlistOffers }, { status: 500 });
+  return NextResponse.json({ ok: true, ...result, webhooks, promoReturns, archives, waitlistOffers }, { headers: { "Cache-Control": "no-store" } });
 }
 
 export const POST = handle;

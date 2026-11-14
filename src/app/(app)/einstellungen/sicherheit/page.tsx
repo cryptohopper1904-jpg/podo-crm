@@ -45,7 +45,7 @@ export default async function SecuritySettings() {
           dieser PIN oder deinem Passwort. Nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig.
         </p>
         <ActionForm action={setUnlockPinAction} submit={me?.pin ? "PIN ändern" : "PIN speichern"}>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Neue PIN" hint="4–8 Ziffern, nicht 1234 o. Ä."><Input name="pin" type="password" inputMode="numeric" pattern="[0-9]{4,8}" required autoComplete="off" /></Field>
             <Field label="Dein Passwort zur Bestätigung"><Input name="current" type="password" required autoComplete="current-password" /></Field>
           </div>
@@ -63,7 +63,7 @@ export default async function SecuritySettings() {
       <Card>
         <CardTitle>Passwort ändern</CardTitle>
         <ActionForm action={changePasswordAction} submit="Passwort ändern">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Aktuelles Passwort"><Input name="current" type="password" required autoComplete="current-password" /></Field>
             <Field label="Neues Passwort" hint="mindestens 12 Zeichen"><Input name="next" type="password" required minLength={12} autoComplete="new-password" /></Field>
           </div>

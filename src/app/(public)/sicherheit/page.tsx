@@ -1,4 +1,5 @@
 import { Database, FileLock2, KeyRound, ListChecks, Lock, ScrollText, ServerCog, Sparkles, UserCog } from "lucide-react";
+import { ScrollArea } from "@/components/scroll-area";
 import { Badge, LinkButton } from "@/components/ui";
 import { pageMeta } from "../_content/site";
 
@@ -80,7 +81,7 @@ export default function SecurityPage() {
         </p>
       </header>
 
-      <div className="mt-10 grid gap-4 md:grid-cols-2">
+      <div className="mt-10 grid grid-cols-1 gap-4 md:grid-cols-2">
         {MEASURES.map(({ icon: Icon, title, text }) => (
           <section key={title} className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
             <div className="flex items-center gap-3">
@@ -100,7 +101,7 @@ export default function SecurityPage() {
           Im Testmodus werden keine Daten an den Anbieter übertragen; Ergebnisse sind klar als Test markiert. Für den Echtbetrieb schließt die Praxis
           einen eigenen Vertrag mit dem jeweiligen Anbieter.
         </p>
-        <div className="mt-6 overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface">
+        <ScrollArea label="Schnittstellen" className="mt-6 rounded-[var(--radius-card)] border border-border bg-surface">
           <table className="w-full min-w-[560px] border-collapse text-left text-[15px]">
             <thead>
               <tr className="bg-surface-2 text-sm">
@@ -119,10 +120,10 @@ export default function SecurityPage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </ScrollArea>
       </section>
 
-      <section aria-labelledby="offen" className="mt-14 grid gap-6 lg:grid-cols-2">
+      <section aria-labelledby="offen" className="mt-14 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="rounded-[var(--radius-card)] border border-border bg-surface p-6">
           <h2 id="offen" className="flex items-center gap-2 font-display text-2xl font-semibold">
             <ListChecks size={22} aria-hidden className="text-primary" /> Noch offen
@@ -138,7 +139,7 @@ export default function SecurityPage() {
           <h2 className="font-display text-2xl font-semibold">Ihre Daten bleiben Ihre Daten</h2>
           <p className="mt-3 text-[15px] text-muted">
             Inhaber:innen können jederzeit einen vollständigen Export erstellen: alle Tabellen als JSON und alle Fotos entschlüsselt, als ZIP-Datei.
-            Nach einer Kündigung löschen wir die Praxis nach 30 Tagen Karenzzeit vollständig. Ihre gesetzlichen Aufbewahrungspflichten
+            Nach einer Kündigung löschen wir die Praxis frühestens 30 Tage nach dem Antrag vollständig; Datensicherungen laufen spätestens 14 Tage danach aus. Ihre gesetzlichen Aufbewahrungspflichten
             (z. B. 10 Jahre Behandlungsdokumentation) erfüllen Sie mit dem Export.
           </p>
           <div className="mt-5 flex flex-wrap gap-3">

@@ -9,7 +9,7 @@ export function NewPasswordForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState(resetPasswordAction, undefined);
   return (
     <form onSubmit={keepValues(action)} className="mt-6 flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <input type="hidden" name="token" value={token} />
       <Field label="Neues Passwort" hint="mindestens 12 Zeichen">
         <Input name="password" type="password" autoComplete="new-password" minLength={12} required autoFocus />

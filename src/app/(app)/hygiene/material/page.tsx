@@ -32,7 +32,7 @@ export default async function MaterialsPage(props: PageProps<"/hygiene/material"
       {mats.length === 0 ? (
         <Empty title="Noch kein Material erfasst" />
       ) : (
-        <Table>
+        <Table label="Material">
           <thead><tr><th>Material</th><th className="text-right">Bestand</th><th className="text-right">Mindest</th><th>Lieferant</th><th></th></tr></thead>
           <tbody>
             {mats.map((m) => {

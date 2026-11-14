@@ -36,7 +36,7 @@ export async function createFeedAction(_: FeedState, form: FormData): Promise<Fe
   const auth = await requireAuth("integrations.manage");
   const parsed = base.extend({ url: z.string().trim().min(1, "Bitte die iCal-Adresse eingeben.").max(2000) }).safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Ungültige Eingabe." };
-  if (form.get("avv") !== "on") return { error: "Bitte bestätigen Sie den Datenschutz-Hinweis (AVV)." };
+  if (form.get("avv") !== "on") return { error: "Bitte bestätige den Datenschutz-Hinweis (AVV)." };
   let id: string;
   try {
     await checkUrl(parsed.data.url);

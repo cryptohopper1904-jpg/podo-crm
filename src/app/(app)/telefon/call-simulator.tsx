@@ -21,14 +21,14 @@ export function CallSimulator({ initialCallId, tomorrow, service, vendor = "vapi
   const callId = state?.callId ?? initialCallId;
   return (
     <div className="flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <FormSuccess message={state?.ok} />
       {state?.result ? <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-surface-2 p-3 text-xs">{state.result}</pre> : null}
       <form onSubmit={keepValues(run)} className="flex flex-col gap-3">
         <input type="hidden" name="kind" value="tool" />
         <input type="hidden" name="vendor" value={vendor} />
         <input type="hidden" name="callId" value={callId} />
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Anrufende Nummer (Testdaten)"><Input name="caller" defaultValue="+49 151 00000000" /></Field>
           <Field label="Werkzeug">
             <Select
@@ -53,10 +53,10 @@ export function CallSimulator({ initialCallId, tomorrow, service, vendor = "vapi
         <input type="hidden" name="vendor" value={vendor} />
         <input type="hidden" name="callId" value={callId} />
         <input type="hidden" name="caller" value="+49 151 00000000" />
-        <Field label="Zusammenfassung (Ende-Bericht)" className="min-w-64 flex-1"><Input name="summary" defaultValue="Testanruf: Terminwunsch aufgenommen." /></Field>
+        <Field label="Zusammenfassung (Ende-Bericht)" className="min-w-0 flex-[1_1_16rem]"><Input name="summary" defaultValue="Testanruf: Terminwunsch aufgenommen." /></Field>
         <Button type="submit" variant="secondary" disabled={pending}>Gespräch beenden</Button>
       </form>
-      <p className="text-xs text-muted">Simulations-ID: <code>{callId}</code></p>
+      <p className="text-[13px] text-muted">Simulations-ID: <code>{callId}</code></p>
     </div>
   );
 }

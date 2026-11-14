@@ -17,7 +17,7 @@ export const LEGAL_FILES = {
 export async function LegalDoc({ doc }: { doc: keyof typeof LEGAL_FILES }) {
   const source = await readFile(path.join(process.cwd(), "docs", "legal", LEGAL_FILES[doc]), "utf8");
   return (
-    <article className="mx-auto max-w-3xl px-4 py-14 sm:px-6">
+    <article lang="de" className="mx-auto max-w-3xl px-4 py-14 hyphens-auto wrap-break-word sm:px-6">
       <Markdown source={source} />
     </article>
   );

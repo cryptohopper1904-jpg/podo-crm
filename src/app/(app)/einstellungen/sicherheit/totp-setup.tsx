@@ -14,8 +14,11 @@ export function TotpSetup({
   email,
   startAction = startTotpAction,
   confirmAction = confirmTotpAction,
+  fullWidth = false,
 }: {
   email: string;
+  /** Knöpfe in voller Breite (Anmeldeseite /login/2fa-einrichten, wie die übrigen Anmelde-Formulare) */
+  fullWidth?: boolean;
   startAction?: () => Promise<{ secret?: string; error?: string } | undefined>;
   confirmAction?: (s: State, f: FormData) => Promise<State>;
 }) {
@@ -32,7 +35,7 @@ export function TotpSetup({
   if (state?.ok) return <FormSuccess message={state.ok} />;
   if (!secret) {
     return (
-      <div className="flex justify-center">
+      <div className={fullWidth ? "flex flex-col" : "flex justify-center"}>
         <Button type="button" disabled={pending} onClick={() => start(async () => setSecret((await startAction())?.secret ?? null))}>
           Jetzt einrichten
         </Button>
@@ -41,7 +44,7 @@ export function TotpSetup({
   }
   return (
     <form onSubmit={keepValues(confirm)} className="flex flex-col gap-4">
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <ol className="list-decimal pl-5 text-sm">
         <li>In der Authenticator-App „Konto hinzufügen“ wählen und diesen QR-Code scannen:</li>
       </ol>
@@ -61,7 +64,7 @@ export function TotpSetup({
         <li>Den angezeigten 6-stelligen Code hier eintragen.</li>
       </ol>
       <Field label="Code"><Input name="code" inputMode="numeric" autoComplete="one-time-code" required /></Field>
-      <div className="flex justify-center"><Button type="submit" disabled={confirming}>Bestätigen</Button></div>
+      <div className={fullWidth ? "flex flex-col" : "flex justify-center"}><Button type="submit" disabled={confirming}>Bestätigen</Button></div>
     </form>
   );
 }
