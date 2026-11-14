@@ -6,7 +6,7 @@
  */
 import { devices, expect, test, type ConsoleMessage, type Page } from "@playwright/test";
 import { totpCode } from "../src/lib/auth/totp";
-import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp } from "./support";
+import { demoSlug, DEMO_EMAIL, DEMO_PASSWORD, insertAppointment, resetDemoTotp, withDemoOrg } from "./support";
 
 const run = Date.now().toString(36);
 const firstName = "Erna";
@@ -178,6 +178,58 @@ test("Zahlung erfassen (bar): Beleg über den Zahlungseingang, Rechnungs-PDF aus
   expect(a.status()).toBe(200);
   expect(Buffer.compare(await a.body(), await b.body())).toBe(0);
   await expect(page.getByText(/Beleg-Archiv: Original vom/)).toBeVisible();
+});
+
+test("Beleg ohne Archiv-PDF: kein Druck der Bildschirmansicht, Drucken über das PDF holt das Archiv nach", async () => {
+  const issuedId = page.url().split("?")[0].split("/").pop()!;
+  // Beleg mit Momentaufnahme, dessen Archiv-PDF fehlt (wie nach gescheiterter Ablage beim Ausstellen)
+  const id = await withDemoOrg(async (q, org) => {
+    const src = (await q("select patient_id, issued_snapshot from invoices where id = $1", [issuedId])).rows[0];
+    const inv = (await q("insert into invoices (organization_id, patient_id, kind, status) values ($1, $2, 'invoice', 'draft') returning id", [org, src.patient_id])).rows[0].id as string;
+    await q("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1, $2, 'E2E Leistung', 4000, 4000, 0, 1)", [org, inv]);
+    await q("update invoices set status = 'issued', number = $2, issued_at = current_date, due_at = current_date, total_cents = 4000, net_cents = 4000, issued_snapshot = $3 where id = $1", [
+      inv,
+      `E2E-${run}`,
+      src.issued_snapshot,
+    ]);
+    return inv;
+  });
+  await page.goto(`/rechnungen/${id}`);
+  const viaPdf = page.getByRole("link", { name: "Drucken (über PDF)" });
+  await expect(viaPdf).toHaveAttribute("href", `/api/invoices/${id}/pdf`);
+  await expect(page.getByRole("button", { name: "Drucken / als PDF speichern" })).toHaveCount(0);
+  await expect(page.getByText(/Das Original-PDF wird nachgeholt/)).toBeVisible();
+  // Strg+P: Bildschirmansicht wird nicht als Beleg gedruckt, stattdessen der Hinweis
+  await page.emulateMedia({ media: "print" });
+  await expect(page.locator(".invoice-sheet")).toBeHidden();
+  await expect(page.getByText(/nur über das archivierte PDF gedruckt/)).toBeVisible();
+  await page.emulateMedia({ media: "screen" });
+  // PDF-Abruf holt das Archiv nach → danach normaler Druck
+  const pdf = await page.request.get(`/api/invoices/${id}/pdf`);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Drucken / als PDF speichern" })).toBeVisible();
+  await expect(page.getByText(/Beleg-Archiv: Original vom/)).toBeVisible();
+
+  // Kassenzahlung ohne Zahlungsbeleg (Anlegen bei der Buchung gescheitert): Karte „Zahlungsbeleg fehlt“, nachträglich erstellen
+  await withDemoOrg(async (q, org) => {
+    await q("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at) values ($1, $2, 'cash', 1500, now())", [org, id]);
+    await q("update invoices set paid_cents = paid_cents + 1500, status = 'partially_paid' where id = $1", [id]);
+  });
+  await page.goto(`/rechnungen/${id}?zahlungsbeleg=fehlt`);
+  await expect(page.getByRole("heading", { name: "Zahlung gebucht – Zahlungsbeleg fehlt" })).toBeVisible();
+  page.once("dialog", (d) => void d.accept());
+  await page.getByRole("button", { name: "Zahlungsbeleg nachträglich erstellen" }).click();
+  await expect(page).toHaveURL(/\?beleg=[0-9a-f-]{36}$/);
+  await expect(page.getByRole("heading", { name: "Zahlung erfasst – Zahlungsbeleg aushändigen" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Zahlung gebucht – Zahlungsbeleg fehlt" })).toHaveCount(0);
+  const receiptHref = await page.getByRole("link", { name: /^Zahlungsbeleg ZB\d{4}-\d{4} drucken$/ }).getAttribute("href");
+  expect((await page.request.get(receiptHref!)).status()).toBe(200);
+  // ?zahlungsbeleg=fehlt ohne fehlenden Beleg: Warnung bleibt sichtbar, aber ohne Knopf zum Nachholen
+  await page.goto(`/rechnungen/${issuedId}?zahlungsbeleg=fehlt`);
+  await expect(page.getByRole("heading", { name: "Zahlung gebucht – Zahlungsbeleg fehlt" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Zahlungsbeleg nachträglich erstellen" })).toHaveCount(0);
 });
 
 test("Rechnungsformular auf dem iPad (Hochformat) ohne horizontales Scrollen", async () => {

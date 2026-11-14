@@ -380,6 +380,8 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
                       return <div key={m} className="absolute inset-x-0 z-[1]" style={{ top, height: px(SLOT_MIN), ...HATCH }} title={`${toHhmm(m)} – belegt, nicht verfügbar`} />;
                     }
                     if (!canWrite) return null;
+                    // touch-compact: Viertelstunden sind 16 px hoch – mit der 44-px-Regel für Touch überlappten sie,
+                    // ein Tipp auf 11:00 traf dann 11:15 (der spätere Slot liegt oben)
                     return (
                       <Link
                         key={m}
@@ -387,7 +389,7 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
                         tabIndex={-1}
                         aria-label={`Neuer Termin am ${dm(c.dateIso)} um ${toHhmm(m)} Uhr`}
                         title={c.note ? `${toHhmm(m)} – ${c.note}; neuer Termin trotzdem möglich` : `${toHhmm(m)} – neuer Termin`}
-                        className="absolute inset-x-0 z-[1] hover:bg-primary-soft/70"
+                        className="touch-compact absolute inset-x-0 z-[1] hover:bg-primary-soft/70"
                         style={{ top, height: px(SLOT_MIN) }}
                       />
                     );

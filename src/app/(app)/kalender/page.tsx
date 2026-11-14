@@ -39,6 +39,7 @@ import { DayBlockLine } from "./calendar-blocks-view";
 import { canCreateBlocks } from "@/server/calendar-blocks";
 import { CalendarHeader } from "./calendar-header";
 import { DATE_SLOT, ViewportDefault } from "./calendar-header-parts";
+import { NewAppointmentHost } from "./new-appointment-dialog";
 
 export const metadata = { title: "Kalender" };
 
@@ -158,94 +159,96 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const fullTitle = view === "woche" ? `Woche ab ${weekdayLong(`${start}T12:00:00Z`)}${options.weekNumbers ? ` · KW ${isoWeek(start)}` : ""}` : weekdayLong(`${day}T12:00:00Z`);
 
   return (
-    <div className="mx-auto max-w-6xl max-sm:pb-20">
-      <CalendarHeader
-        title={fullTitle}
-        shortTitle={shortCalendarTitle(view, day)}
-        dateValue={day}
-        datePattern={listHref({ datum: DATE_SLOT })}
-        prevHref={listHref({ datum: addDays(day, -step) })}
-        nextHref={listHref({ datum: addDays(day, step) })}
-        todayHref={view === "woche" ? `/kalender?ansicht=woche${keep}` : keep ? `/kalender?${keep.slice(1)}` : "/kalender"}
-        prevLabel={view === "woche" ? "Vorige Woche" : "Vorheriger Tag"}
-        nextLabel={view === "woche" ? "Nächste Woche" : "Nächster Tag"}
-        tabs={[
-          { href: listHref({ ansicht: "tag" }), label: "Tag", active: view === "tag" },
-          { href: listHref({ ansicht: "woche" }), label: "Woche", active: view === "woche" },
-        ]}
-        modeSwitch={(place) => <ModeSwitch mode="simple" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
-        panel={(place) => panel(view, place)}
-        blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
-        newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
-      />
-      <div className="flex flex-col gap-4">
-        <Finder auth={auth} />
-        {overlaps.size ? (
-          <p className="rounded-xl bg-accent-soft p-4 text-sm text-accent-soft-text">
-            <strong>Überschneidung:</strong> {overlaps.size} Termine überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in). Bitte in PodoHero oder in der Quelle (z. B. Doctolib) verlegen.
-          </p>
-        ) : null}
-        {hiddenCancelled ? (
-          <p className="text-xs text-muted">{hiddenCancelled} abgesagte{hiddenCancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</p>
-        ) : null}
-        {hiddenWeekend ? (
-          <p className="rounded-xl bg-warn-soft px-4 py-2 text-sm text-warn-soft-text">
-            {hiddenWeekend} Termin{hiddenWeekend === 1 ? "" : "e"} am Wochenende ausgeblendet (Anzeige „nur Mo–Fr“).{" "}
-            <Link href={`/kalender?datum=${day}&ansicht=woche${weekendKeep}`} className="font-semibold underline">Wochenende einblenden</Link>
-          </p>
-        ) : null}
-        {schoolUncovered ? <p className="text-xs text-muted">Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {SCHOOL_HOLIDAYS_META.coverage.to.split("-").reverse().join(".")}.</p> : null}
-        {dates.map((iso) => {
-          const list = byDay(iso);
-          const holiday = options.holidays ? holidayOn(iso, state) : null;
-          const school = options.schoolHolidays ? schoolHolidayOn(iso, state) : null;
-          const absent = absentNames(iso);
-          return (
-            <Card key={iso}>
-              {view === "woche" ? (
-                <div className="mb-2 flex items-center gap-2">
-                  <Link href={listHref({ ansicht: "tag", datum: iso })} className="font-display text-lg font-semibold hover:text-primary">{weekdayLong(`${iso}T12:00:00Z`)}</Link>
-                  <span className="text-sm text-muted">{list.filter((r) => r.a.status !== "cancelled").length} Termine</span>
-                </div>
-              ) : null}
-              {holiday || school || absent.length || (board && options.blocks && board.blocks.some((b) => b.dateIso === iso)) ? (
-                <p className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  {holiday ? <Badge tone="warn">Feiertag: {holiday}</Badge> : null}
-                  {school ? <span className="text-xs text-info-soft-text"><span className="rounded bg-info-soft px-1.5 py-0.5">Schulferien</span> {school}</span> : null}
-                  {absent.length ? <span className="text-xs text-muted">Abwesend: {absent.join(", ")}</span> : null}
-                  {board && options.blocks ? <DayBlockLine board={board} dateIso={iso} /> : null}
-                </p>
-              ) : null}
-              {list.length === 0 ? (
-                <Empty
-                  title="Keine Termine"
-                  action={
-                    canWrite ? (
-                      <LinkButton variant="secondary" href={`/kalender/neu?datum=${iso}`}>
-                        <Plus size={18} aria-hidden /> Termin
-                      </LinkButton>
-                    ) : null
-                  }
-                />
-              ) : (
-                list.map((r) => (
-                  <AppointmentRow
-                    key={r.a.id}
-                    row={r}
-                    canDoc={auth.can("medical.write")}
-                    canEdit={canWrite}
-                    billable={doneIds.includes(r.a.id) && !billed.has(r.a.id)}
-                    overlap={overlaps.has(r.a.id)}
-                    from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
-                    color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}
+    <NewAppointmentHost enabled={canWrite} fallbackDate={day}>
+      <div className="mx-auto max-w-6xl max-sm:pb-20">
+        <CalendarHeader
+          title={fullTitle}
+          shortTitle={shortCalendarTitle(view, day)}
+          dateValue={day}
+          datePattern={listHref({ datum: DATE_SLOT })}
+          prevHref={listHref({ datum: addDays(day, -step) })}
+          nextHref={listHref({ datum: addDays(day, step) })}
+          todayHref={view === "woche" ? `/kalender?ansicht=woche${keep}` : keep ? `/kalender?${keep.slice(1)}` : "/kalender"}
+          prevLabel={view === "woche" ? "Vorige Woche" : "Vorheriger Tag"}
+          nextLabel={view === "woche" ? "Nächste Woche" : "Nächster Tag"}
+          tabs={[
+            { href: listHref({ ansicht: "tag" }), label: "Tag", active: view === "tag" },
+            { href: listHref({ ansicht: "woche" }), label: "Woche", active: view === "woche" },
+          ]}
+          modeSwitch={(place) => <ModeSwitch mode="simple" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
+          panel={(place) => panel(view, place)}
+          blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
+          newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
+        />
+        <div className="flex flex-col gap-4">
+          <Finder auth={auth} />
+          {overlaps.size ? (
+            <p className="rounded-xl bg-accent-soft p-4 text-sm text-accent-soft-text">
+              <strong>Überschneidung:</strong> {overlaps.size} Termine überschneiden sich mit Terminen aus dem Kalender-Abo (gleiche Behandler:in). Bitte in PodoHero oder in der Quelle (z. B. Doctolib) verlegen.
+            </p>
+          ) : null}
+          {hiddenCancelled ? (
+            <p className="text-xs text-muted">{hiddenCancelled} abgesagte{hiddenCancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</p>
+          ) : null}
+          {hiddenWeekend ? (
+            <p className="rounded-xl bg-warn-soft px-4 py-2 text-sm text-warn-soft-text">
+              {hiddenWeekend} Termin{hiddenWeekend === 1 ? "" : "e"} am Wochenende ausgeblendet (Anzeige „nur Mo–Fr“).{" "}
+              <Link href={`/kalender?datum=${day}&ansicht=woche${weekendKeep}`} className="font-semibold underline">Wochenende einblenden</Link>
+            </p>
+          ) : null}
+          {schoolUncovered ? <p className="text-xs text-muted">Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {SCHOOL_HOLIDAYS_META.coverage.to.split("-").reverse().join(".")}.</p> : null}
+          {dates.map((iso) => {
+            const list = byDay(iso);
+            const holiday = options.holidays ? holidayOn(iso, state) : null;
+            const school = options.schoolHolidays ? schoolHolidayOn(iso, state) : null;
+            const absent = absentNames(iso);
+            return (
+              <Card key={iso}>
+                {view === "woche" ? (
+                  <div className="mb-2 flex items-center gap-2">
+                    <Link href={listHref({ ansicht: "tag", datum: iso })} className="font-display text-lg font-semibold hover:text-primary">{weekdayLong(`${iso}T12:00:00Z`)}</Link>
+                    <span className="text-sm text-muted">{list.filter((r) => r.a.status !== "cancelled").length} Termine</span>
+                  </div>
+                ) : null}
+                {holiday || school || absent.length || (board && options.blocks && board.blocks.some((b) => b.dateIso === iso)) ? (
+                  <p className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {holiday ? <Badge tone="warn">Feiertag: {holiday}</Badge> : null}
+                    {school ? <span className="text-xs text-info-soft-text"><span className="rounded bg-info-soft px-1.5 py-0.5">Schulferien</span> {school}</span> : null}
+                    {absent.length ? <span className="text-xs text-muted">Abwesend: {absent.join(", ")}</span> : null}
+                    {board && options.blocks ? <DayBlockLine board={board} dateIso={iso} /> : null}
+                  </p>
+                ) : null}
+                {list.length === 0 ? (
+                  <Empty
+                    title="Keine Termine"
+                    action={
+                      canWrite ? (
+                        <LinkButton variant="secondary" href={`/kalender/neu?datum=${iso}`}>
+                          <Plus size={18} aria-hidden /> Termin
+                        </LinkButton>
+                      ) : null
+                    }
                   />
-                ))
-              )}
-            </Card>
-          );
-        })}
+                ) : (
+                  list.map((r) => (
+                    <AppointmentRow
+                      key={r.a.id}
+                      row={r}
+                      canDoc={auth.can("medical.write")}
+                      canEdit={canWrite}
+                      billable={doneIds.includes(r.a.id) && !billed.has(r.a.id)}
+                      overlap={overlaps.has(r.a.id)}
+                      from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
+                      color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}
+                    />
+                  ))
+                )}
+              </Card>
+            );
+          })}
+        </div>
       </div>
-    </div>
+    </NewAppointmentHost>
   );
 }
 
@@ -302,42 +305,44 @@ async function FullPage({
   const canWrite = auth.can("appointments.write");
 
   return (
-    <div className="mx-auto max-w-7xl max-sm:pb-20">
-      <ViewportDefault narrow={narrow} explicitView={typeof sp.ansicht === "string"} />
-      <CalendarHeader
-        title={title}
-        shortTitle={shortCalendarTitle(view, day)}
-        dateValue={day}
-        datePattern={calHref({ datum: DATE_SLOT })}
-        prevHref={calHref({ datum: prev })}
-        nextHref={calHref({ datum: next })}
-        todayHref={calHref({ datum: today })}
-        prevLabel={unit[0]}
-        nextLabel={unit[1]}
-        tabs={tabs.map(([v, label]) => ({ href: calHref({ ansicht: v }), label, active: view === v }))}
-        modeSwitch={(place) => <ModeSwitch mode="full" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
-        panel={(place) => panel(view, place)}
-        blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
-        newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
-      />
-      <div className="mb-3"><Finder auth={auth} /></div>
-      <FullCalendar
-        view={view}
-        day={view === "woche" ? start : day}
-        focusDay={day}
-        today={today}
-        now={new Date()}
-        rows={rows}
-        board={board}
-        state={auth.organization.state as StateCode}
-        overlaps={overlaps}
-        canWrite={canWrite}
-        calHref={calHref}
-        options={options}
-        showWeekendHref={`/kalender?ansicht=${view}&datum=${day}${weekendKeep}`}
-        canMove={canMove}
-        billed={billed}
-      />
-    </div>
+    <NewAppointmentHost enabled={canWrite} fallbackDate={day}>
+      <div className="mx-auto max-w-7xl max-sm:pb-20">
+        <ViewportDefault narrow={narrow} explicitView={typeof sp.ansicht === "string"} />
+        <CalendarHeader
+          title={title}
+          shortTitle={shortCalendarTitle(view, day)}
+          dateValue={day}
+          datePattern={calHref({ datum: DATE_SLOT })}
+          prevHref={calHref({ datum: prev })}
+          nextHref={calHref({ datum: next })}
+          todayHref={calHref({ datum: today })}
+          prevLabel={unit[0]}
+          nextLabel={unit[1]}
+          tabs={tabs.map(([v, label]) => ({ href: calHref({ ansicht: v }), label, active: view === v }))}
+          modeSwitch={(place) => <ModeSwitch mode="full" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
+          panel={(place) => panel(view, place)}
+          blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
+          newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
+        />
+        <div className="mb-3"><Finder auth={auth} /></div>
+        <FullCalendar
+          view={view}
+          day={view === "woche" ? start : day}
+          focusDay={day}
+          today={today}
+          now={new Date()}
+          rows={rows}
+          board={board}
+          state={auth.organization.state as StateCode}
+          overlaps={overlaps}
+          canWrite={canWrite}
+          calHref={calHref}
+          options={options}
+          showWeekendHref={`/kalender?ansicht=${view}&datum=${day}${weekendKeep}`}
+          canMove={canMove}
+          billed={billed}
+        />
+      </div>
+    </NewAppointmentHost>
   );
 }

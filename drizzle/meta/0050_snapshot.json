@@ -1,5 +1,5 @@
 {
-  "id": "a725feac-2d74-4a96-99ba-c89120c9e453",
+  "id": "ea19dcde-be61-46f1-a75d-faddeaf6fc33",
   "prevId": "2d93bcec-c35b-4f87-a90d-baf00f4b69b9",
   "version": "7",
   "dialect": "postgresql",
@@ -4496,12 +4496,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "meta": {
-          "name": "meta",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "received_at": {
           "name": "received_at",
           "type": "timestamp with time zone",
@@ -7004,6 +6998,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

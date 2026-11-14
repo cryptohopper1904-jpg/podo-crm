@@ -327,6 +327,9 @@ Beim Tippen in „Straße“ (z. B. `Friedrich-Herder-Str.`) schlägt die App vo
 - **Vor dem ersten echten Bargeld-Einsatz ist ein Vertrag mit einer zertifizierten TSE Pflicht** (z. B. fiskaly SIGN DE), dazu die Meldung der Kasse ans Finanzamt (§ 146a Abs. 4 AO) und die Verfahrensdokumentation.
 - Bis dahin signiert ein **Mock** jede Barzahlung nur zum Test (`payments.external_ref = tse:test:…`). Das ersetzt keine TSE.
 - fiskaly: `TSE_PROVIDER=fiskaly`, `FISKALY_API_KEY`, `FISKALY_API_SECRET`, `FISKALY_TSS_ID`, `FISKALY_CLIENT_ID`. Fehlen Zugangsdaten, wird die Barzahlung mit „TSE nicht konfiguriert“ abgelehnt.
+- **Freigabe-Riegel `TSE_LIVE_FREIGABE_FORDERUNGSAUFLOESUNG=1`:** Ohne diesen Wert bleibt die Kasse auch mit `TSE_PROVIDER=fiskaly` im Testmodus (Mock-Signaturen); Kasse und *Einstellungen → Schnittstellen* zeigen den Grund. Hintergrund: Zahlungen auf bereits ausgestellte Rechnungen werden in TSE/DSFinV-K derzeit als „Umsatz“ mit Steuersatz erfasst, nicht als Forderungsauflösung (USt-Schlüssel 5). Erst setzen, wenn das mit der Steuerberatung geklärt ist.
+- ⚠️ **Bestehende fiskaly-Installationen:** Nach dem Update (ab PR #81) signiert die Kasse im **Testmodus**, bis `TSE_LIVE_FREIGABE_FORDERUNGSAUFLOESUNG=1` gesetzt ist. Vor dem Update mit der Praxis/Steuerberatung abstimmen – sonst entstehen ab dem Update Kassenvorgänge ohne gültige TSE-Signatur.
+- **Beleg-Archiv:** Jeder ausgestellte Beleg und jeder Zahlungsbeleg wird als PDF verschlüsselt in `STORAGE_DIR` abgelegt (`document_archive`). Scheitert die Ablage, holt der Cron `/api/cron/reminders` sie nach (mit Backoff); bis dahin werden Download, E-Mail und Portal mit „PDF wird gerade erzeugt“ abgelehnt. Verwaiste Dateien: `scripts/archive-orphans.ts --storage-dir …` (Probelauf, `--quarantine`). Verfahrensdokumentation: `docs/compliance/BELEG-ARCHIV.md`.
 
 ---
 
