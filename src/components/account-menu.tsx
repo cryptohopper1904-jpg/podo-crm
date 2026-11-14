@@ -5,7 +5,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 /**
  * Konto-Menü in der Kopfzeile (unter lg, also Handy und Tablet hochkant): ein Knopf mit den Initialen statt vier
  * einzelner Symbol-Knöpfe – darin Praxis wechseln, Neuigkeiten, Einstellungen, Hell/Dunkel und Abmelden (`children`,
- * vom Server-Layout gerendert). Schließt mit Esc, bei Klick daneben und nach Auswahl eines Links/Formulars.
+ * vom Server-Layout gerendert). Schließt mit Esc, bei Klick daneben, wenn der Fokus das Menü verlässt (Tab) und nach
+ * Auswahl eines Links/Formulars.
  */
 export function AccountMenu({ initials, name, meta, className = "", children }: { initials: string; name: string; meta: string; className?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -33,7 +34,15 @@ export function AccountMenu({ initials, name, meta, className = "", children }: 
   }, [open]);
 
   return (
-    <div ref={root} className={`relative shrink-0 ${className}`}>
+    <div
+      ref={root}
+      className={`relative shrink-0 ${className}`}
+      onBlur={(e) => {
+        // Tab aus dem Menü heraus (Fokus landet außerhalb) → zu; Fokuswechsel innerhalb lässt es offen
+        const next = e.relatedTarget as Node | null;
+        if (open && next && !e.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
       <button
         ref={button}
         type="button"

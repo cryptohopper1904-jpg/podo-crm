@@ -138,6 +138,12 @@ test("„Mehr“ führt zur Kasse; Konto-Menü mit Neuigkeiten, Einstellungen, H
   await expect(menu).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Abmelden" })).toBeHidden();
+  // Tab aus dem Menü heraus schließt es
+  await menu.click();
+  await page.getByRole("button", { name: "Abmelden" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: "Abmelden" })).toBeHidden();
   // Link im Menü schließt es und navigiert
   await menu.click();
   await page.getByRole("link", { name: "Neuigkeiten", exact: true }).click();
@@ -152,11 +158,34 @@ test("Bildschirmtastatur: untere Leiste verschwindet, solange ein Eingabefeld de
   await page.goto("/kunden/neu");
   const bar = page.getByRole("navigation", { name: "Schnellnavigation" });
   await expect(bar).toBeVisible();
-  const field = page.locator("main input[type=text], main input:not([type])").first();
+  const fields = page.locator("main input[type=text], main input:not([type])");
+  const field = fields.first();
   await field.focus();
   await expect(bar).toBeHidden();
   await expect(page.locator("html[data-keyboard=open]")).toHaveCount(1);
-  await field.blur();
+  // Feldwechsel: die Leiste blitzt zwischen focusout und focusin nicht auf
+  await page.evaluate(() => {
+    const w = window as unknown as { __barShown: number };
+    w.__barShown = 0;
+    const nav = document.querySelector('nav[aria-label="Schnellnavigation"]')!;
+    new MutationObserver(() => {
+      if (!nav.hasAttribute("data-keyboard")) w.__barShown++;
+    }).observe(nav, { attributes: true, attributeFilter: ["data-keyboard"] });
+  });
+  await fields.nth(1).focus();
+  await fields.nth(2).focus();
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => (window as unknown as { __barShown: number }).__barShown), "Leiste blitzt beim Feldwechsel auf").toBe(0);
+  await expect(bar).toBeHidden();
+  // Datum öffnet eine Auswahl, keine Schreibtastatur → Leiste bleibt
+  const date = page.locator("main input[type=date]").first();
+  if (await date.count()) {
+    await date.focus();
+    await expect(bar).toBeVisible();
+  }
+  await page.locator("main input[type=text], main input:not([type])").first().focus();
+  await expect(bar).toBeHidden();
+  await page.locator("main input[type=text], main input:not([type])").first().blur();
   await expect(bar).toBeVisible();
   await expect(page.locator("html[data-keyboard]")).toHaveCount(0);
   expect(errors).toEqual([]);
@@ -187,5 +216,17 @@ test("Desktop 1280×800: Bereiche gruppiert, „Einstellungen“ ohne Scrollen s
   await expect(page.getByRole("button", { name: "Abmelden" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Konto-Menü" })).toBeHidden();
   expect(errors).toEqual([]);
+  await context.close();
+});
+
+test("Plattform-Routen: notFound() liefert eine echte 404 (keine gestreamte 200)", async ({ browser }) => {
+  // Demo-Inhaber:in ist kein Plattform-Admin → requirePlatformAdmin() ruft notFound()
+  const { context, page } = await newDevice(browser, { viewport: { width: 1280, height: 800 } });
+  for (const p of ["/plattform", "/plattform/vertrieb", "/plattform/vertrieb/kein-lead", "/plattform/vertrieb/kampagnen/00000000-0000-0000-0000-000000000000"]) {
+    const r = await page.request.get(p, { maxRedirects: 0 });
+    expect(r.status(), p).toBe(404);
+  }
+  // Praxis-Seiten dagegen weiter normal
+  expect((await page.request.get("/heute", { maxRedirects: 0 })).status()).toBe(200);
   await context.close();
 });

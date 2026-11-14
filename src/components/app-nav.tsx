@@ -33,7 +33,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cx } from "./ui";
-import { bottomNavSplit, groupNav, type NavKey } from "@/lib/nav";
+import { bottomNavSplit, groupNav, showSettings, type NavKey } from "@/lib/nav";
 import { DEFAULT_VIEW_LEVEL, splitNav, VIEW_LEVEL_LABELS, type ViewLevel } from "@/lib/view-level";
 
 export type { NavKey };
@@ -190,7 +190,11 @@ export function SideNav({ allowed, badges, collapsed = false, level = DEFAULT_VI
  * „Einstellungen“ unten fest in der Sidebar (immer sichtbar, auch wenn die Liste darüber scrollt). Für alle Rollen:
  * ohne Praxis-Einstellungsrecht öffnet /einstellungen die persönlichen Seiten (Ansicht, Sicherheit, App).
  */
-export function SettingsLink({ collapsed }: { collapsed: boolean }) {
+export function SettingsLink({ collapsed, allowed, personal }: { collapsed: boolean; allowed: readonly NavKey[]; personal: boolean }) {
+  if (!showSettings(allowed, personal)) return null;
+  return <SettingsLinkInner collapsed={collapsed} />;
+}
+function SettingsLinkInner({ collapsed }: { collapsed: boolean }) {
   const path = usePathname();
   const item = ITEMS.find((i) => i.key === "einstellungen")!;
   return <SideLink item={item} active={isActive(path, item.href)} collapsed={collapsed} />;
@@ -204,15 +208,27 @@ function keyboardOpenNow(): boolean {
   if (!(el instanceof HTMLElement) || !matchMedia("(pointer: coarse)").matches) return false;
   if (el.isContentEditable) return true;
   if (el instanceof HTMLTextAreaElement) return !el.readOnly;
-  if (el instanceof HTMLInputElement) return !el.readOnly && !["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "hidden", "image"].includes(el.type);
+  // nur Felder mit Schreibtastatur – Datum/Uhrzeit öffnen eine Auswahl (iOS: Rad), Select ein Menü
+  if (el instanceof HTMLInputElement) return !el.readOnly && !NO_KEYBOARD_INPUTS.includes(el.type);
   return false;
 }
+const NO_KEYBOARD_INPUTS = ["checkbox", "radio", "button", "submit", "reset", "range", "color", "file", "hidden", "image", "date", "time", "datetime-local", "month", "week"];
+/**
+ * Fokus-Wechsel melden – erst nach dem Ereignis (setTimeout 0): beim Wechsel von Feld zu Feld liegt zwischen focusout
+ * und focusin kurz kein Feld im Fokus; sofort gelesen, würde die Leiste dabei kurz aufblitzen.
+ */
 function subscribeFocus(cb: () => void) {
-  document.addEventListener("focusin", cb);
-  document.addEventListener("focusout", cb);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const later = () => {
+    clearTimeout(timer);
+    timer = setTimeout(cb, 0);
+  };
+  document.addEventListener("focusin", later);
+  document.addEventListener("focusout", later);
   return () => {
-    document.removeEventListener("focusin", cb);
-    document.removeEventListener("focusout", cb);
+    clearTimeout(timer);
+    document.removeEventListener("focusin", later);
+    document.removeEventListener("focusout", later);
   };
 }
 /**
@@ -248,7 +264,7 @@ function MoreBadge({ n }: { n: number }) {
  * Breite jeder erlaubte Bereich erreichbar (Aufteilung: bottomNavSplit in src/lib/nav.ts).
  * Bei offener Bildschirmtastatur ausgeblendet (mehr Platz fürs Formular).
  */
-export function BottomNav({ allowed, level = DEFAULT_VIEW_LEVEL, badges }: { allowed: NavKey[]; level?: ViewLevel; badges?: Badges }) {
+export function BottomNav({ allowed, level = DEFAULT_VIEW_LEVEL, badges, personal = true }: { allowed: NavKey[]; level?: ViewLevel; badges?: Badges; personal?: boolean }) {
   const path = usePathname();
   const dialog = useRef<HTMLDialogElement>(null);
   const sheetId = useId();
@@ -340,9 +356,9 @@ export function BottomNav({ allowed, level = DEFAULT_VIEW_LEVEL, badges }: { all
             ))}
           <section aria-label="Konto" className="border-t border-border pt-4">
             <ul className="grid grid-cols-2 gap-2 min-[360px]:grid-cols-3 sm:grid-cols-4">
-              <li className="min-w-0"><SheetTile href="/einstellungen" label="Einstellungen" icon={Settings} active={isActive(path, "/einstellungen")} onNavigate={close} /></li>
+              {showSettings(allowed, personal) ? <li className="min-w-0"><SheetTile href="/einstellungen" label="Einstellungen" icon={Settings} active={isActive(path, "/einstellungen")} onNavigate={close} /></li> : null}
               <li className="min-w-0"><SheetTile href="/neuigkeiten" label="Neuigkeiten" icon={Sparkles} active={isActive(path, "/neuigkeiten")} onNavigate={close} /></li>
-              <li className="min-w-0"><SheetTile href="/einstellungen/ansicht" label="Ansicht ändern" icon={SlidersHorizontal} active={false} onNavigate={close} /></li>
+              {personal ? <li className="min-w-0"><SheetTile href="/einstellungen/ansicht" label="Ansicht ändern" icon={SlidersHorizontal} active={false} onNavigate={close} /></li> : null}
             </ul>
           </section>
         </div>
@@ -370,13 +386,13 @@ function SheetTile({ href, label, icon: Icon, badge, active, onNavigate }: { hre
 }
 
 /** Übersicht aller erlaubten Bereiche (/bereiche) – auch die, die die Ansicht in der Navigation ausblendet. */
-export function AreaOverview({ allowed, level, badges }: { allowed: NavKey[]; level: ViewLevel; badges?: Badges }) {
+export function AreaOverview({ allowed, level, badges, personal = true }: { allowed: NavKey[]; level: ViewLevel; badges?: Badges; personal?: boolean }) {
   const split = splitNav(allowed.filter((k) => k !== "einstellungen"), level);
   const groups = [
     { title: "In deiner Navigation", items: itemsOf(split.visible) },
     { title: "Weitere Bereiche", items: itemsOf(split.more) },
     // persönliche Einstellungen gibt es für alle Rollen (ohne Praxis-Recht: Ansicht, Sicherheit, App)
-    { title: "Konto", items: [ITEMS.find((i) => i.key === "einstellungen")!] },
+    { title: "Konto", items: showSettings(allowed, personal) ? [ITEMS.find((i) => i.key === "einstellungen")!] : [] },
   ].filter((g) => g.items.length);
   return (
     <div className="flex flex-col gap-6">
