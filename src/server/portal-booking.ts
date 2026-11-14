@@ -9,7 +9,7 @@ import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availabi
 import { berlinDateIso, berlinToUtc, dateDe, timeDe } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { practiceHours } from "@/lib/opening-hours";
-import { assertEntitled, EntitlementError } from "@/lib/plans";
+import { assertEntitled, EntitlementError, entitlements } from "@/lib/plans";
 import { canCancelOnline, type PortalLink } from "@/lib/portal";
 import {
   dayRange,
@@ -149,9 +149,9 @@ async function bookableServicesFor(o: OrgRow, cfg: OnlineBookingSettings) {
 }
 
 /**
- * Darf von außen (/buchen, Patientenportal) gebucht werden? Nein, wenn die Online-Buchung aus ist, das Abo die
- * Funktion nicht (mehr) enthält bzw. die Praxis im Nur-Lesen-Modus ist (Testphase/Abo abgelaufen) oder die Löschung
- * der Praxis beantragt ist. Gleiche Regel für Anzeige (Optionen) und Speichern (Slot-Prüfung, Buchung, Verschieben).
+ * Darf im Patientenportal gebucht/verschoben werden? Nein, wenn die Online-Buchung aus ist, die Löschung der Praxis
+ * beantragt ist oder das Abo das Patientenportal nicht (mehr) enthält bzw. die Praxis im Nur-Lesen-Modus ist.
+ * Gleiche Regel für Anzeige (Optionen) und Speichern (Buchung, Verschieben). /buchen: publicBookingBlocked().
  */
 function bookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
   const cfg = parseOnlineBookingSettings(o.settings);
@@ -163,6 +163,18 @@ function bookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
     if (e instanceof EntitlementError) return "Die Online-Buchung ist derzeit nicht verfügbar.";
     throw e;
   }
+  return null;
+}
+
+/**
+ * Öffentliche Online-Buchung /buchen: in ALLEN Tarifen verfügbar (Produktentscheidung, wie auf der Werbeseite) – also
+ * ohne Freischaltung „portal“. Gesperrt nur, wenn die Online-Buchung aus ist, die Praxis im Nur-Lesen-Modus ist
+ * (Testphase/Abo abgelaufen) oder die Löschung beantragt ist. Gleiche Regel für Seite, Slot-Prüfung und Buchung.
+ */
+function publicBookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
+  const cfg = parseOnlineBookingSettings(o.settings);
+  if (!cfg.enabled) return "Die Online-Buchung ist in dieser Praxis derzeit ausgeschaltet.";
+  if (o.deletionRequestedAt || entitlements(o.billing, now).readOnly) return "Die Online-Buchung ist derzeit nicht verfügbar.";
   return null;
 }
 
@@ -441,7 +453,7 @@ const inPublicWindow = (dateIso: string, now: Date) => {
 export async function publicBookingOptions(organizationId: string, now = new Date()): Promise<PublicBookingOptions | null> {
   const o = await loadOrg(organizationId);
   // Abo abgelaufen/gesperrt oder Löschung beantragt wie „Online-Buchung aus“: null → dieselbe 404 wie unbekannte Praxis
-  if (!o || bookingBlocked(o, now)) return null;
+  if (!o || publicBookingBlocked(o, now)) return null;
   const cfg = parseOnlineBookingSettings(o.settings);
   const svc = await bookableServicesFor(o, cfg);
   const byDay = new Map<string, Record<number, string[]>>();
@@ -469,7 +481,7 @@ export type PublicSlotCheck = { ok: true; service: { id: string; name: string; d
 export async function checkPublicSlot(organizationId: string, serviceId: string, start: Date, now = new Date()): Promise<PublicSlotCheck> {
   const o = await loadOrg(organizationId);
   if (!o) return { ok: false, error: "Praxis nicht gefunden." };
-  const blocked = bookingBlocked(o, now);
+  const blocked = publicBookingBlocked(o, now);
   if (blocked) return { ok: false, error: blocked };
   const cfg = parseOnlineBookingSettings(o.settings);
   const svc = (await bookableServicesFor(o, cfg)).find((x) => x.id === serviceId);
@@ -482,5 +494,5 @@ export async function checkPublicSlot(organizationId: string, serviceId: string,
 /** Ist die Online-Buchung /buchen dieser Praxis von außen erreichbar? (gleiche Regel wie publicBookingOptions) */
 export async function publicBookingAvailable(organizationId: string, now = new Date()): Promise<boolean> {
   const o = await loadOrg(organizationId);
-  return !!o && !bookingBlocked(o, now);
+  return !!o && !publicBookingBlocked(o, now);
 }

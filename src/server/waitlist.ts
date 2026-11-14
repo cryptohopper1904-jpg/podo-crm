@@ -71,9 +71,12 @@ export type OfferSummary = { offered: number; manual: number; skipped?: string }
 export async function offerFreedSlot(org: string, appointmentId: string, deps: OfferDeps = {}): Promise<OfferSummary> {
   const now = deps.now ?? new Date();
   if (!z.uuid().safeParse(appointmentId).success) return { offered: 0, manual: 0, skipped: "invalid" };
-  const [o] = await db.select({ name: organizations.name, phone: organizations.phone, deletionRequestedAt: organizations.deletionRequestedAt }).from(organizations).where(eq(organizations.id, org));
-  // Löschung beantragt: niemandem mehr Termine anbieten
-  if (!o || o.deletionRequestedAt) return { offered: 0, manual: 0, skipped: "org" };
+  const [o] = await db
+    .select({ name: organizations.name, phone: organizations.phone, deletionRequestedAt: organizations.deletionRequestedAt, plan: organizations.plan, subscriptionStatus: organizations.subscriptionStatus, trialEndsAt: organizations.trialEndsAt, currentPeriodEnd: organizations.currentPeriodEnd, seats: organizations.seats })
+    .from(organizations)
+    .where(eq(organizations.id, org));
+  // Löschung beantragt oder Nur-Lesen-Modus (Abo/Testphase abgelaufen): niemandem mehr Termine anbieten
+  if (!o || o.deletionRequestedAt || entitlements(o, now).readOnly) return { offered: 0, manual: 0, skipped: "org" };
   const base = offerBaseUrl(deps.baseUrl ?? process.env.PUBLIC_URL);
   if (!base) return { offered: 0, manual: 0, skipped: "no_https_url" };
 

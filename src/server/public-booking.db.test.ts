@@ -96,6 +96,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(await pb.checkPublicSlot(p.org, p.pk, slot(), now)).toEqual({ ok: false, error: "Die Online-Buchung ist derzeit nicht verfügbar." });
     });
 
+    it("AppSec H-2: /buchen in allen Tarifen – Kostenlos und Basis ohne Patientenportal bleiben buchbar", async () => {
+      for (const plan of ["free", "starter"]) {
+        const p = await practice();
+        await f.pool.query("update organizations set plan = $2, subscription_status = 'active' where id = $1", [p.org, plan]);
+        expect((await pb.publicBookingOptions(p.org, now))?.days.length, plan).toBeGreaterThan(0);
+        expect((await pb.checkPublicSlot(p.org, p.pk, slot(), now)).ok, plan).toBe(true);
+        expect(await pb.publicBookingAvailable(p.org, now), plan).toBe(true);
+      }
+    });
+
     it("normale Praxis unverändert buchbar", async () => {
       const p = await practice();
       expect((await pb.publicBookingOptions(p.org, now))?.days.length).toBeGreaterThan(0);

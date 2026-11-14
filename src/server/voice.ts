@@ -40,7 +40,7 @@ import { isPrivateOnly, PRIVATE_ONLY_VOICE_NOTE } from "@/lib/features";
 
 const BOOKABLE_CATEGORIES = ["treatment", "cosmetic", "brace"];
 
-type OrgRow = { id: string; name: string; street: string | null; zip: string | null; city: string | null; phone: string | null; state: string; settings: Record<string, unknown>; billing?: OrgBilling };
+type OrgRow = { id: string; name: string; street: string | null; zip: string | null; city: string | null; phone: string | null; state: string; settings: Record<string, unknown>; billing?: OrgBilling; deletionRequestedAt?: Date | null };
 
 async function loadOrg(org: string): Promise<OrgRow | null> {
   const [o] = await db
@@ -58,6 +58,7 @@ async function loadOrg(org: string): Promise<OrgRow | null> {
       trialEndsAt: organizations.trialEndsAt,
       currentPeriodEnd: organizations.currentPeriodEnd,
       seats: organizations.seats,
+      deletionRequestedAt: organizations.deletionRequestedAt,
     })
     .from(organizations)
     .where(eq(organizations.id, org));
@@ -328,7 +329,8 @@ export function voiceToolDeps(org: string, o: OrgRow, ctx: VoiceCallContext): Vo
 
 export async function runVoiceToolCalls(org: string, ctx: VoiceCallContext, calls: VoiceToolCall[]): Promise<VoiceToolResult[]> {
   const o = await loadOrg(org);
-  if (!o) return calls.map((c) => ({ toolCallId: c.toolCallId, result: "Praxis nicht gefunden." }));
+  // Löschung beantragt: keine Termine, Absagen oder Rückrufbitten mehr annehmen (wie unbekannte Praxis)
+  if (!o || o.deletionRequestedAt) return calls.map((c) => ({ toolCallId: c.toolCallId, result: "Praxis nicht gefunden." }));
   return runVoiceTools(calls, voiceToolDeps(org, o, ctx), (e, tool) => {
     void logSync(org, "voice_agent", { direction: "in", ok: false, message: `Werkzeug ${tool}: ${describeError(e)}` }).catch(() => undefined);
   });
@@ -337,7 +339,8 @@ export async function runVoiceToolCalls(org: string, ctx: VoiceCallContext, call
 /** Ende-Bericht → voice_calls (Transkript nur mit Einstellung + angesagter Aufzeichnung). */
 export async function recordCallEnd(org: string, vendor: VoiceVendorId, ev: Extract<VoiceCallEvent, { type: "call_ended" }>) {
   const o = await loadOrg(org);
-  if (!o) return;
+  // Löschung beantragt: keine neuen Anrufdaten mehr speichern
+  if (!o || o.deletionRequestedAt) return;
   const settings = readVoiceSettings(o.settings);
   const startedAt = ev.startedAt && Number.isFinite(Date.parse(ev.startedAt)) ? new Date(ev.startedAt) : new Date();
   await upsertCall(org, vendor, ev.callId, {

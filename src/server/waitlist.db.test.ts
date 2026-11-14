@@ -314,4 +314,29 @@ function futureWeekday(minDays: number) {
       expect(booked).toBe(0);
     }
   });
+
+  it("AppSec N2: keine neuen Wartelisten-Angebote im Nur-Lesen-Modus oder nach Löschantrag", async () => {
+    for (const block of ["update organizations set plan = 'trial', subscription_status = 'trialing', trial_ends_at = now() - interval '1 day' where id = $1", "update organizations set deletion_requested_at = now() where id = $1"]) {
+      const org = await f.org();
+      const p = await f.patient(org, { email: `n2-${org}@example.org`, preferredChannel: "email" });
+      await f.consent(org, p, "email_reminders");
+      await waitFor(org, p, null, 1);
+      const id = await appt(org, null, berlinToUtc(futureWeekday(5), "15:00"), 30, "cancelled");
+      await f.pool.query(block, [org]);
+      const before = sent.length;
+      expect(await wl.offerFreedSlot(org, id, deps)).toEqual({ offered: 0, manual: 0, skipped: "org" });
+      expect(sent.length).toBe(before);
+    }
+  });
+
+  it("AppSec H-2: Patientenportal behält die Freischaltung „portal“ (Basis-Tarif → gesperrt)", async () => {
+    const org = await f.org();
+    await f.pool.query("update organizations set plan = 'starter', subscription_status = 'active' where id = $1", [org]);
+    const pk = await service(org, "PK", 40);
+    const me = await f.patient(org, { firstName: "Ich" });
+    const l = await portalLink(org, me);
+    const opts = await pb.portalBookingOptions(l);
+    expect(opts?.blocked).toBe("Die Online-Buchung ist derzeit nicht verfügbar.");
+    expect((await pb.bookPortalAppointment(l, { serviceId: pk, startsAt: berlinToUtc(futureWeekday(5), "10:00").toISOString() })).ok).toBe(false);
+  });
 });

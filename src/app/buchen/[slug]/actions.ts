@@ -7,7 +7,7 @@ import { appointmentServices, appointments, messages, organizations } from "@/db
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
-import { checkPublicSlot, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
+import { checkPublicSlot, publicBookingAvailable, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
 
@@ -45,8 +45,8 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   const { ip } = await requestMeta();
   if (limited(ip ?? "unbekannt")) return { error: "Zu viele Anfragen. Bitte später erneut versuchen oder anrufen." };
   const [org] = await db.select().from(organizations).where(eq(organizations.slug, d.slug));
-  // Löschung beantragt wie unbekannte Praxis; Abo/Freigabe prüft checkPublicSlot (bookingBlocked)
-  if (!org || org.deletionRequestedAt) return { error: "Praxis nicht gefunden." };
+  // Unbekannt, Löschantrag, Online-Buchung aus oder Nur-Lesen: nach außen nicht unterscheidbar (wie die 404 der Seite)
+  if (!org || !(await publicBookingAvailable(org.id))) return { error: "Praxis nicht gefunden." };
   const start = berlinToUtc(d.date, d.time);
   // Serverseitig dieselbe Verfügbarkeit wie Portal/Telefon: Freigabe, Leistungsliste, Arbeitszeiten, Abwesenheiten,
   // Feiertage, Vorlauf und Buchungsfenster – nur exakt angebotene Startzeiten (Gesamt-Review M1)
@@ -79,7 +79,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
         `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
         `Name: ${d.firstName} ${d.lastName}`,
         `Telefon: ${d.phone}${d.email ? ` · E-Mail: ${d.email}` : ""}`,
-        `Datenschutzhinweise und Ausfallregelung bei der Buchung bestätigt (${new Date().toISOString()}).`,
+        `Ausfallregelung bei der Buchung bestätigt; Datenschutzhinweise verlinkt (${new Date().toISOString()}).`,
         d.note ? `Notiz: ${d.note}` : null,
         "Bitte Patient zuordnen (bestehend oder neu) und Termin bestätigen.",
       ].filter(Boolean).join("\n"),
