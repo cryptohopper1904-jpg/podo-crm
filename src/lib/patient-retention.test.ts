@@ -16,10 +16,19 @@ describe("Aufbewahrung je Patient:in (Gesamt-Review H3)", () => {
     expect(d.expired).toBe(false);
     expect(d.reasons[0]).toMatch(/630f/);
   });
-  it("Rechnung: 10 Jahre ab Jahresende; das spätere Fristende gilt", () => {
-    const d = retentionDecision({ ...none, lastTreatmentAt: new Date("2020-01-05T10:00:00Z"), lastInvoiceAt: new Date("2020-01-06T00:00:00Z") }, now);
+  it("Rechnung: 8 Jahre ab Jahresende (BEG IV); Behandlungsdoku 10 Jahre – das spätere Fristende gilt", () => {
+    const d = retentionDecision({ ...none, lastTreatmentAt: new Date("2020-01-05T10:00:00Z"), lastInvoiceAt: new Date("2023-01-06T00:00:00Z") }, now);
     if (d.mode !== "anonymize") throw new Error("erwartet anonymize");
-    expect(d.retainUntil.toISOString().slice(0, 10)).toBe("2030-12-31");
+    expect(d.retainUntil.toISOString().slice(0, 10)).toBe("2031-12-31");
+    expect(d.reasons).toHaveLength(2);
+    expect(d.reasons[1]).toMatch(/8 Jahre.*Ablaufhemmung/);
+    const late = retentionDecision({ ...none, lastTreatmentAt: new Date("2020-01-05T10:00:00Z"), lastInvoiceAt: new Date("2020-01-06T00:00:00Z") }, now);
+    expect(late.mode === "anonymize" && late.retainUntil.toISOString().slice(0, 10)).toBe("2030-01-05");
+  });
+  it("Kassenvorgang (TSE-Einzelaufzeichnung): 10 Jahre ab Jahresende", () => {
+    const d = retentionDecision({ ...none, lastInvoiceAt: new Date("2024-12-30T10:00:00Z"), lastRegisterPaymentAt: new Date("2025-01-02T10:00:00Z") }, now);
+    if (d.mode !== "anonymize") throw new Error("erwartet anonymize");
+    expect(d.retainUntil.toISOString().slice(0, 10)).toBe("2035-12-31");
     expect(d.reasons).toHaveLength(2);
   });
   it("Anamnese oder Behandlungsfoto genügen für die Aufbewahrung", () => {
