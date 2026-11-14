@@ -1,5 +1,6 @@
 "use server";
 
+import { log } from "@/lib/log";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq, sql } from "drizzle-orm";
@@ -298,7 +299,7 @@ export async function saveServiceAction(_: SettingsState, form: FormData): Promi
   try {
     r = await saveService(auth, Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
   } catch (e) {
-    console.error("service.save_failed", e);
+    log.error("service.save_failed", { error: e });
     return { error: "Speichern hat nicht geklappt – bitte erneut versuchen." };
   }
   if ("error" in r) return { error: r.error };
