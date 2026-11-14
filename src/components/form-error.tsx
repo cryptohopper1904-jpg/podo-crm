@@ -58,21 +58,25 @@ export function FormError({ message, revealKey, id }: { message?: string | null;
 
 /**
  * Erfolgsmeldung eines Formulars (role="status"). Erscheint sie nach dem Absenden außerhalb des Sichtfelds, wird sie
- * sichtbar gescrollt (ohne Fokus – der bleibt am Formular).
+ * sichtbar gescrollt (ohne Fokus – der bleibt am Formular). `focus`: Meldung fokussieren – nötig, wenn der Absende-Knopf
+ * mit der Meldung verschwindet (sonst fiele der Fokus auf <body>). Wie FormError: nicht für eine Meldung beim Laden.
  */
-export function FormSuccess({ message }: { message?: string | null }) {
+export function FormSuccess({ message, focus }: { message?: string | null; focus?: boolean }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  const last = useRef<string | null | undefined>(null);
+  const last = useRef<string | null | undefined>(message);
   useEffect(() => {
     const el = ref.current;
     if (el && message && message !== last.current) {
-      const r = el.getBoundingClientRect();
-      if (r.top < 64 || r.bottom > innerHeight - 80) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      if (focus) revealMessage(el);
+      else {
+        const r = el.getBoundingClientRect();
+        if (r.top < 64 || r.bottom > innerHeight - 80) el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      }
     }
     last.current = message;
-  }, [message]);
+  }, [message, focus]);
   return (
-    <p ref={ref} role="status" hidden={!message} className="scroll-m-24 rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">
+    <p ref={ref} role="status" tabIndex={focus ? -1 : undefined} hidden={!message} className="scroll-m-24 rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">
       {message ? (
         <span className="flex items-start gap-2">
           <CircleCheck size={18} aria-hidden className="mt-px shrink-0" />

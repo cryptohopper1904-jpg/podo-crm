@@ -75,9 +75,21 @@ describe("Feldfehler (F3)", () => {
     const both = html(h(Field, { label: "Dauer", id: "dauer", hint: "0 = einmalig", error: "Fehlt", children: h(Input, { name: "dauer" }) }));
     expect(both).toContain('aria-describedby="dauer-fehler dauer-hinweis"');
   });
-  it("Meldung, die schon beim ersten Rendern da ist, wird nicht angesprungen", () => {
+  it("ohne id: eigene id, Hinweis außerhalb des <label> (nicht Teil des Namens), aber verknüpft", () => {
+    const out = html(h(Field, { label: "Dauer", hint: "0 = einmalig", children: h(Input, { name: "dauer" }) }));
+    const id = out.match(/<input[^>]* id="([^"]+)"/)?.[1];
+    expect(id).toBeTruthy();
+    expect(out).toContain(`<label for="${id}"`);
+    expect(out).toMatch(/<label[^>]*>Dauer<\/label>/);
+    expect(out).toContain(`aria-describedby="${id}-hinweis"`);
+    expect(out).toContain(`id="${id}-hinweis"`);
+  });
+  it("eigene Komponenten als Kind: bleibt ein umschließendes <label>", () => {
+    const out = html(h(Field, { label: "Preis", hint: "brutto", children: h("span", { className: "block w-36" }, h("input", { name: "p" })) }));
+    expect(out).toMatch(/^<label class="podo-field/);
+  });
+  it("shouldReveal: Ausgangswerte = Anfangsmeldung → kein Anspringen (Verhalten im Browser: e2e/formular-meldungen.spec.ts)", () => {
     const k = {};
-    // FormError startet mit prev = Anfangswerte
     expect(shouldReveal({ message: "Link abgelaufen", key: k }, { message: "Link abgelaufen", key: k })).toBe(false);
     expect(shouldReveal({ message: "Link abgelaufen" }, { message: "Link abgelaufen" })).toBe(false);
   });

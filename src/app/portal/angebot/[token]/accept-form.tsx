@@ -7,13 +7,15 @@ import { acceptOfferAction } from "./actions";
 
 export function AcceptOfferForm({ token, label }: { token: string; label: string }) {
   const [state, action, pending] = useActionState(acceptOfferAction, undefined);
-  if (state?.ok) return <FormSuccess message={state.ok} />;
-  if (state?.taken) return <FormError message={state.error} />;
+  // Formular bleibt stehen (nur der Knopf entfällt, wenn erledigt): die Meldungen sind schon vor dem Absenden im DOM,
+  // werden also angesagt und – weil der Knopf verschwindet – fokussiert (sonst fiele der Fokus auf <body>).
+  const done = !!state?.ok || !!state?.taken;
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-3">
       <input type="hidden" name="token" value={token} />
-      <Button type="submit" disabled={pending}>{pending ? "Wird reserviert …" : `Termin annehmen: ${label}`}</Button>
-      <FormError message={state?.error} />
+      {done ? null : <Button type="submit" disabled={pending}>{pending ? "Wird reserviert …" : `Termin annehmen: ${label}`}</Button>}
+      <FormSuccess message={state?.ok} focus />
+      <FormError message={state?.error} revealKey={state} />
     </form>
   );
 }

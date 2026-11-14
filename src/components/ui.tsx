@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
-import { Children, cloneElement, isValidElement, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { DateInput } from "./date-input";
 import { FormError, FormSuccess } from "./form-error";
 import { StepButton } from "./number-stepper";
@@ -160,27 +160,39 @@ export const hintCls = "text-[13px] leading-5 text-muted";
 
 /**
  * Feld = Beschriftung · Eingabe · optionaler Hinweis darunter.
- * `error`: Feldfehler unter der Eingabe (rot); die Eingabe bekommt `aria-invalid`.
- * `id`: Ist eine id gesetzt, verweist die Eingabe per `aria-describedby` auf Fehler und Hinweis (Screenreader lesen
- * den Hinweis mit) – gilt für ein einzelnes Element als Kind, z. B. <Input>/<Select>/<Textarea>.
+ * Ist das Kind eine einzelne Eingabe (<Input>, <Select>, <Textarea>, <SearchInput> oder ein natives Element), steht
+ * nur die Beschriftung im <label> (htmlFor); Hinweis und Fehler sind Geschwister und per `aria-describedby` an der
+ * Eingabe verknüpft – so werden sie als Beschreibung vorgelesen, nicht als Teil des Namens. Ohne `id` erzeugt Field
+ * eine (useId). `error` setzt zusätzlich `aria-invalid`.
+ * Andere Kinder (eigene Komponenten, mehrere Elemente): wie bisher alles in einem umschließenden <label>.
  */
 export function Field({ label, hint, error, id, children, className }: { label: string; hint?: ReactNode; error?: string | null; id?: string; children: ReactNode; className?: string }) {
-  const errId = error && id ? `${id}-fehler` : undefined;
-  const hintId = hint && id ? `${id}-hinweis` : undefined;
-  const describedBy = [errId, hintId].filter(Boolean).join(" ") || undefined;
+  const autoId = useId();
   const only = Children.count(children) === 1 && isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
-  const control =
-    only && (error || describedBy)
-      ? cloneElement(only, {
-          ...(error ? { "aria-invalid": true } : {}),
-          ...(describedBy ? { "aria-describedby": [only.props["aria-describedby"], describedBy].filter(Boolean).join(" ") } : {}),
-          ...(id && !only.props.id ? { id } : {}),
-        })
-      : children;
+  const direct = !!only && FIELD_CONTROLS.has(only.type);
+  if (!direct) {
+    return (
+      <label className={cx(fieldCls, className)}>
+        <span className={fieldLabelCls}>{label}</span>
+        <span className="flex min-w-0 flex-col gap-1.5">
+          {children}
+          {error ? <span className="text-[13px] leading-5 font-medium text-danger">{error}</span> : null}
+          {hint ? <span className={hintCls}>{hint}</span> : null}
+        </span>
+      </label>
+    );
+  }
+  const controlId = (only.props.id as string | undefined) ?? id ?? autoId;
+  const errId = error ? `${controlId}-fehler` : undefined;
+  const hintId = hint ? `${controlId}-hinweis` : undefined;
+  const describedBy = [only.props["aria-describedby"], errId, hintId].filter(Boolean).join(" ") || undefined;
+  const control = cloneElement(only, { id: controlId, ...(error ? { "aria-invalid": true } : {}), ...(describedBy ? { "aria-describedby": describedBy } : {}) });
   return (
-    <label className={cx(fieldCls, className)}>
-      <span className={fieldLabelCls}>{label}</span>
-      <span className="flex min-w-0 flex-col gap-1.5">
+    <div className={cx(fieldCls, className)}>
+      <label htmlFor={controlId} className={fieldLabelCls}>
+        {label}
+      </label>
+      <div className="flex min-w-0 flex-col gap-1.5">
         {control}
         {error ? (
           <span id={errId} className="text-[13px] leading-5 font-medium text-danger">
@@ -192,8 +204,8 @@ export function Field({ label, hint, error, id, children, className }: { label: 
             {hint}
           </span>
         ) : null}
-      </span>
-    </label>
+      </div>
+    </div>
   );
 }
 
@@ -400,3 +412,6 @@ export function SegmentedControl({
 }
 
 export { FormError, FormSuccess };
+
+/** Kinder, denen Field id/aria-* direkt geben kann (die Props landen am <input>/<select>/<textarea>) */
+const FIELD_CONTROLS = new Set<unknown>(["input", "select", "textarea", Input, Select, Textarea, SearchInput]);

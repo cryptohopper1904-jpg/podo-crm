@@ -14,7 +14,7 @@ import { createRoot } from "react-dom/client";
  *
  * Eine <Toaster/>-Fläche wird beim ersten Aufruf selbst angelegt (kein Eintrag im Layout nötig); sie ist eine
  * aria-live-Region (höflich, Fehler: assertive über role="alert"). Anzeigedauer 5 s (mit Aktion 8 s), pausiert bei
- * Maus-/Tastaturfokus; Schließen-Knopf 44 px. Abstand unten: --podo-toast-bottom (globals.css) – liegt also über
+ * Maus darüber (Hover), Finger/Stift darauf (Touch: Halten) oder Tastaturfokus; Schließen-Knopf 44 px. Abstand unten: --podo-toast-bottom (globals.css) – liegt also über
  * Bottom-Navigation, Home-Leiste (Safe-Area) und einer klebenden Formular-Aktionsleiste.
  */
 export type ToastTone = "success" | "error" | "info";
@@ -85,6 +85,17 @@ function ToastCard({ t }: { t: ToastItem }) {
   const [holds, setHolds] = useState<Record<Hold, boolean>>({ hover: false, press: false, focus: false });
   const hold = (k: Hold, on: boolean) => setHolds((h) => (h[k] === on ? h : { ...h, [k]: on }));
   const paused = holds.hover || holds.press || holds.focus;
+  // Loslassen außerhalb der Karte (Finger weggezogen) beendet das Halten ebenfalls
+  useEffect(() => {
+    if (!holds.press) return;
+    const release = () => setHolds((h) => (h.press ? { ...h, press: false } : h));
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
+    return () => {
+      document.removeEventListener("pointerup", release);
+      document.removeEventListener("pointercancel", release);
+    };
+  }, [holds.press]);
   const left = useRef(t.duration);
   useEffect(() => {
     if (paused) return;
@@ -138,7 +149,8 @@ export function Toaster() {
     owners.push(token);
     emit();
     return () => {
-      owners.splice(owners.indexOf(token), 1);
+      const i = owners.indexOf(token);
+      if (i >= 0) owners.splice(i, 1);
       emit();
     };
   }, [token]);
