@@ -353,10 +353,24 @@
       "breakpoints": true
     },
     {
+      "idx": 50,
+      "version": "7",
+      "when": 1794656619729,
+      "tag": "0050_reminder_log_widerruf",
+      "breakpoints": true
+    },
+    {
       "idx": 51,
       "version": "7",
-      "when": 1794657354323,
-      "tag": "0051_stripe_kunde_eindeutig",
+      "when": 1794658534534,
+      "tag": "0051_beleg_archiv_nachholen",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1794659458932,
+      "tag": "0052_stripe_kunde_eindeutig",
       "breakpoints": true
     }
   ]

@@ -140,7 +140,12 @@ export type InvoicePdfData = {
    * Kein archiviertes Original vorhanden (Altbeleg vor dem Beleg-Archiv): der Beleg wird aus den gespeicherten Daten
    * neu erzeugt und als „Reproduktion“ gekennzeichnet (Fußnote).
    */
-  reproduction?: { generatedAt: Date | string } | null;
+  reproduction?: { generatedAt: Date | string; fromSnapshot?: boolean } | null;
+  /**
+   * Zeitpunkt der PDF-Erzeugung beim Archivieren. Liegt er mehr als 10 Minuten nach dem Ausstellen (Ablage nachgeholt),
+   * erscheint ein dezenter Vermerk „PDF nachträglich erzeugt am …“.
+   */
+  generatedAt?: Date | string | null;
   /** Wortlaut des Kleinunternehmer-Hinweises wie beim Ausstellen (fehlt → bisheriger Wortlaut, Altbelege) */
   smallBusinessNote?: string;
 };
@@ -153,10 +158,20 @@ export function cancellationStamp(c: { number: string | null; issuedAt: string |
 }
 export const CANCELLATION_SUB = "Neudruck des ausgestellten Belegs – dieser Beleg ist ungültig und nicht mehr zu bezahlen.";
 
-/** Fußnote eines aus gespeicherten Daten neu erzeugten Altbelegs */
-export function reproductionNote(at: Date | string): string {
-  return `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich ausgestellte bzw. ausgegebene Beleg.`;
+/**
+ * Fußnote eines ohne archiviertes Original neu erzeugten Belegs: Altbelege (ohne Momentaufnahme) mit den heutigen
+ * Stammdaten, Belege mit Momentaufnahme aus den bei Ausstellung festgeschriebenen Angaben.
+ */
+export function reproductionNote(at: Date | string, fromSnapshot = false): string {
+  return fromSnapshot
+    ? `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den bei Ausstellung festgeschriebenen Angaben erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich ausgestellte bzw. ausgegebene Beleg.`
+    : `Reproduktion: Dieser Beleg wurde am ${dateTimeDe(at)} aus den gespeicherten Belegdaten mit den heutigen Stammdaten neu erzeugt; ein archiviertes Original liegt nicht vor. Maßgeblich ist der ursprünglich ausgestellte bzw. ausgegebene Beleg.`;
 }
+
+/** ab dieser Verzögerung zwischen Ausstellen und PDF-Erzeugung gilt das Archiv-PDF als nachgeholt */
+export const LATE_PDF_MS = 10 * 60 * 1000;
+export const latePdfNote = (at: Date | string) =>
+  `PDF nachträglich erzeugt am ${dateTimeDe(at)} aus den bei Ausstellung festgeschriebenen Angaben (Logo: zum Erzeugungszeitpunkt hinterlegt).`;
 
 export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Array> {
   // Beleg im Stand der Ausstellung: spätere Zahlungen/Zahlungslinks ändern das PDF nicht (GoBD, § 14 UStG)
@@ -456,7 +471,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   if (pub) notes.push({ t: pub });
   for (const n of paymentNoteLines(inv, data.payments, o, { dateDe, money }, { giroCode: !!giro })) notes.push({ t: n });
   if (inv.kind !== "credit_note" && inv.status !== "cancelled") notes.push({ t: "Vielen Dank für Ihr Vertrauen" });
-  if (data.reproduction) notes.push({ t: reproductionNote(data.reproduction.generatedAt), strong: true });
+  if (data.reproduction) notes.push({ t: reproductionNote(data.reproduction.generatedAt, data.reproduction.fromSnapshot), strong: true });
   // Hinweise (Steuer-/Zahlungshinweise) als Ganzes halten; passt das nicht auf eine Seite, jeden Absatz für sich
   const lastBeforeFootnote = notes.length - (data.reproduction ? 2 : 1);
   const thanks = (i: number) => i === lastBeforeFootnote && notes[i].t.startsWith("Vielen Dank");
@@ -472,6 +487,15 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
       y -= 13;
     }
     y -= 1;
+  }
+  // nachgeholtes Archiv-PDF: dezenter Vermerk (Ausstellung und PDF-Erzeugung liegen auseinander)
+  const created = inv.createdAt ? new Date(inv.createdAt).getTime() : NaN;
+  if (!data.reproduction && data.generatedAt && Number.isFinite(created) && new Date(data.generatedAt).getTime() - created > LATE_PDF_MS) {
+    for (const l of wrap(latePdfNote(data.generatedAt), width, 7.5)) {
+      ensure(10);
+      text(l, ML, y, { size: 7.5, color: GRAY });
+      y -= 10;
+    }
   }
 
   // ── QR-Codes: GiroCode (Bezahlen) und Terminbuchung ──

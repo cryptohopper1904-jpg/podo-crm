@@ -25,14 +25,14 @@ async function warnMissingPaymentRefIndex(pool: Pool) {
   );
 }
 
-/** Migration 0051 legt den Index bei doppelten Stripe-Kunden-IDs nicht an – dann laut warnen. */
+/** Migration 0052 legt den Index bei doppelten Stripe-Kunden-IDs nicht an – dann laut warnen. */
 async function warnMissingStripeCustomerIndex(pool: Pool) {
   const r = await pool.query("select 1 from pg_indexes where schemaname = 'public' and indexname = 'organizations_stripe_customer_id'");
   if (r.rowCount) return;
   console.error(
     [
       "",
-      "WARNUNG: Index organizations_stripe_customer_id fehlt – eine Stripe-Kunden-ID ist mehreren Praxen zugeordnet (Migration 0051).",
+      "WARNUNG: Index organizations_stripe_customer_id fehlt – eine Stripe-Kunden-ID ist mehreren Praxen zugeordnet (Migration 0052).",
       "Webhooks werden dann womöglich der falschen Praxis zugeordnet. Dubletten prüfen:",
       "  select stripe_customer_id, array_agg(id) from organizations where stripe_customer_id is not null group by 1 having count(*) > 1;",
       "Nach der Klärung den Index anlegen:",

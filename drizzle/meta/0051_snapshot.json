@@ -1,6 +1,6 @@
 {
-  "id": "afb5b412-df2e-4a04-a54d-6d5fa1dcbf4f",
-  "prevId": "852ede52-0920-4837-9f70-9cc533a4bd97",
+  "id": "64a127fc-490a-40c3-8601-ab434e19a315",
+  "prevId": "ea19dcde-be61-46f1-a75d-faddeaf6fc33",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -5153,24 +5153,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "organizations_stripe_customer_id": {
-          "name": "organizations_stripe_customer_id",
-          "columns": [
-            {
-              "expression": "stripe_customer_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "where": "\"organizations\".\"stripe_customer_id\" is not null",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
@@ -7121,6 +7104,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {

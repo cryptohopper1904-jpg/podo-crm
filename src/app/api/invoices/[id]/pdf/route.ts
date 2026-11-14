@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { audit } from "@/lib/audit";
 import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
-import { ArchiveIntegrityError } from "@/server/document-archive";
+import { archivePendingResponse } from "@/server/archive-pending-response";
+import { ArchiveIntegrityError, ArchivePendingError } from "@/server/document-archive";
 import { invoicePdfForOrg, pdfResponseHeaders } from "@/server/invoice-delivery";
 
 /**
@@ -17,9 +18,10 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/invoices/[id
   if (!downloadAllowed(auth, "invoice_pdf")) return NextResponse.json({ error: SUPPORT_DOWNLOAD_DENIED }, { status: 403 });
   let pdf: Awaited<ReturnType<typeof invoicePdfForOrg>>;
   try {
-    pdf = await invoicePdfForOrg(auth.organization.id, id, { original: req.nextUrl.searchParams.get("original") === "1" });
+    pdf = await invoicePdfForOrg(auth.organization.id, id, { original: req.nextUrl.searchParams.get("original") === "1", userId: auth.user.id });
   } catch (e) {
     // beschädigtes/fehlendes Archiv: nie stillschweigend neu erzeugen, sondern melden (Details im Server-Log)
+    if (e instanceof ArchivePendingError) return archivePendingResponse(req, e.message);
     if (e instanceof ArchiveIntegrityError) return NextResponse.json({ error: e.message }, { status: 500 });
     throw e;
   }
