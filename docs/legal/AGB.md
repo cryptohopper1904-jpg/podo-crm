@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.3 · Stand 14.11.2026
+> Version 0.4 · Stand 14.11.2026
 
 ## § 1 Geltungsbereich, Vertragspartner
 
@@ -59,12 +59,12 @@
 
 1. Kostenpflichtige Verträge laufen auf unbestimmte Zeit und sind monatlich zum Ende des Abrechnungszeitraums kündbar, sofern im Tarif nichts anderes angegeben ist.
 2. Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt. Für den kostenlosen Tarif gilt § 3a.
-3. Die Kündigung kann in Textform oder in der Software erfolgen: unter Einstellungen → Abo (Kündigung zum Ende des Abrechnungszeitraums; die Daten bleiben im Nur-Lesen-Modus erhalten) oder unter Einstellungen → Daten & Kündigung (Kündigung verbunden mit Löschantrag).
+3. Die Kündigung kann in Textform oder in der Software erfolgen: unter Einstellungen → Abo (Kündigung zum Ende des laufenden Abrechnungszeitraums; danach Nur-Lesen-Modus nach § 9 Nr. 2) oder unter Einstellungen → Daten & Kündigung. Ein dort gestellter Löschantrag gilt zugleich als Kündigung zum Ende des laufenden Abrechnungszeitraums. Bis zum Ende des Abrechnungszeitraums kann der Kunde eine Kündigung in der Software zurücknehmen; der Vertrag wird dann unverändert fortgesetzt. Nimmt der Kunde einen Löschantrag vor Ende des Abrechnungszeitraums zurück, gilt die damit verbundene Kündigung als zurückgenommen; eine gesondert erklärte Kündigung bleibt bestehen. Der Anbieter bestätigt die Kündigung unter Angabe des Vertragsendes.
 
 ## § 9 Datenexport und Löschung bei Vertragsende
 
 1. Der Kunde kann jederzeit einen **vollständigen Datenexport** (maschinenlesbare JSON-Dateien und entschlüsselte Fotos/Dokumente) in der Software erstellen.
-2. Nach Beantragung der Löschung bzw. nach Vertragsende werden die Daten nach einer **Karenzzeit von 30 Tagen** endgültig gelöscht. Innerhalb der Karenzzeit kann der Kunde die Löschung widerrufen. Sicherungskopien laufen nach dem im AVV genannten Zeitraum aus.
+2. Endet der Vertrag, ohne dass der Kunde die Löschung beantragt hat, bleibt der Zugang unentgeltlich im Nur-Lesen-Modus bestehen: Die Daten sind lesbar und exportierbar, Änderungen sind gesperrt. Der Nur-Lesen-Modus endet, wenn der Kunde einen Tarif bucht oder die Löschung beantragt, spätestens jedoch 12 Monate nach Vertragsende. Der Anbieter kündigt die Löschung mindestens 30 Tage vorher in Textform an die hinterlegte E-Mail-Adresse sowie in der Software an und löscht die Daten mit Ablauf des Nur-Lesen-Modus endgültig. Beantragt der Kunde die Löschung (Einstellungen → Daten & Kündigung), werden die Daten nach einer Karenzzeit von 30 Tagen, spätestens jedoch 14 Tage nach deren Ablauf, endgültig gelöscht; innerhalb der Karenzzeit kann der Kunde den Antrag zurücknehmen. Verschlüsselte Datensicherungen laufen spätestens 30 Tage nach der Löschung aus (§ 10 AVV). Während des Nur-Lesen-Modus gilt der AVV fort.
 3. Gesetzliche Aufbewahrungspflichten (z. B. 10 Jahre für Behandlungsdokumentation nach § 630f BGB, 8 bzw. 10 Jahre für Buchungsbelege nach § 147 AO) treffen den **Kunden**. Der Kunde ist verpflichtet, vor der Löschung einen Export zu erstellen und für die Dauer der Fristen aufzubewahren. Der Anbieter bewahrt nach der Löschung keine Kopie für den Kunden auf.
 
 ## § 10 Haftung

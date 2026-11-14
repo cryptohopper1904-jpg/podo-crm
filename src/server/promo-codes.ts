@@ -20,6 +20,7 @@ import { createRateLimiter } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { revokeUserSessions } from "@/lib/auth/session";
 import { returnPromoTrialToFree } from "./billing";
+import { stopAutoDeletion } from "./readonly-expiry";
 
 /**
  * Aktionscodes für eine verlängerte Testphase (Plattform-Betreiber). Regeln in src/lib/promo-codes.ts.
@@ -269,6 +270,8 @@ export async function redeemPromoCodeTx(
     },
     tx,
   );
+  // neue Testphase beendet den Nur-Lesen-Modus: automatische Löschung entfällt
+  await stopAutoDeletion(tx, org.id, { trigger: "promo.redeemed", userId: opts.userId });
   return { trialEndsAt, trialDays: c.trialDays, code: c.code, plan };
 }
 

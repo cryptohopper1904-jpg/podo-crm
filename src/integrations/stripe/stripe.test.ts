@@ -170,6 +170,33 @@ describe("Stripe-Adapter (echt, mit Fake-fetch)", () => {
     await expect(a.deleteCustomer("x")).rejects.toThrow();
     expect(calls.length).toBe(before);
   });
+  it("Abos des Kunden, offene Rechnungen/Positionen, canceled_at und Intervall", async () => {
+    const calls: string[] = [];
+    const responses: Record<string, unknown>[] = [
+      {
+        data: [
+          { id: "sub_A1", status: "active", customer: "cus_B2", canceled_at: t, cancel_at_period_end: true, items: { data: [{ price: { recurring: { interval: "year", interval_count: 1 } } }] } },
+          { id: "sub_A2", status: "canceled", customer: "cus_B2", plan: { interval: "month", interval_count: 1 } },
+        ],
+      },
+      { data: [{ amount_remaining: 9900 }, { amount_remaining: 100 }], has_more: false },
+      { data: [{ amount: 1500 }], has_more: true },
+    ];
+    const a = new StripeAdapter({ secretKey: "sk_test_x", fetch: async (url) => (calls.push(url), new Response(JSON.stringify(responses.shift()), { status: 200 })) });
+    const subs = await a.listSubscriptions("cus_B2");
+    expect(calls[0]).toBe("https://api.stripe.com/v1/subscriptions?customer=cus_B2&status=all&limit=100");
+    expect(subs).toMatchObject([
+      { id: "sub_A1", canceledAt: t, interval: "year", intervalCount: 1, cancelAtPeriodEnd: true },
+      { id: "sub_A2", canceledAt: null, interval: "month", intervalCount: 1 },
+    ]);
+    expect(await a.openBillingItems("cus_B2")).toEqual({ openInvoices: 2, openInvoiceCents: 10000, pendingItems: 1, pendingItemCents: 1500, truncated: true });
+    expect(calls.slice(1)).toEqual([
+      "https://api.stripe.com/v1/invoices?customer=cus_B2&status=open&limit=100",
+      "https://api.stripe.com/v1/invoiceitems?customer=cus_B2&pending=true&limit=100",
+    ]);
+    await expect(a.listSubscriptions("cus_B2&x=1")).rejects.toThrow();
+    expect(calls).toHaveLength(3);
+  });
   it("fehlende Price-ID oder Schlüssel → nicht konfiguriert", () => {
     expect(() => checkoutParams({ organizationId: ORG, plan: "plus", seats: 1, successUrl: "a", cancelUrl: "b" }, {})).toThrow(/STRIPE_PRICE_PLUS/);
     expect(() => new StripeAdapter({})).toThrow(/STRIPE_SECRET_KEY/);

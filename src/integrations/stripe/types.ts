@@ -32,6 +32,26 @@ export interface SubscriptionInfo {
   customerId: string | null;
   currentPeriodStart?: Date;
   currentPeriodEnd?: Date;
+  /**
+   * canceled_at (Unix-Sekunden): Zeitpunkt der letzten Kündigungsanfrage – bei cancel_at_period_end der Zeitpunkt der
+   * Anfrage, nicht das Periodenende. Kennzeichnet eine bestimmte Kündigung (wird bei erneuter Kündigung neu gesetzt).
+   */
+  canceledAt?: number | null;
+  /** Abrechnungsintervall des Grundpreises (month, year, week, day) und Anzahl Intervalle je Periode */
+  interval?: string | null;
+  intervalCount?: number | null;
+}
+
+/** Offene Posten eines Stripe-Kunden (Löschlauf, Probelauf): offene Rechnungen und noch nicht abgerechnete Positionen */
+export interface OpenBillingItems {
+  /** Rechnungen mit Status „open“ (z. B. bei Abo-Status past_due/unpaid): Anzahl und offener Betrag in Cent */
+  openInvoices: number;
+  openInvoiceCents: number;
+  /** noch nicht abgerechnete Rechnungspositionen (invoiceitems, pending=true), z. B. anteilige Beträge nach Tarifwechsel */
+  pendingItems: number;
+  pendingItemCents: number;
+  /** true = mehr als eine Seite (100) – Zahlen sind Untergrenzen */
+  truncated: boolean;
 }
 
 /** Minimal benötigte Teile eines Stripe-Events (https://docs.stripe.com/api/events/object) */
@@ -54,6 +74,10 @@ export interface BillingPort {
    * gespeichert; null entfernt den Schlüssel.
    */
   setCancelAtPeriodEnd(subscriptionId: string, cancel: boolean, reason: string | null): Promise<SubscriptionInfo>;
+  /** Alle Abos eines Stripe-Kunden (jeder Status, höchstens 100). */
+  listSubscriptions(customerId: string): Promise<SubscriptionInfo[]>;
+  /** Offene Rechnungen und nicht abgerechnete Positionen eines Kunden (nur lesen). */
+  openBillingItems(customerId: string): Promise<OpenBillingItems>;
   /** Abo sofort beenden – ohne anteilige Gutschrift und ohne Abschlussrechnung (prorate=false, invoice_now=false). */
   cancelSubscriptionNow(subscriptionId: string): Promise<SubscriptionInfo | null>;
   /** Stripe-Kunden löschen (Zahlungsmittel, Adresse; ausgestellte Rechnungen bleiben bei Stripe erhalten). 404 = schon gelöscht. */

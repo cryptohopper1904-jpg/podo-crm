@@ -3,7 +3,7 @@
  * Abo-Seite; die Server Action stellt den Tarif dann sofort um (nur außerhalb von Produktion).
  */
 import { parseVerifiedEvent } from "./signature";
-import type { BillingPort, CheckoutInput, StripeEvent, SubscriptionInfo } from "./types";
+import type { BillingPort, CheckoutInput, OpenBillingItems, StripeEvent, SubscriptionInfo } from "./types";
 
 export const MOCK_WEBHOOK_SECRET = "whsec_mock_dev_only";
 
@@ -18,7 +18,18 @@ export class StripeMock implements BillingPort {
     let s = mockSubscriptions.get(id);
     if (!s) {
       const now = Date.now();
-      s = { id, status: "active", cancelAtPeriodEnd: false, cancelReason: null, customerId: null, currentPeriodStart: new Date(now), currentPeriodEnd: new Date(now + 30 * 86_400_000) };
+      s = {
+        id,
+        status: "active",
+        cancelAtPeriodEnd: false,
+        cancelReason: null,
+        customerId: null,
+        currentPeriodStart: new Date(now),
+        currentPeriodEnd: new Date(now + 30 * 86_400_000),
+        canceledAt: null,
+        interval: "month",
+        intervalCount: 1,
+      };
       mockSubscriptions.set(id, s);
     }
     return s;
@@ -30,8 +41,19 @@ export class StripeMock implements BillingPort {
 
   async setCancelAtPeriodEnd(subscriptionId: string, cancel: boolean, reason: string | null) {
     const s = this.sub(subscriptionId);
-    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason });
+    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason, canceledAt: cancel ? Math.floor(Date.now() / 1000) : null });
     return { ...s };
+  }
+
+  /** Testmodus: Pseudo-Abos haben keinen Kunden – die Praxis-Abo-ID genügt */
+  async listSubscriptions(_customerId: string): Promise<SubscriptionInfo[]> {
+    void _customerId;
+    return [];
+  }
+
+  async openBillingItems(_customerId: string): Promise<OpenBillingItems> {
+    void _customerId;
+    return { openInvoices: 0, openInvoiceCents: 0, pendingItems: 0, pendingItemCents: 0, truncated: false };
   }
 
   async cancelSubscriptionNow(subscriptionId: string) {

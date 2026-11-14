@@ -8,13 +8,16 @@ import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { confirmsPracticeName, isWithinGrace } from "@/lib/org-deletion";
+import { accessMode } from "@/lib/plans";
+import { isAutoDeletion } from "@/lib/readonly-expiry";
 import { CANCEL_FAILED_MESSAGE } from "@/lib/subscription-cancel";
 import { cancelSubscriptionAtPeriodEnd, resumeSubscription } from "@/server/subscription-cancel";
 
 export type DataState = { error?: string; ok?: string; warning?: string } | undefined;
 
+/** Auch im Nur-Lesen-Modus erlaubt: Löschantrag und Rücknahme sind Wege aus dem Nur-Lesen-Modus (AGB § 9 Nr. 2). */
 async function requireOwner() {
-  const auth = await requireAuth("settings.manage");
+  const auth = await requireAuth("settings.manage", { allowReadOnly: true });
   if (auth.role !== "owner" || auth.support) throw new Error("Nur Inhaber:innen können die Praxis kündigen.");
   return auth;
 }
@@ -59,8 +62,24 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
   } catch (e) {
     return { error: (e as Error).message };
   }
-  const [org] = await db.select({ at: organizations.deletionRequestedAt }).from(organizations).where(eq(organizations.id, auth.organization.id));
+  const [org] = await db
+    .select({
+      at: organizations.deletionRequestedAt,
+      settings: organizations.settings,
+      plan: organizations.plan,
+      subscriptionStatus: organizations.subscriptionStatus,
+      trialEndsAt: organizations.trialEndsAt,
+      currentPeriodEnd: organizations.currentPeriodEnd,
+      seats: organizations.seats,
+      stripeSubscriptionId: organizations.stripeSubscriptionId,
+    })
+    .from(organizations)
+    .where(eq(organizations.id, auth.organization.id));
   if (!org?.at) return { ok: "Es ist keine Löschung beantragt." };
+  // automatischer Antrag (Ende des Nur-Lesen-Modus, AGB § 9 Nr. 2): endet nur mit einem Tarif
+  if (isAutoDeletion(org.settings)) {
+    return { error: "Diese Löschung erfolgt automatisch, weil der Nur-Lesen-Modus nach 12 Monaten endet. Wähle unter Einstellungen → Abo einen Tarif (bis 20 Patient:innen auch kostenlos), dann entfällt sie." };
+  }
   if (!isWithinGrace(org.at)) return { error: "Die Karenzzeit ist abgelaufen. Bitte wende dich an den Support." };
   await db.update(organizations).set({ deletionRequestedAt: null }).where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_cancelled", entity: "organization", entityId: auth.organization.id });
@@ -76,6 +95,15 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
   if (r.status === "resumed") return { ok: `${base} Auch die Kündigung ist zurückgenommen – dein Abo läuft weiter.` };
   if (r.status === "kept") {
     return { ok: base, warning: `Dein Abo bleibt gekündigt (zum ${r.periodEnd ? dateDe(r.periodEnd) : "Ende des Abrechnungszeitraums"}), weil die Kündigung separat ausgesprochen wurde. Du kannst sie unter Einstellungen → Abo zurücknehmen.` };
+  }
+  // Abo schon beendet (Rücknahme nach Ende des Abrechnungszeitraums): Kündigung lässt sich nicht mehr zurücknehmen
+  if (r.status === "no_subscription" && org.plan !== "free" && org.plan !== "internal") {
+    if (accessMode(org).mode === "readonly") {
+      return { ok: base, warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo)." };
+    }
+    if (org.stripeSubscriptionId && ["canceled", "none"].includes(org.subscriptionStatus)) {
+      return { ok: base, warning: "Dein Abo ist bereits beendet. Wähle unter Einstellungen → Abo einen Tarif, sonst wechselt die Praxis in den Nur-Lesen-Modus." };
+    }
   }
   return { ok: base };
 }

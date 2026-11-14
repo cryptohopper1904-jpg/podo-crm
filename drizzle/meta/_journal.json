@@ -351,6 +351,13 @@
       "when": 1794643215894,
       "tag": "0049_beleg_archiv",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794657354323,
+      "tag": "0051_stripe_kunde_eindeutig",
+      "breakpoints": true
     }
   ]
 }

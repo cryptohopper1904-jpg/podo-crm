@@ -18,6 +18,14 @@ const ERR: Record<string, string> = {
   eingabe: "Eingaben ungültig.",
 };
 
+const MAIL_LABELS: Record<string, string> = {
+  sent: "versendet",
+  not_configured: "kein Plattform-SMTP",
+  failed: "Versand fehlgeschlagen",
+  no_recipient: "keine Inhaber:in",
+  none: "noch offen",
+};
+
 export default async function PlatformPage({ searchParams }: PageProps<"/plattform">) {
   const row = await requirePlatformAdmin();
   const { fehler } = await searchParams;
@@ -44,15 +52,42 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
         <Card className="mt-6 border-danger/50" data-testid="abo-kuendigung-probleme">
           <h2 className="font-display text-xl font-semibold">Abo-Kündigung prüfen</h2>
           <p className="mt-1 text-sm text-muted">
-            Diese Praxen haben die Löschung beantragt (gilt als Kündigung, AGB § 8 Nr. 3), ihr Stripe-Abo ist aber nicht gekündigt. Bitte im
-            Stripe-Dashboard zum Periodenende kündigen bzw. die Praxis kontaktieren – der Löschlauf beendet ein noch laufendes Abo sonst sofort.
+            Löschantrag gestellt (gilt als Kündigung, AGB § 8 Nr. 3), aber das Stripe-Abo ist nicht gekündigt: im Stripe-Dashboard zum Periodenende
+            kündigen bzw. die Praxis kontaktieren – der Löschlauf beendet ein noch laufendes Abo sonst sofort. Rücknahme fehlgeschlagen: Die Praxis
+            will weitermachen, ihr Abo endet aber zum Periodenende – Kündigung im Stripe-Dashboard zurücknehmen.
           </p>
           <ul className="mt-3 list-disc pl-5 text-sm">
             {practices.filter((p) => p.billingProblem).map((p) => (
               <li key={p.id}>
-                <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: {p.billingProblem} (Löschantrag vom {dateDe(p.deletionRequestedAt)})
+                <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: {p.billingProblem}
+                {p.deletionRequestedAt ? ` (Löschantrag vom ${dateDe(p.deletionRequestedAt)})` : ""}
               </li>
             ))}
+          </ul>
+        </Card>
+      ) : null}
+      {practices.some((p) => p.readonlyExpiry) ? (
+        <Card className="mt-6" data-testid="nur-lesen-ablauf">
+          <h2 className="font-display text-xl font-semibold">Ende des Nur-Lesen-Modus (automatische Löschung)</h2>
+          <p className="mt-1 text-sm text-muted">
+            Praxen, deren Löschung nach 12 Monaten Nur-Lesen-Modus angekündigt ist (AGB § 9 Nr. 2). Gelöscht wird nur durch den Löschlauf; bucht die
+            Praxis vorher einen Tarif, entfällt die Löschung. Ist die E-Mail nicht versendet, bitte selbst in Textform ankündigen (mindestens 30 Tage
+            vor dem Termin).
+          </p>
+          <ul className="mt-3 list-disc pl-5 text-sm">
+            {practices.filter((p) => p.readonlyExpiry).map((p) => {
+              const x = p.readonlyExpiry!;
+              const mailOk = x.noticeMail === "sent";
+              return (
+                <li key={p.id}>
+                  <a href={`#praxis-${p.id}`} className="font-semibold underline">{p.name}</a>: Löschung ab {dateDe(x.deletionAt)}
+                  {x.auto ? " (Löschantrag gestellt)" : ""}
+                  {x.noticeSentAt ? ` · angekündigt am ${dateDe(x.noticeSentAt)}` : ""} ·{" "}
+                  <span className={mailOk ? "" : "font-semibold text-danger"}>{mailOk ? "E-Mail versendet" : `E-Mail nicht versendet (${MAIL_LABELS[x.noticeMail ?? "none"]})`}</span>
+                  {x.reminderMail ? ` · Erinnerung: ${x.reminderMail === "sent" ? "versendet" : MAIL_LABELS[x.reminderMail]}` : ""}
+                </li>
+              );
+            })}
           </ul>
         </Card>
       ) : null}

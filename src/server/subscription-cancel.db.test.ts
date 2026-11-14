@@ -5,7 +5,7 @@
  */
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BillingPort, SubscriptionInfo } from "@/integrations/stripe/types";
+import type { BillingPort, OpenBillingItems, SubscriptionInfo } from "@/integrations/stripe/types";
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
@@ -32,9 +32,25 @@ class FakeStripe {
   calls: string[] = [];
   deletedCustomers: string[] = [];
   fail = false;
+  /** nur Rücknahmen (set …:false) schlagen fehl */
+  failResume = false;
+  open: OpenBillingItems = { openInvoices: 0, openInvoiceCents: 0, pendingItems: 0, pendingItemCents: 0, truncated: false };
+  private clock = 1_800_000_000;
   add(id: string, s: Partial<SubscriptionInfo> = {}) {
     const start = new Date(Date.now() - 10 * 86_400_000);
-    this.subs.set(id, { id, status: "active", cancelAtPeriodEnd: false, cancelReason: null, customerId: null, currentPeriodStart: start, currentPeriodEnd: new Date(start.getTime() + 30 * 86_400_000), ...s });
+    this.subs.set(id, {
+      id,
+      status: "active",
+      cancelAtPeriodEnd: false,
+      cancelReason: null,
+      customerId: null,
+      currentPeriodStart: start,
+      currentPeriodEnd: new Date(start.getTime() + 30 * 86_400_000),
+      canceledAt: null,
+      interval: "month",
+      intervalCount: 1,
+      ...s,
+    });
   }
   private check(op: string) {
     this.calls.push(op);
@@ -47,9 +63,23 @@ class FakeStripe {
   }
   async setCancelAtPeriodEnd(id: string, cancel: boolean, reason: string | null) {
     this.check(`set:${id}:${cancel}:${reason ?? ""}`);
+    if (!cancel && this.failResume) throw Object.assign(new Error("Stripe: Rücknahme fehlgeschlagen (HTTP 502)"), { name: "BillingHttpError" });
     const s = this.subs.get(id)!;
-    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason });
+    // wie Stripe: canceled_at = Zeitpunkt der (letzten) Kündigungsanfrage
+    Object.assign(s, { cancelAtPeriodEnd: cancel, cancelReason: reason, canceledAt: cancel ? ++this.clock : null });
     return { ...s };
+  }
+  /** Kündigung im Kundenportal: Metadaten bleiben, canceled_at ändert sich */
+  portalCancel(id: string) {
+    Object.assign(this.subs.get(id)!, { cancelAtPeriodEnd: true, canceledAt: ++this.clock });
+  }
+  async listSubscriptions(customerId: string) {
+    this.check(`list:${customerId}`);
+    return [...this.subs.values()].filter((s) => s.customerId === customerId).map((s) => ({ ...s }));
+  }
+  async openBillingItems(customerId: string) {
+    this.check(`open:${customerId}`);
+    return { ...this.open };
   }
   async cancelSubscriptionNow(id: string) {
     this.check(`cancel_now:${id}`);
@@ -153,6 +183,8 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(o.settings).toMatchObject({ billingCancelAtPeriodEnd: true, billingCancelReason: "deletion_request" });
     expect(await audits(org, "billing.cancel_at_period_end")).toEqual([expect.objectContaining({ user_id: user, meta: expect.objectContaining({ trigger: "deletion_request" }) })]);
     expect(lib.deletionBillingProblem({ ...o, plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: subId, deletionRequestedAt: o.deletion_requested_at })).toBeNull();
+    const confirm = await f.asOrg(org, async (c) => (await c.query("select subject, body from messages where organization_id=$1", [org])).rows);
+    expect(confirm).toEqual([{ subject: "Kündigung bestätigt", body: expect.stringMatching(/^Mit deinem Löschantrag ist dein PodoHero-Abo zum \d\d\.\d\d\.\d{4} gekündigt \(Vertragsende\)/) }]);
 
     const w = await withdraw();
     expect(w?.ok).toMatch(/Auch die Kündigung ist zurückgenommen – dein Abo läuft weiter\./);
@@ -289,15 +321,102 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
 
     stripe.fail = true;
     expect((await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" })))?.error).toMatch(/konnte gerade nicht gekündigt werden/);
-    // kein Posteingang-Hinweis beim Abo-Weg (Nutzer:in sieht die Meldung direkt)
-    const inbox = await f.asOrg(org, async (cl) => (await cl.query("select 1 from messages where organization_id=$1", [org])).rows);
-    expect(inbox).toHaveLength(0);
+    // kein Fehler-Hinweis im Posteingang beim Abo-Weg (Nutzer:in sieht die Meldung direkt); Kündigungen werden bestätigt
+    const inbox = await f.asOrg(org, async (cl) => (await cl.query("select subject from messages where organization_id=$1", [org])).rows);
+    expect(inbox.map((m) => m.subject)).toEqual(["Kündigung bestätigt"]);
   });
 
   it("Abo-Seite: ohne laufendes Abo nichts zu kündigen", async () => {
     await setup({ sub: null });
     expect(await abo.cancelSubscriptionAction(undefined, fd({ confirm: "on" }))).toEqual({ error: "Es gibt kein laufendes Abo, das gekündigt werden kann." });
     expect(stripe.calls).toEqual([]);
+  });
+
+  it("mehrere Abos desselben Kunden: Antrag kündigt alle, Rücknahme nimmt alle eigenen Kündigungen zurück", async () => {
+    const { org, subId, cusId } = await setup();
+    const second = `sub_${sfx()}`;
+    stripe.add(second, { customerId: cusId });
+    const ended = `sub_${sfx()}`;
+    stripe.add(ended, { customerId: cusId, status: "canceled" });
+    expect((await request())?.ok).toMatch(/Dein Abo endet zum/);
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "deletion_request" });
+    expect(stripe.subs.get(second)).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "deletion_request" });
+    expect(stripe.calls).not.toContain(`set:${ended}:true:deletion_request`);
+    const marks = (await orgRow(org)).settings.billingCancelMarks as { id: string; at: number }[];
+    expect(marks.map((m) => m.id).sort()).toEqual([subId, second].sort());
+    expect(marks.every((m) => typeof m.at === "number")).toBe(true);
+    const w = await withdraw();
+    expect(w?.ok).toMatch(/Auch die Kündigung ist zurückgenommen/);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(false);
+    expect(stripe.subs.get(second)?.cancelAtPeriodEnd).toBe(false);
+    expect((await orgRow(org)).settings.billingCancelMarks).toBeUndefined();
+  });
+
+  it("Rücknahme nur, wenn canceled_at unverändert ist (Portal: fortgesetzt und erneut gekündigt, ohne Webhook)", async () => {
+    const { subId } = await setup();
+    await request();
+    // Portal: erneut gekündigt – Stripe lässt metadata.cancel_reason stehen, canceled_at ist neu
+    stripe.portalCancel(subId);
+    const w = await withdraw();
+    expect(w?.warning).toMatch(/bleibt gekündigt/);
+    expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
+    expect(stripe.calls.filter((c) => c.startsWith(`set:${subId}:false`))).toEqual([]);
+  });
+
+  it("Status kommt aus dem frisch gelesenen Abo (deckt billingLastEventAt ab)", async () => {
+    const { org } = await setup({ sub: { status: "past_due" } });
+    await request();
+    const o = await orgRow(org);
+    expect(o.subscription_status).toBe("past_due");
+    expect(typeof o.settings.billingLastEventAt).toBe("number");
+  });
+
+  it("fehlgeschlagene Rücknahme: Hinweis, Posteingang, Betreiber-Hinweis", async () => {
+    const { org, subId } = await setup();
+    await request();
+    stripe.failResume = true;
+    const w = await withdraw();
+    expect(w?.warning).toMatch(/konnte nicht automatisch zurückgenommen werden/);
+    const o = await orgRow(org);
+    expect(o.deletion_requested_at).toBeNull();
+    expect(o.settings.billingCancelError).toMatchObject({ trigger: "resume" });
+    const inbox = await f.asOrg(org, async (c) => (await c.query("select subject from messages where organization_id=$1", [org])).rows);
+    expect(inbox.map((m) => m.subject).sort()).toEqual(["Kündigung bestätigt", "Kündigung nicht automatisch zurückgenommen"]);
+    expect(await audits(org, "billing.resume_failed")).toHaveLength(1);
+    expect(lib.resumeBillingProblem({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: subId, settings: o.settings })).toMatch(/Rücknahme der Kündigung fehlgeschlagen/);
+    expect(lib.deletionBillingProblem({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: subId, deletionRequestedAt: null, settings: o.settings })).toBeNull();
+  });
+
+  it("Rücknahme nach Ende des Abos: eigene Meldung (Nur-Lesen bis zur Wahl eines Tarifs)", async () => {
+    const { org, subId } = await setup();
+    await request();
+    // Abo inzwischen beendet (Webhook), Ende des bezahlten Zeitraums + 14 Tage Kulanz vorbei
+    stripe.subs.get(subId)!.status = "canceled";
+    await f.pool.query("update organizations set subscription_status='canceled', current_period_end = now() - interval '20 days' where id=$1", [org]);
+    const w = await withdraw();
+    expect(w).toEqual({
+      ok: "Die Löschung wurde zurückgenommen. Deine Praxis bleibt bestehen.",
+      warning: "Dein Abo ist bereits beendet. Die Praxis bleibt im Nur-Lesen-Modus, bis du wieder einen Tarif wählst (Einstellungen → Abo).",
+    });
+  });
+
+  it("Webhook: Event eines weiteren Abos überschreibt die Zuordnung nicht; nach Ende des alten wird ein neues aktives übernommen", async () => {
+    const { org, subId, cusId } = await setup();
+    const other = `sub_${sfx()}`;
+    const now = Math.floor(Date.now() / 1000);
+    const ev = (id: string, status: string, created: number) =>
+      billing.processBillingEvent(
+        { id: `evt_${sfx()}`, type: "customer.subscription.updated", created, data: { object: { id, customer: cusId, status, cancel_at_period_end: false, metadata: { organizationId: org } } } },
+        { prices: {} },
+      );
+    expect(await ev(other, "canceled", now + 1)).toBe("ignored");
+    expect(await ev(other, "active", now + 2)).toBe("ignored"); // Praxis-Abo läuft noch
+    let o = (await f.pool.query("select stripe_subscription_id, subscription_status from organizations where id=$1", [org])).rows[0];
+    expect(o).toEqual({ stripe_subscription_id: subId, subscription_status: "active" });
+    await f.pool.query("update organizations set subscription_status='canceled' where id=$1", [org]);
+    expect(await ev(other, "active", now + 3)).toBe("processed");
+    o = (await f.pool.query("select stripe_subscription_id, subscription_status from organizations where id=$1", [org])).rows[0];
+    expect(o).toEqual({ stripe_subscription_id: other, subscription_status: "active" });
   });
 
   describe("Löschlauf", () => {
@@ -314,12 +433,12 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       const c = await owner.connect();
       try {
         const dry = await purge.purgeOrganization(c, org, { execute: false, billing: stripe as unknown as BillingPort });
-        expect(dry.stripe).toEqual({ subscription: "would_cancel", customer: "would_delete", refundCheck: false });
-        expect(stripe.calls).toEqual([`get:${subId}`]);
+        expect(dry.stripe).toMatchObject({ subscription: "would_cancel", customer: "would_delete", refundCheck: false, subscriptionId: subId, customerId: cusId });
+        expect(stripe.calls).toEqual([`get:${subId}`, `list:${cusId}`, `open:${cusId}`]);
         const lines: string[] = [];
         const r = await purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort, log: (l) => lines.push(l) });
         expect(r.executed).toBe(true);
-        expect(r.stripe).toEqual({ subscription: "canceled_now", customer: "deleted", refundCheck: false });
+        expect(r.stripe).toMatchObject({ subscription: "canceled_now", customer: "deleted", refundCheck: false });
         expect(stripe.calls).toContain(`cancel_now:${subId}`);
         expect(stripe.deletedCustomers).toEqual([cusId]);
         expect(lines.some((l) => l.includes("stripe.subscription_canceled") && l.includes(subId))).toBe(true);
@@ -335,11 +454,52 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       const c = await owner.connect();
       try {
         expect((await purge.purgeOrganization(c, a.org, { execute: true, billing: stripe as unknown as BillingPort })).stripe).toMatchObject({ subscription: "canceled_now", refundCheck: true });
-        expect((await purge.purgeOrganization(c, b.org, { execute: true, billing: stripe as unknown as BillingPort })).stripe).toEqual({ subscription: "ended", customer: "deleted", refundCheck: false });
+        expect((await purge.purgeOrganization(c, b.org, { execute: true, billing: stripe as unknown as BillingPort })).stripe).toMatchObject({ subscription: "ended", customer: "deleted", refundCheck: false });
         expect(stripe.calls).not.toContain(`cancel_now:${b.subId}`);
       } finally {
         c.release();
       }
+    });
+
+    it("Jahresabo → Erstattung prüfen; offene Rechnungen/Positionen im Probelauf; Protokoll mit IDs und refundCheck", async () => {
+      const { org, subId, cusId } = await dueOrg({ interval: "year", currentPeriodStart: new Date(Date.now() - 60 * 86_400_000) });
+      stripe.open = { openInvoices: 1, openInvoiceCents: 9900, pendingItems: 2, pendingItemCents: 1500, truncated: false };
+      const c = await owner.connect();
+      try {
+        const dry = await purge.purgeOrganization(c, org, { execute: false, billing: stripe as unknown as BillingPort });
+        expect(dry.stripe).toMatchObject({ refundCheck: true, subscriptionStatus: "active", openItems: { openInvoices: 1, pendingItems: 2 } });
+        await purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort });
+      } finally {
+        c.release();
+      }
+      const oc = await owner.connect();
+      let purged: { meta: Record<string, unknown> }[];
+      try {
+        await oc.query("begin");
+        await oc.query("alter table audit_log no force row level security");
+        purged = (await oc.query("select meta from audit_log where organization_id is null and action='platform.org_purged' and entity_id=$1", [org])).rows;
+      } finally {
+        await oc.query("rollback");
+        oc.release();
+      }
+      expect(purged).toHaveLength(1);
+      expect(purged[0].meta).toMatchObject({
+        reason: "request",
+        stripe: { refundCheck: true, subscriptionId: subId, customerId: cusId, subscription: "canceled_now", customer: "deleted", openInvoices: 1, pendingItems: 2 },
+      });
+    });
+
+    it("weiteres laufendes Abo des Kunden wird vor dem Löschen ebenfalls beendet", async () => {
+      const { org, cusId } = await dueOrg({});
+      const second = `sub_${sfx()}`;
+      stripe.add(second, { customerId: cusId });
+      const c = await owner.connect();
+      try {
+        await purge.purgeOrganization(c, org, { execute: true, billing: stripe as unknown as BillingPort });
+      } finally {
+        c.release();
+      }
+      expect(stripe.subs.get(second)?.status).toBe("canceled");
     });
 
     it("Stripe nicht erreichbar oder nicht konfiguriert → Abbruch, Praxis bleibt, Protokoll", async () => {
@@ -352,7 +512,7 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
         const { StripeMock } = await import("@/integrations/stripe/mock");
         await expect(purge.purgeOrganization(c, org, { execute: true, billing: new StripeMock() })).rejects.toThrow(/kein Stripe-Zugang/);
         // Probelauf ohne Zugang: meldet „ungeprüft“, bricht nicht ab
-        expect((await purge.purgeOrganization(c, org, { execute: false })).stripe).toEqual({ subscription: "unchecked", customer: "unchecked", refundCheck: false });
+        expect((await purge.purgeOrganization(c, org, { execute: false })).stripe).toMatchObject({ subscription: "unchecked", customer: "unchecked", refundCheck: false });
       } finally {
         c.release();
       }
@@ -370,7 +530,9 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
         oc.release();
       }
       expect(aborted).toHaveLength(3);
-      expect(aborted[0].meta.reason).toMatch(/HTTP 500|kein Stripe-Zugang/);
+      // nur die Art des Fehlers, keine Antworttexte von Stripe und keine Praxisangaben (AppSec)
+      expect(aborted.map((a) => a.meta.reason).sort()).toEqual(["BillingHttpError", "stripe_not_configured", "stripe_not_configured"]);
+      expect(JSON.stringify(aborted)).not.toMatch(/kaputt|Praxis|STRIPE_SECRET_KEY/);
     });
   });
 });

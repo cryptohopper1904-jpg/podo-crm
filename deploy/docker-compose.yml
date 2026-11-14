@@ -200,6 +200,15 @@ services:
               echo "$$(date -Iseconds) News-Abruf fehlgeschlagen"
             fi
           fi
+          # Ende des Nur-Lesen-Modus alle 6 Stunden: Löschung ankündigen, automatischer Löschantrag, Erinnerung (AGB § 9 Nr. 2)
+          LAST=$$(cat /status/cron-nur-lesen.last 2>/dev/null || echo 0)
+          if [ $$(( $$(date +%s) - LAST )) -ge 21600 ]; then
+            if curl -fsS -m 300 -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/cron/nur-lesen >/dev/null; then
+              date +%s > /status/cron-nur-lesen.last
+            else
+              echo "$$(date -Iseconds) Nur-Lesen-Ablauf fehlgeschlagen"
+            fi
+          fi
           # Praxissuche (Vertrieb) einmal pro Nacht: Container läuft in UTC, 01 UTC = 2 bzw. 3 Uhr deutscher Zeit.
           # Höchstens alle 20 h; läuft nur, wenn in der Plattform-Konsole eingeschaltet (sonst antwortet die App sofort).
           # Im Hintergrund (bis 15 min), damit Kalender-Abo/Erinnerungen nicht warten; parallele Läufe verhindert die App.

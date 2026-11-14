@@ -7,7 +7,9 @@ import { Badge, Card, CardTitle } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { DELETION_GRACE_DAYS, deletionDueAt, isWithinGrace } from "@/lib/org-deletion";
+import { isAutoDeletion } from "@/lib/readonly-expiry";
 import { CANCEL_FAILED_MESSAGE, cancelStateFromSettings, hasRunningSubscription } from "@/lib/subscription-cancel";
+import { readonlyDeletionNotice } from "@/server/readonly-expiry";
 import { DeletionCancel, DeletionRequest } from "./deletion-panel";
 
 export const metadata = { title: "Daten & Kündigung" };
@@ -39,7 +41,8 @@ function RetentionNotice() {
       <p className="mt-2">
         Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
         auf. Wir löschen alle Daten frühestens {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig. Verschlüsselte Datensicherungen laufen
-        spätestens 14 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
+        spätestens 30 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf. Ohne Löschantrag bleibt die Praxis nach Vertragsende
+        höchstens 12 Monate im Nur-Lesen-Modus und wird dann gelöscht (Ankündigung mindestens 30 Tage vorher).
       </p>
       <p className="mt-2">
         Der Komplett-Export enthält <strong>nicht</strong> den DSFinV-K-Export (Kasse → DSFinV-K-Export) und den TSE-Export (beim TSE-Anbieter):
@@ -73,6 +76,8 @@ export default async function DataSettings() {
     .from(organizations)
     .where(eq(organizations.id, auth.organization.id));
   const requestedAt = org?.at ?? null;
+  const auto = isAutoDeletion(org?.settings);
+  const expiry = await readonlyDeletionNotice(auth.organization.id);
   const running = !!org && hasRunningSubscription(org);
   const cancel = cancelStateFromSettings(org?.settings);
   const periodEnd = org?.currentPeriodEnd ? dateDe(org.currentPeriodEnd) : "Ende des Abrechnungszeitraums";
@@ -80,7 +85,20 @@ export default async function DataSettings() {
 
   return (
     <div className="flex flex-col gap-6">
-      {requestedAt ? (
+      {requestedAt && auto ? (
+        <Card className="border-danger/50" data-testid="auto-loeschung">
+          <CardTitle>Löschung angekündigt <Badge tone="accent">Nur-Lesen-Modus endet</Badge></CardTitle>
+          <p className="text-[15px]">
+            Dein Vertrag ist beendet; der Nur-Lesen-Modus endet spätestens 12 Monate nach Vertragsende. Die Praxis wird deshalb frühestens am{" "}
+            <strong>{dateDe(deletionDueAt(requestedAt))}</strong> mit allen Daten, Fotos und Zugängen endgültig gelöscht. Bis dahin kannst du alles
+            lesen und exportieren – erstelle jetzt den vollständigen Export.
+          </p>
+          <p className="mt-2 text-[15px]">
+            Möchtest du PodoHero weiter nutzen, wähle unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link> einen
+            Tarif (bis 20 Patient:innen auch kostenlos) – dann entfällt die Löschung.
+          </p>
+        </Card>
+      ) : requestedAt ? (
         <Card className="border-danger/50">
           <CardTitle>Löschung beantragt <Badge tone="accent">Karenzzeit</Badge></CardTitle>
           <p className="text-[15px]">
@@ -92,9 +110,14 @@ export default async function DataSettings() {
               Dein Abo ist zum <strong>{periodEnd}</strong> gekündigt; danach wird nichts mehr abgebucht.
               {cancel.reason !== "deletion_request" ? " Die Kündigung wurde separat ausgesprochen und bleibt auch bei einer Rücknahme des Löschantrags bestehen." : null}
             </p>
-          ) : running ? (
+          ) : running && cancel.error ? (
             <p role="alert" className="mt-3 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text" data-testid="abo-kuendigung-status">
               {CANCEL_FAILED_MESSAGE} Zum Kündigen: {aboLink}.
+            </p>
+          ) : running ? (
+            <p role="alert" className="mt-3 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text" data-testid="abo-kuendigung-status">
+              Dein Abo ist derzeit nicht gekündigt (z. B. weil die Kündigung im Kundenportal zurückgenommen wurde). Damit nach dem Ende des
+              Abrechnungszeitraums nichts mehr abgebucht wird, kündige es unter {aboLink}.
             </p>
           ) : null}
           <div className="mt-4">
@@ -104,6 +127,17 @@ export default async function DataSettings() {
               <p className="text-sm text-muted">Die Karenzzeit ist abgelaufen; die Löschung erfolgt im nächsten Löschlauf.</p>
             )}
           </div>
+        </Card>
+      ) : null}
+
+      {!requestedAt && expiry ? (
+        <Card className="border-danger/50" data-testid="nur-lesen-ablauf">
+          <CardTitle>Nur-Lesen-Modus endet</CardTitle>
+          <p className="text-[15px]">
+            Dein Vertrag ist beendet. Die Praxis bleibt höchstens 12 Monate nach Vertragsende lesbar; ohne neuen Tarif wird sie ab dem{" "}
+            <strong>{dateDe(expiry.deletionAt)}</strong> gelöscht (Ankündigung mindestens 30 Tage vorher). Erstelle vorher den vollständigen Export. Mit
+            einem Tarif unter <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link> entfällt die Löschung.
+          </p>
         </Card>
       ) : null}
 
@@ -130,8 +164,9 @@ export default async function DataSettings() {
             Mit der Kündigung beantragst du die vollständige Löschung deiner Praxis: alle Patient:innen, Doku, Fotos, Rechnungen, Termine und Zugänge.
             Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Der Löschantrag gilt
             zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums; danach wird nichts mehr abgebucht. Nimmst du den
-            Löschantrag innerhalb der Karenzzeit zurück, gilt auch die Kündigung als zurückgenommen und dein Abo läuft weiter. Möchtest du nur das
-            Abo kündigen und deine Daten behalten, nutze „Abo kündigen“ unter{" "}
+            Löschantrag vor dem Ende des Abrechnungszeitraums zurück, gilt auch die Kündigung als zurückgenommen und dein Abo läuft weiter. Ist
+            das Abo bereits beendet, bleibt die Praxis im Nur-Lesen-Modus, bis du wieder einen Tarif wählst. Möchtest du nur das Abo kündigen und
+            deine Daten behalten, nutze „Abo kündigen“ unter{" "}
             <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>
           {running && cancel.cancelAtPeriodEnd ? (

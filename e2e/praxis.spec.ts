@@ -299,10 +299,14 @@ test("Kasse: Kassenbuch-Eintrag, Formel-Schutz, DSFinV-K-Exportseite", async () 
 test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Daten & Kündigung", async () => {
   await page.goto("/einstellungen/daten");
   await expect(page.getByText(/Der Löschantrag gilt\s+zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums/)).toBeVisible();
+  await expect(page.getByText(/Ist\s+das Abo bereits beendet, bleibt die Praxis im Nur-Lesen-Modus, bis du wieder einen Tarif wählst\./)).toBeVisible();
   const restore = await setDemoBilling({ plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId: `sub_mock_e2e${run}` });
   try {
     await page.goto("/einstellungen/abo");
     await expect(page.getByRole("heading", { name: "Abo kündigen" })).toBeVisible();
+    // laufendes (Pseudo-)Abo: Kostenlos-Wechsel verweist auf „Abo kündigen“
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen („Abo kündigen“ auf dieser Seite).", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Kostenlos weiter nutzen" })).toBeDisabled();
     await page.getByRole("button", { name: "Abo kündigen …" }).click();
     await page.getByRole("button", { name: "Abo zum Periodenende kündigen" }).click();
     // Bestätigung ist Pflicht (required) – erst mit Haken wird gekündigt
@@ -315,6 +319,16 @@ test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Date
     await expect(page.getByTestId("abo-gekuendigt")).toHaveCount(0);
   } finally {
     await restore();
+  }
+  // Nebenwirkung der Pseudo-Abo-ID: Ist das Abo beendet, blockiert die verbliebene ID den Kostenlos-Wechsel nicht
+  const restoreEnded = await setDemoBilling({ plan: "praxis", subscriptionStatus: "canceled", stripeSubscriptionId: `sub_mock_e2e${run}` });
+  try {
+    await page.goto("/einstellungen/abo");
+    await expect(page.getByRole("heading", { name: "Kostenlos weiter nutzen" })).toBeVisible();
+    await expect(page.getByText("Bitte zuerst das bezahlte Abo kündigen", { exact: false })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Abo kündigen" })).toHaveCount(0);
+  } finally {
+    await restoreEnded();
   }
 });
 

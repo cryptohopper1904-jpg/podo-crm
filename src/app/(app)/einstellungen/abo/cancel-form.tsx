@@ -23,7 +23,7 @@ export function CancelSubscriptionForm({ periodEnd }: { periodEnd: string }) {
       <FormError message={state?.error} />
       <FormSuccess message={state?.ok} />
       <p className="text-sm font-semibold">Kündigung bestätigen</p>
-      <Checkbox name="confirm" required label={`Ich kündige das Abo zum ${periodEnd}. Meine Daten bleiben erhalten (danach im Nur-Lesen-Modus).`} />
+      <Checkbox name="confirm" required label={`Ich kündige das Abo zum ${periodEnd}. Meine Daten bleiben danach höchstens 12 Monate im Nur-Lesen-Modus erhalten und werden dann gelöscht (Ankündigung 30 Tage vorher).`} />
       <div className="flex flex-wrap gap-2">
         <Button type="submit" variant="danger" disabled={pending}>{pending ? "…" : "Abo zum Periodenende kündigen"}</Button>
         <Button type="button" variant="ghost" onClick={() => setStep(1)}>Abbrechen</Button>

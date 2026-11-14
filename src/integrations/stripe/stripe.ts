@@ -13,6 +13,7 @@ import {
   type BillingPort,
   type CheckoutInput,
   type FetchLike,
+  type OpenBillingItems,
   type StripeEvent,
   type SubscriptionInfo,
 } from "./types";
@@ -72,6 +73,9 @@ export function subscriptionInfo(raw: Record<string, unknown>): SubscriptionInfo
   const meta = raw.metadata && typeof raw.metadata === "object" ? (raw.metadata as Record<string, unknown>) : {};
   const reason = meta[CANCEL_REASON_METADATA_KEY];
   const customer = typeof raw.customer === "string" ? raw.customer : typeof (raw.customer as { id?: unknown } | null)?.id === "string" ? (raw.customer as { id: string }).id : null;
+  // Intervall des Grundpreises (erste Position; ältere API zusätzlich raw.plan)
+  const first = items[0] as { price?: { recurring?: { interval?: unknown; interval_count?: unknown } }; plan?: { interval?: unknown; interval_count?: unknown } } | undefined;
+  const rec = first?.price?.recurring ?? first?.plan ?? (raw.plan as { interval?: unknown; interval_count?: unknown } | undefined);
   return {
     id: String(raw.id ?? ""),
     status: String(raw.status ?? ""),
@@ -80,8 +84,13 @@ export function subscriptionInfo(raw: Record<string, unknown>): SubscriptionInfo
     customerId: customer,
     currentPeriodStart: pick("current_period_start", (a) => Math.min(...a)),
     currentPeriodEnd: pick("current_period_end", (a) => Math.max(...a)),
+    canceledAt: typeof raw.canceled_at === "number" && raw.canceled_at > 0 ? raw.canceled_at : null,
+    interval: typeof rec?.interval === "string" ? rec.interval : null,
+    intervalCount: typeof rec?.interval_count === "number" ? rec.interval_count : null,
   };
 }
+
+const cents = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0);
 
 /** Stripe-IDs landen im URL-Pfad: nur das erwartete Format zulassen */
 function stripeId(id: string, prefix: "sub_" | "cus_"): string {
@@ -150,6 +159,26 @@ export class StripeAdapter implements BillingPort {
     // Leerer Wert entfernt einen Metadaten-Schlüssel bei Stripe
     const params = { cancel_at_period_end: cancel ? "true" : "false", metadata: { [CANCEL_REASON_METADATA_KEY]: reason ?? "" } };
     return subscriptionInfo(await this.post<Record<string, unknown>>(`/subscriptions/${stripeId(subscriptionId, "sub_")}`, params));
+  }
+
+  async listSubscriptions(customerId: string): Promise<SubscriptionInfo[]> {
+    const r = await this.request<{ data?: Record<string, unknown>[] }>("GET", "/subscriptions", { customer: stripeId(customerId, "cus_"), status: "all", limit: 100 });
+    return (r.data ?? []).map(subscriptionInfo);
+  }
+
+  async openBillingItems(customerId: string): Promise<OpenBillingItems> {
+    const customer = stripeId(customerId, "cus_");
+    const inv = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoices", { customer, status: "open", limit: 100 });
+    const items = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoiceitems", { customer, pending: "true", limit: 100 });
+    const invoices = inv.data ?? [];
+    const pending = items.data ?? [];
+    return {
+      openInvoices: invoices.length,
+      openInvoiceCents: invoices.reduce((s, i) => s + cents(i.amount_remaining), 0),
+      pendingItems: pending.length,
+      pendingItemCents: pending.reduce((s, i) => s + cents(i.amount), 0),
+      truncated: inv.has_more === true || items.has_more === true,
+    };
   }
 
   async cancelSubscriptionNow(subscriptionId: string): Promise<SubscriptionInfo | null> {

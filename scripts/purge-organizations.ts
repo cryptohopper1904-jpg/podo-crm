@@ -8,7 +8,12 @@
  * Fällig = organizations.deletion_requested_at älter als 30 Tage (src/lib/org-deletion.ts).
  * Benötigt die EIGENTÜMER-Rolle der Tabellen (nicht die App-Rolle): Nur der Eigentümer darf die
  * Unveränderbarkeits-Trigger innerhalb der Lösch-Transaktion aussetzen (Details: src/server/purge-organization.ts).
- * Löscht anschließend <STORAGE_DIR>/<org-id>/. Verschlüsselte Backups laufen nach ihrer Frist (14 Tage) aus.
+ * Löscht anschließend <STORAGE_DIR>/<org-id>/. Verschlüsselte Backups laufen nach ihrer Frist aus (Server 14 Tage, zweiter
+ * Standort höchstens 30 Tage, docs/BETRIEB.md Abschnitt 7).
+ * Automatische Löschanträge (Ende des Nur-Lesen-Modus, Grund „auto_readonly_expiry“) werden nur ausgeführt, wenn die
+ * Praxis weiterhin keinen Tarif hat und die Löschung angekündigt wurde.
+ * Buchhaltung: VOR dem Lauf mit --execute die Stripe-Rechnungen der Praxis exportieren (docs/BETRIEB.md Abschnitt 9);
+ * der Probelauf meldet offene Rechnungen und nicht abgerechnete Positionen.
  * Stripe: Vorher wird ein noch laufendes Abo sofort beendet und der Stripe-Kunde gelöscht (STRIPE_SECRET_KEY nötig,
  * sobald eine Praxis eine Stripe-ID hat – sonst wird sie übersprungen und der Lauf endet mit Fehlercode).
  */
@@ -46,7 +51,16 @@ async function main() {
         if (r.stripe.subscription === "unchecked" || r.stripe.customer === "unchecked") {
           console.log("    Stripe ungeprüft: STRIPE_SECRET_KEY fehlt – mit --execute würde diese Praxis übersprungen.");
         }
-        if (r.stripe.refundCheck) console.log(`    ACHTUNG: Nach dem Löschantrag wurde eine neue Abo-Periode abgerechnet – Erstattung im Stripe-Dashboard prüfen (Praxis ${o.id}, Abo-ID siehe Zeile stripe.subscription_canceled).`);
+        if (r.stripe.refundCheck) {
+          console.log(
+            `    ACHTUNG: Erstattung prüfen – nach dem Löschantrag wurde eine neue Abo-Periode abgerechnet oder das Abo ist nicht monatlich (Praxis ${o.id}, Abo ${r.stripe.subscriptionId ?? "?"}). Erstattung als Rechnungskorrektur (Credit Note) im Stripe-Dashboard, nicht als bloße Rückzahlung.`,
+          );
+        }
+        const open = r.stripe.openItems;
+        if (open?.openInvoices) console.log(`    ACHTUNG: ${open.openInvoices} offene Stripe-Rechnung(en) über ${(open.openInvoiceCents / 100).toFixed(2)} € (Abo-Status ${r.stripe.subscriptionStatus ?? "?"}) – vor dem Löschen klären (Forderung/Ausbuchung).`);
+        if (open?.pendingItems) console.log(`    ACHTUNG: ${open.pendingItems} nicht abgerechnete Position(en) über ${(open.pendingItemCents / 100).toFixed(2)} € – werden beim sofortigen Beenden nicht mehr abgerechnet (invoice_now=false).`);
+        if (open?.truncated) console.log("    Hinweis: mehr als 100 offene Posten – Zahlen sind Untergrenzen, bitte im Stripe-Dashboard prüfen.");
+        if (r.stripe.customerId) console.log(`    Buchhaltung: Stripe-Rechnungen des Kunden ${r.stripe.customerId} vor dem Löschen exportieren (Lexoffice/Steuerberatung).`);
         if (!execute) for (const [t, n] of Object.entries(r.rows)) if (n) console.log(`    ${t.padEnd(26)} ${n}`);
       } catch (e) {
         failed++;

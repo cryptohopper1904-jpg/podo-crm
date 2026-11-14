@@ -16,6 +16,7 @@ import { CheckoutForm } from "./checkout-form";
 import { CancelSubscriptionForm, ResumeSubscriptionForm } from "./cancel-form";
 import Link from "next/link";
 import { CANCEL_FAILED_MESSAGE, cancelStateFromSettings, hasRunningSubscription } from "@/lib/subscription-cancel";
+import { readonlyDeletionNotice } from "@/server/readonly-expiry";
 
 export const metadata = { title: "Abo & Tarif" };
 
@@ -45,6 +46,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
   const running = !!org && hasRunningSubscription(org);
   const cancel = cancelStateFromSettings(org?.settings);
   const periodEndLabel = org?.currentPeriodEnd ? dateDe(org.currentPeriodEnd) : "Ende des Abrechnungszeitraums";
+  const expiry = a.mode === "readonly" ? await readonlyDeletionNotice(auth.organization.id) : null;
   const freeWarning =
     [
       a.trialDaysLeft !== undefined ? `Die Testphase (noch ${a.trialDaysLeft} ${a.trialDaysLeft === 1 ? "Tag" : "Tage"}) endet damit sofort – Patientenportal, KI-Telefon und Website werden abgeschaltet.` : null,
@@ -83,6 +85,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         {a.mode === "readonly" ? (
           <p className="mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm font-medium text-accent-soft-text">
             {READONLY_REASON_LABELS[a.reason]} Die Praxis ist im Nur-Lesen-Modus: Alle Daten bleiben lesbar und exportierbar, Änderungen sind bis zur Wahl eines Tarifs gesperrt.
+            {expiry ? <> Ohne Tarif wird die Praxis ab dem <strong>{dateDe(expiry.deletionAt)}</strong> gelöscht (höchstens 12 Monate nach Vertragsende) – erstelle vorher den Export unter Daten & Kündigung.</> : null}
           </p>
         ) : a.graceEndsAt ? (
           <p className="mt-4 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text">
@@ -102,7 +105,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
               <p className="mb-3 text-[15px]" data-testid="abo-gekuendigt">
                 Dein Abo ist zum <strong>{periodEndLabel}</strong> gekündigt{cancel.reason === "deletion_request" ? " (mit deinem Löschantrag)" : ""}. Bis dahin
                 nutzt du PodoHero wie gewohnt; danach wird nichts mehr abgebucht. {GRACE_DAYS} Tage nach dem Ende wechselt die Praxis in den
-                Nur-Lesen-Modus – alle Daten bleiben lesbar und exportierbar.
+                Nur-Lesen-Modus. Nach dem Ende bleibt die Praxis bis zu 12 Monate lesbar und alle Daten exportierbar; danach wird sie gelöscht.
               </p>
               <ResumeSubscriptionForm
                 disabledReason={
@@ -116,8 +119,8 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
             <>
               <p className="mb-3 text-sm text-muted">
                 Kündigung jederzeit zum Ende des laufenden Abrechnungszeitraums (derzeit {periodEndLabel}); danach wird nichts mehr abgebucht. Deine
-                Daten bleiben erhalten: {GRACE_DAYS} Tage nach dem Ende wechselt die Praxis in den Nur-Lesen-Modus, alle Daten bleiben lesbar und
-                exportierbar. Bis zum Ende kannst du die Kündigung hier zurücknehmen. Soll die Praxis auch gelöscht werden, nutze{" "}
+                Daten bleiben erhalten: {GRACE_DAYS} Tage nach dem Ende wechselt die Praxis in den Nur-Lesen-Modus. Nach dem Ende bleibt die Praxis
+                bis zu 12 Monate lesbar und alle Daten exportierbar; danach wird sie gelöscht. Bis zum Ende kannst du die Kündigung hier zurücknehmen. Soll die Praxis auch gelöscht werden, nutze{" "}
                 <Link href="/einstellungen/daten" className="font-semibold text-primary underline">Daten & Kündigung</Link>.
               </p>
               {cancel.error && org?.deletionRequestedAt ? (
@@ -206,7 +209,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
       </Table>
       <p className="text-sm font-semibold text-warn-soft-text"><Badge tone="warn">Preise vorläufig</Badge> <span className="ml-2 font-normal text-muted">{PRICES_NOTE}</span></p>
       <p className="text-sm text-muted">
-        Ein Platz ist für eine Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende des Abos und {GRACE_DAYS} Tagen Kulanz wechselt die Praxis in den Nur-Lesen-Modus; alle Daten bleiben lesbar und exportierbar (Einstellungen → Daten & Kündigung, Patientenexport in der Akte), bis die Praxis auf deinen Löschantrag hin gelöscht wird.
+        Ein Platz ist für eine Person mit Behandlungsrolle (Inhaber:in, Podolog:in, Azubi). {SEAT_FREE_NOTE} Kündigung jederzeit zum Ende des Abrechnungszeitraums. Nach dem Ende des Abos und {GRACE_DAYS} Tagen Kulanz wechselt die Praxis in den Nur-Lesen-Modus; alle Daten bleiben lesbar und exportierbar (Einstellungen → Daten & Kündigung, Patientenexport in der Akte). Nach dem Ende bleibt die Praxis bis zu 12 Monate lesbar und alle Daten exportierbar; danach wird sie gelöscht (Ankündigung mindestens 30 Tage vorher) – oder früher auf deinen Löschantrag hin.
       </p>
     </div>
   );

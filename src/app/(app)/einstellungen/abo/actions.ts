@@ -133,7 +133,7 @@ export async function cancelSubscriptionAction(_: AboState, form: FormData): Pro
   revalidatePath("/einstellungen/daten");
   switch (r.status) {
     case "canceled":
-      return { ok: `Dein Abo ist zum ${endLabel(r.periodEnd)} gekündigt. Bis dahin nutzt du PodoHero wie gewohnt; danach wird nichts mehr abgebucht und deine Daten bleiben im Nur-Lesen-Modus erhalten.` };
+      return { ok: `Dein Abo ist zum ${endLabel(r.periodEnd)} gekündigt. Bis dahin nutzt du PodoHero wie gewohnt; danach wird nichts mehr abgebucht und deine Daten bleiben höchstens 12 Monate im Nur-Lesen-Modus erhalten.` };
     case "already_canceled":
       return { ok: `Dein Abo ist bereits zum ${endLabel(r.periodEnd)} gekündigt.` };
     case "no_subscription":

@@ -6,7 +6,10 @@ import { billingUpdateFromEvent, type OrgBillingPatch } from "@/integrations/str
 import { priceIdsFromEnv, type PriceIds } from "@/integrations/stripe/stripe";
 import type { StripeEvent } from "@/integrations/stripe/types";
 import { freeSwitchProblem, SEAT_FREE_ROLES } from "@/lib/plans";
+import { readonlyExpiry } from "@/lib/readonly-expiry";
+import { hasRunningSubscription } from "@/lib/subscription-cancel";
 import { countedPatients } from "./patient-limit";
+import { stopAutoDeletion } from "./readonly-expiry";
 
 export type BillingResult = "processed" | "duplicate" | "ignored" | "unassigned";
 
@@ -70,6 +73,14 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
     if (codeTrial && ev.type.startsWith("customer.subscription.") && !["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "")) {
       return done("ignored", org.id, "Aktionscode-Testphase: altes Abo");
     }
+    // Abo-Event eines WEITEREN Abos desselben Kunden (z. B. doppelt abgeschlossen, altes Abo endet): die Zuordnung der
+    // Praxis nicht stumpf überschreiben. Übernommen wird ein anderes Abo nur, wenn es aktiv ist und die Praxis kein
+    // laufendes Abo mehr hat (z. B. neu abgeschlossen nach Ende des alten).
+    const evSub = upd.patch.stripeSubscriptionId;
+    if (ev.type.startsWith("customer.subscription.") && evSub && org.stripeSubscriptionId && evSub !== org.stripeSubscriptionId) {
+      const newRunning = ["active", "trialing"].includes(upd.patch.subscriptionStatus ?? "");
+      if (hasRunningSubscription(org) || !newRunning) return done("ignored", org.id, "Event eines weiteren Abos – Zuordnung unverändert");
+    }
     await applyPatch(tx, org.id, upd.patch, Math.max(last, ev.created), {
       cancelAtPeriodEnd: upd.cancelAtPeriodEnd,
       // Abo beendet oder neues Abo abgeschlossen: Herkunft und Fehlermerker einer früheren Kündigung entfallen
@@ -82,6 +93,8 @@ export async function processBillingEvent(ev: StripeEvent, opts: { prices?: Pric
       entityId: ev.id,
       meta: { type: ev.type, plan: upd.patch.plan, status: upd.patch.subscriptionStatus, seats: upd.patch.seats, cancelAtPeriodEnd: upd.cancelAtPeriodEnd },
     });
+    // Tarif gebucht bzw. Abo wieder aktiv: automatische Löschung nach Ende des Nur-Lesen-Modus entfällt
+    if (!readonlyExpiry({ ...org, ...upd.patch })) await stopAutoDeletion(tx, org.id, { trigger: `billing:${ev.type}` });
     return done("processed", org.id);
   });
 }
@@ -120,8 +133,8 @@ async function applyPatch(
   cancel: { cancelAtPeriodEnd?: boolean; reset?: boolean } = {},
 ) {
   let settings = sql`coalesce(${organizations.settings}, '{}'::jsonb)`;
-  if (cancel.reset) settings = sql`(${settings} - 'billingCancelReason' - 'billingCancelError')`;
-  else if (cancel.cancelAtPeriodEnd === false) settings = sql`(${settings} - 'billingCancelReason')`;
+  if (cancel.reset) settings = sql`(${settings} - 'billingCancelReason' - 'billingCancelMarks' - 'billingCancelError')`;
+  else if (cancel.cancelAtPeriodEnd === false) settings = sql`(${settings} - 'billingCancelReason' - 'billingCancelMarks')`;
   if (cancel.cancelAtPeriodEnd !== undefined) settings = sql`${settings} || jsonb_build_object('billingCancelAtPeriodEnd', ${cancel.cancelAtPeriodEnd}::boolean)`;
   if (lastEventAt !== undefined) settings = sql`${settings} || jsonb_build_object('billingLastEventAt', ${lastEventAt}::bigint)`;
   const touchesSettings = lastEventAt !== undefined || cancel.cancelAtPeriodEnd !== undefined || cancel.reset;
@@ -156,6 +169,7 @@ export async function applyMockSubscription(organizationId: string, userId: stri
       stripeSubscriptionId: `sub_mock_${organizationId.replace(/-/g, "").slice(0, 12)}`,
     }, undefined, { cancelAtPeriodEnd: false, reset: true });
     await tx.insert(auditLog).values({ organizationId, userId, action: "billing.mock_switch", meta: { plan, seats } });
+    await stopAutoDeletion(tx, organizationId, { trigger: "billing.mock_switch", userId });
   });
 }
 
@@ -275,6 +289,8 @@ async function freeSwitchTx(
     action: opts.action,
     meta: { from: o.plan, status: o.subscriptionStatus, deactivatedMembers: off.length, ...opts.meta },
   });
+  // Kostenlos-Tarif beendet den Nur-Lesen-Modus: automatische Löschung entfällt
+  await stopAutoDeletion(tx, organizationId, { trigger: opts.action, userId: opts.auditUserId });
   return { ok: true as const, deactivated: off.map((m) => m.userId) };
 }
 

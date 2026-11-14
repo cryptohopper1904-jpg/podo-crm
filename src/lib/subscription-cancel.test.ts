@@ -5,7 +5,7 @@ const sub = { plan: "praxis", subscriptionStatus: "active", stripeSubscriptionId
 
 describe("Kündigungszustand des Abos", () => {
   it("liest nur gültige Werte aus den Einstellungen", () => {
-    expect(cancelStateFromSettings(undefined)).toEqual({ cancelAtPeriodEnd: false, reason: null, error: null });
+    expect(cancelStateFromSettings(undefined)).toEqual({ cancelAtPeriodEnd: false, reason: null, error: null, marks: [] });
     expect(cancelStateFromSettings({ billingCancelAtPeriodEnd: true, billingCancelReason: "deletion_request" })).toMatchObject({ cancelAtPeriodEnd: true, reason: "deletion_request" });
     expect(cancelStateFromSettings({ billingCancelAtPeriodEnd: "true", billingCancelReason: "portal" })).toMatchObject({ cancelAtPeriodEnd: false, reason: null });
     expect(cancelStateFromSettings({ billingCancelError: { at: "2026-11-14T10:00:00Z", trigger: "deletion_request" } }).error).toEqual({ at: "2026-11-14T10:00:00Z", trigger: "deletion_request" });

@@ -6,10 +6,11 @@
 export type CheckStatus = "ok" | "warn" | "fail" | "skipped";
 export type CheckResult = { status: CheckStatus; hint?: string } & Record<string, string | number | boolean | null | undefined>;
 
-/** Grenzwerte: Backup täglich (+2 h Toleranz), Cron alle 15 min (3 verpasste Läufe). */
+/** Grenzwerte: Backup täglich (+2 h Toleranz), Cron alle 15 min (3 verpasste Läufe), 6-Stunden-Cron (+1 h). */
 export const MAX_AGE_SECONDS = {
   backup: 26 * 3600,
   cron: 45 * 60,
+  cron6h: 7 * 3600,
 } as const;
 
 /** Bewertet einen Zeitstempel (Unix-Sekunden) aus einer Status-Datei. */
