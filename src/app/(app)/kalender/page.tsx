@@ -1,11 +1,26 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import type { ReactNode } from "react";
-import { Ban, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { AppointmentRow } from "@/components/appointment-row";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
-import { Badge, Card, Empty, LinkButton, PageHeader } from "@/components/ui";
+import { Badge, Card, cx, Empty, LinkButton, segmentGroupCls, segmentItemCls } from "@/components/ui";
 import { getSession, requireAuth } from "@/lib/auth/session";
-import { addDaysIso, modeParam, mondayOfIso, monthWeeks, parseFullView, parseMode, shiftMonthIso, type CalendarMode, type FullView } from "@/lib/calendar-grid";
+import {
+  addDaysIso,
+  defaultFullView,
+  isNarrowCookie,
+  modeParam,
+  mondayOfIso,
+  monthWeeks,
+  NARROW_COOKIE,
+  parseFullView,
+  parseMode,
+  shiftMonthIso,
+  shortCalendarTitle,
+  type CalendarMode,
+  type FullView,
+} from "@/lib/calendar-grid";
 import { berlinDateIso, weekdayLong } from "@/lib/format";
 import { holidayOn, STATES, type StateCode } from "@/lib/holidays";
 import { isoWeek, keepOptionParams, parseOptionParams, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
@@ -22,21 +37,27 @@ import { FreeSlotFinder } from "./free-slot-finder";
 import { FullCalendar } from "./full-calendar";
 import { DayBlockLine } from "./calendar-blocks-view";
 import { canCreateBlocks } from "@/server/calendar-blocks";
+import { CalendarHeader } from "./calendar-header";
+import { DATE_SLOT, ViewportDefault } from "./calendar-header-parts";
 
 export const metadata = { title: "Kalender" };
 
 const addDays = addDaysIso;
 const mondayOf = mondayOfIso;
 
-/** Umschalter „Einfach“ / „Vollständig“ – speichert die Wahl je Person (im Support-Modus nur per Link, ohne Speichern). */
-function ModeSwitch({ mode, day, ansicht, persist, optKeep }: { mode: CalendarMode; day: string; ansicht: string; persist: boolean; optKeep: string }) {
-  const cls = (m: CalendarMode) => `rounded-lg px-3 py-2 text-sm font-semibold ${mode === m ? "bg-primary text-on-primary" : "hover:bg-surface-2"}`;
+/**
+ * Umschalter „Einfach“ / „Vollständig“ – speichert die Wahl je Person (im Support-Modus nur per Link, ohne Speichern).
+ * `wide`: volle Breite (im „⋯“-Menü auf dem Handy).
+ */
+function ModeSwitch({ mode, day, ansicht, persist, optKeep, wide = false }: { mode: CalendarMode; day: string; ansicht: string; persist: boolean; optKeep: string; wide?: boolean }) {
   const label = { simple: "Einfach", full: "Vollständig" } as const;
+  const group = cx(segmentGroupCls, "flex-nowrap", wide && "flex w-full");
+  const item = (m: CalendarMode) => cx(segmentItemCls(mode === m), wide && "flex-1");
   if (!persist) {
     return (
-      <div className="flex rounded-xl border border-border bg-surface p-1" role="group" aria-label="Kalenderansicht">
+      <div className={group} role="group" aria-label="Kalenderansicht">
         {(["simple", "full"] as const).map((m) => (
-          <Link key={m} href={`/kalender?datum=${day}&ansicht=${m === "simple" && ansicht === "monat" ? "woche" : ansicht}&modus=${modeParam(m)}${optKeep}`} className={cls(m)} aria-current={mode === m ? "true" : undefined}>
+          <Link key={m} href={`/kalender?datum=${day}&ansicht=${m === "simple" && ansicht === "monat" ? "woche" : ansicht}&modus=${modeParam(m)}${optKeep}`} className={item(m)} aria-current={mode === m ? "true" : undefined}>
             {label[m]}
           </Link>
         ))}
@@ -44,11 +65,11 @@ function ModeSwitch({ mode, day, ansicht, persist, optKeep }: { mode: CalendarMo
     );
   }
   return (
-    <form action={setCalendarModeAction} className="flex rounded-xl border border-border bg-surface p-1" role="group" aria-label="Kalenderansicht">
+    <form action={setCalendarModeAction} className={group} role="group" aria-label="Kalenderansicht">
       <input type="hidden" name="datum" value={day} />
       <input type="hidden" name="ansicht" value={ansicht} />
       {(["simple", "full"] as const).map((m) => (
-        <button key={m} type="submit" name="mode" value={m} className={`cursor-pointer ${cls(m)}`} aria-pressed={mode === m} title={m === "full" ? "Tag/Woche/Monat mit Zeitachse (wird gemerkt)" : "Terminliste (wird gemerkt)"}>
+        <button key={m} type="submit" name="mode" value={m} className={cx("cursor-pointer", item(m))} aria-pressed={mode === m} title={m === "full" ? "Tag/Woche/Monat mit Zeitachse (wird gemerkt)" : "Terminliste (wird gemerkt)"}>
           {label[m]}
         </button>
       ))}
@@ -96,8 +117,9 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const persist = !auth.support;
   const options = calendarOptionsOf(session?.user.prefs, mode, parseOptionParams(sp));
   const state = auth.organization.state as StateCode;
-  const panel = (ansicht: string) => (
+  const panel = (ansicht: string, place: "menu" | "bar" = "bar") => (
     <CalendarOptionsPanel
+      wide={place === "menu"}
       mode={mode}
       options={options}
       persist={persist}
@@ -106,7 +128,10 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
     />
   );
 
-  if (mode === "full") return <FullPage auth={auth} sp={sp} day={day} keep={keep} optKeep={optKeep} persist={persist} options={options} panel={panel} weekendKeep={weekendKeep} />;
+  if (mode === "full") {
+    const narrow = isNarrowCookie((await cookies()).get(NARROW_COOKIE)?.value);
+    return <FullPage auth={auth} sp={sp} day={day} keep={keep} optKeep={optKeep} persist={persist} options={options} panel={panel} weekendKeep={weekendKeep} narrow={narrow} />;
+  }
 
   const view = sp.ansicht === "woche" ? "woche" : "tag";
   const start = view === "woche" ? mondayOf(day) : day;
@@ -125,27 +150,33 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const schoolUncovered = options.schoolHolidays && allDates.some((d) => !schoolHolidaysCovered(d));
   const absentNames = (iso: string) =>
     board && options.absences ? board.team.filter((t) => board.absences.some((a) => a.userId === t.id && a.startsOn <= iso && iso <= a.endsOn)).map((t) => t.name) : [];
+  // „Quittung“ direkt in der Zeile: erledigte, noch nicht abgerechnete Termine (nur mit Recht auf Belege)
+  const doneIds = auth.can("invoices.write") ? rows.filter((r) => r.a.status === "done" && r.patient).map((r) => r.a.id) : [];
+  const billed = doneIds.length ? await billedAppointmentIds(auth, doneIds) : new Set<string>();
+  const canWrite = auth.can("appointments.write");
+  const listHref = (p: { ansicht?: "tag" | "woche"; datum?: string }) => `/kalender?datum=${p.datum ?? day}${(p.ansicht ?? view) === "woche" ? "&ansicht=woche" : ""}${keep}`;
+  const fullTitle = view === "woche" ? `Woche ab ${weekdayLong(`${start}T12:00:00Z`)}${options.weekNumbers ? ` · KW ${isoWeek(start)}` : ""}` : weekdayLong(`${day}T12:00:00Z`);
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <PageHeader
-        title={view === "woche" ? `Woche ab ${weekdayLong(`${start}T12:00:00Z`)}${options.weekNumbers ? ` · KW ${isoWeek(start)}` : ""}` : weekdayLong(`${day}T12:00:00Z`)}
-        subtitle="Kalender"
-        actions={
-          <>
-            <ModeSwitch mode="simple" day={day} ansicht={view} persist={persist} optKeep={optKeep} />
-            {panel(view)}
-            <div className="flex rounded-xl border border-border bg-surface p-1">
-              <Link href={`/kalender?datum=${day}${keep}`} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view === "tag" ? "bg-primary text-on-primary" : ""}`}>Tag</Link>
-              <Link href={`/kalender?datum=${day}&ansicht=woche${keep}`} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view === "woche" ? "bg-primary text-on-primary" : ""}`}>Woche</Link>
-            </div>
-            <LinkButton variant="secondary" href={`/kalender?datum=${addDays(day, -step)}${view === "woche" ? "&ansicht=woche" : ""}${keep}`} aria-label="Zurück"><ChevronLeft size={18} aria-hidden /></LinkButton>
-            <LinkButton variant="secondary" href={view === "woche" ? `/kalender?ansicht=woche${keep}` : keep ? `/kalender?${keep.slice(1)}` : "/kalender"}>Heute</LinkButton>
-            <LinkButton variant="secondary" href={`/kalender?datum=${addDays(day, step)}${view === "woche" ? "&ansicht=woche" : ""}${keep}`} aria-label="Weiter"><ChevronRight size={18} aria-hidden /></LinkButton>
-            {canCreateBlocks(auth) ? <LinkButton variant="secondary" href={`/kalender/sperrzeit/neu?datum=${day}`} title="Sperrzeit eintragen: Pause, Schulung, früher Feierabend, Wartung, Reinigung …" aria-label="Sperrzeit eintragen"><Ban size={18} aria-hidden /><span className="max-2xl:sr-only">Sperrzeit</span></LinkButton> : null}
-            {auth.can("appointments.write") ? <LinkButton href={`/kalender/neu?datum=${day}`}><Plus size={18} aria-hidden /> Termin</LinkButton> : null}
-          </>
-        }
+    <div className="mx-auto max-w-6xl max-sm:pb-20">
+      <CalendarHeader
+        title={fullTitle}
+        shortTitle={shortCalendarTitle(view, day)}
+        dateValue={day}
+        datePattern={listHref({ datum: DATE_SLOT })}
+        prevHref={listHref({ datum: addDays(day, -step) })}
+        nextHref={listHref({ datum: addDays(day, step) })}
+        todayHref={view === "woche" ? `/kalender?ansicht=woche${keep}` : keep ? `/kalender?${keep.slice(1)}` : "/kalender"}
+        prevLabel={view === "woche" ? "Vorige Woche" : "Vorheriger Tag"}
+        nextLabel={view === "woche" ? "Nächste Woche" : "Nächster Tag"}
+        tabs={[
+          { href: listHref({ ansicht: "tag" }), label: "Tag", active: view === "tag" },
+          { href: listHref({ ansicht: "woche" }), label: "Woche", active: view === "woche" },
+        ]}
+        modeSwitch={(place) => <ModeSwitch mode="simple" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
+        panel={(place) => panel(view, place)}
+        blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
+        newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
       />
       <div className="flex flex-col gap-4">
         <Finder auth={auth} />
@@ -173,7 +204,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
             <Card key={iso}>
               {view === "woche" ? (
                 <div className="mb-2 flex items-center gap-2">
-                  <Link href={`/kalender?datum=${iso}${keep}`} className="font-display text-lg font-semibold hover:text-primary">{weekdayLong(`${iso}T12:00:00Z`)}</Link>
+                  <Link href={listHref({ ansicht: "tag", datum: iso })} className="font-display text-lg font-semibold hover:text-primary">{weekdayLong(`${iso}T12:00:00Z`)}</Link>
                   <span className="text-sm text-muted">{list.filter((r) => r.a.status !== "cancelled").length} Termine</span>
                 </div>
               ) : null}
@@ -186,14 +217,24 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
                 </p>
               ) : null}
               {list.length === 0 ? (
-                <Empty title="Keine Termine" />
+                <Empty
+                  title="Keine Termine"
+                  action={
+                    canWrite ? (
+                      <LinkButton variant="secondary" href={`/kalender/neu?datum=${iso}`}>
+                        <Plus size={18} aria-hidden /> Termin
+                      </LinkButton>
+                    ) : null
+                  }
+                />
               ) : (
                 list.map((r) => (
                   <AppointmentRow
                     key={r.a.id}
                     row={r}
                     canDoc={auth.can("medical.write")}
-                    canEdit={auth.can("appointments.write")}
+                    canEdit={canWrite}
+                    billable={doneIds.includes(r.a.id) && !billed.has(r.a.id)}
                     overlap={overlaps.has(r.a.id)}
                     from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
                     color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}
@@ -222,6 +263,7 @@ async function FullPage({
   persist,
   options,
   panel,
+  narrow,
 }: {
   auth: Awaited<ReturnType<typeof requireAuth>>;
   sp: Record<string, string | string[] | undefined>;
@@ -231,9 +273,11 @@ async function FullPage({
   weekendKeep: string;
   persist: boolean;
   options: CalendarOptions;
-  panel: (ansicht: string) => ReactNode;
+  panel: (ansicht: string, place?: "menu" | "bar") => ReactNode;
+  /** Handy (Cookie, siehe ViewportDefault): ohne Angabe Tag statt Woche */
+  narrow: boolean;
 }) {
-  const view = parseFullView(sp.ansicht);
+  const view = parseFullView(sp.ansicht, defaultFullView(narrow));
   const today = berlinDateIso();
   let start: string, days: number;
   if (view === "tag") [start, days] = [day, 1];
@@ -254,36 +298,33 @@ async function FullPage({
   const kw = options.weekNumbers && view === "woche" ? ` · KW ${isoWeek(start)}` : "";
   const title = view === "tag" ? weekdayLong(`${day}T12:00:00Z`) : view === "woche" ? `${shortDate(start)} – ${shortDate(addDays(start, 6))}${kw}` : monthTitle(day);
   const tabs: [FullView, string][] = [["tag", "Tag"], ["woche", "Woche"], ["monat", "Monat"]];
+  const unit = { tag: ["Vorheriger Tag", "Nächster Tag"], woche: ["Vorige Woche", "Nächste Woche"], monat: ["Voriger Monat", "Nächster Monat"] }[view];
   const canWrite = auth.can("appointments.write");
 
   return (
-    <div className="mx-auto max-w-7xl">
-      <PageHeader
+    <div className="mx-auto max-w-7xl max-sm:pb-20">
+      <ViewportDefault narrow={narrow} explicitView={typeof sp.ansicht === "string"} />
+      <CalendarHeader
         title={title}
-        subtitle="Kalender"
-        actions={
-          <>
-            <ModeSwitch mode="full" day={day} ansicht={view} persist={persist} optKeep={optKeep} />
-            {panel(view)}
-            <div className="flex rounded-xl border border-border bg-surface p-1" role="group" aria-label="Zeitraum">
-              {tabs.map(([v, label]) => (
-                <Link key={v} href={calHref({ ansicht: v })} className={`rounded-lg px-3 py-2 text-sm font-semibold ${view === v ? "bg-primary text-on-primary" : "hover:bg-surface-2"}`} aria-current={view === v ? "true" : undefined}>
-                  {label}
-                </Link>
-              ))}
-            </div>
-            <LinkButton variant="secondary" href={calHref({ datum: prev })} aria-label="Zurück"><ChevronLeft size={18} aria-hidden /></LinkButton>
-            <LinkButton variant="secondary" href={calHref({ datum: today })}>Heute</LinkButton>
-            <LinkButton variant="secondary" href={calHref({ datum: next })} aria-label="Weiter"><ChevronRight size={18} aria-hidden /></LinkButton>
-            {canCreateBlocks(auth) ? <LinkButton variant="secondary" href={`/kalender/sperrzeit/neu?datum=${day}`} title="Sperrzeit eintragen: Pause, Schulung, früher Feierabend, Wartung, Reinigung …" aria-label="Sperrzeit eintragen"><Ban size={18} aria-hidden /><span className="max-2xl:sr-only">Sperrzeit</span></LinkButton> : null}
-            {canWrite ? <LinkButton href={`/kalender/neu?datum=${day}`}><Plus size={18} aria-hidden /> Termin</LinkButton> : null}
-          </>
-        }
+        shortTitle={shortCalendarTitle(view, day)}
+        dateValue={day}
+        datePattern={calHref({ datum: DATE_SLOT })}
+        prevHref={calHref({ datum: prev })}
+        nextHref={calHref({ datum: next })}
+        todayHref={calHref({ datum: today })}
+        prevLabel={unit[0]}
+        nextLabel={unit[1]}
+        tabs={tabs.map(([v, label]) => ({ href: calHref({ ansicht: v }), label, active: view === v }))}
+        modeSwitch={(place) => <ModeSwitch mode="full" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
+        panel={(place) => panel(view, place)}
+        blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
+        newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
       />
       <div className="mb-3"><Finder auth={auth} /></div>
       <FullCalendar
         view={view}
         day={view === "woche" ? start : day}
+        focusDay={day}
         today={today}
         now={new Date()}
         rows={rows}
