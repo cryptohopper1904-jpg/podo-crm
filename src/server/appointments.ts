@@ -157,6 +157,8 @@ export type InternalAppointmentInput = {
   allowConflict: boolean;
 };
 
+export const ARCHIVED_PATIENT_MSG = "Diese Patient:in ist archiviert – neue Termine sind nicht möglich.";
+
 /**
  * Interne Terminanlage (Kalender) – Gesamt-Review M2: Konfliktprüfung und Anlage in EINER Transaktion unter
  * derselben Buchungssperre wie /buchen, Portal, Telefon und Warteliste (pg_advisory_xact_lock „book:<org>“).
@@ -173,6 +175,13 @@ export async function createInternalAppointments(
   return withOrg(org, async (tx) => {
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
+    // Patient:in muss zur Praxis gehören und darf nicht archiviert sein (Auswahl im Formular zeigt Archivierte nicht an –
+    // hier serverseitig, falls eine Kennung von woanders kommt, z. B. „Meinten Sie …?“ oder ein veraltetes Formular)
+    if (input.patientId) {
+      const [pt] = await tx.select({ archivedAt: patients.archivedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId))).limit(1);
+      if (!pt) return { ok: false as const, error: "Patient:in nicht gefunden." };
+      if (pt.archivedAt) return { ok: false as const, error: ARCHIVED_PATIENT_MSG };
+    }
     // verstorben: keine neuen künftigen Termine (nachträgliche Erfassung vergangener Behandlungen bleibt möglich)
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {
       return { ok: false as const, deceased: true as const };

@@ -30,7 +30,7 @@ export async function savePatientAction(_: PatientFormState, form: FormData): Pr
     if (dups.length) {
       return {
         error: "Möglicherweise gibt es diese Person schon. Bitte prüfen oder trotzdem anlegen.",
-        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") })),
+        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") + (d.archived ? " (archiviert)" : "") })),
       };
     }
   }

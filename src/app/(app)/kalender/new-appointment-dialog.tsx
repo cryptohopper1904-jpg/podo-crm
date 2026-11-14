@@ -19,21 +19,28 @@ const subscribeNarrow = (cb: () => void) => {
 };
 const useNarrow = () => useSyncExternalStore(subscribeNarrow, () => matchMedia(NARROW_QUERY).matches, () => false);
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+const FOCUSABLE = 'a[href]:not([tabindex="-1"]), button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 type Open = { prefill: NewPrefill; anchor: Point | null; key: number };
 
+/** Formularinhalt als Vergleichswert („Eingaben verwerfen?“ nur, wenn sich etwas geändert hat) */
+const snapshot = (f: HTMLFormElement | null | undefined) => (f ? new URLSearchParams([...new FormData(f)].map(([k, v]) => [k, String(v)])).toString() : "");
+
 /**
  * „Neuer Termin“ als Fenster über dem Kalender (statt Seitenwechsel). Fängt Klicks auf Links nach /kalender/neu
- * ab (freie Zeit im Raster, „+ Termin“, Vorschläge aus „Freien Termin finden“) – ohne JavaScript bleiben das
- * normale Links auf die Seite /kalender/neu.
+ * ab (freie Zeit im Raster, „+ Termin“, Vorschläge aus „Freien Termin finden“). Ohne JavaScript (oder per
+ * Deep-Link/neuem Tab) führen diese Links weiter auf die Seite /kalender/neu – dort lässt sich die Seite öffnen,
+ * die Patient:innen-Auswahl selbst braucht aber JavaScript.
  *
- * - Desktop/iPad: nicht abdunkelndes Fenster, der Kalender bleibt sichtbar und bedienbar. Verschiebbar an der
- *   Titelleiste (Maus und Touch), bleibt im sichtbaren Bereich (clampPosition). Ist es offen, übernimmt ein Klick
- *   auf eine andere freie Zeit Datum/Uhrzeit (und die Behandler:in-Spalte) ins Formular.
- * - Handy (< 640 px): Vollbild-Blatt von unten, nicht verschiebbar.
- * - Escape schließt, Tab bleibt im Fenster (Fokusfalle), danach Fokus zurück auf den auslösenden Link.
- * - Speichern schließt, aktualisiert den Kalender und meldet „Termin angelegt“ mit Link zum Termin.
+ * - Desktop/iPad: nicht-modales, nicht abdunkelndes Fenster (aria-modal=false), der Kalender bleibt sichtbar und
+ *   per Maus und Tastatur bedienbar (keine Tab-Falle). F6 oder der Knopf „Zum Fenster“ springt zwischen Fenster
+ *   und Kalender. Verschiebbar an der Titelleiste (Maus und Touch), bleibt im sichtbaren Bereich (clampPosition).
+ *   Ist es offen, übernimmt ein Klick auf eine andere freie Zeit Datum/Uhrzeit (und die Behandler:in-Spalte).
+ * - Handy (< 640 px): modales Vollbild-Blatt (aria-modal=true, Hintergrund inert, Seite scrollt nicht mit).
+ * - Escape (im Fenster) schließt – innere Elemente (Vorschläge, Schnellformular) fangen es vorher selbst ab; sind
+ *   schon Eingaben gemacht, kommt vorher „Eingaben verwerfen?“. Danach Fokus zurück auf den auslösenden Link.
+ * - Speichern schließt und meldet „Termin angelegt“ mit Link zum Termin; den Kalender aktualisiert die Server-Aktion
+ *   (revalidatePath in createAppointmentInDialogAction) – kein zusätzliches router.refresh().
  */
 export function NewAppointmentHost({ enabled, fallbackDate, children }: { enabled: boolean; fallbackDate: string; children: ReactNode }) {
   const router = useRouter();
@@ -47,6 +54,15 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
   const opener = useRef<HTMLElement | null>(null);
   const drag = useRef<{ id: number; dx: number; dy: number } | null>(null);
   const titleId = useId();
+  const hintId = useId();
+  const calendar = useRef<HTMLDivElement>(null);
+  /** Formularstand nach dem Laden – zum Vergleich vor dem Schließen */
+  const initialForm = useRef<string | null>(null);
+  /** zuletzt fokussiertes Element im Fenster (F6/„Zum Fenster“ springt dorthin zurück) */
+  const lastInside = useRef<HTMLElement | null>(null);
+  const keyboard = useRef(false);
+  /** Desktop: Fokus per Tastatur im Kalender, Fenster offen → Knopf „Zum Fenster“ zeigen */
+  const [focusOutside, setFocusOutside] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -62,9 +78,25 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
   const close = useCallback(() => {
     setOpen(null);
     setApply(null);
+    setFocusOutside(false);
+    initialForm.current = null;
+    lastInside.current = null;
     const el = opener.current;
     opener.current = null;
     if (el?.isConnected) requestAnimationFrame(() => el.focus({ preventScroll: true }));
+  }, []);
+  /** Schließen durch die Nutzer:in (Escape, ×, Abbrechen): bei geänderten Eingaben vorher nachfragen */
+  const requestClose = useCallback(() => {
+    const el = box.current;
+    const form = el?.querySelector("form");
+    const dirty = !!el?.querySelector("[data-dirty]") || (initialForm.current !== null && snapshot(form) !== initialForm.current);
+    if (dirty && !confirm("Eingaben verwerfen?")) return;
+    close();
+  }, [close]);
+  const focusDialog = useCallback(() => {
+    const last = lastInside.current;
+    const target = last?.isConnected && box.current?.contains(last) ? last : box.current?.querySelector<HTMLElement>("input[role=combobox], input:not([type=hidden]), button");
+    target?.focus();
   }, []);
 
   const onClickCapture = (e: React.MouseEvent) => {
@@ -101,36 +133,82 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
     return () => removeEventListener("resize", fit);
   }, [open, narrow, data]);
 
-  // Fokus ins Fenster (erstes Feld), Escape schließt
+  // Fokus ins Fenster (erstes Feld)
   useEffect(() => {
-    if (!open) return;
-    requestAnimationFrame(() => box.current?.querySelector<HTMLElement>("[data-autofocus], input:not([type=hidden]), button")?.focus());
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        close();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, close]);
+    if (open) requestAnimationFrame(() => box.current?.querySelector<HTMLElement>("[data-autofocus], input:not([type=hidden]), button")?.focus());
+  }, [open]);
   useEffect(() => {
-    if (open && data) requestAnimationFrame(() => box.current?.querySelector<HTMLElement>("input[role=combobox], input:not([type=hidden])")?.focus());
+    if (!open || !data) return;
+    requestAnimationFrame(() => {
+      box.current?.querySelector<HTMLElement>("input[role=combobox], input:not([type=hidden])")?.focus();
+      initialForm.current = snapshot(box.current?.querySelector("form"));
+    });
   }, [open, data]);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key !== "Tab" || !box.current) return;
-    const items = [...box.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
-    if (!items.length) return;
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
+  // Desktop (nicht modal): Fokus verfolgen, F6 wechselt zwischen Fenster und Kalender
+  useEffect(() => {
+    if (!open || narrow) return;
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLElement;
+      if (box.current?.contains(t)) {
+        lastInside.current = t;
+        setFocusOutside(false);
+      } else if (!(t as Element).closest?.("[data-zum-fenster]")) {
+        setFocusOutside(keyboard.current);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      keyboard.current = true;
+      if (e.key !== "F6" || e.altKey || e.ctrlKey || e.metaKey) return;
       e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
+      if (box.current?.contains(document.activeElement)) {
+        const back = opener.current?.isConnected ? opener.current : calendar.current?.querySelector<HTMLElement>(FOCUSABLE);
+        back?.focus();
+      } else focusDialog();
+    };
+    const onPointer = (e: PointerEvent) => {
+      keyboard.current = false;
+      // Knopf „Zum Fenster“ selbst nicht vor dem Klick ausblenden
+      if (!(e.target as Element | null)?.closest?.("[data-zum-fenster]")) setFocusOutside(false);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [open, narrow, focusDialog]);
+
+  // Handy (modal): alles außerhalb des Blatts inert, Seite dahinter scrollt nicht
+  useEffect(() => {
+    const el = box.current;
+    if (!open || !narrow || !el) return;
+    const touched: HTMLElement[] = [];
+    for (let n: HTMLElement | null = el; n && n !== document.body; n = n.parentElement) {
+      for (const sib of Array.from(n.parentElement?.children ?? [])) {
+        // Meldungen (Toaster, aria-live) bleiben hörbar
+        if (sib === n || !(sib instanceof HTMLElement) || sib.inert || sib.tagName === "SCRIPT" || sib.hasAttribute("aria-live")) continue;
+        sib.inert = true;
+        touched.push(sib);
+      }
     }
+    const root = document.documentElement;
+    const prev = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => {
+      for (const t of touched) t.inert = false;
+      root.style.overflow = prev;
+    };
+  }, [open, narrow]);
+
+  // Escape am Fenster selbst (nicht global): innere Elemente (Vorschläge, Schnellformular) haben es dann schon verbraucht
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    e.preventDefault();
+    e.stopPropagation();
+    requestClose();
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -153,13 +231,24 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
   const team = data?.team ?? [];
   return (
     <div onClickCapture={onClickCapture}>
-      {children}
+      <div ref={calendar}>{children}</div>
+      {open && !narrow && focusOutside ? (
+        <button
+          type="button"
+          data-zum-fenster=""
+          onClick={focusDialog}
+          className="no-print fixed right-4 bottom-4 z-40 inline-flex h-11 cursor-pointer items-center gap-2 rounded-xl border border-border-strong bg-surface px-4 font-semibold shadow-lg hover:bg-surface-2"
+        >
+          Zum Fenster „Neuer Termin“ <kbd className="rounded border border-border px-1 text-xs text-muted">F6</kbd>
+        </button>
+      ) : null}
       {open ? (
         <div
           ref={box}
           role="dialog"
           aria-modal={narrow ? true : false}
           aria-labelledby={titleId}
+          aria-describedby={narrow ? undefined : hintId}
           data-termin-dialog=""
           onKeyDown={onKeyDown}
           className={
@@ -180,8 +269,12 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
             <h2 id={titleId} className="min-w-0 flex-1 truncate font-display text-lg font-semibold">
               Neuer Termin
             </h2>
-            {narrow ? null : <span className="hidden text-[13px] text-muted lg:inline">Freie Zeit im Kalender anklicken = übernehmen</span>}
-            <button type="button" onClick={close} aria-label="Schließen" className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-muted hover:bg-surface hover:text-text">
+            {narrow ? null : (
+              <span id={hintId} className="hidden text-[13px] text-muted lg:inline">
+                Freie Zeit im Kalender anklicken = übernehmen<span className="sr-only">. F6 wechselt zwischen Fenster und Kalender.</span>
+              </span>
+            )}
+            <button type="button" onClick={requestClose} aria-label="Schließen" className="inline-flex size-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-muted hover:bg-surface hover:text-text">
               <X size={20} aria-hidden />
             </button>
           </div>
@@ -201,10 +294,9 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
                 variant="dialog"
                 apply={apply}
                 cancelHref="/kalender"
-                onCancel={close}
+                onCancel={requestClose}
                 onCreated={(c) => {
                   close();
-                  router.refresh();
                   const when = new Intl.DateTimeFormat("de-DE", { weekday: "short", day: "numeric", month: "numeric", timeZone: "UTC" }).format(new Date(`${c.date}T12:00:00Z`));
                   toast(c.n > 1 ? `${c.n} Termine angelegt (ab ${when})` : `Termin angelegt (${when})`, {
                     action: { label: "Termin öffnen", onClick: () => router.push(`/kalender/termin/${c.id}`) },

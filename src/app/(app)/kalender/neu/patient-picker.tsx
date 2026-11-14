@@ -10,10 +10,12 @@ const display = (p: PickerPatient) => `${p.lastName}${p.firstName ? `, ${p.first
 
 /**
  * Patient:in für einen neuen Termin – ein Feld: tippen (Name oder Nummer), Vorschlag antippen. Danach steht die
- * Auswahl als Zeile mit „ändern“ da. Tastatur: Pfeil hoch/runter, Enter wählt, Escape schließt die Vorschläge.
+ * Auswahl als Zeile mit „ändern“ da. Tastatur: Pfeil hoch/runter, Enter wählt. Escape schließt zuerst die
+ * Vorschläge, dann leert es das Feld – erst danach erreicht es das Fenster „Neuer Termin“ (das sich dann schließt).
  * Termine ohne Patient:in (Pause, Schulung …) über den Reiter „Sperrzeit“.
- * `canCreate` (patients.write): findet die Suche niemanden, „+ Neue:n Patient:in … anlegen“ öffnet ein kleines
- * Formular darunter; die neue Person ist danach ausgewählt (ohne Seitenwechsel).
+ * `canCreate` (patients.write): „+ Neue:n Patient:in … anlegen“ steht immer als letzte Zeile der Vorschläge (auch
+ * wenn es Treffer gibt – Namensgleichheit ist häufig) bzw. ohne Treffer unter dem Feld; es öffnet ein kleines
+ * Formular darunter, die neue Person ist danach ausgewählt (ohne Seitenwechsel).
  */
 export function PatientPicker({
   patients: given,
@@ -42,6 +44,15 @@ export function PatientPicker({
   const listId = `${id}-liste`;
   const hits = useMemo(() => matchPatients(patients, query), [patients, query]);
   const show = open && query.trim().length > 0;
+  const newName = splitNewName(query);
+  /** letzte Zeile „+ Neue:n Patient:in anlegen“ in der Vorschlagsliste (nur wenn es Treffer gibt) */
+  const createRow = canCreate && !!newName.lastName && hits.length > 0;
+  const rowCount = hits.length + (createRow ? 1 : 0);
+  const createId = `${listId}-neu`;
+  const startCreate = () => {
+    setCreating(splitNewName(query));
+    setOpen(false);
+  };
 
   const choose = (p: PickerPatient) => {
     setPicked(p);
@@ -85,10 +96,10 @@ export function PatientPicker({
               ref={input}
               id={`${id}-suche`}
               role="combobox"
-              aria-expanded={show && hits.length > 0}
+              aria-expanded={show && rowCount > 0}
               aria-controls={listId}
               aria-autocomplete="list"
-              aria-activedescendant={show && hits[active] ? `${listId}-${hits[active].id}` : undefined}
+              aria-activedescendant={show && rowCount ? (hits[active] ? `${listId}-${hits[active].id}` : createRow && active === hits.length ? createId : undefined) : undefined}
               aria-invalid={error ? true : undefined}
               aria-describedby={`${id}-hinweis`}
               placeholder="Name oder Nummer"
@@ -101,29 +112,32 @@ export function PatientPicker({
               onFocus={() => setOpen(true)}
               onBlur={() => setTimeout(() => setOpen(false), 150)}
               onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  // innen zuerst: Vorschläge schließen, dann Suchtext leeren – erst danach schließt Escape das Fenster
+                  if (show && rowCount) setOpen(false);
+                  else if (query) setQuery("");
+                  else return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
                 // Enter schickt nie das Formular ab, solange die Vorschläge offen sind (auch ohne Treffer);
                 // ohne Treffer öffnet Enter „Neue:n Patient:in anlegen“
                 if (show && !hits.length && e.key === "Enter") {
                   e.preventDefault();
-                  if (canCreate && splitNewName(query).lastName) {
-                    setCreating(splitNewName(query));
-                    setOpen(false);
-                  }
+                  if (canCreate && newName.lastName) startCreate();
                 }
-                if (!show || !hits.length) return;
+                if (!show || !rowCount) return;
                 if (e.key === "ArrowDown") {
                   e.preventDefault();
-                  setActive((a) => (a + 1) % hits.length);
+                  setActive((a) => (a + 1) % rowCount);
                 } else if (e.key === "ArrowUp") {
                   e.preventDefault();
-                  setActive((a) => (a - 1 + hits.length) % hits.length);
+                  setActive((a) => (a - 1 + rowCount) % rowCount);
                 } else if (e.key === "Enter") {
                   e.preventDefault();
-                  choose(hits[active]);
-                } else if (e.key === "Escape") {
-                  // nur die Vorschläge schließen (nicht das Fenster „Neuer Termin“)
-                  e.preventDefault();
-                  setOpen(false);
+                  if (hits[active]) choose(hits[active]);
+                  else if (createRow) startCreate();
                 }
               }}
             />
@@ -143,6 +157,19 @@ export function PatientPicker({
                     <span className="shrink-0 text-sm text-muted">#{p.number}</span>
                   </li>
                 ))}
+                {createRow ? (
+                  <li
+                    id={createId}
+                    role="option"
+                    aria-selected={active === hits.length}
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={startCreate}
+                    className={`mt-1 flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border-t border-border px-3 text-[15px] font-semibold text-primary ${active === hits.length ? "bg-primary-soft" : "hover:bg-primary-soft"}`}
+                  >
+                    <UserPlus size={18} aria-hidden className="shrink-0" />
+                    <span className="min-w-0 truncate">Neue:n Patient:in „{query.trim()}“ anlegen</span>
+                  </li>
+                ) : null}
               </ul>
             ) : query.trim() && !creating ? (
               // ohne Treffer: fester Hinweis unter dem Feld (bleibt auch ohne Fokus stehen)
@@ -150,14 +177,11 @@ export function PatientPicker({
                 <p aria-hidden className="px-3 py-2 text-sm text-muted">
                   Keine Patient:in gefunden.
                 </p>
-                {canCreate && splitNewName(query).lastName ? (
+                {canCreate && newName.lastName ? (
                   <button
                     type="button"
                     onPointerDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setCreating(splitNewName(query));
-                      setOpen(false);
-                    }}
+                    onClick={startCreate}
                     className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-3 text-left text-[15px] font-semibold text-primary hover:bg-primary-soft"
                   >
                     <UserPlus size={18} aria-hidden className="shrink-0" />
@@ -186,7 +210,7 @@ export function PatientPicker({
           />
         ) : null}
         <span role="status" className="sr-only">
-          {show ? (hits.length ? `${hits.length} Vorschl${hits.length === 1 ? "ag" : "äge"}` : `Keine Patient:in gefunden.${canCreate ? " Neu anlegen möglich." : ""}`) : ""}
+          {show ? (hits.length ? `${hits.length} Vorschl${hits.length === 1 ? "ag" : "äge"}${createRow ? ", danach „Neu anlegen“" : ""}` : `Keine Patient:in gefunden.${canCreate ? " Neu anlegen möglich." : ""}`) : ""}
         </span>
         {error ? <span className="text-[13px] leading-5 font-medium text-danger">{error}</span> : null}
         <span id={`${id}-hinweis`} className={hintCls}>

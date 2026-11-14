@@ -17,7 +17,7 @@ import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient } from "@/server/calendar-feeds";
 import { seriesStarts } from "@/lib/appointment-series";
-import { findDuplicates, insertPatient, parseBirthDate, patientInput, toPatientValues } from "@/server/patients";
+import { CREATE_REQUEST_ID, findDuplicates, insertPatient, parseBirthDate, patientCreatedByRequest, patientInput, toPatientValues } from "@/server/patients";
 import { changeAppointmentStatus, offerAfterCancel, UNDO_GRACE_MS, type StatusResult } from "@/server/calendar-status";
 import { durationFromServices } from "@/lib/appointment-duration";
 
@@ -87,7 +87,7 @@ async function createFromForm(form: FormData): Promise<{ ok: false; state: NonNu
   return { ok: true, id: res.ids[0], date: d.date, n: res.ids.length };
 }
 
-/** Seite /kalender/neu (auch ohne JavaScript): nach dem Anlegen zum Kalender am Tag des Termins */
+/** Seite /kalender/neu (Deep-Link, z. B. aus anderen Seiten oder in neuem Tab): nach dem Anlegen zum Kalender am Tag des Termins */
 export async function createAppointmentAction(_: ApptFormState, form: FormData): Promise<ApptFormState> {
   const r = await createFromForm(form);
   if (!r.ok) return r.state;
@@ -103,34 +103,42 @@ export async function createAppointmentInDialogAction(_: DialogApptState, form: 
   return { created: { id: r.id, date: r.date, n: r.n } };
 }
 
+export type QuickPatientDuplicate = { id: string; number: number; firstName: string | null; lastName: string; archived: boolean };
 export type QuickPatientState =
-  | { error?: string; duplicates?: { id: string; number: number; name: string }[]; patient?: { id: string; number: number; firstName: string | null; lastName: string } }
+  | { error?: string; duplicates?: QuickPatientDuplicate[]; patient?: { id: string; number: number; firstName: string | null; lastName: string } }
   | undefined;
 
 /**
  * Neue Patient:in direkt aus dem Terminformular (Name, Telefon, optional Geburtsdatum/E-Mail). Gleiche Rechte
  * (patients.write), Prüfung (patientInput) und Dublettenprüfung wie /kunden/neu; „trotzdem anlegen“ mit ignoreDuplicates.
+ * `requestId` (Token je geöffnetem Schnellformular) macht das Anlegen idempotent: kommt dieselbe Anfrage mehrfach an
+ * (Mehrfach-Enter, Doppelklick, erneutes Senden), gibt es genau eine Patient:in – Wiederholungen liefern dieselbe.
+ * Archivierte Treffer in „Meinten Sie …?“ sind gekennzeichnet (`archived`) und im Formular nicht auswählbar.
  */
 export async function quickCreatePatientAction(_: QuickPatientState, form: FormData): Promise<QuickPatientState> {
   const auth = await requireAuth("patients.write");
   const org = auth.organization.id;
   const pick = (k: string) => String(form.get(k) ?? "").trim();
+  const requestId = pick("requestId");
+  if (!CREATE_REQUEST_ID.test(requestId)) return { error: "Formular abgelaufen – bitte neu öffnen." };
   const parsed = patientInput.safeParse({ firstName: pick("firstName"), lastName: pick("lastName"), phoneMobile: pick("phoneMobile"), email: pick("email"), birthDate: parseBirthDate(pick("birthDate")) });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const values = toPatientValues(parsed.data);
+  // Wiederholung einer schon erfolgreichen Anfrage: dieselbe Person zurück (nicht als „Dublette“ von sich selbst melden)
+  const prev = await patientCreatedByRequest(org, auth.user.id, requestId);
+  if (prev) return { patient: prev };
   if (form.get("ignoreDuplicates") !== "1") {
     const dups = await findDuplicates(org, values);
     if (dups.length) {
       return {
         error: "Möglicherweise gibt es diese Person schon. Bitte auswählen oder trotzdem anlegen.",
-        duplicates: dups.map((d) => ({ id: d.id, number: d.number, name: [d.firstName, d.lastName].filter(Boolean).join(" ") })),
+        duplicates: dups.map((d) => ({ id: d.id, number: d.number, firstName: d.firstName, lastName: d.lastName, archived: d.archived })),
       };
     }
   }
-  const created = await insertPatient(org, values);
+  const created = await insertPatient(org, values, { requestId, userId: auth.user.id, meta: { via: "termin" } });
   if (!created.ok) return { error: created.error };
-  await audit({ organizationId: org, userId: auth.user.id, action: "patient.create", entity: "patient", entityId: created.id, meta: { via: "termin" } });
-  revalidatePath("/kunden");
+  if (!created.existing) revalidatePath("/kunden");
   return { patient: { id: created.id, number: created.number, firstName: values.firstName ?? null, lastName: values.lastName } };
 }
 
