@@ -50,6 +50,12 @@ export function evaluateReadonlyExpiryCron(enabled: boolean, epochSeconds: numbe
   return evaluateTimestamp(epochSeconds, MAX_AGE_SECONDS.cron6h, nowMs);
 }
 
+/** Überfällige Löschanträge (Frist + 14 Tage überschritten): 0 → ok, sonst warn – nur die Anzahl, keine IDs/Namen (Recht R-8). */
+export function evaluateOverdueDeletions(overdue: number): CheckResult {
+  if (overdue > 0) return { status: "warn", overdue, hint: "Löschanträge überfällig – Löschlauf ausführen (docs/BETRIEB.md Abschnitt 9)" };
+  return { status: "ok", overdue: 0 };
+}
+
 /** Liest „1731000000“ (ggf. mit Zeilenumbruch) aus einer Status-Datei. */
 export function parseEpoch(text: string | null): number | null {
   if (text === null) return null;

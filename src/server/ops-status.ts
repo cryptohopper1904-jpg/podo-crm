@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { db } from "@/db";
-import { evaluateMigrations, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { evaluateMigrations, evaluateOverdueDeletions, evaluateReadonlyExpiryCron, evaluateTimestamp, MAX_AGE_SECONDS, parseEpoch, type CheckResult } from "@/lib/ops-health";
+import { overdueCutoff } from "@/lib/org-deletion";
 import { readonlyExpiryEnabled } from "@/lib/readonly-expiry";
 
 /**
@@ -55,7 +56,7 @@ export async function checkPaymentRefIndex(): Promise<CheckResult> {
 }
 
 /**
- * Eindeutiger Index je Stripe-Kunden-ID (Migration 0052 legt ihn bei Dubletten nicht an). Fehlt er: fail – teilen sich
+ * Eindeutiger Index je Stripe-Kunden-ID (Migration 0053 legt ihn bei Dubletten nicht an). Fehlt er: fail – teilen sich
  * zwei Praxen eine Kunden-ID, träfen Kündigung und Löschlauf auch die andere Praxis (AppSec L-1; beide brechen dann ab).
  */
 export async function checkStripeCustomerIndex(): Promise<CheckResult> {
@@ -64,6 +65,21 @@ export async function checkStripeCustomerIndex(): Promise<CheckResult> {
     return r.rows.length ? { status: "ok" } : { status: "fail", hint: "Index organizations_stripe_customer_id fehlt (doppelte Stripe-Kunden-IDs, siehe Deploy-Log)" };
   } catch {
     return { status: "fail", hint: "Index-Status nicht lesbar" };
+  }
+}
+
+/**
+ * Überfällige Löschanträge (Recht R-8): Antrag + 30 Tage Karenzzeit + 14 Tage („spätestens 14 Tage danach“, AGB § 9 Nr. 2)
+ * überschritten, Praxis aber noch da – Löschlauf vergessen oder abgebrochen → warn. Nur die Anzahl, keine IDs oder Namen.
+ */
+export async function checkOverdueDeletions(now: Date = new Date()): Promise<CheckResult> {
+  try {
+    const r = await withTimeout(
+      db.execute<{ n: number }>(sql`select count(*)::int as n from organizations where deletion_requested_at is not null and deletion_requested_at < ${overdueCutoff(now).toISOString()}::timestamptz`),
+    );
+    return evaluateOverdueDeletions(Number(r.rows[0]?.n ?? 0));
+  } catch {
+    return { status: "fail", hint: "Löschanträge nicht lesbar" };
   }
 }
 

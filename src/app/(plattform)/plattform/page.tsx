@@ -76,7 +76,8 @@ export default async function PlatformPage({ searchParams }: PageProps<"/plattfo
           <p className="mt-1 text-sm text-muted">
             Löschantrag gestellt (gilt als Kündigung, AGB § 8 Nr. 3), aber das Stripe-Abo ist nicht gekündigt: im Stripe-Dashboard zum Periodenende
             kündigen bzw. die Praxis kontaktieren – der Löschlauf beendet ein noch laufendes Abo sonst sofort. Rücknahme fehlgeschlagen: Die Praxis
-            will weitermachen, ihr Abo endet aber zum Periodenende – Kündigung im Stripe-Dashboard zurücknehmen.
+            will weitermachen, ihr Abo endet aber zum Periodenende – Kündigung im Stripe-Dashboard zurücknehmen. Löschlauf begonnen: Abo/Kunde
+            bei Stripe sind ggf. schon beendet – Löschlauf wiederholen oder (Antrag zurückgenommen, Tarif gebucht) mit der Praxis klären.
           </p>
           <ul className="mt-3 list-disc pl-5 text-sm">
             {practices.filter((p) => p.billingProblem).map((p) => (

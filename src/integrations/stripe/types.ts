@@ -60,7 +60,7 @@ export interface OpenBillingItems {
    * schon gelöscht.
    */
   customerBalanceCents: number | null;
-  /** true = mehr als eine Seite (100) – Zahlen sind Untergrenzen */
+  /** true = mehr Posten, als gelesen wurden (über 1000 je Liste) – Zahlen sind Untergrenzen, der Löschlauf setzt refundCheck */
   truncated: boolean;
 }
 

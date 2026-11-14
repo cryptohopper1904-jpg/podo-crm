@@ -7,6 +7,7 @@ import { Badge, Card, CardTitle } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe } from "@/lib/format";
 import { CASH_REGISTER_NOTE, DELETION_GRACE_DAYS, deletionDueAt, isWithinGrace } from "@/lib/org-deletion";
+import { accessMode } from "@/lib/plans";
 import { isAutoDeletion } from "@/lib/readonly-expiry";
 import { CANCEL_FAILED_MESSAGE, cancelStateFromSettings, hasRunningSubscription } from "@/lib/subscription-cancel";
 import { readonlyDeletionNotice } from "@/server/readonly-expiry";
@@ -41,7 +42,7 @@ function RetentionNotice() {
       <p className="mt-2">
         Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
         auf. Wir löschen alle Daten {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig (spätestens 14 Tage danach). Verschlüsselte Datensicherungen laufen
-        spätestens 30 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf. Ohne Löschantrag bleibt die Praxis nach Vertragsende
+        spätestens 30 Tage nach der Löschung aus. Eine Kopie für dich bewahren wir nicht auf. Ohne Löschantrag bleibt die Praxis nach Vertragsende
         höchstens 12 Monate im Nur-Lesen-Modus und wird dann gelöscht (Ankündigung mindestens 30 Tage vorher).
       </p>
       <p className="mt-2">
@@ -72,6 +73,8 @@ export default async function DataSettings() {
       subscriptionStatus: organizations.subscriptionStatus,
       stripeSubscriptionId: organizations.stripeSubscriptionId,
       currentPeriodEnd: organizations.currentPeriodEnd,
+      trialEndsAt: organizations.trialEndsAt,
+      seats: organizations.seats,
       settings: organizations.settings,
     })
     .from(organizations)
@@ -80,6 +83,8 @@ export default async function DataSettings() {
   const auto = isAutoDeletion(org?.settings);
   const expiry = await readonlyDeletionNotice(auth.organization.id);
   const running = !!org && hasRunningSubscription(org);
+  // Abo bzw. Testphase beendet (Nur-Lesen-Modus): bis zur Löschung nur lesen und exportieren (Recht R-6)
+  const readonly = !!org && accessMode(org).mode === "readonly";
   const cancel = cancelStateFromSettings(org?.settings);
   const periodEnd = org?.currentPeriodEnd ? dateDe(org.currentPeriodEnd) : "Ende des Abrechnungszeitraums";
   const aboLink = <Link href="/einstellungen/abo" className="font-semibold underline">Abo</Link>;
@@ -91,9 +96,9 @@ export default async function DataSettings() {
           <CardTitle>Löschung angekündigt <Badge tone="accent">Nur-Lesen-Modus endet</Badge></CardTitle>
           <p className="text-[15px]">
             {expiry?.kind === "trial"
-              ? "Deine Testphase ist beendet; der Nur-Lesen-Modus endet spätestens 12 Monate nach Ende der Testphase."
-              : "Dein Vertrag ist beendet; der Nur-Lesen-Modus endet spätestens 12 Monate nach Vertragsende."}{" "}
-            Wir löschen deine Praxis deshalb am <strong>{dateDe(deletionDueAt(requestedAt))}</strong> endgültig (spätestens 14 Tage danach) – mit allen
+              ? "Deine Testphase ist beendet. Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach Ende der Testphase;"
+              : "Dein Vertrag ist beendet. Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach Vertragsende;"}{" "}
+            wir löschen deine Praxis am <strong>{dateDe(deletionDueAt(requestedAt))}</strong> endgültig (spätestens 14 Tage danach) – mit allen
             Daten, Fotos und Zugängen. Bis dahin kannst du alles lesen und exportieren – erstelle jetzt den vollständigen Export.
           </p>
           <p className="mt-2 text-[15px]">
@@ -106,7 +111,7 @@ export default async function DataSettings() {
           <CardTitle>Löschung beantragt <Badge tone="accent">Karenzzeit</Badge></CardTitle>
           <p className="text-[15px]">
             Beantragt am <strong>{dateDe(requestedAt)}</strong>. Wir löschen die Praxis am <strong>{dateDe(deletionDueAt(requestedAt))}</strong> endgültig
-            (spätestens 14 Tage danach) – mit allen Daten, Fotos und Zugängen. Bis dahin kannst du weiterarbeiten und exportieren.
+            (spätestens 14 Tage danach) – mit allen Daten, Fotos und Zugängen. Bis dahin kannst du {readonly ? "lesen" : "weiterarbeiten"} und exportieren.
           </p>
           {running && cancel.cancelAtPeriodEnd ? (
             <p className="mt-2 text-[15px]" data-testid="abo-kuendigung-status">
@@ -138,10 +143,10 @@ export default async function DataSettings() {
           <CardTitle>Nur-Lesen-Modus endet</CardTitle>
           <p className="text-[15px]">
             {expiry.kind === "trial"
-              ? "Deine Testphase ist beendet. Die Praxis bleibt höchstens 12 Monate nach Ende der Testphase lesbar;"
-              : "Dein Vertrag ist beendet. Die Praxis bleibt höchstens 12 Monate nach Vertragsende lesbar;"}{" "}
-            ohne neuen Tarif löschen wir sie am <strong>{dateDe(expiry.deletionAt)}</strong> endgültig (spätestens 14 Tage danach; Ankündigung mindestens
-            30 Tage vorher). Erstelle vorher den vollständigen Export. Mit einem Tarif unter{" "}
+              ? "Deine Testphase ist beendet. Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach Ende der Testphase;"
+              : "Dein Vertrag ist beendet. Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach Vertragsende;"}{" "}
+            wir löschen deine Praxis am <strong>{dateDe(expiry.deletionAt)}</strong> endgültig (spätestens 14 Tage danach). Erstelle vorher den
+            vollständigen Export. Mit einem Tarif unter{" "}
             <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link> entfällt die Löschung.
           </p>
         </Card>
@@ -175,9 +180,8 @@ export default async function DataSettings() {
             Nach {DELETION_GRACE_DAYS} Tagen Karenzzeit wird endgültig gelöscht; bis dahin kannst du den Antrag zurücknehmen. Der Löschantrag gilt
             zugleich als Kündigung deines Abos zum Ende des laufenden Abrechnungszeitraums; danach wird nichts mehr abgebucht. Nimmst du den
             Löschantrag vor dem Ende des Abrechnungszeitraums zurück, gilt auch die Kündigung als zurückgenommen und dein Abo läuft weiter. Ist
-            das Abo bereits beendet, bleibt die Praxis im Nur-Lesen-Modus, bis du wieder einen Tarif wählst – höchstens 12 Monate nach Vertragsende.
-            Möchtest du nur das Abo kündigen und
-            deine Daten behalten, nutze „Abo kündigen“ unter{" "}
+            das Abo bereits beendet, kannst du bis zur Löschung lesen und exportieren. Ohne Löschantrag bleibt die Praxis nach Vertragsende im
+            Nur-Lesen-Modus, bis du wieder einen Tarif wählst – höchstens 12 Monate. Möchtest du nur das Abo kündigen und deine Daten behalten, nutze „Abo kündigen“ unter{" "}
             <Link href="/einstellungen/abo" className="font-semibold text-primary underline">Abo</Link>.
           </p>
           {running && cancel.cancelAtPeriodEnd ? (

@@ -15,6 +15,23 @@ export function legalAcceptance(userId: string, now: Date = new Date()): LegalAc
 /** Ab dieser AVV-Version gilt die Standardweisung zur Löschung unbestätigter Online-Anfragen (AVV § 3 Nr. 4) */
 export const RETENTION_MIN_AVV = "0.3";
 
+/** Ab dieser AVV-Version gilt der Nur-Lesen-Modus nach Vertragsende mit Löschung nach Ankündigung (AVV § 10 Nr. 2) */
+export const READONLY_MIN_AVV = "0.4";
+
+/** Hinweis im AVV-Banner, solange die bisherige Zustimmung älter als READONLY_MIN_AVV ist (Recht R-1) */
+export const AVV_READONLY_NOTE =
+  "Nach Vertragsende bleiben deine Daten höchstens 12 Monate im Nur-Lesen-Modus lesbar und exportierbar und werden nach Ankündigung (mindestens 30 Tage vorher) gelöscht (§ 10 Nr. 2).";
+
+/**
+ * Welche Neuerungen das AVV-Banner nennt – abhängig von der bisher akzeptierten Version: Löschweisung für Online-Anfragen
+ * (§ 3 Nr. 4, ab 0.3) und Nur-Lesen-Modus/Löschung nach Vertragsende (§ 10 Nr. 2, ab 0.4).
+ */
+export function avvBannerNews(previous: string | null): { retention: boolean; readonly: string | null } {
+  const retention = !versionAtLeast(previous, RETENTION_MIN_AVV);
+  const readonly = versionAtLeast(previous, READONLY_MIN_AVV) ? null : `${retention ? "Außerdem neu: " : "Neu ist u. a.: "}${AVV_READONLY_NOTE}`;
+  return { retention, readonly };
+}
+
 /** „0.3“ → [0, 3]; ungültig → null */
 function parseVersion(v: unknown): number[] | null {
   if (typeof v !== "string" || !/^\d+(\.\d+)*$/.test(v)) return null;

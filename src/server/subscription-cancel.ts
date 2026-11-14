@@ -111,14 +111,15 @@ async function clearCancelError(organizationId: string) {
 }
 
 /**
- * Kündigungsbestätigung (AGB § 8 Nr. 3, Recht E-4) mit Vertragsende; beim Löschantrag mit frühestem Löschtermin
- * (Antrag + 30 Tage), sonst mit dem Hinweis auf den Nur-Lesen-Modus. Dazu der Kassen-Hinweis (Buchhaltung E2).
+ * Kündigungsbestätigung (AGB § 8 Nr. 3, Recht E-4/R-7) mit Vertragsende; beim Löschantrag mit Löschtermin (Antrag + 30 Tage,
+ * spätestens 14 Tage danach) und dem Hinweis, dass das Abo mit einer früheren Löschung endet, sonst mit dem Hinweis auf
+ * den Nur-Lesen-Modus. Dazu der Kassen-Hinweis (Buchhaltung E2, Recht R-2).
  */
 export function cancelConfirmationText(reason: CancelReason, periodEnd: Date | null, deletionRequestedAt: Date | null): string {
   const end = periodEnd ? dateDe(periodEnd) : "Ende des Abrechnungszeitraums";
   const main =
     reason === "deletion_request" && deletionRequestedAt
-      ? `Mit deinem Löschantrag ist dein PodoHero-Abo zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Deine Praxis wird frühestens am ${dateDe(deletionDueAt(deletionRequestedAt))} endgültig gelöscht. Nimmst du den Löschantrag bis dahin zurück (Einstellungen → Daten & Kündigung), gilt auch die Kündigung als zurückgenommen, solange der Abrechnungszeitraum noch läuft.`
+      ? `Mit deinem Löschantrag ist dein PodoHero-Abo zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Wird die Praxis vorher gelöscht, endet das Abo mit der Löschung. Deine Praxis wird am ${dateDe(deletionDueAt(deletionRequestedAt))} endgültig gelöscht (spätestens 14 Tage danach). Nimmst du den Löschantrag bis dahin zurück (Einstellungen → Daten & Kündigung), gilt auch die Kündigung als zurückgenommen, solange der Abrechnungszeitraum noch läuft.`
       : `Dein PodoHero-Abo ist zum ${end} gekündigt (Vertragsende); danach wird nichts mehr abgebucht. Bis zum Ende des Abrechnungszeitraums kannst du die Kündigung in der Software zurücknehmen. Danach bleibt die Praxis höchstens 12 Monate lesbar und wird dann gelöscht (Ankündigung mindestens 30 Tage vorher) – exportiere rechtzeitig (Einstellungen → Daten & Kündigung).`;
   return `${main} ${CASH_REGISTER_NOTE}`;
 }
@@ -276,6 +277,10 @@ export async function resumeSubscription(
     return running && local.cancelAtPeriodEnd ? { status: "kept", periodEnd: org.currentPeriodEnd } : running ? { status: "not_canceled" } : { status: "no_subscription" };
   }
   try {
+    // dieselbe Stripe-Kunden-ID bei einer anderen Praxis: nichts fortsetzen (AppSec L-1/AS-1, wie bei der Kündigung)
+    if (org.stripeCustomerId && (await sharesStripeCustomer(organizationId, org.stripeCustomerId))) {
+      throw Object.assign(new Error("Stripe-Kunden-ID gehört mehreren Praxen"), { name: "SharedStripeCustomer" });
+    }
     // Ziele: markierte Abos; ältere Stände ohne Marken bzw. die Inhaber:in auf der Abo-Seite: auch das Abo der Praxis
     const targets = new Map<string, number | null | undefined>(local.marks.map((m) => [m.id, m.at]));
     if (running && (!opts.onlyReason || !local.marks.length) && !targets.has(org.stripeSubscriptionId!)) targets.set(org.stripeSubscriptionId!, undefined);

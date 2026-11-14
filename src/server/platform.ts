@@ -8,6 +8,7 @@ import { isPlanId, PLANS, seatCounts, voiceAddonActive, type PlanId } from "@/li
 import { websiteAddonActive } from "@/lib/website";
 import { isDemoPractice } from "@/lib/demo-practice";
 import { deletionBillingProblem, resumeBillingProblem } from "@/lib/subscription-cancel";
+import { purgeStartedProblem } from "@/lib/org-deletion";
 import { isAutoDeletion, needsManualNotice, readonlyExpiry, readonlyExpiryState, plannedDeletionDate, type MailOutcome, type ManualNoticeVia } from "@/lib/readonly-expiry";
 import { stopAutoDeletion } from "./readonly-expiry";
 
@@ -40,7 +41,10 @@ export type PracticeOverview = {
   websiteAddon: boolean;
   /** Demo-Praxis mit erfundenen Daten (organizations.settings.demo, Bootstrap) */
   demo: boolean;
-  /** Löschantrag gestellt, Stripe-Abo aber nicht gekündigt (automatische Kündigung fehlgeschlagen) – Betreiber muss handeln */
+  /**
+   * Löschantrag gestellt, Stripe-Abo aber nicht gekündigt (automatische Kündigung fehlgeschlagen), Rücknahme fehlgeschlagen
+   * oder Löschlauf begonnen und abgebrochen (settings.purgeStartedAt) – Betreiber muss handeln
+   */
   billingProblem: string | null;
   deletionRequestedAt: Date | null;
   /** Ende des Nur-Lesen-Modus angekündigt bzw. automatischer Löschantrag (AGB § 9 Nr. 2) */
@@ -104,7 +108,7 @@ export async function listPractices(adminUserId: string): Promise<PracticeOvervi
       voiceAddon: voiceAddonActive(o.settings),
       websiteAddon: websiteAddonActive(o.settings),
       demo: isDemoPractice(o.settings),
-      billingProblem: deletionBillingProblem(o) ?? resumeBillingProblem(o),
+      billingProblem: purgeStartedProblem(o.settings) ?? deletionBillingProblem(o) ?? resumeBillingProblem(o),
       deletionRequestedAt: o.deletionRequestedAt,
       readonlyExpiry: expiryOverview(o, now),
       owners: ownerRows.filter((r) => r.org === o.id).map(({ id, name, email }) => ({ id, name, email })),

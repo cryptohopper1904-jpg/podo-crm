@@ -6,12 +6,13 @@ import type { MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
 import { dateDe } from "@/lib/format";
 import { log } from "@/lib/log";
-import { CASH_REGISTER_NOTE, deletionDueAt, DELETION_GRACE_DAYS, EXPORT_CASH_NOTE } from "@/lib/org-deletion";
+import { CASH_REGISTER_NOTE_ANNOUNCEMENT, deletionDueAt, DELETION_GRACE_DAYS, EXPORT_CASH_NOTE } from "@/lib/org-deletion";
 import { GRACE_DAYS } from "@/lib/plans";
 import {
   AUTO_DELETION_REASON,
   isAutoDeletion,
   needsManualNotice,
+  NOTICE_MAX_ATTEMPTS,
   plannedDeletionDate,
   readonlyExpiry,
   readonlyExpiryState,
@@ -49,19 +50,35 @@ const publicUrl = () => (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
 /**
  * Automatische Löschung stoppen (Tarif gebucht, Testphase verlängert, Kostenlos-Tarif …): entfernt den Zustand der
  * Ankündigung und – nur wenn er automatisch gestellt wurde – den Löschantrag. Ein selbst gestellter Löschantrag bleibt.
+ * Hat der Löschlauf schon begonnen (settings.purgeStartedAt: Stripe-Abo/-Kunde ggf. schon beendet), wird nichts
+ * zurückgesetzt – stattdessen Betreiber-Hinweis (Audit org.readonly_expiry_stop_blocked, Plattform-Konsole; Code CR-1).
  * true = es wurde etwas zurückgesetzt.
  */
 export async function stopAutoDeletion(exec: Db | Tx, organizationId: string, meta: { trigger: string; userId?: string | null }): Promise<boolean> {
   const auto = sql`(${organizations.settings}->>'deletionReason') = ${AUTO_DELETION_REASON}`;
+  const pending = sql`(${organizations.settings} ? 'readonlyExpiry' or ${auto})`;
   const rows = await exec
     .update(organizations)
     .set({
       deletionRequestedAt: sql`case when ${auto} then null else ${organizations.deletionRequestedAt} end`,
       settings: sql`(coalesce(${organizations.settings}, '{}'::jsonb) - 'readonlyExpiry') - (case when ${auto} then 'deletionReason' else '' end)`,
     })
-    .where(and(eq(organizations.id, organizationId), sql`(${organizations.settings} ? 'readonlyExpiry' or ${auto})`))
+    .where(and(eq(organizations.id, organizationId), pending, sql`not (coalesce(${organizations.settings}, '{}'::jsonb) ? 'purgeStartedAt')`))
     .returning({ id: organizations.id });
-  if (!rows.length) return false;
+  if (!rows.length) {
+    const [blocked] = await exec
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(and(eq(organizations.id, organizationId), pending, sql`${organizations.settings} ? 'purgeStartedAt'`));
+    if (blocked) {
+      log.error("readonly_expiry.stop_blocked_purge_started", { organizationId, trigger: meta.trigger });
+      // der Cron prüft alle 6 h erneut – nur Aktionen (Tarifbuchung, Konsole) protokollieren
+      if (meta.trigger !== "cron") {
+        await exec.insert(auditLog).values({ organizationId, userId: meta.userId ?? null, action: "org.readonly_expiry_stop_blocked", entity: "organization", entityId: organizationId, meta: { trigger: meta.trigger, reason: "purge_started" } });
+      }
+    }
+    return false;
+  }
   await exec.insert(auditLog).values({ organizationId, userId: meta.userId ?? null, action: "org.readonly_expiry_stopped", entity: "organization", entityId: organizationId, meta: { trigger: meta.trigger } });
   return true;
 }
@@ -85,11 +102,15 @@ export const readonlySql = (now: Date) => {
 /**
  * Versand der Ankündigung/Erinnerung; wirft nie. „sent“ nur, wenn mindestens eine Inhaber:innen-Adresse angenommen hat
  * (AGB § 9 Nr. 2: Ankündigung an die Inhaber:innen) – die Steuerberatung (Rolle accountant) erhält sie zusätzlich zur
- * Sicherung der Aufbewahrungspflichten, zählt aber nicht als Zugang (Recht B-1).
+ * Sicherung der Aufbewahrungspflichten, zählt aber nicht als Zugang (Recht B-1). `withAccountant: false` bei
+ * Wiederholungen, die sie schon erreicht haben (Code CR-2).
  */
-function deliver(organizationId: string, subject: string, text: string, deps: Deps): Promise<MailOutcome> {
-  return sendOrgMail(organizationId, subject, text, { primary: ["owner"], additional: ["accountant"], mail: deps.mail, logKey: "cron.readonly_expiry" });
+function deliver(organizationId: string, subject: string, text: string, deps: Deps, withAccountant = true): Promise<MailOutcome> {
+  return sendOrgMail(organizationId, subject, text, { primary: ["owner"], additional: withAccountant ? ["accountant"] : [], mail: deps.mail, logKey: "cron.readonly_expiry" });
 }
+
+/** Der Versand hat den Mailserver erreicht (an Inhaber:innen zugestellt oder abgelehnt) – die Steuerberatung wurde mit angeschrieben */
+const reachedMailServer = (m: MailOutcome) => m === "sent" || m === "failed";
 
 async function inbox(organizationId: string, subject: string, body: string) {
   await withOrg(organizationId, (tx) =>
@@ -111,10 +132,10 @@ function noticeText(name: string, info: ReadonlyExpiry, deletionAt: Date, remind
     ...(reminder
       ? []
       : [
-          `Der Nur-Lesen-Modus endet spätestens 12 Monate nach ${trial ? "Ende der Testphase (AGB § 3 Nr. 5, § 9 Nr. 2)" : "Vertragsende (AGB § 9 Nr. 2)"}. Wir löschen deine Praxis deshalb am ${date} endgültig (spätestens 14 Tage danach) – mit allen Patient:innen, Dokumentation, Fotos, Rechnungen, Terminen und Zugängen. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht.`,
+          `Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach ${trial ? "Ende der Testphase (AGB § 3 Nr. 5, § 9 Nr. 2)" : "Vertragsende (AGB § 9 Nr. 2)"}; wir löschen deine Praxis am ${date} endgültig (spätestens 14 Tage danach) – mit allen Patient:innen, Dokumentation, Fotos, Rechnungen, Terminen und Zugängen. Verschlüsselte Datensicherungen werden spätestens 30 Tage nach der Löschung gelöscht.`,
           "",
         ]),
-    `Bitte erstelle vorher einen vollständigen Export (Einstellungen → Daten & Kündigung). Den Export brauchst du, um deine Aufbewahrungspflichten zu erfüllen. Bewahre ihn unverändert, lesbar und maschinell auswertbar bis zum Fristende auf und stimme die Ablage mit deiner Steuerberatung ab. ${EXPORT_CASH_NOTE} ${CASH_REGISTER_NOTE}`,
+    `Bitte erstelle vorher einen vollständigen Export (Einstellungen → Daten & Kündigung). Den Export brauchst du, um deine Aufbewahrungspflichten zu erfüllen. Bewahre ihn unverändert, lesbar und maschinell auswertbar bis zum Fristende auf und stimme die Ablage mit deiner Steuerberatung ab. ${EXPORT_CASH_NOTE} ${CASH_REGISTER_NOTE_ANNOUNCEMENT}`,
     "",
     trial
       ? "Möchtest du PodoHero weiter nutzen, wähle unter Einstellungen → Abo einen Tarif. Für kleine Praxen gibt es den kostenlosen Tarif (bis 20 Patient:innen, ein Zugang) – auch damit entfällt die Löschung."
@@ -125,10 +146,10 @@ function noticeText(name: string, info: ReadonlyExpiry, deletionAt: Date, remind
   return { subject, body, text };
 }
 
-const stateSql = (patch: Record<string, string | null>) =>
+const stateSql = (patch: Record<string, string | number | boolean | null>) =>
   sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('readonlyExpiry', coalesce(${organizations.settings}->'readonlyExpiry', '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb)`;
 
-async function setState(organizationId: string, patch: Record<string, string | null>) {
+async function setState(organizationId: string, patch: Record<string, string | number | boolean | null>) {
   await db.update(organizations).set({ settings: stateSql(patch) }).where(eq(organizations.id, organizationId));
 }
 
@@ -202,9 +223,13 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
   let current = state;
   // Erstankündigung – oder erneuter Versuch, wenn die letzte Ankündigung nicht zugestellt wurde (Versandfehler, kein
   // Plattform-SMTP, kein Empfänger, abgebrochener Lauf) und der Betreiber noch nichts vermerkt hat: höchstens einmal je
-  // NOTICE_RETRY_HOURS, mit neuem Termin (frühestens 30 Tage nach diesem Versuch).
+  // NOTICE_RETRY_HOURS und insgesamt NOTICE_MAX_ATTEMPTS Versuche, mit neuem Termin (frühestens 30 Tage nach diesem
+  // Versuch). Danach bleibt nur die Pflichtaktion beim Betreiber (Plattform-Konsole, Code CR-2).
   const retry =
-    !!state.noticeSentAt && needsManualNotice(state) && now.getTime() - Date.parse(state.noticeSentAt) >= NOTICE_RETRY_HOURS * 3600_000;
+    !!state.noticeSentAt &&
+    needsManualNotice(state) &&
+    state.noticeAttempts < NOTICE_MAX_ATTEMPTS &&
+    now.getTime() - Date.parse(state.noticeSentAt) >= NOTICE_RETRY_HOURS * 3600_000;
   if (!state.noticeSentAt || retry) {
     if (now < info.noticeAt) return "none";
     // angekündigter Termin: spätester Termin, aber nie weniger als 30 Tage nach der Ankündigung
@@ -212,7 +237,7 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
     const claimed = await db
       .update(organizations)
       // „unknown“, bis das Versandergebnis feststeht: bricht der Lauf ab, gilt die Ankündigung als nicht zugestellt
-      .set({ settings: stateSql({ noticeSentAt: now.toISOString(), deletionAt: deletionAt.toISOString(), noticeMail: "unknown" }) })
+      .set({ settings: stateSql({ noticeSentAt: now.toISOString(), deletionAt: deletionAt.toISOString(), noticeMail: "unknown", noticeAttempts: retry ? state.noticeAttempts + 1 : 1 }) })
       .where(
         and(
           eq(organizations.id, o.id),
@@ -228,15 +253,24 @@ async function step(o: OrgRow, now: Date, deps: Deps): Promise<"none" | "notice"
     const { subject, body, text } = noticeText(o.name, info, deletionAt, false);
     // Posteingang nur bei der Erstankündigung (Wiederholungen ändern nur den Termin; die Hinweisleiste zeigt ihn aktuell)
     if (!retry) await inbox(o.id, `Löschung der Praxis am ${dateDe(deletionAt)}`, body).catch((e) => log.error("cron.readonly_expiry.inbox_failed", { organizationId: o.id, error: e }));
-    const mail = await deliver(o.id, subject, text, deps);
-    await setState(o.id, { noticeMail: mail });
-    await db.insert(auditLog).values({
-      organizationId: o.id,
-      action: "org.readonly_expiry_notice",
-      entity: "organization",
-      entityId: o.id,
-      meta: { deletionAt: deletionAt.toISOString(), contractEnd: info.contractEnd.toISOString(), mail, ...(retry ? { retry: true, previousMail: state.noticeMail } : {}) },
-    });
+    // Steuerberatung nur, solange sie die Ankündigung noch nicht erhalten hat (Erstversuch bzw. bisher nichts versendet)
+    const mail = await deliver(o.id, subject, text, deps, !state.accountantNotified);
+    await setState(o.id, { noticeMail: mail, ...(reachedMailServer(mail) ? { accountantNotified: true } : {}) });
+    // Wiederholung ohne Versand (kein Plattform-SMTP, kein Empfänger): keine weitere Audit-Zeile je Versuch
+    if (!retry || !["not_configured", "no_recipient"].includes(mail)) {
+      await db.insert(auditLog).values({
+        organizationId: o.id,
+        action: "org.readonly_expiry_notice",
+        entity: "organization",
+        entityId: o.id,
+        meta: {
+          deletionAt: deletionAt.toISOString(),
+          contractEnd: info.contractEnd.toISOString(),
+          mail,
+          ...(retry ? { retry: true, attempt: state.noticeAttempts + 1, previousMail: state.noticeMail } : {}),
+        },
+      });
+    }
     did = "notice";
     current = { ...state, noticeSentAt: now.toISOString(), deletionAt: deletionAt.toISOString(), noticeMail: mail };
   }

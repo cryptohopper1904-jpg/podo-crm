@@ -102,10 +102,12 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     expect(sent[0].to).toBe(p.email);
     expect(sent[0].subject).toMatch(/Ankündigung: Löschung deiner Praxis am \d\d\.\d\d\.\d{4}/);
     // einheitlich mit AGB § 9 Nr. 2 (Recht E-2), Verweis AGB § 3 Nr. 5 (E-1), TSE-Export beim Anbieter (E-7), Kassenabmeldung (Buchhaltung E2)
-    expect(sent[0].text).toMatch(/Wir löschen deine Praxis deshalb am \d\d\.\d\d\.\d{4} endgültig \(spätestens 14 Tage danach\)/);
+    // Recht R-4: „endet grundsätzlich 12 Monate nach …; wir löschen deine Praxis am … endgültig (spätestens 14 Tage danach)“
+    expect(sent[0].text).toMatch(/Der Nur-Lesen-Modus endet grundsätzlich 12 Monate nach Ende der Testphase \(AGB § 3 Nr\. 5, § 9 Nr\. 2\); wir löschen deine Praxis am \d\d\.\d\d\.\d{4} endgültig \(spätestens 14 Tage danach\)/);
     expect(sent[0].text).toContain("(AGB § 3 Nr. 5, § 9 Nr. 2)");
     expect(sent[0].text).toContain("und den TSE-Export bei deinem TSE-Anbieter; nach der Löschung lassen sie sich über PodoHero nicht mehr erzeugen.");
-    expect(sent[0].text).toContain("§ 146a Abs. 4 AO, über „Mein ELSTER“");
+    // Recht R-2: Ankündigung mit „– falls noch nicht geschehen“
+    expect(sent[0].text).toContain("teile die Außerbetriebnahme – falls noch nicht geschehen – innerhalb eines Monats danach deinem Finanzamt mit (§ 146a Abs. 4 AO, z. B. über „Mein ELSTER“)");
     expect(sent[0].text).toContain("Du kannst die Löschung auch sofort beantragen (Einstellungen → Daten & Kündigung).");
     expect(sent[0].text).not.toMatch(/ab dem|frühestens am/);
     // Testphase: eigener Satz, kostenloser Tarif als Ausweg, Aufbewahrungs-Hinweis (Buchhaltung)
@@ -251,6 +253,68 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     mailMode = "ok";
     expect(await run([q.org], new Date(t0.getTime() + 3 * DAY))).toMatchObject({ notices: 0 });
     expect((await row(q.org)).settings.readonlyExpiry.noticeSentAt).toBe(before);
+  });
+
+  it("Code CR-2: Wiederholungen ohne Steuerberatung, höchstens 3 Versuche, ohne Versand keine Audit-Zeile je Versuch", async () => {
+    const t0 = new Date();
+    const H = 3600_000;
+    // a) Inhaber:in lehnt ab, Steuerberatung erhält die Ankündigung beim ersten Versuch – Wiederholungen nur an die Inhaber:in
+    const p = await practice({ deleteInDays: 40, now: t0 });
+    const acc = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [p.org, acc]);
+    const accEmail = (await f.pool.query("select email from users where id=$1", [acc])).rows[0].email as string;
+    rejectTo.add(p.email);
+    for (const h of [0, 25, 50]) expect(await run([p.org], new Date(t0.getTime() + h * H))).toMatchObject({ notices: 1, requests: 0 });
+    expect(sent.map((m) => m.to)).toEqual([accEmail]);
+    let st = (await row(p.org)).settings.readonlyExpiry;
+    expect(st).toMatchObject({ noticeAttempts: 3, noticeMail: "failed", accountantNotified: true });
+    // vierter Versuch entfällt – nur noch Pflichtaktion beim Betreiber
+    rejectTo.delete(p.email);
+    expect(await run([p.org], new Date(t0.getTime() + 75 * H))).toMatchObject({ notices: 0, mailNotSent: 1 });
+    expect(sent).toHaveLength(1);
+    expect((await row(p.org)).settings.readonlyExpiry.noticeAttempts).toBe(3);
+    const meta = (await audits(p.org, "org.readonly_expiry_notice")).map((r) => r.meta);
+    expect(meta).toHaveLength(3);
+    expect(meta.map((m) => m.attempt ?? 1)).toEqual([1, 2, 3]);
+    // b) ohne Plattform-SMTP: Audit-Zeile nur beim Erstversuch, Versuche ebenfalls begrenzt
+    mailMode = "unconfigured";
+    const q = await practice({ deleteInDays: 40, now: t0 });
+    for (const h of [0, 25, 50, 75, 100]) await run([q.org], new Date(t0.getTime() + h * H));
+    st = (await row(q.org)).settings.readonlyExpiry;
+    expect(st).toMatchObject({ noticeAttempts: 3, noticeMail: "not_configured" });
+    expect(st.accountantNotified).toBeUndefined();
+    expect(await audits(q.org, "org.readonly_expiry_notice")).toEqual([{ meta: expect.objectContaining({ mail: "not_configured" }) }]);
+    // c) zuvor nichts versendet (kein Plattform-SMTP): die Steuerberatung erhält den ersten tatsächlich versendeten Versuch
+    const r = await practice({ deleteInDays: 40, now: t0 });
+    const acc2 = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [r.org, acc2]);
+    await run([r.org], t0);
+    mailMode = "ok";
+    await run([r.org], new Date(t0.getTime() + 25 * H));
+    expect(sent.slice(1).map((m) => m.to).sort()).toEqual([r.email, (await f.pool.query("select email from users where id=$1", [acc2])).rows[0].email].sort());
+  });
+
+  it("Code CR-1: begonnener Löschlauf (purgeStartedAt) – Tarifbuchung setzt die automatische Löschung nicht zurück, Betreiber-Hinweis", async () => {
+    const now = new Date();
+    const p = await practice({ deleteInDays: 5, now });
+    await run([p.org], now);
+    expect((await row(p.org)).deletion_requested_at).not.toBeNull();
+    await owner.query("update organizations set settings = settings || jsonb_build_object('purgeStartedAt', now()::text) where id=$1", [p.org]);
+    const { db } = await import("@/db");
+    expect(await mod.stopAutoDeletion(db, p.org, { trigger: "billing:checkout.session.completed" })).toBe(false);
+    // Cron: kein Audit je Lauf (alle 6 h), nur Protokoll
+    expect(await mod.stopAutoDeletion(db, p.org, { trigger: "cron" })).toBe(false);
+    const o = await row(p.org);
+    expect(o.deletion_requested_at).not.toBeNull();
+    expect(o.settings).toMatchObject({ deletionReason: "auto_readonly_expiry", readonlyExpiry: expect.objectContaining({ noticeMail: "sent" }) });
+    expect(await audits(p.org, "org.readonly_expiry_stopped")).toEqual([]);
+    expect(await audits(p.org, "org.readonly_expiry_stop_blocked")).toEqual([{ meta: { trigger: "billing:checkout.session.completed", reason: "purge_started" } }]);
+    const { purgeStartedProblem } = await import("@/lib/org-deletion");
+    expect(purgeStartedProblem(o.settings)).toMatch(/Löschlauf begonnen/);
+    // ohne Marke wie bisher
+    await owner.query("update organizations set settings = settings - 'purgeStartedAt' where id=$1", [p.org]);
+    expect(await mod.stopAutoDeletion(db, p.org, { trigger: "test" })).toBe(true);
+    expect((await row(p.org)).deletion_requested_at).toBeNull();
   });
 
   it("Recht B-1: nur an die Steuerberatung zugestellt gilt NICHT als Zugang – kein Antrag, Pflichtaktion", async () => {

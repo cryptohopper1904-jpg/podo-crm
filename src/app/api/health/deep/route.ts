@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { safeEqual } from "@/lib/safe-equal";
 import { log } from "@/lib/log";
 import { evaluateCalendarFeeds, overallStatus, type CheckResult } from "@/lib/ops-health";
-import { checkMigrations, checkPaymentRefIndex, checkStripeCustomerIndex, checkTimestamps, withTimeout } from "@/server/ops-status";
+import { checkMigrations, checkOverdueDeletions, checkPaymentRefIndex, checkStripeCustomerIndex, checkTimestamps, withTimeout } from "@/server/ops-status";
 import { webhookBacklog } from "@/server/webhooks";
 import { calendarFeedHealth } from "@/server/calendar-feeds";
 
@@ -19,7 +19,8 @@ export const dynamic = "force-dynamic";
  * - kein Token konfiguriert → 503 (fail closed), falsches Token → 401 (zeitkonstanter Vergleich)
  * - Prüfungen: Datenbank, Migrationsstand, Dateiablage beschreibbar, Alter des letzten Backups,
  *   letzte Cron-Läufe (Zeitstempel-Dateien in STATUS_DIR, geschrieben von backup-/cron-Container),
- *   Kalender-Abo (Alter des letzten erfolgreichen Abrufs, „kalender_abo“), eindeutiger SumUp-Index („zahlungen_index“)
+ *   Kalender-Abo (Alter des letzten erfolgreichen Abrufs, „kalender_abo“), eindeutiger SumUp-Index („zahlungen_index“),
+ *   überfällige Löschanträge („loeschantraege“, nur Anzahl)
  * - Antwort: Zustand je Prüfung, nur Zeiten/Zähler, keine Personendaten, keine Fehlertexte der DB
  * - HTTP 200 bei ok/warn, 503 bei mindestens einem „fail“
  * Das öffentliche /api/health bleibt minimal ({ ok: true }) für Container-Healthchecks.
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   if (!safeEqual(token, secret)) return NextResponse.json({ error: "Nicht autorisiert" }, { status: 401 });
 
-  const [database, migrations, storage, stamps, webhooks, kalender_abo, zahlungen_index, stripe_kunde_index] = await Promise.all([
+  const [database, migrations, storage, stamps, webhooks, kalender_abo, zahlungen_index, stripe_kunde_index, loeschantraege] = await Promise.all([
     checkDb(),
     checkMigrations(),
     checkStorage(),
@@ -87,8 +88,9 @@ export async function GET(req: NextRequest) {
     checkCalendarFeeds(),
     checkPaymentRefIndex(),
     checkStripeCustomerIndex(),
+    checkOverdueDeletions(),
   ]);
-  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps, webhooks, kalender_abo, zahlungen_index, stripe_kunde_index };
+  const checks: Record<string, CheckResult> = { database, migrations, storage, ...stamps, webhooks, kalender_abo, zahlungen_index, stripe_kunde_index, loeschantraege };
   const status = overallStatus(checks);
   if (status !== "ok") {
     log.warn("health.deep", { status, failed: Object.entries(checks).filter(([, c]) => c.status === "fail").map(([k]) => k).join(",") || null });

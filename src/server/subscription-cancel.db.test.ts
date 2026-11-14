@@ -397,20 +397,29 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
     const toOwner = mailState.capture.filter((m) => m.subject.startsWith("Kündigung bestätigt"));
     expect(toOwner).toHaveLength(1);
     expect(toOwner[0].to).toBe(await email(authState.user));
-    expect(toOwner[0].text).toContain(`Deine Praxis wird frühestens am ${due} endgültig gelöscht. Nimmst du den Löschantrag bis dahin zurück (Einstellungen → Daten & Kündigung), gilt auch die Kündigung als zurückgenommen, solange der Abrechnungszeitraum noch läuft.`);
-    expect(toOwner[0].text).toContain("§ 146a Abs. 4 AO");
+    // Recht R-7: Löschtermin mit „spätestens 14 Tage danach“, Abo endet mit einer früheren Löschung
+    expect(toOwner[0].text).toContain(
+      `Wird die Praxis vorher gelöscht, endet das Abo mit der Löschung. Deine Praxis wird am ${due} endgültig gelöscht (spätestens 14 Tage danach). Nimmst du den Löschantrag bis dahin zurück (Einstellungen → Daten & Kündigung), gilt auch die Kündigung als zurückgenommen, solange der Abrechnungszeitraum noch läuft.`,
+    );
+    expect(toOwner[0].text).not.toContain("frühestens");
+    // Recht R-2: Kassenabmeldung
+    expect(toOwner[0].text).toContain("Hast du PodoHero als Kasse mit TSE genutzt, teile die Außerbetriebnahme innerhalb eines Monats danach deinem Finanzamt mit (§ 146a Abs. 4 AO");
     const toAcc = mailState.capture.filter((m) => m.subject.startsWith("Löschantrag der Praxis"));
     expect(toAcc.map((m) => m.to)).toEqual([await email(acc)]);
     expect(toAcc[0].subject).toContain(`Löschung am ${due}`);
     expect(toAcc[0].text).toContain(`Wir löschen die Praxis am ${due} endgültig (spätestens 14 Tage danach)`);
     expect(toAcc[0].text).toMatch(/vollständigen Export/);
     expect(toAcc[0].text).toContain("max. 3 Jahre je Export");
+    // Recht R-3: Kassen-Hinweis an die Steuerberatung in der 3. Person, ohne die du-Fassung
+    expect(toAcc[0].text).toContain("Hat die Praxis die Kasse genutzt, sollte sie auch den DSFinV-K-Export");
+    expect(toAcc[0].text).toContain("dem Finanzamt mitteilen (§ 146a Abs. 4 AO");
+    expect(toAcc[0].text).not.toMatch(/Hast du (die Kasse|PodoHero als Kasse)|deinem TSE-Anbieter/);
     expect(mailState.capture.map((m) => m.to)).not.toContain(await email(recep));
     expect(await audits(org, "org.deletion_request_accountant_mail")).toEqual([expect.objectContaining({ meta: expect.objectContaining({ mail: "sent" }) })]);
     expect(await audits(org, "billing.cancel_confirmation_mail")).toEqual([expect.objectContaining({ meta: { trigger: "deletion_request", mail: "sent" } })]);
     // Posteingang trägt denselben Text
     const inbox = await f.asOrg(org, async (c) => (await c.query("select body from messages where organization_id=$1 and subject='Kündigung bestätigt'", [org])).rows);
-    expect(inbox[0].body).toContain(`frühestens am ${due} endgültig gelöscht`);
+    expect(inbox[0].body).toContain(`Deine Praxis wird am ${due} endgültig gelöscht (spätestens 14 Tage danach)`);
   });
 
   it("Abo-Seite: Bestätigung ohne Löschantrag nennt Nur-Lesen-Modus und Ankündigung (E-4); ohne Plattform-SMTP keine E-Mail", async () => {
@@ -450,6 +459,64 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
         `create unique index if not exists "organizations_stripe_customer_id" on "organizations" using btree ("stripe_customer_id") where "organizations"."stripe_customer_id" is not null`,
       );
     }
+  });
+
+  it("geteilte Stripe-Kunden-ID: Rücknahme des Löschantrags setzt bei Stripe nichts fort (AppSec AS-1)", { timeout: 30_000 }, async () => {
+    const { org, subId, cusId } = await setup();
+    await request();
+    expect(stripe.subs.get(subId)).toMatchObject({ cancelAtPeriodEnd: true, cancelReason: "deletion_request" });
+    const other = await f.org();
+    await owner.query("drop index if exists organizations_stripe_customer_id");
+    try {
+      await owner.query("update organizations set stripe_customer_id=$2 where id=$1", [other, cusId]);
+      stripe.calls = [];
+      const w = await withdraw();
+      expect(w?.ok).toMatch(/Die Löschung wurde zurückgenommen/);
+      expect(w?.warning).toMatch(/konnte nicht automatisch zurückgenommen werden/);
+      expect(stripe.calls).toEqual([]);
+      expect(stripe.subs.get(subId)?.cancelAtPeriodEnd).toBe(true);
+      expect(await audits(org, "billing.resume_failed")).toEqual([expect.objectContaining({ meta: expect.objectContaining({ error: "SharedStripeCustomer" }) })]);
+      // ebenso über die Abo-Seite
+      await abo.resumeSubscriptionAction();
+      expect(stripe.calls).toEqual([]);
+    } finally {
+      await owner.query("update organizations set stripe_customer_id=null where id=$1", [other]);
+      await owner.query(
+        `create unique index if not exists "organizations_stripe_customer_id" on "organizations" using btree ("stripe_customer_id") where "organizations"."stripe_customer_id" is not null`,
+      );
+    }
+  });
+
+  it("Steuerberatung: Gegen-Mail bei Rücknahme (BK-5), je Art höchstens eine E-Mail je Praxis und 24 h (AppSec AS-2)", async () => {
+    const { org } = await setup();
+    const acc = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'accountant')", [org, acc]);
+    const accEmail = (await f.pool.query("select email from users where id=$1", [acc])).rows[0].email as string;
+    mailState.capture = [];
+    const toAcc = () => mailState.capture!.filter((m) => m.to === accEmail);
+    await request();
+    await withdraw();
+    expect(toAcc().map((m) => m.subject)).toEqual([expect.stringMatching(/^Löschantrag der Praxis „Testpraxis Fuß“ – Löschung am /), "Löschantrag der Praxis „Testpraxis Fuß“ zurückgenommen – PodoHero"]);
+    expect(toAcc()[1].text).toMatch(/wurde der Löschantrag am \d\d\.\d\d\.\d{4} zurückgenommen\. Die Praxis wird nicht gelöscht/);
+    // erneuter Antrag und erneute Rücknahme innerhalb von 24 h: keine weiteren E-Mails an die Steuerberatung
+    await request();
+    await withdraw();
+    expect(toAcc()).toHaveLength(2);
+    expect((await audits(org, "org.deletion_request_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "throttled"]);
+    expect((await audits(org, "org.deletion_withdrawn_accountant_mail")).map((r) => r.meta.mail)).toEqual(["sent", "throttled"]);
+    // nach 24 h wieder
+    await owner.query("update organizations set settings = jsonb_set(settings, '{accountantMailAt,deletion_request}', to_jsonb((now() - interval '25 hours')::text)) where id=$1", [org]);
+    await request();
+    expect(toAcc()).toHaveLength(3);
+    // gleichzeitige Anträge (Rennen) senden höchstens einmal
+    const mailMod = await import("./org-mail");
+    await owner.query("update organizations set settings = settings - 'accountantMailAt' where id=$1", [org]);
+    const capture: { to: string }[] = [];
+    const port = () => ({ kind: "smtp", isMock: false, source: "platform", send: async (m: { to: string }) => (capture.push(m), { messageId: "x" }) }) as never;
+    const r = await Promise.all([1, 2, 3].map(() => mailMod.notifyAccountantsOfDeletionRequest(org, "Testpraxis Fuß", new Date(), { mail: port })));
+    expect(r.filter((x) => x === "sent")).toHaveLength(1);
+    expect(r.filter((x) => x === "throttled")).toHaveLength(2);
+    expect(capture).toHaveLength(1);
   });
 
   it("Kündigungs-Marken werden in SQL zusammengeführt (vorhandene Marken anderer Abos bleiben, auch bei veraltetem Lesestand)", async () => {
@@ -736,6 +803,21 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       expect(purged[0].meta).toMatchObject({ stripe: { refundCheck: true, customerBalanceCents: -2500, pendingChargeCents: 1500, pendingCreditCents: -400 } });
     });
 
+    it("Health-Check: überfällige Löschanträge (Antrag + 30 + 14 Tage) → warn, nur Anzahl (Recht R-8)", async () => {
+      const ops = await import("./ops-status");
+      const { org } = await setup({ sub: null });
+      await owner.query("update organizations set deletion_requested_at = now() - interval '45 days' where id=$1", [org]);
+      try {
+        const r = await ops.checkOverdueDeletions();
+        expect(r).toMatchObject({ status: "warn", hint: expect.stringMatching(/überfällig/) });
+        expect(Number(r.overdue)).toBeGreaterThanOrEqual(1);
+        expect(Object.keys(r).sort()).toEqual(["hint", "overdue", "status"]);
+        expect(JSON.stringify(r)).not.toContain(org);
+      } finally {
+        await owner.query("update organizations set deletion_requested_at = null where id=$1", [org]);
+      }
+    });
+
     it("Stripe abgeschlossen, DB-Löschung bricht ab → Abbruch-Protokoll mit Stripe-Stand, Marke purgeStartedAt (Code C-1)", async () => {
       const { org, subId, cusId } = await dueOrg({ currentPeriodStart: new Date(Date.now() - 2 * 86_400_000) });
       // nach dem Löschen des Stripe-Kunden ändert sich der Antrag (z. B. von Hand zurückgenommen) → purgeOnce bricht ab
@@ -757,7 +839,25 @@ const sfx = () => Math.random().toString(36).slice(2, 10);
       expect(aborted[0].meta).toMatchObject({
         reason: "not_requested",
         stripe: { subscription: "canceled_now", customer: "deleted", refundCheck: true, subscriptionId: subId, customerId: cusId },
+        stripeIdsCleared: true,
       });
+      // Code CR-1: Stripe-IDs des gelöschten Kunden geleert, beendetes Abo als „canceled“; Betreiber-Hinweis
+      const after = (await owner.query("select stripe_customer_id, stripe_subscription_id, subscription_status, settings from organizations where id=$1", [org])).rows[0];
+      expect(after).toMatchObject({ stripe_customer_id: null, stripe_subscription_id: null, subscription_status: "canceled" });
+      const { purgeStartedProblem } = await import("@/lib/org-deletion");
+      expect(purgeStartedProblem(after.settings)).toMatch(/Löschlauf begonnen/);
+      // erneuter Lauf (Antrag wieder fällig): löscht ohne weitere Stripe-Aufrufe
+      await owner.query("update organizations set deletion_requested_at = now() - interval '31 days' where id=$1", [org]);
+      stripe.calls = [];
+      const c2 = await owner.connect();
+      try {
+        const r = await purge.purgeOrganization(c2, org, { execute: true, billing: stripe as unknown as BillingPort });
+        expect(r.stripe).toMatchObject({ subscription: "none", customer: "none" });
+      } finally {
+        c2.release();
+      }
+      expect(stripe.calls).toEqual([]);
+      expect(await exists(org)).toBe(false);
     });
 
     it("Antrag vor der ersten Stripe-Änderung entfernt → nichts bei Stripe geändert (bedingte Marke)", async () => {

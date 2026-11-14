@@ -51,3 +51,28 @@ describe("checkStripeCustomerIndex (AppSec L-1)", () => {
     delete db.execute;
   });
 });
+
+describe("checkOverdueDeletions (Recht R-8)", () => {
+  it("überfällige Löschanträge → warn mit Anzahl (ohne IDs/Namen), keine → ok, nicht lesbar → fail; Stichtag Antrag + 44 Tage", async () => {
+    const { db } = (await import("@/db")) as unknown as { db: { execute?: (q: unknown) => Promise<unknown> } };
+    const { checkOverdueDeletions } = await import("./ops-status");
+    const { overdueCutoff } = await import("@/lib/org-deletion");
+    const now = new Date("2026-11-14T12:00:00Z");
+    expect(overdueCutoff(now).toISOString()).toBe("2026-10-01T12:00:00.000Z");
+    let params: unknown[] = [];
+    db.execute = async (q: unknown) => {
+      params = (q as { queryChunks?: unknown[] }).queryChunks ?? [];
+      return { rows: [{ n: 2 }] };
+    };
+    const r = await checkOverdueDeletions(now);
+    expect(r).toEqual({ status: "warn", overdue: 2, hint: expect.stringMatching(/überfällig/) });
+    expect(JSON.stringify(params)).toContain("2026-10-01T12:00:00.000Z");
+    db.execute = async () => ({ rows: [{ n: 0 }] });
+    expect(await checkOverdueDeletions(now)).toEqual({ status: "ok", overdue: 0 });
+    db.execute = async () => {
+      throw new Error("weg");
+    };
+    expect((await checkOverdueDeletions(now)).status).toBe("fail");
+    delete db.execute;
+  });
+});

@@ -1,12 +1,12 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { memberships, users } from "@/db/schema";
+import { memberships, organizations, users } from "@/db/schema";
 import { MailNotConfiguredError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
 import { dateDe } from "@/lib/format";
 import { log } from "@/lib/log";
-import { CASH_REGISTER_NOTE, deletionDueAt, EXPORT_CASH_NOTE } from "@/lib/org-deletion";
+import { ACCOUNTANT_CASH_NOTE, deletionDueAt } from "@/lib/org-deletion";
 import type { MailOutcome } from "@/lib/readonly-expiry";
 import { platformMailPort } from "./mail";
 
@@ -78,16 +78,69 @@ export async function sendOrgMail(organizationId: string, subject: string, text:
 
 const publicUrl = () => (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
 
+/** Höchstens eine E-Mail je Art an die Steuerberatung einer Praxis in diesem Zeitraum (AppSec AS-2) */
+export const ACCOUNTANT_MAIL_THROTTLE_HOURS = 24;
+export type AccountantMailKind = "deletion_request" | "deletion_withdrawn";
+export type AccountantMailOutcome = MailOutcome | "throttled";
+
+/**
+ * Drossel (AppSec AS-2): beansprucht per bedingtem UPDATE den Versand dieser Art für die Praxis
+ * (organizations.settings.accountantMailAt[kind]); false = in den letzten ACCOUNTANT_MAIL_THROTTLE_HOURS schon versendet.
+ * Atomar – auch gleichzeitige Anträge/Rücknahmen senden höchstens einmal.
+ */
+async function claimAccountantMail(organizationId: string, kind: AccountantMailKind, now: Date): Promise<boolean> {
+  const cutoff = new Date(now.getTime() - ACCOUNTANT_MAIL_THROTTLE_HOURS * 3600_000).toISOString();
+  const prev = sql`(case when jsonb_typeof(${organizations.settings}->'accountantMailAt') = 'object' then ${organizations.settings}->'accountantMailAt' else '{}'::jsonb end)`;
+  const rows = await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('accountantMailAt', ${prev} || jsonb_build_object(${kind}::text, ${now.toISOString()}::text))` })
+    .where(
+      and(
+        eq(organizations.id, organizationId),
+        sql`case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end`,
+      ),
+    )
+    .returning({ id: organizations.id });
+  return rows.length > 0;
+}
+
+/** Versand an die Steuerberatung (Rolle accountant) mit Drossel und Audit; wirft nie. */
+async function mailAccountants(
+  organizationId: string,
+  kind: AccountantMailKind,
+  subject: string,
+  text: string,
+  auditMeta: Record<string, unknown>,
+  opts: { mail?: () => MailPort; now?: Date },
+): Promise<AccountantMailOutcome> {
+  const action = kind === "deletion_request" ? "org.deletion_request_accountant_mail" : "org.deletion_withdrawn_accountant_mail";
+  let mail: AccountantMailOutcome;
+  try {
+    if (!(await orgRecipientEmails(organizationId, ["accountant"])).length) return "no_recipient";
+    mail = (await claimAccountantMail(organizationId, kind, opts.now ?? new Date()))
+      ? await sendOrgMail(organizationId, subject, text, { primary: ["accountant"], mail: opts.mail, logKey: `org.${kind}` })
+      : "throttled";
+  } catch (e) {
+    log.warn(`org.${kind}.mail_failed`, { organizationId, error: e });
+    mail = "failed";
+  }
+  await audit({ organizationId, action, entity: "organization", entityId: organizationId, meta: { mail, ...auditMeta } }).catch((e) =>
+    log.warn(`org.${kind}.audit_failed`, { organizationId, error: e }),
+  );
+  return mail;
+}
+
 /**
  * Freiwilliger Löschantrag (Buchhaltung E4): Die Steuerberatung (Rolle accountant) erfährt Löschtermin und was vorher zu
- * sichern ist – die Aufbewahrungspflichten der Praxis laufen weiter. Ohne Steuerberatung bzw. Plattform-SMTP: nichts.
+ * sichern ist – die Aufbewahrungspflichten der Praxis laufen weiter. Kassen-Hinweis in der 3. Person (Recht R-3).
+ * Ohne Steuerberatung bzw. Plattform-SMTP: nichts; höchstens eine E-Mail je Praxis und 24 h (AppSec AS-2).
  */
 export async function notifyAccountantsOfDeletionRequest(
   organizationId: string,
   practiceName: string,
   requestedAt: Date,
-  opts: { mail?: () => MailPort } = {},
-): Promise<MailOutcome> {
+  opts: { mail?: () => MailPort; now?: Date } = {},
+): Promise<AccountantMailOutcome> {
   const due = dateDe(deletionDueAt(requestedAt));
   const url = publicUrl();
   const text = [
@@ -95,21 +148,34 @@ export async function notifyAccountantsOfDeletionRequest(
     "",
     `für die Praxis „${practiceName}“, bei der du in PodoHero als Steuerberatung eingetragen bist, wurde am ${dateDe(requestedAt)} die Löschung beantragt. Wir löschen die Praxis am ${due} endgültig (spätestens 14 Tage danach), sofern der Antrag nicht vorher zurückgenommen wird. Danach sind auch deine Zugänge und alle Belege in PodoHero gelöscht.`,
     "",
-    `Die Aufbewahrungspflichten der Praxis bleiben bestehen. Bitte stimme mit der Praxis ab, dass sie vorher einen vollständigen Export erstellt (Einstellungen → Daten & Kündigung): Er enthält Rechnungen und Zahlungsbelege als Original-PDF mit Prüfsumme und das Kassenbuch als Tabelle. ${EXPORT_CASH_NOTE} ${CASH_REGISTER_NOTE}`,
+    `Die Aufbewahrungspflichten der Praxis bleiben bestehen. Bitte stimme mit der Praxis ab, dass sie vorher einen vollständigen Export erstellt (Einstellungen → Daten & Kündigung): Er enthält Rechnungen und Zahlungsbelege als Original-PDF mit Prüfsumme und das Kassenbuch als Tabelle. ${ACCOUNTANT_CASH_NOTE}`,
     ...(url ? ["", url] : []),
     "",
     "Viele Grüße",
     "PodoHero",
   ].join("\n");
-  const mail = await sendOrgMail(organizationId, `Löschantrag der Praxis „${practiceName}“ – Löschung am ${due} – PodoHero`, text, {
-    primary: ["accountant"],
-    mail: opts.mail,
-    logKey: "org.deletion_request",
-  });
-  if (mail !== "no_recipient") {
-    await audit({ organizationId, action: "org.deletion_request_accountant_mail", entity: "organization", entityId: organizationId, meta: { mail, deletionAt: deletionDueAt(requestedAt).toISOString() } }).catch(
-      (e) => log.warn("org.deletion_request.audit_failed", { organizationId, error: e }),
-    );
-  }
-  return mail;
+  return mailAccountants(organizationId, "deletion_request", `Löschantrag der Praxis „${practiceName}“ – Löschung am ${due} – PodoHero`, text, { deletionAt: deletionDueAt(requestedAt).toISOString() }, opts);
+}
+
+/**
+ * Rücknahme des Löschantrags (Buchhaltung BK-5): Gegen-Mail an die Steuerberatung – die Praxis bleibt bestehen.
+ * Gleiche Drossel wie beim Antrag (AppSec AS-2).
+ */
+export async function notifyAccountantsOfDeletionWithdrawal(
+  organizationId: string,
+  practiceName: string,
+  opts: { mail?: () => MailPort; now?: Date } = {},
+): Promise<AccountantMailOutcome> {
+  const now = opts.now ?? new Date();
+  const url = publicUrl();
+  const text = [
+    "Hallo,",
+    "",
+    `für die Praxis „${practiceName}“, bei der du in PodoHero als Steuerberatung eingetragen bist, wurde der Löschantrag am ${dateDe(now)} zurückgenommen. Die Praxis wird nicht gelöscht; deine Zugänge und die Belege in PodoHero bleiben bestehen.`,
+    ...(url ? ["", url] : []),
+    "",
+    "Viele Grüße",
+    "PodoHero",
+  ].join("\n");
+  return mailAccountants(organizationId, "deletion_withdrawn", `Löschantrag der Praxis „${practiceName}“ zurückgenommen – PodoHero`, text, {}, { ...opts, now });
 }

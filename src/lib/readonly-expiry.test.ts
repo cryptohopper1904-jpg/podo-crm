@@ -79,7 +79,14 @@ describe("Ende des Nur-Lesen-Modus: Fristen", () => {
       reminderMail: "sent",
       manualNoticeAt: null,
       manualNoticeVia: null,
+      noticeAttempts: 0,
+      accountantNotified: false,
     });
+    // Versuchszähler (Code CR-2): ältere Stände ohne Zähler zählen als ein Versuch, ungültige Werte ebenso
+    const sent = "2026-11-01T00:00:00.000Z";
+    expect(readonlyExpiryState({ readonlyExpiry: { noticeSentAt: sent } }).noticeAttempts).toBe(1);
+    expect(readonlyExpiryState({ readonlyExpiry: { noticeSentAt: sent, noticeAttempts: 3, accountantNotified: true } })).toMatchObject({ noticeAttempts: 3, accountantNotified: true });
+    expect(readonlyExpiryState({ readonlyExpiry: { noticeSentAt: sent, noticeAttempts: "9", accountantNotified: "ja" } })).toMatchObject({ noticeAttempts: 1, accountantNotified: false });
     expect(isAutoDeletion({ deletionReason: "auto_readonly_expiry" })).toBe(true);
     expect(isAutoDeletion({ deletionReason: "owner" })).toBe(false);
     expect(isAutoDeletion(null)).toBe(false);

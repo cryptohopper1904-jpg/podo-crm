@@ -180,7 +180,9 @@ describe("Stripe-Adapter (echt, mit Fake-fetch)", () => {
         ],
       },
       { data: [{ amount_remaining: 9900 }, { amount_remaining: 100 }], has_more: false },
-      { data: [{ amount: 1500 }, { amount: -400 }], has_more: true },
+      // zwei Seiten: Weiterblättern mit starting_after (Code CR-3)
+      { data: [{ id: "ii_1", amount: 1500 }], has_more: true },
+      { data: [{ id: "ii_2", amount: -400 }], has_more: false },
       { id: "cus_B2", balance: -2500 },
     ];
     const a = new StripeAdapter({ secretKey: "sk_test_x", fetch: async (url) => (calls.push(url), new Response(JSON.stringify(responses.shift()), { status: 200 })) });
@@ -199,18 +201,24 @@ describe("Stripe-Adapter (echt, mit Fake-fetch)", () => {
       pendingChargeCents: 1500,
       pendingCreditCents: -400,
       customerBalanceCents: -2500,
-      truncated: true,
+      truncated: false,
     });
     expect(calls.slice(1)).toEqual([
       "https://api.stripe.com/v1/invoices?customer=cus_B2&status=open&limit=100",
       "https://api.stripe.com/v1/invoiceitems?customer=cus_B2&pending=true&limit=100",
+      "https://api.stripe.com/v1/invoiceitems?customer=cus_B2&pending=true&limit=100&starting_after=ii_1",
       "https://api.stripe.com/v1/customers/cus_B2",
     ]);
     // bereits gelöschter Kunde: kein Saldo
     responses.push({ data: [] }, { data: [] }, { id: "cus_B2", deleted: true });
     expect((await a.openBillingItems("cus_B2")).customerBalanceCents).toBeNull();
+    // mehr als 10 Seiten: abgeschnitten → truncated (Zahlen sind Untergrenzen)
+    responses.push({ data: [] });
+    for (let i = 0; i < 10; i++) responses.push({ data: [{ id: `ii_p${i}`, amount: 100 }], has_more: true });
+    responses.push({ id: "cus_B2", balance: 0 });
+    expect(await a.openBillingItems("cus_B2")).toMatchObject({ pendingItems: 10, pendingItemCents: 1000, truncated: true });
     await expect(a.listSubscriptions("cus_B2&x=1")).rejects.toThrow();
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(20);
   });
   it("fehlende Price-ID oder Schlüssel → nicht konfiguriert", () => {
     expect(() => checkoutParams({ organizationId: ORG, plan: "plus", seats: 1, successUrl: "a", cancelUrl: "b" }, {})).toThrow(/STRIPE_PRICE_PLUS/);

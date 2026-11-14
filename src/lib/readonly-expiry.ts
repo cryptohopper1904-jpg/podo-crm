@@ -97,7 +97,14 @@ export type ReadonlyExpiryState = {
   /** Betreiber-Vermerk: Ankündigung von Hand in Textform verschickt (Zugang am …) */
   manualNoticeAt: string | null;
   manualNoticeVia: ManualNoticeVia | null;
+  /** Anzahl der Versandversuche der Ankündigung (ältere Stände ohne Zähler: 1, sobald angekündigt) */
+  noticeAttempts: number;
+  /** Ankündigung hat den Mailserver erreicht, die Steuerberatung hat sie also (mit) erhalten – Wiederholungen ohne sie */
+  accountantNotified: boolean;
 };
+
+/** Höchstzahl der Versandversuche einer Ankündigung; danach nur noch die Pflichtaktion beim Betreiber (Code CR-2) */
+export const NOTICE_MAX_ATTEMPTS = 3;
 
 const iso = (v: unknown) => (typeof v === "string" && !Number.isNaN(Date.parse(v)) ? v : null);
 const outcome = (v: unknown): MailOutcome | null => (v === "sent" || (MAIL_NOT_SENT as readonly unknown[]).includes(v) ? (v as MailOutcome) : null);
@@ -113,6 +120,9 @@ export function readonlyExpiryState(settings: Record<string, unknown> | null | u
     reminderMail: outcome(s.reminderMail),
     manualNoticeAt: iso(s.manualNoticeAt),
     manualNoticeVia: via(s.manualNoticeVia),
+    noticeAttempts:
+      typeof s.noticeAttempts === "number" && Number.isInteger(s.noticeAttempts) && s.noticeAttempts >= 0 ? s.noticeAttempts : iso(s.noticeSentAt) ? 1 : 0,
+    accountantNotified: s.accountantNotified === true,
   };
 }
 

@@ -90,6 +90,9 @@ export function subscriptionInfo(raw: Record<string, unknown>): SubscriptionInfo
   };
 }
 
+/** Höchstzahl Seiten (à 100) beim Lesen offener Posten – genug für jeden realistischen Kunden, begrenzt die Laufzeit */
+const LIST_MAX_PAGES = 10;
+
 const cents = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v) : 0);
 
 /** Stripe-IDs landen im URL-Pfad: nur das erwartete Format zulassen */
@@ -166,14 +169,34 @@ export class StripeAdapter implements BillingPort {
     return (r.data ?? []).map(subscriptionInfo);
   }
 
+  /**
+   * Liste seitenweise lesen (has_more/starting_after), höchstens LIST_MAX_PAGES Seiten à 100 – `more` = es gäbe noch weitere
+   * (Zahlen sind dann Untergrenzen).
+   */
+  private async listAll(path: string, params: Record<string, unknown>): Promise<{ data: Record<string, unknown>[]; more: boolean }> {
+    const data: Record<string, unknown>[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < LIST_MAX_PAGES; page++) {
+      const r: { data?: Record<string, unknown>[]; has_more?: boolean } = await this.request("GET", path, { ...params, limit: 100, ...(after ? { starting_after: after } : {}) });
+      const rows = r.data ?? [];
+      data.push(...rows);
+      const last = rows.at(-1)?.id;
+      if (r.has_more !== true) return { data, more: false };
+      // ohne ID kein Weiterblättern möglich: als unvollständig melden
+      if (typeof last !== "string" || !last) return { data, more: true };
+      after = last;
+    }
+    return { data, more: true };
+  }
+
   async openBillingItems(customerId: string): Promise<OpenBillingItems> {
     const customer = stripeId(customerId, "cus_");
-    const inv = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoices", { customer, status: "open", limit: 100 });
-    const items = await this.request<{ data?: Record<string, unknown>[]; has_more?: boolean }>("GET", "/invoiceitems", { customer, pending: "true", limit: 100 });
+    const inv = await this.listAll("/invoices", { customer, status: "open" });
+    const items = await this.listAll("/invoiceitems", { customer, pending: "true" });
     // Kundensaldo (negativ = Guthaben); ein gelöschter Kunde liefert { deleted: true } ohne Saldo
     const cus = await this.request<{ balance?: unknown; deleted?: unknown }>("GET", `/customers/${customer}`);
-    const invoices = inv.data ?? [];
-    const pending = (items.data ?? []).map((i) => cents(i.amount));
+    const invoices = inv.data;
+    const pending = items.data.map((i) => cents(i.amount));
     return {
       openInvoices: invoices.length,
       openInvoiceCents: invoices.reduce((s, i) => s + cents(i.amount_remaining), 0),
@@ -182,7 +205,7 @@ export class StripeAdapter implements BillingPort {
       pendingChargeCents: pending.filter((a) => a > 0).reduce((s, a) => s + a, 0),
       pendingCreditCents: pending.filter((a) => a < 0).reduce((s, a) => s + a, 0),
       customerBalanceCents: cus.deleted === true ? null : cents(cus.balance),
-      truncated: inv.has_more === true || items.has_more === true,
+      truncated: inv.more || items.more,
     };
   }
 
