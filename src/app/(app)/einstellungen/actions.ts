@@ -161,7 +161,13 @@ export async function updateMemberAction(form: FormData) {
 export async function saveServiceAction(_: SettingsState, form: FormData): Promise<SettingsState> {
   const auth = await requireAuth("settings.manage");
   // Prüfung, Kürzel-Regeln, Verweise und Audit: src/server/service-catalog.ts saveService
-  const r = await saveService(auth, Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  let r: Awaited<ReturnType<typeof saveService>>;
+  try {
+    r = await saveService(auth, Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  } catch (e) {
+    console.error("service.save_failed", e);
+    return { error: "Speichern hat nicht geklappt – bitte erneut versuchen." };
+  }
   if ("error" in r) return { error: r.error };
   revalidatePath("/einstellungen/leistungen");
   return { ok: "Gespeichert." };

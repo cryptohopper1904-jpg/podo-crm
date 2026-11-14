@@ -339,6 +339,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await mod.setServiceActive(auth(org), long, true)).toEqual({ code: "SEHRLANGESK_archiv", codeConflict: null, codeInvalid: "SEHRLANGESK" });
     const [a] = await q<{ meta: unknown }>(org, "select meta from audit_log where organization_id = $1 and action = 'service.unarchive' and entity_id = $2", [org, long]);
     expect(a.meta).toEqual({ code: "SEHRLANGESK_archiv", codeInvalid: "SEHRLANGESK" });
+    // langes Kürzel unverändert speichern geht (nur Bezeichnung ändern); ein neues langes Kürzel nicht
+    const [{ category_id }] = await q<{ category_id: string }>(org, "select category_id from services where id = $1", [long]);
+    const form = (code: string) => ({ id: long, code, name: "Jetzt umbenannt", price: "1,00", vatRate: "0", durationMin: "10", categoryId: category_id });
+    expect(await mod.saveService(auth(org), form("SEHRLANGESK_ARCHIV"))).toMatchObject({ ok: true, code: "SEHRLANGESK_archiv" });
+    expect(await mod.saveService(auth(org), form("ELFZEICHENX"))).toEqual({ error: "Kürzel höchstens 10 Zeichen." });
   });
 
   it("Audit: Umbenennen mit altem Namen, Verschieben mit Art vorher/nachher, Archivieren mit mitgewanderten Verweisen", async () => {

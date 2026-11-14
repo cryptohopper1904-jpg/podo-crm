@@ -310,7 +310,8 @@ const optText = z.string().trim().max(300).optional().transform((v) => v || null
 /** Formular „Leistung“ (Einstellungen → Leistungen); leere Felder sind vorher entfernt */
 export const serviceInput = z.object({
   id: z.uuid().optional(),
-  code: z.string().trim().min(1, "Bitte ein Kürzel eingeben.").max(MAX_SERVICE_CODE_LENGTH, `Kürzel höchstens ${MAX_SERVICE_CODE_LENGTH} Zeichen.`).toUpperCase().optional(),
+  // Länge erst in saveService prüfen: ein unverändertes Alt-/Archiv-Kürzel darf länger sein (z. B. „BEHAND_archiv“)
+  code: z.string().trim().min(1, "Bitte ein Kürzel eingeben.").max(40, "Kürzel zu lang.").toUpperCase().optional(),
   name: z.string().trim().min(2, "Bezeichnung: mindestens 2 Zeichen.").max(200),
   price: z.string(),
   vatRate: z.coerce.number().refine((v) => [0, 7, 19].includes(v), "Bitte einen gültigen USt-Satz wählen."),
@@ -366,6 +367,8 @@ export async function saveService(auth: AuthContext, input: unknown): Promise<Sa
         return { error: `Kürzel mit „_archiv“ am Ende sind für archivierte Leistungen reserviert – bitte ein anderes Kürzel wählen.` };
       }
       if (!code) return { error: "Bitte ein Kürzel eingeben." };
+      const unchanged = !!current && code === current.code;
+      if (!unchanged && code.length > MAX_SERVICE_CODE_LENGTH) return { error: `Kürzel höchstens ${MAX_SERVICE_CODE_LENGTH} Zeichen.` };
       // Kürzel-Schnelleingabe in der Rechnung: Leistungen und Produkte teilen sich die Kürzel
       if (await codeTaken(tx, org, code, "product")) return { error: `Das Kürzel ${code} hat schon ein Produkt. Bitte ein anderes wählen.` };
       if (d.id && current) {
