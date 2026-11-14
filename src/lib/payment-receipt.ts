@@ -202,7 +202,7 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     }
     y -= 2;
     // Zeitpunkt der Belegerstellung (nicht der PDF-Erzeugung – die steht ggf. im Vermerk darunter)
-    text(`Beleg erstellt: ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
+    text(`Belegerstellung (keine TSE-Angabe): ${dateTimeSecondsDe(input.issuedAt)}`, ML, y, { size: 7.5, color: GRAY });
     y -= 14;
   }
   if (!input.reproduction && input.generatedAt && new Date(input.generatedAt).getTime() - new Date(input.issuedAt).getTime() > LATE_PDF_MS) {

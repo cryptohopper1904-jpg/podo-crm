@@ -4,7 +4,7 @@ import { useActionState, useEffect, useRef, type FormEvent, type ReactNode } fro
 import { Button, FormError, FormSuccess } from "@/components/ui";
 import { revealMessage } from "@/components/form-error";
 import { keepValues } from "@/lib/forms";
-import { acceptedKey } from "./accepted-notice";
+import { markAccepted, prepareAcceptedKey } from "./accepted-notice";
 import { acceptOfferAction } from "./actions";
 
 /**
@@ -20,16 +20,14 @@ export function AcceptOfferForm({ token, label }: { token: string; label: string
   // Formular bleibt stehen (nur der Knopf entfällt, wenn erledigt): die Meldungen sind schon vor dem Absenden im DOM,
   // werden also angesagt und – weil der Knopf verschwindet – fokussiert (sonst fiele der Fokus auf <body>).
   const done = !!state?.ok || !!state?.taken;
+  // Merker-Schlüssel (SHA-256-Kürzel des Tokens) schon beim Anzeigen berechnen
+  useEffect(() => prepareAcceptedKey(token), [token]);
   return (
     <form
       onSubmit={(e: FormEvent<HTMLFormElement>) => {
         submittedHere = true;
         // Merker je Tab: die Seite lädt mit der Antwort neu (Zustand „angenommen“) – Titel dann „Termin angenommen“
-        try {
-          window.sessionStorage.setItem(acceptedKey(token), "1");
-        } catch {
-          // ohne sessionStorage bleibt es bei „bereits angenommen“
-        }
+        markAccepted(token);
         submit(e);
       }}
       className="flex flex-col gap-3"

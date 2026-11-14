@@ -204,7 +204,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
           ) : (
             <PrintButton />
           )}
-          {inv.status !== "draft" ? (
+          {/* bei „Drucken (über PDF)“ führt schon dieser Knopf zum selben PDF – kein zweiter „PDF“-Link */}
+          {inv.status !== "draft" && !printViaPdf ? (
             <a
               href={`/api/invoices/${inv.id}/pdf`}
               target="_blank"

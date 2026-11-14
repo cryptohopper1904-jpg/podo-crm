@@ -333,7 +333,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     ...patch,
   });
 
-  it("nachträglich erstellter Zahlungsbeleg: „Belegart: nachträglich erstellt“ im Kopf, Vermerk gut lesbar (nicht grau), „Beleg erstellt:“", async () => {
+  it("nachträglich erstellter Zahlungsbeleg: „Belegart: nachträglich erstellt“ im Kopf, Vermerk gut lesbar (nicht grau), „Belegerstellung (keine TSE-Angabe):“", async () => {
     await renderPaymentReceiptPdf({ number: "ZB2026-0007", issuedAt: "2026-11-16T08:00:00Z", data: receiptData({ belatedAt: "2026-11-16T08:00:00Z" }), generatedAt: "2026-11-16T08:00:01Z" });
     const texts = drawn.map((t) => t.text);
     const i = texts.indexOf("Belegart:");
@@ -345,7 +345,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     expect(note, "Vermerk").toBeTruthy();
     expect(note!.gray, "Vermerk nicht grau").toBe(false);
     expect(texts.join(" ")).toMatch(/Zahlungsbeleg nachträglich erstellt am 16\.11\.2026, 09:00 \(Zahlung vom 14\.11\.2026, 11:00; Angaben aus der gebuchten Zahlung und ihrer\s+TSE-Signatur\)/);
-    expect(texts).toContain("Beleg erstellt: 16.11.2026, 09:00:00");
+    expect(texts).toContain("Belegerstellung (keine TSE-Angabe): 16.11.2026, 09:00:00");
     expect(texts.some((t) => t.startsWith("Erzeugt:"))).toBe(false);
     // sofort archiviert: kein „PDF nachträglich erzeugt“
     expect(texts.join(" ")).not.toMatch(/PDF nachträglich erzeugt/);
@@ -356,7 +356,7 @@ describe("Belegtext: TSE-Angaben, Storno-Neudruck, Reproduktion, Zahlungsbeleg (
     const body = drawn.map((t) => t.text).join(" ");
     expect(body).toMatch(/TSE/);
     expect(body).toContain("ohne TSE-Signatur, siehe TSE-Ausfall");
-    expect(body).not.toContain("Beleg erstellt:");
+    expect(body).not.toContain("Belegerstellung (keine TSE-Angabe):");
   });
 
   it("nachgeholtes Archiv-PDF eines Zahlungsbelegs: Vermerk mit Logo-Zusatz", async () => {

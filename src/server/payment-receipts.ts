@@ -344,7 +344,7 @@ export async function createMissingPaymentReceipt(auth: AuthContext, invoiceId: 
     // Rechnung sperren: keine gleichzeitige Buchung/Nachholung auf derselben Rechnung
     const [inv] = await tx.select({ id: invoices.id }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId))).for("update");
     if (!inv) throw new PaymentReceiptError("Rechnung nicht gefunden.");
-    const [existing] = await tx.select({ id: paymentReceipts.id, number: paymentReceipts.number }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.paymentId, paymentId)));
+    const [existing] = await tx.select({ id: paymentReceipts.id, number: paymentReceipts.number }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.invoiceId, invoiceId), eq(paymentReceipts.paymentId, paymentId)));
     if (existing) return { ...existing, created: false };
     const missing = (await paymentsMissingReceipt(tx, org, invoiceId)).find((m) => m.id === paymentId);
     if (!missing) {
