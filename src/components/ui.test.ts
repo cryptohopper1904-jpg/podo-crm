@@ -67,6 +67,20 @@ describe("Feldfehler (F3)", () => {
     expect(out).toContain('aria-describedby="datum-fehler"');
     expect(out).toContain('id="datum-fehler"');
   });
+  it("verknüpft den Hinweis auch ohne Fehler (aria-describedby), ohne aria-invalid", () => {
+    const out = html(h(Field, { label: "Dauer", id: "dauer", hint: "0 = einmalig", children: h(Input, { name: "dauer" }) }));
+    expect(out).toContain('aria-describedby="dauer-hinweis"');
+    expect(out).toContain('id="dauer-hinweis"');
+    expect(out).not.toContain('aria-invalid="');
+    const both = html(h(Field, { label: "Dauer", id: "dauer", hint: "0 = einmalig", error: "Fehlt", children: h(Input, { name: "dauer" }) }));
+    expect(both).toContain('aria-describedby="dauer-fehler dauer-hinweis"');
+  });
+  it("Meldung, die schon beim ersten Rendern da ist, wird nicht angesprungen", () => {
+    const k = {};
+    // FormError startet mit prev = Anfangswerte
+    expect(shouldReveal({ message: "Link abgelaufen", key: k }, { message: "Link abgelaufen", key: k })).toBe(false);
+    expect(shouldReveal({ message: "Link abgelaufen" }, { message: "Link abgelaufen" })).toBe(false);
+  });
   it("Fehlermeldung wird bei neuer Meldung oder erneutem Absenden angesprungen", () => {
     const a = {};
     const b = {};

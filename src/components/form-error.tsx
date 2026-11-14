@@ -22,14 +22,16 @@ export function shouldReveal(prev: { message?: string | null; key?: unknown }, n
 
 /**
  * Fehlermeldung eines Formulars. Steht oben im Formular – auf dem Handy ist man beim Absenden aber unten am Knopf.
- * Deshalb wird eine neue Meldung in die Bildschirmmitte gescrollt und fokussiert (role="alert" liest sie vor).
+ * Deshalb wird eine neue Meldung in die Bildschirmmitte gescrollt und fokussiert (role="alert" liest sie vor) – nicht
+ * eine Meldung, die schon beim ersten Rendern da ist (Seite lädt nicht „springend“, Fokus bleibt am Seitenanfang).
  * `revealKey`: Ergebnis-Objekt der Server Action übergeben (`revealKey={state}`), dann wird auch eine unveränderte
  * Meldung nach erneutem Absenden wieder angesprungen. Das Element bleibt (versteckt) im DOM, damit die Live-Region
  * schon vor der ersten Meldung besteht.
  */
 export function FormError({ message, revealKey, id }: { message?: string | null; revealKey?: unknown; id?: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  const prev = useRef<{ message?: string | null; key?: unknown }>({ message: null, key: undefined });
+  // Mit der Anfangsmeldung starten: eine schon beim Laden vorhandene Meldung (z. B. ?fehler=…) wird nicht angesprungen
+  const prev = useRef<{ message?: string | null; key?: unknown }>({ message, key: revealKey });
   useEffect(() => {
     const next = { message, key: revealKey };
     if (ref.current && shouldReveal(prev.current, next)) revealMessage(ref.current);

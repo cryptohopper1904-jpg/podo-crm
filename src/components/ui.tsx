@@ -160,13 +160,23 @@ export const hintCls = "text-[13px] leading-5 text-muted";
 
 /**
  * Feld = Beschriftung · Eingabe · optionaler Hinweis darunter.
- * `error`: Feldfehler unter der Eingabe (rot, mit Symbol); die Eingabe bekommt `aria-invalid` und `aria-describedby`
- * (gilt für ein einzelnes Element als Kind, z. B. <Input>/<Select>/<Textarea>). `id` des Feldes nötig für describedby.
+ * `error`: Feldfehler unter der Eingabe (rot); die Eingabe bekommt `aria-invalid`.
+ * `id`: Ist eine id gesetzt, verweist die Eingabe per `aria-describedby` auf Fehler und Hinweis (Screenreader lesen
+ * den Hinweis mit) – gilt für ein einzelnes Element als Kind, z. B. <Input>/<Select>/<Textarea>.
  */
 export function Field({ label, hint, error, id, children, className }: { label: string; hint?: ReactNode; error?: string | null; id?: string; children: ReactNode; className?: string }) {
   const errId = error && id ? `${id}-fehler` : undefined;
+  const hintId = hint && id ? `${id}-hinweis` : undefined;
+  const describedBy = [errId, hintId].filter(Boolean).join(" ") || undefined;
   const only = Children.count(children) === 1 && isValidElement(children) ? (children as ReactElement<Record<string, unknown>>) : null;
-  const control = error && only ? cloneElement(only, { "aria-invalid": true, ...(errId ? { "aria-describedby": errId } : {}), ...(id && !only.props.id ? { id } : {}) }) : children;
+  const control =
+    only && (error || describedBy)
+      ? cloneElement(only, {
+          ...(error ? { "aria-invalid": true } : {}),
+          ...(describedBy ? { "aria-describedby": [only.props["aria-describedby"], describedBy].filter(Boolean).join(" ") } : {}),
+          ...(id && !only.props.id ? { id } : {}),
+        })
+      : children;
   return (
     <label className={cx(fieldCls, className)}>
       <span className={fieldLabelCls}>{label}</span>
@@ -177,7 +187,11 @@ export function Field({ label, hint, error, id, children, className }: { label: 
             {error}
           </span>
         ) : null}
-        {hint ? <span className={hintCls}>{hint}</span> : null}
+        {hint ? (
+          <span id={hintId} className={hintCls}>
+            {hint}
+          </span>
+        ) : null}
       </span>
     </label>
   );

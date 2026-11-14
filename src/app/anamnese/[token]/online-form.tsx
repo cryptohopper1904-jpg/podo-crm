@@ -3,7 +3,7 @@
 import { keepValues } from "@/lib/forms";
 import { useActionState } from "react";
 import { AnamnesisFields } from "@/components/anamnesis-fields";
-import { Button, Card, Checkbox, FormError } from "@/components/ui";
+import { Button, Card, Checkbox, FormActions, FormError } from "@/components/ui";
 import { submitOnlineAnamnesisAction, type OnlineAnamnesisState } from "./actions";
 
 export function OnlineAnamnesisForm({ token, onSite = false }: { token: string; /** Übergabe-Modus am Praxis-Gerät */ onSite?: boolean }) {
@@ -35,7 +35,7 @@ export function OnlineAnamnesisForm({ token, onSite = false }: { token: string; 
       <div aria-hidden className="hidden">
         <label>Website <input name="website" tabIndex={-1} autoComplete="off" /></label>
       </div>
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
       <AnamnesisFields mode="online" />
       <Card>
         <h3 className="mb-2 font-display text-lg font-semibold">Einwilligungen</h3>
@@ -46,10 +46,10 @@ export function OnlineAnamnesisForm({ token, onSite = false }: { token: string; 
         <Checkbox name="consent_sms_reminders" label="Terminerinnerungen per SMS" />
         <Checkbox name="consent_whatsapp" label="Terminabsprachen per WhatsApp (nur Organisatorisches, keine Gesundheitsinformationen; WhatsApp ist ein Dienst von Meta)" />
       </Card>
-      <FormError message={state?.error} />
-      <div>
+      {/* Meldung oben (wird angesprungen und vorgelesen); hier nur die Kurzfassung neben dem Knopf */}
+      <FormActions sticky={false} error={pending ? null : state?.error}>
         <Button type="submit" disabled={pending} className="h-14 w-full text-base sm:w-auto">{pending ? "Wird gesendet …" : "Fragebogen absenden"}</Button>
-      </div>
+      </FormActions>
     </form>
   );
 }

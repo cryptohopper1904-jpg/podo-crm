@@ -39,14 +39,20 @@ export function addToast(list: ToastItem[], item: ToastItem): ToastItem[] {
   return [...list, item].slice(-MAX_TOASTS);
 }
 
-let mounted = 0;
+/**
+ * Eingehängte Flächen. Nur die erste zeigt Meldungen – auch wenn zusätzlich eine <Toaster/> ins Layout gesetzt wird,
+ * gibt es nie zwei Regionen (doppelte Anzeige/Ansage).
+ */
+const owners: object[] = [];
+const firstOwner = () => owners[0] ?? null;
+let autoHost = false;
 function ensureMounted() {
-  if (mounted > 0 || typeof document === "undefined") return false;
+  if (autoHost || owners.length > 0 || typeof document === "undefined") return false;
   const host = document.createElement("div");
   host.dataset.podoToaster = "";
   document.body.appendChild(host);
   // gilt ab sofort als vorhanden (auch bevor der Effekt der neuen Fläche läuft) – nie eine zweite anlegen
-  mounted++;
+  autoHost = true;
   createRoot(host).render(<Toaster />);
   return true;
 }
@@ -72,8 +78,13 @@ export function dismissToast(id: number) {
 
 const ICON = { success: CircleCheck, error: CircleAlert, info: Info } as const;
 
+type Hold = "hover" | "press" | "focus";
+
 function ToastCard({ t }: { t: ToastItem }) {
-  const [paused, setPaused] = useState(false);
+  // Anhalten, solange die Maus darüber ist, ein Finger/Stift draufhält oder der Fokus darin liegt
+  const [holds, setHolds] = useState<Record<Hold, boolean>>({ hover: false, press: false, focus: false });
+  const hold = (k: Hold, on: boolean) => setHolds((h) => (h[k] === on ? h : { ...h, [k]: on }));
+  const paused = holds.hover || holds.press || holds.focus;
   const left = useRef(t.duration);
   useEffect(() => {
     if (paused) return;
@@ -88,10 +99,13 @@ function ToastCard({ t }: { t: ToastItem }) {
   return (
     <div
       role={t.tone === "error" ? "alert" : undefined}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
-      onBlur={() => setPaused(false)}
+      onPointerEnter={(e) => e.pointerType === "mouse" && hold("hover", true)}
+      onPointerLeave={(e) => e.pointerType === "mouse" && hold("hover", false)}
+      onPointerDown={(e) => e.pointerType !== "mouse" && hold("press", true)}
+      onPointerUp={() => hold("press", false)}
+      onPointerCancel={() => hold("press", false)}
+      onFocus={() => hold("focus", true)}
+      onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && hold("focus", false)}
       className="pointer-events-auto flex w-full max-w-md items-center gap-2 rounded-2xl border border-border bg-surface py-1 pr-1 pl-4 text-[15px] text-text shadow-lg motion-safe:animate-rise"
     >
       <Icon size={18} aria-hidden className={clsx("shrink-0", t.tone === "error" ? "text-danger" : t.tone === "info" ? "text-muted" : "text-primary")} />
@@ -118,12 +132,17 @@ function ToastCard({ t }: { t: ToastItem }) {
 /** Fläche für Meldungen. Wird von toast() automatisch angelegt; kann auch ausdrücklich in ein Layout gesetzt werden. */
 export function Toaster() {
   const list = useSyncExternalStore(subscribe, snapshot, () => empty);
+  const [token] = useState(() => ({}));
+  const owner = useSyncExternalStore(subscribe, firstOwner, () => null);
   useEffect(() => {
-    mounted++;
+    owners.push(token);
+    emit();
     return () => {
-      mounted--;
+      owners.splice(owners.indexOf(token), 1);
+      emit();
     };
-  }, []);
+  }, [token]);
+  if (owner !== token) return null;
   return (
     <div
       aria-live="polite"
