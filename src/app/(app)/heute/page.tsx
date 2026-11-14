@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { greeting } from "@/lib/greeting";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { AppointmentRow } from "@/components/appointment-row";
 import type { TherapistColor } from "@/lib/therapist-colors";
@@ -28,11 +29,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   lexoffice: "lexoffice", sumup: "SumUp", doctolib: "Doctolib", google_business: "Google", email_imap: "E-Mail", whatsapp: "WhatsApp",
   sms: "SMS", voice_agent: "KI-Telefon", transcription: "Transkription", llm: "KI-Assistent", calendar_ics: "Kalender-Abo", gkv_billing: "GKV-Abrechnung", kim: "KIM",
 };
-
-function greeting() {
-  const h = Number(new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "numeric", hourCycle: "h23" }).format(new Date()));
-  return h < 11 ? "Guten Morgen" : h < 18 ? "Guten Tag" : "Guten Abend";
-}
 
 export default async function TodayPage(props: PageProps<"/heute">) {
   const auth = await requireAuth();
