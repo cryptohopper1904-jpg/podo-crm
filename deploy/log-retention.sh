@@ -35,6 +35,7 @@ IDS=()
 for id in $ALL; do
   [[ "$id" =~ ^[0-9a-f]{64}$ ]] || continue
   wd="$(docker inspect -f "{{ index .Config.Labels \"$LABEL\" }}" "$id" 2>/dev/null)" || continue
+  [ -n "$wd" ] || continue
   real="$(cd "$wd" 2>/dev/null && pwd -P)" || continue
   [ "$real" = "$DIR" ] && IDS+=("$id")
 done

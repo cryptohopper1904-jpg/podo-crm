@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Grundlage ist die interne Übersicht `docs/compliance/UNTERAUFTRAGNEHMER.md`. Konkrete Anbieter, Verträge und Standorte sind vom Betreiber vor dem Echtbetrieb einzutragen und zu prüfen.
 >
-> Version 0.2 · Stand 13.11.2026
+> Version 0.3 · Stand 14.11.2026
 
 ## 1. Unterauftragnehmer des Betreibers
 
@@ -37,7 +37,7 @@ Die folgenden Schnittstellen sind in PodoHero vorbereitet. Sie sind standardmä�
 | Google Business Profile | Bewertungen lesen und beantworten | USA (Data Privacy Framework) | keine Gesundheitsdaten in Antworten |
 | WhatsApp Business (über einen Business Solution Provider) | organisatorische Nachrichten | EU/USA | nur mit Einwilligung, keine Befunde; AVV mit dem Anbieter |
 | SMS-Anbieter | Terminerinnerungen | DE | AVV mit dem Anbieter |
-| KI/LLM (EU-Anbieter empfohlen) | Sprachbericht strukturieren, Antwortvorschläge | EU empfohlen; Anbieter und Land gibt die Praxis beim Einschalten der Antwortvorschläge an | **nur mit AVV und Zero Data Retention**; vorher technisch gesperrt. Antwortvorschläge standardmäßig aus, Einschalten nur durch die Inhaber:in nach Bestätigung von AVV und Geheimhaltungsverpflichtung (§ 203 Abs. 3 und 4 StGB), bei Drittland zusätzlich Angemessenheitsbeschluss/Standardvertragsklauseln; KIM-Nachrichten nie |
+| KI/LLM (EU-Anbieter empfohlen) | Sprachbericht strukturieren, Antwortvorschläge | EU empfohlen; Anbieter und Land gibt die Praxis beim Einschalten der Antwortvorschläge an | Sprachbericht: **nur mit AVV und Zero Data Retention**; vorher technisch gesperrt. Antwortvorschläge: kein Unterauftragnehmer, sondern vom Verantwortlichen selbst beauftragt (AVV § 7 Nr. 2), Zero Data Retention empfohlen; Antwortvorschläge standardmäßig aus, Einschalten nur durch die Inhaber:in nach Bestätigung von AVV und Geheimhaltungsverpflichtung (§ 203 Abs. 3 und 4 StGB), bei Drittland zusätzlich Angemessenheitsbeschluss/Standardvertragsklauseln; KIM-Nachrichten nie |
 | Transkription | Sprachbericht | EU oder selbst gehostet | **nur mit AVV**; vorher technisch gesperrt |
 | KI-Telefon | Anrufannahme | je nach gewähltem Anbieter (vor Aktivierung prüfen) | Pilot; Hinweis auf KI zu Beginn des Gesprächs (AI Act) |
 | Abrechnungszentrum (GKV) | Übermittlung nach § 302 SGB V | DE | Export als CSV, Vertrag der Praxis mit dem Zentrum |

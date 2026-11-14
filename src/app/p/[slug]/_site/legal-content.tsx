@@ -79,7 +79,7 @@ export function ImprintContent({ site }: { site: Legal }) {
  * „KI-Antwortvorschläge“ (Anbieter und Land aus den Einstellungen; Garantie-Satz nur bei Drittland). Speicherdauer
  * „6 Monate nach Eingang“ nur, wenn der Löschlauf für die Praxis aktiv ist (AVV ab RETENTION_MIN_AVV akzeptiert,
  * src/server/online-request-retention.ts), sonst ohne festen Zeitraum; Datensicherungen: spätestens 30 Tage
- * (lokal 14 Tage, Zweitkopie 29 Tage – deploy/backup.sh, AVV § 10 Nr. 2).
+ * (lokal 14 Tage, Zweitkopie höchstens 30 Tage – deploy/offsite-backup.example.sh, AVV § 10 Nr. 2).
  */
 export function BookingPrivacyBlock({ site }: { site: Legal }) {
   const controller = [site.legalName ?? site.name, site.street, [site.zip, site.city].filter(Boolean).join(" "), site.email, site.phone].filter(Boolean).join(", ");
@@ -98,7 +98,7 @@ export function BookingPrivacyBlock({ site }: { site: Legal }) {
       </p>
       <p className="mt-3">
         <strong>Empfänger:</strong> Die Praxis nutzt die Praxissoftware PodoHero als Auftragsverarbeiter nach Art. 28 DSGVO; die Daten werden auf
-        Servern in Deutschland gespeichert.{" "}
+        Servern in Deutschland gespeichert. Für Bestätigungen per SMS nutzt die Praxis einen Anbieter mit Sitz in Deutschland.{" "}
         {ai ? (
           <>
             Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst {ai.provider} ({ai.country}) als Auftragsverarbeiter. Dabei wird
@@ -113,8 +113,9 @@ export function BookingPrivacyBlock({ site }: { site: Legal }) {
             ) : null}
           </>
         ) : (
-          "Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt."
-        )}
+          "PodoHero übermittelt Ihre Daten nicht in Länder außerhalb der EU bzw. des EWR."
+        )}{" "}
+        Antwortet die Praxis per E-Mail, gilt dafür ergänzend der E-Mail-Anbieter der Praxis.
       </p>
       <p className="mt-3">
         <strong>Speicherdauer:</strong>{" "}

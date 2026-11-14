@@ -173,7 +173,7 @@ Erinnerung einrichten, z. B. `/etc/cron.d/podo-restore-test`:
 ```
 
 ### 3.3 Zweiter Standort (Pflicht)
-Backups auf demselben Server helfen nicht, wenn der Server weg ist. Beispiel für eine **Hetzner Storage Box** per `rclone` (SFTP): `deploy/offsite-backup.example.sh` – Einrichtung steht im Kopf der Datei (SSH-Schlüssel, `rclone.conf`, Cron-Eintrag täglich nach dem Backup). Es wird mit `copy` (nicht `sync`) kopiert und offsite 90 Tage aufbewahrt. Die Dateien sind schon verschlüsselt; die Passphrase gehört **nicht** auf die Storage Box. AVV mit dem Anbieter abschließen.
+Backups auf demselben Server helfen nicht, wenn der Server weg ist. Beispiel für eine **Hetzner Storage Box** per `rclone` (SFTP): `deploy/offsite-backup.example.sh` – Einrichtung steht im Kopf der Datei (SSH-Schlüssel, `rclone.conf`, Cron-Eintrag täglich nach dem Backup). Es wird mit `copy` (nicht `sync`) kopiert und offsite höchstens 30 Tage aufbewahrt (`OFFSITE_RETENTION` 29 Tage; AVV § 10 Nr. 2 – nicht erhöhen, ohne AVV/AGB anzupassen). Die Dateien sind schon verschlüsselt; die Passphrase gehört **nicht** auf die Storage Box. AVV mit dem Anbieter abschließen.
 
 ### 3.4 Backup in die laufende Installation einspielen
 ```bash
@@ -280,7 +280,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 ## 7. Datenschutz-Hinweise für den Betrieb
 - **Backups enthalten Gesundheitsdaten** (Art. 9 DSGVO): nur verschlüsselt speichern und übertragen, Offsite-Anbieter mit AVV und Standort DE/EU, Passphrase getrennt aufbewahren.
 - **Restore-Tests** laufen in einem Wegwerf-Container auf dem Produktionsserver und werden danach gelöscht. Backups nicht auf Arbeitsplatz-Rechnern oder Laptops entschlüsseln.
-- **Löschfristen**: Nach dem endgültigen Löschen einer Praxis (Abschnitt 9) sind ihre Daten noch so lange in Backups vorhanden, wie diese aufbewahrt werden – lokal `BACKUP_RETENTION_DAYS` (14 Tage), offsite 90 Tage (Beispielskript). Diese Fristen im Löschkonzept/AVV so angeben; bei einer Wiederherstellung bereits gelöschte Praxen erneut mit `scripts/purge-organizations.ts` löschen.
+- **Löschfristen**: Nach dem endgültigen Löschen einer Praxis (Abschnitt 9) sind ihre Daten noch so lange in Backups vorhanden, wie diese aufbewahrt werden – lokal `BACKUP_RETENTION_DAYS` (14 Tage), offsite höchstens 30 Tage (Beispielskript, `OFFSITE_RETENTION` 29 Tage). Diese Fristen im Löschkonzept/AVV so angeben; bei einer Wiederherstellung bereits gelöschte Praxen erneut mit `scripts/purge-organizations.ts` löschen.
 - **Aufbewahrungspflichten** (Behandlungsdoku 10 Jahre, § 630f BGB; Rechnungen GoBD) erfüllt die Datenbank selbst, nicht das Backup.
 - **Kund:in löschen** (Inhaber:in, *Kunde bearbeiten → Kund:in löschen*): ohne Behandlungsdoku, Anamnese, Behandlungsfotos und Rechnungen vollständige Löschung (DB-Funktion `podo_delete_patient`, Audit `patient.deleted`); sonst Löschung der Kontaktdaten, Widerruf der Werbe-/Kanal-Einwilligungen, Löschen der Marketing-Fotos und Archivierung (Audit `patient.contact_erased`). Die endgültige Löschung nach Fristablauf ist noch ein Betreiber-Schritt (offen, siehe `docs/reviews/GESAMT-REVIEW.md` H3).
 - **Webhook-Rohdaten** (`webhook_events`, RLS je Praxis): Inhalt nur bis zur erfolgreichen Verarbeitung, Einträge werden nach 30 Tagen gelöscht (Cron).

@@ -172,7 +172,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       );
       expect(privacy).toContain("10 Jahre nach § 630f Abs. 3 BGB");
       // KI-Antwortvorschläge aus (Standard): kein Drittland
-      expect(privacy).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      expect(privacy).toContain("PodoHero übermittelt Ihre Daten nicht in Länder außerhalb der EU bzw. des EWR.");
       expect(privacy).not.toContain("KI-Dienst");
       expect(privacy).toContain("Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO (sicherer Betrieb der Website); die Protokolldaten werden nach 7 Tagen gelöscht.");
       expect(privacy).not.toContain("Datenschutzbeauftragte");
@@ -203,7 +203,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(on).toContain("Bitte geben Sie im Freitext keine Diagnosen an.");
       // Recht M-88-6: Garantie-Satz nur bei Drittland
       expect(on).toContain("Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine Kopie der Garantien erhalten Sie bei der Praxis.");
-      expect(on).not.toContain("findet nicht statt");
+      expect(on).not.toContain("PodoHero übermittelt Ihre Daten nicht in Länder außerhalb");
       expect((await web.loadPracticeLegal(slug))!.aiReplies).toEqual({ provider: "Beispiel-KI <b>Inc.</b>", country: "USA", countryIn: "in den USA", thirdCountry: true });
       await setAi({ enabled: true, provider: "Mistral AI", country: "Frankreich", avvConfirmed: true, confidentialityConfirmed: true });
       const eu = await render();
@@ -212,9 +212,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(eu).not.toContain("außerhalb der EU");
       // Drittland ohne Bestätigung der Garantien oder ohne Bestätigung § 203 (z. B. von Hand gesetzt) gilt als aus
       await setAi({ enabled: true, provider: "X", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
-      expect(await render()).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      expect(await render()).toContain("PodoHero übermittelt Ihre Daten nicht in Länder außerhalb der EU bzw. des EWR.");
       await setAi({ enabled: true, provider: "X", country: "Frankreich", avvConfirmed: true });
-      expect(await render()).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      expect(await render()).toContain("PodoHero übermittelt Ihre Daten nicht in Länder außerhalb der EU bzw. des EWR.");
       await setAi({ enabled: false, provider: "X", country: "Frankreich", avvConfirmed: true, confidentialityConfirmed: true });
       expect(await render()).not.toContain("KI-Dienst");
     });

@@ -38,7 +38,7 @@ function RetentionNotice() {
       <p className="mt-2">
         Diese Pflichten treffen die Praxis. Erstelle deshalb <strong>vor</strong> der Kündigung einen vollständigen Export und bewahre ihn sicher
         auf. Wir löschen alle Daten frühestens {DELETION_GRACE_DAYS} Tage nach dem Antrag endgültig. Verschlüsselte Datensicherungen laufen
-        spätestens 14 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
+        spätestens 30 Tage danach aus. Eine Kopie für dich bewahren wir nicht auf.
       </p>
       <p className="mt-2">
         Der Komplett-Export enthält <strong>nicht</strong> den DSFinV-K-Export (Kasse → DSFinV-K-Export) und den TSE-Export (beim TSE-Anbieter):

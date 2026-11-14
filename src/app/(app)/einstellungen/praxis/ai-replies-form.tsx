@@ -68,13 +68,12 @@ export function AiRepliesForm({ initial, disabled, canEnable }: { initial: AiRep
                 required
                 label="Für die Übermittlung in dieses Land besteht ein Angemessenheitsbeschluss (z. B. EU-US Data Privacy Framework mit Zertifizierung des Anbieters) oder es wurden Standardvertragsklauseln abgeschlossen."
               />
-              <p className="text-sm text-muted">Für Gesundheitsdaten empfehlen wir Anbieter in der EU.</p>
             </>
           ) : null}
           <p className="text-sm text-muted">
             Den KI-Dienst beauftragst du selbst (eigener Vertrag); PodoHero übermittelt nur auf deine Anforderung je Nachricht. Anbieter und Land stehen
             danach in den Datenschutzhinweisen deiner Buchungsseite. Vor dem Versand werden Namen der Person, Telefonnummern, E-Mail-Adressen und
-            Datumsangaben entfernt, bei Online-Anfragen zusätzlich die Notiz und die Leistung. Freie Namen im Text erkennt die Software nicht sicher.
+            Datumsangaben entfernt, bei Online-Anfragen zusätzlich die Notiz und die Leistung. Freie Namen im Text erkennt die Software nicht sicher. Nimm Anbieter und Land auch in die allgemeinen Datenschutzhinweise deiner Praxis auf, wenn du Antwortvorschläge für E-Mail, SMS oder WhatsApp nutzt.
           </p>
         </div>
       ) : null}
