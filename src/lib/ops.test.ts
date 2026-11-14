@@ -68,6 +68,17 @@ describe("Deep-Health-Bewertung", () => {
     expect(parseEpoch("kaputt")).toBeNull();
   });
 
+  it("fehlender Zeitstempel: warn kurz nach dem ersten Start, fail nach Ablauf der Frist (nicht dauerhaft warn)", () => {
+    const day = 26 * 3600;
+    expect(evaluateTimestamp(null, day, now, "noch kein Lauf erfasst", now / 1000 - 3600).status).toBe("warn");
+    const late = evaluateTimestamp(null, day, now, "noch kein Lauf erfasst", now / 1000 - day - 60);
+    expect(late).toMatchObject({ status: "fail", hint: "seit dem Start kein erfolgreicher Lauf", lastAt: null });
+    // ohne Start-Zeitstempel (z. B. alter cron-Container): weiterhin warn
+    expect(evaluateTimestamp(null, day, now, "x", null).status).toBe("warn");
+    // ein vorhandener Lauf-Zeitstempel geht vor
+    expect(evaluateTimestamp(now / 1000 - 60, day, now, "x", now / 1000 - 10 * day).status).toBe("ok");
+  });
+
   it("bewertet den Migrationsstand", () => {
     const journal = { count: 3, latestWhen: 300, latestTag: "0002_x" };
     expect(evaluateMigrations({ count: 3, latestWhen: 300 }, journal).status).toBe("ok");

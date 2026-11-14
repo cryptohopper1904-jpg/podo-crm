@@ -75,12 +75,15 @@ export function ImprintContent({ site }: { site: Legal }) {
 
 /**
  * Pflichtinformationen zur Online-Terminanfrage (Art. 13 DSGVO), aus den Stammdaten erzeugt – stehen VOR dem
- * Freitext der Praxis, nur solange die Online-Buchung erreichbar ist. Speicherdauer „6 Monate nach Eingang“:
+ * Freitext der Praxis, nur solange die Online-Buchung erreichbar ist. Empfänger: Drittland-Satz je nach Schalter
+ * „KI-Antwortvorschläge“ (Anbieter und Land aus den Einstellungen). Speicherdauer „6 Monate nach Eingang“:
  * src/server/online-request-retention.ts (täglicher Lauf); Datensicherungen: 30 Tage (deploy/backup.sh).
  */
 export function BookingPrivacyBlock({ site }: { site: Legal }) {
   const controller = [site.legalName ?? site.name, site.street, [site.zip, site.city].filter(Boolean).join(" "), site.email, site.phone].filter(Boolean).join(", ");
   const dpo = site.imprintInfo.dpo;
+  // KI-Antwortvorschläge der Praxis (Einstellungen → Praxis): Anbieter/Land nur, wenn eingeschaltet (src/lib/ai-replies.ts)
+  const ai = site.aiReplies;
   return (
     <section className="mt-6 leading-relaxed">
       <h2 className="font-display text-xl font-semibold">Online-Terminanfrage</h2>
@@ -93,12 +96,21 @@ export function BookingPrivacyBlock({ site }: { site: Legal }) {
       </p>
       <p className="mt-3">
         <strong>Empfänger:</strong> Die Praxis nutzt die Praxissoftware PodoHero als Auftragsverarbeiter nach Art. 28 DSGVO; die Daten werden auf
-        Servern in Deutschland gespeichert. Eine Übermittlung in Drittländer findet nicht statt, sofern die Praxis keine KI-Antwortvorschläge mit
-        einem Anbieter außerhalb der EU nutzt.
+        Servern in Deutschland gespeichert.{" "}
+        {ai ? (
+          <>
+            Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst {ai.provider} ({ai.country}) als Auftragsverarbeiter. Dabei kann der
+            Inhalt Ihrer Nachricht ohne Ihren Namen und Ihre Kontaktdaten in {ai.country} verarbeitet werden. Liegt das Land außerhalb der EU bzw. des
+            EWR, stützt sich die Übermittlung auf einen Angemessenheitsbeschluss oder Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine
+            Kopie der Garantien erhalten Sie bei der Praxis.
+          </>
+        ) : (
+          "Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt."
+        )}
       </p>
       <p className="mt-3">
-        <strong>Speicherdauer:</strong> Wird Ihre Anfrage nicht in eine Patientenakte übernommen – etwa weil kein Termin zustande kommt –, löschen wir
-        sie 6 Monate nach Eingang automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben. Kommt es zur
+        <strong>Speicherdauer:</strong> Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löschen wir 6 Monate nach Eingang
+        automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben. Kommt es zur
         Behandlung, gelten die gesetzlichen Aufbewahrungsfristen (10 Jahre nach § 630f Abs. 3 BGB).
       </p>
       <p className="mt-3">

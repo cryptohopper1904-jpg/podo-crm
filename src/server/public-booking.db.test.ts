@@ -28,7 +28,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   });
 
   async function practice(settings: Record<string, unknown> = {}) {
-    const org = await f.org({ settings: { onlineBooking: { enabled: true, ...settings }, imprint: { owner: "Petra Test", profession: "Podologin" } } });
+    const org = await f.org({
+      settings: {
+        onlineBooking: { enabled: true, ...settings },
+        imprint: { owner: "Petra Test", profession: "Podologin" },
+        // AVV 0.3 akzeptiert (Standardweisung zur Löschung, § 3 Nr. 4) – sonst überspringt der Löschlauf die Praxis
+        legalAcceptance: { agb: "0.3", avv: "0.3", version: "agb-0.3+avv-0.3", at: "2026-11-14T00:00:00.000Z", by: "test" },
+      },
+    });
     // Impressums-Pflichtangaben (§ 5 DDG) – ohne sie ist /buchen gesperrt
     await f.pool.query("update organizations set state = 'BB', street = 'Teststraße 1', zip = '16540', city = 'Hohen Neuendorf', email = 'praxis@example.org' where id = $1", [org]);
     const u = await f.user();
@@ -160,9 +167,13 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(privacy).toContain("Online-Terminanfrage");
       expect(privacy).toContain("Verantwortlich für die Verarbeitung Ihrer Terminanfrage ist Podologie Test GmbH, Teststraße 1, 16540 Hohen Neuendorf, praxis@example.org, 030 1234567.");
       expect(privacy).toContain("durch PodoHero als Auftragsverarbeiter der Praxis");
-      expect(privacy).toContain("löschen wir sie 6 Monate nach Eingang automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben.");
+      expect(privacy).toContain(
+        "Anfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löschen wir 6 Monate nach Eingang automatisch. Kopien in verschlüsselten Datensicherungen werden spätestens 30 Tage danach überschrieben.",
+      );
       expect(privacy).toContain("10 Jahre nach § 630f Abs. 3 BGB");
-      expect(privacy).toContain("Eine Übermittlung in Drittländer findet nicht statt, sofern die Praxis keine KI-Antwortvorschläge mit einem Anbieter außerhalb der EU nutzt.");
+      // KI-Antwortvorschläge aus (Standard): kein Drittland
+      expect(privacy).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      expect(privacy).not.toContain("KI-Dienst");
       expect(privacy).toContain("Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO (sicherer Betrieb der Website); die Protokolldaten werden nach 7 Tagen gelöscht.");
       expect(privacy).not.toContain("Datenschutzbeauftragte");
       expect(privacy).not.toContain("wird hier noch ergänzt");
@@ -171,6 +182,29 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(imprint).toContain("Berufsbezeichnung: Podologin (verliehen in Deutschland)");
       expect(imprint).toContain("Podologengesetz (PodG)");
       expect(imprint).not.toContain("ergänzt hier noch");
+    });
+
+    it("Recht H-88-4: KI-Antwortvorschläge an → Anbieter und Land im Art.-13-Block; unvollständig gespeichert → wie aus", async () => {
+      const web = await import("./website");
+      const { renderToStaticMarkup } = await import("react-dom/server");
+      const { createElement } = await import("react");
+      const { PrivacyContent } = await import("@/app/p/[slug]/_site/legal-content");
+      const p = await practice();
+      const [{ slug }] = (await f.pool.query("select slug from organizations where id = $1", [p.org])).rows;
+      const setAi = (a: Record<string, unknown>) => f.pool.query("update organizations set settings = settings || jsonb_build_object('aiReplies', $2::jsonb) where id = $1", [p.org, JSON.stringify(a)]);
+      const render = async () => renderToStaticMarkup(createElement(PrivacyContent, { site: (await web.loadPracticeLegal(slug))! }));
+      await setAi({ enabled: true, provider: "Beispiel-KI <b>Inc.</b>", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
+      const on = await render();
+      expect(on).toContain("Für Antwortvorschläge auf Ihre Nachricht nutzt die Praxis den KI-Dienst Beispiel-KI &lt;b&gt;Inc.&lt;/b&gt; (USA) als Auftragsverarbeiter.");
+      expect(on).toContain("Dabei kann der Inhalt Ihrer Nachricht ohne Ihren Namen und Ihre Kontaktdaten in USA verarbeitet werden.");
+      expect(on).toContain("Standardvertragsklauseln nach Art. 46 Abs. 2 lit. c DSGVO; eine Kopie der Garantien erhalten Sie bei der Praxis.");
+      expect(on).not.toContain("findet nicht statt");
+      expect((await web.loadPracticeLegal(slug))!.aiReplies).toEqual({ provider: "Beispiel-KI <b>Inc.</b>", country: "USA" });
+      // ohne Bestätigung § 203 (z. B. von Hand gesetzt) gilt der Schalter als aus
+      await setAi({ enabled: true, provider: "X", country: "USA", avvConfirmed: true });
+      expect(await render()).toContain("Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.");
+      await setAi({ enabled: false, provider: "X", country: "USA", avvConfirmed: true, confidentialityConfirmed: true });
+      expect(await render()).not.toContain("KI-Dienst");
     });
 
     it("Art.-13-Block nur bei aktiver Online-Buchung; Website-Knopf „Termin buchen“ folgt derselben Regel", async () => {
@@ -335,8 +369,48 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
           [p.org, patient, key],
         ),
       );
-      expect(await ret.purgeStaleOnlineRequests(p.org)).toEqual({ appointments: 1, messages: 1 });
-      expect((await msgBodies(p.org)).sort()).toEqual(["antwort", "bestand", "extern", "zugeordnet"]);
+      // ausgehende Antwort ohne Person (mit Versand-ID) gehört zur gelöschten Anfrage und wird mitgelöscht
+      expect(await ret.purgeStaleOnlineRequests(p.org)).toEqual({ appointments: 1, messages: 2 });
+      expect((await msgBodies(p.org)).sort()).toEqual(["bestand", "extern", "zugeordnet"]);
+    });
+
+    it("verwaiste Nachrichten (Termin gelöscht): nach Stichtag am Eingang mitgelöscht, sonst bleiben sie", async () => {
+      const p = await practice();
+      const patient = await f.patient(p.org);
+      const gone = (await f.asOrg(p.org, (c) => c.query("select gen_random_uuid() as id"))).rows[0].id as string;
+      const key = `online-request:${gone}`;
+      const kept = await request(p.org, { status: "confirmed" }); // Termin existiert noch → keine Waise
+      await f.asOrg(p.org, (c) =>
+        c.query(
+          `insert into messages (organization_id, patient_id, channel, direction, subject, body, thread_key, external_id, received_at) values
+            ($1, null, 'email', 'inbound',  'Neue Online-Buchung (unbestätigt)', 'waise-alt',        $3, null,     ${OLD}),
+            ($1, null, 'email', 'outbound', 'Re: Ihre Anfrage',                   'waise-antwort',    $3, 'smtp:1', ${OLD}),
+            ($1, null, 'email', 'inbound',  'Neue Online-Buchung (unbestätigt)', 'waise-neu',        $3, null,     now() - interval '5 months'),
+            ($1, $2,   'email', 'inbound',  'Neue Online-Buchung (unbestätigt)', 'waise-zugeordnet', $3, null,     ${OLD}),
+            ($1, null, 'email', 'inbound',  'Neue Online-Buchung (unbestätigt)', 'waise-extern',     $3, 'imap:2', ${OLD})`,
+          [p.org, patient, key],
+        ),
+      );
+      expect(await ret.purgeStaleOnlineRequests(p.org)).toEqual({ appointments: 0, messages: 2 });
+      expect((await msgBodies(p.org)).sort()).toEqual([`anfrage ${kept}`, "waise-extern", "waise-neu", "waise-zugeordnet"].sort());
+      const audit = (await f.asOrg(p.org, (c) => c.query("select meta from audit_log where organization_id = $1 and action = 'retention.online_requests'", [p.org]))).rows;
+      expect(audit).toHaveLength(1);
+      expect(audit[0].meta).toMatchObject({ appointments: 0, messages: 2 });
+    });
+
+    it("Lauf über alle Praxen: ohne akzeptierte AVV 0.3 wird nichts gelöscht (übersprungen)", async () => {
+      const p = await practice();
+      const id = await request(p.org);
+      await f.pool.query("update organizations set settings = jsonb_set(settings, '{legalAcceptance,avv}', '\"0.2\"') where id = $1", [p.org]);
+      const all = await ret.purgeStaleOnlineRequestsAll();
+      expect(all.skipped).toBeGreaterThanOrEqual(1);
+      expect(await apptIds(p.org)).toEqual([id]);
+      await f.pool.query("update organizations set settings = settings - 'legalAcceptance' where id = $1", [p.org]);
+      await ret.purgeStaleOnlineRequestsAll();
+      expect(await apptIds(p.org)).toEqual([id]);
+      await f.pool.query("update organizations set settings = jsonb_set(settings, '{legalAcceptance}', '{\"avv\":\"0.3\",\"agb\":\"0.3\"}') where id = $1", [p.org]);
+      await ret.purgeStaleOnlineRequestsAll();
+      expect(await apptIds(p.org)).toEqual([]);
     });
 
     it("Nachricht einer anderen (nicht gelöschten) Anfrage bleibt, auch wenn sie alt ist", async () => {
@@ -374,8 +448,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       const [appt] = (await f.asOrg(p.org, (c) => c.query("select id, external_id, source from appointments where organization_id = $1", [p.org]))).rows;
       expect(appt.external_id).toBe(`online-request:${appt.id}`);
       expect(appt.source).toBe("online");
-      const [msg] = (await f.asOrg(p.org, (c) => c.query("select thread_key, direction, external_id from messages where organization_id = $1", [p.org]))).rows;
-      expect(msg).toEqual({ thread_key: `online-request:${appt.id}`, direction: "inbound", external_id: null });
+      const [msg] = (await f.asOrg(p.org, (c) => c.query("select thread_key, direction, external_id, meta from messages where organization_id = $1", [p.org]))).rows;
+      // Name strukturiert (für das Schwärzen vor einem KI-Antwortvorschlag)
+      expect(msg).toEqual({ thread_key: `online-request:${appt.id}`, direction: "inbound", external_id: null, meta: { onlineRequest: { firstName: "Olga", lastName: "Test" } } });
     });
   });
 });

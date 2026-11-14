@@ -5,9 +5,10 @@
  * die App zeigt eine Warnung (Einstellungen, Heute).
  */
 
-export const PROFESSIONS = ["Podologin", "Podologe"] as const;
+/** gesetzliche Berufsbezeichnungen nach § 1 PodG (auch „Medizinische Fußpflegerin/Medizinischer Fußpfleger“) */
+export const PROFESSIONS = ["Podologin", "Podologe", "Medizinische Fußpflegerin", "Medizinischer Fußpfleger"] as const;
 export const DEFAULT_PROFESSION_STATE = "Deutschland";
-/** Standardtext nur für die gesetzlichen Berufsbezeichnungen nach PodG – nicht für eine Freitext-Berufsbezeichnung */
+/** Standardtext nur für die gesetzlichen Berufsbezeichnungen nach PodG (PROFESSIONS) – nicht für eine Freitext-Berufsbezeichnung */
 export const DEFAULT_REGULATIONS =
   "Podologengesetz (PodG) und Ausbildungs- und Prüfungsverordnung für Podologen (PodAPrV), abrufbar unter gesetze-im-internet.de";
 
@@ -17,6 +18,7 @@ export const SOLE_PROPRIETOR = "Einzelpraxis";
 export const LEGAL_FORMS = [
   { value: SOLE_PROPRIETOR, label: "Einzelpraxis (Einzelunternehmen)", register: false },
   { value: "GbR", label: "GbR (Praxisgemeinschaft)", register: false },
+  { value: "eGbR", label: "eGbR (eingetragene GbR)", register: true },
   { value: "e. K.", label: "e. K. (eingetragene:r Kauffrau/Kaufmann)", register: true },
   { value: "PartG", label: "Partnerschaftsgesellschaft (PartG)", register: true },
   { value: "PartG mbB", label: "PartG mbB", register: true },
@@ -45,7 +47,7 @@ export type ImprintSettings = {
   authority: string;
   /** Rechtsform (optional; LEGAL_FORMS), leer = keine Angabe */
   legalForm: string;
-  /** Registergericht und Registernummer (Pflicht bei registerpflichtiger Rechtsform) */
+  /** Registergericht und Registernummer (Pflicht bei registerpflichtiger Rechtsform, sonst freiwillig) */
   registerCourt: string;
   registerNumber: string;
   /** Wirtschafts-Identifikationsnummer (§ 139c AO, optional) */
@@ -65,7 +67,7 @@ export function imprintSettings(settings: Record<string, unknown> | null | undef
     owner: str(i.owner, 200),
     profession,
     professionState: str(i.professionState, 120) || DEFAULT_PROFESSION_STATE,
-    // PodG-Standardtext nur bei „Podologin/Podologe“ (Rechtsprüfung): bei Freitext nur, was die Praxis selbst einträgt
+    // PodG-Standardtext nur bei den Berufsbezeichnungen nach PodG (Rechtsprüfung): bei Freitext nur, was die Praxis selbst einträgt
     regulations: isKnownProfession(profession)
       ? storedRegulations || DEFAULT_REGULATIONS
       : storedRegulations === DEFAULT_REGULATIONS ? "" : storedRegulations,
@@ -105,6 +107,9 @@ export function missingImprintFields(o: ImprintBase, settings: Record<string, un
   if (requiresRegister(i.legalForm) && (!has(i.registerCourt) || !has(i.registerNumber))) missing.push("register");
   return missing;
 }
+
+/** Platzhalter für die Aufsichtsbehörde (Einstellungen → Praxis → Impressum) */
+export const AUTHORITY_PLACEHOLDER = "z. B. zuständiges Gesundheitsamt (nur wenn zutreffend)";
 
 /** Impressum der Demo-Praxis (Seed/Bootstrap; erfundene Angaben) */
 export const DEMO_IMPRINT: ImprintSettings = {

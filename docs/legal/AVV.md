@@ -28,7 +28,7 @@ und Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener 
 1. Der Auftragsverarbeiter verarbeitet die Daten nur auf **dokumentierte Weisung** des Verantwortlichen, auch in Bezug auf Übermittlungen in Drittländer, sofern er nicht gesetzlich zu einer anderen Verarbeitung verpflichtet ist (Art. 28 Abs. 3 lit. a DSGVO). In diesem Fall teilt er dem Verantwortlichen die rechtlichen Anforderungen vor der Verarbeitung mit, sofern das Recht dies nicht verbietet.
 2. Weisungen erteilt der Verantwortliche grundsätzlich durch die Nutzung und Konfiguration der Software (z. B. Aktivieren einer Schnittstelle, Datenexport, Löschantrag) sowie in Textform an [cryptohopper1904@gmail.com](mailto:cryptohopper1904@gmail.com).
 3. Hält der Auftragsverarbeiter eine Weisung für rechtswidrig, informiert er den Verantwortlichen unverzüglich (Art. 28 Abs. 3 UAbs. 2 DSGVO) und darf die Ausführung bis zur Bestätigung aussetzen.
-4. Als Standardweisung gilt: Online-Terminanfragen, die der Verantwortliche nicht innerhalb von 6 Monaten nach Eingang einer Patientenakte zuordnet und auf die sich keine Behandlungsdokumentation oder Rechnung bezieht, löscht der Auftragsverarbeiter automatisch einschließlich der zugehörigen Posteingangsnachricht. Der Verantwortliche kann eine abweichende Weisung in Textform erteilen.
+4. Als Standardweisung gilt: Online-Terminanfragen, die nicht zu einem Termin oder einer Behandlung geführt haben, löscht der Auftragsverarbeiter 6 Monate nach Eingang automatisch einschließlich der zugehörigen Posteingangsnachrichten (auch Antworten an die anfragende Person, solange sie keiner Patientenakte zugeordnet sind). Nicht zu einem Termin oder einer Behandlung geführt hat eine Anfrage, deren Terminvormerkung der Verantwortliche keiner Patientenakte zugeordnet und weder bestätigt noch als erledigt oder nicht wahrgenommen erfasst hat und auf die sich keine Behandlungsdokumentation oder Rechnung bezieht. Der Verantwortliche kann eine abweichende Weisung in Textform erteilen.
 
 ## § 4 Vertraulichkeit und Berufsgeheimnis (§ 203 StGB)
 
@@ -51,7 +51,8 @@ und Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener 
 
 ## § 7 Drittlandübermittlung
 
-Eine Verarbeitung in Drittländern außerhalb der EU/des EWR erfolgt nur, wenn die Voraussetzungen der Art. 44 ff. DSGVO erfüllt sind und der Verantwortliche zugestimmt hat. Gesundheitsdaten werden vom Auftragsverarbeiter nicht in Drittländer übermittelt.
+1. Eine Verarbeitung in Drittländern außerhalb der EU/des EWR durch den Auftragsverarbeiter oder seine Unterauftragnehmer erfolgt nur, wenn die Voraussetzungen der Art. 44 ff. DSGVO erfüllt sind und der Verantwortliche zugestimmt hat. Der Auftragsverarbeiter und seine Unterauftragnehmer übermitteln keine Gesundheitsdaten in Drittländer.
+2. Davon abzugrenzen sind Dienste, die der Verantwortliche selbst beauftragt und in der Software verbindet (§ 6 Nr. 4), insbesondere ein KI-Dienst für Antwortvorschläge im Posteingang. Solche Dienste verarbeiten auf Grundlage eines eigenen Vertrags zwischen dem Verantwortlichen und dem Anbieter; die Wahl des Anbieters, den Ort der Verarbeitung und die Garantien nach Art. 44 ff. DSGVO (z. B. Angemessenheitsbeschluss oder Standardvertragsklauseln) verantwortet der Verantwortliche. Die Funktion ist standardmäßig ausgeschaltet; der Verantwortliche schaltet sie selbst ein und bestätigt dabei Vertrag und Verschwiegenheit des Anbieters. Der Auftragsverarbeiter leitet Nachrichteninhalte nur auf Anforderung des Verantwortlichen je Nachricht und nach Entfernung der bekannten Namen sowie der Telefonnummern und E-Mail-Adressen an diesen Dienst weiter; er selbst nimmt dabei keine Drittlandübermittlung im Sinne von Nr. 1 vor.
 
 ## § 8 Unterstützung des Verantwortlichen
 

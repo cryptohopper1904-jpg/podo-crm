@@ -5,6 +5,7 @@ import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { isPrivateOnly } from "@/lib/features";
 import { imprintSettings, type ImprintSettings } from "@/lib/imprint";
+import { aiReplyDisclosure } from "@/lib/ai-replies";
 import { publicBookingAvailable } from "@/server/portal-booking";
 import { defaultServiceDescription, homeVisitAreas, safeUrl, websiteOpeningHours, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
@@ -31,6 +32,8 @@ export type PublicSite = {
   /** strukturierte Impressums-Pflichtangaben (Einstellungen → Praxis, src/lib/imprint.ts) */
   imprintInfo: ImprintSettings;
   privacy: string;
+  /** KI-Antwortvorschläge eingeschaltet: Anbieter und Land für die Datenschutzhinweise (src/lib/ai-replies.ts), sonst null */
+  aiReplies: { provider: string; country: string } | null;
   showPrices: boolean;
   onlineBooking: boolean;
   /** Praxis nur für Privatpatient:innen & Selbstzahler (src/lib/features.ts): Badge, keine Kassen-Hinweise */
@@ -74,6 +77,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     imprint: w.imprint,
     imprintInfo: imprintSettings(settings),
     privacy: w.privacy,
+    aiReplies: aiReplyDisclosure(settings),
     showPrices: w.showPrices,
     // „Termin online buchen“ nur, wenn /buchen wirklich erreichbar ist (eingeschaltet, Impressum vollständig, kein
     // Nur-Lesen/Löschantrag) – gleiche Regel wie Buchungsseite und Datenschutzblock (src/server/portal-booking.ts)
@@ -93,7 +97,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
 });
 
 /** Angaben für Impressum und Datenschutzhinweise einer Praxis (Website /p und Online-Buchung /buchen) */
-export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "vatId" | "imprint" | "imprintInfo" | "privacy" | "onlineBooking"> & {
+export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "vatId" | "imprint" | "imprintInfo" | "privacy" | "aiReplies" | "onlineBooking"> & {
   /** Praxis-Website veröffentlicht → Impressum/Datenschutz unter /p/<slug>/…, sonst Ersatzseiten unter /buchen/<slug>/… */
   websitePublished: boolean;
 };
@@ -120,6 +124,7 @@ export const loadPracticeLegal = cache(async (slug: string): Promise<PracticeLeg
     imprint: w.imprint,
     imprintInfo: imprintSettings(o.settings ?? {}),
     privacy: w.privacy,
+    aiReplies: aiReplyDisclosure(o.settings ?? {}),
     onlineBooking: await publicBookingAvailable(o.id),
     websitePublished: websitePublished(o),
   };

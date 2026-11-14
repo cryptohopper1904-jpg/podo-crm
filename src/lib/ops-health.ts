@@ -13,9 +13,27 @@ export const MAX_AGE_SECONDS = {
   dailyCron: 26 * 3600,
 } as const;
 
-/** Bewertet einen Zeitstempel (Unix-Sekunden) aus einer Status-Datei. */
-export function evaluateTimestamp(epochSeconds: number | null, maxAgeSeconds: number, nowMs = Date.now(), missingHint = "noch kein Lauf erfasst"): CheckResult {
-  if (epochSeconds === null || !Number.isFinite(epochSeconds) || epochSeconds <= 0) return { status: "warn", hint: missingHint, lastAt: null };
+/**
+ * Bewertet einen Zeitstempel (Unix-Sekunden) aus einer Status-Datei. Fehlt er, ist das zunächst nur „warn“ (frisch
+ * installiert); mit `sinceEpochSeconds` (Zeitpunkt des ersten Starts, eigene Status-Datei) wird daraus „fail“, sobald
+ * seit dem Start länger als `maxAgeSeconds` kein erfolgreicher Lauf erfasst ist – kein dauerhaftes „warn“.
+ */
+export function evaluateTimestamp(
+  epochSeconds: number | null,
+  maxAgeSeconds: number,
+  nowMs = Date.now(),
+  missingHint = "noch kein Lauf erfasst",
+  sinceEpochSeconds: number | null = null,
+): CheckResult {
+  if (epochSeconds === null || !Number.isFinite(epochSeconds) || epochSeconds <= 0) {
+    if (sinceEpochSeconds !== null && Number.isFinite(sinceEpochSeconds) && sinceEpochSeconds > 0) {
+      const sinceSeconds = Math.max(0, Math.round(nowMs / 1000 - sinceEpochSeconds));
+      const startedAt = new Date(sinceEpochSeconds * 1000).toISOString();
+      if (sinceSeconds > maxAgeSeconds) return { status: "fail", hint: "seit dem Start kein erfolgreicher Lauf", lastAt: null, startedAt, sinceMinutes: Math.round(sinceSeconds / 60) };
+      return { status: "warn", hint: missingHint, lastAt: null, startedAt };
+    }
+    return { status: "warn", hint: missingHint, lastAt: null };
+  }
   const ageSeconds = Math.max(0, Math.round(nowMs / 1000 - epochSeconds));
   const lastAt = new Date(epochSeconds * 1000).toISOString();
   if (ageSeconds > maxAgeSeconds) return { status: "fail", hint: "zu alt", lastAt, ageMinutes: Math.round(ageSeconds / 60) };

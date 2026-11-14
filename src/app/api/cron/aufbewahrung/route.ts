@@ -23,7 +23,7 @@ async function handle(req: NextRequest) {
       log.error("cron.aufbewahrung.partial", { errors: result.errors, count: result.organizations });
       return NextResponse.json({ ok: false, ...result }, { status: 500, headers: { "Cache-Control": "no-store" } });
     }
-    log.info("cron.aufbewahrung.done", { count: result.organizations, appointments: result.appointments, messages: result.messages });
+    log.info("cron.aufbewahrung.done", { count: result.organizations, skipped: result.skipped, appointments: result.appointments, messages: result.messages });
     return NextResponse.json({ ok: true, ...result }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     log.error("cron.aufbewahrung.failed", { error: e });

@@ -206,8 +206,6 @@ main() {
 
   # ── 5. Starten ────────────────────────────────────────────────────────────
   say "5/6 Container neu starten (migrate spielt neue Migrationen ein)"
-  # Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites); idempotent, Fehler nicht fatal
-  if [ -f deploy/log-retention.sh ]; then run bash deploy/log-retention.sh || warn "Log-Aufbewahrung (logrotate) nicht eingerichtet."; fi
   if [ "$PODO_MODE" = subdomain ]; then
     # falls jemals versehentlich gestartet: eigener Caddy würde 80/443 des vorhandenen Webservers blockieren
     run "${COMPOSE[@]}" rm -sf caddy
@@ -221,6 +219,9 @@ main() {
     # backup/cron neu erstellen: eingebundene Skripte (backup.sh) sonst evtl. noch alte Fassung
     [ "$started" = 1 ] && { "${COMPOSE[@]}" up -d --force-recreate --no-deps backup cron >/dev/null || started=0; }
   fi
+  # Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites): nach dem Neustart, weil logrotate die
+  # Log-Dateien der (neu erstellten) eigenen Container einzeln einträgt; idempotent, Fehler nicht fatal
+  if [ -f deploy/log-retention.sh ]; then run bash deploy/log-retention.sh || warn "Log-Aufbewahrung (logrotate) nicht eingerichtet."; fi
 
   # ── 6. Health-Check ───────────────────────────────────────────────────────
   say "6/6 Auf /api/health warten (max. ${TIMEOUT}s)"
@@ -249,6 +250,8 @@ main() {
   if "${COMPOSE[@]}" up -d --build "${SERVICES[@]}" && "${COMPOSE[@]}" up -d --force-recreate --no-deps backup cron >/dev/null && wait_healthy "$TIMEOUT"; then
     rb_ok=1
   fi
+  # neu erstellte Container → Log-Aufbewahrung neu eintragen (nicht fatal)
+  [ -f deploy/log-retention.sh ] && { bash deploy/log-retention.sh || warn "Log-Aufbewahrung (logrotate) nicht eingerichtet."; }
   echo
   if [ "$rb_ok" = 1 ]; then
     warn "Die vorherige Version läuft wieder."

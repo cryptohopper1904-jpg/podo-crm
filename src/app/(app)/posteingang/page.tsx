@@ -1,16 +1,17 @@
 import Link from "next/link";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, Empty, Field, Input, PageHeader, Textarea } from "@/components/ui";
-import { withOrg } from "@/db";
-import { messages, patients } from "@/db/schema";
+import { db, withOrg } from "@/db";
+import { appointments, messages, organizations, patients } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { dateTimeDe } from "@/lib/format";
 import { isMockMode } from "@/integrations/registry";
 import { mapSequential } from "@/lib/seq";
 import type { PatientSuggestion } from "@/lib/kim-hints";
 import { kimPatientSuggestions, loadKimConnection } from "@/server/kim";
-import { ONLINE_REQUEST_PREFIX } from "@/server/online-request-retention";
+import { onlineRequestAppointmentId } from "@/lib/online-request";
+import { aiReplyChannel, aiReplySettings } from "@/lib/ai-replies";
 import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction, syncKimAction } from "./actions";
 
@@ -20,7 +21,17 @@ const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "What
 
 type Row = { m: typeof messages.$inferSelect; patient: { id: string; number: number; firstName: string | null; lastName: string } | null };
 
-function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: boolean; suggestions?: PatientSuggestion[] }) {
+type CardProps = {
+  row: Row;
+  canWrite: boolean;
+  suggestions?: PatientSuggestion[];
+  /** KI-Antwortvorschläge eingeschaltet (Einstellungen → Praxis) */
+  aiEnabled?: boolean;
+  /** Online-Anfrage, deren Termin noch unter die automatische Löschung fällt (ohne Person, geplant/abgesagt) */
+  pendingRequest?: boolean;
+};
+
+function MessageCard({ row, canWrite, suggestions = [], aiEnabled = false, pendingRequest = false }: CardProps) {
   const { m, patient } = row;
   const open = m.status === "new" || m.status === "suggested";
   return (
@@ -40,8 +51,8 @@ function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: 
       </div>
       {m.subject ? <p className="font-semibold">{m.subject}</p> : null}
       <p className="whitespace-pre-wrap text-[15px]">{m.body}</p>
-      {/* nur gekennzeichnete /buchen-Anfragen ohne Akte werden nach 6 Monaten gelöscht (src/server/online-request-retention.ts) */}
-      {!patient && m.direction === "inbound" && m.threadKey?.startsWith(ONLINE_REQUEST_PREFIX) ? <OnlineRequestRetentionNote className="mt-3" /> : null}
+      {/* nur gekennzeichnete /buchen-Anfragen ohne Akte, deren Termin noch löschbar ist (src/server/online-request-retention.ts) */}
+      {!patient && m.direction === "inbound" && !m.externalId && pendingRequest ? <OnlineRequestRetentionNote className="mt-3" /> : null}
 
       {open && canWrite ? (
         <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
@@ -65,9 +76,11 @@ function MessageCard({ row, canWrite, suggestions = [] }: { row: Row; canWrite: 
               <Field label={m.channel === "kim" ? "Patientennummer" : "Patientennummer (leer = automatisch über Absender)"}><Input name="patientNumber" inputMode="numeric" className="w-40" /></Field>
             </ActionForm>
           ) : null}
-          <ActionForm action={suggestReplyAction} submit={m.aiSuggestion ? "Neuen KI-Vorschlag erzeugen" : "KI-Vorschlag erzeugen"} className="flex flex-col gap-2">
-            <input type="hidden" name="id" value={m.id} />
-          </ActionForm>
+          {aiEnabled && aiReplyChannel(m.channel) && (m.channel !== "kim" || patient) ? (
+            <ActionForm action={suggestReplyAction} submit={m.aiSuggestion ? "Neuen KI-Vorschlag erzeugen" : "KI-Vorschlag erzeugen"} className="flex flex-col gap-2">
+              <input type="hidden" name="id" value={m.id} />
+            </ActionForm>
+          ) : null}
           <ActionForm action={sendReplyAction} submit="Antwort senden">
             <input type="hidden" name="id" value={m.id} />
             <Field
@@ -113,6 +126,30 @@ export default async function InboxPage() {
   const suggestionMap = new Map(
     canWrite ? await mapSequential(kimOpen, async (r) => [r.m.id, await kimPatientSuggestions(org, { subject: r.m.subject, body: r.m.body })] as const) : [],
   );
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+  const aiEnabled = aiReplySettings(o?.settings).enabled;
+  // Hinweis „wird nach 6 Monaten gelöscht“ nur, solange der Termin der Anfrage noch darunter fällt (ohne Person, geplant/abgesagt)
+  const requestIds = [...new Set(open.map((r) => onlineRequestAppointmentId(r.m.threadKey)).filter((id): id is string => !!id))];
+  const pendingKeys = new Set(
+    requestIds.length
+      ? (
+          await withOrg(org, (tx) =>
+            tx
+              .select({ externalId: appointments.externalId })
+              .from(appointments)
+              .where(
+                and(
+                  eq(appointments.organizationId, org),
+                  inArray(appointments.id, requestIds),
+                  eq(appointments.source, "online"),
+                  isNull(appointments.patientId),
+                  inArray(appointments.status, ["planned", "cancelled"]),
+                ),
+              ),
+          )
+        ).map((a) => a.externalId)
+      : [],
+  );
   return (
     <div className="mx-auto max-w-4xl">
       <PageHeader title="Posteingang" subtitle={`${open.length} offen`} />
@@ -130,7 +167,16 @@ export default async function InboxPage() {
       ) : null}
       <section className="flex flex-col gap-4">
         <h2 className="font-display text-xl font-semibold">Neu</h2>
-        {open.length ? open.map((r) => <MessageCard key={r.m.id} row={r} canWrite={canWrite} suggestions={suggestionMap.get(r.m.id)} />) : <Empty title="Keine offenen Nachrichten" />}
+        {open.length ? open.map((r) => (
+              <MessageCard
+                key={r.m.id}
+                row={r}
+                canWrite={canWrite}
+                suggestions={suggestionMap.get(r.m.id)}
+                aiEnabled={aiEnabled}
+                pendingRequest={!!r.m.threadKey && pendingKeys.has(r.m.threadKey)}
+              />
+            )) : <Empty title="Keine offenen Nachrichten" />}
       </section>
       <section className="mt-8 flex flex-col gap-4">
         <h2 className="font-display text-xl font-semibold">Beantwortet</h2>

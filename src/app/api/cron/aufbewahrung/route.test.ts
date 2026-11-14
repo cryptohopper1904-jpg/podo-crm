@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
-const run = vi.hoisted(() => ({ result: { organizations: 2, appointments: 3, messages: 3, errors: 0 }, calls: 0 }));
+const run = vi.hoisted(() => ({ result: { organizations: 2, skipped: 0, appointments: 3, messages: 3, errors: 0 }, calls: 0 }));
 vi.mock("@/server/online-request-retention", () => ({
   purgeStaleOnlineRequestsAll: vi.fn(async () => {
     run.calls++;
@@ -23,7 +23,7 @@ describe("POST /api/cron/aufbewahrung", () => {
   beforeEach(() => {
     process.env.CRON_SECRET = SECRET;
     run.calls = 0;
-    run.result = { organizations: 2, appointments: 3, messages: 3, errors: 0 };
+    run.result = { organizations: 2, skipped: 0, appointments: 3, messages: 3, errors: 0 };
     logged.errors = [];
   });
   afterEach(() => {
@@ -47,11 +47,11 @@ describe("POST /api/cron/aufbewahrung", () => {
   it("richtiges Token: 200 nur mit Zählern", async () => {
     const r = await req(`Bearer ${SECRET}`);
     expect(r.status).toBe(200);
-    expect(await r.json()).toEqual({ ok: true, organizations: 2, appointments: 3, messages: 3, errors: 0 });
+    expect(await r.json()).toEqual({ ok: true, organizations: 2, skipped: 0, appointments: 3, messages: 3, errors: 0 });
   });
 
   it("Fehlschlag einer Praxis: 500 (kein Zeitstempel im cron-Container → Alarm) und Fehler-Log", async () => {
-    run.result = { organizations: 2, appointments: 1, messages: 1, errors: 1 };
+    run.result = { organizations: 2, skipped: 0, appointments: 1, messages: 1, errors: 1 };
     const r = await req(`Bearer ${SECRET}`);
     expect(r.status).toBe(500);
     expect((await r.json()).errors).toBe(1);

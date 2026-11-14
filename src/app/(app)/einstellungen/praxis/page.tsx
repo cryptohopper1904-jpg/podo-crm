@@ -22,6 +22,8 @@ import { ImprintForm } from "./imprint-form";
 import { ImprintWarning } from "./imprint-warning";
 import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { LogoUpload } from "./logo-upload";
+import { AiRepliesForm } from "./ai-replies-form";
+import { aiReplySettings } from "@/lib/ai-replies";
 
 const LOGO_HINT = {
   compact: "Nur das Zeichen (z. B. der Fuß). Erscheint dezent auf Anamnese- und Doku-Bögen sowie auf Quittungen.",
@@ -54,6 +56,14 @@ export default async function PracticeSettings() {
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
       <a href={`/buchen/${o.slug}`} target="_blank" rel="noreferrer" className="mt-2 inline-block break-all font-semibold text-primary">{(process.env.PUBLIC_URL ?? "")}/buchen/{o.slug}</a>
       <OnlineRequestRetentionNote className="mt-3" />
+    </Card>
+    <Card id="ki-antworten" className="scroll-mt-24">
+      <h2 className="mb-1 font-display text-lg font-semibold">KI-Antwortvorschläge (Posteingang)</h2>
+      <p className="mb-4 text-sm text-muted">
+        Standard: aus. Eingeschaltet erzeugt ein KI-Dienst auf Knopfdruck Antwortentwürfe für E-Mail, SMS, WhatsApp und KIM. Den Dienst selbst
+        richtest du unter <Link className="font-semibold text-primary underline" href="/einstellungen/schnittstellen">Einstellungen → Schnittstellen</Link> ein.
+      </p>
+      <AiRepliesForm initial={aiReplySettings(o.settings)} disabled={!!auth.support} />
     </Card>
     <Card>
       <ActionForm action={savePracticeAction} stickyActions>

@@ -8,7 +8,7 @@ import { appointmentServices, appointments, messages, organizations } from "@/db
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
-import { ONLINE_REQUEST_SUBJECT, onlineRequestKey } from "@/server/online-request-retention";
+import { ONLINE_REQUEST_SUBJECT, onlineRequestKey, singleLine } from "@/lib/online-request";
 import { checkPublicSlot, publicBookingAvailable, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
@@ -31,8 +31,9 @@ const schema = z.object({
   serviceId: z.string().uuid("Bitte eine Leistung wählen."),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Bitte einen Tag wählen."),
   time: z.string().regex(/^\d{2}:\d{2}$/, "Bitte eine Uhrzeit wählen."),
-  firstName: z.string().trim().min(1, "Vorname fehlt").max(80),
-  lastName: z.string().trim().min(1, "Nachname fehlt").max(80),
+  // eine Zeile (der Name steht in einer eigenen Zeile der Posteingangs-Nachricht und in messages.meta)
+  firstName: z.string().transform(singleLine).pipe(z.string().min(1, "Vorname fehlt").max(80)),
+  lastName: z.string().transform(singleLine).pipe(z.string().min(1, "Nachname fehlt").max(80)),
   phone: z.string().trim().min(6, "Telefonnummer fehlt").max(40),
   email: z.string().trim().email("E-Mail ungültig").max(200).optional().or(z.literal("")),
   note: z.string().trim().max(500).optional(),
@@ -82,6 +83,8 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
       fromAddress: d.email || d.phone,
       subject: ONLINE_REQUEST_SUBJECT,
       threadKey: key,
+      // Name strukturiert: wird vor einem KI-Antwortvorschlag zuverlässig entfernt (src/lib/online-request.ts)
+      meta: { onlineRequest: { firstName: d.firstName, lastName: d.lastName } },
       body: [
         `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
         `Name: ${d.firstName} ${d.lastName}`,

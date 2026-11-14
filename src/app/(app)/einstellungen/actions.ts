@@ -24,6 +24,8 @@ import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
 import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, isKnownLegalForm, isKnownProfession, requiresRegister } from "@/lib/imprint";
+import { AI_COUNTRY_MAX, AI_PROVIDER_MAX, aiReplySettings } from "@/lib/ai-replies";
+import { avvReacceptance, LEGAL_VERSIONS, storedLegalAcceptance } from "@/lib/legal";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -86,12 +88,13 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
     owner: v.owner,
     profession,
     professionState: v.professionState || DEFAULT_PROFESSION_STATE,
-    // PodG-Standardtext nur für „Podologin/Podologe“; bei Freitext nur eigene Angaben der Praxis
+    // PodG-Standardtext nur für die Berufsbezeichnungen nach PodG; bei Freitext nur eigene Angaben der Praxis
     regulations: known ? v.regulations || DEFAULT_REGULATIONS : v.regulations === DEFAULT_REGULATIONS ? "" : (v.regulations ?? ""),
     authority: v.authority ?? "",
     legalForm,
-    registerCourt: registered ? (v.registerCourt ?? "") : "",
-    registerNumber: registered ? (v.registerNumber ?? "") : "",
+    // Pflicht nur bei registerpflichtiger Rechtsform; sonst freiwillig (z. B. eingetragene Einzelkaufleute ohne Angabe der Rechtsform)
+    registerCourt: v.registerCourt ?? "",
+    registerNumber: v.registerNumber ?? "",
     economicId: v.economicId ?? "",
     dpo: v.dpo ?? "",
   };
@@ -105,6 +108,66 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
   revalidatePath("/heute");
   const incomplete = !imprint.owner || !imprint.profession || (registered && (!imprint.registerCourt || !imprint.registerNumber));
   return { ok: incomplete ? "Gespeichert. Es fehlen noch Pflichtangaben – die Online-Buchung bleibt gesperrt." : "Gespeichert." };
+}
+
+/**
+ * KI-Antwortvorschläge (Posteingang) an/aus – Standard aus. Einschalten nur mit beiden Bestätigungen (AVV mit dem
+ * KI-Anbieter, Verschwiegenheit nach § 203 Abs. 4 StGB) sowie Anbieter-Name und Land; beides steht danach in den
+ * Datenschutzhinweisen der Online-Buchung. Nicht per Support-Freigabe: das sind Erklärungen der Praxis.
+ */
+export async function saveAiRepliesAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  if (auth.support) return { error: "Nur die Praxis selbst kann KI-Antwortvorschläge ein- oder ausschalten." };
+  const enable = form.get("enabled") === "on";
+  const provider = String(form.get("provider") ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  const country = String(form.get("country") ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  if (provider.length > AI_PROVIDER_MAX) return { error: `Anbieter: höchstens ${AI_PROVIDER_MAX} Zeichen.` };
+  if (country.length > AI_COUNTRY_MAX) return { error: `Land: höchstens ${AI_COUNTRY_MAX} Zeichen.` };
+  const avv = form.get("avvConfirmed") === "on";
+  const confidentiality = form.get("confidentialityConfirmed") === "on";
+  if (enable) {
+    if (!provider || !country) return { error: "Bitte Anbieter und Land des KI-Dienstes angeben." };
+    if (!avv || !confidentiality) return { error: "Bitte beide Punkte bestätigen (AVV und Verschwiegenheit) – sonst bleiben KI-Antwortvorschläge aus." };
+  }
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
+  const before = aiReplySettings(o?.settings);
+  const aiReplies = enable
+    ? { enabled: true, provider, country, avvConfirmed: true, confidentialityConfirmed: true, at: new Date().toISOString(), by: auth.user.id }
+    : { ...before, enabled: false, provider: provider || before.provider, country: country || before.country, offAt: new Date().toISOString(), offBy: auth.user.id };
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ aiReplies })}::jsonb` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({
+    organizationId: auth.organization.id,
+    userId: auth.user.id,
+    action: enable ? "settings.ai_replies.on" : "settings.ai_replies.off",
+    meta: enable ? { provider, country, avvConfirmed: true, confidentialityConfirmed: true } : {},
+  });
+  revalidatePath("/einstellungen/praxis");
+  revalidatePath("/posteingang");
+  return { ok: enable ? "KI-Antwortvorschläge eingeschaltet. Die Datenschutzhinweise deiner Buchungsseite nennen jetzt den Anbieter." : "KI-Antwortvorschläge ausgeschaltet." };
+}
+
+/**
+ * Nachträgliche Zustimmung zur aktuellen AVV durch die Inhaber:in (Hinweis in den Einstellungen). Gespeichert werden
+ * Version, Zeitpunkt und Person (organizations.settings.legalAcceptance); erst danach läuft z. B. die automatische
+ * Löschung unbestätigter Online-Anfragen (AVV § 3 Nr. 4).
+ */
+export async function acceptAvvAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  void form;
+  const auth = await requireAuth("settings.manage");
+  if (auth.role !== "owner" || auth.support) return { error: "Die AVV kann nur die Inhaberin bzw. der Inhaber der Praxis bestätigen." };
+  const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
+  const prev = storedLegalAcceptance(o?.settings);
+  const legalAcceptance = avvReacceptance(prev, auth.user.id);
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ legalAcceptance })}::jsonb` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "legal.avv_accepted", meta: { avv: LEGAL_VERSIONS.avv, previous: prev?.avv ?? null } });
+  revalidatePath("/einstellungen", "layout");
+  return { ok: `AVV Version ${LEGAL_VERSIONS.avv} akzeptiert.` };
 }
 
 /**

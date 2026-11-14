@@ -98,11 +98,12 @@ services:
     container_name: podo-app
     ports: ["$BIND:$PORT:3000"]
 YML
-# Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites)
-bash "$APP_DIR/deploy/log-retention.sh"
 COMPOSE=(docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.subdomain.yml --env-file "$ENV")
 "${COMPOSE[@]}" rm -sf caddy >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up -d --build db migrate app backup cron
+# Container-Logs höchstens 7 Tage (Datenschutzhinweise der Praxis-Websites) – nach dem Start (Container-IDs);
+# die Logs des vorhandenen Webservers (Host-Proxy) begrenzt das nicht, siehe docs/BETRIEB.md 4.4
+bash "$APP_DIR/deploy/log-retention.sh" || echo "WARNUNG: Log-Aufbewahrung (logrotate) nicht eingerichtet – docs/BETRIEB.md 4.4."
 
 say "6/6 Weiterleitung im vorhandenen Caddy eintragen"
 if ! grep -qF "$MARK" "$CADDYFILE"; then

@@ -351,6 +351,13 @@
       "when": 1794643215894,
       "tag": "0049_beleg_archiv",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1794658411678,
+      "tag": "0050_nachricht_meta",
+      "breakpoints": true
     }
   ]
 }

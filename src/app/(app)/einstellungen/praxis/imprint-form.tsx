@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ActionForm } from "@/components/action-form";
 import { Field, Input, Select, Textarea } from "@/components/ui";
-import { DEFAULT_REGULATIONS, LEGAL_FORMS, PROFESSIONS, requiresRegister, type ImprintSettings } from "@/lib/imprint";
+import { AUTHORITY_PLACEHOLDER, DEFAULT_REGULATIONS, LEGAL_FORMS, PROFESSIONS, requiresRegister, type ImprintSettings } from "@/lib/imprint";
 import { saveImprintAction } from "../actions";
 
 const OTHER = "__andere";
@@ -15,7 +15,7 @@ export function ImprintForm({ initial }: { initial: ImprintSettings }) {
   const [legalForm, setLegalForm] = useState(initial.legalForm);
   const freeText = choice === OTHER;
   const register = requiresRegister(legalForm);
-  // PodG-Standardtext nur bei „Podologin/Podologe“ vorbelegen; bei Freitext nur eigene Angaben der Praxis
+  // PodG-Standardtext nur bei den Berufsbezeichnungen nach PodG vorbelegen; bei Freitext nur eigene Angaben der Praxis
   const regulations = freeText ? (initial.regulations === DEFAULT_REGULATIONS ? "" : initial.regulations) : initial.regulations || DEFAULT_REGULATIONS;
   return (
     <ActionForm action={saveImprintAction}>
@@ -29,16 +29,13 @@ export function ImprintForm({ initial }: { initial: ImprintSettings }) {
         <Field label="Inhaber:in bzw. vertretungsberechtigte Person *" id="imprint-owner">
           <Input name="owner" defaultValue={initial.owner} maxLength={200} autoComplete="name" />
         </Field>
-        {register ? (
-          <>
-            <Field label="Registergericht *" id="imprint-register-court" hint="z. B. Amtsgericht Neuruppin">
-              <Input name="registerCourt" defaultValue={initial.registerCourt} maxLength={120} />
-            </Field>
-            <Field label="Registernummer *" id="imprint-register-number" hint="z. B. HRB 12345 oder PR 123">
-              <Input name="registerNumber" defaultValue={initial.registerNumber} maxLength={60} />
-            </Field>
-          </>
-        ) : null}
+        {/* Pflicht bei registerpflichtiger Rechtsform, sonst freiwillig (Werte bleiben beim Wechsel der Rechtsform erhalten) */}
+        <Field label={register ? "Registergericht *" : "Registergericht (optional)"} id="imprint-register-court" hint="z. B. Amtsgericht Neuruppin">
+          <Input name="registerCourt" defaultValue={initial.registerCourt} maxLength={120} />
+        </Field>
+        <Field label={register ? "Registernummer *" : "Registernummer (optional)"} id="imprint-register-number" hint="z. B. HRB 12345, PR 123 oder GsR 45">
+          <Input name="registerNumber" defaultValue={initial.registerNumber} maxLength={60} />
+        </Field>
         <Field label="Berufsbezeichnung *" id="imprint-profession">
           <Select name="professionChoice" value={choice} onChange={(e) => setChoice(e.target.value)}>
             <option value="">– wählen –</option>
@@ -54,7 +51,7 @@ export function ImprintForm({ initial }: { initial: ImprintSettings }) {
         <Field label="Staat der Verleihung">
           <Input name="professionState" defaultValue={initial.professionState} maxLength={120} />
         </Field>
-        {/* key: beim Wechsel Podologin/Podologe ↔ Freitext neu vorbelegen (Standardtext nur für PodG-Berufe) */}
+        {/* key: beim Wechsel PodG-Berufsbezeichnung ↔ Freitext neu vorbelegen (Standardtext nur für PodG-Berufe) */}
         <Field
           key={freeText ? "frei" : "podg"}
           label="Berufsrechtliche Regelungen"
@@ -63,8 +60,8 @@ export function ImprintForm({ initial }: { initial: ImprintSettings }) {
         >
           <Textarea name="regulations" rows={2} defaultValue={regulations} maxLength={500} />
         </Field>
-        <Field label="Zuständige Aufsichtsbehörde (optional)" className="sm:col-span-2" hint="z. B. Gesundheitsamt des Landkreises – nur wenn für die Praxis zutreffend.">
-          <Textarea name="authority" rows={2} defaultValue={initial.authority} maxLength={500} />
+        <Field label="Zuständige Aufsichtsbehörde (optional)" className="sm:col-span-2" hint="Nur angeben, wenn für deine Praxis eine Aufsichtsbehörde zuständig ist.">
+          <Textarea name="authority" rows={2} defaultValue={initial.authority} maxLength={500} placeholder={AUTHORITY_PLACEHOLDER} />
         </Field>
         <Field label="Wirtschafts-Identifikationsnummer (optional)" id="imprint-economic-id" hint="W-IdNr., sobald das Finanzamt sie mitgeteilt hat.">
           <Input name="economicId" defaultValue={initial.economicId} maxLength={40} />

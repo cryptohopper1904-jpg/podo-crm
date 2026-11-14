@@ -1,9 +1,11 @@
 import "server-only";
-import { and, eq, inArray, isNull, like, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { appointments, messages, organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
+import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 import { log } from "@/lib/log";
+import { ONLINE_REQUEST_PREFIX, onlineRequestKey } from "@/lib/online-request";
 
 /**
  * Speicherdauer unbestätigter Online-Terminanfragen (/buchen): Wird eine Anfrage nicht in eine Patientenakte übernommen,
@@ -16,17 +18,15 @@ import { log } from "@/lib/log";
  *   Anfragen aus der Zeit vor diesem Kennzeichen (vor der Ankündigung) haben es nicht und bleiben unberührt.
  * - nur Status „geplant“ oder „abgesagt“ – bestätigte, erledigte und „nicht erschienen“-Termine bleiben
  * - nur ohne zugeordnete Person und ohne Behandlungsdokumentation oder Rechnungsposition
- * - Nachricht nur zusammen mit ihrem Termin (thread_key „online-request:<id>“), nur eingehend, ohne external_id
- *   und ohne zugeordnete Person
+ * - Nachrichten zum gelöschten Termin (thread_key „online-request:<id>“) ohne zugeordnete Person: eingehende nur ohne
+ *   external_id, ausgehende Antworten der Praxis (tragen die Versand-ID als external_id) ebenso
+ * - verwaiste Nachrichten (Kennzeichen, ohne Person, Termin existiert nicht mehr – z. B. von der Praxis gelöscht)
+ *   nach demselben Stichtag, gemessen am Eingang (received_at); eingehende nur ohne external_id
+ * - nur Praxen, die die AVV ab Version 0.3 akzeptiert haben (§ 3 Nr. 4 = Standardweisung zur Löschung)
  * Je Praxis eine Transaktion mit Audit-Eintrag (nur Zähler + Stichtag). Aufruf täglich über POST /api/cron/aufbewahrung.
  */
 export const ONLINE_REQUEST_RETENTION_MONTHS = 6;
-/** Betreff der Posteingangs-Nachricht einer Online-Anfrage (src/app/buchen/[slug]/actions.ts) */
-export const ONLINE_REQUEST_SUBJECT = "Neue Online-Buchung (unbestätigt)";
-/** Kennzeichen echter /buchen-Anfragen: appointments.external_id und messages.thread_key = „online-request:<Termin-ID>“ */
-export const ONLINE_REQUEST_PREFIX = "online-request:";
-
-export const onlineRequestKey = (appointmentId: string) => `${ONLINE_REQUEST_PREFIX}${appointmentId}`;
+export { ONLINE_REQUEST_PREFIX, ONLINE_REQUEST_SUBJECT, onlineRequestKey } from "@/lib/online-request";
 
 export function onlineRequestCutoff(now: Date): Date {
   const d = new Date(now);
@@ -56,21 +56,30 @@ export async function purgeStaleOnlineRequests(organizationId: string, now = new
         ),
       )
       .returning({ id: appointments.id });
-    let msgCount = 0;
-    if (appts.length) {
-      const msgs = await tx
-        .delete(messages)
-        .where(
-          and(
-            eq(messages.organizationId, organizationId),
-            inArray(messages.threadKey, appts.map((a) => onlineRequestKey(a.id))),
-            eq(messages.direction, "inbound"),
-            isNull(messages.externalId),
-            isNull(messages.patientId),
-          ),
-        )
-        .returning({ id: messages.id });
-      msgCount = msgs.length;
+    // eingehend nur ohne external_id (sonst kein Formular-Eingang); ausgehende Antworten tragen die Versand-ID
+    const deletable = or(eq(messages.direction, "outbound"), isNull(messages.externalId));
+    const linked = appts.length
+      ? await tx
+          .delete(messages)
+          .where(and(eq(messages.organizationId, organizationId), inArray(messages.threadKey, appts.map((a) => onlineRequestKey(a.id))), isNull(messages.patientId), deletable))
+          .returning({ id: messages.id })
+      : [];
+    // verwaist: Termin existiert nicht mehr (z. B. von der Praxis gelöscht) – Stichtag am Eingang der Nachricht
+    const orphans = await tx
+      .delete(messages)
+      .where(
+        and(
+          eq(messages.organizationId, organizationId),
+          like(messages.threadKey, `${ONLINE_REQUEST_PREFIX}%`),
+          isNull(messages.patientId),
+          deletable,
+          lt(messages.receivedAt, cutoff),
+          sql`not exists (select 1 from appointments a where a.organization_id = ${messages.organizationId} and (a.external_id = ${messages.threadKey} or a.id::text = substr(${messages.threadKey}, ${ONLINE_REQUEST_PREFIX.length + 1})))`,
+        ),
+      )
+      .returning({ id: messages.id });
+    const msgCount = linked.length + orphans.length;
+    if (appts.length || msgCount) {
       await audit(
         { organizationId, action: "retention.online_requests", meta: { appointments: appts.length, messages: msgCount, cutoff: cutoff.toISOString() } },
         tx,
@@ -80,13 +89,24 @@ export async function purgeStaleOnlineRequests(organizationId: string, now = new
   });
 }
 
-/** Alle Praxen, je Praxis einzeln abgesichert; Antwort nur mit Zählern. */
-export async function purgeStaleOnlineRequestsAll(now = new Date()): Promise<{ organizations: number; appointments: number; messages: number; errors: number }> {
-  const orgs = await db.select({ id: organizations.id }).from(organizations);
+/**
+ * Alle Praxen, je Praxis einzeln abgesichert; Antwort nur mit Zählern. Nur Praxen mit akzeptierter AVV ab Version 0.3
+ * (Standardweisung § 3 Nr. 4) – die übrigen werden übersprungen und gezählt, bis die Inhaber:in die AVV bestätigt
+ * (Hinweis in den Einstellungen, src/app/(app)/einstellungen/avv-banner.tsx).
+ */
+export async function purgeStaleOnlineRequestsAll(
+  now = new Date(),
+): Promise<{ organizations: number; skipped: number; appointments: number; messages: number; errors: number }> {
+  const orgs = await db.select({ id: organizations.id, settings: organizations.settings }).from(organizations);
   let a = 0;
   let m = 0;
   let errors = 0;
+  let skipped = 0;
   for (const o of orgs) {
+    if (!avvAcceptedAtLeast(o.settings, RETENTION_MIN_AVV)) {
+      skipped++;
+      continue;
+    }
     try {
       const r = await purgeStaleOnlineRequests(o.id, now);
       a += r.appointments;
@@ -97,5 +117,5 @@ export async function purgeStaleOnlineRequestsAll(now = new Date()): Promise<{ o
       log.error("retention.online_requests.failed", { org: o.id, error: e });
     }
   }
-  return { organizations: orgs.length, appointments: a, messages: m, errors };
+  return { organizations: orgs.length, skipped, appointments: a, messages: m, errors };
 }

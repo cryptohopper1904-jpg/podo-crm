@@ -181,6 +181,9 @@ services:
       - -c
       - |
         apk add --no-cache curl >/dev/null
+        # Zeitpunkt des ersten Starts (bleibt im Volume): /api/health/deep meldet „fail“, wenn danach 26 h lang
+        # kein Aufbewahrungs-Lauf gelang (statt dauerhaft „warn“, src/lib/ops-health.ts)
+        [ -s /status/cron-aufbewahrung.first ] || date +%s > /status/cron-aufbewahrung.first
         i=0
         while true; do
           sleep 300
