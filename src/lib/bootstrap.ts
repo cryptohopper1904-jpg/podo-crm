@@ -24,6 +24,7 @@ import { z } from "zod";
 import * as schema from "../db/schema";
 import { hashPassword, passwordProblem } from "./auth/password";
 import { DEMO_PRACTICE_FIELDS, seedDemoPracticeData } from "./demo-data";
+import { DEMO_IMPRINT } from "./imprint";
 import { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice } from "./demo-practice";
 
 export { DEMO_PRACTICE_NAME, DEMO_PRACTICE_SLUG, isDemoPractice };
@@ -365,7 +366,7 @@ async function bootstrapDemo(db: Db, env: Env, warnings: string[]): Promise<Boot
           subscriptionStatus: "active",
           trialEndsAt: null,
           seats: 1,
-          settings: { demo: true, bootstrap: { source: "env-demo", at: new Date().toISOString() } },
+          settings: { demo: true, imprint: DEMO_IMPRINT, bootstrap: { source: "env-demo", at: new Date().toISOString() } },
         })
         .returning({ id: schema.organizations.id });
       orgId = org.id;

@@ -4,6 +4,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { isPrivateOnly } from "@/lib/features";
+import { imprintSettings, type ImprintSettings } from "@/lib/imprint";
 import { defaultServiceDescription, homeVisitAreas, safeUrl, websiteOpeningHours, websitePublished, websiteSettings, type OpeningHour } from "@/lib/website";
 
 /**
@@ -27,6 +28,8 @@ export type PublicSite = {
   practitioner: { name: string; qualification?: string } | null;
   openingDate: string | null;
   imprint: string;
+  /** strukturierte Impressums-Pflichtangaben (Einstellungen → Praxis, src/lib/imprint.ts) */
+  imprintInfo: ImprintSettings;
   privacy: string;
   showPrices: boolean;
   onlineBooking: boolean;
@@ -71,6 +74,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
     practitioner: typeof practitioner?.name === "string" && practitioner.name ? { name: practitioner.name, qualification: typeof practitioner.qualification === "string" ? practitioner.qualification : undefined } : null,
     openingDate: typeof settings.openingDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(settings.openingDate) ? settings.openingDate : null,
     imprint: w.imprint,
+    imprintInfo: imprintSettings(settings),
     privacy: w.privacy,
     showPrices: w.showPrices,
     onlineBooking: booking?.enabled !== false,
@@ -89,7 +93,7 @@ export const loadPublicSite = cache(async (slug: string): Promise<PublicSite | n
 });
 
 /** Angaben für Impressum und Datenschutzhinweise einer Praxis (Website /p und Online-Buchung /buchen) */
-export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "taxNumber" | "vatId" | "imprint" | "privacy"> & {
+export type PracticeLegal = Pick<PublicSite, "slug" | "name" | "legalName" | "street" | "zip" | "city" | "phone" | "email" | "taxNumber" | "vatId" | "imprint" | "imprintInfo" | "privacy"> & {
   /** Praxis-Website veröffentlicht → Impressum/Datenschutz unter /p/<slug>/…, sonst Ersatzseiten unter /buchen/<slug>/… */
   websitePublished: boolean;
 };
@@ -115,6 +119,7 @@ export const loadPracticeLegal = cache(async (slug: string): Promise<PracticeLeg
     taxNumber: o.taxNumber,
     vatId: o.vatId,
     imprint: w.imprint,
+    imprintInfo: imprintSettings(o.settings ?? {}),
     privacy: w.privacy,
     websitePublished: websitePublished(o),
   };

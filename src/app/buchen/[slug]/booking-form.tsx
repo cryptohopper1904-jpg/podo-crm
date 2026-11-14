@@ -59,7 +59,7 @@ export function BookingForm({ slug, services, days, privacyHref }: { slug: strin
       ) : null}
       {svc && date && time ? (
         <Card>
-          <h2 className="mb-3 font-display text-lg font-semibold">3. Deine Angaben</h2>
+          <h2 className="mb-3 font-display text-lg font-semibold">3. Ihre Angaben</h2>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Vorname"><Input name="firstName" required autoComplete="given-name" /></Field>
             <Field label="Nachname"><Input name="lastName" required autoComplete="family-name" /></Field>

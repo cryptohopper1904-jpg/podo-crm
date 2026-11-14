@@ -184,7 +184,7 @@ test("öffentliche Online-Buchung", async ({ browser }) => {
   await expect(pub.getByRole("link", { name: "Datenschutzhinweisen der Praxis" })).toHaveAttribute("href", /\/(p|buchen)\/[a-z0-9-]+\/datenschutz$/);
   await pub.getByLabel(/Nicht rechtzeitig/).check();
   await pub.getByRole("button", { name: /Termin anfragen/ }).click();
-  await expect(pub.getByText(/Deine Anfrage ist eingegangen/)).toBeVisible();
+  await expect(pub.getByText(/Ihre Terminanfrage ist eingegangen/)).toBeVisible();
   // Impressum und Datenschutz der Praxis (Demo ohne Website → Ersatzseiten der Online-Buchung)
   for (const [link, heading] of [["Impressum", "Impressum"], ["Datenschutz", "Datenschutz"]] as const) {
     await pub.goto(`/buchen/${await demoSlug()}`);

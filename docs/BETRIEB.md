@@ -295,7 +295,7 @@ Nur `BACKUP_PASSPHRASE` vorhanden, `.env` sonst verloren: neue `.env` erzeugen l
 ## 8. Fachliche Dienste
 
 ### Erinnerungen, Rückholung, KIM (Cron)
-- Endpunkte: `POST /api/cron/reminders` und `POST /api/cron/kim` mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
+- Endpunkte: `POST /api/cron/reminders`, `POST /api/cron/kim` und täglich `POST /api/cron/aufbewahrung` (löscht unbestätigte Online-Terminanfragen ohne zugeordnete Person nach 6 Monaten), jeweils mit `Authorization: Bearer $CRON_SECRET` (zeitkonstanter Vergleich; ohne `CRON_SECRET` → 503, falsches Token → 401). Antwort enthält nur Zähler.
 - Docker: Der Container `cron` ruft beide alle 15 Minuten **intern** über `http://app:3000` auf und schreibt nach jedem erfolgreichen Lauf einen Zeitstempel (für `/api/health/deep`). `install.sh`/`install-subdomain.sh` erzeugen `CRON_SECRET` (auch bei bestehenden Installationen).
 - Einschalten je Praxis unter **Einstellungen → Erinnerungen**: 24-h-Terminerinnerung, Rückholung (überfällig, max. alle 30 Tage), Spangen-Erinnerung. Standard: alles aus.
 - Versand nur mit Einwilligung des Kanals (`email_reminders`/`sms_reminders`/`whatsapp`), Texte ohne medizinische Angaben. Jede Erinnerung wird über `reminder_log` höchstens einmal versendet; Fehler werden protokolliert und nicht automatisch wiederholt.

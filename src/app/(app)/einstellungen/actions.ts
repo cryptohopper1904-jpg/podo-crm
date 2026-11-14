@@ -23,6 +23,7 @@ import { codeTaken } from "@/server/products";
 import { dunningSettingsInput, saveDunningSettings } from "@/server/dunning";
 import { DUNNING_STAGES } from "@/lib/dunning";
 import { isClosedWeek, validateWeek, weekSummary, weekToList } from "@/lib/opening-hours";
+import { DEFAULT_PROFESSION_STATE, DEFAULT_REGULATIONS, PROFESSIONS } from "@/lib/imprint";
 
 export type SettingsState = { error?: string; ok?: string; secret?: string } | undefined;
 const opt = z.string().trim().max(300).optional().transform((v) => v || null);
@@ -52,6 +53,40 @@ export async function savePracticeAction(_: SettingsState, form: FormData): Prom
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.practice" });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };
+}
+
+/** Einstellungen → Praxis → Impressum (§ 5 DDG): strukturierte Pflichtangaben in settings.imprint (src/lib/imprint.ts). */
+export async function saveImprintAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const d = z
+    .object({
+      owner: z.string().trim().max(200, "Name ist zu lang."),
+      professionChoice: z.string().trim().max(120).optional(),
+      professionOther: z.string().trim().max(120, "Berufsbezeichnung ist zu lang.").optional(),
+      professionState: z.string().trim().max(120).optional(),
+      regulations: z.string().trim().max(500, "Berufsrechtliche Regelungen: höchstens 500 Zeichen.").optional(),
+      authority: z.string().trim().max(500, "Aufsichtsbehörde: höchstens 500 Zeichen.").optional(),
+    })
+    .safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: d.error.issues[0]?.message };
+  const v = d.data;
+  const profession = (PROFESSIONS as readonly string[]).includes(v.professionChoice ?? "") ? v.professionChoice! : v.professionChoice ? (v.professionOther ?? "") : "";
+  const imprint = {
+    owner: v.owner,
+    profession,
+    professionState: v.professionState || DEFAULT_PROFESSION_STATE,
+    regulations: v.regulations || DEFAULT_REGULATIONS,
+    authority: v.authority ?? "",
+  };
+  // settings atomar zusammenführen (andere Schlüssel bleiben unverändert)
+  await db
+    .update(organizations)
+    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint })}::jsonb` })
+    .where(eq(organizations.id, auth.organization.id));
+  await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.imprint" });
+  revalidatePath("/einstellungen/praxis");
+  revalidatePath("/einstellungen/website");
+  return { ok: imprint.owner && imprint.profession ? "Gespeichert." : "Gespeichert. Es fehlen noch Pflichtangaben – die Online-Buchung bleibt gesperrt." };
 }
 
 /**

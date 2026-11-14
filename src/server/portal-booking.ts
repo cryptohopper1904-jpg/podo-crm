@@ -9,6 +9,7 @@ import { computeAvailability, mergeRanges, type TimeRange } from "@/lib/availabi
 import { berlinDateIso, berlinToUtc, dateDe, timeDe } from "@/lib/format";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { practiceHours } from "@/lib/opening-hours";
+import { missingImprintFields } from "@/lib/imprint";
 import { assertEntitled, EntitlementError, entitlements } from "@/lib/plans";
 import { canCancelOnline, type PortalLink } from "@/lib/portal";
 import {
@@ -37,6 +38,10 @@ type OrgRow = {
   id: string;
   name: string;
   phone: string | null;
+  email: string | null;
+  street: string | null;
+  zip: string | null;
+  city: string | null;
   state: string;
   settings: Record<string, unknown>;
   billing: { plan: string; subscriptionStatus: string; trialEndsAt: Date | null; currentPeriodEnd: Date | null; seats: number };
@@ -51,6 +56,10 @@ async function loadOrg(org: string): Promise<OrgRow | null> {
     id: o.id,
     name: o.name,
     phone: o.phone,
+    email: o.email,
+    street: o.street,
+    zip: o.zip,
+    city: o.city,
     state: o.state,
     settings: (o.settings ?? {}) as Record<string, unknown>,
     billing: { plan: o.plan, subscriptionStatus: o.subscriptionStatus, trialEndsAt: o.trialEndsAt, currentPeriodEnd: o.currentPeriodEnd, seats: o.seats },
@@ -169,12 +178,14 @@ function bookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
 /**
  * Öffentliche Online-Buchung /buchen: in ALLEN Tarifen verfügbar (Produktentscheidung, wie auf der Werbeseite) – also
  * ohne Freischaltung „portal“. Gesperrt nur, wenn die Online-Buchung aus ist, die Praxis im Nur-Lesen-Modus ist
- * (Testphase/Abo abgelaufen) oder die Löschung beantragt ist. Gleiche Regel für Seite, Slot-Prüfung und Buchung.
+ * (Testphase/Abo abgelaufen), die Löschung beantragt ist oder Impressums-Pflichtangaben fehlen (§ 5 DDG,
+ * src/lib/imprint.ts). Gleiche Regel für Seite, Slot-Prüfung und Buchung.
  */
 function publicBookingBlocked(o: OrgRow, now: Date = new Date()): string | null {
   const cfg = parseOnlineBookingSettings(o.settings);
   if (!cfg.enabled) return "Die Online-Buchung ist in dieser Praxis derzeit ausgeschaltet.";
   if (o.deletionRequestedAt || entitlements(o.billing, now).readOnly) return "Die Online-Buchung ist derzeit nicht verfügbar.";
+  if (missingImprintFields(o, o.settings).length) return "Die Online-Buchung ist derzeit nicht verfügbar.";
   return null;
 }
 

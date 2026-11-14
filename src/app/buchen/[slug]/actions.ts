@@ -7,6 +7,7 @@ import { appointmentServices, appointments, messages, organizations } from "@/db
 import { audit } from "@/lib/audit";
 import { berlinToUtc } from "@/lib/format";
 import { requestMeta } from "@/lib/auth/session";
+import { ONLINE_REQUEST_SUBJECT } from "@/server/online-request-retention";
 import { checkPublicSlot, publicBookingAvailable, clashes, lockBooking, overDayLimit } from "@/server/portal-booking";
 
 export type BookingState = { error?: string; ok?: string } | undefined;
@@ -74,7 +75,7 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
       channel: d.email ? "email" : "sms",
       direction: "inbound",
       fromAddress: d.email || d.phone,
-      subject: "Neue Online-Buchung (unbestätigt)",
+      subject: ONLINE_REQUEST_SUBJECT,
       body: [
         `Online-Anfrage: ${svc.name} am ${d.date} um ${d.time} Uhr.`,
         `Name: ${d.firstName} ${d.lastName}`,
@@ -89,5 +90,5 @@ export async function bookAction(_: BookingState, form: FormData): Promise<Booki
   });
   if ("error" in result) return { error: result.error };
   await audit({ organizationId: org.id, action: "booking.online", entity: "appointment", entityId: result.appointmentId });
-  return { ok: "Danke! Deine Anfrage ist eingegangen. Die Praxis bestätigt den Termin kurzfristig." };
+  return { ok: "Vielen Dank! Ihre Terminanfrage ist eingegangen. Der Termin ist erst verbindlich, wenn die Praxis ihn bestätigt. Die Praxis meldet sich dazu bei Ihnen." };
 }

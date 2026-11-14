@@ -9,6 +9,7 @@ import { emptyWeek, storedPracticeHours, weekFromList } from "@/lib/opening-hour
 import { defaultServiceDescription, homeVisitAreas, LIMITS, openingHours, WEBSITE_ADDON_CENTS, websiteEntitlement, websiteSettings } from "@/lib/website";
 import { saveWebsiteAction } from "./actions";
 import { WebsiteHours } from "./website-hours";
+import { ImprintWarning } from "../praxis/imprint-warning";
 
 export const metadata = { title: "Website" };
 
@@ -36,6 +37,7 @@ export default async function WebsiteSettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <ImprintWarning org={o} settings={o.settings} />
       <Card>
         <h2 className="mb-1 flex flex-wrap items-center gap-2 font-display text-lg font-semibold">
           Praxis-Website

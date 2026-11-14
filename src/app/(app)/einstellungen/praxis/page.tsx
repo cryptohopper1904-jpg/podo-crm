@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/session";
 import { STATES } from "@/lib/holidays";
+import { imprintSettings } from "@/lib/imprint";
 import { PRIVATE_ONLY_LABEL, isPrivateOnly, privateOnlyNote } from "@/lib/features";
 import { readDunningSettings } from "@/lib/dunning";
 import { formatIban } from "@/lib/invoice-view";
@@ -17,6 +18,8 @@ import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
 import { removeLogoAction, saveBankTaxAction, saveBillingModeAction, savePracticeAction } from "../actions";
 import { DocumentsForm } from "./documents-form";
 import { DunningForm } from "./dunning-form";
+import { ImprintForm } from "./imprint-form";
+import { ImprintWarning } from "./imprint-warning";
 import { LogoUpload } from "./logo-upload";
 
 const LOGO_HINT = {
@@ -35,6 +38,7 @@ export default async function PracticeSettings() {
   const publicUrl = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   return (
     <div className="flex flex-col gap-6">
+    <ImprintWarning org={o} settings={o.settings} />
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Abrechnung</h2>
       <ActionForm action={saveBillingModeAction}>
@@ -70,6 +74,14 @@ export default async function PracticeSettings() {
         </p>
         <Checkbox name="smallBusiness" defaultChecked={o.smallBusiness} label="Kleinunternehmer nach § 19 UStG (keine Umsatzsteuer auf Rechnungen)" />
       </ActionForm>
+    </Card>
+    <Card id="impressum" className="scroll-mt-24">
+      <h2 className="mb-1 font-display text-lg font-semibold">Impressum (Pflichtangaben)</h2>
+      <p className="mb-4 text-sm text-muted">
+        Für das Impressum der Praxis-Website und der Online-Buchung (§ 5 DDG). Name, Anschrift, E-Mail und Telefon kommen aus den Praxisdaten oben.
+        Ohne diese Angaben und die mit * markierten Felder ist die Online-Buchung gesperrt.
+      </p>
+      <ImprintForm initial={imprintSettings(o.settings)} />
     </Card>
     <Card>
       <h2 className="mb-1 font-display text-lg font-semibold">Logos</h2>

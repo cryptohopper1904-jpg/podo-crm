@@ -26,8 +26,9 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   });
 
   async function practice(settings: Record<string, unknown> = {}) {
-    const org = await f.org({ settings: { onlineBooking: { enabled: true, ...settings } } });
-    await f.pool.query("update organizations set state = 'BB' where id = $1", [org]);
+    const org = await f.org({ settings: { onlineBooking: { enabled: true, ...settings }, imprint: { owner: "Petra Test", profession: "Podologin" } } });
+    // Impressums-Pflichtangaben (§ 5 DDG) – ohne sie ist /buchen gesperrt
+    await f.pool.query("update organizations set state = 'BB', street = 'Teststraße 1', zip = '16540', city = 'Hohen Neuendorf', email = 'praxis@example.org' where id = $1", [org]);
     const u = await f.user();
     await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, u]);
     const ids = await f.asOrg(org, async (c) => {
@@ -125,5 +126,65 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await f.pool.query("update organizations set deletion_requested_at = now() where id = $1", [p.org]);
     expect(await pb.publicBookingAvailable(p.org, now)).toBe(false);
     expect(await web.loadPracticeLegal(slug)).toBeNull();
+  });
+
+  describe("Rechtsprüfung H1/H2: Impressum und Datenschutz", () => {
+    it("fehlende Impressums-Pflichtangaben sperren /buchen (Optionen, Slot-Prüfung, Verfügbarkeit)", async () => {
+      for (const sqlText of [
+        "update organizations set settings = settings - 'imprint' where id = $1",
+        "update organizations set settings = jsonb_set(settings, '{imprint,profession}', '\"\"') where id = $1",
+        "update organizations set email = null where id = $1",
+        "update organizations set street = null where id = $1",
+      ]) {
+        const p = await practice();
+        expect(await pb.publicBookingAvailable(p.org, now), "vorher").toBe(true);
+        await f.pool.query(sqlText, [p.org]);
+        expect(await pb.publicBookingOptions(p.org, now), sqlText).toBeNull();
+        expect((await pb.checkPublicSlot(p.org, p.pk, at("2030-03-05", "09:00"), now)).ok, sqlText).toBe(false);
+        expect(await pb.publicBookingAvailable(p.org, now), sqlText).toBe(false);
+      }
+    });
+
+    it("Datenschutzblock enthält Verantwortlichen aus den Stammdaten, Impressum die Pflichtangaben", async () => {
+      const web = await import("./website");
+      const { renderToStaticMarkup } = await import("react-dom/server");
+      const { createElement } = await import("react");
+      const { PrivacyContent, ImprintContent } = await import("@/app/p/[slug]/_site/legal-content");
+      const p = await practice();
+      await f.pool.query("update organizations set legal_name = 'Podologie Test GmbH', phone = '030 1234567' where id = $1", [p.org]);
+      const [{ slug }] = (await f.pool.query("select slug from organizations where id = $1", [p.org])).rows;
+      const legal = (await web.loadPracticeLegal(slug))!;
+      const privacy = renderToStaticMarkup(createElement(PrivacyContent, { site: legal }));
+      expect(privacy).toContain("Online-Terminanfrage");
+      expect(privacy).toContain("Verantwortlich für die Verarbeitung Ihrer Terminanfrage ist Podologie Test GmbH, Teststraße 1, 16540 Hohen Neuendorf, praxis@example.org, 030 1234567.");
+      expect(privacy).toContain("durch PodoHero als Auftragsverarbeiter der Praxis");
+      expect(privacy).toContain("spätestens nach 6 Monaten gelöscht");
+      expect(privacy).not.toContain("wird hier noch ergänzt");
+      const imprint = renderToStaticMarkup(createElement(ImprintContent, { site: legal }));
+      expect(imprint).toContain("Vertretungsberechtigte Person: Petra Test");
+      expect(imprint).toContain("Berufsbezeichnung: Podologin (verliehen in Deutschland)");
+      expect(imprint).toContain("Podologengesetz (PodG)");
+      expect(imprint).not.toContain("ergänzt hier noch");
+    });
+  });
+
+  it("Aufbewahrung: unbestätigte Online-Anfragen ohne Akte nach 6 Monaten gelöscht, zugeordnete bleiben", async () => {
+    const ret = await import("./online-request-retention");
+    const p = await practice();
+    const patient = await f.patient(p.org);
+    const old = "now() - interval '7 months'";
+    const ids = await f.asOrg(p.org, async (c) => {
+      const ins = async (patientId: string | null, created: string) =>
+        (await c.query(`insert into appointments (organization_id, patient_id, starts_at, ends_at, status, source, created_at) values ($1,$2, now() - interval '200 days', now() - interval '200 days' + interval '1 hour', 'planned', 'online', ${created}) returning id`, [p.org, patientId])).rows[0].id as string;
+      const stale = await ins(null, old);
+      const fresh = await ins(null, "now() - interval '2 months'");
+      const assigned = await ins(patient, old);
+      await c.query(`insert into messages (organization_id, channel, direction, subject, body, received_at) values ($1,'email','inbound',$2,'x', ${old}), ($1,'email','inbound',$2,'y', now())`, [p.org, ret.ONLINE_REQUEST_SUBJECT]);
+      return { stale, fresh, assigned };
+    });
+    expect(await ret.purgeStaleOnlineRequests(p.org)).toEqual({ appointments: 1, messages: 1 });
+    const left = (await f.asOrg(p.org, (c) => c.query("select id from appointments where organization_id = $1", [p.org]))).rows.map((r) => r.id);
+    expect(left.sort()).toEqual([ids.fresh, ids.assigned].sort());
+    expect((await f.asOrg(p.org, (c) => c.query("select body from messages where organization_id = $1", [p.org]))).rows.map((r) => r.body)).toEqual(["y"]);
   });
 });
