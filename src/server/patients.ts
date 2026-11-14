@@ -1,4 +1,5 @@
 import "server-only";
+import { UUID } from "./patient-route";
 import { and, asc, desc, eq, ilike, isNull, max, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
@@ -161,6 +162,8 @@ export async function listPatients(auth: AuthContext, opts: { q?: string; status
 }
 
 export async function getPatient(auth: AuthContext, id: string) {
+  // Kaputte Kennung: kein DB-Aufruf (sonst „invalid input syntax for type uuid“ als Fehler im Log)
+  if (!UUID.test(id)) return null;
   const org = auth.organization.id;
   const result = await withOrg(org, async (tx) => {
     const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, id)));

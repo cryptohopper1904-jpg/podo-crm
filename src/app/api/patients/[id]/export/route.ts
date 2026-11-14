@@ -18,7 +18,9 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/patients/[i
     const w = <T extends { organizationId: unknown; patientId: unknown }>(t: T) => and(eq(t.organizationId as never, org), eq(t.patientId as never, id));
     const [p] = await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, id)));
     if (!p) return null;
-    const inv = await tx.select().from(invoices).where(w(invoices));
+    // Rechnungen/Zahlungen nur mit Rechnungsrecht (Azubis haben patients.read + medical.read, aber kein invoices.read)
+    const canInvoices = auth.can("invoices.read");
+    const inv = canInvoices ? await tx.select().from(invoices).where(w(invoices)) : [];
     const recs = await tx.select().from(treatmentRecords).where(w(treatmentRecords));
     return {
       exportiertAm: new Date().toISOString(),
@@ -30,6 +32,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/patients/[i
       behandlungen: await mapSequential(
         recs, async (r) => ({ ...r, nachtraege: await tx.select().from(recordAddenda).where(and(eq(recordAddenda.organizationId, org), eq(recordAddenda.recordId, r.id))) })),
       medien: (await tx.select().from(media).where(w(media))).map((m) => ({ ...m, storageKey: undefined })),
+      ...(canInvoices ? {} : { hinweis: "Rechnungen und Zahlungen sind nicht enthalten (fehlende Berechtigung). Für eine vollständige Auskunft den Export durch eine Person mit Rechnungsrecht erstellen lassen." }),
       rechnungen: await mapSequential(
         inv, async (i) => ({
           ...i,

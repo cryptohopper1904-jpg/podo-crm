@@ -120,7 +120,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                       <RiskBadges flags={p.riskFlags} compact />
                       <span className="text-sm text-muted">
                         Letzter Besuch: <span className="tabular-nums">{dateDe(p.lastVisit)}</span>
-                        {p.openCents ? <> · <span className="font-semibold text-danger">offen {money(p.openCents)}</span></> : null}
+                        {(p.openCents ?? 0) > 0 ? <> · <span className="font-semibold text-danger">offen {money(p.openCents)}</span></> : null}
                       </span>
                     </span>
                     <ChevronRight size={18} aria-hidden className="shrink-0 text-muted" />
@@ -166,7 +166,7 @@ export default async function PatientsPage(props: PageProps<"/kunden">) {
                     <td className="text-sm">{p.phoneMobile ?? p.phoneLandline ?? p.email ?? "–"}</td>
                     <td className="text-sm">{[p.zip, p.city].filter(Boolean).join(" ") || "–"}{p.homeVisit ? " · Hausbesuch" : ""}</td>
                     <td className="text-sm tabular-nums">{dateDe(p.lastVisit)}</td>
-                    {showMoney ? <td className="tabular-nums">{p.openCents ? <span className="font-semibold text-danger">{money(p.openCents)}</span> : "–"}</td> : null}
+                    {showMoney ? <td className="tabular-nums">{(p.openCents ?? 0) > 0 ? <span className="font-semibold text-danger">{money(p.openCents)}</span> : "–"}</td> : null}
                     <td>{p.deceased ? <Badge>{DECEASED_LABEL}</Badge> : <Badge tone={statusTone[p.status]}>{STATUS_LABEL[p.status]}</Badge>}</td>
                   </tr>
                 ))}

@@ -5,7 +5,7 @@ import { withOrg } from "@/db";
 import { patients } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** /kunden/<id> und alle Unterseiten (Doku, Anamnese, Bearbeiten …); /kunden/neu ist eine eigene Seite */
 const AKTE = /^\/kunden\/([^/?#]+)(?:\/|$)/;
 
