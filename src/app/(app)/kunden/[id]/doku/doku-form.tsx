@@ -1,12 +1,12 @@
 "use client";
 
 import { keepValues } from "@/lib/forms";
-import { useActionState, useRef, useState } from "react";
-import { Camera, Check, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
+import { useActionState, useRef, useState, type FormEvent } from "react";
+import { Camera, Check, ChevronDown, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
 import { FootFindings } from "@/components/foot3d";
 import { serializeFootPoints } from "@/lib/foot3d";
-import { Badge, Button, Card, Checkbox, Field, FormError, Input, Select, Textarea, cx } from "@/components/ui";
+import { Badge, Button, Card, Checkbox, Field, FormActions, FormError, Input, Select, Textarea, cx } from "@/components/ui";
 import { saveTreatmentAction, type DokuFormState } from "./actions";
 
 type Service = { id: string; code: string; name: string };
@@ -70,6 +70,21 @@ export function DokuForm({
   const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
   const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Pflicht-Bestätigung: eigene Meldung am Feld statt der flüchtigen Browser-Blase (Systemsprache)
+  const confirmRef = useRef<HTMLInputElement>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const submit = keepValues(action);
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    if (!confirmRef.current?.checked) {
+      e.preventDefault();
+      setConfirmError("Bitte bestätige, dass du die Angaben geprüft hast.");
+      confirmRef.current?.scrollIntoView({ block: "center" });
+      confirmRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    setConfirmError(null);
+    submit(e);
+  }
 
   // ── Pflichtfotos Nagelspange (versionierte Regel, siehe src/lib/rules/brace.ts) ──
   const requiredPurpose =
@@ -103,7 +118,7 @@ export function DokuForm({
   }
 
   return (
-    <form onSubmit={keepValues(action)} className="flex flex-col gap-6">
+    <form onSubmit={onSubmit} className="flex flex-col gap-6">
       <input type="hidden" name="patientId" value={patientId} />
       {appointmentId ? <input type="hidden" name="appointmentId" value={appointmentId} /> : null}
       <input type="hidden" name="footPoints" value={serializeFootPoints(points)} />
@@ -112,7 +127,7 @@ export function DokuForm({
       <input type="hidden" name="aiAssisted" value={ai ? "1" : "0"} />
       <input type="hidden" name="braceAction" value={braceAction} />
       {activeBrace ? <input type="hidden" name="braceEpisodeId" value={activeBrace.id} /> : null}
-      <FormError message={state?.error} />
+      <FormError message={state?.error} revealKey={state} />
 
       {prescriptions.length ? (
         <Card>
@@ -160,8 +175,19 @@ export function DokuForm({
         </Field>
       </Card>
 
-      <Card>
-        <h2 className="mb-3 font-display text-lg font-semibold">Nagelkorrekturspange</h2>
+      <Card className="p-0">
+        {/* Ohne laufende Spange eingeklappt (selten gebraucht) – das Formular wird auf dem Handy deutlich kürzer */}
+        <details open={!!activeBrace || braceAction !== "none"} className="group">
+          <summary className="flex min-h-14 cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-card)] px-5 py-3 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0">
+              <span className="block font-display text-lg font-semibold">Nagelkorrekturspange</span>
+              <span className="block text-[13px] leading-5 text-muted">
+                {braceAction === "none" ? (activeBrace ? "Laufende Spange – heute kein Spangen-Schritt" : "Keine Spange – zum Setzen aufklappen") : "Spangen-Schritt gewählt"}
+              </span>
+            </span>
+            <ChevronDown size={20} aria-hidden className="shrink-0 text-muted transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="px-5 pb-5">
         {activeBrace ? (
           <p className="mb-3 text-sm">
             Laufende Spange: <strong>{activeBrace.side === "left" ? "links" : "rechts"} D{activeBrace.toe}</strong>
@@ -185,14 +211,14 @@ export function DokuForm({
                 const p = k === "set" ? "brace_before" : k === "remove" ? "brace_after" : k === "complication" ? "brace_complication" : k === "check" ? "brace_progress" : "finding";
                 setPhotoMeta((m) => ({ ...m, purpose: p, ...(activeBrace ? { footSide: activeBrace.side, toe: String(activeBrace.toe) } : {}) }));
               }}
-              className={cx("h-11 rounded-xl px-3.5 text-sm font-semibold", braceAction === k ? "bg-accent text-on-accent" : "border border-border bg-surface")}
+              className={cx("h-11 rounded-xl px-3.5 text-sm font-semibold", braceAction === k ? "bg-primary text-on-primary" : "border border-border bg-surface")}
             >
               {label}
             </button>
           ))}
         </div>
         {braceAction === "set" ? (
-          <div className="mt-4 grid gap-4 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Field label="Seite">
               <Select name="braceSide" defaultValue="right"><option value="right">rechts</option><option value="left">links</option></Select>
             </Field>
@@ -200,7 +226,7 @@ export function DokuForm({
               <Select name="braceToe" defaultValue="1">{[1, 2, 3, 4, 5].map((t) => <option key={t} value={t}>D{t}</option>)}</Select>
             </Field>
             <Field label="Stadium"><Select name="braceStage" defaultValue="2"><option value="1">1</option><option value="2">2</option><option value="3">3</option></Select></Field>
-            <Field label="Spangentyp/Produkt"><Input name="braceType" placeholder="z. B. 3-teilige Drahtspange" required /></Field>
+            <Field label="Spangentyp/Produkt" className="col-span-2 sm:col-span-1"><Input name="braceType" placeholder="z. B. 3-teilige Drahtspange" required /></Field>
           </div>
         ) : null}
         {braceAction === "check" ? (
@@ -218,12 +244,14 @@ export function DokuForm({
             <Input name="missingPhotoReason" placeholder="z. B. Kamera defekt, Foto wird nachgereicht" />
           </Field>
         ) : null}
+          </div>
+        </details>
       </Card>
 
       <Card>
         <h2 className="mb-3 font-display text-lg font-semibold">Fotos</h2>
-        <div className="grid gap-3 sm:grid-cols-4">
-          <Field label="Anlass">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Field label="Anlass" className="col-span-2 sm:col-span-1">
             <Select value={photoMeta.purpose} onChange={(e) => setPhotoMeta({ ...photoMeta, purpose: e.target.value })}>
               {Object.entries(PURPOSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
@@ -253,7 +281,7 @@ export function DokuForm({
           {uploading ? <Loader2 className="animate-spin" size={20} aria-hidden /> : <Camera size={20} aria-hidden />}
           {uploading ? "Wird verschlüsselt hochgeladen …" : "Foto aufnehmen"}
         </label>
-        <p className="mt-2 text-xs text-muted">Tipp: gleicher Abstand und gleiches Licht wie beim letzten Foto, damit der Verlauf vergleichbar ist.</p>
+        <p className="mt-2 text-[13px] leading-5 text-muted">Tipp: gleicher Abstand und gleiches Licht wie beim letzten Foto, damit der Verlauf vergleichbar ist.</p>
         <FormError message={uploadError} />
         {uploads.length ? (
           <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">
@@ -261,16 +289,16 @@ export function DokuForm({
               <figure key={u.id} className="relative overflow-hidden rounded-xl bg-surface-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={u.preview} alt={PURPOSES[u.purpose]} className="aspect-square w-full object-cover" />
-                <figcaption className="px-2 py-1 text-[11px]">
+                <figcaption className="px-2 py-1 text-xs">
                   {PURPOSES[u.purpose]} · {u.footSide === "left" ? "li" : "re"} D{u.toe}
                 </figcaption>
                 <button
                   type="button"
                   aria-label="Foto aus diesem Eintrag entfernen"
-                  className="absolute right-1 top-1 rounded-lg bg-surface/90 p-1.5"
+                  className="absolute right-1 top-1 inline-flex size-11 items-center justify-center rounded-lg bg-surface/90"
                   onClick={() => setUploads((x) => x.filter((y) => y.id !== u.id))}
                 >
-                  <Trash2 size={14} aria-hidden />
+                  <Trash2 size={16} aria-hidden />
                 </button>
               </figure>
             ))}
@@ -309,16 +337,27 @@ export function DokuForm({
         </div>
         {ai ? <p className="mt-3"><Badge tone="info">KI-unterstützt – bitte alle Felder prüfen</Badge></p> : null}
         <div className="mt-4">
-          <Checkbox name="confirm" required label="Ich habe die Angaben geprüft. Nach dem Speichern ist der Eintrag unveränderbar (nur Nachträge, § 630f BGB)." />
+          <Checkbox
+            ref={confirmRef}
+            name="confirm"
+            aria-required="true"
+            aria-invalid={confirmError ? true : undefined}
+            aria-describedby={confirmError ? "doku-confirm-fehler" : undefined}
+            onChange={(e) => e.target.checked && setConfirmError(null)}
+            label="Ich habe die Angaben geprüft. Nach dem Speichern ist der Eintrag unveränderbar (nur Nachträge, § 630f BGB)."
+          />
+          {confirmError ? (
+            <p id="doku-confirm-fehler" className="ml-8 text-[13px] leading-5 font-medium text-danger">{confirmError}</p>
+          ) : null}
         </div>
       </Card>
 
-      {/* über der unteren Leiste (BottomNav) samt Home-Indikator des iPhones */}
-      <div className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] z-10 lg:bottom-4">
-        <Button type="submit" variant="accent" disabled={pending || uploading} className="h-14 w-full text-base">
-          {pending ? "Wird gespeichert …" : <><Check size={20} aria-hidden /> Prüfen und abschließen</>}
+      {/* Klebende Aktionsleiste (ui.tsx FormActions): über Bottom-Navigation und Home-Leiste, Primärfarbe */}
+      <FormActions error={state?.error}>
+        <Button type="submit" disabled={pending || uploading} className="h-12 flex-[1_1_16rem] text-base">
+          {pending ? "Wird gespeichert …" : uploading ? "Foto wird hochgeladen …" : <><Check size={20} aria-hidden /> Prüfen und abschließen</>}
         </Button>
-      </div>
+      </FormActions>
     </form>
   );
 }
