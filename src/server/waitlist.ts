@@ -1,6 +1,6 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, gte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, withOrg } from "@/db";
 import { appointmentServices, appointments, consents, messages, organizations, patientLinks, patients, reminderLog, services, waitlist } from "@/db/schema";
@@ -31,7 +31,7 @@ import { mailMessagingPort } from "./mail";
 
 const PROVIDER: Record<ReminderChannel, MessagingProvider> = { email: "email_imap", sms: "sms", whatsapp: "whatsapp" };
 const REMINDER_CONSENTS = ["email_reminders", "sms_reminders", "whatsapp"] as const;
-const offerKey = (linkId: string) => `wloffer:${linkId}`;
+export const offerKey = (linkId: string) => `wloffer:${linkId}`;
 const wlCols = { wishes: waitlist.wishes, serviceIds: waitlist.serviceIds, weekdays: waitlist.weekdays, dayparts: waitlist.dayparts, note: waitlist.note };
 
 /**
@@ -69,8 +69,12 @@ export type OfferDeps = {
   cancelledAt?: Date;
 };
 
-/** reminder_log.status für Angebote, deren Link durch „Rückgängig“ (Absage zurückgenommen) widerrufen wurde */
-export const OFFER_REVOKED_STATUS = "revoked";
+/**
+ * Höchstens so viele Angebote je Person und Termin in OFFER_LIMIT_WINDOW_MS (zählt auch widerrufene): eine Schleife
+ * aus Absage und „Rückgängig“ darf dieselbe Person nicht mit Angeboten überschütten.
+ */
+export const OFFER_LIMIT_PER_SLOT = 2;
+export const OFFER_LIMIT_WINDOW_MS = 24 * 3600_000;
 
 /** Ergebnis ohne Links/Tokens (die stehen nur in der versendeten Nachricht). */
 export type OfferSummary = { offered: number; manual: number; skipped?: string };
@@ -92,17 +96,21 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
   type Planned = { linkId: string; token: string; patientId: string; firstName: string | null; label: string; channel: ReminderChannel; to: string; expiresAt: Date };
   const prepared = await withOrg(org, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`wl:${org}:${appointmentId}`}, 0))`);
+    // Zeilensperre: „Rückgängig“ (changeAppointmentStatus sperrt dieselbe Zeile) wartet, bis die neuen Links committet
+    // sind, und widerruft sie dann mit – ohne Sperre könnte es zwischen diesem Lesen und dem Commit durchlaufen und die
+    // gerade entstehenden Links nicht sehen. Reihenfolge hier: wl:-Sperre → Zeile; dort: book:-Sperre → Zeile (kein Zyklus).
     const [a] = await tx
       .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, endsAt: appointments.endsAt, status: appointments.status, updatedAt: appointments.updatedAt })
       .from(appointments)
-      .where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId)));
+      .where(and(eq(appointments.organizationId, org), eq(appointments.id, appointmentId)))
+      .for("update");
     if (!a || a.status !== "cancelled") return { skipped: "not_cancelled" as const };
     if (deps.cancelledAt && a.updatedAt.getTime() !== deps.cancelledAt.getTime()) return { skipped: "superseded" as const };
     if (deps.onlyFirstWave) {
       const [wave] = await tx
         .select({ id: reminderLog.id })
         .from(reminderLog)
-        .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), gte(reminderLog.at, a.updatedAt), ne(reminderLog.status, OFFER_REVOKED_STATUS)))
+        .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), gte(reminderLog.at, a.updatedAt), isNull(reminderLog.revokedAt)))
         .limit(1);
       if (wave) return { skipped: "already_offered" as const };
     }
@@ -125,16 +133,23 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       .where(and(eq(waitlist.organizationId, org), isNull(waitlist.resolvedAt), isNull(patients.archivedAt), notDeceased()));
     if (!entries.length) return { skipped: "no_entries" as const };
     // schon für diesen Termin angeboten oder anderes Angebot noch offen → nicht erneut
-    // (außer das Angebot wurde durch „Rückgängig“ widerrufen – dann bei einer erneuten Absage wieder berücksichtigen)
+    // (außer das Angebot wurde durch „Rückgängig“ widerrufen – dann bei einer erneuten Absage wieder berücksichtigen,
+    // aber höchstens OFFER_LIMIT_PER_SLOT Angebote je Person und Termin in 24 h, widerrufene mitgezählt)
     const already = await tx
       .select({ patientId: reminderLog.patientId })
       .from(reminderLog)
-      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), ne(reminderLog.status, OFFER_REVOKED_STATUS)));
+      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), isNull(reminderLog.revokedAt)));
+    const limited = await tx
+      .select({ patientId: reminderLog.patientId })
+      .from(reminderLog)
+      .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.kind, OFFER_KIND), eq(reminderLog.appointmentId, a.id), gt(reminderLog.at, new Date(now.getTime() - OFFER_LIMIT_WINDOW_MS))))
+      .groupBy(reminderLog.patientId)
+      .having(sql`count(*) >= ${OFFER_LIMIT_PER_SLOT}`);
     const activeOffers = await tx
       .select({ patientId: patientLinks.patientId })
       .from(patientLinks)
       .where(and(eq(patientLinks.organizationId, org), eq(patientLinks.purpose, OFFER_PURPOSE), isNull(patientLinks.revokedAt), isNull(patientLinks.usedAt), gt(patientLinks.expiresAt, now)));
-    const exclude = [a.patientId, ...already.map((x) => x.patientId), ...activeOffers.map((x) => x.patientId)].filter((x): x is string => !!x);
+    const exclude = [a.patientId, ...already.map((x) => x.patientId), ...limited.map((x) => x.patientId), ...activeOffers.map((x) => x.patientId)].filter((x): x is string => !!x);
     const candidates = entries.map((e) => ({ id: e.id, patientId: e.patientId, createdAt: e.createdAt, wishes: wishesOfRow(e, svcList) }));
     const picked = matchWaitlist(candidates, { startsAt: a.startsAt, endsAt: a.endsAt, serviceIds }, { excludePatientIds: exclude });
     if (!picked.length) return { skipped: "no_match" as const };
@@ -199,6 +214,19 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       if (!ports.has(provider)) ports.set(provider, await getPort(org, provider).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))));
       const port = ports.get(provider)!;
       if (port instanceof Error) throw port;
+      // „Rückgängig“ kann nach dem Commit oben (während des Versands an andere) gelaufen sein → widerrufenen Link nicht
+      // mehr verschicken. Ein Widerruf direkt nach dieser Prüfung lässt die Nachricht noch rausgehen; der Link ist dann
+      // aber ungültig (Annahme prüft revoked_at unter der Buchungssperre, Seite zeigt „vergeben“).
+      const [link] = await db.select({ revokedAt: patientLinks.revokedAt }).from(patientLinks).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, r.linkId)));
+      if (!link || link.revokedAt) {
+        await withOrg(org, (tx) =>
+          tx
+            .update(reminderLog)
+            .set({ status: "skipped", detail: "nicht versendet – Angebot vor dem Versand widerrufen" })
+            .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, offerKey(r.linkId)))),
+        );
+        continue;
+      }
       const res = await port.send({ to: r.to, body: text.body, subject: r.channel === "email" ? text.subject : undefined });
       detail = port.isMock ? "Testmodus – nicht wirklich versendet" : `versendet (${res.externalId})`.slice(0, 200);
       // Im Verlauf ohne Link (nur der Hash ist gespeichert)
@@ -224,13 +252,8 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       // fehlgeschlagener Versand → Link sofort ungültig
       await db.update(patientLinks).set({ revokedAt: new Date() }).where(and(eq(patientLinks.organizationId, org), eq(patientLinks.id, r.linkId)));
     }
-    // „widerrufen“ (Rückgängig während des Versands) bleibt stehen
-    await withOrg(org, (tx) =>
-      tx
-        .update(reminderLog)
-        .set({ status, detail })
-        .where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, offerKey(r.linkId)), ne(reminderLog.status, OFFER_REVOKED_STATUS))),
-    );
+    // Versandnachweis; ein Widerruf durch „Rückgängig“ steht davon unabhängig in revoked_at
+    await withOrg(org, (tx) => tx.update(reminderLog).set({ status, detail }).where(and(eq(reminderLog.organizationId, org), eq(reminderLog.dedupeKey, offerKey(r.linkId)))));
   }
 
   if (sent.length || failed.length || manual.length) {
