@@ -10,6 +10,25 @@ import { berlinDateIso } from "@/lib/format";
 export const TEST_DB = process.env.TEST_DATABASE_URL;
 
 /**
+ * Nach dem erneuten Einspielen einer ALTEN Migration in die gemeinsame Test-DB: Deren CREATE OR REPLACE FUNCTION setzt
+ * den festen search_path zurück (Migration *_user_praxis_abgleich). Gleiche Anweisung wie dort – als Owner ausführen,
+ * damit spätere Testdateien den Produktionsstand sehen.
+ */
+export const RESTORE_SEARCH_PATH_SQL = `DO $$
+DECLARE fn regprocedure;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure FROM pg_proc p
+     WHERE p.pronamespace = 'public'::regnamespace AND p.prokind = 'f'
+       AND pg_has_role(current_user, p.proowner, 'USAGE')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+       AND NOT coalesce(p.proconfig, '{}'::text[]) @> ARRAY['search_path=pg_catalog, public, pg_temp']
+  LOOP
+    EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, public, pg_temp', fn);
+  END LOOP;
+END $$`;
+
+/**
  * Altbestand nachstellen, den heutige Trigger nicht mehr zulassen (z. B. Support-Freigabe ohne Person): als Owner mit
  * session_replication_role = replica (Trigger aus). Braucht einen Superuser (TEST_OWNER_DATABASE_URL); sonst `false`
  * (Test dann überspringen).

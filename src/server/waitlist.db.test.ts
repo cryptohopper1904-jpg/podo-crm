@@ -10,7 +10,7 @@ vi.mock("server-only", () => ({}));
 import { hashPortalToken, newPortalToken } from "@/lib/portal";
 import { berlinDateIso, berlinToUtc } from "@/lib/format";
 import type { MessagingPort } from "@/integrations/types";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
 
 /** nächster Werktag (Di–Do) mindestens `minDays` Tage in der Zukunft (Berliner Datum) */
 function futureWeekday(minDays: number) {
@@ -249,6 +249,35 @@ function futureWeekday(minDays: number) {
     // fremder Termin → abgelehnt
     const foreign = await appt(org, await f.patient(org), berlinToUtc(futureWeekday(8), "09:00"), 40, "planned", pk);
     expect((await pb.reschedulePortalAppointment(l, { appointmentId: foreign, startsAt: target })).ok).toBe(false);
+  });
+
+  it("Verschieben: Behandler:in bleibt nur, wenn sie aktiv im Kalender der Praxis ist (Altdaten: Person außerhalb der Praxis)", async (ctx) => {
+    const org = await f.org();
+    const pk = await service(org, "PK", 40);
+    const me = await f.patient(org);
+    const l = await portalLink(org, me);
+    const therapist = await f.user(org, "therapist");
+    const other = await f.org();
+    const stranger = await f.user(other, "therapist");
+    // Altbestand nachstellen braucht einen Superuser (Trigger aus)
+    if (!(await insertLegacy("select 1", []))) ctx.skip();
+    const move = async (therapistId: string, legacy: boolean, weekday: number) => {
+      const start = berlinToUtc(futureWeekday(weekday), "09:00");
+      const id = await appt(org, me, start, 40, "confirmed", pk);
+      if (legacy) {
+        // Altbestand vor dem Trigger podo_user_in_org: Termin zeigt auf eine Person einer anderen Praxis
+        await insertLegacy("update appointments set therapist_id = $2 where id = $1", [id, therapistId]);
+      } else {
+        await f.asOrg(org, (c) => c.query("update appointments set therapist_id = $2 where id = $1", [id, therapistId]));
+      }
+      const opts = (await pb.portalBookingOptions(l, { rescheduleId: id }))!;
+      const target = opts.days.flatMap((d) => d.slots[40]).find((x) => new Date(x).getTime() > start.getTime() + 86400_000)!;
+      const r = await pb.reschedulePortalAppointment(l, { appointmentId: id, startsAt: target });
+      expect(r.ok).toBe(true);
+      return (await f.asOrg(org, (c) => c.query("select therapist_id from appointments where organization_id = $1 and status = 'planned' and starts_at = $2", [org, target]))).rows[0].therapist_id as string | null;
+    };
+    expect(await move(therapist, false, 6)).toBe(therapist);
+    expect(await move(stranger, true, 9)).toBeNull();
   });
 
   it("Regression: Ursprungstermin wird reaktiviert/verschoben → Annahme vergibt ihn nicht doppelt", async () => {

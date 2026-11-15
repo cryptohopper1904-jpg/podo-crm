@@ -66,6 +66,8 @@ async function main() {
     await pool.query(`grant usage on schema public to ${appRole}`);
     await pool.query(`grant select, insert, update, delete on all tables in schema public to ${appRole}`);
     await pool.query(`grant usage, select on all sequences in schema public to ${appRole}`);
+    // SECURITY-DEFINER-Funktionen, die die App selbst aufruft (EXECUTE ist PUBLIC entzogen, Migration *_kontext_haertung)
+    await pool.query(`grant execute on function podo_delete_patient(uuid), podo_calendar_feeds_active(), podo_calendar_feeds_health(interval) to ${appRole}`);
     // Einlösungen von Aktionscodes sind ein Nachweis: die App-Rolle darf sie nur anlegen und lesen.
     // Gelöscht werden sie nur mit der Praxis (FK-Kaskade bzw. Löschlauf als Eigentümer, src/server/purge-organization.ts).
     await pool.query(`revoke update, delete on promo_redemptions from ${appRole}`);
