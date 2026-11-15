@@ -16,6 +16,7 @@ const url = process.env.TEST_DATABASE_URL;
     const db = drizzle(pool, { schema: s });
     const [org] = await db.insert(s.organizations).values({ name: "Import-Test", slug: `imp-${Date.now()}` }).returning();
     const [user] = await db.insert(s.users).values({ email: `imp-${Date.now()}@example.org`, name: "T", passwordHash: "x" }).returning();
+    await db.insert(s.memberships).values({ organizationId: org.id, userId: user.id, role: "owner" });
     const parsed = await parseWorkbook(await buildWorkbook(), { today: "2026-11-07" });
     await db.transaction(async (tx) => {
       await tx.execute(sql`select set_config('app.org_id', ${org.id}, true)`);
@@ -40,6 +41,7 @@ const url = process.env.TEST_DATABASE_URL;
     const db = drizzle(pool, { schema: s });
     const [org] = await db.insert(s.organizations).values({ name: "Import-Archiv", slug: `imp-arch-${Date.now()}` }).returning();
     const [user] = await db.insert(s.users).values({ email: `imp-arch-${Date.now()}@example.org`, name: "T", passwordHash: "x" }).returning();
+    await db.insert(s.memberships).values({ organizationId: org.id, userId: user.id, role: "owner" });
     const parsed = await parseWorkbook(await buildWorkbook(), { today: "2026-11-07" });
     const usedCodes = new Set(parsed.invoices.flatMap((i) => i.lines.map((l) => l.serviceCode)));
     const code = parsed.services.find((sv) => usedCodes.has(sv.code))?.code ?? parsed.services[0].code;

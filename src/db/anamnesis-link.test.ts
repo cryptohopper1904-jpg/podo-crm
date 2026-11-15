@@ -96,6 +96,7 @@ const url = process.env.TEST_DATABASE_URL;
     const { createAnamnesisLink } = await import("@/server/anamnesis");
     const { can } = await import("@/lib/auth/permissions");
     const userId = (await pool.query("insert into users (email, name, password_hash) values ($1, 'T', 'x') returning id", [`an-${Date.now()}@example.org`])).rows[0].id;
+    await pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [orgId, userId]);
     const auth = { sessionId: "s", user: { id: userId, email: "t@example.org", name: "T", totpEnabled: false, isPlatformAdmin: false }, organization: { id: orgId, name: "P", slug: "p", smallBusiness: false, state: "BB" }, billing: { plan: "internal", subscriptionStatus: "active", trialEndsAt: null, currentPeriodEnd: null, seats: 1 }, access: { mode: "full" as const }, readOnly: false, support: null, mutating: true, role: "owner" as const, can: (p: Parameters<typeof can>[1]) => can("owner", p) };
     const results = await Promise.all(Array.from({ length: 5 }, () => createAnamnesisLink(auth, patientId)));
     expect(results.filter((r) => "token" in r).length).toBeGreaterThanOrEqual(1);

@@ -169,7 +169,7 @@ const CANCELLED_NEW = vevent("c@google.com", "20261113T080000", "20261113T083000
 
   it("kennzeichnet Überschneidungen mit PodoHero-Terminen derselben Behandler:in", async () => {
     const { org, id, therapist } = await setup();
-    const other = await f.user();
+    const other = await f.user(org, "therapist");
     await f.asOrg(org, (c) =>
       c.query(
         "insert into appointments (organization_id, therapist_id, starts_at, ends_at, title) values ($1,$2,'2026-11-10T08:00:00Z','2026-11-10T09:00:00Z','Praxis-Termin'), ($1,$3,'2026-11-12T13:00:00Z','2026-11-12T14:00:00Z','andere Behandlerin')",

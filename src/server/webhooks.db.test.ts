@@ -106,7 +106,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("Storno entfernt Zahlungslink/checkout_ref; spätere SumUp-Zahlung wird gemeldet statt gebucht", async () => {
     const { cancelInvoice } = await import("./invoices");
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const inv = await f.invoice(org, await f.patient(org), 2500);
     await f.asOrg(org, (c) => c.query("update invoices set checkout_ref = 'checkout:abc', payment_link_url = 'https://pay.example.invalid/x' where id = $1", [inv]));
     const auth = { organization: { id: org, name: "T" }, user: { id: user, name: "Test" }, can: () => true } as never;

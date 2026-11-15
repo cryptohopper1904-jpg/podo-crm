@@ -33,7 +33,7 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46,
 
   async function setup(settings: Record<string, unknown> = {}, bytes: Buffer = JPEG) {
     const org = await f.org({ settings });
-    const user = await f.user();
+    const user = await f.user(org);
     const patientId = await f.patient(org, { lastName: "Musterfrau", firstName: "Erika" });
     const { storeEncrypted } = await import("@/lib/storage");
     const stored = await storeEncrypted(org, bytes);

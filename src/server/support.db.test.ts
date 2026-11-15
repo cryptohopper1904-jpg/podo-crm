@@ -27,14 +27,17 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       ).rows[0].id as string,
     );
 
+  /** Person beim Support: Plattform-Admin mit 2FA (Trigger podo_user_in_org lässt nur solche als grantee_user_id zu) */
+  const platformAdmin = () => f.platformAdmin();
+
   it("findet nur aktive Freigaben der jeweiligen Praxis; Ablauf und Widerruf beenden den Zugriff", async () => {
     const orgA = await f.org();
     const orgB = await f.org();
-    const owner = await f.user();
-    const admin = await f.user();
+    const owner = await f.user(orgA);
+    const admin = await platformAdmin();
     expect(await session.findActiveSupportGrant(orgA, admin)).toBeNull();
 
-    const id = await grant(orgA, owner);
+    const id = await grant(orgA, owner, { grantee: admin });
     const g = await session.findActiveSupportGrant(orgA, admin);
     expect(g).toMatchObject({ grantId: id, scope: "read" });
     // Freigabe gilt nicht für andere Praxen
@@ -48,18 +51,18 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Freigabe für eine bestimmte Person gilt nur für diese", async () => {
     const org = await f.org();
-    const owner = await f.user();
-    const admin1 = await f.user();
-    const admin2 = await f.user();
+    const owner = await f.user(org);
+    const admin1 = await platformAdmin();
+    const admin2 = await platformAdmin();
     await grant(org, owner, { grantee: admin1 });
-    await grant(org, owner, { revoked: true });
+    await grant(org, owner, { grantee: admin2, revoked: true });
     expect(await session.findActiveSupportGrant(org, admin1)).not.toBeNull();
     expect(await session.findActiveSupportGrant(org, admin2)).toBeNull();
   });
 
   it("RLS: Freigaben sind ohne Mandantenkontext unsichtbar", async () => {
     const org = await f.org();
-    await grant(org, await f.user());
+    await grant(org, await f.user(org), { grantee: await platformAdmin() });
     const r = await f.pool.query("select count(*)::int n from support_grants where organization_id = $1", [org]);
     expect(r.rows[0].n).toBe(0);
   });

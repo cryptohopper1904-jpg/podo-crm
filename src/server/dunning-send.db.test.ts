@@ -50,7 +50,7 @@ import { berlinDay, fixtures, TEST_DB, useTestClock } from "./__tests__/db-fixtu
     process.env.DB_POOL_MAX = "1";
     dunning = await import("./dunning");
     org = await f.org({ settings: { dunning: { payDays: 12 } } });
-    user = await f.user();
+    user = await f.user(org);
     patient = await f.patient(org, { email: "erika@example.org" });
   });
   afterAll(async () => {

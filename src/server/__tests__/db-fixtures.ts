@@ -10,6 +10,31 @@ import { berlinDateIso } from "@/lib/format";
 export const TEST_DB = process.env.TEST_DATABASE_URL;
 
 /**
+ * Altbestand nachstellen, den heutige Trigger nicht mehr zulassen (z. B. Support-Freigabe ohne Person): als Owner mit
+ * session_replication_role = replica (Trigger aus). Braucht einen Superuser (TEST_OWNER_DATABASE_URL); sonst `false`
+ * (Test dann überspringen).
+ */
+export async function insertLegacy(sql: string, params: unknown[]): Promise<boolean> {
+  const url = process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
+  const pool = new Pool({ connectionString: url, max: 1 });
+  try {
+    if (!(await pool.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) return false;
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local session_replication_role = replica");
+      await c.query(sql, params);
+      await c.query("commit");
+    } finally {
+      c.release();
+    }
+    return true;
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
  * Feste Systemzeit für zeitabhängige DB-Tests: mit `TEST_NOW` (ISO-Zeitpunkt, z. B. 2026-11-13T23:30:00Z) läuft
  * `Date` auf diesem Zeitpunkt – so lassen sich Tagesgrenzen (UTC-Abend = Berliner Folgetag) gezielt prüfen.
  * Nur `Date` wird ersetzt; Timer und die DB-Uhr laufen normal weiter.
@@ -28,6 +53,8 @@ export const berlinDay = (offsetDays = 0) => addDaysIso(berlinDateIso(), offsetD
 export function fixtures(url: string) {
   const pool = new Pool({ connectionString: url, max: 3 });
   const sfx = () => Math.random().toString(36).slice(2, 10);
+  /** angelegte Plattform-Admins – in end() wieder zurückgestuft (s. platformAdmin) */
+  const admins: string[] = [];
 
   async function asOrg<T>(org: string, fn: (c: PoolClient) => Promise<T>): Promise<T> {
     const c = await pool.connect();
@@ -56,8 +83,14 @@ export function fixtures(url: string) {
       ]);
       return r.rows[0].id as string;
     },
-    async user() {
-      return (await pool.query("insert into users (email, name, password_hash) values ($1, 'Test', 'x') returning id", [`u-${sfx()}@example.org`])).rows[0].id as string;
+    /**
+     * Benutzer:in; mit `org` zugleich Mitglied dieser Praxis (Rolle `role`). Wer in einer Praxis handelt (created_by,
+     * author_id …) oder ihr zugeordnet wird, muss dort Mitglied sein (Trigger podo_user_in_org, *_user_praxis_abgleich).
+     */
+    async user(org?: string, role = "owner") {
+      const id = (await pool.query("insert into users (email, name, password_hash) values ($1, 'Test', 'x') returning id", [`u-${sfx()}@example.org`])).rows[0].id as string;
+      if (org) await pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,$3)", [org, id, role]);
+      return id;
     },
     async patient(org: string, p: { lastName?: string; firstName?: string; email?: string | null; phoneMobile?: string | null; preferredChannel?: string } = {}) {
       return asOrg(org, async (c) => {
@@ -82,7 +115,18 @@ export function fixtures(url: string) {
         return id;
       });
     },
+    /**
+     * Plattform-Admin (Support) ohne Mitgliedschaft. Wird in end() wieder zurückgestuft: listSupportAdmins() liefert
+     * höchstens 100 Personen – angesammelte Test-Admins in der gemeinsamen Test-DB verdrängten sonst die anderer Tests.
+     */
+    async platformAdmin(totp = true) {
+      const id = (await pool.query("insert into users (email, name, password_hash, is_platform_admin, totp_enabled) values ($1, 'Test', 'x', true, $2) returning id", [`a-${sfx()}@example.org`, totp]))
+        .rows[0].id as string;
+      admins.push(id);
+      return id;
+    },
     async end() {
+      if (admins.length) await pool.query("update users set is_platform_admin = false where id = any($1::uuid[])", [admins]);
       await pool.end();
     },
   };

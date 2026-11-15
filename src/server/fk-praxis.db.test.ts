@@ -487,7 +487,8 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     const client = await pool.connect();
     const lookups: string[] = [];
     client.on("notice", (n) => {
-      if ((n.message ?? "").includes("SELECT EXISTS (SELECT 1 FROM public.")) lookups.push(n.message ?? "");
+      // nur die Lookups von podo_fk_same_org (Alias „t“), nicht die von podo_user_in_org (memberships m)
+      if (/SELECT EXISTS \(SELECT 1 FROM public\.\w+ t WHERE/.test(n.message ?? "")) lookups.push(n.message ?? "");
     });
     let ms = 0;
     try {

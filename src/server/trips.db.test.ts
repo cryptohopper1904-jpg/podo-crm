@@ -25,7 +25,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     trips = await import("./trips");
     orgA = await f.org();
     orgB = await f.org();
-    user = await f.user();
+    user = await f.user(orgA);
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [orgB, user]);
   });
   afterAll(async () => {
     delete process.env.ROUTING_PROVIDER;
@@ -65,6 +66,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("„Ich fahre los“: pseudonymisiertes Ziel, Schätzung, Ankunft mit km-Korrektur", async () => {
     const org = await f.org({ settings: { trips: { plate: "P-AB 123", rateCents: 30 } } });
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, user]);
     const patientAddr = { street: "Brandenburger Straße 10", zip: "14467", city: "Potsdam" };
     const patientId = await f.patient(org, { lastName: "Musterfrau", firstName: "Erika" });
     const number = await f.asOrg(org, async (c) => {
@@ -115,6 +117,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("aktueller Standort wird nicht gespeichert und Tour ohne Startort funktioniert", async () => {
     const org = await f.org();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, user]);
     const patientAddr = { street: "Lindenstraße 5", zip: "14467", city: "Potsdam" };
     const patientId = await f.patient(org, { lastName: "Beispiel" });
     await f.asOrg(org, async (c) => {

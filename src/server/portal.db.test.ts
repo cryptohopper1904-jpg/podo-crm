@@ -67,7 +67,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("parallele Link-Erzeugung hinterlässt genau einen aktiven Link", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org);
     const auth = { organization: { id: org, name: "T" }, user: { id: user, name: "Test" }, can: () => true } as never;
     const urls = await Promise.all(Array.from({ length: 6 }, () => core.createPortalLink(auth, p)));

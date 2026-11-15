@@ -28,8 +28,10 @@ const soon = new Date(Date.now() + 30 * day);
   let auditCalls: () => { action: string; organizationId?: string | null; meta?: Record<string, unknown> }[];
 
   const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? TEST_DB, max: 1 });
-  const org = async (patch: { plan?: string; status?: string; trialEndsAt?: Date | null; stripeSub?: string | null; stripeCustomer?: string | null } = {}) => {
+  /** Praxis; `admin` ist dort Mitglied (wer einlöst, muss zur Praxis gehören – Trigger podo_user_in_org), außer `noAdmin` */
+  const org = async (patch: { plan?: string; status?: string; trialEndsAt?: Date | null; stripeSub?: string | null; stripeCustomer?: string | null; noAdmin?: boolean } = {}) => {
     const id = await f.org();
+    if (!patch.noAdmin) await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [id, admin]);
     await f.pool.query("update organizations set plan = $2, subscription_status = $3, trial_ends_at = $4, stripe_subscription_id = $5, stripe_customer_id = $6 where id = $1", [
       id,
       patch.plan ?? "trial",
@@ -222,7 +224,7 @@ const soon = new Date(Date.now() + 30 * day);
     const ownerUser = await f.user();
     const team = await f.user();
     const make = async () => {
-      const o = await org({ plan: "free", status: "none", trialEndsAt: null });
+      const o = await org({ plan: "free", status: "none", trialEndsAt: null, noAdmin: true });
       await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner'), ($1,$3,'therapist')", [o, ownerUser, team]);
       return o;
     };
@@ -258,7 +260,7 @@ const soon = new Date(Date.now() + 30 * day);
 
     // aus der Testphase eingelöst: kein Merker, keine Rückkehr
     const t = await org();
-    await p.redeemPromoCodeForOrganization(t, ownerUser, C("FREI"));
+    await p.redeemPromoCodeForOrganization(t, admin, C("FREI"));
     await f.pool.query("update organizations set trial_ends_at = now() - interval '1 minute' where id = $1", [t]);
     expect((await billing.returnPromoTrialToFree(t)).status).toBe("not_due");
     expect(await orgRow(t)).toMatchObject({ subscription_status: "trialing" });

@@ -388,6 +388,8 @@ const day = 86_400_000;
       await f.pool.query("update organizations set plan = $2, subscription_status = $3, trial_ends_at = now() + interval '30 days' where id = $1", [org, patch.plan ?? "trial", patch.status ?? "trialing"]);
       return org;
     };
+    /** Inhaber:in der Praxis – wer einlöst, muss zur Praxis gehören (Trigger podo_user_in_org) */
+    const ownerOf = async (org: string) => (await f.pool.query("select user_id from memberships where organization_id = $1 and role = 'owner'", [org])).rows[0].user_id as string;
     const item = async (id: string) => (await pl.loadPipeline()).find((l) => l.id === id)!;
 
     beforeAll(async () => {
@@ -422,7 +424,7 @@ const day = 86_400_000;
       await ownerOrg(`chef@pipe3-${sfx}.example`, { plan: "praxis", status: "active" });
       const orgCode = await ownerOrg(`irgendwer-${sfx}@gmx.de`);
       await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-L`, label: "persönlich", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: viaCode });
-      await promo.redeemPromoCodeForOrganization(orgCode, admin, `TPIPE${sfx.toUpperCase()}-L`);
+      await promo.redeemPromoCodeForOrganization(orgCode, await ownerOf(orgCode), `TPIPE${sfx.toUpperCase()}-L`);
       expect(await item(dom)).toMatchObject({ stage: "test", org: { id: orgDom, via: "domain" } });
       expect(await item(web)).toMatchObject({ stage: "kunde", org: { via: "domain", converted: true } });
       expect(await item(viaCode)).toMatchObject({ stage: "test", org: { id: orgCode, via: "code" } });
@@ -476,7 +478,7 @@ const day = 86_400_000;
       expect(stats).toMatchObject({ leads: 1, contacted: 1, sent: 1, tests: 0, codes: [{ code, active: true }] });
       // Code einer Praxis eingelöst → Test in der Kampagnen-Statistik
       const o = await ownerOrg(`x-${sfx}@gmx.de`);
-      await promo.redeemPromoCodeForOrganization(o, admin, code);
+      await promo.redeemPromoCodeForOrganization(o, await ownerOf(o), code);
       expect((await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)).toMatchObject({ tests: 1, converted: 0 });
       // Einwilligung gilt für die Adresse: neue E-Mail → Einwilligung weg, Versand übersprungen
       await v.updateLead(admin, id, { name: "Pipe Kampagne", contactPerson: null, email: `neu@pipe5-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });

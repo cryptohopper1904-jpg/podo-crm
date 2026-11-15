@@ -35,7 +35,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("ohne Termin-Bezug: Standard = Rechnungsdatum, eigenes Datum wird festgeschrieben; Zukunft abgelehnt", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
 
     const b1 = await bundle(org, (await invoices.createInvoice(auth, base(patient))).id);
@@ -50,7 +50,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("mit Termin: Datum festgeschrieben – Verschieben nach dem Storno ändert Rechnung und Storno nicht", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const appt = await appointment(org, patient, "2026-03-12 09:00+01");
     const inv = await invoices.createInvoice(auth, base(patient, { serviceDate: "2026-11-13", lines: [line({ appointmentId: appt })] }));
@@ -65,7 +65,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("gemischt (Termin + Produkt ohne Bezug): Zeitraum aus beidem; künftiger Termin abgelehnt", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const appt = await appointment(org, patient, "2026-11-02 10:00+01");
     const inv = await invoices.createInvoice(auth, base(patient, { serviceDate: "2026-11-06", lines: [line({ appointmentId: appt }), line({ description: "Pflegecreme" })] }));
@@ -79,7 +79,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Sammelrechnung ohne Bezug: Leistungszeitraum von … bis; bis vor von abgelehnt", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const c = await invoices.createInvoice(auth, base(patient, { kind: "collective", serviceDate: "2026-10-01", serviceDateTo: "2026-10-31" }));
     const b = await bundle(org, c.id);
@@ -90,7 +90,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Ausfallhonorar ohne Termin-Bezug: „Termin am“ ist Pflicht", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const fee = base(patient, { kind: "no_show_fee", lines: [line({ description: "Ausfallhonorar", vatRate: 0 })] });
     await expect(invoices.createInvoice(auth, fee)).rejects.toThrow(/Datum des versäumten Termins/);
@@ -105,7 +105,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Anzahlung für einen künftigen Termin: Zahlungstag + „Leistung noch nicht erbracht“; Storno: „Anzahlung vom …“", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const appt = await f.asOrg(org, async (c) =>
       (await c.query("insert into appointments (organization_id, patient_id, starts_at, ends_at, status) values ($1,$2, now() + interval '8 days', now() + interval '8 days 45 minutes','planned') returning id", [org, patient])).rows[0].id as string,
@@ -120,7 +120,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Altbeleg (vor Einführung) wird wie früher gedruckt; Leistungsangaben sind nach dem Ausstellen gesperrt; neue Zeilen standardmäßig festgeschrieben", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     // Altbeleg nachbilden: als Entwurf ohne Leistungsangabe (wie vor der Migration ausgestellt)
@@ -141,7 +141,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Sammelrechnung mit übernommenen Quittungen: Leistungszeitraum deckt die Quittungen ab (nicht das Rechnungsdatum)", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const year = Number(berlinDateIso().slice(0, 4)) - 1;
     const cash = (cents: number) => [{ method: "cash", amountCents: cents, voucherCode: null, externalRef: null }];
@@ -187,7 +187,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("weicher Doppel-Schutz vergleicht das Leistungsdatum, nicht das Rechnungsdatum", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const service = await f.asOrg(org, async (c) =>
       (await c.query("insert into services (organization_id, code, name, price_cents, vat_rate) values ($1,'PKB','Podologische Komplexbehandlung',6500,0) returning id", [org])).rows[0].id as string,
