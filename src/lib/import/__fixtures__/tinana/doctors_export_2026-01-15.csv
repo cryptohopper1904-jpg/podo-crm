@@ -1,0 +1,4 @@
+﻿anrede;titel;vorname;nachname;strasse;hausnummer;plz;stadt;arztnummer;betriebsstaettennummer;email;telefon;mobil;erstellt_am
+;Dr. med.;Ärztin;Beispiel;Praxisweg;3;12345;Beispielstadt;999999999;999999990;praxis@example.org;030 0000010;;02.01.2026 09:00
+Herr;;Arzt;Muster;Klinikallee;8;54321;Probedorf;888888888;888888880;;040 0000011;0152 0000012;02.01.2026 09:00
+;Dr. med.;Ärztin;Beispiel;Zweigstelle;1;12345;Beispielstadt;999999999;777777770;praxis@example.org;030 0000013;;02.01.2026 09:00

@@ -1,0 +1,11 @@
+﻿ZEITHALTUNGSBERICHT
+Mitarbeiter;Stunden;Stunden mit Termin;Stunden mit Aufgaben;Auslastung
+Therapeutin Eins;8,0;5,5;0,5;75,0 %
+Therapeut Zwei;6,0;3,0;0,0;50,0 %
+Gesamt;14,0;8,5;0,5;64,3 %
+
+UMSATZBERICHT
+Mitarbeiter;Behandlungen;Theoretischer Umsatz (EUR);Bezahlt (EUR);Stundenumsatz (EUR)
+Therapeutin Eins;6;311,52;311,52;56,64
+Therapeut Zwei;2;114,40;0,00;38,13
+Gesamt;8;425,92;311,52;50,11

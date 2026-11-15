@@ -1,0 +1,5 @@
+﻿patienten_id;anrede;titel;vorname;nachname;geschlecht;geburtsdatum;strasse;hausnummer;plz;stadt;standort;email;telefon_1_label;telefon_1;telefon_2_label;telefon_2;notiz;vip;versicherungstyp;erstellt_am
+10000000-0000-4000-8000-000000000001;Frau;;Erika;Musterfrau;Weiblich;03.04.1950;Teststraße;1;12345;Beispielstadt;Praxis Beispiel;erika.musterfrau@example.org;Mobil;0151 0000001;Festnetz;030 0000001;"Diabetikerin; Marcumar";Nein;GKV;02.01.2026 09:15
+10000000-0000-4000-8000-000000000002;Herr;Dr.;Max;Mustermann;Männlich;17.11.1962;Musterweg;12a;54321;Probedorf;Praxis Beispiel;;Mobil;0160 0000002;;;;Ja;Privat;02.01.2026 09:16
+10000000-0000-4000-8000-000000000003;Divers;;Kim;Beispiel;Divers;01.01.1990;Allee;7;01001;Beispielstadt;Praxis Beispiel;kim@example.org;Mobil;0170 0000003;;;;Nein;;05.01.2026 14:02
+10000000-0000-4000-8000-000000000004;Frau;;Lena;Probe;Weiblich;;;;;;;;;;;;;Nein;GKV;07.01.2026 08:00

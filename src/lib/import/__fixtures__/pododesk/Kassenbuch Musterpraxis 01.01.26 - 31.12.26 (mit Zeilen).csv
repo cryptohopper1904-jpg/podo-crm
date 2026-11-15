@@ -1,0 +1,6 @@
+﻿"Buchungsnummer";"Belegnummer";"Datum";"Erfasst von";"Buchungstyp";"Betreff";"Betrag in €";"Kassenbestand in €"
+"1";"KB-0001";"02.01.2026";"Erika Muster";"Anfangsbestand";"Anfangsbestand Kasse";"150,00";"150,00"
+"2";"KB-0002";"02.01.2026";"Erika Muster";"Einnahme";"Termin P-Test-001 DFc2 priv.";"24,00";"174,00"
+"3";"KB-0003";"03.01.2026";"Max Beispiel";"Einnahme";"Produktverkauf GEHWOL Testcreme";"10,00";"184,00"
+"4";"KB-0004";"05.01.2026";"Erika Muster";"Ausgabe";"Bürobedarf";"-12,50";"171,50"
+"5";"KB-0005";"05.01.2026";"Erika Muster";"Korrektur";"Korrekturbuchung wegen Zähldifferenz";"-0,50";"171,00"
