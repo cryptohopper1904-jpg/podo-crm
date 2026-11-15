@@ -86,6 +86,8 @@ export async function dunningOverview(auth: AuthContext) {
       .where(
         and(
           eq(invoices.organizationId, org),
+          // übernommene Altrechnungen (Import) nicht mahnen (Buchhaltung P1)
+          eq(invoices.source, "crm"),
           inArray(invoices.kind, [...DUNNABLE_KINDS]),
           inArray(invoices.status, [...DUNNABLE_STATUSES]),
           lt(invoices.dueAt, today),

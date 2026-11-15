@@ -70,11 +70,23 @@ export async function financeOverview(auth: AuthContext, year: number) {
                        and (t2.treated_at at time zone 'Europe/Berlin')::date = (a.starts_at at time zone 'Europe/Berlin')::date)))
       ) x group by 1, 2`);
 
+    // „davon übernommen“ (Buchhaltung F1/BA): übernommene Zahlungen aus dem Excel-Import (external_ref 'excel:…', wie
+    // Kasse und Migration 0060) – sie stehen schon im bisherigen System und werden getrennt ausgewiesen. Neueingänge in
+    // PodoHero auf übernommene Altrechnungen zählen NICHT dazu. Offene Beträge: nach Herkunft der Rechnung (unten).
+    const [imp] = (
+      await tx.execute<{ v: number }>(sql`
+        select coalesce(sum(p.amount_cents), 0)::bigint as v
+        from payments p
+        where p.organization_id = ${org} and coalesce(p.external_ref, '') ilike 'excel:%'
+          and p.paid_at >= ${berlinToUtc(`${year}-01-01`, "00:00")} and p.paid_at < ${to}`)
+    ).rows;
+
     const [recv] = (
-      await tx.execute<{ open: number; overdue: number; n: number }>(sql`
+      await tx.execute<{ open: number; overdue: number; n: number; imported: number }>(sql`
         select coalesce(sum(total_cents - paid_cents), 0)::bigint as open,
                coalesce(sum(case when due_at < ${today} then total_cents - paid_cents else 0 end), 0)::bigint as overdue,
-               count(*)::int as n
+               count(*)::int as n,
+               coalesce(sum(case when source <> 'crm' then total_cents - paid_cents else 0 end), 0)::bigint as imported
         from invoices
         where organization_id = ${org} and status in ('issued', 'partially_paid') and total_cents > 0`)
     ).rows;
@@ -126,10 +138,12 @@ export async function financeOverview(auth: AuthContext, year: number) {
       treatmentMonths,
       treatmentPrevMonths,
       revenueYear,
+      /** davon Zahlungen übernommener Altrechnungen (Import) im Jahr */
+      revenueImportedYear: Number(imp?.v ?? 0),
       revenuePrev,
       treatmentsYear,
       treatmentsPrev,
-      receivables: { openCents: Number(recv?.open ?? 0), overdueCents: Number(recv?.overdue ?? 0), count: Number(recv?.n ?? 0) },
+      receivables: { openCents: Number(recv?.open ?? 0), overdueCents: Number(recv?.overdue ?? 0), count: Number(recv?.n ?? 0), importedCents: Number(recv?.imported ?? 0) },
       byService,
       costs,
       fixedMonthlyCents,

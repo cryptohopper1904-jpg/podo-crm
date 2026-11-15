@@ -1,0 +1,4 @@
+﻿rechnungsnummer;status;standort;aussteller;zahlungsmethode;nettobetrag;mwst_betrag;gesamtbetrag;rechnungswert_nach_korrektur;belegart;typ;korrektur_zu;anzahl_positionen;positionen;notizen;patient_vorname;patient_nachname;erstellt_am;bezahlt_am
+RE-2026-00003;Offen;Praxis Beispiel;Praxis Beispiel GmbH;;10.8;0;10.8;;Rechnung;Abrechnung;;1;1× B-26-00001 Musterfrau, Erika — 1x X8040;;;;12.01.2026 17:00;
+RE-2026-00002;Bezahlt;Praxis Beispiel;Praxis Beispiel GmbH;;29.41;5.59;35;;Rechnung;Standard;;1;1× Wellness-Fußmassage 30 Min;;Max;Mustermann;12.01.2026 11:40;12.01.2026 11:41
+RE-2026-00001;Bezahlt;Praxis Beispiel;Praxis Beispiel GmbH;;43.3;0;43.3;;Rechnung;Zuzahlung;;3;"1× Zuzahlung Pauschale; 6× Zuzahlung 10% PB-G; 6× Zuzahlung 10% PBF";;Erika;Musterfrau;12.01.2026 10:10;12.01.2026 10:12

@@ -2,9 +2,12 @@
 
 const TZ = "Europe/Berlin";
 
+/** einmal gebaut: Intl.DateTimeFormat je Aufruf zu erzeugen kostet ~0,1 ms (Importe mit 50.000 Zeilen, AppSec A-B1) */
+let offsetFormat: Intl.DateTimeFormat | null = null;
+
 /** Offset von Europe/Berlin zum Zeitpunkt `utc` in Minuten (60 oder 120). */
 export function berlinOffsetMinutes(utc: Date): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
+  offsetFormat ??= new Intl.DateTimeFormat("en-US", {
     timeZone: TZ,
     hourCycle: "h23",
     year: "numeric",
@@ -12,7 +15,8 @@ export function berlinOffsetMinutes(utc: Date): number {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).formatToParts(utc);
+  });
+  const parts = offsetFormat.formatToParts(utc);
   const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
   const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
   return Math.round((asUtc - Math.floor(utc.getTime() / 60000) * 60000) / 60000);

@@ -56,7 +56,7 @@ export function setStorageDriver(d: StorageDriver) {
   driver = d;
 }
 
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+export { MAX_UPLOAD_BYTES } from "./upload-limits";
 export const ALLOWED_MIME = new Set([
   "image/jpeg",
   "image/png",

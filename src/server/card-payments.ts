@@ -12,6 +12,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { money } from "@/lib/format";
 import { adapterFor, loadConnection, logSync } from "./integrations";
 import { InvoiceError } from "./invoices";
+import { IMPORTED_INVOICE_LOCKED } from "@/lib/invoice-labels";
 import { processSumupEvent } from "./webhooks";
 
 /**
@@ -24,6 +25,8 @@ async function loadOpenInvoice(org: string, invoiceId: string) {
   const [inv] = await withOrg(org, (tx) => tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId))));
   if (!inv) throw new InvoiceError("Rechnung nicht gefunden.");
   if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Die Rechnung ist nicht offen.");
+  // Altbestand aus dem Import: offen ist er in der bisherigen Software – keine Kartenzahlung/kein Zahlungslink (Buchhaltung P1)
+  if (inv.source !== "crm") throw new InvoiceError(IMPORTED_INVOICE_LOCKED);
   const open = inv.totalCents - inv.paidCents;
   if (open <= 0) throw new InvoiceError("Kein offener Betrag.");
   return { inv, open };
@@ -138,6 +141,8 @@ export async function sendPaymentLink(auth: AuthContext, invoiceId: string, chan
   const { inv, p, b } = data;
   if (!inv.paymentLinkUrl) throw new InvoiceError("Bitte zuerst einen Zahlungslink erzeugen.");
   if (inv.status !== "issued" && inv.status !== "partially_paid") throw new InvoiceError("Die Rechnung ist nicht offen.");
+  // Altbestand aus dem Import: offen ist er in der bisherigen Software – keine Kartenzahlung/kein Zahlungslink (Buchhaltung P1)
+  if (inv.source !== "crm") throw new InvoiceError(IMPORTED_INVOICE_LOCKED);
   let to: string | null = null;
   if (channel === "email") to = b?.email || p?.email || null;
   else {

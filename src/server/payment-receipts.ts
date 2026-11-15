@@ -293,7 +293,9 @@ export async function paymentReceiptPdfForOrg(org: string, invoiceId: string, re
  *  - Kassenvorgänge (Bar/Karte/Gutschein) ohne payment_receipts-Zeile,
  *  - NACH dem Ausstellen (nicht `paidAtIssue` – Zahlungen beim Ausstellen stehen auf dem Beleg selbst; SumUp-Zahlungen
  *    gelten nie als beim Ausstellen erfasst),
- *  - in PodoHero ausgestellt (kein übernommener Altbestand) und bezahlt ab dem Stichtag PAYMENT_RECEIPTS_SINCE,
+ *  - bezahlt ab dem Stichtag PAYMENT_RECEIPTS_SINCE; bei übernommenen Altrechnungen (source ≠ crm) zählen nur
+ *    Neueingänge in PodoHero (z. B. Barzahlung am Tresen) – die übernommenen Altzahlungen (external_ref 'excel:…')
+ *    stehen im Kassenbuch des bisherigen Systems und bekommen nie einen Beleg,
  *  - mit TSE-Signatur oder ohne (TSE-Ausfall, z. B. SumUp-Terminalzahlung bei gestörter TSE → `tseFailed`).
  */
 export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: string) {
@@ -302,7 +304,7 @@ export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: str
     .from(invoices)
     .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
   if (!inv || inv.status === "draft" || !inv.number) return [];
-  if (inv.source && inv.source !== "crm") return [];
+  const legacy = !!inv.source && inv.source !== "crm";
   const rows = await tx
     .select({
       id: payments.id,
@@ -320,12 +322,14 @@ export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: str
         eq(payments.invoiceId, invoiceId),
         inArray(payments.method, [...REGISTER_METHODS]),
         gte(payments.paidAt, PAYMENT_RECEIPTS_SINCE),
+        legacy ? sql`coalesce(${payments.externalRef}, '') not ilike 'excel:%'` : undefined,
         notExists(tx.select({ one: sql`1` }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.paymentId, payments.id)))),
       ),
     )
     .orderBy(asc(payments.paidAt), asc(payments.id));
   return rows
-    .filter((p) => !paidAtIssue(p, { createdAt: inv.createdAt, source: inv.source }))
+    // Altrechnung: „beim Ausstellen“ gibt es in PodoHero nicht (paidAtIssue zählt dort alles dazu) – jeder Neueingang zählt
+    .filter((p) => legacy || !paidAtIssue(p, { createdAt: inv.createdAt, source: inv.source }))
     .map((p) => ({ id: p.id, paidAt: p.paidAt, method: p.method, amountCents: p.amountCents, tseFailed: !p.fiscalId }));
 }
 

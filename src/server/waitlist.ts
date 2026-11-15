@@ -9,7 +9,7 @@ import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { dateDe, timeDe } from "@/lib/format";
 import { hashPortalToken, isPortalToken, newPortalToken } from "@/lib/portal";
-import { chooseChannel, grantedConsents, type ReminderChannel } from "@/lib/reminders";
+import { chooseChannel, grantedConsents, noRemindersFlag, type ReminderChannel } from "@/lib/reminders";
 import { isDeceased } from "@/lib/patient-deceased";
 import { entitlements } from "@/lib/plans";
 import { notDeceased } from "./patient-deceased";
@@ -175,7 +175,7 @@ export async function offerFreedSlot(org: string, appointmentId: string, deps: O
       if (!p) continue;
       const extra = (p.extra ?? {}) as Record<string, unknown>;
       const ch = chooseChannel(
-        { id: p.id, firstName: p.firstName, email: p.email, phoneMobile: p.phoneMobile, preferredChannel: p.preferredChannel, noReminders: extra.no_reminders === true || extra.no_reminders === "true", deceased: isDeceased(extra) },
+        { id: p.id, firstName: p.firstName, email: p.email, phoneMobile: p.phoneMobile, preferredChannel: p.preferredChannel, noReminders: noRemindersFlag(extra), deceased: isDeceased(extra) },
         grantedConsents(cons.filter((r) => r.patientId === p.id)),
       );
       const label = shortName(p.firstName, p.lastName);

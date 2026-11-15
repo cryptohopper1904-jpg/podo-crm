@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.4 · Stand 14.11.2026
+> Version 0.5 · Stand 15.11.2026
 
 zwischen der Praxis des Kunden (nachfolgend **„Verantwortlicher“**)
 
@@ -17,9 +17,9 @@ und Pitt Petruschke, Einzelunternehmer, handelnd unter „PodoHero“, Veltener 
 
 | | |
 |---|---|
-| **Art der Verarbeitung** | Speichern, Organisieren, Abfragen, Übermitteln (nur auf Veranlassung des Verantwortlichen), Löschen |
+| **Art der Verarbeitung** | Erheben durch Übernahme (Import) aus Exportdateien anderer Praxissoftware auf Veranlassung des Verantwortlichen, Speichern, Organisieren, Abfragen, Übermitteln (nur auf Veranlassung des Verantwortlichen), Löschen |
 | **Zweck** | Praxisverwaltung: Patientenakte, Termine, Behandlungsdokumentation, Abrechnung, Kommunikation, Auswertungen |
-| **Kategorien betroffener Personen** | Patientinnen und Patienten, Angehörige/Betreuer, Rechnungsempfänger, Mitarbeitende des Verantwortlichen |
+| **Kategorien betroffener Personen** | Patientinnen und Patienten, Angehörige/Betreuer, Rechnungsempfänger, Mitarbeitende des Verantwortlichen, verordnende Ärztinnen und Ärzte (Name, LANR, BSNR) |
 | **Kategorien von Daten** | Stamm- und Kontaktdaten, Termin- und Abrechnungsdaten, **Gesundheitsdaten nach Art. 9 DSGVO** (Anamnese, Befunde, Behandlungsdokumentation, Fotos), Versicherungsdaten, Kommunikationsinhalte, Protokolldaten |
 | **Ort der Verarbeitung** | PodoHero-Cloud: Rechenzentrum bei Hetzner in Deutschland (Hetzner Online GmbH); eine Verarbeitung außerhalb der EU/des EWR findet nur nach § 7 statt. Vom Verantwortlichen aktivierte Schnittstellen (z. B. Messenger, Telefonagent) siehe Unterauftragnehmer-Liste |
 

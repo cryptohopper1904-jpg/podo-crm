@@ -8,6 +8,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, dateDe, fullName } from "@/lib/format";
 import { estimateCents, type UnbilledLine } from "@/lib/year-end";
+import { IMPORTED_APPOINTMENT_NOT_BILLABLE } from "@/lib/invoice-labels";
 import { openDepositsFor, openReceiptsFor } from "./invoices";
 
 /**
@@ -19,12 +20,17 @@ import { openDepositsFor, openReceiptsFor } from "./invoices";
  * (keine Anzahlung) eine Position mit diesem Doku-Eintrag bzw. Termin hat – oder (Altbestand ohne Bezug) wenn für die
  * Person am selben Tag eine eigene Rechnung/Quittung ausgestellt wurde. createInvoice prüft verbindlich.
  * Es werden nur Datum, Termin und Leistungen gelesen – keine medizinischen Inhalte.
+ * Übernommene Termine (Quelle „import“, Übernahme-Assistent) zählen nie als offen: Sammelrechnung, Jahresvorschlag,
+ * Heute-Hinweis und Jahresend-Schätzung nutzen alle unbilledItems (Code-Review CR2).
  */
 
 type Item = { patientId: string; at: Date; recordId: string | null; appointmentId: string | null; title: string | null };
 type Svc = { appointmentId: string; serviceId: string; name: string; priceCents: number; vatRate: number; quantity: number };
 
 const BILLED_STATUS_EXCLUDED = ["cancelled", "draft"] as const;
+
+/** Rechnung/Quittung zu einem übernommenen Termin (Quelle „import“) – gesperrt (Code-Review Runde 2 S1) */
+export { IMPORTED_APPOINTMENT_NOT_BILLABLE };
 
 async function servicesOf(tx: Tx, org: string, apptIds: string[]) {
   const rows = apptIds.length
@@ -69,6 +75,8 @@ async function unbilledItems(tx: Tx, org: string, opts: { from: Date; to: Date; 
         gte(appointments.startsAt, opts.from),
         lt(appointments.startsAt, to),
         inArray(appointments.status, ["planned", "confirmed", "done"]),
+        // aus anderer Praxissoftware übernommene Termine wurden dort abgerechnet (Übernahme-Assistent) – nie erneut vorschlagen
+        ne(appointments.source, "import"),
         ...byPatient(appointments.patientId),
       ),
     )
@@ -178,11 +186,13 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
     const apptId = apptIn ?? record?.appointmentId ?? null;
     const [appt] = apptId
       ? await tx
-          .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, title: appointments.title, prescriptionId: appointments.prescriptionId, status: appointments.status })
+          .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, title: appointments.title, prescriptionId: appointments.prescriptionId, status: appointments.status, source: appointments.source })
           .from(appointments)
           .where(and(eq(appointments.organizationId, org), eq(appointments.id, apptId)))
       : [];
     if (apptIn && !appt) return null;
+    // übernommener Termin (Übernahme-Assistent): in der bisherigen Software abgerechnet – keine zweite Rechnung (S1)
+    if (appt?.source === "import") return { patient: null, error: IMPORTED_APPOINTMENT_NOT_BILLABLE } as const;
     if (!record && appt) {
       const [r] = await tx
         .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, appointmentId: treatmentRecords.appointmentId, prescriptionId: treatmentRecords.prescriptionId })

@@ -185,6 +185,16 @@ function* dataRows(ws: ExcelJS.Worksheet, headerRow: number): Generator<ExcelJS.
   for (let r = headerRow + 1; r <= ws.rowCount; r++) yield ws.getRow(r);
 }
 
+/**
+ * größte Patienten-ID, die als Patientennummer übernommen wird; größere würden die Nummern dahinter verschieben und
+ * bekommen eine neue Nummer – die ID selbst bleibt als Bezug (Rechnungen, Gutscheine, Wiedererkennung) erhalten
+ */
+export const MAX_LEGACY_PATIENT_ID = 9_999_999;
+
+/** Legacy-ID als Patientennummer – nur 1 … MAX_LEGACY_PATIENT_ID, sonst null (neue Nummer) */
+export const legacyPatientNumber = (legacyId: number | null): number | null =>
+  legacyId !== null && legacyId > 0 && legacyId <= MAX_LEGACY_PATIENT_ID ? legacyId : null;
+
 const toInt = (v: Primitive): number | null => {
   const n = toNumber(v);
   return n === null ? null : Math.round(n);
@@ -269,7 +279,14 @@ function parsePatients(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     const email = asString(v.email)?.toLowerCase() ?? null;
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ctx.warn(sheet, row.number, `E-Mail-Adresse wirkt ungültig („${email}“).`);
     const legacyId = toInt(v.id);
-    if (legacyId === null) ctx.warn(sheet, row.number, "ID fehlt – neue Patientennummer wird vergeben.");
+    // unplausibel große IDs würden die Patientennummern dahinter verschieben (Nummer = ID): neue Nummer, ID bleibt Bezug
+    if (legacyId !== null && legacyId > MAX_LEGACY_PATIENT_ID) {
+      ctx.warn(
+        sheet,
+        row.number,
+        `ID ${legacyId} ist zu groß für eine Patientennummer (höchstens ${MAX_LEGACY_PATIENT_ID.toLocaleString("de-DE")}) – neue Patientennummer wird vergeben, die ID bleibt als Bezug (Rechnungen, Gutscheine) erhalten.`,
+      );
+    } else if (legacyId === null) ctx.warn(sheet, row.number, "ID fehlt – neue Patientennummer wird vergeben.");
     out.push({
       row: row.number,
       legacyId,
@@ -315,7 +332,9 @@ export function findDuplicates(patients: PatientImportDraft[]): DuplicateGroup[]
     for (const p of patients) {
       const k = keyFn(p);
       if (!k) continue;
-      map.set(k, [...(map.get(k) ?? []), p]);
+      const list = map.get(k);
+      if (list) list.push(p);
+      else map.set(k, [p]);
     }
     for (const [value, list] of map) {
       if (list.length > 1) groups.push({ sheet: "Patienten", reason, value, rows: list.map((p) => p.row), legacyIds: list.map((p) => p.legacyId) });
@@ -333,7 +352,10 @@ export function findDuplicates(patients: PatientImportDraft[]): DuplicateGroup[]
   const phoneMap = new Map<string, PatientImportDraft[]>();
   for (const p of patients) {
     for (const n of new Set([digits(p.phoneMobile), digits(p.phoneLandline)])) {
-      if (n) phoneMap.set(n, [...(phoneMap.get(n) ?? []), p]);
+      if (!n) continue;
+      const list = phoneMap.get(n);
+      if (list) list.push(p);
+      else phoneMap.set(n, [p]);
     }
   }
   for (const [value, list] of phoneMap) {

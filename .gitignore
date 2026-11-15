@@ -52,3 +52,4 @@ next-env.d.ts
 !deploy/.env.example
 deploy/docker-compose.subdomain.yml
 deploy/.update.lock
+!src/lib/import/__fixtures__/**

@@ -101,13 +101,19 @@ type ItemsFilter = { closingIds: string[] } | { openUntil: Date };
 /** Stornierte Original-Rechnung (Erstattung einer Anzahlung bleibt eine Anzahlungs-Buchung) */
 const cancelled = alias(invoices, "cancelled_invoice");
 
+/** Zahlung stammt nicht aus dem Excel-Import (external_ref „excel:…“, Groß-/Kleinschreibung egal) – wie Migration 0060 */
+const notImportedPayment = sql`coalesce(${payments.externalRef}, '') not ilike 'excel:%'`;
+
 async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
   const payCond =
     "closingIds" in filter
       ? filter.closingIds.length
         ? inArray(payments.cashClosingId, filter.closingIds)
         : sql`false`
-      : and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil));
+      : // übernommene Altzahlungen (Excel-Import, external_ref „excel:…“) stehen im Kassenbuch des bisherigen Systems und
+        // kommen nie in einen Abschluss (Buchhaltung K1/BA, Migration 0060 – gleiche Bedingung im Trigger). Maßgeblich ist
+        // die Herkunft der ZAHLUNG: Neueingänge auf übernommene Altrechnungen gehören in die PodoHero-Kasse.
+        and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil), notImportedPayment);
   const movCond =
     "closingIds" in filter
       ? filter.closingIds.length

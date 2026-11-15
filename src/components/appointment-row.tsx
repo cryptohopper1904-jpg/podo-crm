@@ -9,7 +9,7 @@ import { TherapistBadge } from "./therapist-badge";
 import { Badge } from "./ui";
 import { withReturn } from "@/lib/back-link";
 
-export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Patientenportal", extern: "Extern" };
+export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Patientenportal", extern: "Extern", import: "Übernommen" };
 export const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },
@@ -78,7 +78,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
   const showStatus = canEdit && open;
   // Doctolib/Kalender-Abo/extern: Absage in der Quelle (Server lehnt sie hier ab)
   const showCancel = showStatus && !feed && a.source !== "doctolib" && a.source !== "extern";
-  const showReceipt = billable && !!patient && a.status === "done";
+  // übernommene Termine (Quelle „import“) nie abrechnen (S1)
+  const showReceipt = billable && !!patient && a.status === "done" && a.source !== "import";
   const who = patient ? [patient.firstName, patient.lastName].filter(Boolean).join(" ") : (a.title ?? "");
   return (
     <div data-appt-row className={`@container border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>

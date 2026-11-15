@@ -15,14 +15,24 @@
  *  - Sammelrechnungs-Teile werden als Positionen in die SR übernommen (keine eigenen Rechnungen),
  *    daher bleibt `collective_invoice_id` beim Import leer.
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
+ *  - Zahlungszeilen nur mit Zahlungsdatum VOR dem Import-Tag (Berliner Datum): eine Altzahlung „heute“ oder in der
+ *    Zukunft fiele in einen offenen Kassentag – sie bleibt nur an der Rechnung (paid_cents/Status) vermerkt, mit Hinweis.
+ *
+ * Mit `skipExisting` (Übernahme-Assistent, wiederholbar): Patient:innen mit bereits vorhandener Legacy-ID
+ * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; Zeilen OHNE Legacy-ID werden über
+ * Vorname + Nachname + Geburtsdatum (normalisiert) mit dem Bestand abgeglichen und bei einem Treffer nicht angelegt; vorhandene Leistungen (gleiches Kürzel)
+ * bleiben unverändert; gleiche Fixkosten (Kategorie, Betrag, Intervall, Start) werden nicht doppelt angelegt.
  */
 import { EXCEL_IMPORT_SOURCE_PREFIX } from "@/lib/appointment-marks";
+import { normName } from "../uebernahme/tinana";
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
 import * as s from "@/db/schema";
 import { ensureSequenceAtLeast } from "@/lib/numbering";
 import type { ImportResult, ImportWarning, PatientImportDraft } from "./types";
+import { legacyPatientNumber } from "./parse";
+import { berlinDateIso } from "@/lib/format";
 
 export interface PersistSummary {
   patients: number;
@@ -60,7 +70,14 @@ function patientNotes(p: PatientImportDraft): string | null {
 
 const isInactive = (status: string | null) => !!status && /(inaktiv|archiv|verstorben|gelöscht)/i.test(status);
 
-export async function persistImport(tx: Tx, organizationId: string, result: ImportResult, userId: string): Promise<PersistSummary> {
+export async function persistImport(
+  tx: Tx,
+  organizationId: string,
+  input: ImportResult,
+  userId: string,
+  opts: { skipExisting?: boolean; /** Import-Tag (Berliner Datum, YYYY-MM-DD); Standard heute – nur für Tests */ today?: string } = {},
+): Promise<PersistSummary> {
+  const today = opts.today ?? berlinDateIso();
   const warnings: ImportWarning[] = [];
   const summary: PersistSummary = {
     patients: 0,
@@ -79,16 +96,54 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // ───── Patienten ─────
   // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Doctolib-Import)
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
+  let result = input;
+  if (opts.skipExisting) {
+    const known = await tx
+      .select({ id: s.patients.id, legacy: sql<string | null>`${s.patients.externalIds}->>'legacyExcel'` })
+      .from(s.patients)
+      .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.externalIds} ? 'legacyExcel'`));
+    const byLegacy = new Map(known.filter((k) => k.legacy !== null).map((k) => [String(k.legacy), k.id]));
+    for (const p of input.patients) {
+      const id = p.legacyId !== null ? byLegacy.get(String(p.legacyId)) : undefined;
+      if (id && p.legacyId !== null && summary.patientIdByLegacyId[p.legacyId] === undefined) summary.patientIdByLegacyId[p.legacyId] = id;
+    }
+    // ohne Legacy-ID: Name + Geburtsdatum (sonst würde jede Wiederholung doppelt anlegen)
+    const rows = await tx
+      .select({ firstName: s.patients.firstName, lastName: s.patients.lastName, birthDate: s.patients.birthDate, erasedAt: s.patients.contactErasedAt })
+      .from(s.patients)
+      .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.birthDate} is not null`));
+    const key = (p: { firstName: string | null; lastName: string; birthDate: string | null }) => `${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`;
+    const persons = new Set(rows.map(key));
+    /** Kontaktdaten auf Wunsch gelöscht (Art. 17) – nie erneut anlegen, auch nicht mit Legacy-ID (AppSec A-H2) */
+    const erased = new Set(rows.filter((r) => r.erasedAt).map(key));
+    const knownPerson = (p: PatientImportDraft) => !!p.birthDate && persons.has(key(p));
+    const erasedPerson = (p: PatientImportDraft) => !!p.birthDate && erased.has(key(p));
+    result = {
+      ...input,
+      patients: input.patients.filter((p) => {
+        if (erasedPerson(p)) {
+          warnings.push({ sheet: "Patienten", row: p.row, message: "Kontaktdaten dieser Person wurden auf Wunsch gelöscht (Art. 17 DSGVO) – gelöscht, nicht übernommen." });
+          return false;
+        }
+        return p.legacyId === null ? !knownPerson(p) : !byLegacy.has(String(p.legacyId));
+      }),
+    };
+  }
   // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
   await assertPatientCapacity(tx, organizationId, result.patients.length);
   const existingNumbers = new Set(
     (await tx.select({ number: s.patients.number }).from(s.patients).where(eq(s.patients.organizationId, organizationId))).map((r) => r.number),
   );
   const used = new Set(existingNumbers);
-  let next = Math.max(0, ...existingNumbers, ...result.patients.map((p) => p.legacyId ?? 0)) + 1;
+  // Schleife statt Math.max(...): bei sehr vielen Nummern sonst „Maximum call stack size exceeded“
+  let next = 1;
+  for (const n of existingNumbers) if (n >= next) next = n + 1;
+  // Legacy-ID als Nummer nur bis MAX_LEGACY_PATIENT_ID (größere IDs bleiben Bezug, bekommen aber eine neue Nummer)
+  for (const p of result.patients) if ((legacyPatientNumber(p.legacyId) ?? 0) >= next) next = legacyPatientNumber(p.legacyId)! + 1;
   const numbered = result.patients.map((p) => {
     let number: number;
-    if (p.legacyId !== null && p.legacyId > 0 && !used.has(p.legacyId)) number = p.legacyId;
+    const wanted = legacyPatientNumber(p.legacyId);
+    if (wanted !== null && !used.has(wanted)) number = wanted;
     else {
       number = next++;
       summary.renumberedPatients.push({ legacyId: p.legacyId, number });
@@ -142,19 +197,25 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // zugeordnet – die Positionen behalten Bezeichnung/Preis als Kopie, ohne Verweis.
   const serviceIdByCode = new Map<string, string>();
   for (const part of chunks(result.services)) {
+    const serviceValues = part.map((sv) => ({
+      organizationId,
+      code: sv.code,
+      name: sv.name,
+      priceCents: sv.priceCents,
+      vatRate: sv.vatRate,
+      durationMin: sv.durationMin,
+      requiresTherapeuticPurpose: sv.vatRate === 0,
+    }));
+    if (opts.skipExisting) {
+      // nichts überschreiben: nur fehlende Kürzel anlegen, vorhandene (aktive) zuordnen
+      const rows = await tx.insert(s.services).values(serviceValues).onConflictDoNothing({ target: [s.services.organizationId, s.services.code] }).returning({ id: s.services.id, code: s.services.code });
+      for (const r of rows) serviceIdByCode.set(r.code.toUpperCase(), r.id);
+      summary.services += rows.length;
+      continue;
+    }
     const rows = await tx
       .insert(s.services)
-      .values(
-        part.map((sv) => ({
-          organizationId,
-          code: sv.code,
-          name: sv.name,
-          priceCents: sv.priceCents,
-          vatRate: sv.vatRate,
-          durationMin: sv.durationMin,
-          requiresTherapeuticPurpose: sv.vatRate === 0,
-        })),
-      )
+      .values(serviceValues)
       .onConflictDoUpdate({
         target: [s.services.organizationId, s.services.code],
         set: {
@@ -221,7 +282,14 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   }
 
   // ───── Fixkosten ─────
-  for (const part of chunks(result.fixedCosts)) {
+  let fixedCosts = result.fixedCosts;
+  if (opts.skipExisting && fixedCosts.length) {
+    const have = new Set(
+      (await tx.select().from(s.fixedCosts).where(eq(s.fixedCosts.organizationId, organizationId))).map((f) => `${f.category}|${f.amountCents}|${f.interval}|${f.startDate}`),
+    );
+    fixedCosts = fixedCosts.filter((f) => !have.has(`${f.category}|${f.amountCents}|${f.interval}|${f.startDate}`));
+  }
+  for (const part of chunks(fixedCosts)) {
     if (!part.length) continue;
     await tx.insert(s.fixedCosts).values(
       part.map((f) => ({ organizationId, category: f.category, amountCents: f.amountCents, interval: f.interval, startDate: f.startDate, note: "Import aus Excel (Kalkulation)" })),
@@ -315,7 +383,18 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
         const invoiceId = idByNumber.get(inv.number)!;
         const paidCents = Math.min(inv.totalCents, inv.payments.reduce((a, p) => a + p.amountCents, 0));
         await tx.update(s.invoices).set({ number: inv.number, status: inv.status, paidCents }).where(and(eq(s.invoices.id, invoiceId), eq(s.invoices.organizationId, organizationId)));
-        const paidAt = inv.issuedAt ? new Date(`${inv.issuedAt}T12:00:00Z`) : new Date();
+        // ohne Rechnungsdatum keine Zahlungszeile mit „heute“ – der Betrag steht nur an der Rechnung (paid_cents/Status),
+        // sonst fiele eine Altzahlung in den heutigen Kassentag (Buchhaltung K2)
+        if (!inv.issuedAt) {
+          if (inv.payments.length) warnings.push({ sheet: "Rechnungen", row: inv.row, message: `Rechnung „${inv.number}“ ohne Rechnungsdatum – Zahlung nur an der Rechnung vermerkt, ohne Zahlungsbuchung.` });
+          continue;
+        }
+        // Zahlungsdatum (= Rechnungsdatum) heute oder später: keine Zahlungszeile (AppSec Runde 4) – Betrag/Status bleiben
+        if (inv.issuedAt >= today) {
+          if (inv.payments.length) warnings.push({ sheet: "Rechnungen", row: inv.row, message: FUTURE_PAYMENT_WARNING });
+          continue;
+        }
+        const paidAt = new Date(`${inv.issuedAt}T12:00:00Z`);
         for (const p of inv.payments) {
           const voucherId = p.method === "voucher" && p.voucherLegacyId != null ? voucherIdByLegacy.get(p.voucherLegacyId) ?? null : null;
           if (p.method === "voucher" && !voucherId) {
@@ -340,6 +419,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
 
   return summary;
 }
+
+export const FUTURE_PAYMENT_WARNING = "Zahlungsdatum heute oder in der Zukunft – Betrag nur an der Rechnung als bezahlt vermerkt, ohne Zahlungsbuchung und ohne Kasse. Bei Zahlung per Gutschein bitte den Gutscheinstand prüfen.";
 
 /** CRM-Nummernformat (siehe src/lib/numbering.ts): R2026-0001, Q…, SR…, GS…, G… */
 export const CRM_NUMBER_RE = /^(R|Q|SR|GS|G)(\d{4})-(\d+)$/;

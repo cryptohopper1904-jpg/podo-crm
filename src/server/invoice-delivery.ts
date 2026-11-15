@@ -18,6 +18,7 @@ import { loadLogos } from "./practice-logos";
 import { logSync } from "./integrations";
 import { mailMessagingPort } from "./mail";
 import { InvoiceError, loadInvoiceBundle, type InvoiceBundle } from "./invoices";
+import { IMPORTED_INVOICE_LOCKED } from "@/lib/invoice-labels";
 
 /** Welche Fassung ausgeliefert wurde (Audit, Anzeige) */
 export type InvoicePdfVariant = "archive" | "storno" | "reproduction";
@@ -185,9 +186,18 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 export async function sendInvoiceEmail(auth: AuthContext, invoiceId: string) {
   assertCan(auth, "invoices.write");
   const org = auth.organization.id;
+  // Herkunft VOR der PDF-Erzeugung prüfen (Code-Review Runde 3): für Altbestand kein PDF rendern/archivieren
+  if (z.uuid().safeParse(invoiceId).success) {
+    const [src] = await withOrg(org, (tx) =>
+      tx.select({ source: invoices.source }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId))),
+    );
+    if (src && src.source !== "crm") throw new InvoiceError(IMPORTED_INVOICE_LOCKED);
+  }
   const pdf = await invoicePdfForOrg(org, invoiceId, { userId: auth.user.id });
   if (!pdf) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
   const { bundle } = pdf;
+  // Altbestand aus dem Import wurde in der bisherigen Software ausgestellt und verschickt (Buchhaltung P1)
+  if (bundle.invoice.source !== "crm") throw new InvoiceError(IMPORTED_INVOICE_LOCKED);
   const to = (bundle.billingContact?.email || bundle.patient?.email || "").trim();
   if (!to) throw new InvoiceError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
   if (!EMAIL_RE.test(to)) throw new InvoiceError("Die hinterlegte E-Mail-Adresse ist ungültig.");

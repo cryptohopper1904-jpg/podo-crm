@@ -21,6 +21,9 @@ import {
   NOTE_NO_SHOW,
   vatExemptNote,
   PAYMENT_METHOD_LABEL,
+  IMPORTED_LEXOFFICE_NOTE,
+  IMPORTED_PAYMENT_NOTE,
+  IMPORTED_CANCEL_NOTE,
 } from "@/lib/invoice-labels";
 import {
   creditedReceiptsBlock,
@@ -105,6 +108,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
 
   const isDraft = inv.status === "draft" || !inv.number;
+  /** Altbestand aus dem Import (Excel-Rechnungsmanager): nicht versenden, nicht an lexoffice (Buchhaltung L1/P1) */
+  const imported = inv.source !== "crm";
   const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
   const runningHead = inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} – Entwurf`;
   const totals = computeTotals(lines);
@@ -225,12 +230,20 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <FileDown size={18} aria-hidden /> Original (Archiv)
             </a>
           ) : null}
-          {canWrite && inv.status !== "draft" ? (
+          {canWrite && inv.status !== "draft" && !imported ? (
             <EmailInvoiceButton invoiceId={inv.id} sentTo={inv.sentTo} sentAt={inv.sentAt ? dateTimeDe(inv.sentAt) : null} recipientEmail={recipientEmail} />
           ) : null}
-          {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? <LexofficeButton invoiceId={inv.id} /> : null}
-          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
+          {canWrite && inv.status !== "draft" && inv.kind !== "deposit" ? (
+            imported ? (
+              <p className="inline-flex h-11 items-center text-sm text-muted">{IMPORTED_LEXOFFICE_NOTE}</p>
+            ) : inv.externalSyncedAt ? (
+              <p className="inline-flex h-11 items-center text-sm text-muted">An lexoffice übertragen am {dateDe(berlinDateIso(inv.externalSyncedAt))}</p>
+            ) : (
+              <LexofficeButton invoiceId={inv.id} />
+            )
+          ) : null}
+          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} note={imported ? IMPORTED_PAYMENT_NOTE : undefined} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} note={imported ? IMPORTED_CANCEL_NOTE : undefined} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">
@@ -290,7 +303,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             bereits ausgestellte Rechnungen werden derzeit als Umsatz erfasst; vor Echtbetrieb mit Steuerberatung abstimmen.
           </p>
         ) : null}
-        {dunnings.length || (isDunnable(inv) && open > 0 && inv.dueAt && inv.dueAt < berlinDateIso()) ? (
+        {dunnings.length || (isDunnable(inv) && !imported && open > 0 && inv.dueAt && inv.dueAt < berlinDateIso()) ? (
           <Card className="w-full">
             <h2 className="mb-1 font-display text-lg font-semibold">Mahnungen</h2>
             {dunnings.length ? (
@@ -318,7 +331,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             ) : null}
           </Card>
         ) : null}
-        {canWrite && isOpen ? <SumupPanel invoiceId={inv.id} paymentLinkUrl={inv.paymentLinkUrl} mock={sumupMock} channels={linkChannels} /> : null}
+        {canWrite && isOpen && !imported ? <SumupPanel invoiceId={inv.id} paymentLinkUrl={inv.paymentLinkUrl} mock={sumupMock} channels={linkChannels} /> : null}
       </div>
 
       <article className="invoice-sheet mx-auto max-w-[210mm] rounded-[var(--radius-card)] border border-border bg-surface p-6 text-[14px] leading-relaxed sm:p-10">

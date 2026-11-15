@@ -67,7 +67,7 @@ export function ReceiptLinks({ invoiceId, receipts, recipientEmail }: { invoiceI
 }
 
 /** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
-export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; openCents: number }) {
+export function PaymentPanel({ invoiceId, openCents, note }: { invoiceId: string; openCents: number; /** Hinweis über dem Formular (z. B. übernommene Altrechnung) */ note?: string }) {
   const refund = openCents < 0;
   const abs = Math.abs(openCents);
   const [open, setOpen] = useState(false);
@@ -96,6 +96,7 @@ export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; open
         <h2 className="font-display text-lg font-semibold">{refund ? "Erstattung erfassen" : "Zahlung erfassen"}</h2>
         <input type="hidden" name="invoiceId" value={invoiceId} />
         <input type="hidden" name="payments" value={paymentsToJson(rows, refund ? -1 : 1)} />
+        {note ? <p className="text-sm text-muted">{note}</p> : null}
         <FormError message={state?.error} />
         <PaymentsEditor rows={rows} onChange={setRows} openCents={abs} refund={refund} />
         <div className="flex gap-3">
@@ -109,7 +110,7 @@ export function PaymentPanel({ invoiceId, openCents }: { invoiceId: string; open
 
 export type CancelProductLine = { id: string; description: string; quantity: string; inTreatment: boolean };
 
-export function CancelPanel({ invoiceId, number, productLines = [] }: { invoiceId: string; number: string; /** Produktpositionen des Belegs (Rückbuchung ins Lager) */ productLines?: CancelProductLine[] }) {
+export function CancelPanel({ invoiceId, number, productLines = [], note }: { invoiceId: string; number: string; /** Produktpositionen des Belegs (Rückbuchung ins Lager) */ productLines?: CancelProductLine[]; /** Hinweis (z. B. übernommene Altrechnung) */ note?: string }) {
   const [open, setOpen] = useState(false);
   const [state, action, pending] = useActionState(cancelInvoiceAction, undefined);
   if (!open) {
@@ -133,6 +134,7 @@ export function CancelPanel({ invoiceId, number, productLines = [] }: { invoiceI
           Es wird eine Stornorechnung mit negativen Beträgen erzeugt. Die Originalrechnung bleibt erhalten und wird als storniert markiert.
           Bereits gezahlte Beträge bleiben als Erstattung offen.
         </p>
+        {note ? <p className="text-sm font-medium">{note}</p> : null}
         <input type="hidden" name="invoiceId" value={invoiceId} />
         <FormError message={state?.error} />
         <Field label="Grund (optional, keine Diagnosen)">

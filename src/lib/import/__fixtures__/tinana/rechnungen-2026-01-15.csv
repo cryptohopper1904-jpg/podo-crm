@@ -1,0 +1,4 @@
+﻿Rechnungsnr.;Datum;Empfänger;Aussteller;Status;Art;Betrag (EUR)
+RE-2026-00003;12.01.2026;Beispiel-BKK;Praxis Beispiel GmbH;Offen;GKV;10,80
+RE-2026-00002;12.01.2026;Max Mustermann;Praxis Beispiel GmbH;Offen;Selbstzahler;35,00
+RE-2026-00001;12.01.2026;Erika Musterfrau;Praxis Beispiel GmbH;Offen;Zuzahlung;43,30

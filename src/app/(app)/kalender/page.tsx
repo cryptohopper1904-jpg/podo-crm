@@ -194,7 +194,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const absentNames = (iso: string) =>
     board && options.absences ? board.team.filter((t) => board.absences.some((a) => a.userId === t.id && a.startsOn <= iso && iso <= a.endsOn)).map((t) => t.name) : [];
   // „Quittung“ direkt in der Zeile: erledigte, noch nicht abgerechnete Termine (nur mit Recht auf Belege)
-  const doneIds = auth.can("invoices.write") ? rows.filter((r) => r.a.status === "done" && r.patient).map((r) => r.a.id) : [];
+  // übernommene Termine (Quelle „import“) wurden in der bisherigen Software abgerechnet – keine Quittung (S1)
+  const doneIds = auth.can("invoices.write") ? rows.filter((r) => r.a.status === "done" && r.patient && r.a.source !== "import").map((r) => r.a.id) : [];
   const billed = doneIds.length ? await billedAppointmentIds(auth, doneIds) : new Set<string>();
   const canWrite = auth.can("appointments.write");
   const listHref = (p: { ansicht?: "tag" | "woche"; datum?: string }) => `/kalender?datum=${p.datum ?? day}${(p.ansicht ?? view) === "woche" ? "&ansicht=woche" : ""}${keep}`;
@@ -279,7 +280,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
                       row={r}
                       canDoc={auth.can("medical.write")}
                       canEdit={canWrite}
-                      billable={doneIds.includes(r.a.id) && !billed.has(r.a.id)}
+                      billable={r.a.source !== "import" && doneIds.includes(r.a.id) && !billed.has(r.a.id)}
                       overlap={overlaps.has(r.a.id)}
                       from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
                       color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}

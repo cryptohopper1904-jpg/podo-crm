@@ -4,6 +4,7 @@
  */
 import { depositLineText } from "./deposit-lines";
 import { dateDe } from "./format";
+import { IMPORTED_RECEIPT_MARK } from "./invoice-labels";
 
 /** Noch nicht angerechnete Anzahlungen (Quittungen) – werden auf Rechnung/Sammelrechnung derselben Person angerechnet. */
 export type OpenDeposit = {
@@ -37,6 +38,8 @@ export type OpenReceipt = {
   issuedAt: string | null;
   totalCents: number;
   vatCents: number;
+  /** Herkunft der Quittung („crm“ = in PodoHero ausgestellt; sonst übernommener Altbestand aus dem Import) */
+  source?: string | null;
   lines: {
     description: string;
     quantity: number;
@@ -97,6 +100,11 @@ export const newLine = (patch: Partial<Line> = {}): Line => ({
  * Text einer übernommenen Quittungs-Position: Leistungsdatum voran (sofern der Text noch kein Datum nennt) und die
  * Quittungsnummer dahinter – „03.02.2026: Nagelspange – abgerechnet mit Quittung Q2026-0004“.
  */
+/** Kennzeichnung in der Auswahl der Sammelrechnung: übernommene Quittung (Import) → „Altbestand“, sonst nichts (BC) */
+export function receiptMark(r: Pick<OpenReceipt, "source">): string | null {
+  return r.source && r.source !== "crm" ? IMPORTED_RECEIPT_MARK : null;
+}
+
 export function receiptLineText(l: { description: string; serviceDate: string | null }, receiptNumber: string | null): string {
   const text = /\d{2}\.\d{2}\.\d{4}/.test(l.description) ? l.description : `${dateDe(l.serviceDate)}: ${l.description}`;
   const suffix = receiptNumber ? ` – abgerechnet mit Quittung ${receiptNumber}` : "";

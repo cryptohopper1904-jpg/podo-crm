@@ -11,16 +11,19 @@ import {
   normalizeNewlines,
   readDunningSettings,
   salutationLine,
+  IMPORTED_NOT_DUNNABLE,
+  type DunnableInvoice,
 } from "./dunning";
 import { renderDunningPdf, dunningPdfFilename, type DunningPdfData } from "./dunning-pdf";
 
 const S = DEFAULT_DUNNING_SETTINGS;
-const inv = (p: Partial<{ kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number }> = {}) => ({
+const inv = (p: Partial<DunnableInvoice> = {}): DunnableInvoice => ({
   kind: "invoice",
   status: "issued",
   dueAt: "2026-11-01",
   totalCents: 6500,
   paidCents: 0,
+  source: "crm",
   ...p,
 });
 
@@ -51,6 +54,9 @@ describe("Mahnwesen: Stufenberechnung", () => {
     for (const kind of ["receipt", "deposit", "credit_note"]) expect(dunningState(inv({ kind }), [], S, "2026-12-01").state).toBe("not_dunnable");
     for (const status of ["paid", "cancelled", "draft"]) expect(dunningState(inv({ status }), [], S, "2026-12-01").state).toBe("not_dunnable");
     expect(dunningState(inv({ dueAt: null }), [], S, "2026-12-01").state).toBe("not_dunnable");
+    // Buchhaltung P1: übernommene Altrechnung (Import) wird nicht gemahnt
+    expect(dunningState(inv({ source: "excel-import" }), [], S, "2026-12-01")).toEqual({ state: "not_dunnable", reason: IMPORTED_NOT_DUNNABLE });
+    expect(dunningState(inv({ source: "crm" }), [], S, "2026-12-01").state).not.toBe("not_dunnable");
     // Teilzahlung bis auf 0 € offen → nichts zu mahnen
     expect(dunningState(inv({ status: "partially_paid", paidCents: 6500 }), [], S, "2026-12-01").state).toBe("not_dunnable");
   });
