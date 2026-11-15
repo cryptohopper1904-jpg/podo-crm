@@ -411,8 +411,15 @@
     {
       "idx": 58,
       "version": "7",
-      "when": 1794774149698,
-      "tag": "0058_uebernahme_import",
+      "when": 1794774798313,
+      "tag": "0058_abrechnung_sperre_indizes",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1794775770717,
+      "tag": "0059_uebernahme_import",
       "breakpoints": true
     }
   ]

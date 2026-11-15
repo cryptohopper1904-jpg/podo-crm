@@ -130,6 +130,72 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await ap.moveAppointment(auth, null)).toMatchObject({ ok: false });
   });
 
+  it("Abrechnungsregel wie die Doppelabrechnungs-Prüfung: über die Doku abgerechnet bzw. Anzahlung sperrt; Gutschrift, Storno, Entwurf nicht", async () => {
+    const org = await f.org();
+    const a = await member(org);
+    const auth = authOf(org, a);
+    const p = await f.patient(org);
+    /** Beleg (Art, Endstand) mit einer Position zum Termin bzw. – `via: "doku"` – zum Doku-Eintrag des Termins */
+    const bill = (apptId: string, kind: string, status: "issued" | "draft" | "cancelled", via: "termin" | "doku") =>
+      f.asOrg(org, async (c) => {
+        let ref = apptId;
+        if (via === "doku") {
+          ref = (
+            await c.query(
+              "insert into treatment_records (organization_id, patient_id, author_id, treated_at, appointment_id, prev_hash, hash) values ($1,$2,$3,now(),$4,$5,$5) returning id",
+              [org, p, a, apptId, `h-${apptId}`],
+            )
+          ).rows[0].id;
+        }
+        const inv = (await c.query("insert into invoices (organization_id, status, kind) values ($1,'draft',$2) returning id", [org, kind])).rows[0].id;
+        await c.query(
+          `insert into invoice_lines (organization_id, invoice_id, ${via === "doku" ? "treatment_record_id" : "appointment_id"}, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,$3,'Behandlung',4500,4500,0,1)`,
+          [org, inv, ref],
+        );
+        if (status === "draft") return;
+        await c.query("update invoices set status='issued', number=$2, issued_at=current_date, due_at=current_date + 14, total_cents=4500, net_cents=4500 where id=$1", [inv, `T-${Math.random().toString(36).slice(2, 9)}`]);
+        if (status === "cancelled") await c.query("update invoices set status='cancelled' where id=$1", [inv]);
+      });
+    const at = (h: number) => new Date(`2030-04-06T${String(h).padStart(2, "0")}:00:00Z`);
+    const ueberDoku = await appt(org, a, at(7));
+    await bill(ueberDoku, "invoice", "issued", "doku");
+    const quittungDoku = await appt(org, a, at(8));
+    await bill(quittungDoku, "receipt", "issued", "doku");
+    const anzahlung = await appt(org, a, at(9));
+    await bill(anzahlung, "deposit", "issued", "termin");
+    const anzahlungDoku = await appt(org, a, at(10));
+    await bill(anzahlungDoku, "deposit", "issued", "doku");
+    const gutschrift = await appt(org, a, at(11));
+    await bill(gutschrift, "credit_note", "issued", "doku");
+    const storno = await appt(org, a, at(12));
+    await bill(storno, "invoice", "cancelled", "doku");
+    const entwurf = await appt(org, a, at(13));
+    await bill(entwurf, "invoice", "draft", "doku");
+    const frei = await appt(org, a, at(14));
+
+    const all = [ueberDoku, quittungDoku, anzahlung, anzahlungDoku, gutschrift, storno, entwurf, frei];
+    const locked = new Set([ueberDoku, quittungDoku, anzahlung, anzahlungDoku]);
+    expect(await ap.billedAppointmentIds(auth, all)).toEqual(locked);
+    // Server-seitig dieselbe Regel: gesperrte lassen sich nicht verschieben, alle anderen schon (kein Umweg am Kalender vorbei)
+    for (const id of all) {
+      const to = new Date((await row(org, id)).starts_at.getTime() + 24 * 3_600_000);
+      const res = await ap.moveAppointment(auth, await move(id, to, 30, a));
+      if (locked.has(id)) {
+        expect(res).toMatchObject({ ok: false, error: expect.stringMatching(/abgerechnet/) });
+        expect((await row(org, id)).starts_at).not.toEqual(to);
+      } else {
+        expect(res).toEqual({ ok: true });
+      }
+    }
+    // Formular (rescheduleAppointment direkt) und Detailansicht: ebenso gesperrt
+    expect(await ap.rescheduleAppointment(auth, ueberDoku, { startsAt: at(20), durationMin: 30, therapistId: a, allowConflict: true })).toMatchObject({ ok: false, error: expect.stringMatching(/abgerechnet/) });
+    expect((await ap.getAppointment(auth, ueberDoku))?.lock?.reason).toBe("billed");
+    expect((await ap.getAppointment(auth, gutschrift))?.lock).toBeNull();
+    // fremde Praxis sieht die Sperre nicht (Filter auf die Praxis)
+    const other = await f.org();
+    expect(await ap.billedAppointmentIds(authOf(other, await member(other)), all)).toEqual(new Set());
+  });
+
   it("fremde Praxis: Termin nicht gefunden, nichts geändert; ohne appointments.write: verboten", async () => {
     const orgA = await f.org();
     const orgB = await f.org();

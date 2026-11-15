@@ -1,6 +1,11 @@
-/** Doctolib-Patientenentwurf → Spaltenwerte für `patients` (gemeinsam für den Doctolib-Import und den Übernahme-Assistenten). */
+import { DOCTOLIB_CSV_SOURCE } from "@/lib/appointment-marks";
 import type { PatientDraft } from "../types";
 
+/**
+ * Doctolib-CSV-Import (Einstellungen → Import): Werte für die neue Patientenzeile (ohne Praxis und Nummer). Mit
+ * Doctolib-Patienten-ID steht sie in external_ids.doctolib (Abgleich beim nächsten Import), ohne ID wenigstens der
+ * Marker { import: "doctolib" } – übernommene Personen sind keine Neupatient:innen (Kalender „N“).
+ */
 export function doctolibPatientValues(p: PatientDraft) {
   const extra: Record<string, unknown> = {};
   if (p.maidenName) extra.maidenName = p.maidenName;
@@ -21,11 +26,12 @@ export function doctolibPatientValues(p: PatientDraft) {
     phoneMobile: p.phoneMobile ?? null,
     phoneLandline: p.phoneLandline ?? null,
     email: p.email ?? null,
-    insuranceType: p.insuranceType ?? ("self" as const),
+    insuranceType: p.insuranceType ?? "self",
     gpName: p.gpName ?? null,
     notes: p.notes ?? null,
     extra,
-    externalIds: p.externalId ? { doctolib: p.externalId } : ({} as Record<string, string>),
-    source: "doctolib-csv",
+    // ohne Doctolib-Patienten-ID wenigstens der Import-Marker: übernommene Personen sind keine Neupatient:innen (Kalender „N“)
+    externalIds: p.externalId ? { doctolib: p.externalId } : { import: "doctolib" },
+    source: DOCTOLIB_CSV_SOURCE,
   };
 }

@@ -8,9 +8,87 @@ import { TZ } from "./format";
 export type CalendarMode = "simple" | "full";
 export type FullView = "tag" | "woche" | "monat";
 
-/** 15-Minuten-Raster, Standard-Zeitachse 07:00–20:00 */
+/** 15-Minuten-Raster (Standard), Standard-Zeitachse 07:00–20:00 */
 export const SLOT_MIN = 15;
 export const DEFAULT_RANGE = { startMin: 7 * 60, endMin: 20 * 60 } as const;
+
+/**
+ * Wählbare Rasterweiten der Zeitachse (Einstellungen → Kalender, je Person in users.prefs.calendar.slotMin).
+ * Bestimmt Zeilen und Beschriftung der Zeitachse, das Klick-Raster für neue Termine und das Ziehen-Raster.
+ */
+export const SLOT_STEPS = [60, 30, 15, 10, 5] as const;
+export type SlotStep = (typeof SLOT_STEPS)[number];
+export const isSlotStep = (v: unknown): v is SlotStep => SLOT_STEPS.includes(v as SlotStep);
+export const SLOT_STEP_LABELS: Record<SlotStep, string> = {
+  60: "60 Minuten",
+  30: "30 Minuten",
+  15: "15 Minuten (Standard)",
+  10: "10 Minuten",
+  5: "5 Minuten",
+};
+
+/** Mindesthöhe einer Rasterzeile (Platz für die Uhrzeit-Beschriftung) und einer Stunde (Lesbarkeit bei grobem Raster) */
+export const ROW_PX = 16;
+export const MIN_HOUR_PX = 64;
+
+/**
+ * Maßstab der Zeitachse: jede Rasterzeile ist mindestens 16 px hoch, eine Stunde mindestens 64 px. Bei feinem Raster
+ * wächst also die Stunde (10 min → 96 px, 5 min → 192 px), bei grobem die Zeile (30 min → 32 px, 60 min → 64 px).
+ * 15 min ergibt wie bisher 16 px je Viertelstunde.
+ */
+export function gridScale(step: SlotStep = SLOT_MIN) {
+  const hourPx = Math.max(MIN_HOUR_PX, (ROW_PX * 60) / step);
+  const pxPerMin = hourPx / 60;
+  return { step, hourPx, rowPx: step * pxPerMin, pxPerMin };
+}
+
+/** Mindesthöhe einer freien Klickfläche („neuer Termin“), damit sie antippbar bleibt */
+export const MIN_FREE_PX = 10;
+
+/** Kürzestes freies Reststück (Minuten, auf volle 5) als Klickfläche: mindestens 10 px hoch und mindestens 5 Minuten */
+export function minFreeMin(scale: { pxPerMin: number }): number {
+  return Math.max(5, Math.ceil(MIN_FREE_PX / scale.pxPerMin / 5) * 5);
+}
+
+/** Beginn jeder Rasterzeile im Bereich [startMin, endMin) – erste Zeile auf dem Raster (Bereich beginnt i. d. R. zur vollen Stunde) */
+export function gridSlots(range: { startMin: number; endMin: number }, step: SlotStep = SLOT_MIN): number[] {
+  const out: number[] = [];
+  for (let m = Math.ceil(range.startMin / step) * step; m < range.endMin; m += step) out.push(m);
+  return out;
+}
+
+/** Überlappende/angrenzende Intervalle zusammenfassen (sortiert) */
+export function mergeIntervals(list: readonly { startMin: number; endMin: number }[]): { startMin: number; endMin: number }[] {
+  const sorted = list.filter((i) => i.endMin > i.startMin).map((i) => ({ ...i })).sort((a, b) => a.startMin - b.startMin);
+  const out: { startMin: number; endMin: number }[] = [];
+  for (const i of sorted) {
+    const last = out.at(-1);
+    if (last && i.startMin <= last.endMin) last.endMin = Math.max(last.endMin, i.endMin);
+    else out.push({ startMin: i.startMin, endMin: i.endMin });
+  }
+  return out;
+}
+
+/**
+ * Freie Teile einer Rasterzeile [startMin, endMin) ohne belegte Zeiten (Klickflächen „neuer Termin“). Teile unter
+ * `minLen` Minuten fallen weg. Bei grobem Raster (z. B. 60 min) bleibt so der freie Rest einer Stunde anklickbar –
+ * der neue Termin beginnt dann am Anfang des freien Teils (auf volle 5 Minuten aufgerundet, z. B. 10:15, wenn
+ * 10:00–10:15 belegt ist).
+ */
+export function freeParts(startMin: number, endMin: number, busy: readonly { startMin: number; endMin: number }[], minLen = 5): { startMin: number; endMin: number }[] {
+  const out: { startMin: number; endMin: number }[] = [];
+  let cur = startMin;
+  for (const b of mergeIntervals(busy)) {
+    if (b.endMin <= cur) continue;
+    if (b.startMin >= endMin) break;
+    if (b.startMin > cur) out.push({ startMin: cur, endMin: b.startMin });
+    cur = Math.max(cur, b.endMin);
+    if (cur >= endMin) break;
+  }
+  if (cur < endMin) out.push({ startMin: cur, endMin });
+  // Beginn auf volle 5 Minuten (Termine ab 10:13 würden sonst „um 10:13 Uhr“ angeboten)
+  return out.map((p) => ({ startMin: Math.ceil(p.startMin / 5) * 5, endMin: p.endMin })).filter((p) => p.endMin - p.startMin >= minLen);
+}
 
 export const toMin = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 export const toHhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

@@ -1,5 +1,5 @@
 {
-  "id": "fad829ff-709b-46c4-8357-6cce95581cbb",
+  "id": "e5bdae24-98bb-41a3-8b19-0f1b9902ab7f",
   "prevId": "f0243f0f-846b-484a-bb82-a025a9ab05e5",
   "version": "7",
   "dialect": "postgresql",
@@ -3682,6 +3682,27 @@
           "columns": [
             {
               "expression": "invoice_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invoice_lines_treatment_record": {
+          "name": "invoice_lines_treatment_record",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "treatment_record_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -9639,6 +9660,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "treatment_records_appointment": {
+          "name": "treatment_records_appointment",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "appointment_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -10987,8 +11029,7 @@
         "email",
         "voice_agent",
         "portal",
-        "extern",
-        "import"
+        "extern"
       ]
     },
     "public.appointment_status": {

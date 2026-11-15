@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { Ban } from "lucide-react";
 import { blockTime, describeBlock, type BlockOccurrence } from "@/lib/calendar-blocks";
-import { layoutLanes, SLOT_MIN, toHhmm } from "@/lib/calendar-grid";
+import { gridScale, layoutLanes, toHhmm } from "@/lib/calendar-grid";
 
 /**
  * Darstellung der Kalender-Sperrzeiten (Pause, Schulung, früher Feierabend, Wartung, Reinigung …).
@@ -13,9 +13,6 @@ import { layoutLanes, SLOT_MIN, toHhmm } from "@/lib/calendar-grid";
 type Team = readonly { id: string; name: string }[];
 type Board = { team: Team; blocks: readonly BlockOccurrence[] };
 
-/** 16 px je 15 Minuten – wie in full-calendar.tsx */
-const PX_PER_MIN = 16 / SLOT_MIN;
-const px = (min: number) => `${Math.round(min * PX_PER_MIN)}px`;
 
 export const BLOCK_HATCH: CSSProperties = {
   backgroundImage:
@@ -50,6 +47,7 @@ export function BlockOverlays({
   dateIso,
   range,
   showPerson,
+  pxPerMin = gridScale().pxPerMin,
 }: {
   board: Board;
   target: string | "all" | "none";
@@ -57,7 +55,10 @@ export function BlockOverlays({
   range: { startMin: number; endMin: number };
   /** Vorname der Person anzeigen (Woche mit mehreren Behandler:innen) */
   showPerson: boolean;
+  /** Maßstab der Zeitachse (gridScale des gewählten Rasters, wie in full-calendar.tsx) */
+  pxPerMin?: number;
 }) {
+  const px = (min: number) => `${Math.round(min * pxPerMin)}px`;
   const items = columnBlocks(board, target, dateIso)
     .map((o) => ({ o, startMin: Math.max(o.startMin, range.startMin), endMin: Math.min(o.endMin, range.endMin) }))
     .filter((x) => x.endMin > x.startMin);
@@ -68,7 +69,7 @@ export function BlockOverlays({
   return (
     <>
       {[...whole, ...perPerson].map(({ o, startMin, endMin, lane, lanes }) => {
-        const h = (endMin - startMin) * PX_PER_MIN;
+        const h = (endMin - startMin) * pxPerMin;
         const person = o.userId ? board.team.find((t) => t.id === o.userId)?.name.split(" ")[0] : null;
         return (
           <Link

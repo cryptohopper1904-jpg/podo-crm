@@ -294,7 +294,13 @@ export type UserPrefs = {
       weekNumbers?: boolean;
       startHour?: number;
       endHour?: number;
+      /** Hausbesuche anzeigen (fehlt = ja) */
+      homeVisits?: boolean;
+      /** ausgeblendete Behandler:innen (User-IDs; nur Anzeige) */
+      hiddenTherapists?: string[];
     };
+    /** Raster der Zeitachse in Minuten (60/30/15/10/5; fehlt = 15) – Einstellungen → Kalender */
+    slotMin?: 60 | 30 | 15 | 10 | 5;
   };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";
@@ -849,7 +855,12 @@ export const treatmentRecords = pgTable(
     hash: text("hash").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [index("treatment_records_patient").on(t.organizationId, t.patientId, t.treatedAt), uniqueIndex("treatment_records_org_id").on(t.organizationId, t.id)],
+  (t) => [
+    index("treatment_records_patient").on(t.organizationId, t.patientId, t.treatedAt),
+    uniqueIndex("treatment_records_org_id").on(t.organizationId, t.id),
+    // Abrechnungsstand je Termin (Doku-Eintrag zum Termin, src/server/appointment-invoiced.ts)
+    index("treatment_records_appointment").on(t.organizationId, t.appointmentId),
+  ],
 );
 
 export const recordAddenda = pgTable("record_addenda", {
@@ -1016,7 +1027,12 @@ export const invoiceLines = pgTable(
     treatmentPosition: integer("treatment_position"),
     position: integer("position").notNull().default(0),
   },
-  (t) => [index("invoice_lines_appointment").on(t.organizationId, t.appointmentId), index("invoice_lines_invoice").on(t.invoiceId)],
+  (t) => [
+    index("invoice_lines_appointment").on(t.organizationId, t.appointmentId),
+    index("invoice_lines_invoice").on(t.invoiceId),
+    // Doppelabrechnungs-Prüfung und Abrechnungsstand über den Doku-Eintrag (assertNotInvoiced, appointment-invoiced.ts)
+    index("invoice_lines_treatment_record").on(t.organizationId, t.treatmentRecordId),
+  ],
 );
 
 // ───────────────────────── Produkte & Warenwirtschaft ─────────────────────────

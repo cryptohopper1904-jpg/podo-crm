@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { Badge } from "@/components/ui";
-import { absentOn, addDaysIso, berlinParts, dayInterval, gridRange, initials, isBusy, layoutLanes, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView } from "@/lib/calendar-grid";
-import { isoWeek, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
+import { absentOn, addDaysIso, berlinParts, dayInterval, freeParts, gridRange, gridScale, gridSlots, minFreeMin, initials, layoutLanes, mergeIntervals, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView, type SlotStep } from "@/lib/calendar-grid";
+import { isoWeek, passesDisplayFilter, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
+import { MARK_LABELS, type AppointmentMark } from "@/lib/appointment-marks";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import { dotStyle, colorVar, type TherapistColor } from "@/lib/therapist-colors";
@@ -17,9 +18,11 @@ type Row = Awaited<ReturnType<typeof listAppointments>>[number];
 type Board = Awaited<ReturnType<typeof calendarBoard>>;
 type Interval = { startMin: number; endMin: number };
 
-/** 16 px je 15 Minuten (64 px je Stunde) */
-const PX_PER_MIN = 16 / SLOT_MIN;
-const px = (min: number) => `${Math.round(min * PX_PER_MIN)}px`;
+/** Maßstab der Zeitachse je Raster (gridScale): 15 min = 16 px je Viertelstunde, 64 px je Stunde */
+type Scale = ReturnType<typeof gridScale>;
+const pxOf = (scale: Scale) => (min: number) => `${Math.round(min * scale.pxPerMin)}px`;
+/** Monatsansicht: Ziehen ohne Zeitachse – Maßstab egal, Standard */
+const MONTH_PX_PER_MIN = gridScale(SLOT_MIN).pxPerMin;
 
 const WD_SHORT = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const WD_LONG = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
@@ -27,12 +30,13 @@ const dm = (iso: string) => `${Number(iso.slice(8, 10))}.${Number(iso.slice(5, 7
 const fmtDe = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
 const wdIndex = (iso: string) => (new Date(`${iso}T12:00:00Z`).getUTCDay() + 6) % 7;
 
-const GRID_BG: CSSProperties = {
-  // Stundenlinien kräftiger, Viertelstunden zart – beides aus den Farb-Tokens (hell/dunkel)
-  backgroundImage:
-    "repeating-linear-gradient(to bottom, var(--border-strong) 0 1px, transparent 1px 64px), repeating-linear-gradient(to bottom, color-mix(in srgb, var(--border) 85%, transparent) 0 1px, transparent 1px 16px)",
+/** Stundenlinien kräftiger, Rasterzeilen zart – beides aus den Farb-Tokens (hell/dunkel) */
+const gridBg = (scale: Scale): CSSProperties => ({
+  backgroundImage: `repeating-linear-gradient(to bottom, var(--border-strong) 0 1px, transparent 1px ${scale.hourPx}px)${
+    scale.rowPx < scale.hourPx ? `, repeating-linear-gradient(to bottom, color-mix(in srgb, var(--border) 85%, transparent) 0 1px, transparent 1px ${scale.rowPx}px)` : ""
+  }`,
   backgroundBlendMode: "normal",
-};
+});
 const HATCH: CSSProperties = {
   backgroundImage: "repeating-linear-gradient(135deg, color-mix(in srgb, var(--muted) 22%, transparent) 0 4px, transparent 4px 9px)",
 };
@@ -61,6 +65,12 @@ export type FullCalendarProps = {
   canMove: boolean;
   /** abgerechnete Termine (kein Griff zum Verschieben) */
   billed: Set<string>;
+  /** Raster der Zeitachse (Einstellungen → Kalender) */
+  slot: SlotStep;
+  /** Symbole im Termin-Block: N (Neupatient:in), R (Rechnung offen/geschrieben) */
+  marks: Map<string, AppointmentMark>;
+  /** Hinweis „x Termine durch den Anzeige-Filter ausgeblendet … Alle einblenden“ (Seite, gleiche Zählung wie „Einfach“) */
+  filterHint: ReactNode;
 };
 
 /**
@@ -118,8 +128,10 @@ function newHref(dateIso: string, min: number | null, therapistId: string | null
 }
 
 export function FullCalendar(props: FullCalendarProps) {
-  const live = props.options.cancelled ? props.rows : props.rows.filter((r) => r.a.status !== "cancelled");
-  const cancelled = props.rows.length - live.length;
+  const notCancelled = props.options.cancelled ? props.rows : props.rows.filter((r) => r.a.status !== "cancelled");
+  const cancelled = props.rows.length - notCancelled.length;
+  // Anzeige-Filter (Behandler:innen, Hausbesuche) – nur Darstellung; die Belegung („nicht verfügbar“) zählt weiter alle Termine
+  const live = notCancelled.filter((r) => passesDisplayFilter(props.options, r.a));
   // Wochenende „nur Mo–Fr“: ausgeblendete Sa/So-Termine nicht stumm verschlucken
   const hiddenWeekend =
     props.view !== "tag" && props.options.weekend === "keine" ? live.filter((r) => wdIndex(berlinParts(r.a.startsAt).dateIso) >= 5).length : 0;
@@ -138,11 +150,19 @@ export function FullCalendar(props: FullCalendarProps) {
           <Link href={props.showWeekendHref} className="font-semibold underline">Wochenende einblenden</Link>
         </p>
       ) : null}
-      {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} />}
+      {props.filterHint}
+      {props.view === "monat" ? <MonthView {...props} rows={live} /> : <TimeGridView {...props} rows={live} busyRows={props.rows} />}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin oder Sperrzeit</span> : null}
         {props.canMove && props.view !== "monat" ? <span>Termin ziehen = verschieben (Touch: lange drücken), unteren Rand ziehen = Dauer ändern</span> : null}
         {props.canMove && props.view === "monat" ? <span className="max-sm:hidden">Termin auf einen anderen Tag ziehen = verschieben (Uhrzeit bleibt; Touch: lange drücken)</span> : null}
+        {props.view !== "monat" && props.marks.size ? (
+          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1"><MarkBadge kind="newPatient" /> {MARK_LABELS.newPatient}</span>
+            <span className="inline-flex items-center gap-1"><MarkBadge kind="open" /> {MARK_LABELS.open}</span>
+            <span className="inline-flex items-center gap-1"><MarkBadge kind="written" /> {MARK_LABELS.written}</span>
+          </span>
+        ) : null}
         {props.board.team.length > 1 ? (
           <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Farben der Behandler:innen">
             {props.board.team.map((t) => (
@@ -167,11 +187,15 @@ export function FullCalendar(props: FullCalendarProps) {
 
 // ───────────── Tag und Woche: Zeitachse mit Spalten ─────────────
 
-function TimeGridView({ view, day, focusDay, today, now, rows, board, state, overlaps, canWrite, calHref, options, canMove, billed }: FullCalendarProps) {
+function TimeGridView({ view, day, focusDay, today, now, rows, busyRows, board, state, overlaps, canWrite, calHref, options, canMove, billed, slot, marks }: FullCalendarProps & { busyRows: Row[] }) {
+  const scale = gridScale(slot);
+  const px = pxOf(scale);
   const team = board.team;
   const teamIds = new Set(team.map((t) => t.id));
+  // Tagesansicht: Spalten nur für angezeigte Behandler:innen (Anzeige-Filter); deren Termine fehlen in `rows` ohnehin
+  const shownTeam = team.filter((t) => !options.hiddenTherapists.includes(t.id));
   const busyFor = (therapistId: string, dateIso: string): Interval[] =>
-    rows
+    busyRows
       .filter((r) => r.a.status !== "cancelled" && (r.a.therapistId === therapistId || r.a.therapistId === null))
       .map((r) => dayInterval(r.a.startsAt, r.a.endsAt, dateIso))
       .filter((x): x is Interval => !!x);
@@ -191,7 +215,7 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
 
   if (view === "tag") {
     const dayRows = onDay(day);
-    columns = team.map((t) => {
+    columns = shownTeam.map((t) => {
       const av = board.availabilityOf(t.id, day);
       return {
         key: t.id,
@@ -290,8 +314,10 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
     { startMin: options.startHour * 60, endMin: options.endHour * 60 },
   );
   const height = range.endMin - range.startMin;
-  const slots = Array.from({ length: height / SLOT_MIN }, (_, i) => range.startMin + i * SLOT_MIN);
-  const hours = slots.filter((m) => m % 60 === 0);
+  // Rasterzeilen laut Einstellung; jede Zeile trägt ihre Uhrzeit (volle Stunden hervorgehoben)
+  const slots = gridSlots(range, slot);
+  // freie Reststücke einer Rasterzeile nur, wenn sie mindestens 10 px hoch (antippbar) sind
+  const minFree = minFreeMin(scale);
   const colMin = view === "tag" ? "8rem" : "5.5rem";
   // Handy: Woche als 3-Tage-Fenster, Tag mit höchstens 2 Behandler:innen nebeneinander – weitere per Wischen
   // (seitlich einrastend, ganze Spalten); ab sm wie bisher (Mindestbreite je Spalte, sonst Scrollbalken).
@@ -314,7 +340,8 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
       <DndSurface
         view={view === "tag" ? "tag" : "woche"}
         enabled={canMove}
-        pxPerMin={PX_PER_MIN}
+        pxPerMin={scale.pxPerMin}
+        step={slot}
         className="@container max-h-[calc(100dvh-13rem)] min-h-[26rem] scroll-pl-[3.25rem] overflow-auto rounded-[var(--radius-card)] border border-border bg-surface max-sm:snap-x max-sm:snap-mandatory data-[dnd-active]:snap-none"
         ariaLabel={view === "tag" ? "Tagesplan" : "Wochenplan"}
       >
@@ -331,8 +358,13 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
           {/* Zeitachse */}
           <div className="sticky left-0 z-10 border-r border-border bg-surface" style={{ height: px(height) }} aria-hidden>
             <div className="relative h-full">
-              {hours.map((m) => (
-                <span key={m} className="absolute right-1.5 -translate-y-1/2 text-[11px] tabular-nums text-muted first:translate-y-0.5" style={{ top: px(m - range.startMin) }}>
+              {slots.map((m) => (
+                <span
+                  key={m}
+                  data-zeitachse=""
+                  className={`absolute right-1.5 -translate-y-1/2 text-[11px] leading-none tabular-nums first:translate-y-0.5 ${m % 60 === 0 ? "font-semibold text-text" : "text-muted"}`}
+                  style={{ top: px(m - range.startMin) }}
+                >
                   {toHhmm(m)}
                 </span>
               ))}
@@ -355,12 +387,13 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
               <div
                 key={c.key}
                 className={`relative snap-start border-l border-border ${c.today ? "bg-primary-soft/25" : ""}`}
-                style={{ height: px(height), ...GRID_BG }}
+                style={{ height: px(height), ...gridBg(scale) }}
                 data-dnd-col=""
                 data-date={c.dateIso}
                 data-therapist={c.therapistId ?? ""}
                 data-range-start={range.startMin}
                 data-range-end={range.endMin}
+                data-raster={slot}
                 {...(view === "tag" && !c.therapistId ? { "data-drop": "0" } : {})}
               >
                 {/* außerhalb der Arbeitszeit */}
@@ -374,32 +407,42 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
                     <p className="sticky top-14 mx-1 mt-2 rounded-lg border border-border bg-surface px-2 py-1 text-center text-xs font-semibold text-muted">Abwesend – nicht verfügbar</p>
                   </div>
                 ) : (
-                  slots.map((m) => {
-                    const top = px(m - range.startMin);
-                    if (c.busy && isBusy(c.busy, m, m + SLOT_MIN)) {
-                      return <div key={m} className="absolute inset-x-0 z-[1]" style={{ top, height: px(SLOT_MIN), ...HATCH }} title={`${toHhmm(m)} – belegt, nicht verfügbar`} />;
-                    }
-                    if (!canWrite) return null;
-                    // touch-compact: Viertelstunden sind 16 px hoch – mit der 44-px-Regel für Touch überlappten sie,
-                    // ein Tipp auf 11:00 traf dann 11:15 (der spätere Slot liegt oben)
-                    return (
-                      <Link
-                        key={m}
-                        href={newHref(c.dateIso, m, c.withTherapist)}
-                        tabIndex={-1}
-                        aria-label={`Neuer Termin am ${dm(c.dateIso)} um ${toHhmm(m)} Uhr`}
-                        title={c.note ? `${toHhmm(m)} – ${c.note}; neuer Termin trotzdem möglich` : `${toHhmm(m)} – neuer Termin`}
-                        className="touch-compact absolute inset-x-0 z-[1] hover:bg-primary-soft/70"
-                        style={{ top, height: px(SLOT_MIN) }}
+                  <>
+                    {/* belegt (genaue Zeiten, unabhängig vom Raster) */}
+                    {busyIn(c.busy, range).map((b) => (
+                      <div
+                        key={`b${b.startMin}`}
+                        className="absolute inset-x-0 z-[1]"
+                        style={{ top: px(b.startMin - range.startMin), height: px(b.endMin - b.startMin), ...HATCH }}
+                        title={`${toHhmm(b.startMin)}–${toHhmm(b.endMin)} – belegt, nicht verfügbar`}
                       />
-                    );
-                  })
+                    ))}
+                    {/* frei → neuer Termin: je Rasterzeile die freien Teile (bei grobem Raster bleibt der freie Rest anklickbar) */}
+                    {canWrite
+                      ? slots.flatMap((m) =>
+                          freeParts(m, Math.min(m + slot, range.endMin), c.busy ?? [], minFree).map((f) => (
+                            // touch-compact: Zeilen sind ab 16 px hoch – mit der 44-px-Regel für Touch überlappten sie,
+                            // ein Tipp auf 11:00 traf dann 11:15 (der spätere Slot liegt oben)
+                            <Link
+                              key={f.startMin}
+                              href={newHref(c.dateIso, f.startMin, c.withTherapist)}
+                              prefetch={false}
+                              tabIndex={-1}
+                              aria-label={`Neuer Termin am ${dm(c.dateIso)} um ${toHhmm(f.startMin)} Uhr`}
+                              title={c.note ? `${toHhmm(f.startMin)} – ${c.note}; neuer Termin trotzdem möglich` : `${toHhmm(f.startMin)} – neuer Termin`}
+                              className="touch-compact absolute inset-x-0 z-[1] hover:bg-primary-soft/70"
+                              style={{ top: px(f.startMin - range.startMin), height: px(f.endMin - f.startMin) }}
+                            />
+                          )),
+                        )
+                      : null}
+                  </>
                 )}
                 {/* Sperrzeiten (Pause, Schulung …) */}
-                {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} /> : null}
+                {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} pxPerMin={scale.pxPerMin} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
-                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} />
+                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} pxPerMin={scale.pxPerMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} mark={marks.get(b.row.a.id)} />
                 ))}
                 {nowMin !== null ? (
                   <div className="pointer-events-none absolute inset-x-0 z-[3] h-0.5 bg-accent" style={{ top: px(nowMin - range.startMin) }} aria-hidden>
@@ -415,23 +458,61 @@ function TimeGridView({ view, day, focusDay, today, now, rows, board, state, ove
   );
 }
 
+/** Belegte Zeiten einer Spalte, zusammengefasst und auf die Zeitachse beschnitten */
+function busyIn(busy: Interval[] | null, range: Interval): Interval[] {
+  if (!busy) return [];
+  return mergeIntervals(busy)
+    .map((b) => ({ startMin: Math.max(b.startMin, range.startMin), endMin: Math.min(b.endMin, range.endMin) }))
+    .filter((b) => b.endMin > b.startMin);
+}
+
+/**
+ * Symbol im Termin-Block: „N“ Neupatient:in (Akzentfarbe), „R“ Rechnung offen (grau) / geschrieben (grün).
+ * Farben aus den Tokens (hell/dunkel, Kontrast ≥ 4,5:1); die Bedeutung steht zusätzlich in title/aria-label.
+ */
+export function MarkBadge({ kind }: { kind: "newPatient" | "open" | "written" }) {
+  const cls =
+    kind === "newPatient"
+      ? "bg-accent-soft text-accent-soft-text ring-accent-soft-text/50"
+      : kind === "written"
+        ? "bg-primary text-on-primary ring-primary"
+        : "bg-surface text-muted ring-border-strong";
+  const label = MARK_LABELS[kind];
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      data-mark={kind}
+      className={`inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] leading-none font-bold no-underline ring-1 ${cls}`}
+    >
+      {kind === "newPatient" ? "N" : "R"}
+    </span>
+  );
+}
+
 function Block({
   b,
   rangeStart,
+  pxPerMin,
   overlap,
   showTherapist,
   color,
   move,
+  mark,
 }: {
   b: Interval & { row: Row; lane: number; lanes: number };
   rangeStart: number;
+  pxPerMin: number;
   overlap: boolean;
   showTherapist: boolean;
   color: TherapistColor | null;
   move: ReturnType<typeof moveAttrs>;
+  mark?: AppointmentMark;
 }) {
   const { a, therapist } = b.row;
-  const h = (b.endMin - b.startMin) * PX_PER_MIN;
+  const px = (min: number) => `${Math.round(min * pxPerMin)}px`;
+  const h = (b.endMin - b.startMin) * pxPerMin;
   const name = personName(b.row);
   const sub = b.row.patient ? a.title : null;
   const time = `${toHhmm(b.startMin)}–${toHhmm(b.endMin)}`;
@@ -450,6 +531,9 @@ function Block({
             : "bg-primary-soft text-primary-soft-text";
   const tint = color && a.status !== "cancelled" && a.status !== "no_show" ? { background: colorVar(color, "soft"), color: colorVar(color, "text") } : {};
   const done = a.status === "done" ? "✓ " : "";
+  const blockH = Math.max(14, Math.round(h) - 1);
+  // Symbole N/R: nur ab 20 px Blockhöhe (sonst nur im Tooltip); rechts Platz reservieren, damit kein Text darunter liegt
+  const badges = mark && blockH >= 20 ? ([mark.newPatient ? "newPatient" : null, mark.invoice].filter(Boolean) as ("newPatient" | "open" | "written")[]) : [];
   const title = [
     `${time} Uhr`,
     name,
@@ -458,6 +542,8 @@ function Block({
     therapist,
     a.status === "done" ? "erledigt" : a.status === "no_show" ? "nicht erschienen" : a.status === "cancelled" ? "abgesagt" : a.status === "confirmed" ? "bestätigt" : null,
     b.row.feed ? `aus Kalender-Abo „${b.row.feed.label}“` : null,
+    mark?.newPatient ? MARK_LABELS.newPatient : null,
+    mark?.invoice ? MARK_LABELS[mark.invoice] : null,
     move.movable ? "Ziehen zum Verschieben (Touch: lange drücken)" : move.lock ? `Nicht verschiebbar: ${move.lock}` : null,
   ]
     .filter(Boolean)
@@ -468,10 +554,10 @@ function Block({
       title={title}
       draggable={false}
       {...move.attrs}
-      className={`group absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary px-1.5 py-0.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
+      className={`group absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary py-0.5 pl-1.5 ${badges.length === 2 ? "pr-[2.375rem]" : badges.length ? "pr-[1.375rem]" : "pr-1.5"} text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
       style={{
         top: px(b.startMin - rangeStart),
-        height: `${Math.max(14, Math.round(h) - 1)}px`,
+        height: `${blockH}px`,
         left: `calc(${(b.lane / b.lanes) * 100}% + 2px)`,
         width: `calc(${100 / b.lanes}% - 4px)`,
         borderLeftColor: color ? colorVar(color) : undefined,
@@ -488,6 +574,13 @@ function Block({
           {showTherapist && therapist && h >= 62 ? <span className="truncate">{therapist}</span> : null}
         </>
       )}
+      {badges.length ? (
+        <span className="pointer-events-none absolute right-1 bottom-0.5 flex gap-0.5" data-testid="termin-symbole">
+          {badges.map((k) => (
+            <MarkBadge key={k} kind={k} />
+          ))}
+        </span>
+      ) : null}
       {move.movable && h >= 22 ? (
         <span data-resize="" className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" title="Ziehen = Dauer ändern" aria-hidden>
           <span className="mx-auto mt-[3px] block h-0.5 w-6 rounded-full bg-current opacity-0 group-hover:opacity-40" />
@@ -539,7 +632,7 @@ function MonthGrid({ day, today, rows, board, state, canWrite, calHref, options,
   const kw = options.weekNumbers;
   const template = `${kw ? "2.25rem " : ""}repeat(${shownCols.length}, minmax(0, 1fr))`;
   return (
-    <DndSurface view="monat" enabled={canMove} pxPerMin={PX_PER_MIN} className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" ariaLabel="Monatsübersicht">
+    <DndSurface view="monat" enabled={canMove} pxPerMin={MONTH_PX_PER_MIN} className="overflow-x-auto rounded-[var(--radius-card)] border border-border bg-surface" ariaLabel="Monatsübersicht">
       <div className="grid min-w-[32rem]" style={{ gridTemplateColumns: template }}>
         {kw ? <div className="border-b border-border px-1 py-2 text-center text-xs font-semibold text-muted" title="Kalenderwoche">KW</div> : null}
         {shownCols.map((i) => (
@@ -566,7 +659,7 @@ function MonthGrid({ day, today, rows, board, state, canWrite, calHref, options,
               >
                 {school ? <span className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-info-soft-text/50" title={`Schulferien: ${school}`} aria-hidden /> : null}
                 {canWrite ? (
-                  <Link href={newHref(iso, null, null)} tabIndex={-1} aria-label={`Neuer Termin am ${dm(iso)}`} title="Neuer Termin an diesem Tag" className="absolute inset-0 hover:bg-primary-soft/50" />
+                  <Link href={newHref(iso, null, null)} prefetch={false} tabIndex={-1} aria-label={`Neuer Termin am ${dm(iso)}`} title="Neuer Termin an diesem Tag" className="absolute inset-0 hover:bg-primary-soft/50" />
                 ) : null}
                 <div className="pointer-events-none relative flex flex-col gap-0.5">
                   <div className="flex items-center justify-between gap-1">

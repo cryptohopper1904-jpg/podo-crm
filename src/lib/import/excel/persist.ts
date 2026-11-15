@@ -20,6 +20,7 @@
  * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; vorhandene Leistungen (gleiches Kürzel)
  * bleiben unverändert; gleiche Fixkosten (Kategorie, Betrag, Intervall, Start) werden nicht doppelt angelegt.
  */
+import { EXCEL_IMPORT_SOURCE_PREFIX } from "@/lib/appointment-marks";
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
@@ -51,7 +52,8 @@ function chunks<T>(arr: T[], size = CHUNK): T[][] {
   return out;
 }
 
-const SOURCE = "excel-import:rechnungsmanager-0.9.2";
+/** beginnt mit EXCEL_IMPORT_SOURCE_PREFIX – daran erkennt die Kalender-Regel „N“ übernommene Personen */
+const SOURCE = `${EXCEL_IMPORT_SOURCE_PREFIX}:rechnungsmanager-0.9.2`;
 
 function patientNotes(p: PatientImportDraft): string | null {
   const parts: string[] = [];
@@ -140,7 +142,8 @@ export async function persistImport(
           notes: patientNotes(p),
           route: p.route,
           homeVisit: !!p.route,
-          externalIds: p.legacyId !== null ? { legacyExcel: p.legacyId } : {},
+          // Fremd-ID bzw. ohne Alt-ID wenigstens die Quelle: übernommene Personen sind keine Neupatient:innen (Kalender „N“)
+          externalIds: p.legacyId !== null ? { legacyExcel: p.legacyId } : { import: "excel" },
           extra: { legacyExcel: p.legacy },
           source: SOURCE,
           archivedAt: isInactive(p.legacy.status) ? new Date() : null,

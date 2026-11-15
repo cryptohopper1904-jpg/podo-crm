@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, MIN_DURATION_MIN, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
 import { berlinParts } from "./calendar-grid";
 import { berlinToUtc } from "./format";
 
@@ -13,7 +13,7 @@ describe("Raster und Position (Ziehen in Tag/Woche)", () => {
   });
 
   it("Zeigerposition → Startminute (mit Griffversatz, begrenzt auf die Zeitachse)", () => {
-    const base = { pxPerMin: PX, rangeStart: 7 * 60, rangeEnd: 20 * 60, durationMin: 40 };
+    const base = { pxPerMin: PX, rangeStart: 7 * 60, rangeEnd: 20 * 60, durationMin: 40, originMin: 8 * 60 };
     // 3 h unter 07:00, Termin 10 min unterhalb des Anfangs gegriffen → 09:50 → Raster 09:45
     expect(dropStartMin({ ...base, offsetPx: 180 * PX, grabMin: 10 })).toBe(9 * 60 + 45);
     expect(dropStartMin({ ...base, offsetPx: 183 * PX, grabMin: 10 })).toBe(10 * 60);
@@ -22,12 +22,12 @@ describe("Raster und Position (Ziehen in Tag/Woche)", () => {
     expect(dropStartMin({ ...base, offsetPx: 99_999, grabMin: 0 })).toBe(20 * 60 - 40);
   });
 
-  it("Dauer ändern am unteren Rand: mindestens 15 min, höchstens 8 h, nicht über Mitternacht", () => {
-    const base = { pxPerMin: PX, rangeStart: 7 * 60, startMin: 10 * 60 };
+  it("Dauer ändern am unteren Rand: mindestens 5 min, höchstens 8 h, nicht über Mitternacht", () => {
+    const base = { pxPerMin: PX, rangeStart: 7 * 60, startMin: 10 * 60, durationMin: 30 };
     expect(resizeDuration({ ...base, offsetPx: (3 * 60 + 50) * PX })).toBe(45); // 10:50 → 10:45
-    expect(resizeDuration({ ...base, offsetPx: 0 })).toBe(15);
+    expect(resizeDuration({ ...base, offsetPx: 0 })).toBe(5);
     expect(resizeDuration({ ...base, offsetPx: 99_999 })).toBe(480);
-    expect(resizeDuration({ pxPerMin: PX, rangeStart: 0, startMin: 23 * 60, offsetPx: 99_999 })).toBe(60);
+    expect(resizeDuration({ pxPerMin: PX, rangeStart: 0, startMin: 23 * 60, durationMin: 30, offsetPx: 99_999 })).toBe(60);
   });
 
   it("Spaltenwechsel: Spalte unter dem Zeiger", () => {
@@ -81,15 +81,23 @@ describe("Zeitpunkte (Berliner Ortszeit, Sommer-/Winterzeit)", () => {
   });
 
   it("Dauer ziehen am Winterzeit-Tag: echte Dauer höchstens 8 h", () => {
-    const base = { pxPerMin: PX, rangeStart: 0, startMin: 0, offsetPx: 99_999 };
+    const base = { pxPerMin: PX, rangeStart: 0, startMin: 0, durationMin: 60, offsetPx: 99_999 };
     // 00:00–08:00 Uhr sind am 25.10.2026 neun echte Stunden → auf 00:00–07:00 (8 h) begrenzt
     expect(resizeOnDay({ ...base, dateIso: "2026-10-25" })).toEqual({ localMin: 420, realMin: 480 });
     expect(resizeOnDay({ ...base, dateIso: "2026-03-29" })).toEqual({ localMin: 480, realMin: 420 });
     expect(resizeOnDay({ ...base, dateIso: "2026-06-10", offsetPx: 45 * PX })).toEqual({ localMin: 45, realMin: 45 });
   });
 
+  it("Dauer ziehen am Sommerzeit-Tag: echte Dauer mindestens 5 Minuten", () => {
+    // 01:58 Uhr (krumme Minuten), Ende auf 03:00 Uhr gezogen = nur 2 echte Minuten → um einen Schritt verlängert
+    const startsAt = new Date("2026-03-29T00:58:00Z");
+    const r = resizeOnDay({ dateIso: "2026-03-29", pxPerMin: PX, rangeStart: 0, startMin: 118, durationMin: 62, offsetPx: 180 * PX, startsAt });
+    expect(r).toEqual({ localMin: 77, realMin: 17 });
+    expect(r.realMin).toBeGreaterThanOrEqual(MIN_DURATION_MIN);
+  });
+
   it("Beginn in der doppelten Stunde (25.10., 02:30 zweimal): echte Dauer ab dem tatsächlichen Beginn", () => {
-    const base = { dateIso: "2026-10-25", pxPerMin: PX, rangeStart: 0, startMin: 150 };
+    const base = { dateIso: "2026-10-25", pxPerMin: PX, rangeStart: 0, startMin: 150, durationMin: 30 };
     const first = new Date("2026-10-25T00:30:00Z"); // 02:30 Sommerzeit
     const second = new Date("2026-10-25T01:30:00Z"); // 02:30 Winterzeit
     // bis 03:30 Uhr: vom ersten 02:30 zwei echte Stunden, vom zweiten eine

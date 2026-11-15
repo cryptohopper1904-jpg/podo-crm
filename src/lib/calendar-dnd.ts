@@ -24,21 +24,41 @@ export const durationOf = (startsAt: Date, endsAt: Date) => Math.max(1, Math.rou
 
 /**
  * Neue Startminute beim Ziehen in der Zeitachse: Zeigerposition in der Spalte (px ab Spaltenoberkante) minus
- * Griffversatz, aufs Raster gerundet und so begrenzt, dass der Termin in der sichtbaren Zeitachse bleibt.
+ * Griffversatz. Auf das Raster gerundet wird die VERSCHIEBUNG gegenüber der Ausgangszeit (`originMin`, Berliner
+ * Uhrzeit des bisherigen Beginns), nicht die absolute Uhrzeit: ein 10:30-Termin bleibt bei 60-Minuten-Raster auf
+ * „:30“ und behält beim reinen Spaltenwechsel seine Uhrzeit. Begrenzt, so dass der Termin in der sichtbaren
+ * Zeitachse bleibt. (Neue Termine per Klick beginnen dagegen auf der absoluten Rasterzeit, siehe freeParts.)
  */
-export function dropStartMin(p: { offsetPx: number; grabMin: number; pxPerMin: number; rangeStart: number; rangeEnd: number; durationMin: number; step?: number }): number {
+export function dropStartMin(p: {
+  offsetPx: number;
+  grabMin: number;
+  pxPerMin: number;
+  rangeStart: number;
+  rangeEnd: number;
+  durationMin: number;
+  /** bisheriger Beginn (Minuten ab Mitternacht, Berliner Ortszeit) */
+  originMin: number;
+  step?: number;
+}): number {
   const raw = p.rangeStart + p.offsetPx / p.pxPerMin - p.grabMin;
-  const snapped = snapMin(raw, p.step);
+  const moved = p.originMin + snapMin(raw - p.originMin, p.step);
   const lo = Math.max(0, p.rangeStart);
   const hi = Math.min(DAY_MIN, p.rangeEnd) - Math.min(p.durationMin, DAY_MIN);
-  return clamp(snapped, lo, hi);
+  return clamp(moved, lo, hi);
 }
 
-/** Neue Dauer beim Ziehen am unteren Rand (mindestens ein Rasterschritt, höchstens 8 Stunden, nicht über Mitternacht). */
-export function resizeDuration(p: { offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; step?: number }): number {
-  const step = p.step ?? SLOT_MIN;
-  const end = snapMin(p.rangeStart + p.offsetPx / p.pxPerMin, step);
-  return clamp(end - p.startMin, step, Math.min(MAX_DURATION_MIN, DAY_MIN - p.startMin));
+/** Schritt, in dem sich die Dauer beim Ziehen am unteren Rand ändert: Raster, höchstens 15 Minuten */
+export const resizeStep = (step = SLOT_MIN) => Math.min(step, SLOT_MIN);
+
+/**
+ * Neue Dauer beim Ziehen am unteren Rand: die bisherige Dauer (`durationMin`, Uhrzeit-Minuten) plus die Änderung des
+ * Endes, gerundet auf resizeStep (Raster, höchstens 15 min) – ein Termin mit „krummer“ Dauer behält seinen Rest.
+ * Mindestens 5 Minuten (unabhängig vom Raster), höchstens 8 Stunden, nicht über Mitternacht.
+ */
+export function resizeDuration(p: { offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; durationMin: number; step?: number }): number {
+  const rawEnd = p.rangeStart + p.offsetPx / p.pxPerMin;
+  const dur = p.durationMin + snapMin(rawEnd - (p.startMin + p.durationMin), resizeStep(p.step));
+  return clamp(dur, MIN_DURATION_MIN, Math.min(MAX_DURATION_MIN, DAY_MIN - p.startMin));
 }
 
 /**
@@ -70,18 +90,33 @@ function localSlotsAt(dateIso: string, min: number): Date[] {
  * Dauer ändern am unteren Rand an einem bestimmten Tag: Uhrzeit-Dauer fürs Geisterbild und echte Dauer zum Speichern.
  * Am Tag der Winterzeit-Umstellung ist die echte Dauer eine Stunde länger – auch sie bleibt ≤ 8 h (sonst nicht speicherbar).
  */
-export function resizeOnDay(p: { dateIso: string; offsetPx: number; pxPerMin: number; rangeStart: number; startMin: number; startsAt?: Date; step?: number }): {
+export function resizeOnDay(p: {
+  dateIso: string;
+  offsetPx: number;
+  pxPerMin: number;
+  rangeStart: number;
+  startMin: number;
+  durationMin: number;
+  startsAt?: Date;
+  step?: number;
+}): {
   localMin: number;
   realMin: number;
 } {
-  const step = p.step ?? SLOT_MIN;
+  const dStep = resizeStep(p.step);
   let localMin = resizeDuration(p);
   let realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
-  while (realMin > MAX_DURATION_MIN && localMin > step) {
-    localMin -= step;
+  while (realMin > MAX_DURATION_MIN && localMin - dStep >= MIN_DURATION_MIN) {
+    localMin -= dStep;
     realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
   }
-  return { localMin, realMin };
+  // Am Tag der Sommerzeit-Umstellung kann das Ende hinter der Lücke liegen (z. B. 01:58–03:00 Uhr = 2 echte Minuten):
+  // dann verlängern, bis die echte Dauer mindestens 5 Minuten beträgt (sonst nicht speicherbar)
+  while (realMin < MIN_DURATION_MIN && p.startMin + localMin + dStep <= DAY_MIN) {
+    localMin += dStep;
+    realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
+  }
+  return { localMin, realMin: Math.max(realMin, MIN_DURATION_MIN) };
 }
 
 /** Spalte unter dem Zeiger (Spaltenwechsel Tag ↔ Tag bzw. Behandler:in ↔ Behandler:in); -1 = keine */

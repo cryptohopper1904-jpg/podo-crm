@@ -5,10 +5,14 @@ import {
   isoWeek,
   keepOptionParams,
   parseOptionParams,
+  displayFilterSummary,
+  passesDisplayFilter,
   resolveCalendarOptions,
+  sanitizeIdList,
   sanitizeStoredOptions,
   toStoredOptions,
   visibleWeekDays,
+  withTeamFilter,
 } from "./calendar-options";
 
 describe("Kalender-Anzeigeoptionen", () => {
@@ -24,6 +28,8 @@ describe("Kalender-Anzeigeoptionen", () => {
       weekNumbers: true,
       startHour: 7,
       endHour: 20,
+      homeVisits: true,
+      hiddenTherapists: [],
     });
     expect(defaultCalendarOptions("simple").cancelled).toBe(true);
     expect(resolveCalendarOptions("full", {})).toEqual(defaultCalendarOptions("full"));
@@ -99,4 +105,54 @@ describe("Kalender-Anzeigeoptionen", () => {
     expect(isoWeek("2027-01-04")).toBe(1);
     expect(isoWeek("2024-12-30")).toBe(1);
   });
+
+  it("Anzeige-Filter: Hausbesuche (URL „hb“) und ausgeblendete Behandler:innen – gespeichert nur als Abweichung", () => {
+    const a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const b = "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB";
+    expect(parseOptionParams({ hb: "0" })).toEqual({ homeVisits: false });
+    expect(keepOptionParams({ hb: "0" })).toBe("&hb=0");
+    expect(sanitizeIdList([a, b, a, "x", 3, "'; drop"])).toEqual([a, b.toLowerCase()]);
+    expect(sanitizeIdList("x")).toEqual([]);
+    expect(sanitizeIdList(Array.from({ length: 80 }, (_, i) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(i).padStart(12, "0")}`))).toHaveLength(50);
+    expect(sanitizeStoredOptions({ homeVisits: false, hiddenTherapists: [a, "kaputt"] })).toEqual({ homeVisits: false, hiddenTherapists: [a] });
+    const o = resolveCalendarOptions("full", { homeVisits: false, hiddenTherapists: [a] });
+    expect(o.homeVisits).toBe(false);
+    expect(o.hiddenTherapists).toEqual([a]);
+    expect(toStoredOptions("full", o)).toEqual({ homeVisits: false, hiddenTherapists: [a] });
+    expect(toStoredOptions("full", defaultCalendarOptions("full"))).toEqual({});
+    // Filter: Hausbesuche aus, Behandler:in a aus; Termine ohne Zuordnung bleiben sichtbar
+    expect(passesDisplayFilter(o, { therapistId: a, homeVisit: false })).toBe(false);
+    expect(passesDisplayFilter(o, { therapistId: b.toLowerCase(), homeVisit: true })).toBe(false);
+    expect(passesDisplayFilter(o, { therapistId: b.toLowerCase(), homeVisit: false })).toBe(true);
+    expect(passesDisplayFilter(o, { therapistId: null, homeVisit: false })).toBe(true);
+    expect(passesDisplayFilter(defaultCalendarOptions("full"), { therapistId: a, homeVisit: true })).toBe(true);
+  });
+
+describe("Anzeige-Filter: Team und Hinweis", () => {
+  const a = "11111111-1111-4111-8111-111111111111";
+  const b = "22222222-2222-4222-8222-222222222222";
+  const ehemalig = "33333333-3333-4333-8333-333333333333";
+  it("berücksichtigt nur Behandler:innen des aktuellen Teams", () => {
+    const o = { ...defaultCalendarOptions("full"), hiddenTherapists: [a, ehemalig] };
+    expect(withTeamFilter(o, [a.toUpperCase(), b]).hiddenTherapists).toEqual([a]);
+    expect(withTeamFilter(o, []).hiddenTherapists).toEqual([]);
+    // gemerkte IDs in Großbuchstaben (ältere Einstellungen) werden ebenfalls erkannt und klein geführt
+    expect(withTeamFilter({ ...o, hiddenTherapists: [a.toUpperCase(), a] }, [b, a]).hiddenTherapists).toEqual([a]);
+    // übrige Optionen bleiben
+    expect(withTeamFilter(o, [a])).toMatchObject({ homeVisits: true, holidays: o.holidays });
+  });
+  it("zählt ausgeblendete Termine ohne abgesagte, mit den aktiven Filtern als Text", () => {
+    const o = { ...defaultCalendarOptions("simple"), hiddenTherapists: [a], homeVisits: false };
+    const rows = [
+      { status: "planned", therapistId: a, homeVisit: false },
+      { status: "cancelled", therapistId: a, homeVisit: false },
+      { status: "done", therapistId: b, homeVisit: true },
+      { status: "cancelled", therapistId: b, homeVisit: true },
+      { status: "planned", therapistId: b, homeVisit: false },
+      { status: "planned", therapistId: null, homeVisit: false },
+    ];
+    expect(displayFilterSummary(o, rows)).toEqual({ hidden: 2, reasons: "Behandler:innen, Hausbesuche" });
+    expect(displayFilterSummary(defaultCalendarOptions("full"), rows)).toEqual({ hidden: 0, reasons: "" });
+  });
+});
 });
