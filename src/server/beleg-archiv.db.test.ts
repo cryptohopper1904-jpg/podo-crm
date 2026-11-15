@@ -10,7 +10,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PDFPage } from "pdf-lib";
 import { Pool } from "pg";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, RESTORE_SEARCH_PATH_SQL, TEST_DB } from "./__tests__/db-fixtures";
 
 const ownerUrlFrom = (url: string) => url.replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
 const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0049_beleg_archiv.sql"), "utf8");
@@ -853,6 +853,8 @@ afterEach(() => vi.restoreAllMocks());
     expect((await bundle(org, ids.orig)).credited).toEqual([]);
     await owner.query(MIGRATION);
     await owner.query(MIGRATION);
+    // CREATE OR REPLACE aus 0049 hat den festen search_path zurückgesetzt – Stand der späteren Migrationen wiederherstellen
+    await owner.query(RESTORE_SEARCH_PATH_SQL);
     const links = await f.asOrg(org, async (c) => (await c.query("select credited_invoice_id, amount_cents from invoice_credits where invoice_id = $1 order by amount_cents", [ids.orig])).rows);
     expect(links).toEqual([
       { credited_invoice_id: ids.dep, amount_cents: 1500 },

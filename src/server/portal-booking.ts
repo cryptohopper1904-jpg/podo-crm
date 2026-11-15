@@ -24,6 +24,7 @@ import {
   type OnlineBookingSettings,
 } from "@/lib/portal-booking";
 import { createRateLimiter } from "@/lib/rate-limit";
+import { isCalendarMember } from "./appointments";
 import { bookableStaff } from "./staff";
 import { blocksFor } from "@/lib/calendar-blocks";
 import { loadBlockOccurrences } from "./calendar-blocks";
@@ -406,20 +407,30 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
       .from(appointmentServices)
       .where(and(eq(appointmentServices.organizationId, org), eq(appointmentServices.appointmentId, a.id)));
     await tx.update(appointments).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(appointments.organizationId, org), eq(appointments.id, a.id)));
+    // Behandler:in nur übernehmen, wenn sie noch aktiv im Kalender der Praxis ist (wie Warteliste/Kalender-Abo). Sonst
+    // scheiterte das Verschieben an Altdaten (Person außerhalb der Praxis, Trigger podo_user_in_org) mit einem
+    // unverständlichen Fehler; die Praxis ordnet den Termin dann neu zu.
+    const therapistId = a.therapistId && (await isCalendarMember(tx, org, a.therapistId)) ? a.therapistId : null;
     const [n] = await tx
       .insert(appointments)
       .values({
         organizationId: org,
         locationId: a.locationId,
         patientId: link.patientId,
-        therapistId: a.therapistId,
+        therapistId,
         startsAt: start,
         endsAt: end,
         status: "planned",
         source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: a.title,
-        notes: [`Über das Patientenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`, a.notes].filter(Boolean).join("\n"),
+        notes: [
+          `Über das Patientenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`,
+          a.therapistId && !therapistId ? "Behandler:in nicht mehr verfügbar – bitte neu zuordnen." : null,
+          a.notes,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         homeVisit: a.homeVisit,
         prescriptionId: a.prescriptionId,
       })
