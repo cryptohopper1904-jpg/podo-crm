@@ -26,7 +26,7 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
 
   it("Vorschau schlägt Person über KVNR vor, Import legt offenen Entwurf mit Herkunft und Zusammenfassung an", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { lastName: "Musterfrau", firstName: "Erika" });
     await f.asOrg(org, (c) => c.query("update patients set insurance_number = 'A123456780' where id = $1", [p]));
     const auth = authFor(org, user);
@@ -64,7 +64,7 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
 
   it("parallele Importe: Unique-Index greift, genau eine Verordnung", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org);
     const auth = authFor(org, user);
     const results = await Promise.all([1, 2, 3].map(() => evo.importEverordnung(auth, bundle("hmv-ui-minimal.json"), { patientId: p })));
@@ -74,13 +74,14 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
     expect(n).toBe(1);
     // gleiche Kennung in anderer Praxis ist erlaubt
     const org2 = await f.org();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org2, user]);
     const p2 = await f.patient(org2);
     expect("id" in (await evo.importEverordnung(authFor(org2, user), bundle("hmv-ui-minimal.json"), { patientId: p2 }))).toBe(true);
   });
 
   it("neue Person aus der eVerordnung; ohne Zuordnung kein Import; Rechte", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     expect(await evo.importEverordnung(authFor(org, user), bundle("hmv-ui-minimal.json"), {})).toEqual({ error: expect.stringMatching(/Person/) });
     const res = await evo.importEverordnung(authFor(org, user), bundle("hmv-ui-minimal.json"), { createPatient: true });
     if ("error" in res) throw new Error(res.error);
@@ -92,7 +93,7 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
   });
   it("Neuanlage ist atomar: parallele Importe mit „neu anlegen“ hinterlassen genau eine Person und eine Verordnung", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const auth = authFor(org, user);
     const results = await Promise.all([1, 2, 3].map(() => evo.importEverordnung(auth, bundle("hmv-ui-minimal.json"), { createPatient: true })));
     expect(results.filter((r) => "id" in r)).toHaveLength(1);
@@ -105,7 +106,7 @@ const bundle = (name: string) => readFileSync(path.join(__dirname, "../lib/evero
 
   it("Kandidatensuche: Nachname wird exakt (ohne LIKE-Platzhalter) verglichen", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { lastName: "Anders" });
     await f.asOrg(org, (c) => c.query("update patients set birth_date = '1948-06-15' where id = $1", [p]));
     const evil = bundle("hmv-ui-minimal.json").replace('"family": "Mustermann"', '"family": "%"').replace('"text": "Max Mustermann"', '"text": "Max %"');

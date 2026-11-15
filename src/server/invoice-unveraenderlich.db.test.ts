@@ -66,7 +66,7 @@ afterEach(() => vi.restoreAllMocks());
 
   it("Rechnung mit Zahlungsziel: „Zahlung erfassen“ (bar) ändert das PDF nicht – App-Status wird „bezahlt“", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     await f.asOrg(org, (c) => c.query("update organizations set iban = 'DE02120300000000202051' where id = $1", [org]));
     const inv = await invoices.createInvoice(auth, base(patient));
@@ -97,7 +97,7 @@ afterEach(() => vi.restoreAllMocks());
 
   it("Quittung (bar beim Ausstellen): „Betrag dankend erhalten“ und Zahlungsblock bleiben auf dem Beleg", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const rec = await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [pay("cash", 6500)] }));
     const text = await pdfText(org, rec.id);
@@ -110,7 +110,7 @@ afterEach(() => vi.restoreAllMocks());
 
   it("Teilzahlung beim Ausstellen bleibt, die spätere Restzahlung nicht", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient, { payments: [pay("card", 2000)] }));
     const before = await pdfText(org, inv.id);
@@ -125,7 +125,7 @@ afterEach(() => vi.restoreAllMocks());
 
   it("angerechnete Anzahlung + spätere SumUp-Zahlung: Beleg unverändert, Status/paid_cents korrekt", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amountCents: 1500, vatRate: 0, method: "cash", notes: null });
     const inv = await invoices.createInvoice(auth, base(patient, { depositIds: [dep.id] }));
@@ -143,7 +143,7 @@ afterEach(() => vi.restoreAllMocks());
 
   it("Anzahlungs-Quittung: Zahlung beim Ausstellen gehört zum Beleg", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Nagelspange", amountCents: 3000, vatRate: 0, method: "card", notes: null });
     expect(await pdfText(org, dep.id)).toContain("Zahlung per Karte – Betrag dankend erhalten.");

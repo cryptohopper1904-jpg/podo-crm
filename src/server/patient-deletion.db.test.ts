@@ -36,7 +36,7 @@ import type { AuthContext } from "@/lib/auth/session";
 
   it("ohne Dokumentation/Rechnungen: vollständige Löschung inkl. Einwilligungen und Fotos, Audit ohne Namen", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { lastName: "Löschbar" });
     await f.consent(org, p, "marketing", true);
     const key = `${org}/m-${Date.now()}`;
@@ -54,7 +54,7 @@ import type { AuthContext } from "@/lib/auth/session";
 
   it("mit Behandlung: Löschung gesperrt (auch direkt in der DB), Kontaktdaten werden gelöscht und Marketing widerrufen", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { lastName: "Akte", email: "akte@example.org", phoneMobile: "0151 1" });
     await f.asOrg(org, (c) =>
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prev_hash, hash) values ($1,$2,$3, now(), null, 'h')", [org, p, user]),
@@ -97,7 +97,7 @@ import type { AuthContext } from "@/lib/auth/session";
 
   it("mit Rechnung: Sperre; nur Inhaber:in und nie im Support-Modus", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org);
     await f.invoice(org, p);
     expect((await del.deletionStatus(ownerAuth(org, user), p))?.mode).toBe("anonymize");

@@ -46,7 +46,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("Altfall (Anzahlung angerechnet, SumUp-Zahlung, paid_cents falsch) wird korrigiert – korrekte Rechnungen bleiben unberührt, zweiter Lauf ändert nichts", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amountCents: 1500, vatRate: 0, method: "cash", notes: null });
     const broken = await invoices.createInvoice(auth, base(patient, { depositIds: [dep.id] }));
@@ -78,7 +78,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("Korrektur: stornierte Teilbelege zählen nicht; Überzahlung wird im Audit markiert", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Behandlung", amountCents: 1500, vatRate: 0, method: "cash", notes: null });
     const inv = await invoices.createInvoice(auth, base(patient, { depositIds: [dep.id] }));
@@ -101,7 +101,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("manuelle Zahlung mit Referenz „sumup:“ (jede Schreibweise) wird abgelehnt", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     for (const ref of ["sumup:fake-1", "SumUp:fake-2", "  SUMUP:fake-3"]) {
@@ -127,7 +127,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("5 gleichzeitige Zustellungen derselben Transaktion → genau eine Zahlung", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     const input = { invoiceId: inv.id, externalRef: `sumup:par-${inv.id}`, amountCents: 6500, method: "card" as const };
@@ -143,7 +143,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("Webhook parallel zu „Zahlung erfassen“ → keine Überzahlung", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     const [hook, manual] = await Promise.allSettled([
@@ -159,7 +159,7 @@ const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0048_sumup_za
 
   it("Begleittext bei späterer Teilzahlung: Eingang und Restbetrag, Hinweis auf Stand bei Ausstellung", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     const patient = await f.patient(org);
     const inv = await invoices.createInvoice(auth, base(patient));
     await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:teil-${inv.id}`, amountCents: 2500, method: "payment_link" });

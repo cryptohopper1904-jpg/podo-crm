@@ -33,7 +33,8 @@ import { berlinDay, fixtures, TEST_DB, useTestClock } from "./__tests__/db-fixtu
     dunning = await import("./dunning");
     orgA = await f.org({ settings: { dunning: { payDays: 10, stages: { dunning1: { days: 14, feeCents: 250 } } } } });
     orgB = await f.org();
-    user = await f.user();
+    user = await f.user(orgA);
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [orgB, user]);
     patient = await f.patient(orgA, { lastName: "Muster", firstName: "Erika", email: "erika@example.org" });
     await f.asOrg(orgA, (c) => c.query("update patients set salutation = 'Frau' where id = $1", [patient]));
   });

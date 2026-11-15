@@ -117,7 +117,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const todayLate = await appointment(`${today} 23:30 Europe/Berlin`);
     await expect(deposit(todayLate)).rejects.toThrow(msg);
     // dokumentierte Behandlung (auch ohne Termin)
-    const user = await f.user();
+    const user = await f.user(org, "therapist");
     const rec = await f.asOrg(org, async (c) =>
       (await c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash) values ($1,$2,$3,now(),'h') returning id", [org, patient, user])).rows[0].id as string,
     );

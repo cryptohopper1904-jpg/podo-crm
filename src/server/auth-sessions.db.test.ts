@@ -178,7 +178,7 @@ const redirectOf = async (p: Promise<unknown>) => {
     it("Freigabe für eine andere Person: kein Zutritt, Sitzung bleibt unverändert", async () => {
       const own = await activeOrg();
       const practice = await activeOrg();
-      const owner = await f.user();
+      const owner = await f.user(practice);
       const admin = await platformAdmin();
       const colleague = await platformAdmin();
       await member(own, admin);

@@ -37,6 +37,7 @@ d("Datenbank-Sicherheit", () => {
     orgA = (await pool.query("insert into organizations (name, slug) values ('A', $1) returning id", [`a-${sfx}`])).rows[0].id;
     orgB = (await pool.query("insert into organizations (name, slug) values ('B', $1) returning id", [`b-${sfx}`])).rows[0].id;
     userId = (await pool.query("insert into users (email, name, password_hash) values ($1, 'T', 'x') returning id", [`t-${sfx}@example.org`])).rows[0].id;
+    await pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [orgA, userId]);
     patientA = await asOrg(orgA, async (c) => (await c.query("insert into patients (organization_id, number, last_name) values ($1, 1, 'Beispiel') returning id", [orgA])).rows[0].id);
   });
 

@@ -37,7 +37,7 @@ const PNG_FULL = readFileSync(path.join(__dirname, "../../docs/kunden/kiehne/log
 
   it("speichert, ersetzt und entfernt Logos (verschlüsselt, mit Audit), nur mit settings.manage", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const auth = authFor(org, user);
     await expect(logos.uploadLogo(authFor(org, user, ["patients.read"]), "compact", PNG)).rejects.toThrow(/Berechtigung/);
 
@@ -71,7 +71,7 @@ const PNG_FULL = readFileSync(path.join(__dirname, "../../docs/kunden/kiehne/log
 
   it("lehnt falsche Dateien ab (Typ, Größe, kaputt) und die DB nur bekannte Arten", async () => {
     const org = await f.org();
-    const auth = authFor(org, await f.user());
+    const auth = authFor(org, await f.user(org));
     await expect(logos.uploadLogo(auth, "full", Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'/>"))).rejects.toThrow(/PNG- oder JPEG/);
     await expect(logos.uploadLogo(auth, "full", Buffer.concat([PNG, Buffer.alloc(1024 * 1024)]))).rejects.toThrow(/zu groß/);
     const broken = Buffer.from(PNG.subarray(0, 60));
@@ -87,7 +87,7 @@ const PNG_FULL = readFileSync(path.join(__dirname, "../../docs/kunden/kiehne/log
     process.env.PUBLIC_URL = "https://app.example.org";
     const org = await f.org({ settings: { websiteUrl: "https://www.example.org", documents: { qualification: "staatlich anerkannte Podologin", whatsapp: true, booking: { channel: "podohero" } } } });
     await f.pool.query("update organizations set iban = 'DE02120300000000202051', bic = 'BYLADEM1001', bank_name = 'Beispielbank', account_holder = 'Erika Muster' where id = $1", [org]);
-    const user = await f.user();
+    const user = await f.user(org);
     const auth = authFor(org, user);
     const patient = await f.patient(org);
     const appt = await f.asOrg(org, async (c) => (await c.query("insert into appointments (organization_id, patient_id, starts_at, ends_at, status) values ($1,$2,'2026-11-09 23:30+01','2026-11-10 00:10+01','done') returning id", [org, patient])).rows[0].id as string);

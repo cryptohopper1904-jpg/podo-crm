@@ -21,7 +21,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   const setup = async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const auth = { organization: { id: org, name: "T", slug: "t", smallBusiness: false }, user: { id: user, name: "Anna Test" }, can: () => true } as never;
     const patient = await f.patient(org);
     const invoice = await f.invoice(org, patient, 100_000);

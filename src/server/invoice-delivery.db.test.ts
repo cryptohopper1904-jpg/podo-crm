@@ -21,7 +21,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("schlägt nur nicht abgerechnete Behandlungen vor und verhindert Doppelabrechnung", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const auth = { organization: { id: org, name: "T", smallBusiness: false }, user: { id: user, name: "Test" }, can: () => true } as never;
     const { home, resident, recs } = await f.asOrg(org, async (c) => {
       const home = (await c.query("insert into billing_contacts (organization_id, kind, name) values ($1,'care_home','Haus Sonnenschein') returning id", [org])).rows[0].id as string;

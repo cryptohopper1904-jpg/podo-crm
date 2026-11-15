@@ -59,7 +59,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("markieren: Termine nur nach Bestätigung absagen, Warteliste/Links erledigen, Audit; Zurücknehmen protokolliert", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { lastName: "Verstorben" });
     const future = await appt(org, p, new Date(Date.now() + 5 * 86400_000));
     const past = await appt(org, p, new Date(Date.now() - 20 * 86400_000), "done");
@@ -116,7 +116,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("Erinnerungen und Rückholung: Verstorbene werden ausgeschlossen, andere weiter angeschrieben", async () => {
     const settings = { reminders: { r24: true, recall: true } };
     const org = await f.org({ settings });
-    const user = await f.user();
+    const user = await f.user(org);
     const alive = await f.patient(org, { lastName: "Lebt", phoneMobile: "+49 170 4444444" });
     const dead = await f.patient(org, { lastName: "Tot", phoneMobile: "+49 170 5555555" });
     for (const p of [alive, dead]) {
@@ -153,7 +153,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Portal- und Anamnese-Link: für Verstorbene abgelehnt, nach Rücknahme wieder möglich", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org);
     const a = auth(org, user);
     const activeLinks = async () => (await q<{ n: number }>(org, "select count(*)::int n from patient_links where patient_id = $1 and revoked_at is null", [p]))[0].n;
@@ -177,7 +177,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
   it("Kontaktdaten löschen behält die Markierung „verstorben“", async () => {
     const org = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const p = await f.patient(org, { email: "x@example.org" });
     await q(org, `update patients set extra = extra || '{"no_reminders": true}'::jsonb where id = $1`, [p]);
     await q(org, "insert into treatment_records (organization_id, patient_id, author_id, treated_at, prev_hash, hash) values ($1,$2,$3, now(), null, 'h')", [org, p, user]);

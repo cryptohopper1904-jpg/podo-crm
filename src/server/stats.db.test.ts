@@ -39,7 +39,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("Termine: Belegung je Wochentag × Stunde in Berliner Ortszeit (Sommerzeit), Quoten, Vorlauf-Median, neue Patient:innen", async () => {
     const org = await f.org();
     const other = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
     const therapist = await f.user();
     await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'therapist')", [org, therapist]).catch(() => undefined);
     const p1 = await f.patient(org, { lastName: "Alt" });
@@ -126,7 +126,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   it("Leistungen/Produkte/Umsatz: angerechnete Quittungen und Anzahlungen nur einmal, konsistent mit financeOverview, mandantengetrennt", async () => {
     const org = await f.org();
     const other = await f.org();
-    const user = await f.user();
+    const user = await f.user(org);
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [other, user]);
     const patient = await f.patient(org);
     let seq = 0;
     const ids = await f.asOrg(org, async (c) => {

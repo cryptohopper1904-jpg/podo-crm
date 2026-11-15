@@ -21,6 +21,7 @@ const url = process.env.TEST_DATABASE_URL;
     const sfx = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     orgId = (await pool.query("insert into organizations (name, slug) values ('VO-Test', $1) returning id", [`vo-${sfx}`])).rows[0].id;
     userId = (await pool.query("insert into users (email, name, password_hash) values ($1, 'T', 'x') returning id", [`vo-${sfx}@example.org`])).rows[0].id;
+    await pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [orgId, userId]);
     const c = await pool.connect();
     try {
       await c.query("begin");

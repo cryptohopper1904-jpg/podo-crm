@@ -56,8 +56,14 @@ export function fixtures(url: string) {
       ]);
       return r.rows[0].id as string;
     },
-    async user() {
-      return (await pool.query("insert into users (email, name, password_hash) values ($1, 'Test', 'x') returning id", [`u-${sfx()}@example.org`])).rows[0].id as string;
+    /**
+     * Benutzer:in; mit `org` zugleich Mitglied dieser Praxis (Rolle `role`). Wer in einer Praxis handelt (created_by,
+     * author_id …) oder ihr zugeordnet wird, muss dort Mitglied sein (Trigger podo_user_in_org, *_user_praxis_abgleich).
+     */
+    async user(org?: string, role = "owner") {
+      const id = (await pool.query("insert into users (email, name, password_hash) values ($1, 'Test', 'x') returning id", [`u-${sfx()}@example.org`])).rows[0].id as string;
+      if (org) await pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,$3)", [org, id, role]);
+      return id;
     },
     async patient(org: string, p: { lastName?: string; firstName?: string; email?: string | null; phoneMobile?: string | null; preferredChannel?: string } = {}) {
       return asOrg(org, async (c) => {
