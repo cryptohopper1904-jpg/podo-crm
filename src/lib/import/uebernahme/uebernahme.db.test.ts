@@ -409,7 +409,48 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
     expect(await counts(t.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
   });
 
-  it("AppSec H3: Person zwischen Planung und Schreiben gelöscht (Art. 17) – keine Verknüpfung, keine Termine/Verordnungen", async () => {
+  /** Ablage, die nach `ms` fertig wird (ohne Datei), und Mitschrift der entfernten Schlüssel */
+  function slowStore(ms: number) {
+    const stored: string[] = [];
+    const discarded: string[] = [];
+    let n = 0;
+    const store = (_org: string, data: Buffer) =>
+      new Promise<{ storageKey: string; sha256: string; sizeBytes: number }>((resolve) =>
+        setTimeout(() => {
+          const storageKey = `late-${++n}`;
+          stored.push(storageKey);
+          resolve({ storageKey, sha256: "x", sizeBytes: data.length });
+        }, ms),
+      );
+    const discard = async (k: string) => void discarded.push(k);
+    return { store, discard, stored, discarded };
+  }
+
+  it("Runde 4 R3: verspätet doch fertige Ablage (nach der Zeitgrenze) wird wieder entfernt", async () => {
+    const t = await practice("r4l");
+    const slow = slowStore(120);
+    const { d } = deps({ store: slow.store, discard: slow.discard, storeTimeoutMs: 30 });
+    await expect(runUebernahme(d, { org: t.org, userId: t.user, files: rawUpload(), opts, tokenHash: `r4l-${stamp}`, auditMeta: {} })).rejects.toBeInstanceOf(StoreTimeoutError);
+    expect(slow.stored).toEqual([]);
+    await new Promise((r) => setTimeout(r, 250));
+    expect(slow.stored).toEqual(["late-1"]);
+    expect(slow.discarded).toEqual(["late-1"]);
+    expect(await counts(t.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
+  });
+
+  it("Runde 4 R7: Gesamt-Zeitgrenze für alle Ablagen eines Laufs – jede einzelne schnell genug, zusammen zu lang", async () => {
+    const t = await practice("r4t");
+    const slow = slowStore(60);
+    const { d } = deps({ store: slow.store, discard: slow.discard, storeTimeoutMs: 5_000, storeTotalTimeoutMs: 90 });
+    await expect(runUebernahme(d, { org: t.org, userId: t.user, files: rawUpload(), opts, tokenHash: `r4t-${stamp}`, auditMeta: {} })).rejects.toBeInstanceOf(StoreTimeoutError);
+    await new Promise((r) => setTimeout(r, 200));
+    // erste Ablage rechtzeitig (beim Abbruch entfernt), zweite nach Ablauf der Gesamtgrenze fertig (verspätet entfernt)
+    expect(slow.stored).toEqual(["late-1", "late-2"]);
+    expect([...slow.discarded].sort()).toEqual(["late-1", "late-2"]);
+    expect(await counts(t.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
+  });
+
+  it("AppSec H3:Person zwischen Planung und Schreiben gelöscht (Art. 17) – keine Verknüpfung, keine Termine/Verordnungen", async () => {
     const t = await practice("h3");
     const [old] = await inOrg(t.org, (tx) =>
       tx.insert(s.patients).values({ organizationId: t.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self" }).returning(),

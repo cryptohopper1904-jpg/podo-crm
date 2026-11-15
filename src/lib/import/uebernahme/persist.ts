@@ -17,6 +17,7 @@ import type { Tx } from "@/db";
 import * as s from "@/db/schema";
 import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { persistImport, type PersistSummary } from "../excel/persist";
+import { legacyPatientNumber } from "../excel/parse";
 import type { ExistingSnapshot, ImportPlan, PatientRef } from "./plan";
 
 const CHUNK = 500;
@@ -120,7 +121,7 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
   await assertPatientCapacity(tx, org, plan.patientsCreate.length);
   const [m] = await tx.select({ n: max(s.patients.number) }).from(s.patients).where(eq(s.patients.organizationId, org));
   let next = (m?.n ?? 0) + 1;
-  for (const p of plan.excel?.patients ?? []) if ((p.legacyId ?? 0) >= next) next = (p.legacyId ?? 0) + 1;
+  for (const p of plan.excel?.patients ?? []) if ((legacyPatientNumber(p.legacyId) ?? 0) >= next) next = legacyPatientNumber(p.legacyId)! + 1;
   const idByRef = new Map<string, string>();
   for (const part of chunks(plan.patientsCreate)) {
     const rows = await tx

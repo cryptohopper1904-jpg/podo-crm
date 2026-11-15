@@ -6,7 +6,7 @@ import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { IMPORTED_RECEIPT_MARK } from "@/lib/invoice-labels";
 import { receiptMark } from "@/lib/partial-lines";
-import { MAX_LEGACY_PATIENT_ID, parseWorkbook } from "../excel/parse";
+import { legacyPatientNumber, MAX_LEGACY_PATIENT_ID, parseWorkbook } from "../excel/parse";
 import { buildWorkbook } from "../excel/excel-import.test";
 import { collectFiles, RUN_LIMITS } from "./collect";
 import { analyzeFile } from "./detect";
@@ -81,7 +81,7 @@ describe("AppSec Runde 3 SB1: Einträge über alle ZIPs eines Laufs begrenzt", (
 });
 
 describe("Code-Review Runde 3 (Nice)", () => {
-  it("Legacy-IDs über 9.999.999 gelten als „ohne ID“ (mit Hinweis), neue Patientennummer", async () => {
+  it("Legacy-IDs über 9.999.999: Hinweis, ID bleibt als Bezug (Runde 4 R2: Nummernvergabe begrenzt, nicht die ID)", async () => {
     expect(MAX_LEGACY_PATIENT_ID).toBe(9_999_999);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load((await buildWorkbook()) as never);
@@ -89,14 +89,21 @@ describe("Code-Review Runde 3 (Nice)", () => {
     ws.getCell("A3").value = 12_345_678;
     const res = await parseWorkbook(new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer), { today: "2026-11-07" });
     const max = res.patients.find((p) => p.row === 3)!;
-    expect(max.legacyId).toBeNull();
+    expect(max.legacyId).toBe(12_345_678);
+    expect(legacyPatientNumber(max.legacyId)).toBeNull();
     expect(res.report.warnings).toContainEqual(
-      expect.objectContaining({ row: 3, message: "ID 12345678 ist zu groß (höchstens 9.999.999) – wird ohne ID übernommen, neue Patientennummer wird vergeben." }),
+      expect.objectContaining({
+        row: 3,
+        message: "ID 12345678 ist zu groß für eine Patientennummer (höchstens 9.999.999) – neue Patientennummer wird vergeben, die ID bleibt als Bezug (Rechnungen, Gutscheine) erhalten.",
+      }),
     );
-    // genau an der Grenze bleibt die ID
+    // genau an der Grenze bleibt die ID auch Nummer
     ws.getCell("A3").value = 9_999_999;
     const ok = await parseWorkbook(new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer), { today: "2026-11-07" });
     expect(ok.patients.find((p) => p.row === 3)!.legacyId).toBe(9_999_999);
+    expect(legacyPatientNumber(9_999_999)).toBe(9_999_999);
+    expect(legacyPatientNumber(0)).toBeNull();
+    expect(legacyPatientNumber(null)).toBeNull();
   });
 
   it("ChoiceConflictError-Text nennt alle Nummern", () => {
@@ -125,6 +132,25 @@ describe("Code-Review Runde 3 (Nice)", () => {
   it("AppSec H1: withTimeout bricht hängende Ablage ab, lässt schnelle durch", async () => {
     await expect(withTimeout(new Promise(() => {}), 20)).rejects.toBeInstanceOf(StoreTimeoutError);
     await expect(withTimeout(Promise.resolve("ok"), 1_000)).resolves.toBe("ok");
+  });
+
+  it("Runde 4 R3: withTimeout räumt ein erst nach der Zeitgrenze fertiges Ergebnis auf (onLate), sonst nicht", async () => {
+    const late: string[] = [];
+    let finish!: (v: string) => void;
+    const slow = new Promise<string>((r) => (finish = r));
+    await expect(withTimeout(slow, 10, (v) => late.push(v))).rejects.toBeInstanceOf(StoreTimeoutError);
+    finish("spät");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(late).toEqual(["spät"]);
+    // rechtzeitig fertig: kein Aufräumen; verspätet abgelehnt bzw. Fehler beim Aufräumen: verschluckt
+    await expect(withTimeout(Promise.resolve("ok"), 1_000, (v) => late.push(v))).resolves.toBe("ok");
+    let fail!: (e: Error) => void;
+    const failing = new Promise<string>((_, rej) => (fail = rej));
+    await expect(withTimeout(failing, 10, () => late.push("nie"))).rejects.toBeInstanceOf(StoreTimeoutError);
+    fail(new Error("Ablage gescheitert"));
+    await expect(withTimeout(new Promise<string>((r) => setTimeout(() => r("x"), 20)), 5, () => Promise.reject(new Error("discard")))).rejects.toBeInstanceOf(StoreTimeoutError);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(late).toEqual(["spät"]);
   });
 });
 

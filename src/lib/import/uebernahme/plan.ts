@@ -829,12 +829,23 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     if (erasedExcel) warnings.push({ message: `Excel: ${plural(erasedExcel, "Person", "Personen")} mit gelöschten Kontaktdaten (Art. 17 DSGVO) – gelöscht, nicht übernommen.` });
     // Excel-Zeile MIT Legacy-ID und gleichnamige Neuanlage aus Tinana/Doctolib in diesem Lauf: beide werden angelegt
     // (die ID hat Vorrang vor dem Namensabgleich) – Hinweis, damit die Praxis die Personen danach prüft
+    // Personen-Schlüssel mit mindestens einer Neuanlage im Upload – einmal vorab (AppSec Runde 4: sonst je Excel-Zeile
+    // alle gleichnamigen Upload-Einträge durchsuchen → quadratisch bei vielen gleichnamigen Zeilen)
+    const withNewRef = new Set<string>();
+    for (const [key, refs] of uploadByPerson) {
+      for (const r of refs.values()) {
+        if ("ref" in r) {
+          withNewRef.add(key);
+          break;
+        }
+      }
+    }
     const twins: string[] = [];
     for (const p of excel.patients) {
       if (p.legacyId === null || known.has(String(p.legacyId))) continue;
       const pk = personKey(p.firstName, p.lastName, p.birthDate);
       if (!pk || erasedPersons.has(pk)) continue;
-      if ([...(uploadByPerson.get(pk)?.values() ?? [])].some((r) => "ref" in r)) twins.push(`${pseudonym(p.firstName, p.lastName, p.birthDate)} (ID ${p.legacyId})`);
+      if (withNewRef.has(pk)) twins.push(`${pseudonym(p.firstName, p.lastName, p.birthDate)} (ID ${p.legacyId})`);
     }
     if (twins.length) {
       const shown = twins.slice(0, 10).join(", ") + (twins.length > 10 ? ` und ${twins.length - 10} weitere` : "");

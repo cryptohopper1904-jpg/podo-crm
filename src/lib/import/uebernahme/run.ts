@@ -17,7 +17,8 @@
  *  - Dieselbe Bestandsperson für zwei Zeilen gewählt (S4): Import abgelehnt (ChoiceConflictError mit allen Nummern),
  *    nichts gespeichert.
  *  - Zeitgrenzen (AppSec H1): Schreib-Transaktion mit SET LOCAL lock_timeout/statement_timeout, jede Dokument-Ablage
- *    mit Zeitgrenze (StoreTimeoutError) – bei Überschreitung wird nichts gespeichert.
+ *    mit Zeitgrenze und alle Ablagen eines Laufs zusammen mit einer Gesamt-Zeitgrenze (StoreTimeoutError) – bei
+ *    Überschreitung wird nichts gespeichert; eine verspätet doch fertige Ablage wird wieder entfernt.
  */
 import { createHash } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
@@ -76,6 +77,8 @@ export interface RunDeps {
   discard: (storageKey: string) => Promise<void>;
   /** Zeitgrenze je Dokument-Ablage (Standard STORE_TIMEOUT_MS; Tests kürzer) */
   storeTimeoutMs?: number;
+  /** Gesamt-Zeitgrenze für alle Ablagen eines Laufs (Standard STORE_TOTAL_TIMEOUT_MS; Tests kürzer) */
+  storeTotalTimeoutMs?: number;
 }
 
 export const RUN_ACTION = "import.uebernahme.run";
@@ -84,6 +87,7 @@ export const RUN_ACTION = "import.uebernahme.run";
 export const TX_LOCK_TIMEOUT = "10s";
 export const TX_STATEMENT_TIMEOUT = "120s";
 export const STORE_TIMEOUT_MS = 60_000;
+export const STORE_TOTAL_TIMEOUT_MS = 10 * 60_000;
 
 export class StoreTimeoutError extends Error {
   constructor() {
@@ -100,13 +104,27 @@ export function isDbTimeout(e: unknown): boolean {
 }
 export const DB_TIMEOUT_MESSAGE = "Die Datenbank ist gerade ausgelastet. Es wurde nichts gespeichert – bitte versuchen Sie es in einigen Minuten erneut.";
 
-/** Promise mit Zeitgrenze; Exportiert nur für Tests. */
-export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+/**
+ * Promise mit Zeitgrenze; `onLate` räumt ein Ergebnis auf, das erst NACH der Zeitüberschreitung fertig wird (z. B.
+ * verspätet doch abgelegte Datei wieder entfernen) – Fehler dabei werden verschluckt. Exportiert nur für Tests.
+ */
+export async function withTimeout<T>(p: Promise<T>, ms: number, onLate?: (late: T) => unknown): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
-    return await Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new StoreTimeoutError()), ms)))]);
+    return await Promise.race([
+      p,
+      new Promise<never>(
+        (_, reject) =>
+          (timer = setTimeout(() => {
+            timedOut = true;
+            reject(new StoreTimeoutError());
+          }, ms)),
+      ),
+    ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (timedOut && onLate) p.then(onLate).catch(() => {});
   }
 }
 
@@ -187,10 +205,14 @@ async function runInner(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySumm
   const bySha = new Map<string, Stored>();
   const used = new Set<string>();
   try {
-    // (2) PDFs vor der Transaktion ablegen (je Inhalt einmal)
+    // (2) PDFs vor der Transaktion ablegen (je Inhalt einmal) – je Ablage und insgesamt mit Zeitgrenze
+    const perStore = deps.storeTimeoutMs ?? STORE_TIMEOUT_MS;
+    const deadline = Date.now() + (deps.storeTotalTimeoutMs ?? STORE_TOTAL_TIMEOUT_MS);
     for (const d of plan.documents) {
       if (bySha.has(d.sha256)) continue;
-      const r = await withTimeout(deps.store(a.org, Buffer.from(d.data)), deps.storeTimeoutMs ?? STORE_TIMEOUT_MS);
+      const left = deadline - Date.now();
+      if (left <= 0) throw new StoreTimeoutError();
+      const r = await withTimeout(deps.store(a.org, Buffer.from(d.data)), Math.min(perStore, left), (late) => deps.discard(late.storageKey));
       stored.push(r.storageKey);
       bySha.set(d.sha256, r);
     }

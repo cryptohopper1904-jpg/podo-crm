@@ -196,6 +196,15 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // DB-Trigger (0060): Zuordnung einer Import-Zahlung zu einem Abschluss wird abgelehnt
     const closingId = rows.find((r) => r.id === crmPay)!.cash_closing_id;
     await expect(f.asOrg(org, (c) => c.query("update payments set cash_closing_id = $2 where id = $1", [importPay, closingId]))).rejects.toThrow(/Übernommene Zahlungen \(Import\) kommen in keinen Kassenabschluss/);
+    // Runde 4 R6: Rückdatierungs-Guard ebenfalls case-insensitive – „EXCEL:“ darf (wie „excel:“) in den abgeschlossenen
+    // Zeitraum, eine gewöhnliche Zahlung mit Benutzer nicht
+    const backdate = (ref: string | null) =>
+      f.asOrg(org, (c) =>
+        c.query("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, external_ref, created_by) values ($1,$2,'cash',100,'2026-08-03 09:00+02',$3,$4) returning id", [org, imported, ref, user]),
+      );
+    await expect(backdate("EXCEL:ALT2")).resolves.toBeTruthy();
+    await expect(backdate("Excel:ALT3")).resolves.toBeTruthy();
+    await expect(backdate(null)).rejects.toThrow(/nicht rückwirkend in einen abgeschlossenen Kassenzeitraum/);
   });
 
   it("Buchhaltung BA/CB1: Neueingang (bar) auf übernommene Altrechnung kommt in den Abschluss, excel:-Zahlung nicht (Herkunft der Zahlung)", async () => {

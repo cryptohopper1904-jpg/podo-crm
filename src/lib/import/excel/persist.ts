@@ -15,6 +15,8 @@
  *  - Sammelrechnungs-Teile werden als Positionen in die SR übernommen (keine eigenen Rechnungen),
  *    daher bleibt `collective_invoice_id` beim Import leer.
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
+ *  - Zahlungszeilen nur mit Zahlungsdatum VOR dem Import-Tag (Berliner Datum): eine Altzahlung „heute“ oder in der
+ *    Zukunft fiele in einen offenen Kassentag – sie bleibt nur an der Rechnung (paid_cents/Status) vermerkt, mit Hinweis.
  *
  * Mit `skipExisting` (Übernahme-Assistent, wiederholbar): Patient:innen mit bereits vorhandener Legacy-ID
  * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; Zeilen OHNE Legacy-ID werden über
@@ -29,6 +31,8 @@ import type { Tx } from "@/db";
 import * as s from "@/db/schema";
 import { ensureSequenceAtLeast } from "@/lib/numbering";
 import type { ImportResult, ImportWarning, PatientImportDraft } from "./types";
+import { legacyPatientNumber } from "./parse";
+import { berlinDateIso } from "@/lib/format";
 
 export interface PersistSummary {
   patients: number;
@@ -71,8 +75,9 @@ export async function persistImport(
   organizationId: string,
   input: ImportResult,
   userId: string,
-  opts: { skipExisting?: boolean } = {},
+  opts: { skipExisting?: boolean; /** Import-Tag (Berliner Datum, YYYY-MM-DD); Standard heute – nur für Tests */ today?: string } = {},
 ): Promise<PersistSummary> {
+  const today = opts.today ?? berlinDateIso();
   const warnings: ImportWarning[] = [];
   const summary: PersistSummary = {
     patients: 0,
@@ -133,10 +138,12 @@ export async function persistImport(
   // Schleife statt Math.max(...): bei sehr vielen Nummern sonst „Maximum call stack size exceeded“
   let next = 1;
   for (const n of existingNumbers) if (n >= next) next = n + 1;
-  for (const p of result.patients) if ((p.legacyId ?? 0) >= next) next = (p.legacyId ?? 0) + 1;
+  // Legacy-ID als Nummer nur bis MAX_LEGACY_PATIENT_ID (größere IDs bleiben Bezug, bekommen aber eine neue Nummer)
+  for (const p of result.patients) if ((legacyPatientNumber(p.legacyId) ?? 0) >= next) next = legacyPatientNumber(p.legacyId)! + 1;
   const numbered = result.patients.map((p) => {
     let number: number;
-    if (p.legacyId !== null && p.legacyId > 0 && !used.has(p.legacyId)) number = p.legacyId;
+    const wanted = legacyPatientNumber(p.legacyId);
+    if (wanted !== null && !used.has(wanted)) number = wanted;
     else {
       number = next++;
       summary.renumberedPatients.push({ legacyId: p.legacyId, number });
@@ -382,6 +389,11 @@ export async function persistImport(
           if (inv.payments.length) warnings.push({ sheet: "Rechnungen", row: inv.row, message: `Rechnung „${inv.number}“ ohne Rechnungsdatum – Zahlung nur an der Rechnung vermerkt, ohne Zahlungsbuchung.` });
           continue;
         }
+        // Zahlungsdatum (= Rechnungsdatum) heute oder später: keine Zahlungszeile (AppSec Runde 4) – Betrag/Status bleiben
+        if (inv.issuedAt >= today) {
+          if (inv.payments.length) warnings.push({ sheet: "Rechnungen", row: inv.row, message: FUTURE_PAYMENT_WARNING });
+          continue;
+        }
         const paidAt = new Date(`${inv.issuedAt}T12:00:00Z`);
         for (const p of inv.payments) {
           const voucherId = p.method === "voucher" && p.voucherLegacyId != null ? voucherIdByLegacy.get(p.voucherLegacyId) ?? null : null;
@@ -407,6 +419,8 @@ export async function persistImport(
 
   return summary;
 }
+
+export const FUTURE_PAYMENT_WARNING = "Zahlungsdatum heute oder in der Zukunft – Zahlung nicht übernommen, bitte in der Kasse erfassen.";
 
 /** CRM-Nummernformat (siehe src/lib/numbering.ts): R2026-0001, Q…, SR…, GS…, G… */
 export const CRM_NUMBER_RE = /^(R|Q|SR|GS|G)(\d{4})-(\d+)$/;

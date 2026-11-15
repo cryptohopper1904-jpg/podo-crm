@@ -17,7 +17,7 @@ BEGIN
     END IF;
     -- Rückdatierung: verspätete Provider-Zahlungen (Webhook, created_by NULL) und der Altdaten-Import
     -- (external_ref 'excel:…') bleiben möglich. Import-Zahlungen kommen nie in einen Abschluss (siehe unten).
-    IF NEW.created_by IS NOT NULL AND COALESCE(NEW.external_ref, '') NOT LIKE 'excel:%' AND EXISTS (
+    IF NEW.created_by IS NOT NULL AND COALESCE(NEW.external_ref, '') NOT ILIKE 'excel:%' AND EXISTS (
       SELECT 1 FROM cash_closings c WHERE c.organization_id = NEW.organization_id AND c.closed_at >= NEW.paid_at) THEN
       RAISE EXCEPTION 'Zahlungen können nicht rückwirkend in einen abgeschlossenen Kassenzeitraum gebucht werden.' USING ERRCODE = 'P0001';
     END IF;

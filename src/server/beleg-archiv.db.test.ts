@@ -666,10 +666,10 @@ afterEach(() => vi.restoreAllMocks());
     const oldPay = await insertPayment(org, old.id, { method: "cash", amountCents: 6500, paidAt: new Date(PAYMENT_RECEIPTS_SINCE.getTime() - 86_400_000) });
     expect((await bundle(org, old.id)).paymentsMissingReceipt).toEqual([]);
     await rejects(receipts.createMissingPaymentReceipt(auth, old.id, oldPay), /vor Einführung der Zahlungsbelege/);
-    // übernommener Altbestand (Import): nie „fehlend“
+    // übernommene Altzahlung (Import, external_ref excel:…): nie „fehlend“
     const imp = await invoices.createInvoice(auth, base(patient));
     await owner.query(`begin; select set_config('app.org_id', '${org}', true); alter table invoices disable trigger user; update invoices set source = 'excel' where id = '${imp.id}'; alter table invoices enable trigger user; commit;`);
-    const impPay = await insertPayment(org, imp.id, { method: "cash", amountCents: 1000, paidAt: new Date() });
+    const impPay = await insertPayment(org, imp.id, { method: "cash", amountCents: 1000, paidAt: new Date(), externalRef: "EXCEL:R-ALT" });
     expect((await bundle(org, imp.id)).paymentsMissingReceipt).toEqual([]);
     await rejects(receipts.createMissingPaymentReceipt(auth, imp.id, impPay), /kein nachträglicher Zahlungsbeleg/);
     // fremde Praxis: weder Rechnung noch Zahlung sichtbar
@@ -682,6 +682,25 @@ afterEach(() => vi.restoreAllMocks());
     const mine = await invoices.createInvoice(other.auth, base(other.patient));
     await rejects(receipts.createMissingPaymentReceipt(other.auth, mine.id, curPay), /Zahlung nicht gefunden/);
     expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from payment_receipts")).rows[0].n)).toBe(0);
+  });
+
+  it("Runde 4 R1: Neueingang (bar) auf übernommene Altrechnung, Beleg scheitert → „Zahlungsbeleg fehlt“ und nachholbar; Altzahlung nie", async () => {
+    const { org, auth, patient } = await setup();
+    const imp = await invoices.createInvoice(auth, base(patient));
+    await owner.query(`begin; select set_config('app.org_id', '${org}', true); alter table invoices disable trigger user; update invoices set source = 'excel-import' where id = '${imp.id}'; alter table invoices enable trigger user; commit;`);
+    // übernommene Altzahlung aus dem bisherigen System (excel:…) – steht dort im Kassenbuch, bekommt nie einen Beleg
+    const oldPay = await insertPayment(org, imp.id, { method: "cash", amountCents: 1000, paidAt: new Date(Date.now() - 60_000), externalRef: "excel:R-ALT" });
+    // Neueingang am Tresen; Beleg-Savepoint scheitert
+    const res = await withFailingTrigger("payment_receipts", `new.organization_id = '${org}'::uuid`, () => invoices.addPayments(auth, imp.id, [pay("cash", 2000)]));
+    expect(res).toMatchObject({ receiptFailed: true, receipts: [] });
+    const newPay = (await bundle(org, imp.id)).payments.find((p) => p.id !== oldPay)!.id;
+    const missing = (await bundle(org, imp.id)).paymentsMissingReceipt;
+    expect(missing.map((m) => m.id)).toEqual([newPay]);
+    await rejects(receipts.createMissingPaymentReceipt(auth, imp.id, oldPay), /kein nachträglicher Zahlungsbeleg/);
+    const r = await receipts.createMissingPaymentReceipt(auth, imp.id, newPay);
+    expect(r).toMatchObject({ created: true });
+    expect(r.number).toMatch(/^ZB\d{4}-\d{4}$/);
+    expect((await bundle(org, imp.id)).paymentsMissingReceipt).toEqual([]);
   });
 
   it("Zahlungsbeleg nachträglich bei TSE-Ausfall (SumUp ohne Signatur, Zeitstempel vor der Ausstellung): Ausfall-Hinweis; parallel genau einmal", async () => {

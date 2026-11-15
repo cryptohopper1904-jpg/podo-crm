@@ -96,3 +96,40 @@ describe("A-B1: lineare Laufzeit bei vielen gleichnamigen Zeilen", () => {
     expect(dup.message).toMatch(/und \d+ weitere/);
   }, 90_000);
 });
+
+/** Runde 4 R4: Tinana (n − 1) + Excel (n) gleichnamige Personen mit gleichem Geburtsdatum, Excel MIT Legacy-ID */
+async function twinsScenario(n: number) {
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Patienten");
+  ws.addRow(["ID", "Vorname", "Nachname", "Geburtsdatum"]);
+  for (let i = 0; i < n; i++) ws.addRow([i + 1, "Erika", "Musterfrau", "01.01.1950"]);
+  const xlsx = new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer);
+  return [
+    { name: "t/patients_export_2026-01-15.csv", data: enc(tinanaPatients(0, n - 1)) },
+    { name: "podo.xlsx", data: xlsx },
+  ];
+}
+
+async function measureTwins(n: number) {
+  const files = await twinsScenario(n);
+  const empty: ExistingSnapshot = { patients: [], appointmentRefs: new Set(), prescriptionRefs: new Set(), documentHashes: new Set(), therapists: [], locations: [], services: [] };
+  const t0 = performance.now();
+  const detected = await collectFiles(files);
+  const plan = buildPlan(detected, empty, { prescriptionMode: "billed", now: NOW });
+  return { ms: performance.now() - t0, plan };
+}
+
+describe("AppSec Runde 4 R4: Excel-Zwillings-Hinweis linear", () => {
+  it("12.500 vs. 50.000 gleichnamige Excel-Zeilen (Tinana 49.999 gleichnamig): Verhältnis < 8, absolut < 20 s", async () => {
+    await measureTwins(1_000); // Aufwärmrunde
+    const quarter = await measureTwins(12_500);
+    const full = await measureTwins(50_000);
+    const ratio = full.ms / quarter.ms;
+    console.info(`[R4] 12.500 Zeilen: ${Math.round(quarter.ms)} ms, 50.000 Zeilen: ${Math.round(full.ms)} ms, Verhältnis ${ratio.toFixed(2)}`);
+    expect(ratio).toBeLessThan(8);
+    expect(full.ms).toBeLessThan(20_000);
+    expect(full.plan.patientsCreate).toHaveLength(49_999);
+    expect(full.plan.warnings.find((w) => w.message.includes("gleiche Person (Name + Geburtsdatum) wird in diesem Lauf"))?.message).toMatch(/und 49990 weitere/);
+  }, 120_000);
+});
