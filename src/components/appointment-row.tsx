@@ -5,6 +5,7 @@ import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
 import { dotStyle, type TherapistColor } from "@/lib/therapist-colors";
 import { RiskBadges } from "./risk-badges";
+import { TherapistBadge } from "./therapist-badge";
 import { Badge } from "./ui";
 import { withReturn } from "@/lib/back-link";
 
@@ -46,7 +47,7 @@ const Gap = ({ wide = false }: { wide?: boolean }) => <span aria-hidden classNam
  * Die Umbrüche hängen an der Breite der Liste (Container-Query), nicht des Fensters – so brechen alle Zeilen
  * einer Liste gleich um: schmal Aktionen in eigener Zeile (weiterhin bündig), breit alles in einer Zeile.
  */
-export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color, billable = false }: {
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color, billable = false, therapistBadge = false }: {
   row: ApptRow;
   canDoc: boolean;
   canEdit: boolean;
@@ -63,6 +64,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
    * (die aufrufende Seite prüft Recht und Abrechnungsstand, z. B. billedAppointmentIds).
    */
   billable?: boolean;
+  /** Behandler:in als rundes Kürzel-Badge in der Kalenderfarbe statt als Name (Startseite „Heute“) */
+  therapistBadge?: boolean;
 }) {
   const { a, patient, feed } = row;
   const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from, !from.startsWith("/kalender")) : `/kalender/termin/${a.id}`;
@@ -88,10 +91,13 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           aria-hidden
         />
         <div className="col-start-3 row-start-1 min-w-0">
-          <p className="font-semibold">
-            {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{[patient.firstName, patient.lastName].filter(Boolean).join(" ")}</Link> : a.title}
+          <p className={`font-semibold ${therapistBadge && row.therapist ? "flex items-start justify-between gap-2" : ""}`}>
+            <span className="min-w-0">
+              {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{[patient.firstName, patient.lastName].filter(Boolean).join(" ")}</Link> : a.title}
+            </span>
+            {therapistBadge && row.therapist ? <TherapistBadge name={row.therapist} color={color} /> : null}
           </p>
-          <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist ? (
+          <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist && !therapistBadge ? (
               <>
                 {" · "}
                 <span className="wrap-break-word @xl:whitespace-nowrap">

@@ -52,6 +52,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     label: "Persönlich",
     tabs: [
       { href: "ansicht", label: "Ansicht", perm: null },
+      { href: "kalender", label: "Kalender", perm: "appointments.read" },
       { href: "app", label: "App installieren", perm: null },
     ],
   },

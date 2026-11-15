@@ -23,6 +23,10 @@ export type CalendarOptions = {
   /** Zeitachse (volle Stunden); Termine außerhalb erweitern sie weiterhin */
   startHour: number;
   endHour: number;
+  /** Hausbesuche anzeigen */
+  homeVisits: boolean;
+  /** ausgeblendete Behandler:innen (User-IDs) – Termine ohne Zuordnung bleiben immer sichtbar */
+  hiddenTherapists: string[];
 };
 
 /** Gespeicherte Form (users.prefs.calendar.options) – nur abweichende Werte, abgesagte je Ansicht */
@@ -42,10 +46,20 @@ export function defaultCalendarOptions(mode: CalendarMode): CalendarOptions {
     weekNumbers: true,
     startHour: 7,
     endHour: 20,
+    homeVisits: true,
+    hiddenTherapists: [],
   };
 }
 
-const BOOL_KEYS = ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "cancelledSimple", "cancelledFull"] as const;
+const BOOL_KEYS = ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "cancelledSimple", "cancelledFull", "homeVisits"] as const;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** höchstens so viele ausgeblendete Behandler:innen merken (Schutz vor übergroßen Eingaben) */
+export const MAX_HIDDEN_THERAPISTS = 50;
+/** Liste von User-IDs prüfen: nur UUIDs, ohne Doppelte, begrenzt */
+export function sanitizeIdList(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.filter((x): x is string => typeof x === "string" && UUID_RE.test(x)).map((x) => x.toLowerCase()))].slice(0, MAX_HIDDEN_THERAPISTS);
+}
 const isHour = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 24;
 
 /** Gespeicherte Optionen aus users.prefs prüfen (unbekannte/ungültige Felder fallen weg). */
@@ -57,6 +71,8 @@ export function sanitizeStoredOptions(v: unknown): StoredCalendarOptions {
   if (WEEKEND_MODES.includes(o.weekend as WeekendMode)) out.weekend = o.weekend as WeekendMode;
   if (isHour(o.startHour)) out.startHour = o.startHour;
   if (isHour(o.endHour)) out.endHour = o.endHour;
+  const hidden = sanitizeIdList(o.hiddenTherapists);
+  if (hidden.length) out.hiddenTherapists = hidden;
   return out;
 }
 
@@ -72,6 +88,7 @@ export const OPTION_PARAMS = {
   we: "weekend",
   von: "startHour",
   bis: "endHour",
+  hb: "homeVisits",
 } as const;
 export type OptionParam = keyof typeof OPTION_PARAMS;
 
@@ -95,6 +112,7 @@ export function parseOptionParams(sp: Record<string, string | string[] | undefin
   set("cancelled", b("abgesagt"));
   set("workHours", b("az"));
   set("weekNumbers", b("kw"));
+  set("homeVisits", b("hb"));
   const we = last(sp.we);
   set("weekend", WEEKEND_MODES.includes(we as WeekendMode) ? (we as WeekendMode) : undefined);
   set("startHour", hour(last(sp.von)));
@@ -127,13 +145,25 @@ export function toStoredOptions(mode: CalendarMode, o: CalendarOptions, prev: St
   const otherKey = mode === "simple" ? "cancelledFull" : "cancelledSimple";
   if (prev[otherKey] !== undefined) out[otherKey] = prev[otherKey];
   if (o.cancelled !== d.cancelled) out[mode === "simple" ? "cancelledSimple" : "cancelledFull"] = o.cancelled;
-  for (const k of ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "weekend"] as const) {
+  for (const k of ["holidays", "schoolHolidays", "absences", "blocks", "workHours", "weekNumbers", "weekend", "homeVisits"] as const) {
     if (o[k] !== d[k]) (out as Record<string, unknown>)[k] = o[k];
   }
   const t = clampTimeAxis(o.startHour, o.endHour, d);
   if (t.startHour !== d.startHour) out.startHour = t.startHour;
   if (t.endHour !== d.endHour) out.endHour = t.endHour;
+  const hidden = sanitizeIdList(o.hiddenTherapists);
+  if (hidden.length) out.hiddenTherapists = hidden;
   return out;
+}
+
+/**
+ * Anzeige-Filter (Behandler:innen, Hausbesuche) auf einen Termin anwenden – nur Darstellung. Termine ohne
+ * Behandler:in bleiben immer sichtbar (sonst gingen Online-/Telefon-Buchungen ohne Zuordnung unter).
+ */
+export function passesDisplayFilter(o: Pick<CalendarOptions, "homeVisits" | "hiddenTherapists">, a: { therapistId?: string | null; homeVisit: boolean }): boolean {
+  if (!o.homeVisits && a.homeVisit) return false;
+  if (a.therapistId && o.hiddenTherapists.includes(a.therapistId.toLowerCase())) return false;
+  return true;
 }
 
 /** URL-Parameter der Optionen, die in der aktuellen URL gesetzt sind – für Links innerhalb des Kalenders („&feiertage=0…“). */
