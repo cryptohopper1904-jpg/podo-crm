@@ -13,7 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { Pool } from "pg";
 import { afterAll, describe, expect, it } from "vitest";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
 
 const ownerUrlFrom = (url: string) => url.replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
 const DRIZZLE = path.join(__dirname, "../../drizzle");
@@ -22,7 +22,8 @@ const MIGRATION_SUFFIX = "_user_praxis_abgleich";
 const NOT_IN_ORG = "Person gehört nicht zu dieser Praxis.";
 const NO_SUPPORT = "Diese Person kann keinen Support-Zugriff erhalten.";
 
-type World = { org: string; owner: string; patient: string };
+/** Praxis mit Inhaber:in, Person und einem Plattform-Admin (für grantee_user_id) */
+type World = { org: string; owner: string; patient: string; admin: string };
 type Case = { table: string; col: string; insert: (w: World, ref: string) => [string, unknown[]] };
 
 /** Je Spalte (Auswahl, alle Arten): minimale Zeile, die getestete Spalte zeigt auf `ref` */
@@ -64,7 +65,10 @@ const CASES: Case[] = [
   {
     table: "support_grants",
     col: "granted_by",
-    insert: (w, ref) => ["insert into support_grants (organization_id, granted_by, reason, scope, expires_at) values ($1,$2,'Ticket 42','read', now() + interval '2 hours')", [w.org, ref]],
+    insert: (w, ref) => [
+      "insert into support_grants (organization_id, granted_by, grantee_user_id, reason, scope, expires_at) values ($1,$2,$3,'Ticket 42','read', now() + interval '2 hours')",
+      [w.org, ref, w.admin],
+    ],
   },
 ];
 
@@ -85,7 +89,8 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     const org = await f.org();
     const ownerUser = await f.user(org);
     const patient = await f.patient(org);
-    return { org, owner: ownerUser, patient };
+    const admin = await platformAdmin();
+    return { org, owner: ownerUser, patient, admin };
   }
   /** Plattform-Admin ohne Mitgliedschaft (Support) */
   async function platformAdmin(totp = true) {
@@ -161,7 +166,7 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     expect(covered.get("support_grants.grantee_user_id")).toBe("support");
   });
 
-  it("Support als Handelnde:r: nur mit gültiger Freigabe dieser Praxis für genau diese Person; Zuordnungen nie", async () => {
+  it("Support als Handelnde:r: nur mit gültiger Freigabe dieser Praxis für genau diese Person; Zuordnungen nie", async (ctx) => {
     const a = await world();
     const b = await world();
     const admin = await platformAdmin();
@@ -189,29 +194,39 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     await grant(a, noTotp);
     await f.pool.query("update users set totp_enabled = false where id = $1", [noTotp]);
     expect((await attempt(a.org, ...consent(noTotp)))?.message).toBe(NOT_IN_ORG);
-    // ältere Freigabe ohne Person (alle Plattform-Admins) gilt bis zum Ablauf
-    const c2 = await world();
-    const any = await platformAdmin();
-    await grant(c2, null);
-    expect(await attempt(c2.org, "insert into consents (organization_id, patient_id, type, granted, recorded_by) values ($1,$2,'marketing',true,$3)", [c2.org, c2.patient, any])).toBeNull();
     // Kontext bleibt erhalten: nach dem Lookup (der app.org_id lokal setzt) steht wieder die eigene Praxis
     const setting = await f.asOrg(a.org, async (c) => {
       await c.query(consent(admin)[0], consent(admin)[1]);
       return (await c.query("select current_setting('app.org_id', true) as v")).rows[0].v as string;
     });
     expect(setting).toBe(a.org);
+    // ältere Freigabe ohne Person (alle Plattform-Admins, heute nicht mehr anlegbar) gilt bis zum Ablauf
+    const c2 = await world();
+    const any = await platformAdmin();
+    const legacy = await insertLegacy(
+      "insert into support_grants (organization_id, granted_by, grantee_user_id, reason, scope, expires_at) values ($1,$2,null,'Alt','read', now() + interval '2 hours')",
+      [c2.org, c2.owner],
+    );
+    if (!legacy) ctx.skip(); // Altbestand nachstellen braucht einen Superuser
+    expect(await attempt(c2.org, "insert into consents (organization_id, patient_id, type, granted, recorded_by) values ($1,$2,'marketing',true,$3)", [c2.org, c2.patient, any])).toBeNull();
+    // Altfreigabe bleibt widerrufbar (UPDATE ohne Personenwechsel)
+    expect(await attempt(c2.org, "update support_grants set revoked_at = now() where organization_id = $1", [c2.org])).toBeNull();
   });
 
   it("support_grants.grantee_user_id: nur Plattform-Admin mit 2FA; Mitglied, Admin ohne 2FA und unbekannt gleich abgelehnt", async () => {
     const a = await world();
     const sql = "insert into support_grants (organization_id, granted_by, grantee_user_id, reason, scope, expires_at) values ($1,$2,$3,'Ticket 42','read', now() + interval '2 hours')";
     expect(await attempt(a.org, sql, [a.org, a.owner, await platformAdmin()])).toBeNull();
-    const refused = [await f.user(a.org, "therapist"), await platformAdmin(false), randomUUID()];
+    // ohne Person (= alle Plattform-Admins) nur noch im Altbestand
+    const refused = [await f.user(a.org, "therapist"), await platformAdmin(false), randomUUID(), null];
     for (const grantee of refused) {
       const err = await attempt(a.org, sql, [a.org, a.owner, grantee]);
       expect(err?.code).toBe("23503");
       expect(err?.message).toBe(NO_SUPPORT);
     }
+    // Person einer bestehenden Freigabe nicht nachträglich leeren
+    const [{ id: gid }] = (await grant(a, await platformAdmin())).rows as { id: string }[];
+    expect((await attempt(a.org, "update support_grants set grantee_user_id = null where id = $1", [gid]))?.message).toBe(NO_SUPPORT);
     // erteilen darf nur ein Mitglied der Praxis (Support selbst nie, auch nicht mit Freigabe)
     const admin = await platformAdmin();
     await grant(a, admin);
@@ -257,12 +272,16 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     expect(await attempt(a.org, "update tasks set assignee_id = null where id = $1", [legacy])).toBeNull();
   });
 
-  it("search_path: jede SECURITY-DEFINER-Funktion hat pg_catalog, public, pg_temp; temporäre Tabelle `invoices` lenkt nichts um", async () => {
-    const defs = await owner.query("select proname, proconfig from pg_proc where pronamespace = 'public'::regnamespace and prosecdef order by proname");
-    expect(defs.rows.length).toBeGreaterThanOrEqual(6);
-    for (const r of defs.rows as { proname: string; proconfig: string[] | null }[]) {
-      expect(r.proconfig, r.proname).toContain("search_path=pg_catalog, public, pg_temp");
-    }
+  it("search_path: jede eigene Funktion (DEFINER und INVOKER) hat pg_catalog, public, pg_temp; temporäre Tabellen lenken nichts um", async () => {
+    // alle Funktionen im Schema public außer denen von Erweiterungen (pgcrypto, pg_trgm)
+    const defs = await owner.query(`select p.proname, p.prosecdef, p.proconfig from pg_proc p
+      where p.pronamespace = 'public'::regnamespace and p.prokind = 'f'
+        and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
+      order by p.proname`);
+    const rows = defs.rows as { proname: string; prosecdef: boolean; proconfig: string[] | null }[];
+    expect(rows.filter((r) => r.prosecdef).length).toBeGreaterThanOrEqual(6);
+    expect(rows.length).toBeGreaterThanOrEqual(30);
+    for (const r of rows) expect(r.proconfig, r.proname).toContain("search_path=pg_catalog, public, pg_temp");
     // Angriff: App-Rolle (TEMP-Recht) überdeckt invoices mit einer eigenen Tabelle, in der die ausgestellte Rechnung
     // als Entwurf erscheint – der Positions-Trigger muss trotzdem die echte Rechnung prüfen.
     const a = await world();
@@ -280,6 +299,43 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     }
     const total = await f.asOrg(a.org, async (cl) => (await cl.query("select total_cents from invoice_lines where invoice_id = $1", [inv])).rows[0].total_cents);
     expect(total).toBe(6500);
+    // INVOKER-Guard: Zahlung rückwirkend in einen abgeschlossenen Kassenzeitraum, Abschlüsse per temporärer Tabelle versteckt
+    const day = "2026-03-02";
+    await f.asOrg(a.org, (cl) =>
+      cl.query(
+        `insert into cash_closings (organization_id, number, business_date, closed_at, opening_cents, cash_payments_cents, movements_cents, expected_cash_cents,
+           counted_cash_cents, difference_cents, denominations, totals, payment_count, movement_count, first_bon_nr, last_bon_nr, items_digest, tse, hash, created_by)
+         values ($1, 1, $2, $3, 0,0,0,0,0,0,'{}','{}',0,0,0,0,'d','{}',md5(random()::text),$4)`,
+        [a.org, day, `${day}T18:00:00Z`, a.owner],
+      ),
+    );
+    const pay = "insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, created_by) values ($1,$2,'cash',100,$3,$4)";
+    const c2 = await f.pool.connect();
+    try {
+      await c2.query("begin");
+      await c2.query("select set_config('app.org_id', $1, true)", [a.org]);
+      await c2.query("create temp table cash_closings (organization_id uuid, closed_at timestamptz) on commit drop");
+      await expect(c2.query(pay, [a.org, inv, `${day}T10:00:00Z`, a.owner])).rejects.toThrow(/abgeschlossenen Kassenzeitraum/);
+    } finally {
+      await c2.query("rollback");
+      c2.release();
+    }
+  });
+
+  it("Trigger-Argument mit unbekannter Spalte scheitert laut statt still nichts zu prüfen", async (ctx) => {
+    const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
+    if (!su.rows[0]?.rolsuper) ctx.skip(); // Trigger anlegen (zurückgerollt) als Owner/Superuser
+    const a = await world();
+    const c = await owner.connect();
+    try {
+      await c.query("begin");
+      await c.query("create trigger zz_test_user_in_org before insert on tasks for each row execute function podo_user_in_org('assignee', 'member')");
+      await c.query("select set_config('app.org_id', $1, true)", [a.org]);
+      await expect(c.query("insert into tasks (organization_id, title) values ($1, 'x')", [a.org])).rejects.toThrow(/Spalte tasks\.assignee fehlt/);
+    } finally {
+      await c.query("rollback");
+      c.release();
+    }
   });
 
   it("Migration mit Nicht-Superuser-Owner: meldet Altbestand, zweiter Lauf idempotent, Trigger und Support-Pfad greifen", async (ctx) => {

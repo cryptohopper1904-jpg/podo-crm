@@ -10,6 +10,31 @@ import { berlinDateIso } from "@/lib/format";
 export const TEST_DB = process.env.TEST_DATABASE_URL;
 
 /**
+ * Altbestand nachstellen, den heutige Trigger nicht mehr zulassen (z. B. Support-Freigabe ohne Person): als Owner mit
+ * session_replication_role = replica (Trigger aus). Braucht einen Superuser (TEST_OWNER_DATABASE_URL); sonst `false`
+ * (Test dann überspringen).
+ */
+export async function insertLegacy(sql: string, params: unknown[]): Promise<boolean> {
+  const url = process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
+  const pool = new Pool({ connectionString: url, max: 1 });
+  try {
+    if (!(await pool.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) return false;
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await c.query("set local session_replication_role = replica");
+      await c.query(sql, params);
+      await c.query("commit");
+    } finally {
+      c.release();
+    }
+    return true;
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
  * Feste Systemzeit für zeitabhängige DB-Tests: mit `TEST_NOW` (ISO-Zeitpunkt, z. B. 2026-11-13T23:30:00Z) läuft
  * `Date` auf diesem Zeitpunkt – so lassen sich Tagesgrenzen (UTC-Abend = Berliner Folgetag) gezielt prüfen.
  * Nur `Date` wird ersetzt; Timer und die DB-Uhr laufen normal weiter.

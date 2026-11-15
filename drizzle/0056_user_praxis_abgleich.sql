@@ -6,7 +6,8 @@
 -- `create temp table invoices (…)` die Rechnungsprüfung des Triggers auf eine eigene Tabelle umlenken und so Positionen
 -- ausgestellter Rechnungen ändern. Einheitlich `pg_catalog, public, pg_temp` (pg_temp ausdrücklich zuletzt) auch für
 -- die übrigen Definer-Funktionen; dort stand pg_temp schon am Ende, die Angleichung ist reine Vereinheitlichung.
--- Der Test src/server/user-praxis.db.test.ts prüft das für jede SECURITY-DEFINER-Funktion im Schema public.
+-- Dasselbe für alle übrigen eigenen Funktionen (SECURITY INVOKER) steht am Ende dieser Migration.
+-- Der Test src/server/user-praxis.db.test.ts prüft das für jede eigene Funktion im Schema public.
 ALTER FUNCTION podo_invoice_lines_guard() SET search_path = pg_catalog, public, pg_temp;
 --> statement-breakpoint
 ALTER FUNCTION podo_delete_patient(uuid) SET search_path = pg_catalog, public, pg_temp;
@@ -30,7 +31,9 @@ ALTER FUNCTION podo_calendar_feeds_health(interval) SET search_path = pg_catalog
 --              hat keine Mitgliedschaft, kann aber z. B. mit Umfang „write“ Einstellungen ändern oder Belege abrufen).
 --              Unabhängig vom Umfang der Freigabe: was Support schreiben darf, begrenzt die App (effectiveCan).
 --  * support – support_grants.grantee_user_id: die Person beim Support hat gerade KEINE Mitgliedschaft; erlaubt ist nur
---              ein Plattform-Admin mit 2FA (wie isEligibleSupportAdmin in der App).
+--              ein Plattform-Admin mit 2FA (wie isEligibleSupportAdmin in der App). Leer (= alle Plattform-Admins) nur
+--              noch im Altbestand: neue Freigaben bzw. das Leeren einer Person werden abgelehnt (die App legt seit der
+--              personengebundenen Freigabe keine solchen mehr an).
 -- Für unbekannte und fremde Personen dieselbe Meldung (kein Existenz-Orakel über die Benutzer-UUID). Der Trigger läuft
 -- vor der Fremdschlüssel-Prüfung (die ist ein AFTER-Trigger), eine unbekannte UUID landet also ebenfalls hier.
 --
@@ -73,7 +76,16 @@ BEGIN
     col := TG_ARGV[i];
     kind := TG_ARGV[i + 1];
     i := i + 2;
+    -- Tippfehler/umbenannte Spalte in den Trigger-Argumenten: laut scheitern statt still nichts zu prüfen
+    IF NOT (new_row ? col) THEN
+      RAISE EXCEPTION 'podo_user_in_org: Spalte %.% fehlt (Trigger-Argumente prüfen)', TG_TABLE_NAME, col;
+    END IF;
     ref := (new_row ->> col)::uuid;
+    IF ref IS NULL AND kind = 'support'
+       AND (TG_OP = 'INSERT' OR (old_row ->> col) IS NOT NULL) THEN
+      RAISE EXCEPTION 'Diese Person kann keinen Support-Zugriff erhalten.'
+        USING ERRCODE = 'foreign_key_violation', DETAIL = format('%s.%s', TG_TABLE_NAME, col);
+    END IF;
     CONTINUE WHEN ref IS NULL;
     CONTINUE WHEN TG_OP = 'UPDATE'
       AND ref IS NOT DISTINCT FROM (old_row ->> col)::uuid
@@ -328,4 +340,28 @@ BEGIN
   IF total > 0 THEN
     RAISE NOTICE 'Personen-Verweise außerhalb der Praxis im Altbestand: % Zeile(n). Neue Schreibvorgänge werden jetzt geprüft.', total;
   END IF;
+END $$;
+--> statement-breakpoint
+-- Dieselbe Angriffsklasse bei SECURITY-INVOKER-Guards (Kassenabschluss, Rechnungen, Mahnungen …): Sie laufen mit dem
+-- search_path des Aufrufers, und ohne pg_temp im Pfad wird das temporäre Schema für Tabellen zuerst durchsucht – eine
+-- temporäre Tabelle `cash_closings` ließe z. B. rückwirkende Zahlungen in einen abgeschlossenen Zeitraum zu. Deshalb
+-- fester search_path für ALLE eigenen Funktionen im Schema public (ohne Erweiterungen wie pgcrypto/pg_trgm, nur Funktionen
+-- der Migrationsrolle). Die SQL-Funktionen darunter werden nur aus Triggern aufgerufen, Inlining spielt keine Rolle.
+-- Steht am Ende der Migration: CREATE OR REPLACE ohne SET-Klausel (podo_calendar_blocks_org oben) setzt den Pfad zurück.
+-- Neue Funktionen: Der Test src/server/user-praxis.db.test.ts verlangt den festen search_path für jede eigene Funktion.
+DO $$
+DECLARE
+  fn regprocedure;
+BEGIN
+  FOR fn IN
+    SELECT p.oid::regprocedure
+      FROM pg_proc p
+     WHERE p.pronamespace = 'public'::regnamespace
+       AND p.prokind = 'f'
+       AND pg_has_role(current_user, p.proowner, 'USAGE')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+       AND NOT coalesce(p.proconfig, '{}'::text[]) @> ARRAY['search_path=pg_catalog, public, pg_temp']
+  LOOP
+    EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, public, pg_temp', fn);
+  END LOOP;
 END $$;
