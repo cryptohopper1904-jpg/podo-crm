@@ -29,12 +29,29 @@ jobs:
       - name: Historie scannen (Push)
         if: github.event_name != 'pull_request'
         run: '"$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose .'
-      - name: PR-Commits scannen
+      # PR: Regeln/Ausnahmen aus dem Base-Stand, damit ein PR keine eigenen
+      # Ausnahmen mitbringen kann (Fallback auf PR-Stand nur, solange main keine hat).
+      - name: PR-Commits und Merge-Stand scannen
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: '"$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}" .'
+        run: |
+          set -euo pipefail
+          GL="$RUNNER_TEMP/gitleaks"
+          # Nicht auflösbarer oder leerer Bereich ließe gitleaks mit "no leaks" durchlaufen.
+          git cat-file -e "${BASE_SHA}^{commit}"
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          COUNT=$(git rev-list --count "${BASE_SHA}..${HEAD_SHA}")
+          echo "Commits im PR: $COUNT"
+          test "$COUNT" -gt 0
+          CFG="$RUNNER_TEMP/gitleaks.toml"
+          IGN="$RUNNER_TEMP/gitleaksignore"
+          git show "${BASE_SHA}:.gitleaks.toml" > "$CFG" 2>/dev/null || cp .gitleaks.toml "$CFG"
+          git show "${BASE_SHA}:.gitleaksignore" > "$IGN" 2>/dev/null || : > "$IGN"
+          "$GL" git --config "$CFG" --gitleaks-ignore-path "$IGN" --redact --no-banner --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}" .
+          # Merge-Commits haben in git log -p keinen Diff: Endstand zusätzlich prüfen.
+          "$GL" dir --config "$CFG" --gitleaks-ignore-path "$IGN" --redact --no-banner --verbose .
 
   test:
     runs-on: ubuntu-latest

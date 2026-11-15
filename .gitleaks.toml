@@ -5,6 +5,11 @@
 # (condition = "AND"). Neue Ausnahmen genauso eng fassen – nie ganze Ordner.
 #
 # Lokal:  gitleaks git --config .gitleaks.toml --redact .
+#
+# Altfund in der Historie (Secret bereits rotiert): Fingerprint aus der
+# gitleaks-Ausgabe (commit:datei:regel:zeile) in .gitleaksignore eintragen.
+# Bei Pull Requests gelten .gitleaks.toml und .gitleaksignore aus main –
+# Änderungen daran wirken erst nach dem Merge.
 
 title = "podo-crm"
 
@@ -16,7 +21,7 @@ useDefault = true
 [[rules]]
 id = "url-credentials"
 description = "Passwort in einer Verbindungs-URL"
-regex = '''\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}://[^\s:/@"'`<>]+:([^\s/@"'`<>]{3,})@[^\s"'`<>]+'''
+regex = '''\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}://[^\s:/@"'`<>]*:([^\s/@"'`<>]{3,})@[^\s"'`<>]+'''
 secretGroup = 1
 keywords = ["://"]
 
@@ -24,7 +29,8 @@ keywords = ["://"]
   [[rules.allowlists]]
   regexTarget = "secret"
   regexes = [
-    '''^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$''',
+    '''^\$\{[A-Za-z_][A-Za-z0-9_]*\}$''',
+    '''^\$[A-Z_][A-Z0-9_]*$''',
     '''^…$''',
   ]
 
@@ -35,6 +41,11 @@ description = "Stripe-Webhook-Secret"
 regex = '''\b(whsec_[A-Za-z0-9+/=_]{8,})'''
 secretGroup = 1
 keywords = ["whsec_"]
+
+  # Doku-Platzhalter wie whsec_xxxxxxxx
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = ['''^whsec_x+$''']
 
 # ---------------------------------------------------------------------------
 # Ausnahmen: bekannte, unkritische Test-Dummies (Pfad UND Wert müssen passen)
