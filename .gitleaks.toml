@@ -1,0 +1,172 @@
+# gitleaks-Konfiguration (CI-Job „secrets“ in .github/workflows/ci.yml).
+# Standardregeln von gitleaks + zwei eigene Regeln für Lücken, die weder die
+# Standardregeln noch GitHub Push Protection abdecken. Ausnahmen gelten nur für
+# bekannte Test-Dummies, jeweils für eine feste Datei und einen festen Wert
+# (condition = "AND"). Neue Ausnahmen genauso eng fassen – nie ganze Ordner –
+# und immer an der Regel ([[rules.allowlists]]), nie als globale
+# [[allowlists]]: Globale Ausnahmen mit Pfad überspringen in `gitleaks dir`
+# die ganze Datei, unabhängig vom Wert.
+#
+# Lokal:  gitleaks git --config .gitleaks.toml --redact .
+#
+# Altfund in der Historie (Secret bereits rotiert): Fingerprint aus der
+# gitleaks-Ausgabe (commit:datei:regel:zeile) in .gitleaksignore eintragen.
+# Bei Pull Requests gelten .gitleaks.toml und .gitleaksignore aus dem
+# Base-Stand – Änderungen daran wirken erst nach dem Merge.
+
+title = "podo-crm"
+
+[extend]
+useDefault = true
+
+# Zugangsdaten direkt in einer URL, z. B. postgres://user:passwort@host oder
+# smtps://user:passwort@host. Push Protection erkennt das nicht.
+[[rules]]
+id = "url-credentials"
+description = "Passwort in einer Verbindungs-URL"
+regex = '''\b[a-zA-Z][a-zA-Z0-9+.-]{1,20}://[^\s:/@"'`<>]*:([^\s@"'`<>]{3,})@[^\s"'`<>]+'''
+secretGroup = 1
+keywords = ["://"]
+
+  # Platzhalter statt echter Werte: ${VAR}, $VAR, „…“;
+  # außerdem host:PORT/pfad@… (kein Passwort, sondern Port + Pfad)
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = [
+    '''^\$\{[A-Za-z_][A-Za-z0-9_]*\}$''',
+    '''^\$[A-Z_][A-Z0-9_]*$''',
+    '''^…$''',
+    '''^\d{1,5}/''',
+  ]
+
+  # CI: Wegwerf-Postgres
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^\.github/workflows/ci\.yml$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^podo_(owner|app)$''',
+  ]
+
+  # DB-Test: Eigentümer-Rolle der Testdatenbank
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/db/purge\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^podo_owner$''',
+  ]
+
+  # SMTP-Test-URLs
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/integrations/mail/mail\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^p(%3Ass)?$''',
+  ]
+
+  # Platzhalter in den Beispiel-Umgebungsdateien
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^(deploy/)?\.env\.example$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^(CHANGE_ME|passwort)$''',
+  ]
+
+  # Negativbeispiel in der secrets-hygiene-Agentenbeschreibung
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^\.claude/agents/secrets-hygiene\.md$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^sup3rs3cret$''',
+  ]
+
+# Stripe-Webhook-Signaturschlüssel (whsec_…), fehlt in den Standardregeln.
+[[rules]]
+id = "stripe-webhook-secret"
+description = "Stripe-Webhook-Secret"
+regex = '''\b(whsec_[A-Za-z0-9+/=_]{8,})'''
+secretGroup = 1
+keywords = ["whsec_"]
+
+  # Doku-Platzhalter wie whsec_xxxxxxxx
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = ['''^whsec_x+$''']
+
+  # Stripe-Tests und Mock
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/integrations/stripe/(stripe\.test|mock)\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^whsec_(test_123|mock_dev_only|other)$''',
+  ]
+
+# ---------------------------------------------------------------------------
+# Ausnahmen für Standardregeln (gleiche id = Regel bleibt, Ausnahmen kommen dazu)
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "generic-api-key"
+
+  # CI: Test-APP_ENCRYPTION_KEY
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^\.github/workflows/ci\.yml$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=$''',
+  ]
+
+  # CRON_SECRET in Routentests
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/app/api/cron/[a-z-]+/route\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^cron-secret-0123456789$''',
+    '''^0123456789abcdef-test$''',
+  ]
+
+  # SMTP-Test-Passwort
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/integrations/mail/mail\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^geheim-Passwort-123$''',
+  ]
+
+  # Bootstrap-Test-Passwörter
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/lib/bootstrap\.db\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^(inhaber|anderes|neues)-passwort-\d{3}$''',
+  ]
+
+  # E2E-Demo-Passwort
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^e2e/support\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^demo-passwort-123$''',
+  ]
+
+[[rules]]
+id = "stripe-access-token"
+
+  # Stripe-Tests
+  [[rules.allowlists]]
+  condition = "AND"
+  paths = ['''^src/integrations/stripe/stripe\.test\.ts$''']
+  regexTarget = "secret"
+  regexes = [
+    '''^sk_test_x+$''',
+  ]
