@@ -170,6 +170,34 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(cash).toEqual(["165,00", "-4,80"]);
   });
 
+  it("Buchhaltung K1: übernommene Altzahlungen (Excel-Import) kommen nie in Kasse/Abschluss; Migration 0060 sperrt die Zuordnung", async () => {
+    const { auth, org, user, payment } = await setup();
+    const patient = await f.patient(org);
+    // Altrechnung aus dem Excel-Rechnungsmanager (source ≠ crm) mit übernommener Barzahlung
+    const imported = await f.asOrg(org, async (c) => {
+      const id = (await c.query("insert into invoices (organization_id, patient_id, status, source) values ($1,$2,'draft','excel-import') returning id", [org, patient])).rows[0].id as string;
+      await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Altbestand',4000,4000,0,1)", [org, id]);
+      await c.query("update invoices set status='paid', number=$2, issued_at='2026-08-03', total_cents=4000, net_cents=4000, paid_cents=4000 where id=$1", [id, `ALT-${Date.now()}`]);
+      return id;
+    });
+    const importPay = await f.asOrg(org, async (c) =>
+      (await c.query("insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, external_ref, created_by) values ($1,$2,'cash',4000,'2026-08-03 12:00+02',$3,$4) returning id", [org, imported, `excel:ALT`, user])).rows[0].id as string,
+    );
+    const crmPay = await payment("cash", 1500, "2026-08-03 10:00+02");
+    const ov = await kasse.kasseOverview(auth);
+    expect(ov.calc.cashPaymentsCents).toBe(1500);
+    const z = await kasse.closeDay(auth, { businessDate: "2026-08-03", denominations: den(1500), openingCents: 0 });
+    const rows = await f.asOrg(org, async (c) => (await c.query("select id, cash_closing_id from payments where id = any($1)", [[importPay, crmPay]])).rows as { id: string; cash_closing_id: string | null }[]);
+    expect(rows.find((r) => r.id === crmPay)?.cash_closing_id).toBeTruthy();
+    expect(rows.find((r) => r.id === importPay)?.cash_closing_id).toBeNull();
+    expect(z.number).toBe(1);
+    // auch nach dem Abschluss nicht mehr „offen“ in der Kasse
+    expect((await kasse.kasseOverview(auth)).calc.cashPaymentsCents).toBe(0);
+    // DB-Trigger (0060): Zuordnung einer Import-Zahlung zu einem Abschluss wird abgelehnt
+    const closingId = rows.find((r) => r.id === crmPay)!.cash_closing_id;
+    await expect(f.asOrg(org, (c) => c.query("update payments set cash_closing_id = $2 where id = $1", [importPay, closingId]))).rejects.toThrow(/Übernommene Zahlungen \(Import\) kommen in keinen Kassenabschluss/);
+  });
+
   it("Mandantentrennung: fremde Abschlüsse sind unsichtbar", async () => {
     const a = await setup();
     const b = await setup();

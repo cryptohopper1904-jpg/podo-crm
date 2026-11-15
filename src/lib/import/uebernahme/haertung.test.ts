@@ -310,6 +310,9 @@ describe("Feldlängen, Einzahl, Texte", () => {
     expect(dataCopyHint("beim Tinana-Support")).toMatch(/Art\. 28 Abs\. 3 lit\. a und g DSGVO/);
     expect(SOURCE_HELP.find((h) => h.id === "excel")).toMatchObject({ online: false, tips: [expect.not.stringMatching(/Art\. 28/)] });
     expect(SOURCE_HELP.find((h) => h.id === "pododesk")!.missing.join(" ")).toMatch(/in der Regel über die sevdesk-Anbindung/);
+    // Recht Runde 2 B1: Excel-Rechnungen und Kassenbuch-Frist ausdrücklich genannt
+    expect(RETENTION_HINT).toMatch(/Excel/);
+    expect(RETENTION_HINT).toContain("10 Jahre für Kassenbuch");
   });
 });
 

@@ -1,27 +1,42 @@
 /**
  * Ablauf eines Übernahme-Laufs mit Datenbank (ohne Next.js-Abhängigkeiten, damit testbar):
  *
- *  - Je Praxis nur ein Lauf gleichzeitig: pg_try_advisory_xact_lock („uebernahme:<org>“) – ein zweiter Lauf
- *    (Vorschau oder Import) bricht sofort mit ImportBusyError ab, statt Speicher und CPU doppelt zu belegen (AppSec B1).
- *  - Import in zwei Schritten: (1) unter der Sperre Dateien lesen und planen, (2) die zuzuordnenden PDFs VOR der
- *    Transaktion verschlüsselt ablegen (Code-Review CR6), (3) unter der Sperre Bestand neu laden, neu planen und in
- *    EINER Transaktion schreiben. Schlägt (3) fehl, werden alle abgelegten Dateien wieder entfernt; nicht benötigte
- *    Vorab-Ablagen ebenfalls.
+ *  - Prozessweit nur ein Lauf gleichzeitig (Semaphore, AppSec Runde 2 A-B1): Entpacken, Parsen und Planen belegen
+ *    Speicher und CPU – ein zweiter Lauf (auch einer anderen Praxis) bricht sofort mit ServerBusyError ab.
+ *  - Je Praxis nur ein Lauf gleichzeitig: pg_try_advisory_xact_lock („uebernahme:<org>“) beim Laden des Bestands und
+ *    beim Schreiben – ein zweiter Lauf bricht mit ImportBusyError ab.
+ *  - Parsen und Planen laufen AUSSERHALB jeder DB-Transaktion (A-B1): Die Transaktionen laden nur den Bestand bzw.
+ *    schreiben den fertigen Plan.
+ *  - Import: (1) Dateien lesen, Bestand laden (kurze Transaktion), planen; (2) die zuzuordnenden PDFs VOR der
+ *    Transaktion verschlüsselt ablegen (Code-Review CR6); (3) in EINER Transaktion: Sperre, Einmal-Token prüfen, Bestand
+ *    neu laden und mit (1) vergleichen (Fingerabdruck) – hat er sich geändert, Abbruch mit „bitte erneut prüfen“ –,
+ *    dann den Plan aus (1) schreiben. Schlägt (3) fehl, werden alle abgelegten Dateien wieder entfernt.
  *  - Vorschau-Token nur einmal einlösbar: der Lauf schreibt seinen Audit-Eintrag (mit Token-Hash) in derselben
- *    Transaktion; ein zweiter Lauf mit demselben Token findet ihn und bricht mit TokenUsedError ab.
+ *    Transaktion; ein zweiter Lauf mit demselben Token findet ihn (Tokens gelten 15 Minuten, gesucht wird in den
+ *    letzten 20 Minuten) und bricht mit TokenUsedError ab.
+ *  - Dieselbe Bestandsperson für zwei Zeilen gewählt (S4): Import abgelehnt (ChoiceConflictError), nichts gespeichert.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, gt, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
 import * as s from "@/db/schema";
 import { collectFiles } from "./collect";
 import { applyPlan, loadExisting, type ApplySummary } from "./persist";
-import { buildPlan, type ImportPlan, type PlanOptions } from "./plan";
+import { buildPlan, choiceConflictMessage, type ExistingSnapshot, type ImportPlan, type PlanOptions } from "./plan";
 import type { DetectedFile, InputFile } from "./types";
 
 export class ImportBusyError extends Error {
-  constructor() {
-    super("Für diese Praxis läuft gerade schon eine Übernahme. Bitte warten Sie, bis sie abgeschlossen ist, und versuchen Sie es dann erneut.");
+  constructor(message = "Für diese Praxis läuft gerade schon eine Übernahme. Bitte warten Sie, bis sie abgeschlossen ist, und versuchen Sie es dann erneut.") {
+    super(message);
     this.name = "ImportBusyError";
+  }
+}
+
+/** Prozessweite Grenze: ein Lauf gleichzeitig (Unterklasse von ImportBusyError, gleiche Behandlung in der Action) */
+export class ServerBusyError extends ImportBusyError {
+  constructor() {
+    super("Gerade läuft bereits eine andere Datenübernahme. Bitte versuchen Sie es in einigen Minuten erneut.");
+    this.name = "ServerBusyError";
   }
 }
 
@@ -29,6 +44,20 @@ export class TokenUsedError extends Error {
   constructor() {
     super("Diese Vorschau wurde bereits importiert. Bitte die Dateien erneut prüfen.");
     this.name = "TokenUsedError";
+  }
+}
+
+export class StaleSnapshotError extends Error {
+  constructor() {
+    super("Der Bestand hat sich seit der Prüfung geändert (z. B. neue Patient:innen). Es wurde nichts gespeichert – bitte erneut prüfen und importieren.");
+    this.name = "StaleSnapshotError";
+  }
+}
+
+export class ChoiceConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChoiceConflictError";
   }
 }
 
@@ -46,18 +75,55 @@ export interface RunDeps {
 
 export const RUN_ACTION = "import.uebernahme.run";
 
+/** Prozessweite Semaphore (ein Lauf gleichzeitig). Exportiert nur für Tests. */
+let running = false;
+export async function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  if (running) throw new ServerBusyError();
+  running = true;
+  try {
+    return await fn();
+  } finally {
+    running = false;
+  }
+}
+
 async function lock(tx: Tx, org: string) {
   const r = await tx.execute<{ ok: boolean }>(sql`select pg_try_advisory_xact_lock(hashtext(${"uebernahme:" + org})) as ok`);
   if (!r.rows[0]?.ok) throw new ImportBusyError();
 }
 
-/** Vorschau: Dateien lesen und gegen den Bestand planen – unter der Praxis-Sperre. */
-export async function previewUebernahme(deps: Pick<RunDeps, "inOrg">, org: string, files: InputFile[], opts: PlanOptions): Promise<{ detected: DetectedFile[]; plan: ImportPlan }> {
+/** Fingerabdruck des Bestands (Reihenfolge-unabhängig) – erkennt Änderungen zwischen Planung und Schreiben. */
+export function snapshotFingerprint(e: ExistingSnapshot): string {
+  const h = createHash("sha256");
+  const sorted = <T>(list: T[], key: (x: T) => string) => list.map((x) => [key(x), x] as const).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  for (const [, p] of sorted(e.patients, (p) => p.id)) {
+    h.update(JSON.stringify([p.id, p.number, p.firstName, p.lastName, p.birthDate, p.email, p.phoneMobile, !!p.erased, Object.entries(p.externalIds).sort()]));
+    h.update("\n");
+  }
+  for (const set of [e.appointmentRefs, e.prescriptionRefs, e.documentHashes]) h.update(JSON.stringify([...set].sort()));
+  for (const list of [e.therapists, e.locations, e.services] as { id: string }[][]) h.update(JSON.stringify(sorted(list, (x) => x.id).map(([, x]) => x)));
+  return h.digest("hex");
+}
+
+/** Bestand in einer kurzen Transaktion laden (unter der Praxis-Sperre). */
+function loadSnapshot(deps: Pick<RunDeps, "inOrg">, org: string, detected: DetectedFile[]) {
   return deps.inOrg(org, async (tx) => {
     await lock(tx, org);
-    const detected = await collectFiles(files);
-    const existing = await loadExisting(tx, org, pdfShas(detected));
-    return { detected, plan: buildPlan(detected, existing, opts) };
+    return loadExisting(tx, org, pdfShas(detected));
+  });
+}
+
+async function previewInner(deps: Pick<RunDeps, "inOrg">, org: string, files: InputFile[], opts: PlanOptions) {
+  const detected = await collectFiles(files);
+  const existing = await loadSnapshot(deps, org, detected);
+  return { detected, existing, plan: buildPlan(detected, existing, opts) };
+}
+
+/** Vorschau: Dateien lesen und gegen den Bestand planen (Parsen/Planen außerhalb der Transaktion). */
+export async function previewUebernahme(deps: Pick<RunDeps, "inOrg">, org: string, files: InputFile[], opts: PlanOptions): Promise<{ detected: DetectedFile[]; plan: ImportPlan }> {
+  return exclusive(async () => {
+    const { detected, plan } = await previewInner(deps, org, files, opts);
+    return { detected, plan };
   });
 }
 
@@ -74,43 +140,51 @@ export interface RunArgs {
 }
 
 export async function runUebernahme(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySummary; plan: ImportPlan }> {
-  // (1) lesen und planen
-  const { detected, plan: first } = await previewUebernahme(deps, a.org, a.files, a.opts);
+  return exclusive(() => runInner(deps, a));
+}
+
+async function runInner(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySummary; plan: ImportPlan }> {
+  // (1) lesen, Bestand laden, planen – außerhalb der Schreib-Transaktion
+  const { detected, existing: first, plan } = await previewInner(deps, a.org, a.files, a.opts);
+  if (plan.conflicts.length) throw new ChoiceConflictError(choiceConflictMessage(plan.conflicts[0]));
+  const fingerprint = snapshotFingerprint(first);
   const stored: string[] = [];
   const bySha = new Map<string, Stored>();
   const used = new Set<string>();
   try {
     // (2) PDFs vor der Transaktion ablegen (je Inhalt einmal)
-    for (const d of first.documents) {
+    for (const d of plan.documents) {
       if (bySha.has(d.sha256)) continue;
       const r = await deps.store(a.org, Buffer.from(d.data));
       stored.push(r.storageKey);
       bySha.set(d.sha256, r);
     }
-    // (3) neu planen und schreiben – eine Transaktion
-    const result = await deps.inOrg(a.org, async (tx) => {
+    // (3) prüfen und schreiben – eine Transaktion, ohne Parsen/Planen
+    const summary = await deps.inOrg(a.org, async (tx) => {
       await lock(tx, a.org);
       const done = await tx
         .select({ id: s.auditLog.id })
         .from(s.auditLog)
-        .where(and(eq(s.auditLog.organizationId, a.org), eq(s.auditLog.action, RUN_ACTION), sql`${s.auditLog.meta}->>'token' = ${a.tokenHash}`))
+        .where(
+          and(
+            eq(s.auditLog.organizationId, a.org),
+            eq(s.auditLog.action, RUN_ACTION),
+            // Tokens gelten 15 Minuten – nur dieser Zeitraum (mit Puffer) muss durchsucht werden (A-H1, Index audit_org_time)
+            gt(s.auditLog.at, sql`now() - interval '20 minutes'`),
+            sql`${s.auditLog.meta}->>'token' = ${a.tokenHash}`,
+          ),
+        )
         .limit(1);
       if (done.length) throw new TokenUsedError();
       // Patientennummern-Sperre VOR dem Bestandsabgleich (gleiche Sperre wie Neuanlage und die übrigen Importe)
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + a.org}))`);
-      const existing = await loadExisting(tx, a.org, pdfShas(detected));
-      const plan = buildPlan(detected, existing, a.opts);
-      const summary = await applyPlan(tx, a.org, a.userId, plan, async (data, sha256) => {
+      const now = await loadExisting(tx, a.org, pdfShas(detected));
+      if (snapshotFingerprint(now) !== fingerprint) throw new StaleSnapshotError();
+      const summary = await applyPlan(tx, a.org, a.userId, plan, async (_data, sha256) => {
         const pre = bySha.get(sha256);
-        if (pre) {
-          used.add(pre.storageKey);
-          return pre;
-        }
-        // nur falls sich der Bestand zwischen (1) und (3) geändert hat
-        const r = await deps.store(a.org, data);
-        stored.push(r.storageKey);
-        used.add(r.storageKey);
-        return r;
+        if (!pre) throw new Error("Dokument wurde nicht vorab abgelegt.");
+        used.add(pre.storageKey);
+        return pre;
       });
       await tx.insert(s.auditLog).values({
         organizationId: a.org,
@@ -136,11 +210,11 @@ export async function runUebernahme(deps: RunDeps, a: RunArgs): Promise<{ summar
           },
         },
       });
-      return { summary, plan };
+      return summary;
     });
     // nicht benötigte Vorab-Ablagen entfernen
     for (const k of stored) if (!used.has(k)) await deps.discard(k).catch(() => {});
-    return result;
+    return { summary, plan };
   } catch (e) {
     // keine verwaisten verschlüsselten Dateien ohne DB-Eintrag
     for (const k of stored) await deps.discard(k).catch(() => {});

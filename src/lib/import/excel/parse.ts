@@ -315,7 +315,9 @@ export function findDuplicates(patients: PatientImportDraft[]): DuplicateGroup[]
     for (const p of patients) {
       const k = keyFn(p);
       if (!k) continue;
-      map.set(k, [...(map.get(k) ?? []), p]);
+      const list = map.get(k);
+      if (list) list.push(p);
+      else map.set(k, [p]);
     }
     for (const [value, list] of map) {
       if (list.length > 1) groups.push({ sheet: "Patienten", reason, value, rows: list.map((p) => p.row), legacyIds: list.map((p) => p.legacyId) });
@@ -333,7 +335,10 @@ export function findDuplicates(patients: PatientImportDraft[]): DuplicateGroup[]
   const phoneMap = new Map<string, PatientImportDraft[]>();
   for (const p of patients) {
     for (const n of new Set([digits(p.phoneMobile), digits(p.phoneLandline)])) {
-      if (n) phoneMap.set(n, [...(phoneMap.get(n) ?? []), p]);
+      if (!n) continue;
+      const list = phoneMap.get(n);
+      if (list) list.push(p);
+      else phoneMap.set(n, [p]);
     }
   }
   for (const [value, list] of phoneMap) {

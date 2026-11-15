@@ -21,17 +21,28 @@ export const HELP_STAND = "Stand: November 2026, nach unseren Tests – Menüs u
 export const dataCopyHint = (where: string) =>
   `Was der Export nicht enthält, können Sie ${where} als vollständige Datenkopie anfordern. Als Verantwortliche können Sie das jederzeit anweisen; spätestens bei Vertragsende muss der Anbieter Ihnen die Daten nach Ihrer Wahl zurückgeben (Art. 28 Abs. 3 lit. a und g DSGVO, Auftragsverarbeitungsvertrag).`;
 
-/** Aufbewahrung (Recht B2) – in der Hilfe für alle Quellen und auf dem Ergebnis-Bildschirm */
+/** Aufbewahrung (Recht B2, Runde 2 B1) – in der Hilfe für alle Quellen und auf dem Ergebnis-Bildschirm */
 export const RETENTION_HINT =
-  "Übernommene Rechnungen sind in PodoHero nur Kopien zum Nachschlagen – sie werden nicht gebucht und ersetzen nicht die Originale. " +
-  "Bewahren Sie den vollständigen Export Ihrer bisherigen Software (Rechnungen, Kassenbuch, Behandlungsdokumentation) selbst auf, solange die " +
-  "Aufbewahrungsfristen laufen (Rechnungen/Buchungsbelege i. d. R. 8 Jahre, Behandlungsdokumentation 10 Jahre), oder lassen Sie ihn sich vor der " +
-  "Kündigung vollständig geben. Kündigen Sie Ihre bisherige Software erst, wenn Sie alles haben.";
+  "Rechnungen aus Online-Software (z. B. Tinana) legt PodoHero nur als PDF-Kopie bei der Patient:in ab – nicht als PodoHero-Rechnung, Zahlung oder Kassenbuchung. " +
+  "Rechnungen aus dem Excel-Rechnungsmanager übernimmt PodoHero mit ihrer bisherigen Nummer als ausgestellte bzw. bezahlte Rechnungen, damit Ihre Nummernkreise lückenlos weiterlaufen. " +
+  "Übertragen Sie diese Rechnungen nicht noch einmal in Ihre Buchhaltung (z. B. Lexoffice), wenn sie dort schon erfasst sind. " +
+  "In beiden Fällen ersetzen übernommene Rechnungen nicht Ihre Originalunterlagen: Bewahren Sie den vollständigen Export Ihrer bisherigen Software bzw. Ihre Excel-Datei " +
+  "(Rechnungen, Kassenbuch, Behandlungsdokumentation) selbst auf, möglichst im Originalformat, solange die Aufbewahrungsfristen laufen – in der Regel 8 Jahre für Rechnungen " +
+  "und Buchungsbelege, 10 Jahre für Kassenbuch und andere Bücher (jeweils ab Ende des Kalenderjahres) und 10 Jahre nach Abschluss der Behandlung für die " +
+  "Behandlungsdokumentation. Lassen Sie sich alle Daten vor der Kündigung vollständig geben und kündigen Sie Ihre bisherige Software erst, wenn Sie alles haben.";
+
+/** Übernommene Zahlungen aus dem Excel-Rechnungsmanager (Buchhaltung K3) – Import-Seite und Vorschau */
+export const EXCEL_PAYMENTS_HINT =
+  "Übernommene Zahlungen werden nur an der Rechnung vermerkt. Sie erscheinen nicht in der Kasse, im Tagesabschluss oder im DSFinV-K-Export – sie sind im Kassenbuch Ihres bisherigen Systems erfasst.";
+
+/** Wiederholter Upload nach vollständiger Löschung (Code-Review Runde 2) */
+export const REUPLOAD_HINT =
+  "Ein erneuter Upload legt nichts doppelt an. Ausnahme: Patient:innen, die Sie in PodoHero vollständig gelöscht haben (nicht nur ihre Kontaktdaten), kennt PodoHero nicht mehr – sie würden bei einem erneuten Upload derselben Exportdatei wieder angelegt.";
 
 /** Einwilligungen (Recht, Empfehlung) – in der Hilfe für alle Quellen und auf dem Ergebnis-Bildschirm */
 export const CONSENT_HINT =
   "Einwilligungen (z. B. Terminerinnerungen per SMS/E-Mail, Newsletter, Fotos) übernehmen wir aus keinem Fremdsystem, weil ihr Nachweis dort bleibt. " +
-  "Holen Sie sie in PodoHero neu ein; bis dahin verschickt PodoHero an übernommene Patient:innen keine Erinnerungen.";
+  "Holen Sie sie in PodoHero neu ein; bis dahin verschickt PodoHero an neu übernommene Patient:innen keine Erinnerungen. Bei Personen, die schon in PodoHero geführt werden, gelten deren bisherige Einwilligungen in PodoHero weiter.";
 
 export const SOURCE_HELP: SourceHelp[] = [
   {
@@ -66,7 +77,7 @@ export const SOURCE_HELP: SourceHelp[] = [
       "Die Patientendatei aus dem Gesamtexport erkennt der Assistent noch nicht automatisch, weil uns noch kein echter Export vorliegt. Sie wird als „nicht erkannt“ angezeigt; es wird nichts verändert.",
       "Rechnungen werden bei Pododesk in der Regel über die sevdesk-Anbindung erstellt und sind daher nicht im Pododesk-Export.",
     ],
-    tips: [dataCopyHint("bei der Hellmut Ruck GmbH")],
+    tips: [dataCopyHint("beim Pododesk-Support")],
   },
   {
     id: "doctolib",
@@ -92,6 +103,6 @@ export const SOURCE_HELP: SourceHelp[] = [
 /** Nur für Online-Software (Auftragsverarbeitung), nicht für die eigene Excel-Datei */
 export const DSGVO_HINT =
   "Sie sind für die Daten Ihrer Patient:innen verantwortlich, Ihre bisherige Online-Software verarbeitet sie in Ihrem Auftrag. " +
-  "Sie können jederzeit eine vollständige Kopie verlangen; bei Vertragsende muss sie Ihnen die Daten nach Ihrer Wahl zurückgeben (Art. 28 Abs. 3 lit. g DSGVO). " +
+  "Sie können jederzeit eine vollständige Kopie anweisen; bei Vertragsende muss sie die Daten nach Ihrer Wahl zurückgeben oder löschen (Art. 28 Abs. 3 lit. a und g DSGVO) – wählen Sie die Rückgabe. " +
   "Schreiben Sie dazu formlos an den Support: „Bitte stellen Sie mir alle Daten meiner Praxis einschließlich Dokumenten, Fotos und Dokumentation in einem gängigen, " +
   "maschinenlesbaren Format bereit (z. B. CSV und PDF).“";

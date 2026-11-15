@@ -78,3 +78,8 @@ export const NOTE_NO_SHOW =
   "Ausfallhonorar gemäß § 615 BGB für einen nicht wahrgenommenen und nicht rechtzeitig abgesagten Termin. Als Schadensersatz nicht umsatzsteuerbar.";
 /** Interne Notizzeilen mit diesem Präfix werden nicht gedruckt. */
 export const INTERNAL_NOTE_PREFIX = "[intern] ";
+
+/** Altbestand aus dem Import (invoices.source ≠ "crm"): nur Nachschlagen – Buchhaltung L1/P1 */
+export const IMPORTED_INVOICE_LOCKED =
+  "Übernommene Altrechnung (Import) – sie wurde in Ihrer bisherigen Software ausgestellt. Versand, Zahlungslink und Kartenzahlung sind hier nicht möglich.";
+export const IMPORTED_LEXOFFICE_NOTE = "Altbestand aus Import – nicht an lexoffice übertragbar";

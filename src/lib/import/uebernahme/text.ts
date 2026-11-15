@@ -64,6 +64,7 @@ const de = (n: number) => n.toLocaleString("de-DE");
 export function parseCsvBounded(input: string, delimiter?: Delimiter, limits: TextLimits = TEXT_LIMITS): string[][] {
   const text = stripBom(input);
   const d = delimiter ?? detectDelimiter(text.slice(0, SIGNATURE_BYTES));
+  const n = text.length;
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -81,28 +82,32 @@ export function parseCsvBounded(input: string, delimiter?: Delimiter, limits: Te
     }
     row = [];
   };
-  const add = (c: string) => {
-    if (field.length >= limits.maxFieldChars) throw new TextLimitError(`Ein Feld ist länger als ${de(limits.maxFieldChars)} Zeichen – das ist kein unterstützter Export.`);
-    field += c;
+  const add = (chunk: string) => {
+    if (field.length + chunk.length > limits.maxFieldChars) throw new TextLimitError(`Ein Feld ist länger als ${de(limits.maxFieldChars)} Zeichen – das ist kein unterstützter Export.`);
+    field += chunk;
   };
+  // Abschnitte statt einzelner Zeichen (A-B1: lineare, schnelle Zerlegung auch bei 50.000 Zeilen)
+  const plain = new RegExp(`[${d === "\t" ? "\\t" : d}\\r\\n]`, "g");
   let i = 0;
-  while (i < text.length) {
-    const c = text[i];
+  while (i < n) {
     if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          add('"');
-          i += 2;
-          continue;
-        }
-        inQuotes = false;
-        i++;
-        continue;
+      const q = text.indexOf('"', i);
+      if (q < 0) {
+        add(text.slice(i));
+        i = n;
+        break;
       }
-      add(c);
-      i++;
+      add(text.slice(i, q));
+      if (text[q + 1] === '"') {
+        add('"');
+        i = q + 2;
+      } else {
+        inQuotes = false;
+        i = q + 1;
+      }
       continue;
     }
+    const c = text[i];
     if (c === '"' && field === "") {
       inQuotes = true;
       i++;
@@ -113,8 +118,12 @@ export function parseCsvBounded(input: string, delimiter?: Delimiter, limits: Te
       pushRow();
       i += c === "\r" && text[i + 1] === "\n" ? 2 : 1;
     } else {
-      add(c);
-      i++;
+      // gewöhnliche Zeichen bis zum nächsten Trennzeichen/Zeilenende („"“ mitten im Feld ist ein normales Zeichen)
+      plain.lastIndex = i;
+      const m = plain.exec(text);
+      const j = m ? m.index : n;
+      add(text.slice(i, j));
+      i = j;
     }
   }
   if (field !== "" || row.length > 0) pushRow();
@@ -132,9 +141,16 @@ export interface Table {
   records: { row: number; values: Record<string, string> }[];
 }
 
-/** CSV → Datensätze mit normalisierten Spaltennamen. `row` = Zeile in der Datei (Kopf = 1). Mit Grenzen. */
-export function readTable(text: string, limits: TextLimits = TEXT_LIMITS): Table {
-  const rows = parseCsvBounded(text, undefined, limits);
+/**
+ * CSV → Datensätze mit normalisierten Spaltennamen. `row` = Zeile in der Datei (Kopf = 1). Mit Grenzen.
+ * `delimiter`: Trennzeichen aus der Erkennung (textSignature) – dieselbe Zerlegung wie bei der Erkennung (A-H7).
+ */
+export function readTable(text: string, delimiter?: Delimiter, limits: TextLimits = TEXT_LIMITS): Table {
+  return tableFromRows(parseCsvBounded(text, delimiter, limits));
+}
+
+/** Bereits zerlegte Zeilen → Tabelle (analyzeFile zerlegt jede Datei nur einmal) */
+export function tableFromRows(rows: string[][]): Table {
   if (!rows.length) return { headers: [], records: [] };
   const headers = rows[0].map(normHeader);
   const records = rows.slice(1).map((r, i) => {

@@ -3,7 +3,7 @@
  * hochzählen – die Zustimmung wird je Praxis mit Version, Zeitpunkt und Person gespeichert
  * (organizations.settings.legalAcceptance).
  */
-export const LEGAL_VERSIONS = { agb: "0.4", avv: "0.4", datenschutz: "0.5" } as const;
+export const LEGAL_VERSIONS = { agb: "0.4", avv: "0.5", datenschutz: "0.5" } as const;
 export const LEGAL_VERSION = `agb-${LEGAL_VERSIONS.agb}+avv-${LEGAL_VERSIONS.avv}`;
 
 export type LegalAcceptance = { agb: string; avv: string; version: string; at: string; by: string };
@@ -22,14 +22,23 @@ export const READONLY_MIN_AVV = "0.4";
 export const AVV_READONLY_NOTE =
   "Nach Vertragsende bleiben deine Daten höchstens 12 Monate im Nur-Lesen-Modus lesbar und exportierbar und werden nach Ankündigung (mindestens 30 Tage vorher) gelöscht (§ 10 Nr. 2).";
 
+/** Ab dieser AVV-Version sind die Übernahme (Import) und verordnende Ärzt:innen genannt (§ 2) – nur Hinweis, keine Sperre */
+export const IMPORT_MIN_AVV = "0.5";
+
+/** Hinweis im AVV-Banner, solange die bisherige Zustimmung älter als IMPORT_MIN_AVV ist (Recht Runde 2 B2) */
+export const AVV_IMPORT_NOTE =
+  "Die Übernahme (Import) aus Exportdateien anderer Praxissoftware ist als Verarbeitungsart genannt, verordnende Ärztinnen und Ärzte (Name, LANR, BSNR) als betroffene Personen (§ 2).";
+
 /**
  * Welche Neuerungen das AVV-Banner nennt – abhängig von der bisher akzeptierten Version: Löschweisung für Online-Anfragen
- * (§ 3 Nr. 4, ab 0.3) und Nur-Lesen-Modus/Löschung nach Vertragsende (§ 10 Nr. 2, ab 0.4).
+ * (§ 3 Nr. 4, ab 0.3), Nur-Lesen-Modus/Löschung nach Vertragsende (§ 10 Nr. 2, ab 0.4) und Übernahme/verordnende
+ * Ärzt:innen (§ 2, ab 0.5). Die Übernahme ist ohne neue Zustimmung möglich – der Hinweis sperrt nichts.
  */
-export function avvBannerNews(previous: string | null): { retention: boolean; readonly: string | null } {
+export function avvBannerNews(previous: string | null): { retention: boolean; readonly: string | null; import: string | null } {
   const retention = !versionAtLeast(previous, RETENTION_MIN_AVV);
   const readonly = versionAtLeast(previous, READONLY_MIN_AVV) ? null : `${retention ? "Außerdem neu: " : "Neu ist u. a.: "}${AVV_READONLY_NOTE}`;
-  return { retention, readonly };
+  const imp = versionAtLeast(previous, IMPORT_MIN_AVV) ? null : `${retention || readonly ? "Außerdem neu: " : "Neu ist u. a.: "}${AVV_IMPORT_NOTE}`;
+  return { retention, readonly, import: imp };
 }
 
 /** „0.3“ → [0, 3]; ungültig → null */

@@ -47,7 +47,8 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
   const showDrive = canEdit && !!patient && a.homeVisit && open;
   const showStatus = canEdit && open && !auth.readOnly;
   const showCancel = showStatus && !data.feed && a.source !== "doctolib" && a.source !== "extern";
-  const receiptFirst = !!billing?.patient && a.status === "done" && !billing.billedBy.length && !openDeposit && !depositOk;
+  // übernommene Termine (Quelle „import“) wurden in der bisherigen Software abgerechnet (S1)
+  const receiptFirst = a.source !== "import" && !!billing?.patient && a.status === "done" && !billing.billedBy.length && !openDeposit && !depositOk;
   const name = patient ? fullName(patient) : (a.title ?? "Termin");
   const hasActions = showDoc || assign || showDrive || showStatus || receiptFirst;
 

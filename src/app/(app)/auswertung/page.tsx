@@ -109,7 +109,17 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
       <StatsTabs active="finanzen" statsQuery={statsQueryForYear(year, currentYear)} year={year} />
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label={`Umsatz ${year}`} value={money(d.revenueYear)} tone="primary" sub={<Change current={d.revenueYear} previous={d.revenuePrev} />} />
+        <Stat
+          label={`Umsatz ${year}`}
+          value={money(d.revenueYear)}
+          tone="primary"
+          sub={
+            <>
+              <Change current={d.revenueYear} previous={d.revenuePrev} />
+              {d.revenueImportedYear ? <span className="block">davon übernommen (Import): {money(d.revenueImportedYear)}</span> : null}
+            </>
+          }
+        />
         <Stat label={`Behandlungen ${year}`} value={d.treatmentsYear.toLocaleString("de-DE")} tone="info" sub={<Change current={d.treatmentsYear} previous={d.treatmentsPrev} />} />
         <Stat label="Ø Umsatz je Behandlung" value={money(d.avgRevenuePerTreatment)} tone="neutral" />
         <Stat
@@ -119,6 +129,7 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
           sub={
             <Link href="/rechnungen?filter=open" className="underline">
               {d.receivables.count} Rechnungen{d.receivables.overdueCents > 0 ? `, davon ${money(d.receivables.overdueCents)} überfällig` : ""}
+              {d.receivables.importedCents ? `, davon übernommen (Import): ${money(d.receivables.importedCents)}` : ""}
             </Link>
           }
         />

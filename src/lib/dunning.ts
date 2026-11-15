@@ -108,7 +108,10 @@ export function readDunningSettings(settings: Record<string, unknown> | null | u
   return { payDays: intIn(raw.payDays, 1, MAX_PAY_DAYS, DEFAULT_DUNNING_SETTINGS.payDays), stages };
 }
 
-export type DunnableInvoice = { kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number };
+export type DunnableInvoice = { kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number; source?: string | null };
+
+/** Übernommene Altrechnungen (Import) werden in PodoHero nicht gemahnt (Buchhaltung P1) */
+export const IMPORTED_NOT_DUNNABLE = "Übernommene Altrechnung (Import) – Mahnungen bitte über Ihre bisherige Software bzw. Buchhaltung.";
 export type PastDunning = { stage: string; letterDate: string; payBy: string; sentVia: string | null };
 
 /** Ganze Kalendertage von a bis b (YYYY-MM-DD). */
@@ -135,6 +138,7 @@ export type DunningState =
  */
 export function dunningState(inv: DunnableInvoice, past: PastDunning[], settings: DunningSettings, today: string): DunningState {
   if (!isDunnable(inv)) return { state: "not_dunnable", reason: "Nur offene Rechnungen, Sammelrechnungen und Ausfallhonorare werden gemahnt." };
+  if (inv.source != null && inv.source !== "crm") return { state: "not_dunnable", reason: IMPORTED_NOT_DUNNABLE };
   if (inv.totalCents - inv.paidCents <= 0) return { state: "not_dunnable", reason: "Kein offener Betrag." };
   if (!inv.dueAt) return { state: "not_dunnable", reason: "Kein Zahlungsziel." };
   const daysOverdue = daysBetween(inv.dueAt.slice(0, 10), today);

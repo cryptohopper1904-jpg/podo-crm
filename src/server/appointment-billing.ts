@@ -28,6 +28,10 @@ type Svc = { appointmentId: string; serviceId: string; name: string; priceCents:
 
 const BILLED_STATUS_EXCLUDED = ["cancelled", "draft"] as const;
 
+/** Rechnung/Quittung zu einem übernommenen Termin (Quelle „import“) – gesperrt (Code-Review Runde 2 S1) */
+export const IMPORTED_APPOINTMENT_NOT_BILLABLE =
+  "Übernommener Termin (Import) – er wurde in Ihrer bisherigen Software abgerechnet. Eine Rechnung oder Quittung dazu ist hier nicht möglich.";
+
 async function servicesOf(tx: Tx, org: string, apptIds: string[]) {
   const rows = apptIds.length
     ? await tx
@@ -182,11 +186,13 @@ export async function billingFromSource(auth: AuthContext, src: BillingSource) {
     const apptId = apptIn ?? record?.appointmentId ?? null;
     const [appt] = apptId
       ? await tx
-          .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, title: appointments.title, prescriptionId: appointments.prescriptionId, status: appointments.status })
+          .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, title: appointments.title, prescriptionId: appointments.prescriptionId, status: appointments.status, source: appointments.source })
           .from(appointments)
           .where(and(eq(appointments.organizationId, org), eq(appointments.id, apptId)))
       : [];
     if (apptIn && !appt) return null;
+    // übernommener Termin (Übernahme-Assistent): in der bisherigen Software abgerechnet – keine zweite Rechnung (S1)
+    if (appt?.source === "import") return { patient: null, error: IMPORTED_APPOINTMENT_NOT_BILLABLE } as const;
     if (!record && appt) {
       const [r] = await tx
         .select({ id: treatmentRecords.id, patientId: treatmentRecords.patientId, treatedAt: treatmentRecords.treatedAt, appointmentId: treatmentRecords.appointmentId, prescriptionId: treatmentRecords.prescriptionId })

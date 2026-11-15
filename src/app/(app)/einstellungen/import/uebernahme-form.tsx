@@ -43,7 +43,9 @@ function Preview({ p }: { p: UebernahmePreview }) {
   return (
     <div className="flex flex-col gap-5">
       <section aria-labelledby="ueb-files">
-        <h3 id="ueb-files" className="mb-2 font-semibold">Erkannte Dateien</h3>
+        <h3 id="ueb-files" className="mb-2 font-semibold">
+          Erkannte Dateien{p.filesTotal > p.files.length ? ` (${p.filesTotal}, die ersten ${p.files.length})` : ""}
+        </h3>
         <ul className="flex flex-col gap-2">
           {p.files.map((f, i) => (
             <li key={i} className="rounded-xl border border-border p-3 text-sm">
@@ -111,6 +113,7 @@ function Preview({ p }: { p: UebernahmePreview }) {
           <h3 id="ueb-dup" className="mb-1 font-semibold">Mögliche Dubletten – bitte je Person entscheiden</h3>
           <p className="mb-2 text-muted">
             Verknüpfen ergänzt bei der vorhandenen Person nur die Herkunfts-ID und hängt Termine und Verordnungen an; es wird nichts überschrieben.
+            Jede vorhandene Person kann nur einmal verknüpft werden. Zahlen gelten für die angezeigte Auswahl – nach Änderung erneut prüfen.
           </p>
           <ul className="flex flex-col gap-2">
             {p.decisions.map((d) => (
@@ -129,6 +132,9 @@ function Preview({ p }: { p: UebernahmePreview }) {
               </li>
             ))}
           </ul>
+          {p.decisionsTotal > p.decisions.length ? (
+            <p className="mt-2 text-muted">Weitere {p.decisionsTotal - p.decisions.length} mit Standardauswahl (verknüpfen bei genau einer Person mit gleichem Namen und Geburtsdatum, sonst neu anlegen).</p>
+          ) : null}
         </section>
       ) : null}
 

@@ -107,7 +107,9 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
       ? filter.closingIds.length
         ? inArray(payments.cashClosingId, filter.closingIds)
         : sql`false`
-      : and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil));
+      : // offene Zahlungen nur zu eigenen CRM-Rechnungen: übernommene Altzahlungen (Excel-Import, invoices.source ≠ "crm")
+        // stehen im Kassenbuch des bisherigen Systems und kommen nie in einen Abschluss (Buchhaltung K1, Migration 0060)
+        and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil), eq(invoices.source, "crm"));
   const movCond =
     "closingIds" in filter
       ? filter.closingIds.length

@@ -7,11 +7,10 @@ import { audit } from "@/lib/audit";
 import { denyAccess, requestMeta, requireAuth } from "@/lib/auth/session";
 import { MAX_UPLOAD_FILES } from "@/lib/import/uebernahme/collect";
 import type { ApplySummary } from "@/lib/import/uebernahme/persist";
-import type { DuplicateDecision, FileSummary, ImportPlan, PlanTotals } from "@/lib/import/uebernahme/plan";
-import { maskPii, uebernahmeLimiter } from "@/lib/import/uebernahme/preview-safety";
-import { ImportBusyError, previewUebernahme, runUebernahme, TokenUsedError } from "@/lib/import/uebernahme/run";
+import { toPreview, uebernahmeLimiter, type UebernahmePreview } from "@/lib/import/uebernahme/preview-safety";
+import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, TokenUsedError } from "@/lib/import/uebernahme/run";
 import type { InputFile, PrescriptionMode } from "@/lib/import/uebernahme/types";
-import { signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
+import { canonicalPreviewToken, signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
 import { discardStored, storeEncrypted } from "@/lib/storage";
 import { PatientLimitError } from "@/server/patient-limit";
 
@@ -22,16 +21,7 @@ import { PatientLimitError } from "@/server/patient-limit";
  * diese Dateien, Praxis, Person und Optionen) → „Import ausführen“ mit denselben Dateien. Das Token ist nur einmal
  * einlösbar; je Praxis läuft höchstens ein Lauf gleichzeitig, dazu eine Drosselung je Person (src/lib/import/uebernahme/run.ts).
  */
-export interface UebernahmePreview {
-  files: FileSummary[];
-  totals: PlanTotals;
-  warnings: { file?: string; row?: number; message: string }[];
-  warningsTotal: number;
-  samples: ImportPlan["samples"];
-  cashbook: ImportPlan["cashbook"];
-  decisions: Pick<DuplicateDecision, "key" | "who" | "sourceLabel" | "candidates" | "defaultChoice">[];
-  hasWork: boolean;
-}
+export type { UebernahmePreview };
 
 export type UebernahmeState =
   | {
@@ -78,20 +68,6 @@ function choicesOf(form: FormData): Record<string, string> {
   return out;
 }
 
-function toPreview(plan: ImportPlan): UebernahmePreview {
-  return {
-    files: plan.files.map((f) => ({ ...f, note: f.note ? maskPii(f.note) : f.note })),
-    totals: plan.totals,
-    // E-Mail-Adressen, Geburtsdaten und Telefonnummern in Hinweisen maskiert (Vorschau zeigt keine Klardaten)
-    warnings: plan.warnings.slice(0, 200).map((w) => ({ ...w, message: maskPii(w.message) })),
-    warningsTotal: plan.warnings.length,
-    samples: plan.samples,
-    cashbook: plan.cashbook,
-    decisions: plan.decisions.slice(0, 200).map(({ key, who, sourceLabel, candidates, defaultChoice }) => ({ key, who, sourceLabel, candidates, defaultChoice })),
-    hasWork: plan.hasWork,
-  };
-}
-
 export async function uebernahmeAction(_: UebernahmeState, form: FormData): Promise<UebernahmeState> {
   // nur Inhaber:in (import.run + settings.manage); Support-Zugriff und Nur-Lesen-Modus scheitern bereits an requireAuth
   const auth = await requireAuth("import.run");
@@ -131,14 +107,15 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
         userId: auth.user.id,
         files: up.files,
         opts,
-        tokenHash: createHash("sha256").update(token).digest("hex"),
+        // kanonische Form hashen (A-H1): Schreibvarianten desselben Tokens ergeben denselben Hash
+        tokenHash: createHash("sha256").update(canonicalPreviewToken(token)).digest("hex"),
         auditMeta: { sha256: up.hash },
         ip: (await requestMeta().catch(() => null))?.ip ?? null,
       },
     ));
   } catch (e) {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.uebernahme.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
-    if (e instanceof ImportBusyError || e instanceof TokenUsedError) return { error: e.message };
+    if (e instanceof ImportBusyError || e instanceof TokenUsedError || e instanceof StaleSnapshotError || e instanceof ChoiceConflictError) return { error: e.message };
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     console.error("[import.uebernahme]", e instanceof Error ? e.message : e);
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };

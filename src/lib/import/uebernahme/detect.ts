@@ -7,11 +7,12 @@
  * analyzeFile verdrahten.
  */
 import { createHash } from "node:crypto";
+import type { Delimiter } from "@/integrations/csv";
 import { parseDateLoose, parseDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
 import { parseWorkbook } from "../excel/parse";
 import { decimalCents, parseTinanaAppointments, parseTinanaDoctors, parseTinanaInvoices, parseTinanaPatients, parseTinanaPrescriptions } from "./tinana";
 import { MAX_UPLOAD_BYTES } from "@/lib/upload-limits";
-import { decodeBounded, parseCsvBounded, readTable, TextLimitError, textSignature, type TextSignature } from "./text";
+import { decodeBounded, parseCsvBounded, tableFromRows, TextLimitError, textSignature, type Table, type TextSignature } from "./text";
 import type { DetectedFile, FileKind, SourceId } from "./types";
 import { isZip, unzip, ZipError, type ZipLimits } from "./zip";
 
@@ -162,8 +163,9 @@ export const XLSM_NOTE = "Excel-Dateien mit Makros (.xlsm) werden nicht angenomm
 /** Grenzen für den Inhalt einer XLSX-Datei (ist intern ein ZIP) – vor dem Parsen geprüft (AppSec B2). */
 export const XLSX_LIMITS: Partial<ZipLimits> = {
   maxEntries: 2000,
-  maxEntryBytes: 50 * 1024 * 1024,
-  maxTotalBytes: 50 * 1024 * 1024,
+  // entpackt höchstens 25 MB (AppSec Runde 2 A-H8) – ein echter Rechnungsmanager liegt weit darunter
+  maxEntryBytes: 25 * 1024 * 1024,
+  maxTotalBytes: 25 * 1024 * 1024,
   // Tabellen-XML packt sehr gut; deutlich großzügiger als bei Exporten, die Größen-Grenzen bleiben hart
   maxRatio: 1000,
   maxDepth: 0,
@@ -192,8 +194,7 @@ export function recognize(text: string): Recognizer | null {
   return RECOGNIZERS.find((r) => r.match(sig)) ?? null;
 }
 
-function cashbookSummary(text: string) {
-  const t = readTable(text);
+function cashbookSummary(t: Table) {
   let firstDate: string | null = null;
   let lastDate: string | null = null;
   let lastBalanceCents: number | null = null;
@@ -242,50 +243,59 @@ export async function analyzeFile(name: string, data: Uint8Array): Promise<Detec
   if (data.subarray(0, 4096).some((b) => b === 0)) return { ...base, note: UNKNOWN_NOTE };
   let text: string;
   let sig: TextSignature;
-  let dataRows: number;
+  let table: Table;
   try {
     text = decodeBounded(data);
     // Erkennung nur über den Anfang der Datei
     sig = textSignature(text);
     if (!RECOGNIZERS.some((r) => r.match(sig))) return { ...base, note: UNKNOWN_NOTE };
-    // harte Grenzen über die ganze Datei, bevor ein Parser sie verarbeitet
-    dataRows = Math.max(0, parseCsvBounded(text, sig.delimiter as ";" | "," | "\t").length - 1);
+    // harte Grenzen über die ganze Datei, bevor ein Parser sie verarbeitet – einmal zerlegt, die Tinana-Parser
+    // arbeiten auf dieser Tabelle (A-B1), mit dem Trennzeichen aus der Erkennung (A-H7)
+    table = tableFromRows(parseCsvBounded(text, sig.delimiter as Delimiter));
   } catch (e) {
     if (e instanceof TextLimitError) return { ...base, note: e.message };
     throw e;
   }
   const rec = RECOGNIZERS.find((r) => r.match(sig))!;
-  const out: DetectedFile = { ...base, kind: rec.kind, source: rec.source, label: rec.label, target: rec.target, status: rec.status ?? "import", note: rec.note, records: dataRows };
-  switch (rec.kind) {
-    case "tinana.patients": {
-      const r = parseTinanaPatients(text, name);
-      return { ...out, records: r.patients.length, tinanaPatients: r.patients, issues: r.issues };
+  const out: DetectedFile = { ...base, kind: rec.kind, source: rec.source, label: rec.label, target: rec.target, status: rec.status ?? "import", note: rec.note, records: table.records.length };
+  // Trennzeichen aus der Erkennung an die Parser weitergeben (A-H7)
+  const d = sig.delimiter as Delimiter;
+  try {
+    switch (rec.kind) {
+      case "tinana.patients": {
+        const r = parseTinanaPatients(table, name);
+        return { ...out, records: r.patients.length, tinanaPatients: r.patients, issues: r.issues };
+      }
+      case "tinana.appointments": {
+        const r = parseTinanaAppointments(table, name);
+        return { ...out, records: r.appointments.length, tinanaAppointments: r.appointments, issues: r.issues };
+      }
+      case "tinana.prescriptions": {
+        const r = parseTinanaPrescriptions(table, name);
+        return { ...out, records: r.prescriptions.length, tinanaPrescriptions: r.prescriptions, issues: r.issues };
+      }
+      case "tinana.doctors": {
+        const list = parseTinanaDoctors(table);
+        return { ...out, records: list.length, tinanaDoctors: list };
+      }
+      case "tinana.invoices": {
+        const inv = parseTinanaInvoices(table);
+        return { ...out, records: inv.length, tinanaInvoices: inv };
+      }
+      case "doctolib.patients": {
+        const r = parseDoctolibPatientsCsv(text, d);
+        return { ...out, records: r.patients.length, doctolibPatients: r.patients, issues: r.issues.map((i) => ({ file: name, row: i.row, message: i.message })) };
+      }
+      case "pododesk.cashbook": {
+        const c = cashbookSummary(table);
+        return { ...out, records: c.rows, cashbook: c };
+      }
+      default:
+        return out;
     }
-    case "tinana.appointments": {
-      const r = parseTinanaAppointments(text, name);
-      return { ...out, records: r.appointments.length, tinanaAppointments: r.appointments, issues: r.issues };
-    }
-    case "tinana.prescriptions": {
-      const r = parseTinanaPrescriptions(text, name);
-      return { ...out, records: r.prescriptions.length, tinanaPrescriptions: r.prescriptions, issues: r.issues };
-    }
-    case "tinana.doctors": {
-      const d = parseTinanaDoctors(text);
-      return { ...out, records: d.length, tinanaDoctors: d };
-    }
-    case "tinana.invoices": {
-      const inv = parseTinanaInvoices(text);
-      return { ...out, records: inv.length, tinanaInvoices: inv };
-    }
-    case "doctolib.patients": {
-      const r = parseDoctolibPatientsCsv(text);
-      return { ...out, records: r.patients.length, doctolibPatients: r.patients, issues: r.issues.map((i) => ({ file: name, row: i.row, message: i.message })) };
-    }
-    case "pododesk.cashbook": {
-      const c = cashbookSummary(text);
-      return { ...out, records: c.rows, cashbook: c };
-    }
-    default:
-      return out;
+  } catch (e) {
+    // Grenzen beim Parsen (z. B. anderes Trennzeichen im Rest der Datei) → Dateinotiz statt Abbruch des ganzen Laufs
+    if (e instanceof TextLimitError) return { ...base, label: rec.label, note: e.message };
+    throw e;
   }
 }

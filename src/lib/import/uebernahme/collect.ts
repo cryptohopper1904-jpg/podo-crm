@@ -6,16 +6,29 @@
  * auch nicht innerhalb eines ZIPs (AppSec B2). Doppelte Dateien werden vor dem Parsen über den SHA-256 erkannt.
  */
 import { createHash } from "node:crypto";
-import { analyzeFile, isXlsmName, isXlsxName, XLSM_NOTE } from "./detect";
+import { analyzeFile, isPdf, isXlsmName, isXlsxName, XLSM_NOTE } from "./detect";
 import type { DetectedFile, InputFile } from "./types";
 import { DEFAULT_ZIP_LIMITS, isZip, unzip, ZipError, type ZipLimits } from "./zip";
 
 export const MAX_UPLOAD_FILES = 30;
 export const ONE_EXCEL_NOTE = "Bitte je Lauf nur eine Excel-Datei hochladen – diese Datei wurde nicht gelesen.";
 
+/** Gesamtgrenzen je Lauf über alle Dateien und ZIP-Einträge (AppSec Runde 2 A-B1) */
+export interface RunLimits {
+  /** Datensätze über alle Dateien */
+  maxRecords: number;
+  /** Dateien inkl. ZIP-Einträge */
+  maxFiles: number;
+  /** Byte-Summe aller Textdateien (CSV/TXT), die geparst werden */
+  maxTextBytes: number;
+}
+export const RUN_LIMITS: RunLimits = { maxRecords: 100_000, maxFiles: 5_000, maxTextBytes: 40 * 1024 * 1024 };
+
+const de = (n: number) => n.toLocaleString("de-DE");
+
 const sha = (d: Uint8Array) => createHash("sha256").update(d).digest("hex");
 
-export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits> = {}): Promise<DetectedFile[]> {
+export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits> = {}, runLimits: RunLimits = RUN_LIMITS): Promise<DetectedFile[]> {
   const budget = { usedBytes: 0 };
   const flat: InputFile[] = [];
   const out: DetectedFile[] = [];
@@ -38,6 +51,16 @@ export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits
   }
   const seen = new Map<string, DetectedFile>();
   let excelSeen = false;
+  let records = 0;
+  let textBytes = 0;
+  if (flat.length > runLimits.maxFiles) {
+    const rest = flat.length - runLimits.maxFiles;
+    flat.length = runLimits.maxFiles;
+    out.push({
+      ...stub({ name: `weitere ${de(rest)} Dateien`, data: new Uint8Array() }, ""),
+      note: `Zu viele Dateien in einem Lauf (mehr als ${de(runLimits.maxFiles)}) – diese Dateien wurden nicht gelesen. Bitte in mehreren Durchgängen hochladen.`,
+    });
+  }
   for (const f of flat) {
     // SHA vor dem Parsen: doppelte Dateien werden nicht ein zweites Mal verarbeitet
     const hash = sha(f.data);
@@ -51,15 +74,25 @@ export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits
     let d: DetectedFile;
     if (isXlsmName(f.name)) d = { ...stub(f, hash), label: "Excel mit Makros", note: XLSM_NOTE };
     else if (isXlsxName(f.name) && isZip(f.data) && excelSeen) d = { ...stub(f, hash), label: "Excel-Datei", note: ONE_EXCEL_NOTE };
-    else {
+    else if (isTextCandidate(f) && textBytes + f.data.length > runLimits.maxTextBytes) {
+      d = { ...stub(f, hash), note: `Die Textdateien dieses Laufs sind zusammen größer als ${Math.round(runLimits.maxTextBytes / 1024 / 1024)} MB – diese Datei wurde nicht gelesen. Bitte in mehreren Durchgängen hochladen.` };
+    } else {
       if (isXlsxName(f.name) && isZip(f.data)) excelSeen = true;
+      if (isTextCandidate(f)) textBytes += f.data.length;
       d = await analyzeFile(f.name, f.data);
+      if (d.status !== "rejected" && records + d.records > runLimits.maxRecords) {
+        // Inhalte verwerfen, nur der Hinweis bleibt
+        d = { ...stub(f, hash), label: d.label, note: `Zu viele Datensätze in einem Lauf (mehr als ${de(runLimits.maxRecords)}) – diese Datei wurde nicht übernommen. Bitte in mehreren Durchgängen hochladen.` };
+      } else if (d.status !== "rejected") records += d.records;
     }
     seen.set(hash, d);
     out.push(d);
   }
   return out;
 }
+
+/** wird als Text (CSV) geparst: kein PDF, kein ZIP/XLSX */
+const isTextCandidate = (f: InputFile) => !isZip(f.data) && !isPdf(f.data);
 
 function stub(f: InputFile, hash: string): DetectedFile {
   return { name: f.name, sha256: hash, size: f.data.length, kind: "unknown", source: null, label: "nicht erkannt", target: "–", status: "rejected", records: 0, issues: [] };

@@ -7,7 +7,8 @@
 import { createHash } from "node:crypto";
 import { isMobileNumber, parseDateLoose, parseDateTimeLoose } from "@/integrations/doctolib/csv";
 import type { ImportIssue, TinanaAppointment, TinanaDoctor, TinanaInvoice, TinanaPatient, TinanaPrescription } from "./types";
-import { readTable } from "./text";
+import type { Delimiter } from "@/integrations/csv";
+import { readTable, type Table } from "./text";
 
 const nz = (v: string | undefined | null): string | null => {
   const t = (v ?? "").trim();
@@ -33,8 +34,23 @@ function int(v: string | null): number | null {
  * Normalisierung für Namensvergleiche: Groß/Klein, Umlaute wie ihre Umschreibung (Müller = Mueller), ß = ss, Akzente,
  * Bindestriche wie Leerzeichen (Anna-Maria = Anna Maria), mehrfache Leerzeichen.
  */
+const normCache = new Map<string, string>();
+
 export function normName(s: string | null | undefined): string {
-  return (s ?? "")
+  if (!s) return "";
+  // Exporte wiederholen dieselben Namen tausendfach – Ergebnis zwischenspeichern (begrenzt, A-B1)
+  const hit = normCache.get(s);
+  if (hit !== undefined) return hit;
+  const out = normNameRaw(s);
+  if (normCache.size >= 20_000) normCache.clear();
+  normCache.set(s, out);
+  return out;
+}
+
+function normNameRaw(s: string): string {
+  return s
+    // zuerst NFC: „ü“ als u + Trema (NFD, z. B. aus macOS-Exporten) wird sonst nicht zu „ue“ (S2)
+    .normalize("NFC")
     .toLowerCase()
     .replace(/ä/g, "ae")
     .replace(/ö/g, "oe")
@@ -46,6 +62,13 @@ export function normName(s: string | null | undefined): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+/**
+ * Quell-IDs (Tinana patienten_id/termin_id, Doctolib-ID) landen in external_ids bzw. external_id: höchstens 100 Zeichen,
+ * nur Buchstaben, Ziffern und . _ : - (UUIDs, Zahlen). Andere Werte → Zeile mit Hinweis übersprungen (AppSec A-H6).
+ */
+export const SOURCE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
+export const validSourceId = (v: string | null | undefined): v is string => !!v && SOURCE_ID_RE.test(v);
 
 // ───────────── Patienten ─────────────
 function salutationOf(v: string | null): TinanaPatient["salutation"] {
@@ -63,8 +86,8 @@ function insuranceOf(v: string | null): TinanaPatient["insuranceType"] {
   return "self";
 }
 
-export function parseTinanaPatients(text: string, file?: string): { patients: TinanaPatient[]; issues: ImportIssue[] } {
-  const t = readTable(text);
+export function parseTinanaPatients(text: string | Table, file?: string, delimiter?: Delimiter): { patients: TinanaPatient[]; issues: ImportIssue[] } {
+  const t = typeof text === "string" ? readTable(text, delimiter) : text;
   const issues: ImportIssue[] = [];
   const patients: TinanaPatient[] = [];
   for (const r of t.records) {
@@ -74,6 +97,10 @@ export function parseTinanaPatients(text: string, file?: string): { patients: Ti
     const lastName = v("nachname");
     if (!id) {
       issues.push({ file, row: r.row, message: "Patienten-ID fehlt – Zeile übersprungen." });
+      continue;
+    }
+    if (!validSourceId(id)) {
+      issues.push({ file, row: r.row, message: "Patienten-ID ungültig (zu lang oder unzulässige Zeichen) – Zeile übersprungen." });
       continue;
     }
     if (!lastName) {
@@ -126,8 +153,8 @@ export function parseTinanaPatients(text: string, file?: string): { patients: Ti
 }
 
 // ───────────── Termine ─────────────
-export function parseTinanaAppointments(text: string, file?: string): { appointments: TinanaAppointment[]; issues: ImportIssue[] } {
-  const t = readTable(text);
+export function parseTinanaAppointments(text: string | Table, file?: string, delimiter?: Delimiter): { appointments: TinanaAppointment[]; issues: ImportIssue[] } {
+  const t = typeof text === "string" ? readTable(text, delimiter) : text;
   const issues: ImportIssue[] = [];
   const appointments: TinanaAppointment[] = [];
   for (const r of t.records) {
@@ -136,6 +163,11 @@ export function parseTinanaAppointments(text: string, file?: string): { appointm
     const id = v("termin_id");
     if (!id) {
       issues.push({ file, row: r.row, message: "Termin-ID fehlt – Zeile übersprungen." });
+      continue;
+    }
+    const patientId = v("patienten_id");
+    if (!validSourceId(id) || (patientId !== null && !validSourceId(patientId))) {
+      issues.push({ file, row: r.row, message: "Termin- oder Patienten-ID ungültig (zu lang oder unzulässige Zeichen) – Zeile übersprungen." });
       continue;
     }
     const startsAt = parseDateTimeLoose(v("startzeit"));
@@ -154,7 +186,7 @@ export function parseTinanaAppointments(text: string, file?: string): { appointm
     appointments.push({
       row: r.row,
       id,
-      patientId: v("patienten_id"),
+      patientId,
       agendaLabel: v("agenda_label"),
       title: v("titel"),
       startsAt,
@@ -188,18 +220,38 @@ export function mapAppointmentStatus(raw: string, startsAt: string, now: Date): 
 }
 
 // ───────────── Verordnungen ─────────────
+/** Datumswerte wiederholen sich in einer Datei vielfach – je Parserlauf zwischenspeichern (A-B1) */
+interface DateMemo {
+  date: (v: string | null | undefined) => string | null;
+  dateTime: (v: string | null | undefined) => string | null;
+}
+function dateMemo(): DateMemo {
+  const d = new Map<string, string | null>();
+  const dt = new Map<string, string | null>();
+  const cached = (m: Map<string, string | null>, f: (v: string) => string | null) => (v: string | null | undefined) => {
+    if (!v) return f(v ?? "");
+    let r = m.get(v);
+    if (r === undefined) {
+      r = f(v);
+      if (m.size < 50_000) m.set(v, r);
+    }
+    return r;
+  };
+  return { date: cached(d, (v) => parseDateLoose(v)), dateTime: cached(dt, (v) => parseDateTimeLoose(v)) };
+}
+
 /**
  * Gruppenschlüssel einer Verordnung (Tinana exportiert keine ID): aus GEPARSTEN Werten, damit dieselbe Datei nach dem
  * Öffnen und Speichern in Excel (TT.MM.JJ statt TT.MM.JJJJ, ohne Sekunden …) denselben Schlüssel ergibt (Code-Review CR4).
  */
-function groupKey(r: Record<string, string>): string {
-  const created = parseDateTimeLoose(r["erstellt_am"]) ?? r["erstellt_am"] ?? "";
+function groupKey(r: Record<string, string>, memo: DateMemo): string {
+  const created = memo.dateTime(r["erstellt_am"]) ?? r["erstellt_am"] ?? "";
   const parts = [
     normName(r["patient_vorname"]),
     normName(r["patient_nachname"]),
-    parseDateLoose(r["patient_geburtsdatum"]) ?? "",
+    memo.date(r["patient_geburtsdatum"]) ?? "",
     normName(r["versichertennummer"]),
-    parseDateLoose(r["ausstelldatum"]) ?? "",
+    memo.date(r["ausstelldatum"]) ?? "",
     normName(r["arzt_titel"]),
     normName(r["arzt_vorname"]),
     normName(r["arzt_nachname"]),
@@ -229,14 +281,17 @@ const FIELD_WHITELIST: Record<string, string> = {
   erstellt_am: "createdAt",
 };
 
-export function parseTinanaPrescriptions(text: string, file?: string): { prescriptions: TinanaPrescription[]; issues: ImportIssue[] } {
-  const t = readTable(text);
+export function parseTinanaPrescriptions(text: string | Table, file?: string, delimiter?: Delimiter): { prescriptions: TinanaPrescription[]; issues: ImportIssue[] } {
+  const t = typeof text === "string" ? readTable(text, delimiter) : text;
   const issues: ImportIssue[] = [];
   const groups = new Map<string, TinanaPrescription>();
+  const memo = dateMemo();
+  /** Positionsnummern je Verordnung (Set statt Suche in der Liste – lineare Laufzeit, A-B1) */
+  const positionsSeen = new Map<string, Set<string>>();
   for (const r of t.records) {
     const v = (k: string) => nz(r.values[k]);
     if (Object.values(r.values).every((x) => !x)) continue;
-    const key = groupKey(r.values);
+    const key = groupKey(r.values, memo);
     let g = groups.get(key);
     if (!g) {
       const dg = v("diagnosegruppe");
@@ -279,9 +334,12 @@ export function parseTinanaPrescriptions(text: string, file?: string): { prescri
     const label = v("heilmittel_name");
     if (label) {
       const position = v("heilmittel_positionsnummer");
-      if (position && g.positions.some((p) => p.position === position)) {
+      let seen = positionsSeen.get(key);
+      if (!seen) positionsSeen.set(key, (seen = new Set()));
+      if (position && seen.has(position)) {
         issues.push({ file, row: r.row, message: `Heilmittel ${position} doppelt in derselben Verordnung – evtl. zwei gleiche Verordnungen am selben Tag (zusammengefasst).` });
       }
+      if (position) seen.add(position);
       g.positions.push({ position, code: v("heilmittel_kuerzel"), label, units: int(v("heilmittel_menge")) ?? 0, priceCents: decimalCents(v("heilmittel_preis")) });
     }
   }
@@ -300,8 +358,8 @@ export function parseTinanaPrescriptions(text: string, file?: string): { prescri
 export const prescriptionComplete = (p: TinanaPrescription) => !!p.issuedAt && !!p.diagnosisGroup && !!p.units;
 
 // ───────────── Ärzte (nur Nachschlagetabelle für LANR/BSNR) ─────────────
-export function parseTinanaDoctors(text: string): TinanaDoctor[] {
-  const t = readTable(text);
+export function parseTinanaDoctors(text: string | Table, delimiter?: Delimiter): TinanaDoctor[] {
+  const t = typeof text === "string" ? readTable(text, delimiter) : text;
   return t.records
     .map((r) => ({
       name: [nz(r.values.titel), nz(r.values.vorname), nz(r.values.nachname)].filter(Boolean).join(" "),
@@ -312,8 +370,8 @@ export function parseTinanaDoctors(text: string): TinanaDoctor[] {
 }
 
 // ───────────── Rechnungen (nur Info/Archiv) ─────────────
-export function parseTinanaInvoices(text: string): TinanaInvoice[] {
-  const t = readTable(text);
+export function parseTinanaInvoices(text: string | Table, delimiter?: Delimiter): TinanaInvoice[] {
+  const t = typeof text === "string" ? readTable(text, delimiter) : text;
   const out: TinanaInvoice[] = [];
   for (const r of t.records) {
     const number = nz(r.values.rechnungsnummer);

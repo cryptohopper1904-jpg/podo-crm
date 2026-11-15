@@ -103,16 +103,26 @@ export async function persistImport(
       if (id && p.legacyId !== null && summary.patientIdByLegacyId[p.legacyId] === undefined) summary.patientIdByLegacyId[p.legacyId] = id;
     }
     // ohne Legacy-ID: Name + Geburtsdatum (sonst würde jede Wiederholung doppelt anlegen)
-    const persons = new Set(
-      (
-        await tx
-          .select({ firstName: s.patients.firstName, lastName: s.patients.lastName, birthDate: s.patients.birthDate })
-          .from(s.patients)
-          .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.birthDate} is not null`))
-      ).map((p) => `${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`),
-    );
-    const knownPerson = (p: PatientImportDraft) => !!p.birthDate && persons.has(`${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`);
-    result = { ...input, patients: input.patients.filter((p) => (p.legacyId === null ? !knownPerson(p) : !byLegacy.has(String(p.legacyId)))) };
+    const rows = await tx
+      .select({ firstName: s.patients.firstName, lastName: s.patients.lastName, birthDate: s.patients.birthDate, erasedAt: s.patients.contactErasedAt })
+      .from(s.patients)
+      .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.birthDate} is not null`));
+    const key = (p: { firstName: string | null; lastName: string; birthDate: string | null }) => `${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`;
+    const persons = new Set(rows.map(key));
+    /** Kontaktdaten auf Wunsch gelöscht (Art. 17) – nie erneut anlegen, auch nicht mit Legacy-ID (AppSec A-H2) */
+    const erased = new Set(rows.filter((r) => r.erasedAt).map(key));
+    const knownPerson = (p: PatientImportDraft) => !!p.birthDate && persons.has(key(p));
+    const erasedPerson = (p: PatientImportDraft) => !!p.birthDate && erased.has(key(p));
+    result = {
+      ...input,
+      patients: input.patients.filter((p) => {
+        if (erasedPerson(p)) {
+          warnings.push({ sheet: "Patienten", row: p.row, message: "Kontaktdaten dieser Person wurden auf Wunsch gelöscht (Art. 17 DSGVO) – gelöscht, nicht übernommen." });
+          return false;
+        }
+        return p.legacyId === null ? !knownPerson(p) : !byLegacy.has(String(p.legacyId));
+      }),
+    };
   }
   // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
   await assertPatientCapacity(tx, organizationId, result.patients.length);
@@ -120,7 +130,10 @@ export async function persistImport(
     (await tx.select({ number: s.patients.number }).from(s.patients).where(eq(s.patients.organizationId, organizationId))).map((r) => r.number),
   );
   const used = new Set(existingNumbers);
-  let next = Math.max(0, ...existingNumbers, ...result.patients.map((p) => p.legacyId ?? 0)) + 1;
+  // Schleife statt Math.max(...): bei sehr vielen Nummern sonst „Maximum call stack size exceeded“
+  let next = 1;
+  for (const n of existingNumbers) if (n >= next) next = n + 1;
+  for (const p of result.patients) if ((p.legacyId ?? 0) >= next) next = (p.legacyId ?? 0) + 1;
   const numbered = result.patients.map((p) => {
     let number: number;
     if (p.legacyId !== null && p.legacyId > 0 && !used.has(p.legacyId)) number = p.legacyId;
@@ -363,7 +376,13 @@ export async function persistImport(
         const invoiceId = idByNumber.get(inv.number)!;
         const paidCents = Math.min(inv.totalCents, inv.payments.reduce((a, p) => a + p.amountCents, 0));
         await tx.update(s.invoices).set({ number: inv.number, status: inv.status, paidCents }).where(and(eq(s.invoices.id, invoiceId), eq(s.invoices.organizationId, organizationId)));
-        const paidAt = inv.issuedAt ? new Date(`${inv.issuedAt}T12:00:00Z`) : new Date();
+        // ohne Rechnungsdatum keine Zahlungszeile mit „heute“ – der Betrag steht nur an der Rechnung (paid_cents/Status),
+        // sonst fiele eine Altzahlung in den heutigen Kassentag (Buchhaltung K2)
+        if (!inv.issuedAt) {
+          if (inv.payments.length) warnings.push({ sheet: "Rechnungen", row: inv.row, message: `Rechnung „${inv.number}“ ohne Rechnungsdatum – Zahlung nur an der Rechnung vermerkt, ohne Zahlungsbuchung.` });
+          continue;
+        }
+        const paidAt = new Date(`${inv.issuedAt}T12:00:00Z`);
         for (const p of inv.payments) {
           const voucherId = p.method === "voucher" && p.voucherLegacyId != null ? voucherIdByLegacy.get(p.voucherLegacyId) ?? null : null;
           if (p.method === "voucher" && !voucherId) {

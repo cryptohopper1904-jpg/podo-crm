@@ -2,6 +2,7 @@
  * Doctolib CSV-Import/-Export (Patientenexport, 22 Spalten) und generischer Termin-CSV-Import.
  * Ersatz für die nur Partnern zugängliche Doctolib-API (PLAN 6.2).
  */
+import { neutralizeCsvCell } from "@/lib/csv-safe";
 import { parseCsvObjects, writeCsv, type Delimiter } from "../csv";
 import { berlinLocalToIso } from "../time";
 import type { AppointmentCandidate, CsvImportIssue, Gender, PatientDraft } from "../types";
@@ -82,8 +83,8 @@ function parseInsurance(type: string | null, sector: string | null): PatientDraf
 const truthy = (v: string | null) => /^(1|true|yes|ja|y|x|wahr)$/i.test((v ?? "").trim());
 
 /** Doctolib-Patientenexport → Patientenentwürfe. */
-export function parseDoctolibPatientsCsv(text: string): { patients: PatientDraft[]; issues: CsvImportIssue[] } {
-  const { headers, records } = parseCsvObjects(text);
+export function parseDoctolibPatientsCsv(text: string, delimiter?: Delimiter): { patients: PatientDraft[]; issues: CsvImportIssue[] } {
+  const { headers, records } = parseCsvObjects(text, delimiter);
   const issues: CsvImportIssue[] = [];
   const norm = headers.map((h) => h.toLowerCase());
   const missing = ["last_name", "first_name"].filter((c) => !norm.includes(c));
@@ -147,6 +148,10 @@ const insuranceOut = (t: PatientDraft["insuranceType"]): string =>
   t === "gkv" ? "public" : t === "pkv" || t === "beihilfe" ? "private" : t === "self" ? "self_paying" : "";
 
 /** Patienten → Doctolib-CSV (22 Spalten, Kopfzeile, Semikolon-getrennt mit BOM sofern nicht anders gewünscht). */
+const PHONE_COLUMNS = new Set<DoctolibPatientColumn>(["phone_number", "secondary_phone_number"]);
+/** Telefonnummer im internationalen Format: „+“ gefolgt von Ziffern, Leerzeichen, Klammern, „/“ oder „-“ */
+const INTL_PHONE = /^\+[\d ()/-]+$/;
+
 export function writeDoctolibPatientsCsv(
   patients: (PatientDraft & { importIdentifier?: string | number | null })[],
   opts: { delimiter?: Delimiter; bom?: boolean } = { delimiter: ",", bom: true },
@@ -177,9 +182,10 @@ export function writeDoctolibPatientsCsv(
       notes: p.notes ?? "",
       no_notifications_for_doctor_appointment: p.noNotifications ? "true" : "false",
     };
-    rows.push(DOCTOLIB_PATIENT_COLUMNS.map((c) => rec[c]));
+    // Formel-Entschärfung für alle Zellen – Ausnahme nur echte Telefonnummern im Format „+49 …“ (sonst läse Doctolib
+    // das Apostroph als Teil der Nummer). Alles andere, auch „+“-Werte in anderen Spalten, wird entschärft (AppSec A-H5).
+    rows.push(DOCTOLIB_PATIENT_COLUMNS.map((c) => (PHONE_COLUMNS.has(c) && typeof rec[c] === "string" && INTL_PHONE.test(rec[c]) ? rec[c] : neutralizeCsvCell(rec[c]))));
   }
-  // Importformat für Doctolib: Rohwerte (Telefon „+49 …“) – keine Formel-Entschärfung, die Doctolib als Teil der Nummer läse
   return writeCsv(rows, { delimiter: opts.delimiter ?? ",", bom: opts.bom ?? true, neutralize: false });
 }
 

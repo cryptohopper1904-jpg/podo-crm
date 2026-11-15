@@ -1838,6 +1838,11 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
     const [inv] = await tx.select().from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
     if (!inv || inv.status === "draft" || !inv.number || !inv.issuedAt) throw new InvoiceError("Rechnung nicht gefunden oder nicht ausgestellt.");
     if (inv.kind === "deposit") throw new InvoiceError("Anzahlungen werden nicht einzeln übertragen – sie sind in der Sammelrechnung enthalten.");
+    // Buchhaltung L1: Altbestand aus dem Import ist schon in der bisherigen Buchhaltung; nichts doppelt übertragen
+    if (inv.source !== "crm") {
+      throw new InvoiceError("Übernommene Altrechnung (Import) – sie wurde in Ihrer bisherigen Software bzw. Buchhaltung erfasst und wird nicht an lexoffice übertragen.");
+    }
+    if (inv.externalSyncedAt) throw new InvoiceError(`Diese Rechnung wurde bereits am ${dateDe(berlinDateIso(inv.externalSyncedAt))} an lexoffice übertragen.`);
     const lines = await tx
       .select({ totalCents: invoiceLines.totalCents, vatRate: invoiceLines.vatRate })
       .from(invoiceLines)
@@ -1878,11 +1883,14 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
       .where(and(eq(integrationConnections.organizationId, org), eq(integrationConnections.provider, "lexoffice")));
     const original = inv.cancelsInvoiceId
       ? await tx
-          .select({ kind: invoices.kind, issuedAt: invoices.issuedAt })
+          .select({ kind: invoices.kind, issuedAt: invoices.issuedAt, source: invoices.source })
           .from(invoices)
           .where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.cancelsInvoiceId)))
           .then((r) => r[0] ?? null)
       : null;
+    if (original && original.source !== "crm") {
+      throw new InvoiceError("Storno einer übernommenen Altrechnung – bitte in der Buchhaltung manuell gegen den Originalbeleg buchen.");
+    }
     return { inv, lines, receiptLines, sign, conn: conn ?? null, original };
   });
   const { inv, lines, receiptLines, sign, conn, original } = prep;

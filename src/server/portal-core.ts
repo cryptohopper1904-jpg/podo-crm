@@ -145,7 +145,8 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
     const invs = await tx
       .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, issuedAt: invoices.issuedAt, dueAt: invoices.dueAt, totalCents: invoices.totalCents, paidCents: invoices.paidCents, paymentLinkUrl: invoices.paymentLinkUrl })
       .from(invoices)
-      .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, link.patientId), inArray(invoices.status, ["issued", "partially_paid"])))
+      // nur eigene Rechnungen – übernommener Altbestand (Import) erscheint nicht als „offen“ im Portal (Buchhaltung P1)
+      .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, link.patientId), eq(invoices.source, "crm"), inArray(invoices.status, ["issued", "partially_paid"])))
       .orderBy(asc(invoices.issuedAt));
     // Gutscheine der Person = über eine ihrer Rechnungen verkauft
     const vs = await tx
@@ -188,12 +189,13 @@ export async function portalInvoicePdf(link: PortalLink, invoiceId: string) {
     // verstorben/archiviert: kein Portal-Zugriff mehr (Defense in Depth – die Links sind ohnehin widerrufen)
     (await portalPatientActive(tx, link.organizationId, link.patientId))
       ? tx
-          .select({ organizationId: invoices.organizationId, patientId: invoices.patientId, status: invoices.status })
+          .select({ organizationId: invoices.organizationId, patientId: invoices.patientId, status: invoices.status, source: invoices.source })
           .from(invoices)
           .where(and(eq(invoices.organizationId, link.organizationId), eq(invoices.id, invoiceId)))
       : [],
   );
-  if (!invoiceVisibleInPortal(inv, link)) return null;
+  // übernommener Altbestand (Import) erscheint nicht im Portal (Buchhaltung P1)
+  if (!inv || inv.source !== "crm" || !invoiceVisibleInPortal(inv, link)) return null;
   const pdf = await invoicePdfForOrg(link.organizationId, invoiceId, { patientId: link.patientId });
   if (!pdf) return null;
   await audit({ organizationId: link.organizationId, action: "portal.invoice_pdf", entity: "invoice", entityId: invoiceId });

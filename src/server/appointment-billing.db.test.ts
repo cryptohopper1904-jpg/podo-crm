@@ -221,6 +221,15 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await billing.collectiveOverview(auth, year)).find((r) => r.patientId === p)).toMatchObject({ items: 1 });
   });
 
+  it("S1: Rechnung/Quittung zu einem übernommenen Termin ist gesperrt (/rechnungen/neu?termin=…)", async () => {
+    const { org, auth, appointment } = await setup();
+    const p = await f.patient(org, { lastName: "UebernommenS1" });
+    const imported = await appointment(p, `${year}-05-10 10:00+02`, { source: "import", status: "done" });
+    expect(await billing.billingFromSource(auth, { appointmentId: imported })).toEqual({ patient: null, error: billing.IMPORTED_APPOINTMENT_NOT_BILLABLE });
+    const own = await appointment(p, `${year}-05-11 10:00+02`, { status: "done" });
+    expect(await billing.billingFromSource(auth, { appointmentId: own })).toMatchObject({ patient: { id: p }, appointmentId: own });
+  });
+
   it("Termin verschieben: manuell ja (mit Überschneidungsprüfung), Doctolib/Kalender-Abo nein", async () => {
     const { org, user, auth, appointment } = await setup();
     const patient = await f.patient(org, { lastName: "Verschieb" });

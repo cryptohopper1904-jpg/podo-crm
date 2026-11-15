@@ -1,7 +1,7 @@
 import { Download } from "lucide-react";
 import { Card, CardTitle } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
-import { CONSENT_HINT, DSGVO_HINT, HELP_STAND, RETENTION_HINT, SOURCE_HELP } from "@/lib/import/uebernahme/help";
+import { CONSENT_HINT, DSGVO_HINT, EXCEL_PAYMENTS_HINT, HELP_STAND, RETENTION_HINT, REUPLOAD_HINT, SOURCE_HELP } from "@/lib/import/uebernahme/help";
 import { SUPPORTED_FORMATS } from "@/lib/import/uebernahme/detect";
 import { doctolibImportAction, excelImportAction } from "./actions";
 import { DoctolibImportForm, ExcelImportForm } from "./import-forms";
@@ -15,7 +15,8 @@ export default async function ImportSettings() {
   return (
     <div className="flex flex-col gap-4">
       <p className="rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
-        Hochgeladene Dateien werden nur im Arbeitsspeicher verarbeitet und nicht gespeichert. Zuerst prüfen, dann importieren –
+        Hochgeladene Dateien werden nur im Arbeitsspeicher verarbeitet. Gespeichert wird erst mit „Import ausführen“ und nur, was die Vorschau als
+        „wird übernommen“ zeigt (z. B. Rechnungs-PDFs als Dokument bei der Patient:in). Zuerst prüfen, dann importieren –
         der Import läuft in einem Schritt und wird bei einem Fehler vollständig zurückgenommen.
       </p>
       <Card aria-labelledby="daten-uebernehmen">
@@ -48,6 +49,7 @@ export default async function ImportSettings() {
           <summary className="cursor-pointer font-semibold">Aufbewahrung und Einwilligungen (alle Quellen)</summary>
           <p className="mt-2">{RETENTION_HINT}</p>
           <p className="mt-2">{CONSENT_HINT}</p>
+          <p className="mt-2">{REUPLOAD_HINT}</p>
         </details>
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer font-semibold">Daten fehlen im Export? (Online-Software: {SOURCE_HELP.filter((h) => h.online).map((h) => h.title).join(", ")})</summary>
@@ -61,6 +63,7 @@ export default async function ImportSettings() {
           Übernimmt die Blätter Patienten, Leistungen, Gutscheine, Rechnungen und Kalkulation (Fixkosten). Alte Rechnungen werden mit ihrer
           ursprünglichen Nummer als ausgestellt bzw. bezahlt übernommen; die Nummernkreise laufen danach lückenlos weiter.
         </p>
+        <p className="mb-4 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">{EXCEL_PAYMENTS_HINT}</p>
         <ExcelImportForm action={excelImportAction} />
       </Card>
       <Card>

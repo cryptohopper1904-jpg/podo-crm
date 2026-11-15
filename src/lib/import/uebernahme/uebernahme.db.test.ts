@@ -14,7 +14,8 @@ import { collectFiles } from "./collect";
 import { applyPlan, loadExisting } from "./persist";
 import { buildPlan } from "./plan";
 import { tinanaUpload } from "./plan.test";
-import { ImportBusyError, previewUebernahme, runUebernahme, TokenUsedError, type RunDeps } from "./run";
+import { writeDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
+import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, TokenUsedError, type RunDeps } from "./run";
 import { persistImport } from "../excel/persist";
 import { parseWorkbook } from "../excel/parse";
 import { readFileSync } from "node:fs";
@@ -265,5 +266,117 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
     const second = await inOrg(j.org, (tx) => persistImport(tx as never, j.org, one, j.user, { skipExisting: true }));
     expect(second.patients).toBe(0);
     expect((await counts(j.org)).patients).toBe(1);
+  });
+
+  // ───────────── Review Runde 2 ─────────────
+  it("S4: dieselbe Bestandsperson für zwei Zeilen gewählt → Import abgelehnt, nichts gespeichert", async () => {
+    const k = await practice("k");
+    const [old] = await inOrg(k.org, (tx) =>
+      tx.insert(s.patients).values({ organizationId: k.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self" }).returning(),
+    );
+    const H = "patienten_id;anrede;titel;vorname;nachname;geschlecht;geburtsdatum;strasse;hausnummer;plz;stadt;standort;email;telefon_1_label;telefon_1;telefon_2_label;telefon_2;notiz;vip;versicherungstyp;erstellt_am";
+    const csv = [H, "t-1;Frau;;Erika;Musterfrau;;03.04.1950;;;;;;;;;;;;Nein;GKV;", "t-2;Frau;;Erika;Musterfrau;;03.04.1950;;;;;;;;;;;;Nein;GKV;"].join("\n");
+    const { d } = deps();
+    const choices = { "tinana:t-1": old.id, "tinana:t-2": old.id };
+    await expect(
+      runUebernahme(d, { org: k.org, userId: k.user, files: [{ name: "patients_export_2026-01-15.csv", data: new TextEncoder().encode(csv) }], opts: { ...opts, choices }, tokenHash: `k-${stamp}`, auditMeta: {} }),
+    ).rejects.toThrow(new ChoiceConflictError("Nr. 1 kann nur einmal verknüpft werden, bitte erneut prüfen."));
+    expect((await counts(k.org)).patients).toBe(1);
+    const [after] = await inOrg(k.org, (tx) => tx.select().from(s.patients).where(eq(s.patients.id, old.id)));
+    expect(after.externalIds).toEqual({});
+  });
+
+  it("A-B1: Planen außerhalb der Transaktion – ändert sich der Bestand bis zum Schreiben, wird abgebrochen (bitte erneut prüfen)", async () => {
+    const l = await practice("l");
+    let phase = 0;
+    const racing: RunDeps["inOrg"] = (org, fn) =>
+      inOrg(org, async (tx) => {
+        phase++;
+        // eine andere Person legt zwischen Prüfung und Schreiben eine Patient:in an
+        if (phase === 2) await tx.insert(s.patients).values({ organizationId: org, number: 99, lastName: "Dazwischen", insuranceType: "self" });
+        return fn(tx as never);
+      });
+    const { d, stored, discarded } = deps({ inOrg: racing });
+    await expect(runUebernahme(d, { org: l.org, userId: l.user, files: rawUpload(), opts, tokenHash: `l-${stamp}`, auditMeta: {} })).rejects.toBeInstanceOf(StaleSnapshotError);
+    expect(discarded.sort()).toEqual([...stored].sort());
+    expect(await counts(l.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
+  });
+
+  it("A-H1: Einmal-Token – nur Audit-Einträge der letzten 20 Minuten werden durchsucht", async () => {
+    const m = await practice("m");
+    const token = `m-${stamp}`;
+    // derselbe Token-Hash vor 30 Minuten (Token gelten 15 Minuten) blockiert nicht
+    await inOrg(m.org, (tx) => tx.insert(s.auditLog).values({ organizationId: m.org, userId: m.user, action: "import.uebernahme.run", meta: { token }, at: new Date(Date.now() - 30 * 60_000) }));
+    const { d } = deps();
+    await expect(runUebernahme(d, { org: m.org, userId: m.user, files: rawUpload(), opts, tokenHash: token, auditMeta: {} })).resolves.toMatchObject({ summary: { patientsCreated: 4 } });
+    await expect(runUebernahme(d, { org: m.org, userId: m.user, files: rawUpload(), opts, tokenHash: token, auditMeta: {} })).rejects.toBeInstanceOf(TokenUsedError);
+  });
+
+  it("verknüpfte Person zählt einmal, auch mit Tinana- UND Doctolib-ID im selben Lauf", async () => {
+    const n = await practice("n");
+    const [old] = await inOrg(n.org, (tx) =>
+      tx.insert(s.patients).values({ organizationId: n.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self" }).returning(),
+    );
+    const doctolib = writeDoctolibPatientsCsv([{ externalId: "d-1", lastName: "Musterfrau", firstName: "Erika", birthDate: "1950-04-03" }], { delimiter: ",", bom: false });
+    const files = await collectFiles([...rawUpload(), { name: "doctolib.csv", data: new TextEncoder().encode(doctolib) }]);
+    const r = await run(n, files);
+    expect(r.plan.patientsLink.filter((x) => x.patientId === old.id).map((x) => x.key).sort()).toEqual(["doctolib", "tinana"]);
+    expect(r.plan.totals.patientsLinked).toBe(1);
+    expect(r.summary.patientsLinked).toBe(1);
+    const [after] = await inOrg(n.org, (tx) => tx.select().from(s.patients).where(eq(s.patients.id, old.id)));
+    expect(after.externalIds).toEqual({ tinana: "10000000-0000-4000-8000-000000000001", doctolib: "d-1" });
+  });
+
+  it("Excel + Tinana im selben Lauf: Excel-Zeile ohne Legacy-ID wird nicht doppelt angelegt, Legacy-Nummern bleiben", async () => {
+    const o = await practice("o");
+    const base = await parseWorkbook(new Uint8Array(await buildWorkbook()));
+    const excel = {
+      ...base,
+      patients: [
+        { ...base.patients[0], legacyId: 5 },
+        { ...base.patients[1], legacyId: null, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03" },
+      ],
+      invoices: [],
+      vouchers: [],
+      fixedCosts: [],
+      services: [],
+    };
+    const files = [...(await tinanaUpload()), { name: "r.xlsx", sha256: "x", size: 1, kind: "podohero.excel" as const, source: "podohero-excel" as const, label: "Excel", target: "–", status: "import" as const, records: 2, issues: [], excel }];
+    const r = await run(o, files);
+    expect(r.plan.totals.excel).toMatchObject({ patientsNew: 1, patientsExisting: 1 });
+    expect(r.summary.excel?.patients).toBe(1);
+    const all = await inOrg(o.org, (tx) => tx.select().from(s.patients).where(eq(s.patients.organizationId, o.org)));
+    expect(all.filter((p) => p.lastName === "Musterfrau")).toHaveLength(1);
+    expect(all.find((p) => (p.externalIds as Record<string, unknown>).legacyExcel === 5)?.number).toBe(5);
+    expect(Math.min(...all.filter((p) => (p.externalIds as Record<string, unknown>).tinana).map((p) => p.number))).toBeGreaterThan(5);
+  });
+
+  it("A-H2: Excel-Zeile MIT Legacy-ID einer gelöschten Person wird nicht neu angelegt", async () => {
+    const q = await practice("q");
+    await inOrg(q.org, (tx) =>
+      tx.insert(s.patients).values({ organizationId: q.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self", contactErasedAt: new Date(), archivedAt: new Date() }),
+    );
+    const base = await parseWorkbook(new Uint8Array(await buildWorkbook()));
+    const one = { ...base, patients: [{ ...base.patients[0], legacyId: 9001, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03" }], invoices: [], vouchers: [], fixedCosts: [], services: [] };
+    const r = await inOrg(q.org, (tx) => persistImport(tx as never, q.org, one, q.user, { skipExisting: true }));
+    expect(r.patients).toBe(0);
+    expect(r.warnings.some((w) => /gelöscht, nicht übernommen/.test(w.message))).toBe(true);
+    expect((await counts(q.org)).patients).toBe(1);
+  });
+
+  it("K2: Excel-Rechnung ohne Rechnungsdatum – bezahlt vermerkt, aber keine Zahlungszeile mit „heute“", async () => {
+    const r2 = await practice("r2");
+    const base = await parseWorkbook(new Uint8Array(await buildWorkbook()));
+    const inv = base.invoices.find((i) => i.payments.length > 0)!;
+    expect(inv).toBeDefined();
+    const one = { ...base, patients: [], vouchers: [], fixedCosts: [], invoices: [{ ...inv, issuedAt: null, patientLegacyId: null }] };
+    const res = await inOrg(r2.org, (tx) => persistImport(tx as never, r2.org, one, r2.user, { skipExisting: true }));
+    expect(res.payments).toBe(0);
+    expect(res.warnings.some((w) => /ohne Rechnungsdatum – Zahlung nur an der Rechnung vermerkt/.test(w.message))).toBe(true);
+    const [row] = await inOrg(r2.org, (tx) => tx.select().from(s.invoices).where(and(eq(s.invoices.organizationId, r2.org), eq(s.invoices.number, inv.number))));
+    expect(row.paidCents).toBe(Math.min(inv.totalCents, inv.payments.reduce((a, p) => a + p.amountCents, 0)));
+    expect(row.status).toBe(inv.status);
+    const pays = await inOrg(r2.org, (tx) => tx.select().from(s.payments).where(eq(s.payments.invoiceId, row.id)));
+    expect(pays).toEqual([]);
   });
 });

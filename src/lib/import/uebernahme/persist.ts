@@ -41,7 +41,8 @@ export async function loadExisting(tx: Tx, org: string, documentShas: string[] =
       erasedAt: s.patients.contactErasedAt,
     })
     .from(s.patients)
-    .where(eq(s.patients.organizationId, org));
+    .where(eq(s.patients.organizationId, org))
+    .orderBy(s.patients.number);
   const appts = await tx
     .select({ ref: s.appointments.externalId })
     .from(s.appointments)
@@ -95,16 +96,14 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
   // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Neuanlage, Doctolib- und Excel-Import)
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
 
-  // ───── PodoHero-Excel (bisheriger Import, hier ohne Doppelanlage) ─────
-  if (plan.excel) {
-    const r = await persistImport(tx, org, plan.excel, userId, { skipExisting: true });
-    summary.excel = { patients: r.patients, services: r.services, vouchers: r.vouchers, invoices: r.invoices, payments: r.payments, fixedCosts: r.fixedCosts };
-  }
-
   // ───── Patient:innen ─────
+  // Neue Personen aus Tinana/Doctolib VOR der Excel-Übernahme anlegen: Excel-Zeilen ohne Legacy-ID erkennt persistImport
+  // dann über Name + Geburtsdatum wieder (wie in der Vorschau gezählt). Nummern hinter den Excel-Legacy-IDs, damit die
+  // Excel-Personen ihre bisherige Nummer behalten.
   await assertPatientCapacity(tx, org, plan.patientsCreate.length);
   const [m] = await tx.select({ n: max(s.patients.number) }).from(s.patients).where(eq(s.patients.organizationId, org));
   let next = (m?.n ?? 0) + 1;
+  for (const p of plan.excel?.patients ?? []) if ((p.legacyId ?? 0) >= next) next = (p.legacyId ?? 0) + 1;
   const idByRef = new Map<string, string>();
   for (const part of chunks(plan.patientsCreate)) {
     const rows = await tx
@@ -114,6 +113,8 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
     rows.forEach((r, i) => idByRef.set(part[i].ref, r.id));
     summary.patientsCreated += rows.length;
   }
+  /** verknüpfte Personen zählen einmal, auch wenn sie in einem Lauf eine Tinana- UND eine Doctolib-ID bekommen */
+  const linked = new Set<string>();
   for (const l of plan.patientsLink) {
     // nur ergänzen: Quell-ID setzen, wenn für diese Quelle noch keine da ist
     const r = await tx
@@ -121,7 +122,14 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
       .set({ externalIds: sql`${s.patients.externalIds} || jsonb_build_object(${l.key}::text, ${l.externalId}::text)` })
       .where(and(eq(s.patients.organizationId, org), eq(s.patients.id, l.patientId), sql`not (${s.patients.externalIds} ? ${l.key})`))
       .returning({ id: s.patients.id });
-    summary.patientsLinked += r.length;
+    for (const x of r) linked.add(x.id);
+  }
+  summary.patientsLinked = linked.size;
+
+  // ───── PodoHero-Excel (bisheriger Import, hier ohne Doppelanlage) ─────
+  if (plan.excel) {
+    const r = await persistImport(tx, org, plan.excel, userId, { skipExisting: true });
+    summary.excel = { patients: r.patients, services: r.services, vouchers: r.vouchers, invoices: r.invoices, payments: r.payments, fixedCosts: r.fixedCosts };
   }
   const pid = (r: PatientRef): string | null => ("existingId" in r ? r.existingId : idByRef.get(r.ref) ?? null);
 

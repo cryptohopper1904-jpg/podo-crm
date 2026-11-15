@@ -17,8 +17,9 @@
 import { findDuplicates as findFileDuplicates } from "../excel/parse";
 import type { ImportResult, PatientImportDraft } from "../excel/types";
 import { doctolibPatientValues } from "@/integrations/doctolib/patient-values";
+import { EXCEL_PAYMENTS_HINT } from "./help";
 import { plural } from "./plural";
-import { mapAppointmentStatus, normName, prescriptionComplete } from "./tinana";
+import { mapAppointmentStatus, normName, prescriptionComplete, validSourceId } from "./tinana";
 import type { CashbookSummary, DetectedFile, ImportIssue, PrescriptionMode, TinanaPatient, TinanaPrescription } from "./types";
 
 export interface ExistingPatient {
@@ -141,6 +142,12 @@ export interface DuplicateDecision {
   choice: string;
 }
 
+export interface ChoiceConflict {
+  key: string;
+  number: number | null;
+}
+export const choiceConflictMessage = (c: ChoiceConflict) => `Nr. ${c.number ?? "?"} kann nur einmal verknüpft werden, bitte erneut prüfen.`;
+
 export interface FileSummary {
   name: string;
   label: string;
@@ -177,6 +184,8 @@ export interface ImportPlan {
   prescriptions: PrescriptionCreate[];
   documents: DocumentCreate[];
   decisions: DuplicateDecision[];
+  /** dieselbe Bestandsperson für mehrere Zeilen gewählt – der Import wird dann abgelehnt (S4) */
+  conflicts: ChoiceConflict[];
   excel: ImportResult | null;
   cashbook: CashbookSummary | null;
   totals: PlanTotals;
@@ -261,18 +270,19 @@ function tinanaValues(p: TinanaPatient): PatientCreate["values"] {
   };
 }
 
-/** Bestandsabgleich wie findDuplicates (src/server/patients.ts): Nachname+Geburtsdatum, E-Mail, Mobilnummer. */
-function duplicateCandidates(v: PatientCreate["values"], existing: ExistingPatient[]): { patient: ExistingPatient; reason: string }[] {
-  const out: { patient: ExistingPatient; reason: string }[] = [];
-  for (const e of existing) {
-    if (e.erased) continue;
-    if (v.birthDate && e.birthDate === v.birthDate && normName(e.lastName) === normName(v.lastName)) {
-      out.push({ patient: e, reason: normName(e.firstName) === normName(v.firstName) ? "gleicher Name und Geburtsdatum" : "gleicher Nachname und Geburtsdatum" });
-    } else if (v.email && e.email && e.email.toLowerCase() === v.email.toLowerCase()) out.push({ patient: e, reason: "gleiche E-Mail-Adresse" });
-    else if (v.phoneMobile && e.phoneMobile && phoneDigits(e.phoneMobile) === phoneDigits(v.phoneMobile)) out.push({ patient: e, reason: "gleiche Mobilnummer" });
-  }
-  return out;
-}
+/**
+ * Laufzeit (AppSec Runde 2, A-B1): Alle Abgleiche laufen über vorab gebaute Indizes (Map/Set). Je Zeile werden
+ * höchstens MAX_SCAN Bestandspersonen eines Index-Eintrags angesehen und höchstens MAX_CANDIDATES Kandidaten
+ * angeboten – auch 100.000 gleichnamige Zeilen bleiben damit linear.
+ */
+export const MAX_SCAN = 200;
+export const MAX_CANDIDATES = 10;
+
+const pushTo = <K, V>(m: Map<K, V[]>, k: K, v: V) => {
+  const l = m.get(k);
+  if (l) l.push(v);
+  else m.set(k, [v]);
+};
 
 export interface PlanOptions {
   prescriptionMode: PrescriptionMode;
@@ -287,7 +297,8 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   const now = opts.now ?? new Date();
   const warnings: ImportIssue[] = [];
   const active = detected.filter((d) => d.status !== "duplicate" && d.status !== "rejected");
-  for (const d of active) warnings.push(...d.issues);
+  // Schleife statt push(...issues): bei sehr vielen Hinweisen sonst „Maximum call stack size exceeded“
+  for (const d of active) for (const i of d.issues) warnings.push(i);
 
   const totals: PlanTotals = {
     patientsNew: 0,
@@ -308,13 +319,27 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   };
   const samples = { patients: [] as string[], appointments: [] as string[], prescriptions: [] as string[], documents: [] as string[] };
 
-  // ───── Bestands-Indizes ─────
+  // ───── Bestands-Indizes (einmal aufgebaut, je Zeile nur Nachschlagen – A-B1) ─────
   const byExt = new Map<string, ExistingPatient>();
+  const byId = new Map<string, ExistingPatient>();
+  const order = new Map<string, number>();
   const byPerson = new Map<string, ExistingPatient[]>();
   const byName = new Map<string, ExistingPatient[]>();
+  /** Kriterium → Personenschlüssel → Personen: dieselbe Person (gleicher Schlüssel) wird als Gruppe übersprungen (A-B1) */
+  const byLastBirth = new Map<string, Map<string, ExistingPatient[]>>();
+  const byEmail = new Map<string, Map<string, ExistingPatient[]>>();
+  const byPhone = new Map<string, Map<string, ExistingPatient[]>>();
+  const nkOf = new Map<string, string>();
+  const pushGrouped = (m: Map<string, Map<string, ExistingPatient[]>>, k: string, pk: string | null, e: ExistingPatient) => {
+    let g = m.get(k);
+    if (!g) m.set(k, (g = new Map()));
+    pushTo(g, pk ?? "", e);
+  };
   /** Personenschlüssel gelöschter Personen (Art. 17) – auch ohne Quell-ID nicht erneut anlegen */
   const erasedPersons = new Set<string>();
-  for (const e of existing.patients) {
+  existing.patients.forEach((e, i) => {
+    byId.set(e.id, e);
+    order.set(e.id, i);
     for (const k of ["tinana", "doctolib"]) {
       const v = e.externalIds[k];
       if (typeof v === "string" || typeof v === "number") byExt.set(`${k}:${v}`, e);
@@ -322,34 +347,108 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     const pk = personKey(e.firstName, e.lastName, e.birthDate);
     if (e.erased) {
       if (pk) erasedPersons.add(pk);
-      continue;
+      return;
     }
-    if (pk) byPerson.set(pk, [...(byPerson.get(pk) ?? []), e]);
+    if (pk) pushTo(byPerson, pk, e);
     const nk = nameKey(e.firstName, e.lastName);
-    byName.set(nk, [...(byName.get(nk) ?? []), e]);
-  }
-  const live = existing.patients.filter((e) => !e.erased);
+    nkOf.set(e.id, nk);
+    pushTo(byName, nk, e);
+    if (e.birthDate) pushGrouped(byLastBirth, `${normName(e.lastName)}|${e.birthDate}`, pk, e);
+    if (e.email) pushGrouped(byEmail, e.email.toLowerCase(), pk, e);
+    const ph = phoneDigits(e.phoneMobile);
+    if (ph) pushGrouped(byPhone, ph, pk, e);
+  });
+
+  /**
+   * Bestandsabgleich wie findDuplicates (src/server/patients.ts): Nachname+Geburtsdatum, E-Mail, Mobilnummer – über
+   * Indizes. Je Kriterium höchstens MAX_SCAN Personen ansehen und höchstens `limit` passende (`accept`) übernehmen.
+   */
+  const duplicateCandidates = (
+    v: PatientCreate["values"],
+    skipPerson: string | null,
+    accept: (e: ExistingPatient) => boolean,
+    limit = MAX_CANDIDATES,
+  ): { patient: ExistingPatient; reason: string }[] => {
+    const found = new Map<string, { patient: ExistingPatient; reason: string }>();
+    const take = (groups: Map<string, ExistingPatient[]> | undefined, reason: (e: ExistingPatient) => string) => {
+      if (!groups) return;
+      let n = 0;
+      let scanned = 0;
+      for (const [pk, list] of groups) {
+        // dieselbe Person (gleicher Name + Geburtsdatum) zählt nicht als „andere“ mögliche Dublette
+        if (skipPerson && pk === skipPerson) continue;
+        for (let i = 0; i < list.length && scanned < MAX_SCAN && n < limit; i++, scanned++) {
+          const e = list[i];
+          if (found.has(e.id) || !accept(e)) continue;
+          found.set(e.id, { patient: e, reason: reason(e) });
+          n++;
+        }
+        if (scanned >= MAX_SCAN || n >= limit) break;
+      }
+    };
+    if (v.birthDate) {
+      const first = normName(v.firstName);
+      take(byLastBirth.get(`${normName(v.lastName)}|${v.birthDate}`), (e) => (normName(e.firstName) === first ? "gleicher Name und Geburtsdatum" : "gleicher Nachname und Geburtsdatum"));
+    }
+    if (v.email) take(byEmail.get(v.email.toLowerCase()), () => "gleiche E-Mail-Adresse");
+    const ph = phoneDigits(v.phoneMobile);
+    if (ph) take(byPhone.get(ph), () => "gleiche Mobilnummer");
+    // höchstens 3 × limit Einträge – Reihenfolge wie im Bestand
+    return [...found.values()].sort((a, b) => order.get(a.patient.id)! - order.get(b.patient.id)!);
+  };
+  /** Name + E-Mail bzw. Name + Mobilnummer (Wiedererkennung ohne Quell-ID) */
+  const contactMatches = (v: PatientCreate["values"]): ExistingPatient[] => {
+    const nk = nameKey(v.firstName, v.lastName);
+    const out = new Map<string, ExistingPatient>();
+    const ph = phoneDigits(v.phoneMobile);
+    for (const groups of [v.email ? byEmail.get(v.email.toLowerCase()) : undefined, ph ? byPhone.get(ph) : undefined]) {
+      if (!groups) continue;
+      let scanned = 0;
+      for (const list of groups.values()) {
+        for (let i = 0; i < list.length && scanned < MAX_SCAN; i++, scanned++) if (nkOf.get(list[i].id) === nk) out.set(list[i].id, list[i]);
+        // zwei Treffer genügen: dann ist die Person ohnehin nicht eindeutig
+        if (scanned >= MAX_SCAN || out.size > 1) break;
+      }
+    }
+    return [...out.values()];
+  };
 
   const patientsCreate: PatientCreate[] = [];
   const patientsLink: PatientLink[] = [];
   const decisions: DuplicateDecision[] = [];
+  /** Auswahl „verknüpfen mit Nr. …“ für eine Bestandsperson, die in diesem Lauf schon verknüpft wird (S4) */
+  const conflicts: ChoiceConflict[] = [];
   /** Quell-ID („tinana:…“) → Ziel; null = gelöschte Person (nicht übernehmen) */
   const target = new Map<string, PatientRef | null>();
-  /** Personenschlüssel → Ziele aus dem Upload (für Verordnungen) */
-  const uploadByPerson = new Map<string, PatientRef[]>();
+  /** Personenschlüssel → Ziele aus dem Upload (für Verordnungen); innere Map über refKey dedupliziert (A-B1) */
+  const uploadByPerson = new Map<string, Map<string, PatientRef>>();
   /** Name → Ziele aus der Tinana-Patientendatei (mit Tinana-ID) – nur darüber werden Rechnungs-PDFs zugeordnet */
-  const tinanaByName = new Map<string, PatientRef[]>();
+  const tinanaByName = new Map<string, Map<string, PatientRef>>();
+  /** Namen gelöschter Personen (Art. 17) aus der Tinana-Patientendatei – PDFs: „gelöscht, nicht übernommen“ */
+  const tinanaErasedNames = new Set<string>();
   /** Bestandspersonen, die in diesem Lauf schon eine Quell-ID bekommen (je Quelle nur eine) */
-  const linkedNow = new Set<string>();
+  const linkedNow = { tinana: new Set<string>(), doctolib: new Set<string>() };
   const linkedIds = new Set<string>();
   const refKey = (r: PatientRef) => ("existingId" in r ? `e:${r.existingId}` : `r:${r.ref}`);
-  const addIndex = (map: Map<string, PatientRef[]>, key: string | null, r: PatientRef) => {
+  const addIndex = (map: Map<string, Map<string, PatientRef>>, key: string | null, r: PatientRef) => {
     if (!key) return;
-    const list = map.get(key) ?? [];
-    if (!list.some((x) => refKey(x) === refKey(r))) list.push(r);
-    map.set(key, list);
+    let inner = map.get(key);
+    if (!inner) map.set(key, (inner = new Map()));
+    inner.set(refKey(r), r);
   };
-  const erasedWarning = (who: string) => warnings.push({ message: `${who}: Kontaktdaten wurden in PodoHero auf Wunsch gelöscht (Art. 17 DSGVO) – gelöscht, nicht übernommen (auch keine Termine oder Verordnungen).` });
+  /** Ziele eines Index-Eintrags: Anzahl und (nur bei genau einem) das Ziel */
+  const unique = (inner: Map<string, PatientRef> | undefined): { count: number; only: PatientRef | null } => {
+    const count = inner?.size ?? 0;
+    return { count, only: count === 1 ? inner!.values().next().value! : null };
+  };
+  const erasedWarning = (who: string, person: string | null) => {
+    const namesake = person ? byPerson.get(person)?.[0] : undefined;
+    warnings.push({
+      message:
+        `${who}: Kontaktdaten wurden in PodoHero auf Wunsch gelöscht (Art. 17 DSGVO) – gelöscht, nicht übernommen (auch keine Termine oder Verordnungen).` +
+        (namesake ? ` Gleichnamige aktive Nr. ${namesake.number} vorhanden – bitte manuell zuordnen.` : ""),
+    });
+  };
 
   /**
    * Ziel für eine Person aus dem Upload. `linkable` = die Quelle liefert eine stabile ID (sonst wird nichts verknüpft,
@@ -366,13 +465,13 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       if (ref) {
         addIndex(uploadByPerson, person, ref);
         if (key === "tinana") addIndex(tinanaByName, nameKey(values.firstName, values.lastName), ref);
-      }
+      } else if (key === "tinana") tinanaErasedNames.add(nameKey(values.firstName, values.lastName));
       return ref;
     };
     const hit = byExt.get(ext);
     if (hit?.erased || (!hit && person && erasedPersons.has(person))) {
       totals.patientsErased++;
-      erasedWarning(who);
+      erasedWarning(who, person);
       return done(null);
     }
     if (hit) {
@@ -382,35 +481,38 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     const sameperson = person ? byPerson.get(person) ?? [] : [];
     if (!linkable) {
       // ohne Quell-ID (z. B. Doctolib-Zeile ohne ID): wiedererkennen über Name + Geburtsdatum, sonst Name + E-Mail/Mobilnummer
-      const byContact = sameperson.length
-        ? sameperson
-        : live.filter(
-            (e) =>
-              normName(e.lastName) === normName(values.lastName) &&
-              normName(e.firstName) === normName(values.firstName) &&
-              ((values.email && e.email?.toLowerCase() === values.email.toLowerCase()) || (values.phoneMobile && phoneDigits(e.phoneMobile) === phoneDigits(values.phoneMobile))),
-          );
+      const byContact = sameperson.length ? sameperson : contactMatches(values);
       if (byContact.length === 1) {
         totals.patientsExisting++;
         return done({ existingId: byContact[0].id });
       }
     }
     // mögliche Dubletten: verknüpfbar sind nur Personen ohne ID dieser Quelle, die in diesem Lauf noch nicht vergeben sind
-    const free = (e: ExistingPatient) => e.externalIds[key] === undefined && !linkedNow.has(`${key}:${e.id}`);
-    const exact = sameperson.filter(free);
-    const others = duplicateCandidates(values, live).filter((c) => !sameperson.includes(c.patient));
+    const linkedKey = linkedNow[key];
+    const free = (e: ExistingPatient) => e.externalIds[key] === undefined && !linkedKey.has(e.id);
+    const exact: ExistingPatient[] = [];
+    /** dieselbe Person ist schon mit einer anderen ID dieser Quelle verknüpft (S3) */
+    let taken = false;
+    for (let i = 0; i < sameperson.length && i < MAX_SCAN && exact.length < MAX_CANDIDATES; i++) {
+      if (free(sameperson[i])) exact.push(sameperson[i]);
+      else taken = true;
+    }
+    const othersFree = linkable ? duplicateCandidates(values, person, free) : [];
     const candidates = [
       ...exact.map((e) => ({ id: e.id, number: e.number, reason: "gleicher Name und Geburtsdatum" })),
-      ...(linkable ? others.filter((c) => free(c.patient)).map((c) => ({ id: c.patient.id, number: c.patient.number, reason: c.reason })) : []),
-    ];
+      ...othersFree.map((c) => ({ id: c.patient.id, number: c.patient.number, reason: c.reason })),
+    ].slice(0, MAX_CANDIDATES);
+    const wanted = linkable ? opts.choices?.[ext] : undefined;
+    const valid = !!wanted && (wanted === "new" || candidates.some((c) => c.id === wanted));
+    // dieselbe Bestandsperson wurde für zwei Zeilen gewählt → nicht still auf den Standard zurückfallen (S4)
+    if (wanted && !valid && linkedKey.has(wanted)) conflicts.push({ key: ext, number: byId.get(wanted)?.number ?? null });
     if (candidates.length && linkable) {
       const defaultChoice = exact.length === 1 && sameperson.length === 1 ? exact[0].id : "new";
-      const wanted = opts.choices?.[ext];
-      const choice = wanted && (wanted === "new" || candidates.some((c) => c.id === wanted)) ? wanted : defaultChoice;
+      const choice = valid ? wanted! : defaultChoice;
       decisions.push({ key: ext, who, sourceLabel, candidates, defaultChoice, choice });
       if (choice !== "new") {
-        const e = live.find((x) => x.id === choice)!;
-        linkedNow.add(`${key}:${e.id}`);
+        const e = byId.get(choice)!;
+        linkedKey.add(e.id);
         patientsLink.push({ patientId: e.id, key, externalId: extId });
         if (!linkedIds.has(e.id)) totals.patientsLinked++;
         linkedIds.add(e.id);
@@ -421,9 +523,14 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     const ref: PatientRef = { ref: ext };
     patientsCreate.push({ ref: ext, sourceLabel, pseudonym: who, values });
     totals.patientsNew++;
+    const otherId = linkable && taken && !exact.length;
+    if (otherId) warnings.push({ message: `${who}: gleiche Person ist bereits mit anderer ${key === "tinana" ? "Tinana" : "Doctolib"}-ID verknüpft – neu angelegt, bitte prüfen.` });
     if (candidates.length && linkable) warnings.push({ message: `${who}: mögliche Dublette zu ${candidates.map((c) => `Nr. ${c.number}`).join(", ")} – wird neu angelegt (Auswahl in der Vorschau).` });
-    else if (sameperson.length > 1) warnings.push({ message: `${who}: mehrere gleichnamige Personen mit diesem Geburtsdatum vorhanden – neu angelegt, bitte prüfen.` });
-    else if (others.length) warnings.push({ message: `${who}: mögliche Dublette zu Nr. ${others[0].patient.number} – neu angelegt, bitte prüfen und ggf. zusammenführen.` });
+    else if (sameperson.length > 1 && !otherId) warnings.push({ message: `${who}: mehrere gleichnamige Personen mit diesem Geburtsdatum vorhanden – neu angelegt, bitte prüfen.` });
+    else {
+      const other = duplicateCandidates(values, person, () => true, 1)[0];
+      if (other) warnings.push({ message: `${who}: mögliche Dublette zu Nr. ${other.patient.number} – neu angelegt, bitte prüfen und ggf. zusammenführen.` });
+    }
     if (!linkable && !values.birthDate && !values.email && !values.phoneMobile) {
       warnings.push({ message: `${who}: ohne Doctolib-ID, Geburtsdatum, E-Mail und Mobilnummer – bei einem erneuten Upload nicht wiedererkennbar (würde doppelt angelegt).` });
     }
@@ -457,6 +564,10 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
 
   // ───── Doctolib-Patient:innen ─────
   for (const d of active.flatMap((f) => f.doctolibPatients ?? [])) {
+    if (d.externalId && !validSourceId(d.externalId)) {
+      warnings.push({ message: `${pseudonym(d.firstName, d.lastName, d.birthDate)}: Doctolib-ID ungültig (zu lang oder unzulässige Zeichen) – Zeile übersprungen.` });
+      continue;
+    }
     const v = doctolibPatientValues(d);
     const values: PatientCreate["values"] = { ...v, insuranceType: v.insuranceType, externalIds: v.externalIds as Record<string, string> };
     // ohne Doctolib-ID: stabiler Schlüssel aus Name + Geburtsdatum bzw. Kontakt (gleiche Zeile im nächsten Export → gleicher Schlüssel)
@@ -467,14 +578,15 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   // Dubletten innerhalb des Uploads (gleiche Kriterien wie beim Excel-Import)
   const pseudoDrafts = patientsCreate.map((c, i) => ({ row: i + 1, legacyId: null, lastName: c.values.lastName, firstName: c.values.firstName, birthDate: c.values.birthDate, email: c.values.email, phoneMobile: c.values.phoneMobile, phoneLandline: c.values.phoneLandline }) as unknown as PatientImportDraft);
   for (const g of findFileDuplicates(pseudoDrafts)) {
-    const who = g.rows.map((r) => patientsCreate[r - 1].pseudonym).join(", ");
+    const names = g.rows.slice(0, 10).map((r) => patientsCreate[r - 1].pseudonym).join(", ");
+    const who = g.rows.length > 10 ? `${names} und ${g.rows.length - 10} weitere` : names;
     warnings.push({ message: `Mögliche Dublette im Upload (${g.reason === "name_birthdate" ? "Name + Geburtsdatum" : g.reason === "email" ? "E-Mail" : "Telefon"}): ${who} – werden getrennt angelegt, bitte danach prüfen und ggf. zusammenführen.` });
   }
   samples.patients = patientsCreate.slice(0, 5).map((c) => `${c.pseudonym} · ${c.sourceLabel}`);
 
   // ───── Termine ─────
   const therapistByName = new Map<string, string[]>();
-  for (const t of existing.therapists) therapistByName.set(normName(t.name), [...(therapistByName.get(normName(t.name)) ?? []), t.id]);
+  for (const t of existing.therapists) pushTo(therapistByName, normName(t.name), t.id);
   const locationByName = new Map(existing.locations.map((l) => [normName(l.name), l.id]));
   const servicesByLength = [...existing.services].filter((s) => s.name.trim()).sort((a, b) => b.name.length - a.name.length);
   const unmatchedTherapists = new Set<string>();
@@ -576,20 +688,20 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       continue;
     }
     const pk = personKey(p.patientFirstName, p.patientLastName, p.patientBirthDate);
-    if (pk && erasedPersons.has(pk) && !(uploadByPerson.get(pk) ?? []).length) {
+    const fromUpload = pk ? unique(uploadByPerson.get(pk)) : { count: 0, only: null };
+    if (pk && erasedPersons.has(pk) && !fromUpload.count) {
       totals.prescriptionsUnassigned++;
       erasedPrescriptions++;
       continue;
     }
-    const fromUpload = pk ? uploadByPerson.get(pk) ?? [] : [];
-    const fromDb = pk ? (byPerson.get(pk) ?? []).map((e) => ({ existingId: e.id }) as PatientRef) : [];
-    const cands = fromUpload.length ? fromUpload : fromDb;
+    const fromDb = pk ? byPerson.get(pk) ?? [] : [];
+    const cands = fromUpload.count ? fromUpload : { count: fromDb.length, only: fromDb.length === 1 ? ({ existingId: fromDb[0].id } as PatientRef) : null };
     const who = pseudonym(p.patientFirstName, p.patientLastName, p.patientBirthDate);
-    if (cands.length !== 1) {
+    if (!cands.only) {
       totals.prescriptionsUnassigned++;
       warnings.push({
         row: p.rows[0],
-        message: cands.length
+        message: cands.count
           ? `Verordnung vom ${p.issuedAt} (${who}): mehrere passende Patient:innen – nicht übernommen.`
           : `Verordnung vom ${p.issuedAt} (${who}): keine Patient:in mit gleichem Namen und Geburtsdatum – nicht übernommen. Bitte die Patientendatei aller Standorte mit hochladen.`,
       });
@@ -602,7 +714,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     }
     prescriptions.push({
       externalRef,
-      patient: cands[0],
+      patient: cands.only,
       values: {
         issuedAt: p.issuedAt!,
         doctorName: clip(p.doctorName, FIELD_MAX.doctor),
@@ -650,29 +762,32 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       continue;
     }
     // sicher ist nur eine Person aus der hochgeladenen Tinana-Patientendatei (mit Tinana-ID); Bestand allein reicht nicht
-    const cands = inv.patientLastName ? tinanaByName.get(nameKey(inv.patientFirstName, inv.patientLastName)) ?? [] : [];
-    const unique = cands.length === 1 ? cands[0] : null;
-    if (!unique) {
+    const invName = nameKey(inv.patientFirstName, inv.patientLastName);
+    const cands = inv.patientLastName ? unique(tinanaByName.get(invName)) : { count: 0, only: null };
+    const only = cands.only;
+    if (!only) {
       totals.documentsUnassigned++;
-      const onlyDb = inv.patientLastName && !cands.length && (byName.get(nameKey(inv.patientFirstName, inv.patientLastName)) ?? []).length > 0;
+      const onlyDb = inv.patientLastName && !cands.count && (byName.get(invName) ?? []).length > 0;
       f.note =
         inv.type && /abrechnung/i.test(inv.type)
           ? "GKV-Abrechnung an die Kasse – keiner Patient:in zugeordnet, nicht übernommen."
           : !inv.patientLastName
             ? `Rechnung ${inv.number}: ohne Patient:in im Rechnungsexport – nicht übernommen.`
-            : cands.length > 1
+            : !cands.count && tinanaErasedNames.has(invName)
+              ? `Rechnung ${inv.number}: Kontaktdaten der Patient:in wurden in PodoHero auf Wunsch gelöscht (Art. 17 DSGVO) – gelöscht, nicht übernommen.`
+              : cands.count > 1
               ? `Rechnung ${inv.number}: mehrere Patient:innen mit diesem Namen in der Patientendatei – nicht eindeutig, nicht übernommen.`
               : onlyDb
                 ? `Rechnung ${inv.number}: Name nur im PodoHero-Bestand gefunden – ohne Geburtsdatum oder Tinana-ID keine sichere Zuordnung, nicht übernommen. Bitte die Tinana-Patientendatei mit hochladen.`
                 : `Rechnung ${inv.number}: Patient:in nicht in der hochgeladenen Patientendatei – nicht übernommen.`;
       continue;
     }
-    if ("existingId" in unique && existing.documentHashes.has(`${unique.existingId}|${f.sha256}`)) {
+    if ("existingId" in only && existing.documentHashes.has(`${only.existingId}|${f.sha256}`)) {
       totals.documentsExisting++;
       f.note = "Bereits übernommen.";
       continue;
     }
-    documents.push({ patient: unique, name: `${inv.number}.pdf`, sha256: f.sha256, data: f.pdf!, caption: `Rechnung ${inv.number} (aus Tinana übernommen${inv.createdAt ? `, ${inv.createdAt.slice(0, 10)}` : ""})` });
+    documents.push({ patient: only, name: `${inv.number}.pdf`, sha256: f.sha256, data: f.pdf!, caption: `Rechnung ${inv.number} (aus Tinana übernommen${inv.createdAt ? `, ${inv.createdAt.slice(0, 10)}` : ""})` });
     f.note = "Wird als Dokument bei der Patient:in abgelegt.";
     f.status = "import";
     totals.documentsNew++;
@@ -691,12 +806,20 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   }
   if (excel) {
     const known = new Set(existing.patients.map((p) => p.externalIds.legacyExcel).filter((x) => x !== undefined).map(String));
-    // ohne Legacy-ID: Abgleich über Name + Geburtsdatum (wie persistImport mit skipExisting)
-    const already = excel.patients.filter((p) =>
-      p.legacyId !== null
-        ? known.has(String(p.legacyId))
-        : !!p.birthDate && ((byPerson.get(personKey(p.firstName, p.lastName, p.birthDate)!) ?? []).length > 0 || erasedPersons.has(personKey(p.firstName, p.lastName, p.birthDate)!)),
-    ).length;
+    // ohne Legacy-ID: Abgleich über Name + Geburtsdatum (wie persistImport mit skipExisting) – auch mit Personen, die
+    // dieser Lauf aus Tinana/Doctolib neu anlegt (applyPlan legt sie vor der Excel-Übernahme an).
+    // Gelöschte Personen (Art. 17) werden nie erneut angelegt, auch nicht mit Legacy-ID (A-H2).
+    let erasedExcel = 0;
+    const already = excel.patients.filter((p) => {
+      const pk = personKey(p.firstName, p.lastName, p.birthDate);
+      if (p.legacyId !== null && known.has(String(p.legacyId))) return true;
+      if (pk && erasedPersons.has(pk)) {
+        erasedExcel++;
+        return true;
+      }
+      return p.legacyId === null && !!pk && ((byPerson.get(pk) ?? []).length > 0 || !!uploadByPerson.get(pk)?.size);
+    }).length;
+    if (erasedExcel) warnings.push({ message: `Excel: ${plural(erasedExcel, "Person", "Personen")} mit gelöschten Kontaktdaten (Art. 17 DSGVO) – gelöscht, nicht übernommen.` });
     totals.excel = {
       patientsNew: excel.patients.length - already,
       patientsExisting: already,
@@ -705,7 +828,11 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       invoices: excel.invoices.length,
       fixedCosts: excel.fixedCosts.length,
     };
-    if (excel.invoices.length) warnings.push({ message: "Excel-Rechnungsmanager: Rechnungen werden wie beim bisherigen Excel-Import mit ihrer Nummer als ausgestellte Rechnungen übernommen; vorhandene Nummern werden übersprungen." });
+    if (excel.invoices.length) {
+      warnings.push({
+        message: `Excel-Rechnungsmanager: Rechnungen werden wie beim bisherigen Excel-Import mit ihrer Nummer als ausgestellte Rechnungen übernommen; vorhandene Nummern werden übersprungen. Übertragen Sie sie nicht erneut an Ihre Buchhaltung, wenn sie dort schon erfasst sind. ${EXCEL_PAYMENTS_HINT}`,
+      });
+    }
   }
 
   const cashbook = active.find((d) => d.cashbook)?.cashbook ?? null;
@@ -714,7 +841,8 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   const hasWork =
     patientsCreate.length + patientsLink.length + appointments.length + prescriptions.length + documents.length > 0 ||
     !!(excel && (totals.excel!.patientsNew || excel.services.length || excel.vouchers.length || excel.invoices.length || excel.fixedCosts.length));
-  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, decisions, excel, cashbook, totals, warnings, samples, hasWork };
+  for (const c of conflicts) warnings.push({ message: choiceConflictMessage(c) });
+  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, decisions, conflicts, excel, cashbook, totals, warnings, samples, hasWork };
 }
 
 function dedupe<T>(list: T[], key: (x: T) => string): T[] {
