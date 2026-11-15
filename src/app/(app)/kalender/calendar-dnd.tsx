@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useRef, useState, useTransition, type ReactNode } from "react";
 import { Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui";
-import { berlinParts } from "@/lib/calendar-grid";
+import { berlinParts, SLOT_MIN } from "@/lib/calendar-grid";
 import { autoScrollDelta, columnIndexAt, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, resizeOnDay } from "@/lib/calendar-dnd";
 import { moveAppointmentAction, type MoveResult } from "./actions";
 
@@ -60,6 +60,7 @@ export function DndSurface({
   view,
   enabled,
   pxPerMin,
+  step = SLOT_MIN,
   className,
   ariaLabel,
   children,
@@ -67,6 +68,8 @@ export function DndSurface({
   view: View;
   enabled: boolean;
   pxPerMin: number;
+  /** Raster in Minuten (Einstellungen → Kalender), auf das beim Ziehen eingerastet wird */
+  step?: number;
   className: string;
   ariaLabel: string;
   children: ReactNode;
@@ -203,13 +206,17 @@ export function DndSurface({
         const p = berlinParts(s.startsAt);
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
+        // bisherige Dauer in Uhrzeit-Minuten (am Umstellungstag ≠ echte Dauer); Ende an einem anderen Tag → echte Dauer
+        const e = berlinParts(s.endsAt);
+        const localDur = e.dateIso === date && e.min > startMin ? e.min - startMin : durationMin;
         // am Tag der Zeitumstellung echte Minuten speichern (und auf 8 h begrenzen)
-        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, startsAt: s.startsAt });
+        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, durationMin: localDur, startsAt: s.startsAt, step });
         dur = sized.localMin;
         realDur = sized.realMin;
       } else {
         dur = durationMin;
-        startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur });
+        // Verschiebung (nicht die Uhrzeit) rastet ein: Termine außerhalb des Rasters behalten ihre Minuten
+        startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur, originMin: berlinParts(s.startsAt).min, step });
       }
       const c = toContent(r);
       const rect = { top: c.top + (startMin - rangeStart) * pxPerMin, left: c.left + 2, width: Math.max(0, c.width - 4), height: Math.max(14, dur * pxPerMin - 1) };
@@ -422,7 +429,7 @@ export function DndSurface({
       box.removeEventListener("pointerdown", onDown);
       end();
     };
-  }, [enabled, view, pxPerMin, run]);
+  }, [enabled, view, pxPerMin, step, run]);
 
   const hidden = pending?.id ?? null;
   const shownGhost = ghost ?? pending?.ghost ?? confirm?.ghost ?? null;

@@ -18,13 +18,15 @@ type Props = {
   stateName: string;
   /** Knopf in voller Breite (im „⋯“-Menü auf dem Handy) */
   wide?: boolean;
+  /** Behandler:innen für den Anzeige-Filter (sortiert) */
+  team?: { id: string; name: string }[];
 };
 
 /**
  * „Anzeige“: Schalter für Feiertage, Schulferien, Abwesenheiten usw. – je Person gemerkt (sofort beim Umschalten).
  * Im Support-Modus wird nichts gespeichert: die Auswahl landet nur in der Adresse (URL-Parameter).
  */
-export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName, wide = false }: Props) {
+export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName, wide = false, team = [] }: Props) {
   const form = useRef<HTMLFormElement>(null);
   const submit = () => form.current?.requestSubmit();
   const full = mode === "full";
@@ -73,6 +75,20 @@ export function CalendarOptionsPanel({ mode, options, persist, hidden, stateName
         {toggle("abwesend", options.absences, "Abwesenheiten (Team)", full ? "Hinweise in Kopfzeilen; Verfügbarkeit bleibt markiert" : "Hinweis je Tag")}
         {toggle("sperr", options.blocks, "Sperrzeiten", full ? "Pausen, Schulungen … einzeichnen; bleiben gesperrt" : "Hinweis je Tag; bleiben gesperrt")}
         {toggle("abgesagt", options.cancelled, "Abgesagte Termine")}
+        {toggle("hb", options.homeVisits, "Hausbesuche")}
+        {persist && team.length > 1 ? (
+          <fieldset className="flex flex-col px-2 py-1">
+            <legend className="pb-1 text-sm font-medium">Behandler:innen</legend>
+            {team.map((t) => (
+              <label key={t.id} className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg px-1 hover:bg-surface-2">
+                <input type="hidden" name="beh_alle" value={t.id} />
+                <input type="checkbox" name="beh" value={t.id} defaultChecked={!options.hiddenTherapists.includes(t.id)} onChange={submit} className="size-5 shrink-0 accent-[var(--primary)]" />
+                <span className="truncate text-sm">{t.name}</span>
+              </label>
+            ))}
+            <span className="text-xs text-muted">Termine ohne Zuordnung bleiben sichtbar.</span>
+          </fieldset>
+        ) : null}
         {full ? toggle("az", options.workHours, "Arbeitszeiten schattieren") : <input type="hidden" name="az" value={options.workHours ? "1" : "0"} />}
         {toggle("kw", options.weekNumbers, "Kalenderwochen (KW)", "in Woche und Monat")}
         <label className="flex flex-col gap-1 px-2 py-2 text-sm font-medium">

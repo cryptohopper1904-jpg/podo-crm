@@ -5,7 +5,7 @@ import { absences, appointments, organizations, users, workingHours, type UserPr
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { computeAvailability, type TimeRange } from "@/lib/availability";
-import { addDaysIso, berlinParts, findClashes, toHhmm, toMin, type CalendarMode } from "@/lib/calendar-grid";
+import { addDaysIso, berlinParts, findClashes, isSlotStep, SLOT_MIN, toHhmm, toMin, type CalendarMode, type SlotStep } from "@/lib/calendar-grid";
 import { resolveCalendarOptions, sanitizeStoredOptions, type CalendarOptions, type StoredCalendarOptions, type UrlOverrides } from "@/lib/calendar-options";
 import { findFreeSlots, type DayWindow, type FreeSlot } from "@/lib/free-slots";
 import { berlinToUtc } from "@/lib/format";
@@ -129,6 +129,24 @@ export async function saveCalendarMode(userId: string, mode: CalendarMode): Prom
     if (!u) return;
     const prefs: UserPrefs = { ...(u.prefs ?? {}), calendar: { ...(u.prefs?.calendar ?? {}), mode } };
     await tx.update(users).set({ prefs }).where(eq(users.id, userId));
+  });
+}
+
+/** Raster der Zeitachse der Person (Einstellungen → Kalender; Standard 15 Minuten). */
+export function calendarSlotOf(prefs: UserPrefs | null | undefined): SlotStep {
+  const v = prefs?.calendar?.slotMin;
+  return isSlotStep(v) ? v : SLOT_MIN;
+}
+
+/** Raster merken (users.prefs.calendar.slotMin; Standard 15 wird nicht gespeichert) – eigene Einstellung der angemeldeten Person. */
+export async function saveCalendarSlot(userId: string, step: SlotStep): Promise<void> {
+  await db.transaction(async (tx) => {
+    const [u] = await tx.select({ prefs: users.prefs }).from(users).where(eq(users.id, userId)).for("update").limit(1);
+    if (!u) return;
+    const calendar: NonNullable<UserPrefs["calendar"]> = { ...(u.prefs?.calendar ?? {}) };
+    if (step === SLOT_MIN) delete calendar.slotMin;
+    else calendar.slotMin = step;
+    await tx.update(users).set({ prefs: { ...(u.prefs ?? {}), calendar } }).where(eq(users.id, userId));
   });
 }
 

@@ -14,7 +14,7 @@ import { berlinToUtc } from "@/lib/format";
 import { conflictMessage, createInternalAppointments, moveAppointment, rescheduleAppointment, type MoveInput } from "@/server/appointments";
 import { saveCalendarMode, saveCalendarOptions } from "@/server/calendar-board";
 import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
-import { keepOptionParams, parseOptionParams, resolveCalendarOptions, toStoredOptions } from "@/lib/calendar-options";
+import { keepOptionParams, parseOptionParams, resolveCalendarOptions, sanitizeIdList, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient } from "@/server/calendar-feeds";
 import { seriesStarts } from "@/lib/appointment-series";
 import { CREATE_REQUEST_ID, findDuplicates, insertPatient, parseBirthDate, patientCreatedByRequest, patientInput, toPatientValues } from "@/server/patients";
@@ -286,7 +286,17 @@ export async function saveCalendarOptionsAction(form: FormData) {
     redirect(`/kalender?${p}${one("reset") ? "" : keepOptionParams(entries)}`);
   }
   const submitted = parseOptionParams(entries);
-  await saveCalendarOptions(auth.user.id, (prev) => (one("reset") ? null : toStoredOptions(mode, resolveCalendarOptions(mode, prev, submitted), prev)));
+  // Behandler:innen-Filter: „beh_alle“ = im Formular angebotene Personen, „beh“ = davon angezeigte
+  const list = (k: string) => sanitizeIdList(Array.isArray(entries[k]) ? entries[k] : entries[k] ? [entries[k]] : []);
+  const offered = list("beh_alle");
+  const shown = new Set(list("beh"));
+  await saveCalendarOptions(auth.user.id, (prev) => {
+    if (one("reset")) return null;
+    const overrides = offered.length
+      ? { ...submitted, hiddenTherapists: [...(prev.hiddenTherapists ?? []).filter((id) => !offered.includes(id)), ...offered.filter((id) => !shown.has(id))] }
+      : submitted;
+    return toStoredOptions(mode, resolveCalendarOptions(mode, prev, overrides), prev);
+  });
   revalidatePath("/kalender");
   redirect(`/kalender${p.size ? `?${p}` : ""}`);
 }

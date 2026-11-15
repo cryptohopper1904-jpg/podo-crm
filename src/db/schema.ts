@@ -292,7 +292,13 @@ export type UserPrefs = {
       weekNumbers?: boolean;
       startHour?: number;
       endHour?: number;
+      /** Hausbesuche anzeigen (fehlt = ja) */
+      homeVisits?: boolean;
+      /** ausgeblendete Behandler:innen (User-IDs; nur Anzeige) */
+      hiddenTherapists?: string[];
     };
+    /** Raster der Zeitachse in Minuten (60/30/15/10/5; fehlt = 15) – Einstellungen → Kalender */
+    slotMin?: 60 | 30 | 15 | 10 | 5;
   };
   /** Ansicht für Navigation und Startseite (fehlt = „komplex“, src/lib/view-level.ts) */
   view?: "einfach" | "kompakt" | "komplex";

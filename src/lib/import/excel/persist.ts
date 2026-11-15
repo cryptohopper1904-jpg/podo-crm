@@ -117,7 +117,8 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
           notes: patientNotes(p),
           route: p.route,
           homeVisit: !!p.route,
-          externalIds: p.legacyId !== null ? { legacyExcel: p.legacyId } : {},
+          // Fremd-ID bzw. ohne Alt-ID wenigstens die Quelle: übernommene Personen sind keine Neupatient:innen (Kalender „N“)
+          externalIds: p.legacyId !== null ? { legacyExcel: p.legacyId } : { import: "excel" },
           extra: { legacyExcel: p.legacy },
           source: SOURCE,
           archivedAt: isInactive(p.legacy.status) ? new Date() : null,
