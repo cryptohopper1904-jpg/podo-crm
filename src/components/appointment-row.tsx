@@ -8,7 +8,7 @@ import { RiskBadges } from "./risk-badges";
 import { Badge } from "./ui";
 import { withReturn } from "@/lib/back-link";
 
-export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Patientenportal", extern: "Extern" };
+export const SOURCE: Record<string, string> = { manual: "Praxis", doctolib: "Doctolib", online: "Online", phone: "Telefon", whatsapp: "WhatsApp", email: "E-Mail", voice_agent: "KI-Telefon", portal: "Patientenportal", extern: "Extern", import: "Übernommen" };
 export const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" | "accent" }> = {
   planned: { label: "geplant", tone: "neutral" },
   confirmed: { label: "bestätigt", tone: "info" },

@@ -154,11 +154,12 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                 <div className="mt-3 flex flex-wrap gap-2 text-sm">
                   {vo.homeVisit ? <Badge tone="info">Hausbesuch</Badge> : null}
                   {vo.source === "ocr" ? <Badge tone="info">aus Foto ausgelesen, geprüft</Badge> : null}
+                  {vo.rulesVersion?.startsWith("import-") ? <Badge tone="neutral">aus anderer Praxissoftware übernommen</Badge> : null}
                   {vo.therapyReportRequested ? <Badge tone="warn">Therapiebericht angefordert</Badge> : null}
                   {vo.scanMediaId && auth.can("medical.read") ? (
                     <a href={`/api/media/${vo.scanMediaId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary"><FileImage size={16} aria-hidden /> Foto der Verordnung</a>
                   ) : null}
-                  {vo.rulesVersion && vo.rulesVersion !== RULES_VERSION ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
+                  {vo.rulesVersion && vo.rulesVersion !== RULES_VERSION && !vo.rulesVersion.startsWith("import-") ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
                 </div>
                 {ev.messages.length ? (
                   <ul className="mt-3 flex flex-col gap-1">

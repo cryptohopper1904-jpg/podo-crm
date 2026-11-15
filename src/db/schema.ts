@@ -59,6 +59,8 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
   "portal",
   /** Kalender-Abo (iCal-Import) aus einem externen Kalender, der nicht Doctolib ist */
   "extern",
+  /** Übernahme-Assistent: Termine aus einer anderen Praxissoftware (external_id = „<quelle>:<id>“, z. B. „tinana:…“) */
+  "import",
 ]);
 /**
  * deposit = Quittung über eine Anzahlung (z. B. bar beim Termin), die später auf die Sammelrechnung der Person

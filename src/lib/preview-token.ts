@@ -10,7 +10,7 @@ export interface PreviewBinding {
   hash: string;
   organizationId: string;
   userId: string;
-  type: "excel" | "doctolib";
+  type: "excel" | "doctolib" | "uebernahme";
 }
 
 const TTL_MS = 15 * 60_000;

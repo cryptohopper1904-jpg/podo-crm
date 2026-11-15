@@ -15,6 +15,10 @@
  *  - Sammelrechnungs-Teile werden als Positionen in die SR übernommen (keine eigenen Rechnungen),
  *    daher bleibt `collective_invoice_id` beim Import leer.
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
+ *
+ * Mit `skipExisting` (Übernahme-Assistent, wiederholbar): Patient:innen mit bereits vorhandener Legacy-ID
+ * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; vorhandene Leistungen (gleiches Kürzel)
+ * bleiben unverändert; gleiche Fixkosten (Kategorie, Betrag, Intervall, Start) werden nicht doppelt angelegt.
  */
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -58,7 +62,13 @@ function patientNotes(p: PatientImportDraft): string | null {
 
 const isInactive = (status: string | null) => !!status && /(inaktiv|archiv|verstorben|gelöscht)/i.test(status);
 
-export async function persistImport(tx: Tx, organizationId: string, result: ImportResult, userId: string): Promise<PersistSummary> {
+export async function persistImport(
+  tx: Tx,
+  organizationId: string,
+  input: ImportResult,
+  userId: string,
+  opts: { skipExisting?: boolean } = {},
+): Promise<PersistSummary> {
   const warnings: ImportWarning[] = [];
   const summary: PersistSummary = {
     patients: 0,
@@ -77,6 +87,19 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // ───── Patienten ─────
   // Patientennummern konkurrenzsicher vergeben (gleicher Lock wie Doctolib-Import)
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + organizationId}))`);
+  let result = input;
+  if (opts.skipExisting) {
+    const known = await tx
+      .select({ id: s.patients.id, legacy: sql<string | null>`${s.patients.externalIds}->>'legacyExcel'` })
+      .from(s.patients)
+      .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.externalIds} ? 'legacyExcel'`));
+    const byLegacy = new Map(known.filter((k) => k.legacy !== null).map((k) => [String(k.legacy), k.id]));
+    for (const p of input.patients) {
+      const id = p.legacyId !== null ? byLegacy.get(String(p.legacyId)) : undefined;
+      if (id && p.legacyId !== null && summary.patientIdByLegacyId[p.legacyId] === undefined) summary.patientIdByLegacyId[p.legacyId] = id;
+    }
+    result = { ...input, patients: input.patients.filter((p) => p.legacyId === null || !byLegacy.has(String(p.legacyId))) };
+  }
   // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
   await assertPatientCapacity(tx, organizationId, result.patients.length);
   const existingNumbers = new Set(
@@ -139,19 +162,25 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   // zugeordnet – die Positionen behalten Bezeichnung/Preis als Kopie, ohne Verweis.
   const serviceIdByCode = new Map<string, string>();
   for (const part of chunks(result.services)) {
+    const serviceValues = part.map((sv) => ({
+      organizationId,
+      code: sv.code,
+      name: sv.name,
+      priceCents: sv.priceCents,
+      vatRate: sv.vatRate,
+      durationMin: sv.durationMin,
+      requiresTherapeuticPurpose: sv.vatRate === 0,
+    }));
+    if (opts.skipExisting) {
+      // nichts überschreiben: nur fehlende Kürzel anlegen, vorhandene (aktive) zuordnen
+      const rows = await tx.insert(s.services).values(serviceValues).onConflictDoNothing({ target: [s.services.organizationId, s.services.code] }).returning({ id: s.services.id, code: s.services.code });
+      for (const r of rows) serviceIdByCode.set(r.code.toUpperCase(), r.id);
+      summary.services += rows.length;
+      continue;
+    }
     const rows = await tx
       .insert(s.services)
-      .values(
-        part.map((sv) => ({
-          organizationId,
-          code: sv.code,
-          name: sv.name,
-          priceCents: sv.priceCents,
-          vatRate: sv.vatRate,
-          durationMin: sv.durationMin,
-          requiresTherapeuticPurpose: sv.vatRate === 0,
-        })),
-      )
+      .values(serviceValues)
       .onConflictDoUpdate({
         target: [s.services.organizationId, s.services.code],
         set: {
@@ -218,7 +247,14 @@ export async function persistImport(tx: Tx, organizationId: string, result: Impo
   }
 
   // ───── Fixkosten ─────
-  for (const part of chunks(result.fixedCosts)) {
+  let fixedCosts = result.fixedCosts;
+  if (opts.skipExisting && fixedCosts.length) {
+    const have = new Set(
+      (await tx.select().from(s.fixedCosts).where(eq(s.fixedCosts.organizationId, organizationId))).map((f) => `${f.category}|${f.amountCents}|${f.interval}|${f.startDate}`),
+    );
+    fixedCosts = fixedCosts.filter((f) => !have.has(`${f.category}|${f.amountCents}|${f.interval}|${f.startDate}`));
+  }
+  for (const part of chunks(fixedCosts)) {
     if (!part.length) continue;
     await tx.insert(s.fixedCosts).values(
       part.map((f) => ({ organizationId, category: f.category, amountCents: f.amountCents, interval: f.interval, startDate: f.startDate, note: "Import aus Excel (Kalkulation)" })),

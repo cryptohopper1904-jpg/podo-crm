@@ -7,7 +7,7 @@ import { and, eq, max, sql } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { patients } from "@/db/schema";
 import { parseDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
-import type { PatientDraft } from "@/integrations/types";
+import { doctolibPatientValues } from "@/integrations/doctolib/patient-values";
 import { audit } from "@/lib/audit";
 import { signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
 import { requireAuth } from "@/lib/auth/session";
@@ -134,35 +134,6 @@ async function existingDoctolibIds(org: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.id).filter((x): x is string => !!x));
 }
 
-function toValues(p: PatientDraft) {
-  const extra: Record<string, unknown> = {};
-  if (p.maidenName) extra.maidenName = p.maidenName;
-  if (p.occupation) extra.occupation = p.occupation;
-  if (p.referrer) extra.referrer = p.referrer;
-  if (p.gpCity) extra.gpCity = p.gpCity;
-  if (p.crucialInfo) extra.crucialInfo = p.crucialInfo;
-  if (p.noNotifications) extra.noReminders = true;
-  return {
-    salutation: p.salutation ?? null,
-    title: p.title ?? null,
-    lastName: p.lastName,
-    firstName: p.firstName ?? null,
-    birthDate: p.birthDate ?? null,
-    street: p.street ?? null,
-    zip: p.zip ?? null,
-    city: p.city ?? null,
-    phoneMobile: p.phoneMobile ?? null,
-    phoneLandline: p.phoneLandline ?? null,
-    email: p.email ?? null,
-    insuranceType: p.insuranceType ?? "self",
-    gpName: p.gpName ?? null,
-    notes: p.notes ?? null,
-    extra,
-    externalIds: p.externalId ? { doctolib: p.externalId } : {},
-    source: "doctolib-csv",
-  };
-}
-
 export async function doctolibImportAction(_: DoctolibImportState, form: FormData): Promise<DoctolibImportState> {
   const auth = await requireAuth("import.run");
   const org = auth.organization.id;
@@ -210,7 +181,7 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
       const [r] = await tx.select({ n: max(patients.number) }).from(patients).where(eq(patients.organizationId, org));
       let next = (r?.n ?? 0) + 1;
       for (let i = 0; i < todo.length; i += 500) {
-        await tx.insert(patients).values(todo.slice(i, i + 500).map((d) => ({ ...toValues(d), organizationId: org, number: next++ })));
+        await tx.insert(patients).values(todo.slice(i, i + 500).map((d) => ({ ...doctolibPatientValues(d), organizationId: org, number: next++ })));
       }
       return todo.length;
     });
