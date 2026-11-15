@@ -169,7 +169,7 @@ export function passesDisplayFilter(o: Pick<CalendarOptions, "homeVisits" | "hid
 /** Behandler:innen-Filter auf das aktuelle Team beschränken (gemerkte IDs ehemaliger bzw. praxisfremder Personen fallen weg). */
 export function withTeamFilter<T extends Pick<CalendarOptions, "hiddenTherapists">>(o: T, teamIds: Iterable<string>): T {
   const team = new Set([...teamIds].map((id) => id.toLowerCase()));
-  return { ...o, hiddenTherapists: o.hiddenTherapists.filter((id) => team.has(id)) };
+  return { ...o, hiddenTherapists: [...new Set(o.hiddenTherapists.map((id) => id.toLowerCase()))].filter((id) => team.has(id)) };
 }
 
 /**

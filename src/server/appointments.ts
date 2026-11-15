@@ -1,8 +1,8 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, invoiceLines, invoices, memberships, patients, services, users } from "@/db/schema";
+import { absences, appointmentServices, appointments, calendarFeedEvents, calendarFeeds, memberships, patients, services, users } from "@/db/schema";
 import { appointmentEditLock, durationMinutes } from "@/lib/appointment-edit";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
@@ -11,6 +11,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { berlinParts, describeClashes } from "@/lib/calendar-grid";
 import { berlinToUtc } from "@/lib/format";
 import { DURATION_RANGE_ERROR, isValidDurationMin } from "@/lib/appointment-duration";
+import { invoicedAppointmentIdsInTx } from "./appointment-invoiced";
 import { lockBooking } from "./portal-booking";
 import { describeBlockConflicts, type BlockOccurrence } from "@/lib/calendar-blocks";
 import { blockClashesInTx } from "./calendar-blocks";
@@ -263,28 +264,18 @@ export async function getAppointment(auth: AuthContext, id: string) {
   });
 }
 
-/** Steht der Termin auf einer ausgestellten (nicht stornierten, nicht Entwurf) Rechnung, Quittung o. Ä.? */
+/** Gilt der Termin als abgerechnet (billedIdsInTx)? */
 async function isAppointmentBilled(tx: Tx, org: string, appointmentId: string): Promise<boolean> {
   return (await billedIdsInTx(tx, org, [appointmentId])).size > 0;
 }
 
-/** Welche der Termine stehen auf einem ausgestellten Beleg (gleiche Regel wie isAppointmentBilled)? */
-export async function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
-  if (!appointmentIds.length) return new Set();
-  const rows = await tx
-    .selectDistinct({ id: invoiceLines.appointmentId })
-    .from(invoiceLines)
-    .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(
-      and(
-        eq(invoiceLines.organizationId, org),
-        inArray(invoiceLines.appointmentId, appointmentIds),
-        ne(invoices.status, "cancelled"),
-        ne(invoices.status, "draft"),
-        ne(invoices.kind, "credit_note"),
-      ),
-    );
-  return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
+/**
+ * Welche der Termine sind abgerechnet und dürfen daher nicht verschoben bzw. im Status geändert werden? Dieselbe Regel
+ * wie die Doppelabrechnungs-Prüfung (invoicedAppointmentIdsInTx): Position zum Termin oder zu seinem Doku-Eintrag auf
+ * einem Beleg (nicht Entwurf, nicht storniert, keine Gutschrift) – Anzahlungen sperren ebenfalls.
+ */
+export function billedIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
+  return invoicedAppointmentIdsInTx(tx, org, appointmentIds, { deposits: true });
 }
 
 /** Kalender (vollständige Ansicht): abgerechnete Termine – dort gibt es keinen Griff zum Verschieben. */

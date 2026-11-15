@@ -16,6 +16,7 @@
  *    daher bleibt `collective_invoice_id` beim Import leer.
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
  */
+import { EXCEL_IMPORT_SOURCE_PREFIX } from "@/lib/appointment-marks";
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
@@ -47,7 +48,8 @@ function chunks<T>(arr: T[], size = CHUNK): T[][] {
   return out;
 }
 
-const SOURCE = "excel-import:rechnungsmanager-0.9.2";
+/** beginnt mit EXCEL_IMPORT_SOURCE_PREFIX – daran erkennt die Kalender-Regel „N“ übernommene Personen */
+const SOURCE = `${EXCEL_IMPORT_SOURCE_PREFIX}:rechnungsmanager-0.9.2`;
 
 function patientNotes(p: PatientImportDraft): string | null {
   const parts: string[] = [];

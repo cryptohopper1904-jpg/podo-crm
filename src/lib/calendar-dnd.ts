@@ -110,7 +110,13 @@ export function resizeOnDay(p: {
     localMin -= dStep;
     realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
   }
-  return { localMin, realMin };
+  // Am Tag der Sommerzeit-Umstellung kann das Ende hinter der Lücke liegen (z. B. 01:58–03:00 Uhr = 2 echte Minuten):
+  // dann verlängern, bis die echte Dauer mindestens 5 Minuten beträgt (sonst nicht speicherbar)
+  while (realMin < MIN_DURATION_MIN && p.startMin + localMin + dStep <= DAY_MIN) {
+    localMin += dStep;
+    realMin = realDuration(p.dateIso, p.startMin, p.startMin + localMin, p.startsAt);
+  }
+  return { localMin, realMin: Math.max(realMin, MIN_DURATION_MIN) };
 }
 
 /** Spalte unter dem Zeiger (Spaltenwechsel Tag ↔ Tag bzw. Behandler:in ↔ Behandler:in); -1 = keine */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DOCTOLIB_PATIENT_COLUMNS, parseDoctolibPatientsCsv, writeDoctolibPatientsCsv } from "./csv";
 import { DoctolibMock } from "./doctolib";
+import { doctolibPatientValues } from "./patient-values";
 import { parseDoctolibEmail } from "./email";
 
 const header = DOCTOLIB_PATIENT_COLUMNS.join(";");
@@ -83,5 +84,13 @@ describe("Doctolib-Mailparser", () => {
     const c = parseDoctolibEmail("Newsletter: Neues aus der Praxiswelt");
     expect(c.confidence).toBeLessThan(0.5);
     expect(c.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Doctolib-CSV-Import: Patientenzeile", () => {
+  it("mit Patienten-ID → external_ids.doctolib, ohne ID → Import-Marker (kein „N“ im Kalender); Quelle doctolib-csv", () => {
+    expect(doctolibPatientValues({ lastName: "Muster", externalId: "101" })).toMatchObject({ externalIds: { doctolib: "101" }, source: "doctolib-csv" });
+    expect(doctolibPatientValues({ lastName: "Muster", externalId: null })).toMatchObject({ externalIds: { import: "doctolib" }, source: "doctolib-csv" });
+    expect(doctolibPatientValues({ lastName: "Muster" }).externalIds).toEqual({ import: "doctolib" });
   });
 });
