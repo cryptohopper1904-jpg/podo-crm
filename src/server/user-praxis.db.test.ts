@@ -272,16 +272,9 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     expect(await attempt(a.org, "update tasks set assignee_id = null where id = $1", [legacy])).toBeNull();
   });
 
-  it("search_path: jede eigene Funktion (DEFINER und INVOKER) hat pg_catalog, public, pg_temp; temporäre Tabellen lenken nichts um", async () => {
-    // alle Funktionen im Schema public außer denen von Erweiterungen (pgcrypto, pg_trgm)
-    const defs = await owner.query(`select p.proname, p.prosecdef, p.proconfig from pg_proc p
-      where p.pronamespace = 'public'::regnamespace and p.prokind = 'f'
-        and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
-      order by p.proname`);
-    const rows = defs.rows as { proname: string; prosecdef: boolean; proconfig: string[] | null }[];
-    expect(rows.filter((r) => r.prosecdef).length).toBeGreaterThanOrEqual(6);
-    expect(rows.length).toBeGreaterThanOrEqual(30);
-    for (const r of rows) expect(r.proconfig, r.proname).toContain("search_path=pg_catalog, public, pg_temp");
+  // Katalogprüfung „jede eigene Funktion hat den festen search_path“ steht im Migrationstest (frische DB): andere
+  // Testdateien spielen ältere Migrationen erneut in die gemeinsame Test-DB ein (CREATE OR REPLACE setzt den Pfad zurück).
+  it("search_path: temporäre Tabellen lenken Rechnungs- und Kassen-Guard nicht um", async () => {
     // Angriff: App-Rolle (TEMP-Recht) überdeckt invoices mit einer eigenen Tabelle, in der die ausgestellte Rechnung
     // als Entwurf erscheint – der Positions-Trigger muss trotzdem die echte Rechnung prüfen.
     const a = await world();
@@ -422,6 +415,15 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
       const fn = (await ns.query("select pg_get_userbyid(proowner) as owner, prosecdef, proconfig from pg_proc where proname = 'podo_user_in_org'")).rows[0];
       expect(fn).toEqual({ owner: role, prosecdef: true, proconfig: ["search_path=pg_catalog, public, pg_temp"] });
       expect((await ns.query("select proconfig from pg_proc where proname = 'podo_invoice_lines_guard'")).rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+      // jede eigene Funktion (DEFINER und INVOKER) im Schema public, ohne Erweiterungen (pgcrypto, pg_trgm)
+      const defs = await ns.query(`select p.proname, p.prosecdef, p.proconfig from pg_proc p
+        where p.pronamespace = 'public'::regnamespace and p.prokind = 'f'
+          and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
+        order by p.proname`);
+      const rows = defs.rows as { proname: string; prosecdef: boolean; proconfig: string[] | null }[];
+      expect(rows.filter((r) => r.prosecdef).length).toBeGreaterThanOrEqual(6);
+      expect(rows.length).toBeGreaterThanOrEqual(30);
+      for (const r of rows) expect(r.proconfig, r.proname).toContain("search_path=pg_catalog, public, pg_temp");
       // Trigger greift für den Nicht-Superuser-Owner (FORCE RLS gilt für ihn)
       const err = await inOrg(orgA, "insert into tasks (organization_id, title, assignee_id) values ($1,'Neu',$2)", [orgA, userB]);
       expect(err?.code).toBe("23503");
