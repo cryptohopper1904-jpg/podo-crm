@@ -5,14 +5,15 @@
  * Neupatient:in („N“): Der Termin gehört zu einer Person, die vor diesem Termin noch nie in der Praxis war, d. h. es gibt
  *   - keinen früheren Termin derselben Person in dieser Praxis, der nicht abgesagt und nicht „nicht erschienen“ ist
  *     (geplante/bestätigte frühere Termine zählen mit – bei einer Terminserie trägt nur der erste Termin das N),
- *   - keine frühere dokumentierte Behandlung (treatment_records) und
- *   - keine Übernahme aus der Vorgänger-Software (Excel-Import, patients.external_ids.legacyExcel) – dort war die Person
- *     schon Patient:in, auch wenn PodoHero ihre früheren Termine nicht kennt.
+ *   - keine frühere dokumentierte Behandlung (treatment_records; die Doku zu diesem Termin selbst zählt nicht) und
+ *   - keine Übernahme aus anderer Software: jede Fremd-ID in patients.external_ids (Excel-Import „legacyExcel“ bzw.
+ *     „import“, Doctolib …) – dort war die Person schon Patient:in, auch wenn PodoHero ihre früheren Termine nicht kennt.
  *   Abgesagte Termine tragen kein N.
  *
  * Rechnung („R“): nur bei Terminen mit Patient:in, die erledigt sind oder (geplant/bestätigt) bereits vorbei sind – nicht bei
- *   abgesagten oder nicht wahrgenommenen. „geschrieben“ = der Termin steht auf einem ausgestellten Beleg (Rechnung,
- *   Quittung …; nicht Entwurf, nicht storniert, keine Gutschrift) – dieselbe Regel wie „abgerechnet“ beim Verschieben.
+ *   abgesagten oder nicht wahrgenommenen. „geschrieben“ = der Termin oder ein zu ihm gehörender Doku-Eintrag steht auf
+ *   einem ausgestellten Beleg (Rechnung, Quittung …; nicht Entwurf, nicht storniert, keine Anzahlung, keine Gutschrift) –
+ *   dieselbe Regel wie die Doppelabrechnungs-Prüfung (assertNotInvoiced).
  */
 
 export type InvoiceMark = "open" | "written";

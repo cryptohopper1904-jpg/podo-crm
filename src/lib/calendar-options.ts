@@ -166,6 +166,25 @@ export function passesDisplayFilter(o: Pick<CalendarOptions, "homeVisits" | "hid
   return true;
 }
 
+/** Behandler:innen-Filter auf das aktuelle Team beschränken (gemerkte IDs ehemaliger bzw. praxisfremder Personen fallen weg). */
+export function withTeamFilter<T extends Pick<CalendarOptions, "hiddenTherapists">>(o: T, teamIds: Iterable<string>): T {
+  const team = new Set([...teamIds].map((id) => id.toLowerCase()));
+  return { ...o, hiddenTherapists: o.hiddenTherapists.filter((id) => team.has(id)) };
+}
+
+/**
+ * Hinweis „x Termine ausgeblendet“: Anzahl der durch den Anzeige-Filter ausgeblendeten Termine – abgesagte zählen
+ * nie mit (gleiche Zählung in einfacher und vollständiger Ansicht) – und die aktiven Filter als Text.
+ */
+export function displayFilterSummary(
+  o: Pick<CalendarOptions, "homeVisits" | "hiddenTherapists">,
+  rows: readonly { status: string; therapistId?: string | null; homeVisit: boolean }[],
+): { hidden: number; reasons: string } {
+  const hidden = rows.filter((a) => a.status !== "cancelled" && !passesDisplayFilter(o, a)).length;
+  const reasons = [o.hiddenTherapists.length ? "Behandler:innen" : null, o.homeVisits ? null : "Hausbesuche"].filter(Boolean).join(", ");
+  return { hidden, reasons };
+}
+
 /** URL-Parameter der Optionen, die in der aktuellen URL gesetzt sind – für Links innerhalb des Kalenders („&feiertage=0…“). */
 export function keepOptionParams(sp: Record<string, string | string[] | undefined>): string {
   const p = new URLSearchParams();

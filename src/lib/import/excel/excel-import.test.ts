@@ -245,4 +245,13 @@ describe("persistImport", () => {
     expect((ops[invInsert].values as { source: string }[]).every((v) => v.source === "excel-import")).toBe(true);
     expect(ops.every((o) => o.kind !== "insert" || [o.values].flat().every((v) => (v as { organizationId: string }).organizationId === "org-1"))).toBe(true);
   });
+
+  it("Person ohne Alt-ID: Quelle als Fremd-ID (keine Neupatient:in im Kalender)", async () => {
+    const res = await parseWorkbook(await buildWorkbook(), { today: "2026-11-07" });
+    res.patients[res.patients.length - 1].legacyId = null;
+    const { tx, ops } = fakeTx();
+    await persistImport(tx, "org-1", res, "user-1");
+    const pIns = ops.find((o) => o.kind === "insert" && o.table === "patients")!.values as { externalIds: unknown }[];
+    expect(pIns.map((p) => p.externalIds)).toEqual([{ legacyExcel: 1 }, { legacyExcel: 2 }, { import: "excel" }]);
+  });
 });

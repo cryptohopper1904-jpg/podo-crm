@@ -206,13 +206,17 @@ export function DndSurface({
         const p = berlinParts(s.startsAt);
         if (p.dateIso !== date) return { slot: null, ghost: null };
         startMin = p.min;
+        // bisherige Dauer in Uhrzeit-Minuten (am Umstellungstag ≠ echte Dauer); Ende an einem anderen Tag → echte Dauer
+        const e = berlinParts(s.endsAt);
+        const localDur = e.dateIso === date && e.min > startMin ? e.min - startMin : durationMin;
         // am Tag der Zeitumstellung echte Minuten speichern (und auf 8 h begrenzen)
-        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, startsAt: s.startsAt, step });
+        const sized = resizeOnDay({ dateIso: date, offsetPx, pxPerMin, rangeStart, startMin, durationMin: localDur, startsAt: s.startsAt, step });
         dur = sized.localMin;
         realDur = sized.realMin;
       } else {
         dur = durationMin;
-        startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur, step });
+        // Verschiebung (nicht die Uhrzeit) rastet ein: Termine außerhalb des Rasters behalten ihre Minuten
+        startMin = dropStartMin({ offsetPx, grabMin: s.grabMin, pxPerMin, rangeStart, rangeEnd, durationMin: dur, originMin: berlinParts(s.startsAt).min, step });
       }
       const c = toContent(r);
       const rect = { top: c.top + (startMin - rangeStart) * pxPerMin, left: c.left + 2, width: Math.max(0, c.width - 4), height: Math.max(14, dur * pxPerMin - 1) };

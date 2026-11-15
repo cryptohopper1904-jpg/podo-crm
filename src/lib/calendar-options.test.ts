@@ -5,12 +5,14 @@ import {
   isoWeek,
   keepOptionParams,
   parseOptionParams,
+  displayFilterSummary,
   passesDisplayFilter,
   resolveCalendarOptions,
   sanitizeIdList,
   sanitizeStoredOptions,
   toStoredOptions,
   visibleWeekDays,
+  withTeamFilter,
 } from "./calendar-options";
 
 describe("Kalender-Anzeigeoptionen", () => {
@@ -125,4 +127,30 @@ describe("Kalender-Anzeigeoptionen", () => {
     expect(passesDisplayFilter(o, { therapistId: null, homeVisit: false })).toBe(true);
     expect(passesDisplayFilter(defaultCalendarOptions("full"), { therapistId: a, homeVisit: true })).toBe(true);
   });
+
+describe("Anzeige-Filter: Team und Hinweis", () => {
+  const a = "11111111-1111-4111-8111-111111111111";
+  const b = "22222222-2222-4222-8222-222222222222";
+  const ehemalig = "33333333-3333-4333-8333-333333333333";
+  it("berücksichtigt nur Behandler:innen des aktuellen Teams", () => {
+    const o = { ...defaultCalendarOptions("full"), hiddenTherapists: [a, ehemalig] };
+    expect(withTeamFilter(o, [a.toUpperCase(), b]).hiddenTherapists).toEqual([a]);
+    expect(withTeamFilter(o, []).hiddenTherapists).toEqual([]);
+    // übrige Optionen bleiben
+    expect(withTeamFilter(o, [a])).toMatchObject({ homeVisits: true, holidays: o.holidays });
+  });
+  it("zählt ausgeblendete Termine ohne abgesagte, mit den aktiven Filtern als Text", () => {
+    const o = { ...defaultCalendarOptions("simple"), hiddenTherapists: [a], homeVisits: false };
+    const rows = [
+      { status: "planned", therapistId: a, homeVisit: false },
+      { status: "cancelled", therapistId: a, homeVisit: false },
+      { status: "done", therapistId: b, homeVisit: true },
+      { status: "cancelled", therapistId: b, homeVisit: true },
+      { status: "planned", therapistId: b, homeVisit: false },
+      { status: "planned", therapistId: null, homeVisit: false },
+    ];
+    expect(displayFilterSummary(o, rows)).toEqual({ hidden: 2, reasons: "Behandler:innen, Hausbesuche" });
+    expect(displayFilterSummary(defaultCalendarOptions("full"), rows)).toEqual({ hidden: 0, reasons: "" });
+  });
+});
 });

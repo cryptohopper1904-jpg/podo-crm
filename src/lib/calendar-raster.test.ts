@@ -3,7 +3,7 @@
  * für alle Rasterweiten 60/30/15/10/5 Minuten.
  */
 import { describe, expect, it } from "vitest";
-import { freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, SLOT_STEPS, type SlotStep } from "./calendar-grid";
+import { freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, minFreeMin, SLOT_STEPS, type SlotStep } from "./calendar-grid";
 import { dropStartMin, resizeDuration, snapMin } from "./calendar-dnd";
 
 const RANGE = { startMin: 7 * 60, endMin: 20 * 60 };
@@ -80,22 +80,65 @@ describe("mergeIntervals / freeParts", () => {
   });
 });
 
+describe("freie Reststücke antippbar", () => {
+  it.each(SLOT_STEPS.map((s) => [s]))("%i Minuten: Klickfläche mindestens 10 px hoch", (step) => {
+    const scale = gridScale(step as SlotStep);
+    const min = minFreeMin(scale);
+    expect(min * scale.pxPerMin).toBeGreaterThanOrEqual(10);
+    expect(min).toBeGreaterThanOrEqual(5);
+    // 15-Minuten-Raster: 5-Minuten-Rest (5 px) fällt weg, 10 Minuten bleiben
+    if (step === 15) {
+      expect(freeParts(600, 615, [{ startMin: 600, endMin: 610 }], min)).toEqual([]);
+      expect(freeParts(600, 615, [{ startMin: 600, endMin: 605 }], min)).toEqual([{ startMin: 605, endMin: 615 }]);
+    }
+  });
+});
+
 describe("Ziehen im Raster", () => {
-  it.each(SLOT_STEPS.map((s) => [s]))("%i Minuten: Start rastet auf das Raster ein", (step) => {
+  it.each(SLOT_STEPS.map((s) => [s]))("%i Minuten: Verschiebung rastet ein (Termin auf dem Raster bleibt auf dem Raster)", (step) => {
     const { pxPerMin } = gridScale(step as SlotStep);
-    // Zeiger bei 10:22 (Achse ab 07:00), Griff am Terminanfang
-    const start = dropStartMin({ offsetPx: 202 * pxPerMin, grabMin: 0, pxPerMin, rangeStart: 420, rangeEnd: 1200, durationMin: 45, step });
+    // Termin 10:00, Zeiger bei 10:22 (Achse ab 07:00), Griff am Terminanfang
+    const start = dropStartMin({ offsetPx: 202 * pxPerMin, grabMin: 0, pxPerMin, rangeStart: 420, rangeEnd: 1200, durationMin: 45, originMin: 600, step });
     expect(start % step).toBe(0);
     expect(Math.abs(start - 622)).toBeLessThanOrEqual(step / 2);
     expect(snapMin(622, step)).toBe(start);
   });
-  it.each(SLOT_STEPS.map((s) => [s]))("%i Minuten: Dauer ändern endet auf dem Raster (mindestens ein Schritt)", (step) => {
+
+  it.each([[60], [30]])("%i Minuten: Termin außerhalb des Rasters (10:30 bzw. 10:10) behält seine Minuten", (step) => {
     const { pxPerMin } = gridScale(step as SlotStep);
-    // Termin ab 10:00, Zeiger bei 11:07
-    const d = resizeDuration({ offsetPx: 247 * pxPerMin, pxPerMin, rangeStart: 420, startMin: 600, step });
-    expect((600 + d) % step).toBe(0);
-    expect(d).toBeGreaterThanOrEqual(step);
-    // ganz nach oben gezogen → ein Rasterschritt
-    expect(resizeDuration({ offsetPx: 0, pxPerMin, rangeStart: 420, startMin: 600, step })).toBe(step);
+    const base = { grabMin: 5, pxPerMin, rangeStart: 420, rangeEnd: 1200, durationMin: 45, step };
+    const at = (origin: number, pointerMin: number) => dropStartMin({ ...base, originMin: origin, offsetPx: (pointerMin - 420) * pxPerMin });
+    // nur in eine andere Spalte gezogen (Zeiger auf gleicher Höhe, Griff 5 min unter dem Anfang) → Uhrzeit bleibt
+    expect(at(630, 635)).toBe(630);
+    expect(at(610, 615)).toBe(610);
+    // kleine Bewegung unter einem halben Rasterschritt → bleibt
+    expect(at(630, 635 + step / 2 - 1)).toBe(630);
+    // ein Rasterschritt nach unten bzw. oben → genau ein Schritt, Minuten bleiben
+    expect(at(630, 635 + step)).toBe(630 + step);
+    expect(at(630, 635 - step + 4)).toBe(630 - step);
+    expect(at(610, 615 + 2 * step - 3)).toBe(610 + 2 * step);
+    // Rand der Zeitachse begrenzt weiterhin
+    expect(at(630, 0)).toBe(420);
+  });
+
+  it.each(SLOT_STEPS.map((s) => [s]))("%i Minuten: Dauer ändert sich in Schritten von höchstens 15 Minuten, mindestens 5 Minuten", (step) => {
+    const { pxPerMin } = gridScale(step as SlotStep);
+    const d = Math.min(step, 15);
+    // Termin 10:00–10:45, Zeiger bei 11:07
+    const dur = resizeDuration({ offsetPx: 247 * pxPerMin, pxPerMin, rangeStart: 420, startMin: 600, durationMin: 45, step });
+    expect((dur - 45) % d).toBe(0);
+    expect(Math.abs(600 + dur - 667)).toBeLessThanOrEqual(d / 2);
+    // ganz nach oben gezogen → Mindestdauer 5 Minuten (unabhängig vom Raster)
+    expect(resizeDuration({ offsetPx: 0, pxPerMin, rangeStart: 420, startMin: 600, durationMin: 45, step })).toBe(5);
+  });
+
+  it.each([[60], [30]])("%i Minuten: Dauer eines Termins außerhalb des Rasters (10:30–11:10) bleibt „krumm“", (step) => {
+    const { pxPerMin } = gridScale(step as SlotStep);
+    const base = { pxPerMin, rangeStart: 420, startMin: 630, durationMin: 40, step };
+    const at = (pointerMin: number) => resizeDuration({ ...base, offsetPx: (pointerMin - 420) * pxPerMin });
+    expect(at(670)).toBe(40); // Rand nicht bewegt
+    expect(at(686)).toBe(55); // +16 min → +15
+    expect(at(640)).toBe(10); // −30 min
+    expect(at(600)).toBe(5); // weit nach oben → Mindestdauer
   });
 });

@@ -24,7 +24,7 @@ import {
 } from "@/lib/calendar-grid";
 import { berlinDateIso, weekdayLong } from "@/lib/format";
 import { holidayOn, STATES, type StateCode } from "@/lib/holidays";
-import { isoWeek, keepOptionParams, parseOptionParams, passesDisplayFilter, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
+import { displayFilterSummary, isoWeek, keepOptionParams, parseOptionParams, passesDisplayFilter, visibleWeekDays, withTeamFilter, type CalendarOptions } from "@/lib/calendar-options";
 import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import { and, asc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
@@ -32,9 +32,10 @@ import { services } from "@/db/schema";
 import { billedAppointmentIds, listAppointments, therapists } from "@/server/appointments";
 import { teamColors } from "@/server/therapist-colors";
 import { calendarBoard, calendarModeOf, calendarOptionsOf, calendarSlotOf } from "@/server/calendar-board";
-import { appointmentMarks } from "@/server/appointment-marks";
+import { calendarAppointmentInfo } from "@/server/appointment-marks";
 import { setCalendarModeAction } from "./actions";
 import { CalendarOptionsPanel } from "./calendar-options-panel";
+import { FilterHint } from "./filter-hint";
 import { FreeSlotFinder } from "./free-slot-finder";
 import { FullCalendar } from "./full-calendar";
 import { DayBlockLine } from "./calendar-blocks-view";
@@ -118,10 +119,29 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   // Link „Wochenende einblenden“: aktuelle Optionen, Wochenende per URL auf „alle“
   const weekendKeep = `${modeKeep}${keepOptionParams({ ...sp, we: "alle" })}`;
   const persist = !auth.support;
-  const options = calendarOptionsOf(session?.user.prefs, mode, parseOptionParams(sp));
   const state = auth.organization.state as StateCode;
   // Behandler:innen für den Anzeige-Filter (Name sortiert)
   const team = (await therapists(auth)).map((t) => ({ id: t.id, name: t.name })).sort((a, b) => a.name.localeCompare(b.name, "de"));
+  // gemerkter Behandler:innen-Filter: nur Personen des aktuellen Teams (ehemalige bzw. aus einer anderen Praxis zählen nicht)
+  const options = withTeamFilter(
+    calendarOptionsOf(session?.user.prefs, mode, parseOptionParams(sp)),
+    team.map((t) => t.id),
+  );
+  // Hinweis „x Termine ausgeblendet … Alle einblenden“ (Anzeige-Filter zurücksetzen)
+  const filterHint = (rows: readonly { a: { status: string; therapistId: string | null; homeVisit: boolean } }[], ansicht: string) => {
+    const { hidden, reasons } = displayFilterSummary(options, rows.map((r) => r.a));
+    return (
+      <FilterHint
+        hidden={hidden}
+        reasons={reasons}
+        persist={persist}
+        mode={mode}
+        nav={{ datum: day, ansicht, ...(modeKeep ? { modus: modeParam(mode) } : {}) }}
+        teamIds={team.map((t) => t.id)}
+        supportHref={`/kalender?datum=${day}&ansicht=${ansicht}${modeKeep}${keepOptionParams({ ...sp, hb: "1" })}`}
+      />
+    );
+  };
   const panel = (ansicht: string, place: "menu" | "bar" = "bar") => (
     <CalendarOptionsPanel
       team={team}
@@ -136,7 +156,22 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
 
   if (mode === "full") {
     const narrow = isNarrowCookie((await cookies()).get(NARROW_COOKIE)?.value);
-    return <FullPage auth={auth} sp={sp} day={day} keep={keep} optKeep={optKeep} persist={persist} options={options} panel={panel} weekendKeep={weekendKeep} narrow={narrow} slot={calendarSlotOf(session?.user.prefs)} />;
+    return (
+      <FullPage
+        auth={auth}
+        sp={sp}
+        day={day}
+        keep={keep}
+        optKeep={optKeep}
+        persist={persist}
+        options={options}
+        panel={panel}
+        weekendKeep={weekendKeep}
+        narrow={narrow}
+        slot={calendarSlotOf(session?.user.prefs)}
+        filterHint={filterHint}
+      />
+    );
   }
 
   const view = sp.ansicht === "woche" ? "woche" : "tag";
@@ -149,7 +184,6 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   const hiddenCancelled = allRows.length - notCancelled.length;
   // Anzeige-Filter (Behandler:innen, Hausbesuche) – nur Darstellung
   const rows = notCancelled.filter((r) => passesDisplayFilter(options, r.a));
-  const hiddenByFilter = notCancelled.length - rows.length;
   const overlaps = feedOverlapIds(rows);
   const step = view === "woche" ? 7 : 1;
   const byDay = (iso: string) => rows.filter((r) => berlinDateIso(r.a.startsAt) === iso);
@@ -198,9 +232,7 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
           {hiddenCancelled ? (
             <p className="text-xs text-muted">{hiddenCancelled} abgesagte{hiddenCancelled === 1 ? "r Termin ist" : " Termine sind"} ausgeblendet (Anzeige).</p>
           ) : null}
-          {hiddenByFilter ? (
-            <p className="text-xs text-muted" data-testid="anzeige-filter-hinweis">{hiddenByFilter} Termin{hiddenByFilter === 1 ? " ist" : "e sind"} durch den Anzeige-Filter ausgeblendet (Behandler:innen bzw. Hausbesuche).</p>
-          ) : null}
+          {filterHint(allRows, view)}
           {hiddenWeekend ? (
             <p className="rounded-xl bg-warn-soft px-4 py-2 text-sm text-warn-soft-text">
               {hiddenWeekend} Termin{hiddenWeekend === 1 ? "" : "e"} am Wochenende ausgeblendet (Anzeige „nur Mo–Fr“).{" "}
@@ -279,6 +311,7 @@ async function FullPage({
   panel,
   narrow,
   slot,
+  filterHint,
 }: {
   auth: Awaited<ReturnType<typeof requireAuth>>;
   sp: Record<string, string | string[] | undefined>;
@@ -293,6 +326,8 @@ async function FullPage({
   narrow: boolean;
   /** Raster der Zeitachse (Einstellungen → Kalender) */
   slot: SlotStep;
+  /** Hinweis „x Termine ausgeblendet … Alle einblenden“ */
+  filterHint: (rows: Awaited<ReturnType<typeof listAppointments>>, ansicht: string) => ReactNode;
 }) {
   const view = parseFullView(sp.ansicht, defaultFullView(narrow));
   const today = berlinDateIso();
@@ -308,11 +343,12 @@ async function FullPage({
   const overlaps = feedOverlapIds(rows);
   // Ziehen zum Verschieben: nur mit Schreibrecht, nicht im Support- oder Nur-Lesen-Modus (Abo abgelaufen)
   const canMove = auth.can("appointments.write") && !auth.support && !auth.readOnly;
-  // Symbole N/R nur für Tag/Woche (Monat zeigt keine Termin-Blöcke); eine Abfrage für alle Termine
-  const [billed, marks] = await Promise.all([
-    canMove ? billedAppointmentIds(auth, rows.map((r) => r.a.id)) : new Set<string>(),
-    view === "monat" ? new Map() : appointmentMarks(auth, rows.map((r) => r.a.id)),
-  ]);
+  // Zieh-Sperre „abgerechnet“ und Symbole N/R (nur Tag/Woche – Monat zeigt keine Termin-Blöcke) in einer Transaktion
+  const { billed, marks } = await calendarAppointmentInfo(
+    auth,
+    rows.map((r) => r.a.id),
+    { marks: view !== "monat", dragLock: canMove },
+  );
   const calHref = (p: { ansicht?: FullView; datum?: string }) => `/kalender?ansicht=${p.ansicht ?? view}&datum=${p.datum ?? day}${keep}`;
   const prev = view === "tag" ? addDays(day, -1) : view === "woche" ? addDays(day, -7) : shiftMonthIso(day, -1);
   const next = view === "tag" ? addDays(day, 1) : view === "woche" ? addDays(day, 7) : shiftMonthIso(day, 1);
@@ -360,6 +396,7 @@ async function FullPage({
           canMove={canMove}
           billed={billed}
           slot={slot}
+          filterHint={filterHint(rows, view)}
           marks={marks}
         />
       </div>

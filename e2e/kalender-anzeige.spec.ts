@@ -1,6 +1,6 @@
 /**
  * Kalender-Anzeige: Raster unter Einstellungen → Kalender umstellen (Zeitachse beschriftet jede Rasterzeile),
- * Symbole N (Neupatient:in) und R (Rechnung offen) im Termin-Block, Anzeige-Filter „Hausbesuche“.
+ * Symbole N (Neupatient:in) und R (Rechnung offen) im Termin-Block, Anzeige-Filter „Hausbesuche“ samt „Alle einblenden“.
  * Termine werden direkt in der DB angelegt (Woche in ferner Zukunft, erfundene Person).
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -122,5 +122,12 @@ test("Anzeige-Filter: Hausbesuche ausblenden", async () => {
   await page.locator("summary", { hasText: "Anzeige" }).first().click();
   await page.getByRole("switch", { name: "Hausbesuche" }).first().uncheck({ force: true });
   await expect(page.locator(`a[href="/kalender/termin/${ids.home}"]`)).toHaveCount(0);
-  await expect(page.getByTestId("anzeige-filter-hinweis")).toContainText("1 Termin ist durch den Anzeige-Filter ausgeblendet");
+  await expect(page.getByTestId("anzeige-filter-hinweis")).toContainText("1 Termin ist durch den Anzeige-Filter ausgeblendet (Hausbesuche)");
+  // „Alle einblenden“ setzt den Anzeige-Filter zurück (gemerkt) – Anzeige-Panel vorher schließen
+  await page.locator("summary", { hasText: "Anzeige" }).first().click();
+  await page.getByTestId("anzeige-filter-hinweis").getByRole("button", { name: "Alle einblenden" }).click();
+  await expect(page.locator(`a[href="/kalender/termin/${ids.home}"]`)).toBeVisible();
+  await expect(page.getByTestId("anzeige-filter-hinweis")).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator(`a[href="/kalender/termin/${ids.home}"]`)).toBeVisible();
 });

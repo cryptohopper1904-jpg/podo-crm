@@ -42,6 +42,14 @@ export function gridScale(step: SlotStep = SLOT_MIN) {
   return { step, hourPx, rowPx: step * pxPerMin, pxPerMin };
 }
 
+/** Mindesthöhe einer freien Klickfläche („neuer Termin“), damit sie antippbar bleibt */
+export const MIN_FREE_PX = 10;
+
+/** Kürzestes freies Reststück (Minuten, auf volle 5) als Klickfläche: mindestens 10 px hoch und mindestens 5 Minuten */
+export function minFreeMin(scale: { pxPerMin: number }): number {
+  return Math.max(5, Math.ceil(MIN_FREE_PX / scale.pxPerMin / 5) * 5);
+}
+
 /** Beginn jeder Rasterzeile im Bereich [startMin, endMin) – erste Zeile auf dem Raster (Bereich beginnt i. d. R. zur vollen Stunde) */
 export function gridSlots(range: { startMin: number; endMin: number }, step: SlotStep = SLOT_MIN): number[] {
   const out: number[] = [];
