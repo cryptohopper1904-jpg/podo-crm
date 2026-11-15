@@ -72,6 +72,8 @@ export const berlinDay = (offsetDays = 0) => addDaysIso(berlinDateIso(), offsetD
 export function fixtures(url: string) {
   const pool = new Pool({ connectionString: url, max: 3 });
   const sfx = () => Math.random().toString(36).slice(2, 10);
+  /** angelegte Plattform-Admins – in end() wieder zurückgestuft (s. platformAdmin) */
+  const admins: string[] = [];
 
   async function asOrg<T>(org: string, fn: (c: PoolClient) => Promise<T>): Promise<T> {
     const c = await pool.connect();
@@ -132,7 +134,18 @@ export function fixtures(url: string) {
         return id;
       });
     },
+    /**
+     * Plattform-Admin (Support) ohne Mitgliedschaft. Wird in end() wieder zurückgestuft: listSupportAdmins() liefert
+     * höchstens 100 Personen – angesammelte Test-Admins in der gemeinsamen Test-DB verdrängten sonst die anderer Tests.
+     */
+    async platformAdmin(totp = true) {
+      const id = (await pool.query("insert into users (email, name, password_hash, is_platform_admin, totp_enabled) values ($1, 'Test', 'x', true, $2) returning id", [`a-${sfx()}@example.org`, totp]))
+        .rows[0].id as string;
+      admins.push(id);
+      return id;
+    },
     async end() {
+      if (admins.length) await pool.query("update users set is_platform_admin = false where id = any($1::uuid[])", [admins]);
       await pool.end();
     },
   };
