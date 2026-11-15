@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
  *   überfällige Löschanträge („loeschantraege“, nur Anzahl)
  * - Antwort: Zustand je Prüfung, nur Zeiten/Zähler, keine Personendaten, keine Fehlertexte der DB
  * - HTTP 200 bei ok/warn, 503 bei mindestens einem „fail“
- * Das öffentliche /api/health bleibt minimal ({ ok: true }) für Container-Healthchecks.
+ * Das öffentliche /api/health bleibt knapp ({ ok, version, migrations: ok/ausstehend/unbekannt }) für Container-Healthchecks.
  */
 
 async function checkDb(): Promise<CheckResult> {
