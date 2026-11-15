@@ -5,6 +5,37 @@ on:
   pull_request:
 
 jobs:
+  # Secret-Scan mit gitleaks (Regeln/Ausnahmen: .gitleaks.toml).
+  # Push auf main: gesamte Historie. Pull Request: nur die Commits des PRs.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.28.0
+      GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks installieren (feste Version, Prüfsumme)
+        run: |
+          curl -sSfL -o gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP" gitleaks
+          rm gitleaks.tar.gz
+          "$RUNNER_TEMP/gitleaks" version
+      - name: Historie scannen (Push)
+        if: github.event_name != 'pull_request'
+        run: '"$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose .'
+      - name: PR-Commits scannen
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: '"$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}" .'
+
   test:
     runs-on: ubuntu-latest
     services:
