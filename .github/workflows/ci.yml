@@ -52,6 +52,8 @@ jobs:
           IGN="$RUNNER_TEMP/gitleaksignore"
           git show "${BASE_SHA}:.gitleaks.toml" > "$CFG" 2>/dev/null || cp .gitleaks.toml "$CFG"
           git show "${BASE_SHA}:.gitleaksignore" > "$IGN" 2>/dev/null || : > "$IGN"
+          # gitleaks liest zusätzlich ./.gitleaksignore – die Fassung aus dem PR entfernen.
+          rm -f .gitleaksignore
           "$GL" git --config "$CFG" --gitleaks-ignore-path "$IGN" --redact --no-banner --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}" .
           # Merge-Commits haben in git log -p keinen Diff: Endstand zusätzlich prüfen.
           "$GL" dir --config "$CFG" --gitleaks-ignore-path "$IGN" --redact --no-banner --verbose .
