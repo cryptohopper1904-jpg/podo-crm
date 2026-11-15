@@ -28,11 +28,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     );
 
   /** Person beim Support: Plattform-Admin mit 2FA (Trigger podo_user_in_org lässt nur solche als grantee_user_id zu) */
-  const platformAdmin = async () => {
-    const u = await f.user();
-    await f.pool.query("update users set is_platform_admin = true, totp_enabled = true where id = $1", [u]);
-    return u;
-  };
+  const platformAdmin = () => f.platformAdmin();
 
   it("findet nur aktive Freigaben der jeweiligen Praxis; Ablauf und Widerruf beenden den Zugriff", async () => {
     const orgA = await f.org();

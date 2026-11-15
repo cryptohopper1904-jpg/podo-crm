@@ -92,12 +92,8 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
     const admin = await platformAdmin();
     return { org, owner: ownerUser, patient, admin };
   }
-  /** Plattform-Admin ohne Mitgliedschaft (Support) */
-  async function platformAdmin(totp = true) {
-    const u = await f.user();
-    await f.pool.query("update users set is_platform_admin = true, totp_enabled = $2 where id = $1", [u, totp]);
-    return u;
-  }
+  /** Plattform-Admin ohne Mitgliedschaft (Support); wird in f.end() zurückgestuft */
+  const platformAdmin = (totp = true) => f.platformAdmin(totp);
   /** Schreiben im Praxis-Kontext und immer zurückrollen – Fehler oder null */
   async function attempt(org: string, sql: string, params: unknown[]) {
     const c = await f.pool.connect();
