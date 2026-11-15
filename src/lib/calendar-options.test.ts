@@ -136,6 +136,8 @@ describe("Anzeige-Filter: Team und Hinweis", () => {
     const o = { ...defaultCalendarOptions("full"), hiddenTherapists: [a, ehemalig] };
     expect(withTeamFilter(o, [a.toUpperCase(), b]).hiddenTherapists).toEqual([a]);
     expect(withTeamFilter(o, []).hiddenTherapists).toEqual([]);
+    // gemerkte IDs in Großbuchstaben (ältere Einstellungen) werden ebenfalls erkannt und klein geführt
+    expect(withTeamFilter({ ...o, hiddenTherapists: [a.toUpperCase(), a] }, [b, a]).hiddenTherapists).toEqual([a]);
     // übrige Optionen bleiben
     expect(withTeamFilter(o, [a])).toMatchObject({ homeVisits: true, holidays: o.holidays });
   });

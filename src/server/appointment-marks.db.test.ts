@@ -58,14 +58,23 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const auth = authOf(org, user);
     // nacheinander (Patientennummer = max + 1)
     const ps: string[] = [];
-    for (const n of ["Alt", "Neu", "Abgesagt", "NichtDa", "Import", "Doku", "Gleich", "ImportOhneId", "Doctolib", "AltImport", "EigeneDoku"]) ps.push(await f.patient(org, { lastName: n }));
-    const [pAlt, pNeu, pAbgesagt, pNichtDa, pImport, pDoku, pGleich, pImportOhneId, pDoctolib, pAltImport, pEigeneDoku] = ps;
+    for (const n of ["Alt", "Neu", "Abgesagt", "NichtDa", "Import", "Doku", "Gleich", "ImportOhneId", "Doctolib", "AltImport", "EigeneDoku", "DoctolibOhneId", "DoctolibAlt", "ExcelAlt", "Manuell"])
+      ps.push(await f.patient(org, { lastName: n }));
+    const [pAlt, pNeu, pAbgesagt, pNichtDa, pImport, pDoku, pGleich, pImportOhneId, pDoctolib, pAltImport, pEigeneDoku, pDoctolibOhneId, pDoctolibAlt, pExcelAlt, pManuell] = ps;
     await f.asOrg(org, (c) => c.query("update patients set external_ids = '{\"legacyExcel\": 17}'::jsonb where id = $1", [pImport]));
     // Excel-Import ohne Alt-ID (Marker „import“), Doctolib-Import, älterer Excel-Import ohne Fremd-ID (nur extra.legacyExcel)
     await f.asOrg(org, (c) => c.query("update patients set external_ids = '{\"import\": \"excel\"}'::jsonb where id = $1", [pImportOhneId]));
     await f.asOrg(org, (c) => c.query("update patients set external_ids = '{\"doctolib\": \"D-1\"}'::jsonb where id = $1", [pDoctolib]));
     await f.asOrg(org, (c) => c.query("update patients set extra = '{\"legacyExcel\": {\"status\": \"aktiv\"}}'::jsonb where id = $1", [pAltImport]));
     await f.asOrg(org, (c) => c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash) values ($1,$2,$3,'2030-01-10 10:00+01','h')", [org, pDoku, user]));
+    // Doctolib-CSV ohne Patienten-ID (Marker „import“), ältere Doctolib-/Excel-Importe ohne Marker (nur patients.source),
+    // manuell angelegt (Quelle „manual“) bleibt neu
+    const { doctolibPatientValues } = await import("@/integrations/doctolib/patient-values");
+    const ohneId = doctolibPatientValues({ lastName: "DoctolibOhneId", externalId: null });
+    await f.asOrg(org, (c) => c.query("update patients set external_ids = $2::jsonb, source = $3 where id = $1", [pDoctolibOhneId, JSON.stringify(ohneId.externalIds), ohneId.source]));
+    await f.asOrg(org, (c) => c.query("update patients set external_ids = '{}'::jsonb, source = 'doctolib-csv' where id = $1", [pDoctolibAlt]));
+    await f.asOrg(org, (c) => c.query("update patients set external_ids = '{}'::jsonb, source = 'excel-import:rechnungsmanager-0.9.2' where id = $1", [pExcelAlt]));
+    await f.asOrg(org, (c) => c.query("update patients set source = 'manual' where id = $1", [pManuell]));
 
     await appt(org, pAlt, "2030-04-01 09:00+02", "done");
     const alt = await appt(org, pAlt, "2030-05-15 09:00+02", "done");
@@ -90,7 +99,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, appointment_id, hash) values ($1,$2,$3,'2030-05-22 11:55+02',$4,'h')", [org, pEigeneDoku, user, eigeneDoku.id]),
     );
 
-    const m = await marks.appointmentMarks(auth, [alt, neu1, neu2, abgesagt, nichtDa, imp, doku, g1, g2, storniert, ohne, impOhneId, doctolib, altImport, eigeneDoku].map((r) => r.id), now);
+    const doctolibOhneId = await appt(org, pDoctolibOhneId, "2030-05-23 09:00+02");
+    const doctolibAlt = await appt(org, pDoctolibAlt, "2030-05-23 10:00+02");
+    const excelAlt = await appt(org, pExcelAlt, "2030-05-23 11:00+02");
+    const manuell = await appt(org, pManuell, "2030-05-23 12:00+02");
+
+    const m = await marks.appointmentMarks(
+      auth,
+      [alt, neu1, neu2, abgesagt, nichtDa, imp, doku, g1, g2, storniert, ohne, impOhneId, doctolib, altImport, eigeneDoku, doctolibOhneId, doctolibAlt, excelAlt, manuell].map((r) => r.id),
+      now,
+    );
     const n = (r: Row) => m.get(r.id)?.newPatient ?? false;
     expect(n(alt)).toBe(false);
     expect(n(neu1)).toBe(true);
@@ -109,9 +127,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(n(altImport)).toBe(false);
     // die eigene Doku des Termins macht ihn nicht zum Folgetermin
     expect(n(eigeneDoku)).toBe(true);
+    // Doctolib-Import ohne ID bzw. ältere Importe (nur Quelle) → kein N; manuell angelegt → N
+    expect(n(doctolibOhneId)).toBe(false);
+    expect(n(doctolibAlt)).toBe(false);
+    expect(n(excelAlt)).toBe(false);
+    expect(n(manuell)).toBe(true);
   });
 
-  it("Rechnung über den Doku-Eintrag zum Termin; Anzahlung/Gutschrift/storniert zählen nicht; Zieh-Sperre in derselben Abfrage", async () => {
+  it("Rechnung über den Doku-Eintrag zum Termin; Anzahlung/Gutschrift/storniert zählen nicht; Zieh-Sperre (mit Anzahlung) in derselben Abfrage", async () => {
     const org = await f.org();
     const user = await f.user(org);
     const p = await f.patient(org);
@@ -148,8 +171,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(r(anzahlung)).toBe("open");
     expect(r(gutschrift)).toBe("open");
     expect(r(quittung)).toBe("written");
-    // Zieh-Sperre unverändert (billedIdsInTx: nur Positionen mit Terminbezug, Anzahlung sperrt)
-    expect(info.billed).toEqual(new Set([anzahlung.id, quittung.id]));
+    // Zieh-Sperre: dieselbe Regel (auch über den Doku-Eintrag), zusätzlich sperrt die Anzahlung; Gutschrift/Storno nicht
+    expect(info.billed).toEqual(new Set([ueberDoku.id, quittungDoku.id, anzahlung.id, quittung.id]));
     // Teile abschaltbar (Monatsansicht ohne Symbole, ohne Verschieben ohne Sperre)
     const ohneSymbole = await marks.calendarAppointmentInfo(auth, rows.map((x) => x.id), { marks: false, dragLock: true, now });
     expect(ohneSymbole.marks.size).toBe(0);

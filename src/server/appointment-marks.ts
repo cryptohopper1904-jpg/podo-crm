@@ -1,53 +1,23 @@
 import "server-only";
-import { and, eq, inArray, isNotNull, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { appointments, invoiceLines, invoices, treatmentRecords } from "@/db/schema";
+import { appointments } from "@/db/schema";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
-import { invoiceRelevant, markFor, type AppointmentMark } from "@/lib/appointment-marks";
+import { DOCTOLIB_CSV_SOURCE, EXCEL_IMPORT_SOURCE_PREFIX, invoiceRelevant, markFor, type AppointmentMark } from "@/lib/appointment-marks";
+import { invoicedAppointmentIdsInTx } from "./appointment-invoiced";
 import { billedIdsInTx } from "./appointments";
 
 const a0 = alias(appointments, "a0");
 
 /**
- * „Rechnung geschrieben“ für das R-Symbol: Für den Termin oder einen zu ihm gehörenden Doku-Eintrag steht eine
- * Position auf einem gültigen Beleg (Rechnung, Quittung, Sammelrechnung, Ausfallhonorar) – nicht Entwurf, nicht
- * storniert, keine Anzahlung (wird erst angerechnet), keine Gutschrift. Dieselbe Regel wie die Doppelabrechnungs-
- * Prüfung (assertNotInvoiced in src/server/invoices.ts: Termin und Doku-Eintrag gelten als dieselbe Leistung).
- * Zwei Abfragen für alle Termine zusammen.
+ * „Rechnung geschrieben“ für das R-Symbol: wie die Zieh-Sperre (invoicedAppointmentIdsInTx), aber ohne Anzahlungen –
+ * sie werden erst auf die Rechnung angerechnet.
  */
-async function writtenIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
-  if (!appointmentIds.length) return new Set();
-  const recs = await tx
-    .select({ id: treatmentRecords.id, appointmentId: treatmentRecords.appointmentId })
-    .from(treatmentRecords)
-    .where(and(eq(treatmentRecords.organizationId, org), inArray(treatmentRecords.appointmentId, appointmentIds)));
-  const apptOfRec = new Map(recs.map((r) => [r.id, r.appointmentId!]));
-  const conds: SQL[] = [inArray(invoiceLines.appointmentId, appointmentIds)];
-  if (recs.length) conds.push(inArray(invoiceLines.treatmentRecordId, [...apptOfRec.keys()]));
-  const lines = await tx
-    .selectDistinct({ appointmentId: invoiceLines.appointmentId, recordId: invoiceLines.treatmentRecordId })
-    .from(invoiceLines)
-    .innerJoin(invoices, eq(invoices.id, invoiceLines.invoiceId))
-    .where(
-      and(
-        eq(invoiceLines.organizationId, org),
-        eq(invoices.organizationId, org),
-        or(...conds),
-        notInArray(invoices.status, ["cancelled", "draft"]),
-        notInArray(invoices.kind, ["deposit", "credit_note"]),
-      ),
-    );
-  const wanted = new Set(appointmentIds);
-  const out = new Set<string>();
-  for (const l of lines) {
-    if (l.appointmentId && wanted.has(l.appointmentId)) out.add(l.appointmentId);
-    const viaRec = l.recordId ? apptOfRec.get(l.recordId) : undefined;
-    if (viaRec) out.add(viaRec);
-  }
-  return out;
+function writtenIdsInTx(tx: Tx, org: string, appointmentIds: string[]): Promise<Set<string>> {
+  return invoicedAppointmentIdsInTx(tx, org, appointmentIds, { deposits: false });
 }
 
 export type CalendarAppointmentInfo = {
@@ -91,10 +61,11 @@ export async function calendarAppointmentInfo(
         // in den Unterabfragen würden sie sonst auf die innere Tabelle zeigen)
         isNew: sql<boolean>`(
           a0.patient_id is not null
-          -- übernommen (jede Fremd-ID: Excel-Import, Doctolib …) → war schon Patient:in; ältere Excel-Importe ohne
-          -- Alt-ID erkennt man an extra.legacyExcel
+          -- übernommen (jede Fremd-ID bzw. Import-Marker: Excel-Import, Doctolib …) → war schon Patient:in; ältere
+          -- Importe ohne Fremd-ID erkennt man an extra.legacyExcel bzw. an der Quelle (Doctolib-CSV, Excel-Import)
           and not exists (select 1 from patients p where p.organization_id = ${org} and p.id = a0.patient_id
-                and (p.external_ids <> '{}'::jsonb or p.extra ? 'legacyExcel'))
+                and (p.external_ids <> '{}'::jsonb or p.extra ? 'legacyExcel'
+                     or p.source = ${DOCTOLIB_CSV_SOURCE} or starts_with(p.source, ${EXCEL_IMPORT_SOURCE_PREFIX})))
           -- früherer wahrgenommener bzw. geplanter Termin (nicht abgesagt, nicht „nicht erschienen“); bei gleicher
           -- Startzeit entscheidet die ID, damit genau einer der beiden das N trägt
           and not exists (select 1 from appointments b where b.organization_id = ${org} and b.patient_id = a0.patient_id

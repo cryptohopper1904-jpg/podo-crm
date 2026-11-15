@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
+import { autoScrollDelta, columnIndexAt, dragLock, dropStartMin, durationOf, localSlotToUtc, MIN_DURATION_MIN, moveLabel, moveLabelLong, moveToDay, realDuration, resizeDuration, resizeOnDay, snapMin } from "./calendar-dnd";
 import { berlinParts } from "./calendar-grid";
 import { berlinToUtc } from "./format";
 
@@ -86,6 +86,14 @@ describe("Zeitpunkte (Berliner Ortszeit, Sommer-/Winterzeit)", () => {
     expect(resizeOnDay({ ...base, dateIso: "2026-10-25" })).toEqual({ localMin: 420, realMin: 480 });
     expect(resizeOnDay({ ...base, dateIso: "2026-03-29" })).toEqual({ localMin: 480, realMin: 420 });
     expect(resizeOnDay({ ...base, dateIso: "2026-06-10", offsetPx: 45 * PX })).toEqual({ localMin: 45, realMin: 45 });
+  });
+
+  it("Dauer ziehen am Sommerzeit-Tag: echte Dauer mindestens 5 Minuten", () => {
+    // 01:58 Uhr (krumme Minuten), Ende auf 03:00 Uhr gezogen = nur 2 echte Minuten → um einen Schritt verlängert
+    const startsAt = new Date("2026-03-29T00:58:00Z");
+    const r = resizeOnDay({ dateIso: "2026-03-29", pxPerMin: PX, rangeStart: 0, startMin: 118, durationMin: 62, offsetPx: 180 * PX, startsAt });
+    expect(r).toEqual({ localMin: 77, realMin: 17 });
+    expect(r.realMin).toBeGreaterThanOrEqual(MIN_DURATION_MIN);
   });
 
   it("Beginn in der doppelten Stunde (25.10., 02:30 zweimal): echte Dauer ab dem tatsächlichen Beginn", () => {
