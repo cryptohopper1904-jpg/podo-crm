@@ -15,6 +15,37 @@ REVOKE ALL ON FUNCTION podo_calendar_feeds_health(interval) FROM PUBLIC;
 -- Trigger-Funktion (nicht direkt aufrufbar) – nur der Einheitlichkeit halber wie podo_fk_same_org/podo_user_in_org
 REVOKE ALL ON FUNCTION podo_invoice_lines_guard() FROM PUBLIC;
 --> statement-breakpoint
+-- 3) podo_delete_patient (0019): Die Aufbewahrungsprüfung filterte nur auf patient_id. Mit einem Eigentümer, der RLS
+--    umgeht (z. B. Superuser), beantwortete der Aufruf aus Praxis B „hat Patient:in X aus Praxis A Dokumentation?“
+--    (Fehler vs. false). Jetzt ausdrücklich auf die Praxis des Kontexts beschränkt – wie die DELETEs darunter. Sonst
+--    unverändert; SET search_path wie seit 0056 (CREATE OR REPLACE ohne SET-Klausel würde ihn zurücksetzen), Rechte
+--    (REVOKE … FROM PUBLIC oben, GRANT an die App-Rolle in scripts/migrate.ts) bleiben erhalten.
+CREATE OR REPLACE FUNCTION podo_delete_patient(p_patient uuid) RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE
+  org uuid := NULLIF(current_setting('app.org_id', true), '')::uuid;
+  n int;
+BEGIN
+  IF org IS NULL THEN
+    RAISE EXCEPTION 'Kein Praxis-Kontext.' USING ERRCODE = 'P0001';
+  END IF;
+  IF EXISTS (SELECT 1 FROM treatment_records WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM anamneses WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM invoices WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM media WHERE organization_id = org AND patient_id = p_patient AND record_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'Aufbewahrungspflichtige Daten vorhanden – vollständige Löschung nicht zulässig.' USING ERRCODE = 'P0001';
+  END IF;
+  PERFORM set_config('podo.patient_delete', p_patient::text, true);
+  DELETE FROM appointments WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM messages WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM voice_calls WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM media WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM patients WHERE id = p_patient AND organization_id = org;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  PERFORM set_config('podo.patient_delete', '', true);
+  RETURN n = 1;
+END $$;
+--> statement-breakpoint
 -- 2) podo_fk_same_org (0054) und podo_user_in_org (0056):
 --    * leerer Kontext app.org_id bei Tabellen mit erzwungenem RLS → einheitlich 42501 statt Orakel (s. u.);
 --    * podo_fk_same_org: unbekannte Spalte in den Trigger-Argumenten bricht laut ab (podo_user_in_org hat das seit 0056).
@@ -67,7 +98,9 @@ BEGIN
       -- Leerer Kontext (AppSec L1): Für Tabellen mit erzwungenem RLS würde die Policy die Zeile ohnehin ablehnen – vorher
       -- aber verriete die Antwort (Trigger-Fehler vs. RLS-Fehler), ob der Verweis in der Zielpraxis existiert. Deshalb
       -- einheitlich ablehnen, außer für Rollen, die RLS umgehen (Superuser-Wartung). Tabellen ohne RLS (patient_links,
-      -- promo_redemptions) bleiben wie bisher: dort ist dieser Trigger die einzige Prüfung.
+      -- promo_redemptions) bleiben wie bisher: dort ist dieser Trigger die einzige Prüfung. Betriebsannahme: Die App meldet
+      -- sich direkt als ihre Rolle an (kein Superuser/BYPASSRLS, kein SET ROLE von einer solchen Anmelderolle aus) –
+      -- in SECURITY DEFINER ist session_user die einzige sichtbare Identität des Aufrufers.
       IF prev_org = ''
          AND (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_class c WHERE c.oid = TG_RELID)
          AND NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = session_user AND (r.rolsuper OR r.rolbypassrls)) THEN
@@ -156,7 +189,9 @@ BEGIN
       -- Leerer Kontext (AppSec L1): Für Tabellen mit erzwungenem RLS würde die Policy die Zeile ohnehin ablehnen – vorher
       -- aber verriete die Antwort (Trigger-Fehler vs. RLS-Fehler), ob der Verweis in der Zielpraxis existiert. Deshalb
       -- einheitlich ablehnen, außer für Rollen, die RLS umgehen (Superuser-Wartung). Tabellen ohne RLS (patient_links,
-      -- promo_redemptions) bleiben wie bisher: dort ist dieser Trigger die einzige Prüfung.
+      -- promo_redemptions) bleiben wie bisher: dort ist dieser Trigger die einzige Prüfung. Betriebsannahme: Die App meldet
+      -- sich direkt als ihre Rolle an (kein Superuser/BYPASSRLS, kein SET ROLE von einer solchen Anmelderolle aus) –
+      -- in SECURITY DEFINER ist session_user die einzige sichtbare Identität des Aufrufers.
       IF prev_org = ''
          AND (SELECT c.relrowsecurity AND c.relforcerowsecurity FROM pg_class c WHERE c.oid = TG_RELID)
          AND NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname = session_user AND (r.rolsuper OR r.rolbypassrls)) THEN

@@ -424,7 +424,13 @@ export async function reschedulePortalAppointment(link: PortalLink, input: { app
         source: "portal",
         externalId: `${PORTAL_EXTERNAL_PREFIX}${randomUUID()}`,
         title: a.title,
-        notes: [`Über das Patientenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`, a.notes].filter(Boolean).join("\n"),
+        notes: [
+          `Über das Patientenportal verschoben (vorher ${dateDe(a.startsAt)}, ${timeDe(a.startsAt)} Uhr).`,
+          a.therapistId && !therapistId ? "Behandler:in nicht mehr verfügbar – bitte neu zuordnen." : null,
+          a.notes,
+        ]
+          .filter(Boolean)
+          .join("\n"),
         homeVisit: a.homeVisit,
         prescriptionId: a.prescriptionId,
       })

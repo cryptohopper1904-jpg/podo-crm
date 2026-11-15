@@ -101,6 +101,22 @@ const ownerUrlFrom = (url: string) => url.replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//p
     }
   });
 
+  it("podo_delete_patient: Aufruf aus einer anderen Praxis verrät nicht, ob die Person dort Dokumentation hat", async () => {
+    const a = await f.org();
+    const author = await f.user(a);
+    const pa = await f.patient(a);
+    await f.asOrg(a, (c) => c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash) values ($1,$2,$3, now(), md5(random()::text))", [a, pa, author]));
+    const b = await f.org();
+    const call = (patient: string) =>
+      f.asOrg(b, async (c) => (await c.query("select podo_delete_patient($1::uuid) as ok", [patient])).rows[0].ok as boolean);
+    // Person aus A mit Doku und unbekannte UUID: gleiche Antwort (nichts gelöscht, kein Fehler)
+    expect(await call(pa)).toBe(false);
+    expect(await call(randomUUID())).toBe(false);
+    expect((await f.asOrg(a, (c) => c.query("select count(*)::int as n from patients where id = $1", [pa]))).rows[0].n).toBe(1);
+    // in der eigenen Praxis greift die Aufbewahrungssperre weiter
+    await expect(f.asOrg(a, (c) => c.query("select podo_delete_patient($1::uuid)", [pa]))).rejects.toThrow(/Aufbewahrungspflichtige Daten/);
+  });
+
   it("SECURITY-DEFINER-Funktionen: kein EXECUTE für PUBLIC; die App-Rolle darf die drei, die sie selbst aufruft", async () => {
     const rows = (
       await owner.query(`select p.oid::regprocedure::text as fn,

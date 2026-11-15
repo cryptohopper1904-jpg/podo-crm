@@ -274,10 +274,18 @@ function futureWeekday(minDays: number) {
       const target = opts.days.flatMap((d) => d.slots[40]).find((x) => new Date(x).getTime() > start.getTime() + 86400_000)!;
       const r = await pb.reschedulePortalAppointment(l, { appointmentId: id, startsAt: target });
       expect(r.ok).toBe(true);
-      return (await f.asOrg(org, (c) => c.query("select therapist_id from appointments where organization_id = $1 and status = 'planned' and starts_at = $2", [org, target]))).rows[0].therapist_id as string | null;
+      return (await f.asOrg(org, (c) => c.query("select therapist_id, notes from appointments where organization_id = $1 and status = 'planned' and starts_at = $2", [org, target]))).rows[0] as {
+        therapist_id: string | null;
+        notes: string;
+      };
     };
-    expect(await move(therapist, false, 6)).toBe(therapist);
-    expect(await move(stranger, true, 9)).toBeNull();
+    const kept = await move(therapist, false, 6);
+    expect(kept.therapist_id).toBe(therapist);
+    expect(kept.notes).not.toMatch(/neu zuordnen/);
+    // Praxis sieht im Termin, dass die Zuordnung fehlt
+    const dropped = await move(stranger, true, 9);
+    expect(dropped.therapist_id).toBeNull();
+    expect(dropped.notes).toMatch(/Behandler:in nicht mehr verfügbar – bitte neu zuordnen\./);
   });
 
   it("Regression: Ursprungstermin wird reaktiviert/verschoben → Annahme vergibt ihn nicht doppelt", async () => {
