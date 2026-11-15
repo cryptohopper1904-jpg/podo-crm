@@ -122,7 +122,7 @@ const url = process.env.TEST_DATABASE_URL;
     expect(byNumber.get("SR2026-0001")).toMatchObject({ paidCents: 13000, status: "paid" });
     const futureWarnings = sum.warnings.filter((w) => w.message === FUTURE_PAYMENT_WARNING);
     expect(futureWarnings.map((w) => w.row).sort()).toEqual([3, 7]);
-    expect(FUTURE_PAYMENT_WARNING).toBe("Zahlungsdatum heute oder in der Zukunft – Zahlung nicht übernommen, bitte in der Kasse erfassen.");
+    expect(FUTURE_PAYMENT_WARNING).toBe("Zahlungsdatum heute oder in der Zukunft – Betrag nur an der Rechnung als bezahlt vermerkt, ohne Zahlungsbuchung und ohne Kasse. Bei Zahlung per Gutschein bitte den Gutscheinstand prüfen.");
     await pool.end();
   });
 });

@@ -420,7 +420,7 @@ export async function persistImport(
   return summary;
 }
 
-export const FUTURE_PAYMENT_WARNING = "Zahlungsdatum heute oder in der Zukunft – Zahlung nicht übernommen, bitte in der Kasse erfassen.";
+export const FUTURE_PAYMENT_WARNING = "Zahlungsdatum heute oder in der Zukunft – Betrag nur an der Rechnung als bezahlt vermerkt, ohne Zahlungsbuchung und ohne Kasse. Bei Zahlung per Gutschein bitte den Gutscheinstand prüfen.";
 
 /** CRM-Nummernformat (siehe src/lib/numbering.ts): R2026-0001, Q…, SR…, GS…, G… */
 export const CRM_NUMBER_RE = /^(R|Q|SR|GS|G)(\d{4})-(\d+)$/;
