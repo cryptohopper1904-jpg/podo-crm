@@ -4,6 +4,7 @@ import { Badge, Button, Card, CardTitle, Empty, PageHeader, Stat, cx } from "@/c
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { monthlyShare, percentChange } from "@/lib/invoice-math";
+import { IMPORTED_PAYMENTS_DATED_NOTE } from "@/lib/invoice-labels";
 import { financeOverview } from "@/server/finance";
 import { deleteFixedCostAction } from "./actions";
 import { FixedCostForm, MaterialCostForm } from "./finance-forms";
@@ -116,7 +117,12 @@ export default async function FinancePage(props: PageProps<"/auswertung">) {
           sub={
             <>
               <Change current={d.revenueYear} previous={d.revenuePrev} />
-              {d.revenueImportedYear ? <span className="block">davon übernommen (Import): {money(d.revenueImportedYear)}</span> : null}
+              {d.revenueImportedYear ? (
+                <>
+                  <span className="block">davon übernommen (Import): {money(d.revenueImportedYear)}</span>
+                  <span className="block">{IMPORTED_PAYMENTS_DATED_NOTE}</span>
+                </>
+              ) : null}
             </>
           }
         />

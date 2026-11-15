@@ -88,6 +88,23 @@ export interface ApplySummary {
   excel: Pick<PersistSummary, "patients" | "services" | "vouchers" | "invoices" | "payments" | "fixedCosts"> | null;
 }
 
+/** Bestandspersonen aus dem Plan (existingId), an die Termine/Verordnungen/Dokumente geschrieben werden dürfen (H3). */
+async function usableExistingIds(tx: Tx, org: string, plan: ImportPlan, linked: Set<string>): Promise<Set<string>> {
+  const refs = [...plan.appointments.map((a) => a.patient), ...plan.prescriptions.map((p) => p.patient), ...plan.documents.map((d) => d.patient)];
+  const ids = [...new Set(refs.flatMap((r) => ("existingId" in r ? [r.existingId] : [])))];
+  /** Personen mit Verknüpfung im Plan: nur, wenn mindestens eine davon geschrieben wurde */
+  const toLink = new Set(plan.patientsLink.map((l) => l.patientId));
+  const out = new Set<string>();
+  for (const part of chunks(ids)) {
+    const rows = await tx
+      .select({ id: s.patients.id })
+      .from(s.patients)
+      .where(and(eq(s.patients.organizationId, org), inArray(s.patients.id, part), isNull(s.patients.contactErasedAt)));
+    for (const r of rows) if (!toLink.has(r.id) || linked.has(r.id)) out.add(r.id);
+  }
+  return out;
+}
+
 /** Ablage eines Dokuments; `sha256` erlaubt, bereits vor der Transaktion abgelegte Dateien wiederzuverwenden. */
 export type StoreDocument = (data: Buffer, sha256: string) => Promise<{ storageKey: string; sha256: string; sizeBytes: number }>;
 
@@ -116,22 +133,27 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
   /** verknüpfte Personen zählen einmal, auch wenn sie in einem Lauf eine Tinana- UND eine Doctolib-ID bekommen */
   const linked = new Set<string>();
   for (const l of plan.patientsLink) {
-    // nur ergänzen: Quell-ID setzen, wenn für diese Quelle noch keine da ist
+    // nur ergänzen: Quell-ID setzen, wenn für diese Quelle noch keine da ist – nie an gelöschte Personen (Art. 17, H3)
     const r = await tx
       .update(s.patients)
       .set({ externalIds: sql`${s.patients.externalIds} || jsonb_build_object(${l.key}::text, ${l.externalId}::text)` })
-      .where(and(eq(s.patients.organizationId, org), eq(s.patients.id, l.patientId), sql`not (${s.patients.externalIds} ? ${l.key})`))
+      .where(and(eq(s.patients.organizationId, org), eq(s.patients.id, l.patientId), isNull(s.patients.contactErasedAt), sql`not (${s.patients.externalIds} ? ${l.key})`))
       .returning({ id: s.patients.id });
     for (const x of r) linked.add(x.id);
   }
   summary.patientsLinked = linked.size;
+
+  // Bestandspersonen, an die geschrieben werden darf (AppSec H3): in dieser Praxis, nicht gelöscht – und, falls der Plan
+  // sie neu verknüpfen sollte, tatsächlich verknüpft (keine Termine/Verordnungen/Dokumente an eine Person, deren
+  // Verknüpfung nicht geschrieben wurde).
+  const usable = await usableExistingIds(tx, org, plan, linked);
 
   // ───── PodoHero-Excel (bisheriger Import, hier ohne Doppelanlage) ─────
   if (plan.excel) {
     const r = await persistImport(tx, org, plan.excel, userId, { skipExisting: true });
     summary.excel = { patients: r.patients, services: r.services, vouchers: r.vouchers, invoices: r.invoices, payments: r.payments, fixedCosts: r.fixedCosts };
   }
-  const pid = (r: PatientRef): string | null => ("existingId" in r ? r.existingId : idByRef.get(r.ref) ?? null);
+  const pid = (r: PatientRef): string | null => ("existingId" in r ? (usable.has(r.existingId) ? r.existingId : null) : idByRef.get(r.ref) ?? null);
 
   // ───── Termine ─────
   for (const part of chunks(plan.appointments)) {

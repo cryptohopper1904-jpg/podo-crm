@@ -198,6 +198,47 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(f.asOrg(org, (c) => c.query("update payments set cash_closing_id = $2 where id = $1", [importPay, closingId]))).rejects.toThrow(/Übernommene Zahlungen \(Import\) kommen in keinen Kassenabschluss/);
   });
 
+  it("Buchhaltung BA/CB1: Neueingang (bar) auf übernommene Altrechnung kommt in den Abschluss, excel:-Zahlung nicht (Herkunft der Zahlung)", async () => {
+    const { auth, org, user } = await setup();
+    const inv = await import("./invoices");
+    const { berlinDateIso } = await import("@/lib/format");
+    const patient = await f.patient(org);
+    // Altrechnung aus dem Excel-Rechnungsmanager: 60 € gesamt, 40 € schon im alten System bezahlt (excel:…)
+    const imported = await f.asOrg(org, async (c) => {
+      const id = (await c.query("insert into invoices (organization_id, patient_id, status, source) values ($1,$2,'draft','excel-import') returning id", [org, patient])).rows[0].id as string;
+      await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Altbestand',6000,6000,0,1)", [org, id]);
+      await c.query("update invoices set status='partially_paid', number=$2, issued_at='2026-08-03', total_cents=6000, net_cents=6000, paid_cents=4000 where id=$1", [id, `ALT-${Date.now()}`]);
+      return id;
+    });
+    // übernommene Zahlungen – auch in Großschreibung („EXCEL:“) nie in der Kasse
+    const importPays = await f.asOrg(org, async (c) =>
+      (
+        await c.query(
+          "insert into payments (organization_id, invoice_id, method, amount_cents, paid_at, external_ref, created_by) values ($1,$2,'cash',3000,now() - interval '1 minute','excel:ALT',$3), ($1,$2,'cash',1000,now() - interval '1 minute','EXCEL:ALT',$3) returning id",
+          [org, imported, user],
+        )
+      ).rows.map((r) => r.id as string),
+    );
+    // BB: manuelle Referenz mit „excel:“ (egal welche Schreibweise) wird abgelehnt
+    await expect(inv.addPayments(auth, imported, [{ method: "transfer", amountCents: 100, externalRef: " Excel:ALT" }])).rejects.toThrow(/excel:/);
+    // Neueingang am Tresen über die normale Zahlungserfassung (CRM)
+    await inv.addPayments(auth, imported, [{ method: "cash", amountCents: 2000 }]);
+    const newPay = await f.asOrg(org, async (c) => (await c.query("select id, external_ref from payments where invoice_id = $1 and not (id = any($2))", [imported, importPays])).rows);
+    expect(newPay).toHaveLength(1);
+    expect(String(newPay[0].external_ref)).toMatch(/^tse:/);
+    expect((await kasse.kasseOverview(auth)).calc.cashPaymentsCents).toBe(2000);
+    const z = await kasse.closeDay(auth, { businessDate: berlinDateIso(), denominations: den(2000), openingCents: 0 });
+    const rows = await f.asOrg(org, async (c) => (await c.query("select id, cash_closing_id from payments where invoice_id = $1", [imported])).rows as { id: string; cash_closing_id: string | null }[]);
+    expect(rows.find((r) => r.id === newPay[0].id)?.cash_closing_id).toBe(z.id);
+    for (const id of importPays) expect(rows.find((r) => r.id === id)?.cash_closing_id).toBeNull();
+    // Trigger (0060) nach external_ref, case-insensitive: auch „EXCEL:“ nie einem Abschluss zuordnen
+    await expect(f.asOrg(org, (c) => c.query("update payments set cash_closing_id = $2 where id = $1", [importPays[1], z.id]))).rejects.toThrow(/Übernommene Zahlungen \(Import\) kommen in keinen Kassenabschluss/);
+    // Auswertung: „davon übernommen“ zählt nur die excel:-Zahlungen, nicht den Neueingang
+    const fin = await import("./finance");
+    const d = await fin.financeOverview(auth, Number(berlinDateIso().slice(0, 4)));
+    expect(d.revenueImportedYear).toBe(4000);
+  });
+
   it("Mandantentrennung: fremde Abschlüsse sind unsichtbar", async () => {
     const a = await setup();
     const b = await setup();

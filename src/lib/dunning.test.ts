@@ -12,16 +12,18 @@ import {
   readDunningSettings,
   salutationLine,
   IMPORTED_NOT_DUNNABLE,
+  type DunnableInvoice,
 } from "./dunning";
 import { renderDunningPdf, dunningPdfFilename, type DunningPdfData } from "./dunning-pdf";
 
 const S = DEFAULT_DUNNING_SETTINGS;
-const inv = (p: Partial<{ kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number; source: string }> = {}) => ({
+const inv = (p: Partial<DunnableInvoice> = {}): DunnableInvoice => ({
   kind: "invoice",
   status: "issued",
   dueAt: "2026-11-01",
   totalCents: 6500,
   paidCents: 0,
+  source: "crm",
   ...p,
 });
 

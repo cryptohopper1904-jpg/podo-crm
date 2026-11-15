@@ -4,8 +4,15 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+// PDF-Erzeugung beobachten (Verhalten unverändert): Altbestand darf vor der Herkunftsprüfung kein PDF rendern
+vi.mock("@/lib/invoice-pdf", async (orig) => {
+  const m = await orig<typeof import("@/lib/invoice-pdf")>();
+  return { ...m, renderInvoicePdf: vi.fn(m.renderInvoicePdf) };
+});
+import { renderInvoicePdf } from "@/lib/invoice-pdf";
 import { hashPortalToken, newPortalToken } from "@/lib/portal";
-import { IMPORTED_INVOICE_LOCKED } from "@/lib/invoice-labels";
+import { IMPORTED_INVOICE_LOCKED, IMPORTED_RECEIPT_MARK } from "@/lib/invoice-labels";
+import { receiptMark } from "@/lib/partial-lines";
 import { IMPORTED_NOT_DUNNABLE } from "@/lib/dunning";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
@@ -89,6 +96,29 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await expect(cards.createPaymentLink(auth, alt)).rejects.toThrow(IMPORTED_INVOICE_LOCKED);
     await expect(cards.startTerminalPayment(auth, alt)).rejects.toThrow(IMPORTED_INVOICE_LOCKED);
     await expect(delivery.sendInvoiceEmail(auth, alt)).rejects.toThrow(IMPORTED_INVOICE_LOCKED);
+  });
+
+  it("Code-Review Runde 3: sendInvoiceEmail prüft die Herkunft VOR der PDF-Erzeugung (kein Archiv-PDF für Altbestand)", async () => {
+    const { org, auth, invoice } = await setup();
+    const alt = await invoice("excel-import");
+    vi.mocked(renderInvoicePdf).mockClear();
+    await expect(delivery.sendInvoiceEmail(auth, alt)).rejects.toThrow(IMPORTED_INVOICE_LOCKED);
+    expect(renderInvoicePdf).not.toHaveBeenCalled();
+    const n = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from document_archive where invoice_id = $1", [alt])).rows[0].n);
+    expect(n).toBe(0);
+  });
+
+  it("BC: Sammelrechnung – übernommene Quittungen erscheinen in der Auswahl, gekennzeichnet als „Altbestand“", async () => {
+    const { auth, patient, invoice } = await setup();
+    const alt = await invoice("excel-import", { kind: "receipt", status: "paid", paidCents: 5000 });
+    const own = await invoice("crm", { kind: "receipt", status: "paid", paidCents: 5000 });
+    const list = await invoices.openReceiptsForPatient(auth, patient, 2026);
+    const byId = new Map(list.map((r) => [r.id, r]));
+    expect(byId.get(alt)?.source).toBe("excel-import");
+    expect(byId.get(own)?.source).toBe("crm");
+    expect(receiptMark(byId.get(alt)!)).toBe(IMPORTED_RECEIPT_MARK);
+    expect(IMPORTED_RECEIPT_MARK).toBe("Altbestand");
+    expect(receiptMark(byId.get(own)!)).toBeNull();
   });
 
   it("P1: Mahnwesen – Altbestand erscheint nicht in der Mahnliste und wird nicht gemahnt", async () => {

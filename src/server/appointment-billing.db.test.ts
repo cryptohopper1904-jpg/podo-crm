@@ -230,6 +230,23 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await billing.billingFromSource(auth, { appointmentId: own })).toMatchObject({ patient: { id: p }, appointmentId: own });
   });
 
+  it("CS2: createInvoice mit manipulierter appointmentId eines übernommenen Termins wird verbindlich abgelehnt", async () => {
+    const { org, auth, appointment } = await setup();
+    const p = await f.patient(org, { lastName: "UebernommenCS2" });
+    const imported = await appointment(p, `${year}-05-12 10:00+02`, { source: "import", status: "done" });
+    const base = { patientId: p, billingContactId: null, issuedAt: today, dueDays: 14, therapeuticConfirmed: true, notes: null, payments: [] };
+    // Formular umgangen: Position direkt mit der Termin-ID des übernommenen Termins
+    const line = { serviceId: null, treatmentRecordId: null, appointmentId: imported, description: "Behandlung", quantity: 1, factor: 1, unitPriceCents: 4500, vatRate: 0 };
+    await expect(invoices.createInvoice(auth, { ...base, kind: "invoice" as const, lines: [line] })).rejects.toThrow(billing.IMPORTED_APPOINTMENT_NOT_BILLABLE);
+    await expect(
+      invoices.createInvoice(auth, { ...base, kind: "receipt" as const, dueDays: 0, payments: [{ method: "transfer" as const, amountCents: 4500 }], lines: [line] }),
+    ).rejects.toThrow(billing.IMPORTED_APPOINTMENT_NOT_BILLABLE);
+    expect(await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from invoice_lines where appointment_id = $1", [imported])).rows[0].n)).toBe(0);
+    // eigener Termin derselben Person bleibt abrechenbar
+    const own = await appointment(p, `${year}-05-13 10:00+02`, { status: "done" });
+    await expect(invoices.createInvoice(auth, { ...base, kind: "invoice" as const, lines: [{ ...line, appointmentId: own }] })).resolves.toMatchObject({ totalCents: 4500 });
+  });
+
   it("Termin verschieben: manuell ja (mit Überschneidungsprüfung), Doctolib/Kalender-Abo nein", async () => {
     const { org, user, auth, appointment } = await setup();
     const patient = await f.patient(org, { lastName: "Verschieb" });

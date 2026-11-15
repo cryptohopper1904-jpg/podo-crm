@@ -108,7 +108,15 @@ export function readDunningSettings(settings: Record<string, unknown> | null | u
   return { payDays: intIn(raw.payDays, 1, MAX_PAY_DAYS, DEFAULT_DUNNING_SETTINGS.payDays), stages };
 }
 
-export type DunnableInvoice = { kind: string; status: string; dueAt: string | null; totalCents: number; paidCents: number; source?: string | null };
+export type DunnableInvoice = {
+  kind: string;
+  status: string;
+  dueAt: string | null;
+  totalCents: number;
+  paidCents: number;
+  /** Pflicht (AppSec H4): ohne Herkunft würde eine übernommene Altrechnung versehentlich gemahnt */
+  source: string | null;
+};
 
 /** Übernommene Altrechnungen (Import) werden in PodoHero nicht gemahnt (Buchhaltung P1) */
 export const IMPORTED_NOT_DUNNABLE = "Übernommene Altrechnung (Import) – Mahnungen bitte über Ihre bisherige Software bzw. Buchhaltung.";

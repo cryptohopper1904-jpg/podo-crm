@@ -14,7 +14,10 @@
  *  - Vorschau-Token nur einmal einlösbar: der Lauf schreibt seinen Audit-Eintrag (mit Token-Hash) in derselben
  *    Transaktion; ein zweiter Lauf mit demselben Token findet ihn (Tokens gelten 15 Minuten, gesucht wird in den
  *    letzten 20 Minuten) und bricht mit TokenUsedError ab.
- *  - Dieselbe Bestandsperson für zwei Zeilen gewählt (S4): Import abgelehnt (ChoiceConflictError), nichts gespeichert.
+ *  - Dieselbe Bestandsperson für zwei Zeilen gewählt (S4): Import abgelehnt (ChoiceConflictError mit allen Nummern),
+ *    nichts gespeichert.
+ *  - Zeitgrenzen (AppSec H1): Schreib-Transaktion mit SET LOCAL lock_timeout/statement_timeout, jede Dokument-Ablage
+ *    mit Zeitgrenze (StoreTimeoutError) – bei Überschreitung wird nichts gespeichert.
  */
 import { createHash } from "node:crypto";
 import { and, eq, gt, sql } from "drizzle-orm";
@@ -22,7 +25,7 @@ import type { Tx } from "@/db";
 import * as s from "@/db/schema";
 import { collectFiles } from "./collect";
 import { applyPlan, loadExisting, type ApplySummary } from "./persist";
-import { buildPlan, choiceConflictMessage, type ExistingSnapshot, type ImportPlan, type PlanOptions } from "./plan";
+import { buildPlan, choiceConflictsMessage, type ExistingSnapshot, type ImportPlan, type PlanOptions } from "./plan";
 import type { DetectedFile, InputFile } from "./types";
 
 export class ImportBusyError extends Error {
@@ -71,9 +74,41 @@ export interface RunDeps {
   inOrg: InOrg;
   store: (org: string, data: Buffer) => Promise<Stored>;
   discard: (storageKey: string) => Promise<void>;
+  /** Zeitgrenze je Dokument-Ablage (Standard STORE_TIMEOUT_MS; Tests kürzer) */
+  storeTimeoutMs?: number;
 }
 
 export const RUN_ACTION = "import.uebernahme.run";
+
+/** Zeitgrenzen der Schreib-Transaktion (AppSec H1) und je Dokument-Ablage */
+export const TX_LOCK_TIMEOUT = "10s";
+export const TX_STATEMENT_TIMEOUT = "120s";
+export const STORE_TIMEOUT_MS = 60_000;
+
+export class StoreTimeoutError extends Error {
+  constructor() {
+    super("Das Ablegen der Dokumente dauert zu lange. Es wurde nichts gespeichert – bitte versuchen Sie es später erneut.");
+    this.name = "StoreTimeoutError";
+  }
+}
+
+/** Zeitüberschreitung der Datenbank (lock_timeout 55P03, statement_timeout 57014) – auch in der Hülle von Drizzle */
+export function isDbTimeout(e: unknown): boolean {
+  const err = e as { code?: string; cause?: { code?: string } } | null;
+  const code = err?.code ?? err?.cause?.code;
+  return code === "55P03" || code === "57014";
+}
+export const DB_TIMEOUT_MESSAGE = "Die Datenbank ist gerade ausgelastet. Es wurde nichts gespeichert – bitte versuchen Sie es in einigen Minuten erneut.";
+
+/** Promise mit Zeitgrenze; Exportiert nur für Tests. */
+export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new StoreTimeoutError()), ms)))]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Prozessweite Semaphore (ein Lauf gleichzeitig). Exportiert nur für Tests. */
 let running = false;
@@ -146,7 +181,7 @@ export async function runUebernahme(deps: RunDeps, a: RunArgs): Promise<{ summar
 async function runInner(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySummary; plan: ImportPlan }> {
   // (1) lesen, Bestand laden, planen – außerhalb der Schreib-Transaktion
   const { detected, existing: first, plan } = await previewInner(deps, a.org, a.files, a.opts);
-  if (plan.conflicts.length) throw new ChoiceConflictError(choiceConflictMessage(plan.conflicts[0]));
+  if (plan.conflicts.length) throw new ChoiceConflictError(choiceConflictsMessage(plan.conflicts));
   const fingerprint = snapshotFingerprint(first);
   const stored: string[] = [];
   const bySha = new Map<string, Stored>();
@@ -155,12 +190,15 @@ async function runInner(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySumm
     // (2) PDFs vor der Transaktion ablegen (je Inhalt einmal)
     for (const d of plan.documents) {
       if (bySha.has(d.sha256)) continue;
-      const r = await deps.store(a.org, Buffer.from(d.data));
+      const r = await withTimeout(deps.store(a.org, Buffer.from(d.data)), deps.storeTimeoutMs ?? STORE_TIMEOUT_MS);
       stored.push(r.storageKey);
       bySha.set(d.sha256, r);
     }
     // (3) prüfen und schreiben – eine Transaktion, ohne Parsen/Planen
     const summary = await deps.inOrg(a.org, async (tx) => {
+      // Zeitgrenzen nur für diese Transaktion (AppSec H1): nicht unbegrenzt auf Sperren warten bzw. schreiben
+      await tx.execute(sql.raw(`set local lock_timeout = '${TX_LOCK_TIMEOUT}'`));
+      await tx.execute(sql.raw(`set local statement_timeout = '${TX_STATEMENT_TIMEOUT}'`));
       await lock(tx, a.org);
       const done = await tx
         .select({ id: s.auditLog.id })

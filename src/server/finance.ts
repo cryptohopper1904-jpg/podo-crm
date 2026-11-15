@@ -70,13 +70,14 @@ export async function financeOverview(auth: AuthContext, year: number) {
                        and (t2.treated_at at time zone 'Europe/Berlin')::date = (a.starts_at at time zone 'Europe/Berlin')::date)))
       ) x group by 1, 2`);
 
-    // „davon übernommen“ (Buchhaltung F1): Zahlungen bzw. offene Beträge von Altrechnungen aus dem Import
-    // (invoices.source ≠ 'crm') – sie stehen schon im bisherigen System und werden getrennt ausgewiesen
+    // „davon übernommen“ (Buchhaltung F1/BA): übernommene Zahlungen aus dem Excel-Import (external_ref 'excel:…', wie
+    // Kasse und Migration 0060) – sie stehen schon im bisherigen System und werden getrennt ausgewiesen. Neueingänge in
+    // PodoHero auf übernommene Altrechnungen zählen NICHT dazu. Offene Beträge: nach Herkunft der Rechnung (unten).
     const [imp] = (
       await tx.execute<{ v: number }>(sql`
         select coalesce(sum(p.amount_cents), 0)::bigint as v
-        from payments p join invoices i on i.id = p.invoice_id and i.organization_id = ${org}
-        where p.organization_id = ${org} and i.source <> 'crm'
+        from payments p
+        where p.organization_id = ${org} and coalesce(p.external_ref, '') ilike 'excel:%'
           and p.paid_at >= ${berlinToUtc(`${year}-01-01`, "00:00")} and p.paid_at < ${to}`)
     ).rows;
 

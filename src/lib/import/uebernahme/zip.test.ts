@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildZip, safeEntryPath, unzip, ZipError } from "./zip";
+import { buildZip, newZipBudget, safeEntryPath, unzip, ZipError } from "./zip";
 import { collectFiles } from "./collect";
 
 const dec = (d: Uint8Array) => new TextDecoder().decode(d);
@@ -65,7 +65,7 @@ describe("unzip (sicheres Entpacken)", () => {
   it("begrenzt die Größe je Datei und insgesamt über mehrere Archive", () => {
     const z = buildZip([{ path: "a.csv", data: "y".repeat(2000) }]);
     expect(() => unzip(z, { limits: { maxEntryBytes: 1000 } })).toThrow(/zu groß/);
-    const budget = { usedBytes: 0 };
+    const budget = newZipBudget();
     unzip(z, { limits: { maxTotalBytes: 3000 }, budget });
     expect(() => unzip(z, { limits: { maxTotalBytes: 3000 }, budget })).toThrow(/zusammen zu groß/);
   });

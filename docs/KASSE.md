@@ -56,7 +56,11 @@ keine Freigabe – ob das auf eure Praxis zutrifft, klärt bitte die Steuerberat
   Abschlusses oder an/vor einem abgeschlossenen Buchungstag (Europe/Berlin) können weder geändert noch gelöscht werden
   (DB-Trigger `payments_closing_guard`, serverseitig `assertPaymentsEditable`). Einzige erlaubte Änderung: die einmalige
   Zuordnung zum Abschluss. Neue Zahlungen von Benutzer:innen können nicht rückwirkend in einen abgeschlossenen Zeitraum
-  datiert werden; verspätete Terminal-/Webhook-Zahlungen (ohne Benutzer) und der Altdaten-Import gehen in den nächsten Abschluss.
+  datiert werden; verspätete Terminal-/Webhook-Zahlungen (ohne Benutzer) gehen in den nächsten Abschluss.
+- **Übernommene Altzahlungen** (Excel-Import, `payments.external_ref` beginnt mit `excel:`) kommen **nie** in einen
+  Abschluss – sie stehen im Kassenbuch des bisherigen Systems (Migration 0060, Filter in `loadItems`). Maßgeblich ist die
+  Herkunft der **Zahlung**: Ein Neueingang in PodoHero auf eine übernommene Altrechnung kommt normal in Kasse und Z-Bon
+  und wird in der Buchhaltung manuell gegen die alte Forderung ausgebucht. Manuelle Referenzen mit `excel:` lehnt die App ab.
 - **DSFinV-K-Export (`/kasse/export`)**: ZIP für einen Zeitraum mit `index.xml` und den Tabellen
   `cashpointclosing.csv`, `location.csv`, `cashregister.csv`, `vat.csv`, `tse.csv`, `businesscases.csv`,
   `payment.csv`, `cash_per_currency.csv`, `transactions.csv`, `transactions_vat.csv`, `datapayment.csv`, `lines.csv`,

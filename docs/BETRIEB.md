@@ -331,6 +331,16 @@ Beim Tippen in „Straße“ (z. B. `Friedrich-Herder-Str.`) schlägt die App vo
 - ⚠️ **Bestehende fiskaly-Installationen:** Nach dem Update (ab PR #81) signiert die Kasse im **Testmodus**, bis `TSE_LIVE_FREIGABE_FORDERUNGSAUFLOESUNG=1` gesetzt ist. Vor dem Update mit der Praxis/Steuerberatung abstimmen – sonst entstehen ab dem Update Kassenvorgänge ohne gültige TSE-Signatur.
 - **Beleg-Archiv:** Jeder ausgestellte Beleg und jeder Zahlungsbeleg wird als PDF verschlüsselt in `STORAGE_DIR` abgelegt (`document_archive`). Scheitert die Ablage, holt der Cron `/api/cron/reminders` sie nach (mit Backoff); bis dahin werden Download, E-Mail und Portal mit „PDF wird gerade erzeugt“ abgelehnt. Verwaiste Dateien: `scripts/archive-orphans.ts --storage-dir …` (Probelauf, `--quarantine`). Verfahrensdokumentation: `docs/compliance/BELEG-ARCHIV.md`.
 
+### Übernahme-Assistent (Einstellungen → Import)
+- **Ein Lauf je Server-Prozess gleichzeitig:** Entpacken, Parsen und Planen belegen Speicher und CPU. Eine prozessweite
+  Sperre (Semaphore in `src/lib/import/uebernahme/run.ts`) lässt Vorschau- und Import-Läufe **aller Praxen** nur
+  nacheinander zu; ein zweiter gleichzeitiger Lauf bricht sofort mit „Gerade läuft bereits eine andere Datenübernahme“ ab
+  (kein Warteschlangen-Betrieb). Bei mehreren Praxen auf einer Instanz Übernahmen daher zeitlich abstimmen.
+- Grenzen je Lauf: 30 hochgeladene Dateien, 5.000 Dateien inkl. ZIP-Einträgen (vor dem Entpacken jedes Eintrags
+  geprüft), höchstens 50 innere ZIPs, 80 MB entpackt, 40 MB Text, 100.000 Datensätze.
+- Schreib-Transaktion mit `lock_timeout` 10 s und `statement_timeout` 120 s; das Ablegen jedes Dokuments ist auf 60 s
+  begrenzt. Bei Zeitüberschreitung wird nichts gespeichert (Meldung „bitte in einigen Minuten erneut“).
+
 ---
 
 ## 9. Gekündigte Praxen endgültig löschen

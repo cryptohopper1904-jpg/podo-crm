@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { analyzeFile, isPdf, isXlsmName, isXlsxName, XLSM_NOTE } from "./detect";
 import type { DetectedFile, InputFile } from "./types";
-import { DEFAULT_ZIP_LIMITS, isZip, unzip, ZipError, type ZipLimits } from "./zip";
+import { DEFAULT_ZIP_LIMITS, isZip, newZipBudget, unzip, ZipError, type ZipLimits } from "./zip";
 
 export const MAX_UPLOAD_FILES = 30;
 export const ONE_EXCEL_NOTE = "Bitte je Lauf nur eine Excel-Datei hochladen – diese Datei wurde nicht gelesen.";
@@ -22,21 +22,22 @@ export interface RunLimits {
   /** Byte-Summe aller Textdateien (CSV/TXT), die geparst werden */
   maxTextBytes: number;
 }
-export const RUN_LIMITS: RunLimits = { maxRecords: 100_000, maxFiles: 5_000, maxTextBytes: 40 * 1024 * 1024 };
+export const RUN_LIMITS: RunLimits = { maxRecords: 100_000, maxFiles: DEFAULT_ZIP_LIMITS.maxRunEntries, maxTextBytes: 40 * 1024 * 1024 };
 
 const de = (n: number) => n.toLocaleString("de-DE");
 
 const sha = (d: Uint8Array) => createHash("sha256").update(d).digest("hex");
 
 export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits> = {}, runLimits: RunLimits = RUN_LIMITS): Promise<DetectedFile[]> {
-  const budget = { usedBytes: 0 };
+  // ein Budget über alle ZIPs des Laufs: Bytes, Einträge (gegen maxFiles, vor dem Entpacken geprüft), innere ZIPs (SB1)
+  const budget = newZipBudget();
   const flat: InputFile[] = [];
   const out: DetectedFile[] = [];
   for (const f of files) {
     const isExcel = isXlsxName(f.name) || isXlsmName(f.name);
     if (isZip(f.data) && !isExcel) {
       try {
-        const entries = unzip(f.data, { limits: { ...DEFAULT_ZIP_LIMITS, ...limits }, budget });
+        const entries = unzip(f.data, { limits: { ...DEFAULT_ZIP_LIMITS, maxRunEntries: runLimits.maxFiles, ...limits }, budget });
         if (!entries.length) {
           out.push(rejected(f, "Das ZIP enthält keine Dateien."));
           continue;

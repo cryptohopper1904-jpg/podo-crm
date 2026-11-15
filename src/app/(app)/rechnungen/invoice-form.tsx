@@ -13,7 +13,7 @@ import { findServiceByCode, normalizeServiceCode } from "@/lib/service-code";
 import { PRODUCT_IN_TREATMENT_LABEL, productVatHint, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { CREATABLE_KINDS, INVOICE_KIND_LABEL, NOTE_SMALL_BUSINESS, RECEIPT_COLLECTIVE_HINT, THERAPEUTIC_LABEL, type CreatableKind } from "@/lib/invoice-labels";
 import { depositCheckHint, depositNotYetCreditable, depositPreselected } from "@/lib/deposit-rules";
-import { euro, isEmptyLine, newLine, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
+import { euro, isEmptyLine, newLine, receiptMark, syncDepositLines, type Line, type OpenDeposit, type OpenReceipt } from "@/lib/partial-lines";
 import { createInvoiceAction, openReceiptsAction } from "./actions";
 import { newPaymentRow, PaymentsEditor, paymentsSum, paymentsToJson, type PaymentRow } from "./payments-editor";
 
@@ -237,7 +237,7 @@ export function InvoiceForm({
   /** eine Auswahlliste für Quittungen und Anzahlungen (Sammelrechnung), nach Datum */
   const partialItems = [
     ...patientDeposits.map((d) => ({ id: d.id, kind: "deposit" as const, number: d.number, issuedAt: d.issuedAt, totalCents: d.totalCents, text: depositLineText(d), warn: depositCheckHint(d, today), on: depositOn(d.id), blocked: depositBlocked(d) })),
-    ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: null as string | null, on: receiptOn(r.id), blocked: false })),
+    ...patientReceipts.map((r) => ({ id: r.id, kind: "receipt" as const, number: r.number, issuedAt: r.issuedAt, totalCents: r.totalCents, text: r.lines.map((l) => l.description).join(", "), warn: receiptMark(r), on: receiptOn(r.id), blocked: false })),
   ].sort((x, y) => (x.issuedAt ?? "").localeCompare(y.issuedAt ?? "") || (x.number ?? "").localeCompare(y.number ?? ""));
   const openAfterDeposits = totals.totalCents - creditedCents;
 

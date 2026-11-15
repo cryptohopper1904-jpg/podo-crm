@@ -22,6 +22,8 @@ import {
   vatExemptNote,
   PAYMENT_METHOD_LABEL,
   IMPORTED_LEXOFFICE_NOTE,
+  IMPORTED_PAYMENT_NOTE,
+  IMPORTED_CANCEL_NOTE,
 } from "@/lib/invoice-labels";
 import {
   creditedReceiptsBlock,
@@ -240,8 +242,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <LexofficeButton invoiceId={inv.id} />
             )
           ) : null}
-          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} /> : null}
-          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
+          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} note={imported ? IMPORTED_PAYMENT_NOTE : undefined} /> : null}
+          {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} note={imported ? IMPORTED_CANCEL_NOTE : undefined} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
             <Link href={`/kunden/${p.id}`} className="inline-flex h-11 items-center px-3 text-sm font-semibold text-primary">

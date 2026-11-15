@@ -1,6 +1,9 @@
--- Buchhaltung K1 (PR #104, Übernahme-Assistent): Übernommene Zahlungen aus dem Excel-Rechnungsmanager
--- (payments.external_ref 'excel:…', Rechnung mit invoices.source <> 'crm') kommen NIE in einen Kassenabschluss.
+-- Buchhaltung K1/BA (PR #104, Übernahme-Assistent): Übernommene Zahlungen aus dem Excel-Rechnungsmanager
+-- (payments.external_ref 'excel:…', Groß-/Kleinschreibung egal) kommen NIE in einen Kassenabschluss.
 -- Sie stehen im Kassenbuch des bisherigen Systems; ein Z-Bon/DSFinV-K-Export mit ihnen wäre eine Doppelerfassung.
+-- Maßgeblich ist die Herkunft der ZAHLUNG, nicht der Rechnung: Ein Neueingang in PodoHero auf eine übernommene
+-- Altrechnung (z. B. Barzahlung am Tresen) gehört in die PodoHero-Kasse und damit in den nächsten Z-Bon.
+-- Manuelle Referenzen mit „excel:“ lehnt die App ab (src/server/invoices.ts, applyPayments).
 -- Korrigiert die Aussage aus 0017 („der Altdaten-Import … geht in den nächsten Abschluss“). Die App filtert sie seit
 -- diesem Stand (src/server/kasse.ts, loadItems); der Trigger verhindert zusätzlich jede Zuordnung zu einem Abschluss.
 -- Bestehende Abschlüsse, Zuordnungen und die Hash-Kette bleiben unverändert (nur neue Zuordnungen werden geprüft).
@@ -38,8 +41,7 @@ BEGIN
       RAISE EXCEPTION 'Zahlungen eines abgeschlossenen Kassentags sind unveränderbar.' USING ERRCODE = 'P0001';
     END IF;
     -- übernommene Altzahlungen (Import) nie einem Abschluss zuordnen
-    IF COALESCE(NEW.external_ref, '') LIKE 'excel:%'
-       OR EXISTS (SELECT 1 FROM invoices i WHERE i.id = NEW.invoice_id AND i.source <> 'crm') THEN
+    IF COALESCE(NEW.external_ref, '') ILIKE 'excel:%' THEN
       RAISE EXCEPTION 'Übernommene Zahlungen (Import) kommen in keinen Kassenabschluss.' USING ERRCODE = 'P0001';
     END IF;
     SELECT organization_id, closed_at INTO c_org, c_at FROM cash_closings WHERE id = NEW.cash_closing_id;
@@ -55,4 +57,4 @@ BEGIN
 END $$;
 --> statement-breakpoint
 COMMENT ON FUNCTION podo_payment_closing_guard() IS
-  'Kassensperre für payments: keine Rückdatierung in abgeschlossene Zeiträume (außer Provider-Webhooks und Altdaten-Import excel:…), abgeschlossene Zahlungen unveränderbar. Übernommene Altzahlungen (external_ref excel:… bzw. Rechnung mit source <> crm) kommen nie in einen Kassenabschluss (Migration 0060, korrigiert 0017).';
+  'Kassensperre für payments: keine Rückdatierung in abgeschlossene Zeiträume (außer Provider-Webhooks und Altdaten-Import excel:…), abgeschlossene Zahlungen unveränderbar. Übernommene Altzahlungen (external_ref excel:…, Herkunft der Zahlung) kommen nie in einen Kassenabschluss; Neueingänge auf übernommene Altrechnungen schon (Migration 0060, korrigiert 0017).';

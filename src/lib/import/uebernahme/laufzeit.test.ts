@@ -2,7 +2,9 @@
  * AppSec Runde 2 A-B1 (Blocker): quadratische Laufzeit bei vielen gleichnamigen Zeilen. Regressionstest mit 50.000
  * gleichnamigen Tinana-Patient:innen (zwei Standort-Exporte à 25.000, gleiche Person, verschiedene IDs), dazu
  * 20.000 gleichnamige Doctolib-Zeilen ohne ID, 40.000 gleiche Verordnungszeilen und 5.000 gleichnamige Bestandspersonen.
- * Erkennen, Parsen und Planen müssen deutlich unter 5 s bleiben. Ausschließlich erfundene Daten.
+ * Code-Review Runde 3 CS1: relative Prüfung statt fester Grenze (CI-Rechner sind unterschiedlich schnell) – ein Viertel
+ * der Datenmenge (12.500 Tinana-Zeilen) gegen die volle (50.000): linear ≈ Faktor 4, quadratisch ≈ 16; verlangt wird
+ * ein Verhältnis < 8. Dazu eine absolute Rückfallgrenze von 20 s und eine Aufwärmrunde (JIT). Ausschließlich erfundene Daten.
  */
 import { describe, expect, it } from "vitest";
 import { writeDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
@@ -50,24 +52,39 @@ function existingSnapshot(n: number): ExistingSnapshot {
   return { patients, appointmentRefs: new Set(), prescriptionRefs: new Set(), documentHashes: new Set(), therapists: [], locations: [], services: [] };
 }
 
-describe("A-B1: lineare Laufzeit bei vielen gleichnamigen Zeilen", () => {
-  it("50.000 gleichnamige Tinana-Zeilen + 20.000 Doctolib-Zeilen + 40.000 Verordnungszeilen gegen 5.000 Bestandspersonen < 5 s", async () => {
-    const doctolib = writeDoctolibPatientsCsv(Array.from({ length: 20_000 }, () => ({ lastName: "Musterfrau", firstName: "Erika", email: "erika@example.invalid" })), { delimiter: ",", bom: false });
-    const files = [
-      { name: "patients_export_2026-01-15.csv", data: enc(tinanaPatients(0, 25_000)) },
-      { name: "standort2/patients_export_2026-01-15.csv", data: enc(tinanaPatients(25_000, 25_000)) },
-      { name: "doctolib.csv", data: enc(doctolib) },
-      { name: "prescriptions_export_2026-01-15.csv", data: enc(prescriptions(40_000)) },
-    ];
-    const existing = existingSnapshot(5_000);
-    const t0 = performance.now();
-    const detected = await collectFiles(files);
-    console.info(`[A-B1] collect: ${Math.round(performance.now() - t0)} ms`);
-    const plan = buildPlan(detected, existing, { prescriptionMode: "billed", now: NOW });
-    const ms = performance.now() - t0;
-    console.info(`[A-B1] Erkennen + Parsen + Planen: ${Math.round(ms)} ms`);
-    expect(ms).toBeLessThan(5_000);
+/** Upload und Bestand in der Größe `scale` (1 = 50.000 Tinana-, 20.000 Doctolib-, 40.000 Verordnungszeilen, 5.000 Bestand) */
+function scenario(scale: number) {
+  const n = (x: number) => Math.round(x * scale);
+  const doctolib = writeDoctolibPatientsCsv(Array.from({ length: n(20_000) }, () => ({ lastName: "Musterfrau", firstName: "Erika", email: "erika@example.invalid" })), { delimiter: ",", bom: false });
+  const files = [
+    { name: "patients_export_2026-01-15.csv", data: enc(tinanaPatients(0, n(25_000))) },
+    { name: "standort2/patients_export_2026-01-15.csv", data: enc(tinanaPatients(n(25_000), n(25_000))) },
+    { name: "doctolib.csv", data: enc(doctolib) },
+    { name: "prescriptions_export_2026-01-15.csv", data: enc(prescriptions(n(40_000))) },
+  ];
+  return { files, existing: existingSnapshot(n(5_000)) };
+}
 
+/** Erkennen + Parsen + Planen, Dauer in ms */
+async function measure(scale: number) {
+  const { files, existing } = scenario(scale);
+  const t0 = performance.now();
+  const detected = await collectFiles(files);
+  const plan = buildPlan(detected, existing, { prescriptionMode: "billed", now: NOW });
+  return { ms: performance.now() - t0, detected, plan };
+}
+
+describe("A-B1: lineare Laufzeit bei vielen gleichnamigen Zeilen", () => {
+  it("12.500 vs. 50.000 gleichnamige Tinana-Zeilen (+ Doctolib, Verordnungen, Bestand): Verhältnis < 8, absolut < 20 s", async () => {
+    await measure(0.05); // Aufwärmrunde
+    const quarter = await measure(0.25);
+    const full = await measure(1);
+    const ratio = full.ms / quarter.ms;
+    console.info(`[A-B1] 12.500 Zeilen: ${Math.round(quarter.ms)} ms, 50.000 Zeilen: ${Math.round(full.ms)} ms, Verhältnis ${ratio.toFixed(2)}`);
+    expect(ratio).toBeLessThan(8);
+    expect(full.ms).toBeLessThan(20_000);
+
+    const { detected, plan } = full;
     expect(detected.map((d) => d.status)).toEqual(["import", "import", "import", "import"]);
     // Tinana: 50.000 verschiedene IDs, jede wird angelegt bzw. verknüpft – Kandidaten je Entscheidung begrenzt
     expect(plan.totals.patientsNew + plan.totals.patientsLinked).toBeGreaterThanOrEqual(50_000);
@@ -77,5 +94,5 @@ describe("A-B1: lineare Laufzeit bei vielen gleichnamigen Zeilen", () => {
     // Hinweis zu Upload-Dubletten nennt höchstens 10 Personen
     const dup = plan.warnings.find((w) => w.message.startsWith("Mögliche Dublette im Upload (Name + Geburtsdatum)"))!;
     expect(dup.message).toMatch(/und \d+ weitere/);
-  }, 30_000);
+  }, 90_000);
 });

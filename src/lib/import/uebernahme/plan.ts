@@ -147,6 +147,13 @@ export interface ChoiceConflict {
   number: number | null;
 }
 export const choiceConflictMessage = (c: ChoiceConflict) => `Nr. ${c.number ?? "?"} kann nur einmal verknüpft werden, bitte erneut prüfen.`;
+/** Alle Konflikte in einer Meldung (Code-Review Runde 3: ChoiceConflictError nennt alle Nummern) */
+export function choiceConflictsMessage(list: ChoiceConflict[]): string {
+  if (list.length <= 1) return list.length ? choiceConflictMessage(list[0]) : "";
+  const nums = [...new Set(list.map((c) => (c.number === null ? "?" : String(c.number))))];
+  const named = nums.length > 1 ? `${nums.slice(0, -1).join(", ")} und ${nums[nums.length - 1]}` : nums[0];
+  return `Nr. ${named} können jeweils nur einmal verknüpft werden, bitte erneut prüfen.`;
+}
 
 export interface FileSummary {
   name: string;
@@ -820,6 +827,21 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       return p.legacyId === null && !!pk && ((byPerson.get(pk) ?? []).length > 0 || !!uploadByPerson.get(pk)?.size);
     }).length;
     if (erasedExcel) warnings.push({ message: `Excel: ${plural(erasedExcel, "Person", "Personen")} mit gelöschten Kontaktdaten (Art. 17 DSGVO) – gelöscht, nicht übernommen.` });
+    // Excel-Zeile MIT Legacy-ID und gleichnamige Neuanlage aus Tinana/Doctolib in diesem Lauf: beide werden angelegt
+    // (die ID hat Vorrang vor dem Namensabgleich) – Hinweis, damit die Praxis die Personen danach prüft
+    const twins: string[] = [];
+    for (const p of excel.patients) {
+      if (p.legacyId === null || known.has(String(p.legacyId))) continue;
+      const pk = personKey(p.firstName, p.lastName, p.birthDate);
+      if (!pk || erasedPersons.has(pk)) continue;
+      if ([...(uploadByPerson.get(pk)?.values() ?? [])].some((r) => "ref" in r)) twins.push(`${pseudonym(p.firstName, p.lastName, p.birthDate)} (ID ${p.legacyId})`);
+    }
+    if (twins.length) {
+      const shown = twins.slice(0, 10).join(", ") + (twins.length > 10 ? ` und ${twins.length - 10} weitere` : "");
+      warnings.push({
+        message: `Excel: ${shown} – gleiche Person (Name + Geburtsdatum) wird in diesem Lauf auch aus Tinana bzw. Doctolib neu angelegt. Beide Einträge werden übernommen; bitte prüfen Sie diese Personen nach der Übernahme und führen Sie Doppelte zusammen.`,
+      });
+    }
     totals.excel = {
       patientsNew: excel.patients.length - already,
       patientsExisting: already,

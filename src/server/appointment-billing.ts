@@ -8,6 +8,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, dateDe, fullName } from "@/lib/format";
 import { estimateCents, type UnbilledLine } from "@/lib/year-end";
+import { IMPORTED_APPOINTMENT_NOT_BILLABLE } from "@/lib/invoice-labels";
 import { openDepositsFor, openReceiptsFor } from "./invoices";
 
 /**
@@ -29,8 +30,7 @@ type Svc = { appointmentId: string; serviceId: string; name: string; priceCents:
 const BILLED_STATUS_EXCLUDED = ["cancelled", "draft"] as const;
 
 /** Rechnung/Quittung zu einem übernommenen Termin (Quelle „import“) – gesperrt (Code-Review Runde 2 S1) */
-export const IMPORTED_APPOINTMENT_NOT_BILLABLE =
-  "Übernommener Termin (Import) – er wurde in Ihrer bisherigen Software abgerechnet. Eine Rechnung oder Quittung dazu ist hier nicht möglich.";
+export { IMPORTED_APPOINTMENT_NOT_BILLABLE };
 
 async function servicesOf(tx: Tx, org: string, apptIds: string[]) {
   const rows = apptIds.length

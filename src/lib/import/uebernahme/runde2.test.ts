@@ -46,11 +46,17 @@ describe("A-B1: Gesamtgrenzen je Lauf und ein Lauf gleichzeitig", () => {
     expect(recs.map((d) => d.status)).toEqual(["import", "rejected"]);
     expect(recs[1].note).toMatch(/Zu viele Datensätze in einem Lauf \(mehr als 5\)/);
     expect(recs[1].tinanaPatients).toBeUndefined();
-    // Dateien (auch ZIP-Einträge): Rest wird nicht gelesen
+    // Dateien: ein ZIP mit mehr Einträgen als erlaubt wird schon beim Entpacken abgelehnt (Runde 3 SB1) …
     const zip = buildZip(Array.from({ length: 6 }, (_, i) => ({ path: `p${i}.csv`, data: enc(`${TINANA_HEADER}\n${tinanaRow(`z${i}`)}`) })));
     const many = await collectFiles([{ name: "export.zip", data: zip }], {}, { maxRecords: 100, maxFiles: 4, maxTextBytes: 1e9 });
-    expect(many.filter((d) => d.status === "import")).toHaveLength(4);
-    expect(many.find((d) => d.name === "weitere 2 Dateien")?.note).toMatch(/Zu viele Dateien in einem Lauf \(mehr als 4\)/);
+    expect(many).toHaveLength(1);
+    expect(many[0]).toMatchObject({ status: "rejected", label: "ZIP-Archiv" });
+    expect(many[0].note).toMatch(/Zu viele Dateien in einem Lauf \(mehr als 4\) – das ZIP wurde nicht gelesen/);
+    // … ZIP-Einträge plus einzelne Dateien darüber: Rest wird nicht gelesen
+    const small = buildZip(Array.from({ length: 3 }, (_, i) => ({ path: `p${i}.csv`, data: enc(`${TINANA_HEADER}\n${tinanaRow(`y${i}`)}`) })));
+    const mixed = await collectFiles([{ name: "export.zip", data: small }, file("e", 1), file("f", 1)], {}, { maxRecords: 100, maxFiles: 4, maxTextBytes: 1e9 });
+    expect(mixed.filter((d) => d.status === "import")).toHaveLength(4);
+    expect(mixed.find((d) => d.name === "weitere 1 Dateien")?.note).toMatch(/Zu viele Dateien in einem Lauf \(mehr als 4\)/);
     // Byte-Summe aller Textdateien
     const bytes = await collectFiles([file("c", 2), file("d", 2)], {}, { maxRecords: 100, maxFiles: 100, maxTextBytes: file("c", 2).data.length + 10 });
     expect(bytes.map((d) => d.status)).toEqual(["import", "rejected"]);

@@ -8,7 +8,7 @@ import { denyAccess, requestMeta, requireAuth } from "@/lib/auth/session";
 import { MAX_UPLOAD_FILES } from "@/lib/import/uebernahme/collect";
 import type { ApplySummary } from "@/lib/import/uebernahme/persist";
 import { toPreview, uebernahmeLimiter, type UebernahmePreview } from "@/lib/import/uebernahme/preview-safety";
-import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, TokenUsedError } from "@/lib/import/uebernahme/run";
+import { ChoiceConflictError, DB_TIMEOUT_MESSAGE, ImportBusyError, isDbTimeout, previewUebernahme, runUebernahme, StaleSnapshotError, StoreTimeoutError, TokenUsedError } from "@/lib/import/uebernahme/run";
 import type { InputFile, PrescriptionMode } from "@/lib/import/uebernahme/types";
 import { canonicalPreviewToken, signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
 import { discardStored, storeEncrypted } from "@/lib/storage";
@@ -115,7 +115,8 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
     ));
   } catch (e) {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.uebernahme.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
-    if (e instanceof ImportBusyError || e instanceof TokenUsedError || e instanceof StaleSnapshotError || e instanceof ChoiceConflictError) return { error: e.message };
+    if (e instanceof ImportBusyError || e instanceof TokenUsedError || e instanceof StaleSnapshotError || e instanceof ChoiceConflictError || e instanceof StoreTimeoutError) return { error: e.message };
+    if (isDbTimeout(e)) return { error: DB_TIMEOUT_MESSAGE };
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     console.error("[import.uebernahme]", e instanceof Error ? e.message : e);
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };

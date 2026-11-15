@@ -7,7 +7,10 @@
  *    angegebene Größe und CRC-32 müssen exakt zur entpackten Datei passen
  *  - Pfade: keine absoluten Pfade, keine „..“-Segmente, keine Laufwerksbuchstaben, keine Steuerzeichen
  *    (wir schreiben nichts auf die Platte, lehnen solche Archive aber trotzdem ab – sie sind nie ein echter Export)
- *  - Verschachtelte ZIPs nur eine Ebene tief; verschlüsselte Einträge, ZIP64 und unbekannte Kompression werden abgelehnt
+ *  - Verschachtelte ZIPs nur eine Ebene tief, höchstens 50 innere ZIPs je Lauf; verschlüsselte Einträge, ZIP64 und
+ *    unbekannte Kompression werden abgelehnt
+ *  - Einträge über alle Archive eines Laufs gezählt und VOR dem Entpacken jedes Eintrags gegen die Lauf-Grenze geprüft
+ *    (AppSec Runde 3 SB1: sonst 120 innere ZIPs × 2.000 Einträge = 240.000 Entpack-Vorgänge vor jeder Grenze)
  */
 import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 
@@ -22,6 +25,10 @@ export interface ZipLimits {
   maxRatio: number;
   /** wie tief ZIPs in ZIPs entpackt werden (1 = ZIP im ZIP erlaubt, darin kein weiteres) */
   maxDepth: number;
+  /** höchstens so viele Einträge über alle Archive eines Laufs (= RUN_LIMITS.maxFiles, collect.ts) */
+  maxRunEntries: number;
+  /** höchstens so viele innere ZIPs über alle Archive eines Laufs */
+  maxInnerZips: number;
 }
 
 export const DEFAULT_ZIP_LIMITS: ZipLimits = {
@@ -32,6 +39,8 @@ export const DEFAULT_ZIP_LIMITS: ZipLimits = {
   maxTotalBytes: 80 * 1024 * 1024,
   maxRatio: 200,
   maxDepth: 1,
+  maxRunEntries: 5_000,
+  maxInnerZips: 50,
 };
 
 export class ZipError extends Error {
@@ -49,10 +58,20 @@ export interface ZipEntry {
   data: Uint8Array;
 }
 
-/** Budget über alle Archive eines Uploads (Gesamtgröße entpackt). */
+/** Budget über alle Archive eines Uploads: Gesamtgröße entpackt, Einträge, innere ZIPs. */
 export interface ZipBudget {
   usedBytes: number;
+  /** gezählte Einträge (Dateien inkl. innerer ZIPs) */
+  entries: number;
+  /** entpackte innere ZIPs */
+  innerZips: number;
 }
+
+export const newZipBudget = (): ZipBudget => ({ usedBytes: 0, entries: 0, innerZips: 0 });
+
+const deInt = (n: number) => n.toLocaleString("de-DE");
+const tooManyFiles = (max: number) =>
+  new ZipError(`Zu viele Dateien in einem Lauf (mehr als ${deInt(max)}) – das ZIP wurde nicht gelesen. Bitte in mehreren Durchgängen hochladen.`);
 
 export function isZip(data: Uint8Array): boolean {
   return data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b && (data[2] === 0x03 || data[2] === 0x05) && (data[3] === 0x04 || data[3] === 0x06);
@@ -93,7 +112,7 @@ function ignored(path: string): boolean {
  */
 export function unzip(data: Uint8Array, opts: { limits?: Partial<ZipLimits>; budget?: ZipBudget; depth?: number } = {}): ZipEntry[] {
   const limits = { ...DEFAULT_ZIP_LIMITS, ...opts.limits };
-  const budget = opts.budget ?? { usedBytes: 0 };
+  const budget = opts.budget ?? newZipBudget();
   const depth = opts.depth ?? 0;
   const b = data;
   const eocd = findEocd(b);
@@ -125,6 +144,9 @@ export function unzip(data: Uint8Array, opts: { limits?: Partial<ZipLimits>; bud
 
     const path = safeEntryPath(rawName);
     if (ignored(path)) continue;
+    // Lauf-Grenze VOR dem Entpacken prüfen (SB1)
+    if (budget.entries + 1 > limits.maxRunEntries) throw tooManyFiles(limits.maxRunEntries);
+    budget.entries++;
     if (flags & 0x1) throw new ZipError(`„${path}“ ist verschlüsselt – bitte ohne Passwort exportieren.`);
     if (compSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff) throw new ZipError("ZIP64-Archive werden nicht unterstützt.");
     if (method !== 0 && method !== 8) throw new ZipError(`„${path}“ ist mit einem nicht unterstützten Verfahren gepackt.`);
@@ -154,6 +176,8 @@ export function unzip(data: Uint8Array, opts: { limits?: Partial<ZipLimits>; bud
 
     if (isZip(content) && /\.zip$/i.test(path)) {
       if (depth + 1 > limits.maxDepth) throw new ZipError(`„${path}“: ZIP-Dateien sind höchstens eine Ebene tief verschachtelt erlaubt.`);
+      if (budget.innerZips + 1 > limits.maxInnerZips) throw new ZipError(`Zu viele ZIP-Dateien im ZIP (mehr als ${limits.maxInnerZips} je Lauf) – bitte die Exporte direkt hochladen.`);
+      budget.innerZips++;
       for (const inner of unzip(content, { limits, budget, depth: depth + 1 })) out.push({ ...inner, path: `${path}/${inner.path}` });
       continue;
     }

@@ -185,6 +185,9 @@ function* dataRows(ws: ExcelJS.Worksheet, headerRow: number): Generator<ExcelJS.
   for (let r = headerRow + 1; r <= ws.rowCount; r++) yield ws.getRow(r);
 }
 
+/** größte übernommene Patienten-ID (= Patientennummer); größere gelten als „ohne ID“ */
+export const MAX_LEGACY_PATIENT_ID = 9_999_999;
+
 const toInt = (v: Primitive): number | null => {
   const n = toNumber(v);
   return n === null ? null : Math.round(n);
@@ -268,8 +271,12 @@ function parsePatients(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     if (v.birthDate !== null && !birthDate) ctx.warn(sheet, row.number, `Geburtsdatum nicht lesbar („${asString(v.birthDate)}“).`);
     const email = asString(v.email)?.toLowerCase() ?? null;
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ctx.warn(sheet, row.number, `E-Mail-Adresse wirkt ungültig („${email}“).`);
-    const legacyId = toInt(v.id);
-    if (legacyId === null) ctx.warn(sheet, row.number, "ID fehlt – neue Patientennummer wird vergeben.");
+    const rawId = toInt(v.id);
+    // unplausibel große IDs würden die Patientennummern dahinter verschieben (Nummer = ID) – wie „ohne ID“ behandeln
+    const legacyId = rawId !== null && rawId > MAX_LEGACY_PATIENT_ID ? null : rawId;
+    if (rawId !== null && legacyId === null) {
+      ctx.warn(sheet, row.number, `ID ${rawId} ist zu groß (höchstens ${MAX_LEGACY_PATIENT_ID.toLocaleString("de-DE")}) – wird ohne ID übernommen, neue Patientennummer wird vergeben.`);
+    } else if (legacyId === null) ctx.warn(sheet, row.number, "ID fehlt – neue Patientennummer wird vergeben.");
     out.push({
       row: row.number,
       legacyId,

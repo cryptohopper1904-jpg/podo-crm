@@ -15,7 +15,7 @@ import { applyPlan, loadExisting } from "./persist";
 import { buildPlan } from "./plan";
 import { tinanaUpload } from "./plan.test";
 import { writeDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
-import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, TokenUsedError, type RunDeps } from "./run";
+import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, StoreTimeoutError, TokenUsedError, type RunDeps } from "./run";
 import { persistImport } from "../excel/persist";
 import { parseWorkbook } from "../excel/parse";
 import { readFileSync } from "node:fs";
@@ -378,5 +378,85 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
     expect(row.status).toBe(inv.status);
     const pays = await inOrg(r2.org, (tx) => tx.select().from(s.payments).where(eq(s.payments.invoiceId, row.id)));
     expect(pays).toEqual([]);
+  });
+  // ───────────── Review Runde 3 ─────────────
+  it("AppSec H1: Schreib-Transaktion mit lock_timeout 10 s und statement_timeout 120 s (nur dort, SET LOCAL)", async () => {
+    const t = await practice("h1");
+    const seen: { lock: string; stmt: string }[] = [];
+    const probing: RunDeps["inOrg"] = (org, fn) =>
+      inOrg(org, async (tx) => {
+        const r = await fn(tx as never);
+        const lock = (await tx.execute<{ lock_timeout: string }>(sql`show lock_timeout`)).rows[0].lock_timeout;
+        const stmt = (await tx.execute<{ statement_timeout: string }>(sql`show statement_timeout`)).rows[0].statement_timeout;
+        seen.push({ lock, stmt });
+        return r;
+      });
+    const { d } = deps({ inOrg: probing });
+    await runUebernahme(d, { org: t.org, userId: t.user, files: rawUpload(), opts, tokenHash: `h1-${stamp}`, auditMeta: {} });
+    // (1) Bestand laden: Standard; (3) Schreiben: begrenzt
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toEqual({ lock: "0", stmt: "0" });
+    expect(seen[1]).toEqual({ lock: "10s", stmt: "2min" });
+    // SET LOCAL: die nächste Transaktion hat wieder den Standard
+    const after = await inOrg(t.org, async (tx) => (await tx.execute<{ lock_timeout: string }>(sql`show lock_timeout`)).rows[0].lock_timeout);
+    expect(after).toBe("0");
+  });
+
+  it("AppSec H1: hängende Dokument-Ablage bricht nach der Zeitgrenze ab, nichts gespeichert", async () => {
+    const t = await practice("h1s");
+    const { d } = deps({ store: () => new Promise(() => {}), storeTimeoutMs: 50 });
+    await expect(runUebernahme(d, { org: t.org, userId: t.user, files: rawUpload(), opts, tokenHash: `h1s-${stamp}`, auditMeta: {} })).rejects.toBeInstanceOf(StoreTimeoutError);
+    expect(await counts(t.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
+  });
+
+  it("AppSec H3: Person zwischen Planung und Schreiben gelöscht (Art. 17) – keine Verknüpfung, keine Termine/Verordnungen", async () => {
+    const t = await practice("h3");
+    const [old] = await inOrg(t.org, (tx) =>
+      tx.insert(s.patients).values({ organizationId: t.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self" }).returning(),
+    );
+    const files = await tinanaUpload();
+    const r = await inOrg(t.org, async (tx) => {
+      const existing = await loadExisting(tx as never, t.org, []);
+      const plan = buildPlan(files, existing, { prescriptionMode: "active", now: new Date("2026-01-13T08:00:00Z") });
+      expect(plan.patientsLink.map((l) => l.patientId)).toContain(old.id);
+      expect(plan.appointments.some((a) => "existingId" in a.patient && a.patient.existingId === old.id) || plan.prescriptions.some((p) => "existingId" in p.patient && p.patient.existingId === old.id)).toBe(true);
+      // Löschung nach der Planung (an der Fingerabdruck-Prüfung vorbei: applyPlan direkt)
+      await tx.update(s.patients).set({ contactErasedAt: new Date() }).where(eq(s.patients.id, old.id));
+      return applyPlan(tx as never, t.org, t.user, plan, (d) => storeEncrypted(t.org, d));
+    });
+    expect(r.patientsLinked).toBe(0);
+    const [after] = await inOrg(t.org, (tx) => tx.select().from(s.patients).where(eq(s.patients.id, old.id)));
+    expect(after.externalIds).toEqual({});
+    const appts = await inOrg(t.org, (tx) => tx.select().from(s.appointments).where(eq(s.appointments.patientId, old.id)));
+    const rx = await inOrg(t.org, (tx) => tx.select().from(s.prescriptions).where(eq(s.prescriptions.patientId, old.id)));
+    const media = await inOrg(t.org, (tx) => tx.select().from(s.media).where(eq(s.media.patientId, old.id)));
+    expect([appts, rx, media]).toEqual([[], [], []]);
+  });
+
+  it("Code-Review Runde 3: ChoiceConflictError nennt alle doppelt gewählten Nummern", async () => {
+    const k = await practice("k3");
+    const [a, b] = await inOrg(k.org, (tx) =>
+      tx
+        .insert(s.patients)
+        .values([
+          { organizationId: k.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self" },
+          { organizationId: k.org, number: 2, firstName: "Max", lastName: "Mustermann", birthDate: "1948-02-01", insuranceType: "self" },
+        ])
+        .returning(),
+    );
+    const H = "patienten_id;anrede;titel;vorname;nachname;geschlecht;geburtsdatum;strasse;hausnummer;plz;stadt;standort;email;telefon_1_label;telefon_1;telefon_2_label;telefon_2;notiz;vip;versicherungstyp;erstellt_am";
+    const csv = [
+      H,
+      "t-1;Frau;;Erika;Musterfrau;;03.04.1950;;;;;;;;;;;;Nein;GKV;",
+      "t-2;Frau;;Erika;Musterfrau;;03.04.1950;;;;;;;;;;;;Nein;GKV;",
+      "t-3;Herr;;Max;Mustermann;;01.02.1948;;;;;;;;;;;;Nein;GKV;",
+      "t-4;Herr;;Max;Mustermann;;01.02.1948;;;;;;;;;;;;Nein;GKV;",
+    ].join("\n");
+    const { d } = deps();
+    const choices = { "tinana:t-1": a.id, "tinana:t-2": a.id, "tinana:t-3": b.id, "tinana:t-4": b.id };
+    await expect(
+      runUebernahme(d, { org: k.org, userId: k.user, files: [{ name: "patients_export_2026-01-15.csv", data: new TextEncoder().encode(csv) }], opts: { ...opts, choices }, tokenHash: `k3-${stamp}`, auditMeta: {} }),
+    ).rejects.toThrow(new ChoiceConflictError("Nr. 1 und 2 können jeweils nur einmal verknüpft werden, bitte erneut prüfen."));
+    expect((await counts(k.org)).patients).toBe(2);
   });
 });

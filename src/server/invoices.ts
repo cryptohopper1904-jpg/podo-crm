@@ -47,7 +47,7 @@ import {
   vatPortion,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, IMPORTED_APPOINTMENT_NOT_BILLABLE, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 import { buildInvoiceSnapshot, readInvoiceSnapshot, smallBusinessNoteFor, withSnapshot } from "@/lib/invoice-snapshot";
@@ -296,10 +296,13 @@ async function applyPayments(
     }
     let externalRef = p.externalRef ?? null;
     // TSE-Kurzreferenzen vergibt nur der Server (sonst ließe sich eine Signatur vortäuschen); „sumup:“ nur der
-    // SumUp-Webhook (sonst ließe sich eine Anbieterzahlung vortäuschen bzw. eine echte später als Dublette ablehnen)
+    // SumUp-Webhook (sonst ließe sich eine Anbieterzahlung vortäuschen bzw. eine echte später als Dublette ablehnen);
+    // „excel:“ nur der Import (sonst ließe sich eine Kassenzahlung am Abschluss vorbeischleusen)
     const refLower = externalRef?.trim().toLowerCase() ?? "";
     if (refLower.startsWith("tse:")) throw new InvoiceError("Die Referenz darf nicht mit „tse:“ beginnen.");
     if (refLower.startsWith("sumup:")) throw new InvoiceError("Die Referenz darf nicht mit „sumup:“ beginnen.");
+    // „excel:“ kennzeichnet übernommene Altzahlungen (Import) – sie kommen nie in die Kasse (Migration 0060, Buchhaltung BB)
+    if (refLower.startsWith("excel:")) throw new InvoiceError("Die Referenz darf nicht mit „excel:“ beginnen.");
     let signed: SignedPayment | null = null;
     if (needsSignature(p.method)) {
       signed = await signPayment(inv, p.method, p.amountCents, vatGroups);
@@ -365,13 +368,16 @@ async function assertNotInvoiced(
   }
   const appts = appointmentIds.length
     ? await tx
-        .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, careHomeId: patients.careHomeId })
+        .select({ id: appointments.id, patientId: appointments.patientId, startsAt: appointments.startsAt, source: appointments.source, careHomeId: patients.careHomeId })
         .from(appointments)
         .leftJoin(patients, eq(patients.id, appointments.patientId))
         .where(and(eq(appointments.organizationId, org), inArray(appointments.id, appointmentIds)))
     : [];
   if (appts.length !== appointmentIds.length) throw new InvoiceError("Termin zur Position nicht gefunden.");
   for (const a of appts) {
+    // übernommener Termin (Übernahme-Assistent): in der bisherigen Software abgerechnet – verbindlich, auch bei
+    // manipulierter appointmentId im Formular (Code-Review Runde 3 CS2)
+    if (a.source === "import") throw new InvoiceError(IMPORTED_APPOINTMENT_NOT_BILLABLE);
     if (!belongs(a.patientId, a.careHomeId)) throw new InvoiceError(`Der Termin vom ${dateDe(a.startsAt)} gehört nicht zu diesem Rechnungsempfänger.`);
   }
   // Termin ↔ Doku-Eintrag: beide Richtungen einbeziehen
@@ -516,6 +522,8 @@ export async function openReceiptsFor(tx: Tx, org: string, patientId: string, ye
       serviceDate: invoices.serviceDate,
       serviceDateTo: invoices.serviceDateTo,
       serviceDateFixed: invoices.serviceDateFixed,
+      /** Herkunft: übernommene Quittungen (Import) werden in der Auswahl als „Altbestand“ gekennzeichnet (Buchhaltung BC) */
+      source: invoices.source,
     })
     .from(invoices)
     .where(
