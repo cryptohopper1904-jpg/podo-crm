@@ -29,13 +29,20 @@ function int(v: string | null): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
 }
 
-/** Normalisierung für Namensvergleiche (Groß/Klein, Akzente, ß, Leerzeichen). */
+/**
+ * Normalisierung für Namensvergleiche: Groß/Klein, Umlaute wie ihre Umschreibung (Müller = Mueller), ß = ss, Akzente,
+ * Bindestriche wie Leerzeichen (Anna-Maria = Anna Maria), mehrfache Leerzeichen.
+ */
 export function normName(s: string | null | undefined): string {
   return (s ?? "")
     .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
     .replace(/ß/g, "ss")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[-‐‑‒–—]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -47,7 +54,7 @@ function salutationOf(v: string | null): TinanaPatient["salutation"] {
 }
 function genderOf(v: string | null): TinanaPatient["gender"] {
   const s = normName(v);
-  return s.startsWith("weib") ? "female" : s.startsWith("mann") ? "male" : s === "divers" ? "diverse" : null;
+  return s.startsWith("weib") ? "female" : s.startsWith("maenn") || s.startsWith("mann") ? "male" : s === "divers" ? "diverse" : null;
 }
 function insuranceOf(v: string | null): TinanaPatient["insuranceType"] {
   const s = normName(v);
@@ -75,7 +82,7 @@ export function parseTinanaPatients(text: string, file?: string): { patients: Ti
     }
     const birthRaw = v("geburtsdatum");
     const birthDate = parseDateLoose(birthRaw);
-    if (birthRaw && !birthDate) issues.push({ file, row: r.row, message: `Geburtsdatum „${birthRaw}“ nicht lesbar – leer übernommen.` });
+    if (birthRaw && !birthDate) issues.push({ file, row: r.row, message: "Geburtsdatum nicht lesbar – leer übernommen." });
     let phoneMobile: string | null = null;
     let phoneLandline: string | null = null;
     const otherPhones: string[] = [];
@@ -89,7 +96,7 @@ export function parseTinanaPatients(text: string, file?: string): { patients: Ti
       else otherPhones.push(`${v(`telefon_${n}_label`) ?? "Telefon"}: ${num}`);
     }
     const email = v("email")?.toLowerCase() ?? null;
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push({ file, row: r.row, message: `E-Mail „${email}“ ungültig – nicht übernommen.` });
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) issues.push({ file, row: r.row, message: "E-Mail-Adresse ungültig – nicht übernommen." });
     const insuranceRaw = v("versicherungstyp");
     patients.push({
       row: r.row,
@@ -181,42 +188,46 @@ export function mapAppointmentStatus(raw: string, startsAt: string, now: Date): 
 }
 
 // ───────────── Verordnungen ─────────────
-const GROUP_KEYS = [
-  "patient_vorname",
-  "patient_nachname",
-  "patient_geburtsdatum",
-  "versichertennummer",
-  "ausstelldatum",
-  "arzt_titel",
-  "arzt_vorname",
-  "arzt_nachname",
-  "diagnosegruppe",
-  "icd10_codes",
-  "erstellt_am",
-];
+/**
+ * Gruppenschlüssel einer Verordnung (Tinana exportiert keine ID): aus GEPARSTEN Werten, damit dieselbe Datei nach dem
+ * Öffnen und Speichern in Excel (TT.MM.JJ statt TT.MM.JJJJ, ohne Sekunden …) denselben Schlüssel ergibt (Code-Review CR4).
+ */
+function groupKey(r: Record<string, string>): string {
+  const created = parseDateTimeLoose(r["erstellt_am"]) ?? r["erstellt_am"] ?? "";
+  const parts = [
+    normName(r["patient_vorname"]),
+    normName(r["patient_nachname"]),
+    parseDateLoose(r["patient_geburtsdatum"]) ?? "",
+    normName(r["versichertennummer"]),
+    parseDateLoose(r["ausstelldatum"]) ?? "",
+    normName(r["arzt_titel"]),
+    normName(r["arzt_vorname"]),
+    normName(r["arzt_nachname"]),
+    normName(r["diagnosegruppe"]),
+    normName(r["icd10_codes"]),
+    created,
+  ];
+  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
+}
 
-const RAW_KEYS = [
-  "formulartyp",
-  "standort",
-  "krankenkasse",
-  "kostentraeger_id",
-  "versichertennummer",
-  "statusfeld",
-  "leitsymptom_code",
-  "leitsymptom_text",
-  "patientenindividuelles_leitsymptom",
-  "weitere_diagnosen",
-  "therapieziele",
-  "konkrete_therapieziele",
-  "gesamte_therapiedauer",
-  "langzeitverordnung",
-  "unfallbedingt",
-  "bvg",
-  "telefonverordnung",
-  "leistungserbringer_ik",
-  "therapieart",
-  "erstellt_am",
-];
+/**
+ * Feste Auswahl strukturierter Formularangaben für prescriptions.import_data (Nachvollziehbarkeit). Bewusst KEINE
+ * Freitexte (Leitsymptomatik im Wortlaut, weitere Diagnosen, Therapieziele) und keine sonstigen Rohspalten (Recht).
+ */
+const FIELD_WHITELIST: Record<string, string> = {
+  formulartyp: "formType",
+  standort: "location",
+  statusfeld: "statusField",
+  leitsymptom_code: "leadSymptomCode",
+  gesamte_therapiedauer: "totalDuration",
+  langzeitverordnung: "longTerm",
+  unfallbedingt: "accident",
+  bvg: "bvg",
+  telefonverordnung: "phonePrescription",
+  leistungserbringer_ik: "providerIk",
+  therapieart: "therapyType",
+  erstellt_am: "createdAt",
+};
 
 export function parseTinanaPrescriptions(text: string, file?: string): { prescriptions: TinanaPrescription[]; issues: ImportIssue[] } {
   const t = readTable(text);
@@ -225,16 +236,16 @@ export function parseTinanaPrescriptions(text: string, file?: string): { prescri
   for (const r of t.records) {
     const v = (k: string) => nz(r.values[k]);
     if (Object.values(r.values).every((x) => !x)) continue;
-    const key = createHash("sha256")
-      .update(GROUP_KEYS.map((k) => normName(r.values[k])).join("|"))
-      .digest("hex")
-      .slice(0, 32);
+    const key = groupKey(r.values);
     let g = groups.get(key);
     if (!g) {
       const dg = v("diagnosegruppe");
       const doctor = [v("arzt_titel"), v("arzt_vorname"), v("arzt_nachname")].filter(Boolean).join(" ") || null;
-      const raw: Record<string, string> = {};
-      for (const k of RAW_KEYS) if (v(k)) raw[k] = v(k)!;
+      const fields: Record<string, string> = {};
+      for (const [col, k] of Object.entries(FIELD_WHITELIST)) {
+        const x = v(col);
+        if (x) fields[k] = x.slice(0, 200);
+      }
       g = {
         rows: [],
         key,
@@ -260,7 +271,7 @@ export function parseTinanaPrescriptions(text: string, file?: string): { prescri
         copaymentExempt: yes(v("zuzahlungsbefreit")),
         therapyReportRequested: yes(v("therapiebericht_angefordert")),
         positions: [],
-        raw,
+        fields,
       };
       groups.set(key, g);
     }

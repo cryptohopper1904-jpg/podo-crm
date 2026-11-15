@@ -21,7 +21,7 @@ test.describe.configure({ mode: "serial" });
 async function preview(page: Page) {
   await page.goto("/einstellungen/import");
   await expect(page.getByRole("heading", { name: "Daten übernehmen" })).toBeVisible();
-  await page.getByLabel(/Exportdateien deiner bisherigen Software/).setInputFiles(FILES);
+  await page.getByLabel(/Exportdateien Ihrer bisherigen Software/).setInputFiles(FILES);
   await page.getByRole("button", { name: "Dateien prüfen" }).click();
   await expect(page.getByRole("heading", { name: "Erkannte Dateien" })).toBeVisible();
 }
@@ -44,7 +44,7 @@ test("Tinana-Export hochladen, Vorschau prüfen, importieren – Patient:innen s
     await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Musterfrau");
     await runButton.click();
     await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
-    await expect(page.getByText(/Angelegt: \d+ Patient:innen, \d+ Termine, \d+ Verordnungen/)).toBeVisible();
+    await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?, \d+ Verordnung(en)?/)).toBeVisible();
   }
 
   // erneuter Upload derselben Dateien: nichts Neues
@@ -61,7 +61,7 @@ test("Tinana-Export hochladen, Vorschau prüfen, importieren – Patient:innen s
 test("unbekannte Datei: klare Meldung mit den unterstützten Formaten", async ({ page }) => {
   await loginDemoWithFreshTotp(page);
   await page.goto("/einstellungen/import");
-  await page.getByLabel(/Exportdateien deiner bisherigen Software/).setInputFiles({ name: "liste.csv", mimeType: "text/csv", buffer: Buffer.from("Name;Telefon\nA;1\n") });
+  await page.getByLabel(/Exportdateien Ihrer bisherigen Software/).setInputFiles({ name: "liste.csv", mimeType: "text/csv", buffer: Buffer.from("Name;Telefon\nA;1\n") });
   await page.getByRole("button", { name: "Dateien prüfen" }).click();
   await expect(page.getByText(/Format nicht erkannt\. Unterstützt werden: Tinana/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Import ausführen" })).toHaveCount(0);

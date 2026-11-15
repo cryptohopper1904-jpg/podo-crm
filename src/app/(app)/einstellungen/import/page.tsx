@@ -1,7 +1,7 @@
 import { Download } from "lucide-react";
 import { Card, CardTitle } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
-import { DSGVO_HINT, SOURCE_HELP } from "@/lib/import/uebernahme/help";
+import { CONSENT_HINT, DSGVO_HINT, HELP_STAND, RETENTION_HINT, SOURCE_HELP } from "@/lib/import/uebernahme/help";
 import { SUPPORTED_FORMATS } from "@/lib/import/uebernahme/detect";
 import { doctolibImportAction, excelImportAction } from "./actions";
 import { DoctolibImportForm, ExcelImportForm } from "./import-forms";
@@ -21,18 +21,19 @@ export default async function ImportSettings() {
       <Card aria-labelledby="daten-uebernehmen">
         <h2 id="daten-uebernehmen" className="mb-1 font-display text-xl font-semibold">Daten übernehmen</h2>
         <p className="mb-4 text-sm text-muted">
-          Du wechselst von einer anderen Software? Lade ihre Exportdateien hier hoch – auch mehrere auf einmal oder als ZIP. PodoHero erkennt jede Datei
-          automatisch, zeigt dir vorher, was übernommen wird, und ergänzt nur: Es wird nichts gelöscht oder überschrieben, und ein erneuter Upload legt
-          nichts doppelt an.
+          Sie wechseln von einer anderen Software? Laden Sie deren Exportdateien hier hoch – auch mehrere auf einmal oder als ZIP. PodoHero erkennt jede
+          Datei automatisch, zeigt Ihnen vorher, was übernommen wird, und ergänzt nur: Es wird nichts gelöscht oder überschrieben, und ein erneuter Upload
+          legt nichts doppelt an.
         </p>
         <UebernahmeForm action={uebernahmeAction} />
         <details className="mt-5 text-sm">
           <summary className="cursor-pointer font-semibold">Welche Dateien werden erkannt?</summary>
           <ul className="mt-2 list-disc pl-5">{SUPPORTED_FORMATS.map((f) => <li key={f}>{f}</li>)}</ul>
         </details>
+        <p className="mt-3 text-xs text-muted">{HELP_STAND}</p>
         {SOURCE_HELP.map((h) => (
           <details key={h.id} className="mt-3 text-sm">
-            <summary className="cursor-pointer font-semibold">So findest du den Export in {h.title}</summary>
+            <summary className="cursor-pointer font-semibold">So finden Sie den Export in {h.title}</summary>
             <ol className="mt-2 list-decimal pl-5">{h.steps.map((x) => <li key={x}>{x}</li>)}</ol>
             {h.missing.length ? (
               <>
@@ -44,7 +45,12 @@ export default async function ImportSettings() {
           </details>
         ))}
         <details className="mt-3 text-sm">
-          <summary className="cursor-pointer font-semibold">Daten fehlen im Export?</summary>
+          <summary className="cursor-pointer font-semibold">Aufbewahrung und Einwilligungen (alle Quellen)</summary>
+          <p className="mt-2">{RETENTION_HINT}</p>
+          <p className="mt-2">{CONSENT_HINT}</p>
+        </details>
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Daten fehlen im Export? (Online-Software: {SOURCE_HELP.filter((h) => h.online).map((h) => h.title).join(", ")})</summary>
           <p className="mt-2">{DSGVO_HINT}</p>
         </details>
       </Card>

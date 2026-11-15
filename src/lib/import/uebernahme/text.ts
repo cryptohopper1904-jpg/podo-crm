@@ -1,5 +1,36 @@
-/** Text-Hilfen für CSV-Exporte fremder Programme: Zeichensatz, BOM, Trennzeichen, Kopfzeile. */
-import { detectDelimiter, parseCsv, stripBom } from "@/integrations/csv";
+/**
+ * Text-Hilfen für CSV-Exporte fremder Programme: Zeichensatz, BOM, Trennzeichen, Kopfzeile – mit harten Grenzen
+ * (Größe, Zeilen, Spalten, Feldlänge), damit präparierte Dateien den Server nicht lahmlegen (AppSec B1).
+ */
+import { detectDelimiter, parseCsv, stripBom, type Delimiter } from "@/integrations/csv";
+
+export interface TextLimits {
+  /** höchstens so viele Byte je Textdatei */
+  maxBytes: number;
+  /** höchstens so viele Zeilen (inkl. Kopfzeile) */
+  maxRows: number;
+  /** höchstens so viele Spalten je Zeile */
+  maxCols: number;
+  /** höchstens so viele Zeichen je Feld */
+  maxFieldChars: number;
+}
+
+export const TEXT_LIMITS: TextLimits = {
+  maxBytes: 10 * 1024 * 1024,
+  maxRows: 50_000,
+  maxCols: 200,
+  maxFieldChars: 32 * 1024,
+};
+
+/** Erkennung (Trennzeichen, Kopfzeile) liest nur den Anfang der Datei. */
+export const SIGNATURE_BYTES = 64 * 1024;
+
+export class TextLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TextLimitError";
+  }
+}
 
 export function hasBom(data: Uint8Array): boolean {
   return data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf;
@@ -18,19 +49,92 @@ export function decodeText(data: Uint8Array): string {
 export const normHeader = (h: string) =>
   h
     .replace(/^"|"$/g, "")
-    .replace(/ /g, " ")
+    .replace(/ /g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+
+const MB = (n: number) => `${Math.round(n / 1024 / 1024)} MB`;
+const de = (n: number) => n.toLocaleString("de-DE");
+
+/**
+ * CSV zerlegen und dabei abbrechen, sobald eine Grenze überschritten ist (kein Aufbau riesiger Arrays).
+ * Gleiche Regeln wie parseCsv (Anführungszeichen, "" im Feld, Zeilenumbrüche im Feld, leere Zeilen entfallen).
+ */
+export function parseCsvBounded(input: string, delimiter?: Delimiter, limits: TextLimits = TEXT_LIMITS): string[][] {
+  const text = stripBom(input);
+  const d = delimiter ?? detectDelimiter(text.slice(0, SIGNATURE_BYTES));
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  const pushField = () => {
+    if (row.length >= limits.maxCols) throw new TextLimitError(`Zu viele Spalten (mehr als ${de(limits.maxCols)}) – das ist kein unterstützter Export.`);
+    row.push(field);
+    field = "";
+  };
+  const pushRow = () => {
+    pushField();
+    if (!(row.length === 1 && row[0] === "")) {
+      if (rows.length >= limits.maxRows) throw new TextLimitError(`Zu viele Zeilen (mehr als ${de(limits.maxRows)}). Bitte den Export in kleineren Teilen (z. B. je Jahr) hochladen.`);
+      rows.push(row);
+    }
+    row = [];
+  };
+  const add = (c: string) => {
+    if (field.length >= limits.maxFieldChars) throw new TextLimitError(`Ein Feld ist länger als ${de(limits.maxFieldChars)} Zeichen – das ist kein unterstützter Export.`);
+    field += c;
+  };
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          add('"');
+          i += 2;
+          continue;
+        }
+        inQuotes = false;
+        i++;
+        continue;
+      }
+      add(c);
+      i++;
+      continue;
+    }
+    if (c === '"' && field === "") {
+      inQuotes = true;
+      i++;
+    } else if (c === d) {
+      pushField();
+      i++;
+    } else if (c === "\r" || c === "\n") {
+      pushRow();
+      i += c === "\r" && text[i + 1] === "\n" ? 2 : 1;
+    } else {
+      add(c);
+      i++;
+    }
+  }
+  if (field !== "" || row.length > 0) pushRow();
+  return rows;
+}
+
+/** Größe prüfen und Text dekodieren – wirft TextLimitError. */
+export function decodeBounded(data: Uint8Array, limits: TextLimits = TEXT_LIMITS): string {
+  if (data.length > limits.maxBytes) throw new TextLimitError(`Die Datei ist größer als ${MB(limits.maxBytes)}. Bitte den Export in kleineren Teilen (z. B. je Jahr) hochladen.`);
+  return decodeText(data);
+}
 
 export interface Table {
   headers: string[];
   records: { row: number; values: Record<string, string> }[];
 }
 
-/** CSV → Datensätze mit normalisierten Spaltennamen. `row` = Zeile in der Datei (Kopf = 1). */
-export function readTable(text: string): Table {
-  const rows = parseCsv(text);
+/** CSV → Datensätze mit normalisierten Spaltennamen. `row` = Zeile in der Datei (Kopf = 1). Mit Grenzen. */
+export function readTable(text: string, limits: TextLimits = TEXT_LIMITS): Table {
+  const rows = parseCsvBounded(text, undefined, limits);
   if (!rows.length) return { headers: [], records: [] };
   const headers = rows[0].map(normHeader);
   const records = rows.slice(1).map((r, i) => {
@@ -49,18 +153,30 @@ export interface TextSignature {
   delimiter: string;
   /** Kopfzeile normalisiert (erste Zeile) */
   headers: string[];
-  /** Anzahl Datenzeilen (ohne Kopf, ohne Leerzeilen) */
-  dataRows: number;
 }
 
+/**
+ * Signatur für die Erkennung – nur aus dem Anfang der Datei (erste 64 KB) und nur der ersten logischen Zeile,
+ * damit die Erkennung unabhängig von der Dateigröße schnell bleibt (Code-Review CR6).
+ */
 export function textSignature(text: string): TextSignature {
-  const firstLine = (text.split(/\r\n|\n|\r/).find((l) => l.trim() !== "") ?? "").trim();
-  const delimiter = detectDelimiter(text);
-  const rows = parseCsv(text, delimiter);
-  return {
-    firstLine,
-    delimiter,
-    headers: (rows[0] ?? []).map(normHeader),
-    dataRows: Math.max(0, rows.length - 1),
-  };
+  const head = stripBom(text.slice(0, SIGNATURE_BYTES));
+  const firstLine = (head.split(/\r\n|\n|\r/).find((l) => l.trim() !== "") ?? "").trim();
+  // Trennzeichen aus der ersten nicht-leeren Zeile (detectDelimiter liest nur bis zum ersten Zeilenende)
+  const delimiter = detectDelimiter(head.replace(/^\s+/, ""));
+  return { firstLine, delimiter, headers: parseCsv(head.slice(0, firstRowEnd(head)), delimiter)[0]?.map(normHeader) ?? [] };
+}
+
+/** Ende der ersten logischen Zeile (Zeilenumbrüche in Anführungszeichen gehören zum Feld; führende Leerzeilen übersprungen). */
+function firstRowEnd(head: string): number {
+  let inQ = false;
+  let seen = false;
+  for (let i = 0; i < head.length; i++) {
+    const c = head[i];
+    if (c === '"') inQ = !inQ;
+    else if (!inQ && (c === "\n" || c === "\r")) {
+      if (seen) return i;
+    } else if (c.trim() !== "") seen = true;
+  }
+  return head.length;
 }

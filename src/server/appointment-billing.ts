@@ -19,6 +19,8 @@ import { openDepositsFor, openReceiptsFor } from "./invoices";
  * (keine Anzahlung) eine Position mit diesem Doku-Eintrag bzw. Termin hat – oder (Altbestand ohne Bezug) wenn für die
  * Person am selben Tag eine eigene Rechnung/Quittung ausgestellt wurde. createInvoice prüft verbindlich.
  * Es werden nur Datum, Termin und Leistungen gelesen – keine medizinischen Inhalte.
+ * Übernommene Termine (Quelle „import“, Übernahme-Assistent) zählen nie als offen: Sammelrechnung, Jahresvorschlag,
+ * Heute-Hinweis und Jahresend-Schätzung nutzen alle unbilledItems (Code-Review CR2).
  */
 
 type Item = { patientId: string; at: Date; recordId: string | null; appointmentId: string | null; title: string | null };
@@ -69,6 +71,8 @@ async function unbilledItems(tx: Tx, org: string, opts: { from: Date; to: Date; 
         gte(appointments.startsAt, opts.from),
         lt(appointments.startsAt, to),
         inArray(appointments.status, ["planned", "confirmed", "done"]),
+        // aus anderer Praxissoftware übernommene Termine wurden dort abgerechnet (Übernahme-Assistent) – nie erneut vorschlagen
+        ne(appointments.source, "import"),
         ...byPatient(appointments.patientId),
       ),
     )

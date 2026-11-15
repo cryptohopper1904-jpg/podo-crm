@@ -4,6 +4,7 @@
  * - Trennzeichen-Erkennung (Semikolon, Komma, Tab) anhand der Kopfzeile
  * - UTF-8-BOM wird entfernt, CRLF/LF/CR
  */
+import { neutralizeCsvRows } from "@/lib/csv-safe";
 
 export type Delimiter = ";" | "," | "\t";
 
@@ -104,13 +105,18 @@ function escapeField(value: unknown, d: Delimiter): string {
   return s;
 }
 
-/** Schreibt CSV. Standard: Semikolon + BOM + CRLF (Excel-kompatibel im deutschen Gebietsschema). */
+/**
+ * Schreibt CSV. Standard: Semikolon + BOM + CRLF (Excel-kompatibel im deutschen Gebietsschema).
+ * Formel-Injection: Textzellen mit = + - @ Tab/CR am Anfang werden standardmäßig entschärft (neutralizeCsvRows).
+ * `neutralize: false` nur für Maschinen-Importformate, deren Empfänger Rohwerte braucht (z. B. Doctolib: „+49 …“).
+ */
 export function writeCsv(
   rows: unknown[][],
-  opts: { delimiter?: Delimiter; bom?: boolean; eol?: "\r\n" | "\n" } = {},
+  opts: { delimiter?: Delimiter; bom?: boolean; eol?: "\r\n" | "\n"; neutralize?: boolean } = {},
 ): string {
   const d = opts.delimiter ?? ";";
   const eol = opts.eol ?? "\r\n";
-  const body = rows.map((r) => r.map((v) => escapeField(v, d)).join(d)).join(eol) + eol;
+  const safe = opts.neutralize === false ? rows : neutralizeCsvRows(rows);
+  const body = safe.map((r) => r.map((v) => escapeField(v, d)).join(d)).join(eol) + eol;
   return (opts.bom ?? true ? "﻿" : "") + body;
 }

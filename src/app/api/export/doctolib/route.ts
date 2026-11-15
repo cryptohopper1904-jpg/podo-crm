@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { berlinDateIso } from "@/lib/format";
+import { noRemindersFlag } from "@/lib/reminders";
 
 /** Patienten im Doctolib-Importformat (22 Spalten). */
 export async function GET() {
@@ -47,7 +48,7 @@ export async function GET() {
         gpName: p.gpName,
         gpCity: s("gpCity"),
         notes: null,
-        noNotifications: extra.noReminders === true,
+        noNotifications: noRemindersFlag(extra),
       };
     }),
   );

@@ -207,6 +207,20 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await billing.collectiveOverview(auth, year)).find((r) => r.patientId === p4)).toBeUndefined();
   });
 
+  it("Übernahme-Assistent: übernommene Termine (Quelle „import“) gelten nie als offen – keine Doppelabrechnung (CR2)", async () => {
+    const { org, auth, appointment } = await setup();
+    const p = await f.patient(org, { lastName: "Uebernommen" });
+    await appointment(p, `${year}-02-10 10:00+01`, { source: "import", status: "done" });
+    await appointment(p, `${year}-03-10 10:00+01`, { source: "import", status: "planned" });
+    expect((await billing.collectiveOverview(auth, year)).find((r) => r.patientId === p)).toBeUndefined();
+    expect(await billing.patientYearSuggestion(auth, p, year)).toMatchObject({ items: 0, lines: [] });
+    // ein eigener (manueller) Termin derselben Person zählt weiterhin
+    const own = await appointment(p, `${year}-04-10 10:00+02`, { status: "done" });
+    const sug = await billing.patientYearSuggestion(auth, p, year);
+    expect(sug).toMatchObject({ items: 1, lines: [expect.objectContaining({ appointmentId: own })] });
+    expect((await billing.collectiveOverview(auth, year)).find((r) => r.patientId === p)).toMatchObject({ items: 1 });
+  });
+
   it("Termin verschieben: manuell ja (mit Überschneidungsprüfung), Doctolib/Kalender-Abo nein", async () => {
     const { org, user, auth, appointment } = await setup();
     const patient = await f.patient(org, { lastName: "Verschieb" });

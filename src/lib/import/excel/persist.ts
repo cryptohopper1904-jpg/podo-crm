@@ -17,10 +17,12 @@
  *  - Nummernkreise werden hinter die höchste Altnummer im CRM-Format gesetzt (ensureSequenceAtLeast).
  *
  * Mit `skipExisting` (Übernahme-Assistent, wiederholbar): Patient:innen mit bereits vorhandener Legacy-ID
- * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; vorhandene Leistungen (gleiches Kürzel)
+ * (external_ids.legacyExcel) werden nicht erneut angelegt, sondern zugeordnet; Zeilen OHNE Legacy-ID werden über
+ * Vorname + Nachname + Geburtsdatum (normalisiert) mit dem Bestand abgeglichen und bei einem Treffer nicht angelegt; vorhandene Leistungen (gleiches Kürzel)
  * bleiben unverändert; gleiche Fixkosten (Kategorie, Betrag, Intervall, Start) werden nicht doppelt angelegt.
  */
 import { EXCEL_IMPORT_SOURCE_PREFIX } from "@/lib/appointment-marks";
+import { normName } from "../uebernahme/tinana";
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Tx } from "@/db";
@@ -100,7 +102,17 @@ export async function persistImport(
       const id = p.legacyId !== null ? byLegacy.get(String(p.legacyId)) : undefined;
       if (id && p.legacyId !== null && summary.patientIdByLegacyId[p.legacyId] === undefined) summary.patientIdByLegacyId[p.legacyId] = id;
     }
-    result = { ...input, patients: input.patients.filter((p) => p.legacyId === null || !byLegacy.has(String(p.legacyId))) };
+    // ohne Legacy-ID: Name + Geburtsdatum (sonst würde jede Wiederholung doppelt anlegen)
+    const persons = new Set(
+      (
+        await tx
+          .select({ firstName: s.patients.firstName, lastName: s.patients.lastName, birthDate: s.patients.birthDate })
+          .from(s.patients)
+          .where(and(eq(s.patients.organizationId, organizationId), sql`${s.patients.birthDate} is not null`))
+      ).map((p) => `${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`),
+    );
+    const knownPerson = (p: PatientImportDraft) => !!p.birthDate && persons.has(`${normName(p.firstName)}|${normName(p.lastName)}|${p.birthDate}`);
+    result = { ...input, patients: input.patients.filter((p) => (p.legacyId === null ? !knownPerson(p) : !byLegacy.has(String(p.legacyId)))) };
   }
   // Tarif-Grenze (Kostenlos: 20 Patient:innen) – auch archiviert importierte zählen mit
   await assertPatientCapacity(tx, organizationId, result.patients.length);

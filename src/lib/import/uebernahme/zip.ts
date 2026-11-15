@@ -26,8 +26,10 @@ export interface ZipLimits {
 
 export const DEFAULT_ZIP_LIMITS: ZipLimits = {
   maxEntries: 2000,
-  maxEntryBytes: 30 * 1024 * 1024,
-  maxTotalBytes: 200 * 1024 * 1024,
+  // je Datei wie ein einzelner Upload (PDF/Excel); Textdateien prüft analyzeFile zusätzlich (10 MB)
+  maxEntryBytes: 25 * 1024 * 1024,
+  // entpackt über alle Archive eines Laufs (AppSec B1, Code-Review CR6)
+  maxTotalBytes: 80 * 1024 * 1024,
   maxRatio: 200,
   maxDepth: 1,
 };

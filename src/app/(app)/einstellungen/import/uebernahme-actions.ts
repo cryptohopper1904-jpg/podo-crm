@@ -2,13 +2,14 @@
 
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { sql } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { audit } from "@/lib/audit";
-import { denyAccess, requireAuth } from "@/lib/auth/session";
-import { collectFiles, MAX_UPLOAD_FILES } from "@/lib/import/uebernahme/collect";
-import { applyPlan, loadExisting, type ApplySummary } from "@/lib/import/uebernahme/persist";
-import { buildPlan, type FileSummary, type ImportPlan, type PlanTotals } from "@/lib/import/uebernahme/plan";
+import { denyAccess, requestMeta, requireAuth } from "@/lib/auth/session";
+import { MAX_UPLOAD_FILES } from "@/lib/import/uebernahme/collect";
+import type { ApplySummary } from "@/lib/import/uebernahme/persist";
+import type { DuplicateDecision, FileSummary, ImportPlan, PlanTotals } from "@/lib/import/uebernahme/plan";
+import { maskPii, uebernahmeLimiter } from "@/lib/import/uebernahme/preview-safety";
+import { ImportBusyError, previewUebernahme, runUebernahme, TokenUsedError } from "@/lib/import/uebernahme/run";
 import type { InputFile, PrescriptionMode } from "@/lib/import/uebernahme/types";
 import { signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
 import { discardStored, storeEncrypted } from "@/lib/storage";
@@ -18,7 +19,8 @@ import { PatientLimitError } from "@/server/patient-limit";
  * Übernahme-Assistent (Einstellungen → Import → Daten übernehmen).
  * Dateien werden nur im Arbeitsspeicher verarbeitet; nur zugeordnete PDFs werden beim Import verschlüsselt abgelegt
  * (wie Uploads in der Akte). Ablauf wie die übrigen Importe: „Prüfen“ (Vorschau + signiertes Token, gebunden an genau
- * diese Dateien, Praxis, Person und Optionen) → „Import ausführen“ mit denselben Dateien.
+ * diese Dateien, Praxis, Person und Optionen) → „Import ausführen“ mit denselben Dateien. Das Token ist nur einmal
+ * einlösbar; je Praxis läuft höchstens ein Lauf gleichzeitig, dazu eine Drosselung je Person (src/lib/import/uebernahme/run.ts).
  */
 export interface UebernahmePreview {
   files: FileSummary[];
@@ -27,6 +29,7 @@ export interface UebernahmePreview {
   warningsTotal: number;
   samples: ImportPlan["samples"];
   cashbook: ImportPlan["cashbook"];
+  decisions: Pick<DuplicateDecision, "key" | "who" | "sourceLabel" | "candidates" | "defaultChoice">[];
   hasWork: boolean;
 }
 
@@ -46,10 +49,10 @@ const ALLOWED_EXT = /\.(csv|txt|xlsx|zip|pdf)$/i;
 
 async function readFiles(form: FormData): Promise<{ files: InputFile[]; hash: string } | { error: string }> {
   const raw = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-  if (!raw.length) return { error: "Bitte mindestens eine Datei auswählen." };
-  if (raw.length > MAX_UPLOAD_FILES) return { error: `Bitte höchstens ${MAX_UPLOAD_FILES} Dateien auf einmal hochladen (oder als ZIP).` };
+  if (!raw.length) return { error: "Bitte wählen Sie mindestens eine Datei aus." };
+  if (raw.length > MAX_UPLOAD_FILES) return { error: `Bitte laden Sie höchstens ${MAX_UPLOAD_FILES} Dateien auf einmal hoch (oder als ZIP).` };
   const total = raw.reduce((a, f) => a + f.size, 0);
-  if (total > MAX_TOTAL_BYTES) return { error: "Die Dateien sind zusammen größer als 24 MB. Bitte in mehreren Durchgängen hochladen (z. B. Rechnungs-PDFs je Jahr)." };
+  if (total > MAX_TOTAL_BYTES) return { error: "Die Dateien sind zusammen größer als 24 MB. Bitte laden Sie sie in mehreren Durchgängen hoch (z. B. Rechnungs-PDFs je Jahr)." };
   const bad = raw.find((f) => !ALLOWED_EXT.test(f.name));
   if (bad) return { error: `„${bad.name.slice(0, 80)}“: Bitte nur CSV-, Excel- (.xlsx), ZIP- oder PDF-Dateien hochladen.` };
   const files: InputFile[] = [];
@@ -66,14 +69,25 @@ async function readFiles(form: FormData): Promise<{ files: InputFile[]; hash: st
 
 const modeOf = (form: FormData): PrescriptionMode => (form.get("prescriptionMode") === "active" ? "active" : "billed");
 
+/** Auswahl zu möglichen Dubletten („dup:<Quell-Schlüssel>“ → "new" | Patienten-ID); plan.ts prüft gegen die Kandidaten. */
+function choicesOf(form: FormData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of form.entries()) {
+    if (typeof v === "string" && k.startsWith("dup:") && k.length < 300 && /^(new|[0-9a-f-]{36})$/.test(v)) out[k.slice(4)] = v;
+  }
+  return out;
+}
+
 function toPreview(plan: ImportPlan): UebernahmePreview {
   return {
-    files: plan.files,
+    files: plan.files.map((f) => ({ ...f, note: f.note ? maskPii(f.note) : f.note })),
     totals: plan.totals,
-    warnings: plan.warnings.slice(0, 200),
+    // E-Mail-Adressen, Geburtsdaten und Telefonnummern in Hinweisen maskiert (Vorschau zeigt keine Klardaten)
+    warnings: plan.warnings.slice(0, 200).map((w) => ({ ...w, message: maskPii(w.message) })),
     warningsTotal: plan.warnings.length,
     samples: plan.samples,
     cashbook: plan.cashbook,
+    decisions: plan.decisions.slice(0, 200).map(({ key, who, sourceLabel, candidates, defaultChoice }) => ({ key, who, sourceLabel, candidates, defaultChoice })),
     hasWork: plan.hasWork,
   };
 }
@@ -83,70 +97,52 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
   const auth = await requireAuth("import.run");
   if (!auth.can("settings.manage") || auth.support) denyAccess(auth, "import.run");
   const org = auth.organization.id;
+  if (uebernahmeLimiter.limited(`${org}:${auth.user.id}`)) {
+    return { error: "Zu viele Durchläufe in kurzer Zeit. Bitte warten Sie einige Minuten und versuchen Sie es dann erneut." };
+  }
   const up = await readFiles(form);
   if ("error" in up) return { error: up.error };
   const mode = modeOf(form);
   const binding = { hash: createHash("sha256").update(`${up.hash}|${mode}`).digest("hex"), organizationId: org, userId: auth.user.id, type: "uebernahme" as const };
-  const detected = await collectFiles(up.files);
-  const shas = detected.filter((d) => d.kind === "pdf").map((d) => d.sha256);
-  const sources = [...new Set(detected.map((d) => d.source).filter(Boolean))];
+  const opts = { prescriptionMode: mode, choices: choicesOf(form) };
 
   if (form.get("intent") !== "run") {
-    const existing = await withOrg(org, (tx) => loadExisting(tx, org, shas));
-    const plan = buildPlan(detected, existing, { prescriptionMode: mode });
-    await audit({ organizationId: org, userId: auth.user.id, action: "import.uebernahme.preview", meta: { sha256: up.hash, files: up.files.length, sources } });
-    return { previewToken: plan.hasWork ? signPreviewToken(binding) : undefined, preview: toPreview(plan) };
+    try {
+      const { detected, plan } = await previewUebernahme({ inOrg: withOrg }, org, up.files, opts);
+      const sources = [...new Set(detected.map((d) => d.source).filter(Boolean))];
+      await audit({ organizationId: org, userId: auth.user.id, action: "import.uebernahme.preview", meta: { sha256: up.hash, files: up.files.length, sources } });
+      return { previewToken: plan.hasWork ? signPreviewToken(binding) : undefined, preview: toPreview(plan) };
+    } catch (e) {
+      if (e instanceof ImportBusyError) return { error: e.message };
+      throw e;
+    }
   }
 
-  if (!verifyPreviewToken(String(form.get("previewToken") ?? ""), binding)) {
-    return { error: "Bitte zuerst genau diese Dateien prüfen (Vorschau, höchstens 15 Minuten gültig), dann importieren." };
+  const token = String(form.get("previewToken") ?? "");
+  if (!verifyPreviewToken(token, binding)) {
+    return { error: "Bitte prüfen Sie zuerst genau diese Dateien (Vorschau, höchstens 15 Minuten gültig) und importieren Sie dann." };
   }
-  const stored: string[] = [];
   let summary: ApplySummary;
-  let plan: ImportPlan;
   try {
-    ({ summary, plan } = await withOrg(org, async (tx) => {
-      // Sperre VOR dem Bestandsabgleich: zwei gleichzeitige Läufe sehen sonst denselben Bestand und legen doppelt an
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + org}))`);
-      const existing = await loadExisting(tx, org, shas);
-      const p = buildPlan(detected, existing, { prescriptionMode: mode });
-      const s = await applyPlan(tx, org, auth.user.id, p, async (data) => {
-        const r = await storeEncrypted(org, data);
-        stored.push(r.storageKey);
-        return r;
-      });
-      return { summary: s, plan: p };
-    }));
+    ({ summary } = await runUebernahme(
+      { inOrg: withOrg, store: storeEncrypted, discard: discardStored },
+      {
+        org,
+        userId: auth.user.id,
+        files: up.files,
+        opts,
+        tokenHash: createHash("sha256").update(token).digest("hex"),
+        auditMeta: { sha256: up.hash },
+        ip: (await requestMeta().catch(() => null))?.ip ?? null,
+      },
+    ));
   } catch (e) {
-    // keine verwaisten verschlüsselten Dateien ohne DB-Eintrag
-    for (const k of stored) await discardStored(k).catch(() => {});
     await audit({ organizationId: org, userId: auth.user.id, action: "import.uebernahme.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
+    if (e instanceof ImportBusyError || e instanceof TokenUsedError) return { error: e.message };
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     console.error("[import.uebernahme]", e instanceof Error ? e.message : e);
-    return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte die Dateien prüfen oder den Support kontaktieren." };
+    return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
   }
-  await audit({
-    organizationId: org,
-    userId: auth.user.id,
-    action: "import.uebernahme.run",
-    meta: {
-      sha256: up.hash,
-      sources,
-      prescriptionMode: mode,
-      patientsCreated: summary.patientsCreated,
-      patientsLinked: summary.patientsLinked,
-      appointments: summary.appointments,
-      prescriptions: summary.prescriptions,
-      documents: summary.documents,
-      excel: summary.excel,
-      skipped: {
-        patients: plan.totals.patientsExisting,
-        appointments: plan.totals.appointmentsExisting + plan.totals.appointmentsUnassigned,
-        prescriptions: plan.totals.prescriptionsExisting + plan.totals.prescriptionsUnassigned,
-        documents: plan.totals.documentsExisting + plan.totals.documentsUnassigned,
-      },
-    },
-  });
   revalidatePath("/kunden");
   revalidatePath("/kalender");
   revalidatePath("/verordnungen");

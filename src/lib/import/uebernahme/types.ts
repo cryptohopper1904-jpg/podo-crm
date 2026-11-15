@@ -108,8 +108,8 @@ export interface TinanaPrescription {
   copaymentExempt: boolean;
   therapyReportRequested: boolean;
   positions: { position: string | null; code: string | null; label: string; units: number; priceCents: number | null }[];
-  /** Rohdaten zur Nachvollziehbarkeit (prescriptions.import_data) */
-  raw: Record<string, string>;
+  /** feste Auswahl strukturierter Formularangaben (prescriptions.import_data.fields), keine Freitexte */
+  fields: Record<string, string>;
 }
 
 export interface TinanaDoctor {

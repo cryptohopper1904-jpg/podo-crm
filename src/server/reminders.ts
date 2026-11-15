@@ -15,6 +15,7 @@ import {
   type ReminderChannel,
   type ReminderPatient,
   type ReminderSettings,
+  noRemindersFlag,
 } from "@/lib/reminders";
 import { describeError } from "@/integrations/test-connection";
 import type { MessagingPort, MessagingProvider } from "@/integrations/types";
@@ -140,7 +141,7 @@ export async function loadReminderCandidates(tx: Tx, org: string, settings: Remi
         email: p.email,
         phoneMobile: p.phoneMobile,
         preferredChannel: p.preferredChannel,
-        noReminders: extra.no_reminders === true || extra.no_reminders === "true",
+        noReminders: noRemindersFlag(extra),
         // verstorben → keine Erinnerung, keine Rückholung, keine Spangen-Kontrolle (chooseChannel liefert null)
         deceased: isDeceased(p.extra),
       };

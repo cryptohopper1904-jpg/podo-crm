@@ -3,8 +3,13 @@
  * und alles in EINER Transaktion passiert (Fehler → nichts gespeichert).
  *
  * Schreibt nur dazu: neue Patient:innen, Quell-IDs an verknüpften Personen (nur wenn noch keine ID dieser Quelle da ist),
- * Termine (Quelle „import“, keine Benachrichtigungen – es werden weder Mails noch Erinnerungen ausgelöst), Verordnungen,
- * Dokumente. Nichts wird überschrieben oder gelöscht; alles ist über Quelle + ID wiederholbar (idempotent).
+ * Termine (Quelle „import“), Verordnungen, Dokumente. Nichts wird überschrieben oder gelöscht; alles ist über Quelle + ID
+ * wiederholbar (idempotent).
+ *
+ * Benachrichtigungen: Der Import selbst verschickt nichts. Neu angelegte Personen haben keinen Kanal und keine
+ * Einwilligungen (preferred_channel „none“) und bekommen daher auch später keine Erinnerungen. Verknüpfte BESTANDSpersonen
+ * behalten ihre Einwilligungen – für ihre übernommenen künftigen Termine kann der Erinnerungslauf Erinnerungen
+ * verschicken (die Vorschau weist darauf hin).
  */
 import { assertPatientCapacity } from "@/server/patient-limit";
 import { and, eq, inArray, isNull, like, max, sql } from "drizzle-orm";
@@ -33,9 +38,10 @@ export async function loadExisting(tx: Tx, org: string, documentShas: string[] =
       email: s.patients.email,
       phoneMobile: s.patients.phoneMobile,
       externalIds: s.patients.externalIds,
+      erasedAt: s.patients.contactErasedAt,
     })
     .from(s.patients)
-    .where(and(eq(s.patients.organizationId, org), isNull(s.patients.contactErasedAt)));
+    .where(eq(s.patients.organizationId, org));
   const appts = await tx
     .select({ ref: s.appointments.externalId })
     .from(s.appointments)
@@ -61,7 +67,8 @@ export async function loadExisting(tx: Tx, org: string, documentShas: string[] =
     .from(s.services)
     .where(and(eq(s.services.organizationId, org), eq(s.services.active, true)));
   return {
-    patients: patients.map((p) => ({ ...p, externalIds: (p.externalIds ?? {}) as Record<string, unknown> })),
+    // gelöschte Personen (Art. 17) bleiben im Abgleich, damit sie nicht neu angelegt werden
+    patients: patients.map(({ erasedAt, ...p }) => ({ ...p, externalIds: (p.externalIds ?? {}) as Record<string, unknown>, erased: !!erasedAt })),
     appointmentRefs: new Set(appts.map((a) => a.ref).filter((x): x is string => !!x)),
     prescriptionRefs: new Set(rx.map((r) => r.ref).filter((x): x is string => !!x)),
     documentHashes: new Set(docs.map((d) => `${d.patientId}|${d.sha}`)),
@@ -80,7 +87,8 @@ export interface ApplySummary {
   excel: Pick<PersistSummary, "patients" | "services" | "vouchers" | "invoices" | "payments" | "fixedCosts"> | null;
 }
 
-export type StoreDocument = (data: Buffer) => Promise<{ storageKey: string; sha256: string; sizeBytes: number }>;
+/** Ablage eines Dokuments; `sha256` erlaubt, bereits vor der Transaktion abgelegte Dateien wiederzuverwenden. */
+export type StoreDocument = (data: Buffer, sha256: string) => Promise<{ storageKey: string; sha256: string; sizeBytes: number }>;
 
 export async function applyPlan(tx: Tx, org: string, userId: string, plan: ImportPlan, storeDocument: StoreDocument): Promise<ApplySummary> {
   const summary: ApplySummary = { patientsCreated: 0, patientsLinked: 0, appointments: 0, prescriptions: 0, documents: 0, excel: null };
@@ -171,7 +179,7 @@ export async function applyPlan(tx: Tx, org: string, userId: string, plan: Impor
   for (const d of plan.documents) {
     const patientId = pid(d.patient);
     if (!patientId) continue;
-    const stored = await storeDocument(Buffer.from(d.data));
+    const stored = await storeDocument(Buffer.from(d.data), d.sha256);
     await tx.insert(s.media).values({
       organizationId: org,
       patientId,

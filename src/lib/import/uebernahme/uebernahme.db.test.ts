@@ -8,12 +8,17 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { Pool } from "pg";
 import * as s from "@/db/schema";
-import { readDecrypted, storeEncrypted } from "@/lib/storage";
+import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
 import { buildWorkbook } from "../excel/excel-import.test";
 import { collectFiles } from "./collect";
 import { applyPlan, loadExisting } from "./persist";
 import { buildPlan } from "./plan";
 import { tinanaUpload } from "./plan.test";
+import { ImportBusyError, previewUebernahme, runUebernahme, TokenUsedError, type RunDeps } from "./run";
+import { persistImport } from "../excel/persist";
+import { parseWorkbook } from "../excel/parse";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { PrescriptionMode } from "./types";
 
 const url = process.env.TEST_DATABASE_URL;
@@ -152,5 +157,113 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
     expect((await inOrg(d.org, (tx) => tx.select().from(s.fixedCosts).where(eq(s.fixedCosts.organizationId, d.org)))).length).toBe(fixed1);
     const [svcAfter] = await inOrg(d.org, (tx) => tx.select().from(s.services).where(eq(s.services.id, svc.id)));
     expect(svcAfter.priceCents).toBe(1);
+  });
+
+  // ───── Ablauf mit Sperre, Einmal-Token und Vorab-Ablage (run.ts) ─────
+  const FIX = path.resolve(__dirname, "../__fixtures__/tinana");
+  const rawUpload = () => [
+    ...["patients_export_2026-01-15.csv", "appointments_export_2026-01-15.csv", "prescriptions_export_2026-01-15.csv", "invoices_export_2026-01-15.csv"].map((n) => ({ name: n, data: new Uint8Array(readFileSync(path.join(FIX, n))) })),
+    { name: "RE-2026-00001.pdf", data: new TextEncoder().encode("%PDF-1.4\n% Rechnung RE-2026-00001\n%%EOF") },
+    { name: "RE-2026-00002.pdf", data: new TextEncoder().encode("%PDF-1.4\n% Rechnung RE-2026-00002\n%%EOF") },
+  ];
+  const opts = { prescriptionMode: "billed" as const, now: new Date("2026-01-13T08:00:00Z") };
+  function deps(extra: Partial<RunDeps> = {}) {
+    const stored: string[] = [];
+    const discarded: string[] = [];
+    const d: RunDeps = {
+      inOrg: inOrg as never,
+      store: async (org, data) => {
+        const r = await storeEncrypted(org, data);
+        stored.push(r.storageKey);
+        return r;
+      },
+      discard: async (k) => {
+        discarded.push(k);
+        await discardStored(k);
+      },
+      ...extra,
+    };
+    return { d, stored, discarded };
+  }
+
+  it("Vorschau-Token ist nur einmal einlösbar; Audit-Eintrag in derselben Transaktion", async () => {
+    const e = await practice("e");
+    const { d, stored, discarded } = deps();
+    const args = { org: e.org, userId: e.user, files: rawUpload(), opts, tokenHash: `t-${stamp}`, auditMeta: { sha256: "x" } };
+    const r = await runUebernahme(d, args);
+    expect(r.summary).toMatchObject({ patientsCreated: 4, documents: 2 });
+    // beide PDFs wurden vor der Transaktion abgelegt und verwendet – nichts verworfen
+    expect(stored).toHaveLength(2);
+    expect(discarded).toEqual([]);
+    await expect(runUebernahme(d, args)).rejects.toBeInstanceOf(TokenUsedError);
+    const audits = await inOrg(e.org, (tx) => tx.select().from(s.auditLog).where(and(eq(s.auditLog.organizationId, e.org), eq(s.auditLog.action, "import.uebernahme.run"))));
+    expect(audits).toHaveLength(1);
+    expect(audits[0].meta).toMatchObject({ token: `t-${stamp}`, patientsCreated: 4 });
+    // die beim zweiten (abgelehnten) Lauf vorab abgelegten PDFs gibt es nicht – Bestand vorhanden, nichts neu
+    expect(stored).toHaveLength(2);
+  });
+
+  it("Fehler in der Import-Transaktion: vorab abgelegte PDFs werden wieder entfernt, nichts gespeichert", async () => {
+    const f = await practice("f");
+    let phase = 0;
+    const failing: RunDeps["inOrg"] = (org, fn) =>
+      inOrg(org, async (tx) => {
+        phase++;
+        const r = await fn(tx as never);
+        if (phase === 2) throw new Error("Abbruch beim Schreiben (Test)");
+        return r;
+      });
+    const { d, stored, discarded } = deps({ inOrg: failing });
+    await expect(runUebernahme(d, { org: f.org, userId: f.user, files: rawUpload(), opts, tokenHash: `f-${stamp}`, auditMeta: {} })).rejects.toThrow(/Abbruch/);
+    expect(stored).toHaveLength(2);
+    expect(discarded.sort()).toEqual([...stored].sort());
+    await expect(readDecrypted(stored[0])).rejects.toThrow();
+    expect(await counts(f.org)).toEqual({ patients: 0, appointments: 0, services: 0, prescriptions: 0, media: 0, invoices: 0 });
+  });
+
+  it("je Praxis nur ein Lauf gleichzeitig (pg_try_advisory_xact_lock)", async () => {
+    const g = await practice("g");
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const holder = inOrg(g.org, async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"uebernahme:" + g.org}))`);
+      locked();
+      await held;
+    });
+    await isLocked;
+    await expect(previewUebernahme({ inOrg: inOrg as never }, g.org, rawUpload(), opts)).rejects.toBeInstanceOf(ImportBusyError);
+    // andere Praxis ist nicht betroffen
+    const h = await practice("h");
+    await expect(previewUebernahme({ inOrg: inOrg as never }, h.org, rawUpload(), opts)).resolves.toMatchObject({ plan: { hasWork: true } });
+    release();
+    await holder;
+    await expect(previewUebernahme({ inOrg: inOrg as never }, g.org, rawUpload(), opts)).resolves.toMatchObject({ plan: { hasWork: true } });
+  });
+
+  it("Art. 17 gelöschte Person (Tinana-ID vorhanden) wird nicht neu angelegt, ihre Termine nicht übernommen", async () => {
+    const i = await practice("i");
+    await inOrg(i.org, (tx) =>
+      tx.insert(s.patients).values({ organizationId: i.org, number: 1, firstName: "Erika", lastName: "Musterfrau", birthDate: "1950-04-03", insuranceType: "self", externalIds: { tinana: "10000000-0000-4000-8000-000000000001" }, contactErasedAt: new Date(), archivedAt: new Date() }),
+    );
+    const r = await run(i, await tinanaUpload());
+    expect(r.plan.totals).toMatchObject({ patientsErased: 1, patientsNew: 3 });
+    expect(r.summary.patientsCreated).toBe(3);
+    const erika = await inOrg(i.org, (tx) => tx.select().from(s.patients).where(and(eq(s.patients.organizationId, i.org), eq(s.patients.lastName, "Musterfrau"))));
+    expect(erika).toHaveLength(1);
+    const appts = await inOrg(i.org, (tx) => tx.select().from(s.appointments).where(eq(s.appointments.patientId, erika[0].id)));
+    expect(appts).toEqual([]);
+  });
+
+  it("Excel ohne Legacy-ID: zweiter Lauf erkennt die Person über Name + Geburtsdatum (skipExisting)", async () => {
+    const j = await practice("j");
+    const base = await parseWorkbook(new Uint8Array(await buildWorkbook()));
+    const one = { ...base, patients: [{ ...base.patients[1], legacyId: null }], invoices: [], vouchers: [], fixedCosts: [], services: [] };
+    const first = await inOrg(j.org, (tx) => persistImport(tx as never, j.org, one, j.user, { skipExisting: true }));
+    expect(first.patients).toBe(1);
+    const second = await inOrg(j.org, (tx) => persistImport(tx as never, j.org, one, j.user, { skipExisting: true }));
+    expect(second.patients).toBe(0);
+    expect((await counts(j.org)).patients).toBe(1);
   });
 });

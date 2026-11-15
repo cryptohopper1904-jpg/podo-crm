@@ -269,7 +269,7 @@ export function stockCoverage(stock: number, outflow: number, days: number): { c
 
 /** Online gebuchte Termine: Online-Buchung, Patientenportal, Doctolib */
 export const ONLINE_SOURCES = ["online", "portal", "doctolib"] as const;
-/** Für die Vorlaufzeit ungeeignet: Kalender-Abo (Anlagezeit = Importzeit, nicht Buchungszeit) */
-export const LEAD_EXCLUDED_SOURCES = ["extern"] as const;
+/** Für die Vorlaufzeit ungeeignet: Kalender-Abo und Übernahme-Assistent (Anlagezeit = Importzeit, nicht Buchungszeit) */
+export const LEAD_EXCLUDED_SOURCES = ["extern", "import"] as const;
 /** Mindestzahl an Terminen, damit ein Slot in den Ranglisten „früh ausgebucht/kurzfristig“ erscheint */
 export const MIN_SLOT_BOOKINGS = 3;

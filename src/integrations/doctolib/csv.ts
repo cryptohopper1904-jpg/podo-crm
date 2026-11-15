@@ -179,7 +179,8 @@ export function writeDoctolibPatientsCsv(
     };
     rows.push(DOCTOLIB_PATIENT_COLUMNS.map((c) => rec[c]));
   }
-  return writeCsv(rows, { delimiter: opts.delimiter ?? ",", bom: opts.bom ?? true });
+  // Importformat für Doctolib: Rohwerte (Telefon „+49 …“) – keine Formel-Entschärfung, die Doctolib als Teil der Nummer läse
+  return writeCsv(rows, { delimiter: opts.delimiter ?? ",", bom: opts.bom ?? true, neutralize: false });
 }
 
 // ───────────── Termin-CSV (Format variiert je Export – Spaltennamen tolerant zuordnen) ─────────────

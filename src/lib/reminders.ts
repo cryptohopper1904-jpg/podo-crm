@@ -51,6 +51,16 @@ export type ReminderPatient = {
   deceased?: boolean;
 };
 
+/**
+ * „Keine Erinnerungen“ aus patients.extra: Schlüssel `no_reminders` (Doctolib-Import, Übernahme-Assistent). Ältere
+ * Doctolib-Importe schrieben `noReminders` – beide Schlüssel gelten (Altdaten), auch als Text „true“.
+ */
+export function noRemindersFlag(extra: unknown): boolean {
+  if (!extra || typeof extra !== "object") return false;
+  const e = extra as Record<string, unknown>;
+  return [e.no_reminders, e.noReminders].some((v) => v === true || v === "true");
+}
+
 /** Liste der Einwilligungen (beliebige Reihenfolge) → aktuell gültiger Stand je Typ (neuester Eintrag zählt). */
 export function grantedConsents(rows: { type: string; granted: boolean; recordedAt: Date | string }[]): Set<string> {
   const latest = new Map<string, { granted: boolean; at: number }>();
