@@ -149,6 +149,43 @@ describe("parseWorkbook", () => {
     expect(report.skippedEmptyRows).toBe(3);
   });
 
+  it("Bezugs-IDs außerhalb sicherer Ganzzahlen: ohne ID übernehmen (kein Abgleich über „1e+21“)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const p = wb.addWorksheet("Patienten");
+    p.addRow(["ID", "Anrede", "Titel", "Nachname", "Vorname"]);
+    p.addRow([1e21, "Frau", null, "Beispiel", "Erika"]);
+    p.addRow(["9007199254740993", "Herr", null, "Mustermann", "Max"]);
+    p.addRow([Number.MAX_SAFE_INTEGER, "Herr", null, "Probe", "Paul"]);
+    const g = wb.addWorksheet("Gutscheine");
+    g.addRow(["ID", "Gutscheinnummer", "Datum", "Gültig bis", "Betrag", "Restbetrag", "Hinweis"]);
+    g.addRow([1e21, "G2026-0001", new Date(Date.UTC(2026, 0, 5)), null, 50, 50, null]);
+    const res = await parseWorkbook(new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer), { today: "2026-11-07" });
+    expect(res.patients.map((x) => x.legacyId)).toEqual([null, null, Number.MAX_SAFE_INTEGER]);
+    expect(res.vouchers[0].legacyId).toBeNull();
+    const big = res.report.warnings.filter((w) => /ist zu groß – wird ohne ID übernommen/.test(w.message));
+    expect(big.map((w) => [w.sheet, w.row])).toEqual([
+      ["Patienten", 2],
+      ["Patienten", 3],
+      ["Gutscheine", 2],
+    ]);
+    expect(res.report.warnings.some((w) => w.sheet === "Patienten" && w.row === 2 && /ID fehlt/.test(w.message))).toBe(false);
+  });
+
+  it("SR-ID außerhalb sicherer Ganzzahlen: Hinweis „zu groß“ statt irreführendem „keine Sammelrechnung“", async () => {
+    const wb = new ExcelJS.Workbook();
+    const r = wb.addWorksheet("Rechnungen");
+    const head = ["ID", "Rechnungsnummer", "Datum", "Typ", "SR-ID", "Patienten-ID", "Nachname", "Vorname", "Bezahlung", "GS-ID", "A-B", "A-EC", "A-Ü", "A-GS", "Summe", "Summe SR"];
+    for (let n = 1; n <= 10; n++) head.push(`L${n}`, `A${n}`, `F${n}`);
+    head.push("Status Quittung", "Status SR");
+    r.addRow(head);
+    const empty = Array.from({ length: 30 }, () => null);
+    r.addRow([1, "R2026-0001", new Date(Date.UTC(2026, 2, 2)), "R", 1e21, null, "Beispiel", "Erika", null, null, null, null, null, null, 65, null, "PK", 1, 1, ...empty.slice(3), null, null]);
+    const res = await parseWorkbook(new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer), { today: "2026-11-07" });
+    const msgs = res.report.warnings.filter((w) => w.sheet === "Rechnungen" && w.row === 2).map((w) => w.message);
+    expect(msgs.some((m) => /SR-ID „.*“ ist zu groß – wird ohne SR-ID übernommen/.test(m))).toBe(true);
+    expect(msgs.some((m) => /verweist auf keine Sammelrechnung/.test(m))).toBe(false);
+  });
+
   it("meldet unlesbare Dateien statt zu werfen", async () => {
     const res = await parseWorkbook(new Uint8Array([1, 2, 3]));
     expect(res.patients).toEqual([]);

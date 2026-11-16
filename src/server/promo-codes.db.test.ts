@@ -192,6 +192,20 @@ const soon = new Date(Date.now() + 30 * day);
     expect(list.find((c) => c.code === C("EINMAL"))).toMatchObject({ redemptions: 2, usable: false, converted: 0 });
   });
 
+  it("usableCodesFor zählt Einlösungen je Code (ausgeschöpfter Kampagnen-Code wird nicht mehr verschickt)", async () => {
+    const camp = (await owner.query("insert into sales_campaigns (name) values ($1) returning id", [`Test ${sfx}`])).rows[0].id as string;
+    try {
+      await code("KAMPVOLL", { maxRedemptions: 1, campaignId: camp });
+      await p.redeemPromoCodeForOrganization(await org(), admin, C("KAMPVOLL"));
+      // ausgeschöpft → für die Kampagne kein Code (vorher zählte die Unterabfrage gegen r.id und lieferte immer 0)
+      expect((await p.usableCodesFor({ campaignIds: [camp], leadIds: [] })).byCampaign.get(camp)).toBeUndefined();
+      await code("KAMPFREI", { maxRedemptions: 5, campaignId: camp });
+      expect((await p.usableCodesFor({ campaignIds: [camp], leadIds: [] })).byCampaign.get(camp)).toBe(C("KAMPFREI"));
+    } finally {
+      await owner.query("delete from sales_campaigns where id = $1", [camp]);
+    }
+  });
+
   it("DB-Sicherungen: Trigger lehnt direkte Einlösung inaktiver Codes ab, Code/Tage unveränderbar, Einlösung unveränderbar", async () => {
     const id = await code("DIREKT");
     const o = await org();

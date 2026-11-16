@@ -52,4 +52,13 @@ next-env.d.ts
 !deploy/.env.example
 deploy/docker-compose.subdomain.yml
 deploy/.update.lock
-!src/lib/import/__fixtures__/**
+# Import-Fixtures (nur erfundene Daten): ausschließlich CSV/XLSX wieder freigeben …
+!src/lib/import/__fixtures__/**/*.csv
+!src/lib/import/__fixtures__/**/*.xlsx
+# … und Zugangsdaten darunter trotzdem ausschließen (nach den Freigaben, damit z. B. .env.csv ignoriert bleibt)
+src/lib/import/__fixtures__/**/.env*
+src/lib/import/__fixtures__/**/*.pem
+src/lib/import/__fixtures__/**/*.key
+src/lib/import/__fixtures__/**/*[Zz]ugang*
+src/lib/import/__fixtures__/**/[Cc]redentials*
+src/lib/import/__fixtures__/**/*.state.json

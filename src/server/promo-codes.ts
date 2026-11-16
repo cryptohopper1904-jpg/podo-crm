@@ -296,7 +296,7 @@ export async function usableCodesFor(opts: { campaignIds: string[]; leadIds: str
   const byLead = new Map<string, string>();
   if (!opts.campaignIds.length && !opts.leadIds.length) return { byCampaign, byLead };
   const rows = await db
-    .select({ c: promoCodes, n: sql<number>`(select count(*)::int from ${promoRedemptions} r where r.code_id = ${promoCodes.id})` })
+    .select({ c: promoCodes, n: sql<number>`(select count(*)::int from ${promoRedemptions} r where r.code_id = "promo_codes"."id")` })
     .from(promoCodes)
     .where(
       sql`${promoCodes.active} and (${opts.campaignIds.length ? inArray(promoCodes.campaignId, opts.campaignIds) : sql`false`} or ${opts.leadIds.length ? inArray(promoCodes.leadId, opts.leadIds) : sql`false`})`,

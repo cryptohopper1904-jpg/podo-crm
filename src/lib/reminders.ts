@@ -214,4 +214,5 @@ export const REMINDER_STATUS_LABEL: Record<string, string> = {
   failed: "fehlgeschlagen",
 };
 
-export const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "WhatsApp", sms: "SMS", phone: "Telefon", letter: "Brief", none: "–" };
+/** Deutsche Bezeichnungen der Kanäle (Erinnerungen, Posteingang, Heute) */
+export const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "WhatsApp", sms: "SMS", phone: "Telefon", letter: "Brief", none: "–", kim: "KIM" };

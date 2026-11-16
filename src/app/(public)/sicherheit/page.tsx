@@ -48,7 +48,7 @@ const MEASURES = [
   {
     icon: Sparkles,
     title: "Kein KI-Training",
-    text: "Ihre Daten werden nicht zum Training von KI-Modellen verwendet. KI-Funktionen laufen im Testmodus, bis ein EU-Anbieter mit AVV und ohne Datenspeicherung bestätigt ist. Namen werden vor dem Versand entfernt.",
+    text: "Ihre Daten werden nicht zum Training von KI-Modellen verwendet. KI-Funktionen laufen im Testmodus, bis ein EU-Anbieter mit AVV und ohne Datenspeicherung bestätigt ist. Namen werden vor dem Versand entfernt. Das KI-Telefon läuft über einen eigenen Vertrag der Praxis mit dem Telefonie-Anbieter; Echtbetrieb erst nach Prüfung von AVV und Datenübermittlung.",
   },
 ] as const;
 
@@ -61,7 +61,7 @@ const INTEGRATIONS: { name: string; state: "real" | "test" | "planned"; note: st
   { name: "Google-Bewertungen", state: "test", note: "Testmodus bis zur API-Freigabe" },
   { name: "Sprachbericht (Transkription, KI)", state: "test", note: "technisch gesperrt bis zur Freigabe eines EU-Anbieters mit AVV" },
   { name: "Kassen-TSE (fiskaly)", state: "test", note: "Schnittstelle vorbereitet, Vertrag erforderlich" },
-  { name: "KI-Telefon", state: "planned", note: "Pilot in Vorbereitung" },
+  { name: "KI-Telefon (Vapi, Retell AI)", state: "test", note: "Anbindung implementiert; Echtbetrieb erst mit Ihrem eigenen Anbietervertrag inkl. AVV, bis dahin Testmodus; im Tarif Plus enthalten, im Tarif Praxis als Zusatzmodul" },
 ];
 
 const STATE_BADGE = {
