@@ -59,6 +59,6 @@ deploy/.update.lock
 src/lib/import/__fixtures__/**/.env*
 src/lib/import/__fixtures__/**/*.pem
 src/lib/import/__fixtures__/**/*.key
-src/lib/import/__fixtures__/**/*zugang*
-src/lib/import/__fixtures__/**/credentials*
+src/lib/import/__fixtures__/**/*[Zz]ugang*
+src/lib/import/__fixtures__/**/[Cc]redentials*
 src/lib/import/__fixtures__/**/*.state.json

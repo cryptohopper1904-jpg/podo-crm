@@ -651,7 +651,8 @@ function parseInvoices(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     const pay = parsePayment(asString(v.payment), totalCents, { cash: toCents(v.aCash), card: toCents(v.aCard), transfer: toCents(v.aTransfer), voucher: toCents(v.aVoucher) }, gsId);
     pay.warnings.forEach((w) => ctx.warn(sheet, row.number, w));
     const srRefRaw = v.srId;
-    const srRef = srRefRaw === null ? null : typeof srRefRaw === "number" ? String(Math.round(srRefRaw)) : asString(srRefRaw);
+    const srNum = typeof srRefRaw === "number" ? toLegacyId(ctx, sheet, row.number, srRefRaw, "SR-ID") : null;
+    const srRef = srRefRaw === null ? null : typeof srRefRaw === "number" ? (srNum === null ? null : String(srNum)) : asString(srRefRaw);
 
     raws.push({
       srRef: kind === "collective" ? null : srRef,
