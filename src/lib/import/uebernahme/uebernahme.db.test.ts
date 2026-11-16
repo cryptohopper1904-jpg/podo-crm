@@ -563,5 +563,9 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
     expect(second.plan.hasWork).toBe(false);
     const after = await counts(pd.org);
     expect(after).toMatchObject({ patients: 3, appointments: 5, services: rows.links.length });
+    // R3-2: Bestand kennt je Pododesk-Termin die Person (Kollisionsprüfung); zweiter Lauf zählt sie als „bereits übernommen“
+    const snap = await inOrg(pd.org, (tx) => loadExisting(tx as never, pd.org));
+    expect(snap.appointmentPatients?.get("pododesk:101")).toBe(paula.id);
+    expect(second.plan.warnings.some((w) => /kollidier/.test(w.message))).toBe(false);
   });
 });

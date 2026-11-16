@@ -47,7 +47,7 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
     ]);
     expect(files.map((f) => f.status)).toEqual(["rejected", "rejected"]);
     for (const f of files) {
-      expect(f.note).toBe("Bitte jeden Pododesk-Export einzeln übernehmen (je Praxis ein Lauf).");
+      expect(f.note).toBe("Mehrere unterschiedliche Pododesk-Exporte – bitte nur einen Export hochladen. Mehrere Pododesk-Praxen in einem PodoHero-Konto werden derzeit nicht unterstützt.");
       expect(f.label).toBe("Pododesk – Patient:innen");
       expect(f.pododeskPatients).toBeUndefined();
     }
@@ -65,7 +65,7 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
     ]);
     const termine = files.filter((f) => f.kind === "pododesk.appointments" || f.label === "Pododesk – Termine");
     expect(termine).toHaveLength(2);
-    expect(termine.every((f) => f.status === "rejected" && /je Praxis ein Lauf/.test(f.note ?? ""))).toBe(true);
+    expect(termine.every((f) => f.status === "rejected" && /nur einen Export hochladen/.test(f.note ?? ""))).toBe(true);
     // die übrigen Dateien (nur einmal vorhanden) bleiben erhalten
     expect(files.find((f) => f.kind === "pododesk.patients")!.status).toBe("import");
     // derselbe Export zweimal: nur „doppelt“, nicht abgelehnt
@@ -93,7 +93,7 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
     expect(w).toMatch(/3 Termine gehören zu Pododesk-IDs, die im Bestand einer anderen Person zugeordnet sind – nicht übernommen/);
   });
 
-  it("(b) nur der Name weicht ab (z. B. Heirat) bzw. nur das Geburtsdatum → weiterhin dieselbe Person", async () => {
+  it("(b) nur der Name weicht ab (z. B. Heirat, Geburtsdatum gleich) → dieselbe Person; gleicher Name mit anderem Geburtsdatum → Konflikt (R3-1)", async () => {
     const zip = buildZip(FILES.map((n) => ({ path: n, data: fx(n) })));
     const existing = empty({
       patients: [
@@ -102,8 +102,10 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
       ],
     });
     const plan = buildPlan(await collectFiles([{ name: "export.zip", data: zip }]), existing, { prescriptionMode: "billed", now: NOW });
-    expect(plan.totals.patientsExisting).toBe(2);
-    expect(warningsOf(plan)).not.toMatch(/gehört im Bestand zu einer anderen Person/);
+    expect(plan.totals.patientsExisting).toBe(1);
+    const w = warningsOf(plan);
+    expect(w).not.toMatch(/Pododesk-ID 1 gehört im Bestand zu einer anderen Person/);
+    expect(w).toMatch(/Pododesk-ID 2 gehört im Bestand zu einer anderen Person/);
   });
 });
 

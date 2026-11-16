@@ -107,7 +107,7 @@ export function parseDoctolibPatientsCsv(text: string, delimiter?: Delimiter): {
     const gender = parseGender(get(values, "gender"));
     const birthRaw = get(values, "birthdate");
     const birthDate = parseDateLoose(birthRaw);
-    if (birthRaw && !birthDate) issues.push({ row, message: `Ungültiges Geburtsdatum „${birthRaw}“.` });
+    if (birthRaw && !birthDate) issues.push({ row, message: `Ungültiges Geburtsdatum „${birthRaw.length > 40 ? `${birthRaw.slice(0, 40)}…` : birthRaw}“.` });
     const phones = [get(values, "phone_number"), get(values, "secondary_phone_number")].filter((p): p is string => !!p);
     const mobile = phones.find(isMobileNumber) ?? null;
     const landline = phones.find((p) => p !== mobile) ?? null;

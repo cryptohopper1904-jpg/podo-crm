@@ -90,7 +90,10 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
       return { previewToken: plan.hasWork ? signPreviewToken(binding) : undefined, preview: toPreview(plan) };
     } catch (e) {
       if (e instanceof ImportBusyError) return { error: e.message };
-      throw e;
+      if (isDbTimeout(e)) return { error: DB_TIMEOUT_MESSAGE };
+      // nicht weiterwerfen: die Fehlermeldung (z. B. aus der Datenbank) enthielte Klardaten im Log/Fehlerbericht (R3-6)
+      console.error("[import.uebernahme.preview]", errorForLog(e));
+      return { error: "Die Vorschau konnte nicht erstellt werden. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
     }
   }
 

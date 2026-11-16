@@ -43,6 +43,8 @@ export interface ExistingSnapshot {
   patients: ExistingPatient[];
   /** appointments.external_id der Quelle „import“ */
   appointmentRefs: Set<string>;
+  /** appointments.external_id („pododesk:…“) → patient_id des vorhandenen Termins (Kollisionsprüfung, R3-2) */
+  appointmentPatients?: Map<string, string>;
   /** prescriptions.external_ref */
   prescriptionRefs: Set<string>;
   /** `${patientId}|${sha256}` vorhandener Dokumente */
@@ -57,6 +59,18 @@ export interface ExistingSnapshot {
 /** Quellen mit stabiler Patienten-ID (externalIds-Schlüssel) */
 export type SourceKey = "tinana" | "doctolib" | "pododesk";
 const SOURCE_LABEL: Record<SourceKey, string> = { tinana: "Tinana", doctolib: "Doctolib", pododesk: "Pododesk" };
+
+/**
+ * Bestandsperson mit derselben Pododesk-ID ist dieselbe Person, wenn (a) der Name gleich ist und die Geburtsdaten sich
+ * nicht widersprechen (eines darf fehlen) oder (b) beide Geburtsdaten vorhanden und gleich sind (Namenswechsel, z. B.
+ * Heirat). Alles andere – auch anderer Name ohne Geburtsdaten – ist ein Konflikt (R3-1).
+ */
+function samePododeskPerson(hit: Pick<ExistingPatient, "firstName" | "lastName" | "birthDate">, v: Pick<PatientCreate["values"], "firstName" | "lastName" | "birthDate">): boolean {
+  const a = hit.birthDate || null;
+  const b = v.birthDate || null;
+  if (a && b && a === b) return true;
+  return nameKey(hit.firstName, hit.lastName) === nameKey(v.firstName, v.lastName) && !(a && b && a !== b);
+}
 
 export type PatientRef = { existingId: string } | { ref: string };
 
@@ -520,9 +534,9 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       erasedWarning(who, person);
       return done(null);
     }
-    // Pododesk-IDs sind nur je Praxis eindeutig: gehört die ID im Bestand erkennbar zu einer anderen Person (Name UND
-    // Geburtsdatum weichen ab), nicht still verknüpfen – sonst landen Termine bei der falschen Person (Code-Review B1)
-    if (hit && key === "pododesk" && nameKey(hit.firstName, hit.lastName) !== nameKey(values.firstName, values.lastName) && (hit.birthDate ?? null) !== (values.birthDate ?? null)) {
+    // Pododesk-IDs sind nur je Praxis eindeutig (fortlaufende Zahlen): über die ID nur verknüpfen, wenn die Person
+    // erkennbar dieselbe ist – sonst landen Termine bei der falschen Person (Code-Review B1, Runde 3 R3-1)
+    if (hit && key === "pododesk" && !samePododeskPerson(hit, values)) {
       idConflicts.add(ext);
       warnings.push({ message: `Pododesk-ID ${extId.slice(0, 50)} gehört im Bestand zu einer anderen Person – nicht verknüpft, bitte prüfen (Nr. ${hit.number}; ${who} aus dem Upload wurde nicht übernommen).` });
       target.set(ext, null);
@@ -1151,6 +1165,8 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   let deletedService = 0;
   let linkedFuture = 0;
   let idConflict = 0;
+  /** Termin-IDs, die im Bestand schon zu einer anderen Person gehören (R3-2) */
+  const apptCollisions: string[] = [];
   let links = c.linksBefore;
   /** Termine, deren Leistungen wegen MAX_SERVICE_LINKS nur in der Notiz stehen */
   let linksCapped = 0;
@@ -1162,10 +1178,6 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
       continue;
     }
     const externalId = `pododesk:${a.id}`;
-    if (existing.appointmentRefs.has(externalId)) {
-      totals.appointmentsExisting++;
-      continue;
-    }
     const ext = a.patientId ? `pododesk:${a.patientId}` : null;
     if (ext && c.idConflicts.has(ext)) {
       totals.appointmentsUnassigned++;
@@ -1173,6 +1185,20 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
       continue;
     }
     const known = ext ? c.byExt.get(ext) : undefined;
+    if (existing.appointmentRefs.has(externalId)) {
+      // Termin-IDs sind wie Patienten-IDs nur je Praxis eindeutig: „bereits übernommen“ nur, wenn der vorhandene Termin
+      // zur aufgelösten Person gehört – sonst stammt er aus einem anderen Export (R3-2)
+      const owner = existing.appointmentPatients?.get(externalId);
+      const t = ext ? c.target.get(ext) : undefined;
+      const mine = t ? ("existingId" in t ? t.existingId : null) : known?.id ?? null;
+      if (owner !== undefined && owner !== mine) {
+        totals.appointmentsUnassigned++;
+        apptCollisions.push(a.id);
+        continue;
+      }
+      totals.appointmentsExisting++;
+      continue;
+    }
     if ((ext && c.target.has(ext) && c.target.get(ext) === null) || known?.erased) {
       totals.appointmentsUnassigned++;
       erased++;
@@ -1275,8 +1301,15 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   if (unknownTherapist) warnings.push({ message: `${plural(unknownTherapist, "Termin verweist", "Termine verweisen")} auf Mitarbeitende, die nicht in users.csv stehen – ohne Behandler:in übernommen. Laden Sie users.csv mit hoch.` });
   if (deletedService) warnings.push({ message: `${plural(deletedService, "Termin verweist", "Termine verweisen")} auf eine in Pododesk gelöschte Leistung – nur als Hinweis in der Terminnotiz übernommen.` });
   if (idConflict) warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, die im Bestand einer anderen Person zugeordnet sind – nicht übernommen. Bitte prüfen, ob der Export aus derselben Praxis stammt.` });
+  if (apptCollisions.length === 1) {
+    warnings.push({ message: `Pododesk-Termin ${apptCollisions[0].slice(0, 50)} kollidiert mit einem bereits übernommenen Termin einer anderen Person – nicht übernommen. Bitte prüfen, ob der Export aus derselben Praxis stammt.` });
+  } else if (apptCollisions.length) {
+    warnings.push({
+      message: `${apptCollisions.length.toLocaleString("de-DE")} Pododesk-Termine kollidieren mit bereits übernommenen Terminen anderer Personen – nicht übernommen (z. B. Termin ${apptCollisions[0].slice(0, 50)}). Bitte prüfen, ob der Export aus derselben Praxis stammt.`,
+    });
+  }
   if (linksCapped) {
-    warnings.push({ message: `Mehr als ${MAX_SERVICE_LINKS.toLocaleString("de-DE")} Leistungen an Terminen – bei ${plural(linksCapped, "Termin stehen", "Terminen stehen")} die Leistungen nur in der Terminnotiz. Bitte den Export in kleineren Teilen übernehmen, wenn sie verknüpft werden sollen.` });
+    warnings.push({ message: `Mehr als ${MAX_SERVICE_LINKS.toLocaleString("de-DE")} Leistungen an Terminen – bei ${plural(linksCapped, "Termin stehen", "Terminen stehen")} die Leistungen nur in der Terminnotiz.` });
   }
   if (unknownService) warnings.push({ message: `${plural(unknownService, "Leistung an Terminen ist", "Leistungen an Terminen sind")} nicht in leistungenPrivat.csv – nur als Hinweis in der Terminnotiz übernommen.` });
   if (linkedFuture) {

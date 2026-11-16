@@ -47,7 +47,7 @@ export async function loadExisting(tx: Tx, org: string, documentShas: string[] =
     .where(eq(s.patients.organizationId, org))
     .orderBy(s.patients.number);
   const appts = await tx
-    .select({ ref: s.appointments.externalId })
+    .select({ ref: s.appointments.externalId, patientId: s.appointments.patientId })
     .from(s.appointments)
     .where(
       and(
@@ -81,6 +81,8 @@ export async function loadExisting(tx: Tx, org: string, documentShas: string[] =
     // gelöschte Personen (Art. 17) bleiben im Abgleich, damit sie nicht neu angelegt werden
     patients: patients.map(({ erasedAt, ...p }) => ({ ...p, externalIds: (p.externalIds ?? {}) as Record<string, unknown>, erased: !!erasedAt })),
     appointmentRefs: new Set(appts.map((a) => a.ref).filter((x): x is string => !!x)),
+    // nur Pododesk: Termin-IDs sind je Praxis fortlaufend und können zwischen Praxen kollidieren (R3-2)
+    appointmentPatients: new Map(appts.flatMap((a) => (a.ref?.startsWith("pododesk:") && a.patientId ? [[a.ref, a.patientId] as const] : []))),
     prescriptionRefs: new Set(rx.map((r) => r.ref).filter((x): x is string => !!x)),
     documentHashes: new Set(docs.map((d) => `${d.patientId}|${d.sha}`)),
     therapists: members.filter((m) => hasOwnCalendar(m.role)).map((m) => ({ id: m.id, name: m.name, color: m.color })),

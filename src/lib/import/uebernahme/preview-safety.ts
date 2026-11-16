@@ -29,9 +29,10 @@ function emailMask(m: string): string {
 export function maskPii(message: string): string {
   let m = message.replace(EMAIL, emailMask).replace(PHONE, "***");
   if (SENSITIVE.test(m)) {
-    // Rohwerte in Anführungszeichen bzw. Klammern (z. B. „31.02.1950“, (0151 …)) – nicht das Pseudonym „(Jg. 1950)“;
-    // Inhalt höchstens 200 Zeichen (kein quadratisches Zurücksetzen bei langen Meldungen, A-B1)
-    m = m.replace(/„[^“]{0,200}“/g, "„***“").replace(/\((?!Jg\. \d{4}\))[^()\d]{0,200}\d[^()]{0,200}\)/g, "(***)");
+    // Rohwerte in Anführungszeichen bzw. Klammern (z. B. „31.02.1950“, (0151 …)) – nicht das Pseudonym „(Jg. 1950)“.
+    // Ohne Längengrenze, auch unbeendet bis zum Ende (Meldung ist vorher auf 500 Zeichen gekürzt, R3-5); linear, weil
+    // jeder Treffer am nächsten Abschluss- bzw. Klammerzeichen endet und Versuche nur an „ bzw. ( beginnen.
+    m = m.replace(/„[^“]*(?:“|$)/g, (x) => (x.endsWith("“") ? "„***“" : "„***")).replace(/\((?!Jg\. \d{4}\))[^()\d]*\d[^()]*(?:\)|$)/g, (x) => (x.endsWith(")") ? "(***)" : "(***"));
   }
   return m;
 }
@@ -48,7 +49,8 @@ export function errorForLog(e: unknown): string {
   if (!(e instanceof Error)) return "unbekannter Fehler";
   const codeOf = (x: unknown) => {
     const c = x && typeof x === "object" && "code" in x ? (x as { code: unknown }).code : undefined;
-    return typeof c === "string" && /^[A-Z0-9_]{1,40}$/i.test(c) ? c : null;
+    // nur SQLSTATE (fünf Zeichen, z. B. 23505, 22P02) oder Node-Fehlercodes (ERR_…) – keine freien Texte (R3-7)
+    return typeof c === "string" && (/^[0-9A-Z]{5}$/.test(c) || /^ERR_[A-Z_]{1,60}$/.test(c)) ? c : null;
   };
   const code = codeOf(e) ?? codeOf(e.cause);
   const name = /^[A-Za-z][A-Za-z0-9_]{0,60}$/.test(e.name) ? e.name : "Error";
@@ -76,6 +78,11 @@ export interface UebernahmePreview {
 /** höchstens so viele Dateien, Hinweise und Entscheidungen in der Vorschau */
 const PREVIEW_MAX = 200;
 
+/** Hinweise für den Browser: höchstens 200, je Meldung erst gekürzt, dann maskiert (auch Excel-/Doctolib-Einzelimport, R3-9) */
+export function safeWarnings<T extends { message: string }>(list: readonly T[]): T[] {
+  return list.slice(0, PREVIEW_MAX).map((w) => ({ ...w, message: maskPii(short(w.message)) }));
+}
+
 export function toPreview(plan: ImportPlan): UebernahmePreview {
   return {
     // gekürzt wie die Hinweise (AppSec A-H4: ein ZIP mit Tausenden Einträgen bläht sonst die Antwort auf)
@@ -84,7 +91,7 @@ export function toPreview(plan: ImportPlan): UebernahmePreview {
     totals: plan.totals,
     // E-Mail-Adressen, Geburtsdaten und Telefonnummern in Hinweisen maskiert (Vorschau zeigt keine Klardaten);
     // erst kürzen, dann maskieren (A-B1: Aufwand je Meldung begrenzt)
-    warnings: plan.warnings.slice(0, PREVIEW_MAX).map((w) => ({ ...w, message: maskPii(short(w.message)) })),
+    warnings: safeWarnings(plan.warnings),
     warningsTotal: plan.warnings.length,
     samples: plan.samples,
     cashbook: plan.cashbook,

@@ -93,7 +93,7 @@ export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits
   return rejectSeveralPododeskPractices(out);
 }
 
-export const ONE_PODODESK_NOTE = "Bitte jeden Pododesk-Export einzeln übernehmen (je Praxis ein Lauf).";
+export const ONE_PODODESK_NOTE = "Mehrere unterschiedliche Pododesk-Exporte – bitte nur einen Export hochladen. Mehrere Pododesk-Praxen in einem PodoHero-Konto werden derzeit nicht unterstützt.";
 
 /**
  * Pododesk-IDs sind nur innerhalb einer Praxis eindeutig (fortlaufende Zahlen). Zwei unterschiedliche Dateien derselben
@@ -101,9 +101,12 @@ export const ONE_PODODESK_NOTE = "Bitte jeden Pododesk-Export einzeln übernehme
  * Person zugeordnet (Code-Review B1). Deshalb werden alle Dateien dieser Art abgelehnt; gleicher Inhalt zweimal ist
  * schon als „doppelt“ markiert und zählt nicht.
  */
+/** Pododesk-Dateiarten mit praxisbezogenen IDs; Kassenbücher (z. B. je Jahr eines) tragen keine und bleiben erlaubt (R3-3) */
+const PODODESK_ID_KINDS = new Set(["pododesk.patients", "pododesk.appointments", "pododesk.services", "pododesk.users", "pododesk.doctors", "pododesk.practice"]);
+
 function rejectSeveralPododeskPractices(files: DetectedFile[]): DetectedFile[] {
   const count = new Map<string, number>();
-  const counts = (d: DetectedFile) => d.source === "pododesk" && d.status !== "duplicate" && d.status !== "rejected";
+  const counts = (d: DetectedFile) => d.source === "pododesk" && PODODESK_ID_KINDS.has(d.kind) && d.status !== "duplicate" && d.status !== "rejected";
   for (const d of files) if (counts(d)) count.set(d.kind, (count.get(d.kind) ?? 0) + 1);
   return files.map((d) =>
     counts(d) && count.get(d.kind)! > 1 ? { ...stub({ name: d.name, data: new Uint8Array() }, d.sha256), size: d.size, label: d.label, note: ONE_PODODESK_NOTE } : d,

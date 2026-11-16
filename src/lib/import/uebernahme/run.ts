@@ -154,6 +154,7 @@ export function snapshotFingerprint(e: ExistingSnapshot): string {
     h.update("\n");
   }
   for (const set of [e.appointmentRefs, e.prescriptionRefs, e.documentHashes]) h.update(JSON.stringify([...set].sort()));
+  h.update(JSON.stringify([...(e.appointmentPatients ?? new Map<string, string>())].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))));
   for (const list of [e.therapists, e.locations, e.services] as { id: string }[][]) h.update(JSON.stringify(sorted(list, (x) => x.id).map(([, x]) => x)));
   return h.digest("hex");
 }

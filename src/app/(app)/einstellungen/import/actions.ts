@@ -1,6 +1,6 @@
 "use server";
 
-import { errorForLog } from "@/lib/import/uebernahme/preview-safety";
+import { errorForLog, safeWarnings } from "@/lib/import/uebernahme/preview-safety";
 import { stripControl } from "@/lib/import/uebernahme/text";
 import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { createHash } from "node:crypto";
@@ -66,7 +66,8 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
       fileName: up.name,
       preview: {
         counts: result.report.counts,
-        warnings: result.report.warnings.slice(0, 200),
+        // gekürzt und maskiert wie im Übernahme-Assistenten (R3-9)
+        warnings: safeWarnings(result.report.warnings),
         warningsTotal: result.report.warnings.length,
         duplicates: result.report.duplicates,
         collectiveParts: result.report.collectiveParts,
@@ -100,7 +101,7 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
         fixedCosts: s.fixedCosts,
         renumbered: s.renumberedPatients.length,
         sequences: s.sequences.map((q) => `${q.key} ${q.year}: weiter ab ${q.next}`),
-        warnings: s.warnings.map((w) => `${w.sheet}${w.row ? ` Zeile ${w.row}` : ""}: ${w.message}`).slice(0, 100),
+        warnings: safeWarnings(s.warnings.slice(0, 100)).map((w) => `${w.sheet}${w.row ? ` Zeile ${w.row}` : ""}: ${w.message}`),
       },
     };
   } catch (e) {
@@ -154,7 +155,7 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
       preview: {
         total: drafts.length,
         existing: drafts.length - fresh.length,
-        issues: issues.slice(0, 100),
+        issues: safeWarnings(issues),
         sample: fresh.slice(0, 8).map((d) => [d.firstName, d.lastName].filter(Boolean).join(" ")),
       },
     };

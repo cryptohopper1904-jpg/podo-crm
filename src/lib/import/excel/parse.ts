@@ -195,6 +195,12 @@ export const MAX_LEGACY_PATIENT_ID = 9_999_999;
 export const legacyPatientNumber = (legacyId: number | null): number | null =>
   legacyId !== null && legacyId > 0 && legacyId <= MAX_LEGACY_PATIENT_ID ? legacyId : null;
 
+/** Rohwert in Hinweisen: höchstens 40 Zeichen (lange Zellen blähen sonst Vorschau und Antwort auf, R3-5) */
+const rawShort = (v: string | null | undefined): string => {
+  const t = v ?? "";
+  return t.length > 40 ? `${t.slice(0, 40)}…` : t;
+};
+
 const toInt = (v: Primitive): number | null => {
   const n = toNumber(v);
   return n === null ? null : Math.round(n);
@@ -278,17 +284,17 @@ function parsePatients(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     }
     const salRaw = asString(v.salutation);
     const salutation = mapSalutation(salRaw);
-    if (salutation === undefined) ctx.warn(sheet, row.number, `Unbekannte Anrede „${salRaw}“.`);
+    if (salutation === undefined) ctx.warn(sheet, row.number, `Unbekannte Anrede „${rawShort(salRaw)}“.`);
     const chRaw = asString(v.channel);
     let channel = mapChannel(chRaw);
     if (channel === null) {
-      ctx.warn(sheet, row.number, `Unbekannter Kanal „${chRaw}“ – auf „keiner“ gesetzt.`);
+      ctx.warn(sheet, row.number, `Unbekannter Kanal „${rawShort(chRaw)}“ – auf „keiner“ gesetzt.`);
       channel = "none";
     }
     const birthDate = toIsoDate(v.birthDate);
-    if (v.birthDate !== null && !birthDate) ctx.warn(sheet, row.number, `Geburtsdatum nicht lesbar („${asString(v.birthDate)}“).`);
+    if (v.birthDate !== null && !birthDate) ctx.warn(sheet, row.number, `Geburtsdatum nicht lesbar („${rawShort(asString(v.birthDate))}“).`);
     const email = asString(v.email)?.toLowerCase() ?? null;
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ctx.warn(sheet, row.number, `E-Mail-Adresse wirkt ungültig („${email}“).`);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ctx.warn(sheet, row.number, `E-Mail-Adresse wirkt ungültig („${rawShort(email)}“).`);
     const legacyId = toLegacyId(ctx, sheet, row.number, v.id);
     // unplausibel große IDs würden die Patientennummern dahinter verschieben (Nummer = ID): neue Nummer, ID bleibt Bezug
     if (legacyId !== null && legacyId > MAX_LEGACY_PATIENT_ID) {
