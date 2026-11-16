@@ -6,7 +6,7 @@
 export const EXPLAINER_VIDEO = {
   title: "PodoHero im Überblick – Erklärvideo",
   description:
-    "Rundgang durch PodoHero, die Praxissoftware für Podologie: Tagesübersicht, Patientensuche, Kalender, Doku am iPad mit Fußschema, Online-Terminanfrage, Rechnung und Kasse, Auswertung und Web-App – gezeigt mit erfundenen Demo-Daten, Abläufe gekürzt.",
+    "Rundgang durch PodoHero, die Praxissoftware für Podologie: Tagesübersicht, Patientensuche, Kalender, Doku am iPad mit Fußschema, Online-Terminanfrage, Rechnung und Kasse (Kassen-TSE derzeit im Testmodus), Auswertung und Web-App – gezeigt mit erfundenen Demo-Daten, Abläufe gekürzt.",
   /** 16:9 für breite Bildschirme */
   wide: {
     src: "/video/podohero-erklaervideo-v2.mp4",

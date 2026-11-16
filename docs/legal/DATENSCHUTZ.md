@@ -24,7 +24,9 @@ Beim Aufruf der Website verarbeitet unser Server technisch notwendige Daten: IP-
 
 - **Zweck:** Auslieferung der Website, Sicherheit (z. B. Abwehr von Angriffen, Begrenzung von Anmeldeversuchen)
 - **Rechtsgrundlage:** Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einem sicheren Betrieb)
-- **Speicherdauer:** Die Protokolle des Servers werden nach höchstens 7 Tagen automatisch gelöscht; Sicherheitsprotokolle der Anwendung siehe Abschnitt 4
+- **Speicherdauer:** Sicherheitsprotokolle der Anwendung siehe Abschnitt 4
+
+<!-- TODO (Betreiber): Speicherdauer der Server-Protokolle erst angeben, wenn belegt. Stand 16.11.2026: Container-Logs werden per logrotate nach 7 Tagen gelöscht (deploy/log-retention.sh), ABER (1) im Subdomain-Modus erfasst das die Zugriffslogs des vorhandenen Host-Caddy nicht (BETRIEB.md 4.4 – prüfen, ob dort ein `log`-Eintrag besteht, ggf. `roll_keep_for 168h`), und (2) für den Server sind Hetzner-Backups aktiv (Backup-Fenster 02–06 Uhr, bis zu 7 Sicherungen) – Logs liegen damit bis zu ca. 14 Tage in Sicherungen. Danach Frist eintragen (z. B. „höchstens 14 Tage einschließlich Sicherungen“). -->
 
 ### Erklärvideo auf der Startseite
 

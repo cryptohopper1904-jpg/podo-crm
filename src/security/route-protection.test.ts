@@ -142,6 +142,8 @@ describe("Proxy: Routen-Schutz", () => {
     expect(runsProxy("/video")).toBe(true);
     expect(runsProxy("/videox")).toBe(true);
     expect(runsProxy("/videos/x")).toBe(true);
+    expect(runsProxy("/VIDEO/x")).toBe(true);
+    expect(runsProxy("/Video/podohero-erklaervideo-v2.mp4")).toBe(true);
     // public/brand/* und genau /sw.js
     expect(runsProxy("/brand/podohero-mark.svg")).toBe(false);
     expect(runsProxy("/brandx")).toBe(true);

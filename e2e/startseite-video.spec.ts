@@ -117,6 +117,11 @@ test("Videodateien: ohne Anmeldung, Teilabrufe (Range), lange cachebar", async (
   expect(await vtt.text()).toMatch(/^WEBVTT/);
   const tall = await request.head("/video/podohero-erklaervideo-9x16-v2.mp4", { maxRedirects: 0 });
   expect(tall.status()).toBe(200);
+  expect(vtt.headers()["cache-control"]).toMatch(/immutable/);
+  // Nicht vorhandene Datei: kein Jahres-Cache für die 404 (sonst bliebe eine zu früh abgerufene neue Fassung hängen)
+  const missing = await request.get("/video/gibtsnicht-v9.mp4", { maxRedirects: 0 });
+  expect(missing.status()).toBe(404);
+  expect(missing.headers()["cache-control"] ?? "").not.toMatch(/immutable/);
 });
 
 test("Datenschutzerklärung: Abschnitt „Erklärvideo auf der Startseite“", async ({ page }) => {

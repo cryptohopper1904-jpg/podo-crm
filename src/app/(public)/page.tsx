@@ -199,7 +199,7 @@ export default async function Landing() {
       <section aria-labelledby="erklaervideo" className="mx-auto max-w-4xl px-4 pb-14 sm:px-6">
         <JsonLd data={videoObjectLd()} />
         <h2 id="erklaervideo" className="text-center font-display text-2xl font-semibold tracking-tight sm:text-3xl">PodoHero in zweieinhalb Minuten</h2>
-        <p className="mx-auto mt-2 max-w-2xl text-center text-muted">Vom Tagesüberblick bis zum Kassenabschluss – ein kurzer Rundgang durch die Software.</p>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-muted">Vom Tagesüberblick bis zum Tagesabschluss – ein kurzer Rundgang durch die Software.</p>
         <div className="mt-6">
           <ExplainerVideoPlayer />
         </div>

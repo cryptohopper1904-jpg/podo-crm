@@ -35,7 +35,7 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // Erklärvideo der Startseite (public/video): Dateinamen tragen eine Version (-v2) – neue Fassung = neuer Name
-      { source: "/video/:path*", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
+      { source: "/video/:file([A-Za-z0-9._-]+\\.(?:mp4|vtt|webp|jpg))", headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }] },
       // Service Worker: nie aus dem HTTP-Cache, sonst bleiben Updates hängen
       { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }] },
       // Einmal-Token im Pfad: nie als Referrer weitergeben, nicht cachen (spätere Regel überschreibt)
