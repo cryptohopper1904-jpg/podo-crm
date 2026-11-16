@@ -26,6 +26,8 @@ export const SLOT_STEP_LABELS: Record<SlotStep, string> = {
   10: "10 Minuten",
   5: "5 Minuten",
 };
+/** Kurzform für die Auswahl „Raster“ in der Kalender-Werkzeugleiste */
+export const SLOT_STEP_SHORT: Record<SlotStep, string> = { 60: "1 h", 30: "30 min", 15: "15 min", 10: "10 min", 5: "5 min" };
 
 /** Mindesthöhe einer Rasterzeile (Platz für die Uhrzeit-Beschriftung) und einer Stunde (Lesbarkeit bei grobem Raster) */
 export const ROW_PX = 16;

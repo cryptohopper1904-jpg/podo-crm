@@ -1,20 +1,28 @@
 import { initials } from "@/lib/calendar-grid";
 import { colorVar, type TherapistColor } from "@/lib/therapist-colors";
 
+const SIZE = {
+  /** Terminzeile (Heute, Kalender-Liste) */
+  md: "size-7 text-[12px]",
+  /** Termin-Block der Zeitachse – so groß wie die Symbole N/R */
+  sm: "size-4 text-[8px] tracking-tighter",
+} as const;
+
 /**
  * Behandler:in als rundes Kürzel-Badge in der Kalenderfarbe (wie Kontakt-Bilder am iPhone), z. B. „SK“.
  * Getönte Fläche + Text in der dunklen bzw. hellen Variante der Farbe (Kontrast hell/dunkel aus den Tokens) und farbiger
  * Ring; ohne Farbe neutral. Der volle Name steht in title und aria-label.
  */
-export function TherapistBadge({ name, color, className = "" }: { name: string; color?: TherapistColor | null; className?: string }) {
+export function TherapistBadge({ name, color, size = "md", className = "" }: { name: string; color?: TherapistColor | null; size?: keyof typeof SIZE; className?: string }) {
+  const ring = size === "sm" ? 1 : 2;
   return (
     <span
       role="img"
       aria-label={`Behandler:in: ${name}`}
       title={name}
       data-testid="behandler-kuerzel"
-      className={`inline-flex size-7 shrink-0 items-center justify-center rounded-full text-[12px] leading-none font-bold ${color ? "" : "bg-surface-2 text-text ring-1 ring-border-strong"} ${className}`}
-      style={color ? { background: colorVar(color, "soft"), color: colorVar(color, "text"), boxShadow: `inset 0 0 0 2px ${colorVar(color)}` } : undefined}
+      className={`inline-flex shrink-0 items-center justify-center rounded-full leading-none font-bold ${SIZE[size]} ${color ? "" : "bg-surface-2 text-text ring-1 ring-border-strong"} ${className}`}
+      style={color ? { background: colorVar(color, "soft"), color: colorVar(color, "text"), boxShadow: `inset 0 0 0 ${ring}px ${colorVar(color)}` } : undefined}
     >
       {initials(name)}
     </span>

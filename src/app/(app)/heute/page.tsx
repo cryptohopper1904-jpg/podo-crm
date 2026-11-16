@@ -17,6 +17,8 @@ import { holidayOn, type StateCode } from "@/lib/holidays";
 import { collectiveReminderYear } from "@/lib/year-end";
 import { collectiveOverview } from "@/server/appointment-billing";
 import { listAppointments } from "@/server/appointments";
+import { appointmentMarks } from "@/server/appointment-marks";
+import type { AppointmentMark } from "@/lib/appointment-marks";
 import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
@@ -46,6 +48,8 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const today = berlinDateIso();
   const dayStart = berlinToUtc(today, "00:00");
   const [appts, colors] = auth.can("appointments.read") ? await Promise.all([listAppointments(auth, today, 1), teamColors(auth)]) : [[], new Map<string, TherapistColor>()];
+  // Symbole N/R wie im Kalender (gleiche Abfrage und Komponente – src/server/appointment-marks.ts)
+  const marks = appts.length ? await appointmentMarks(auth, appts.map((r) => r.a.id)) : new Map<string, AppointmentMark>();
   const stats = await withOrg(org, async (tx) => {
     const [open] = auth.can("invoices.read")
       ? await tx.select({ n: count(), sum: sql<number>`coalesce(sum(${invoices.totalCents} - ${invoices.paidCents}),0)` }).from(invoices).where(and(eq(invoices.organizationId, org), inArray(invoices.status, ["issued", "partially_paid"])))
@@ -164,7 +168,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               <Link href="/einstellungen/kalender-abo" className="font-semibold underline">prüfen</Link>
             </p>
           ) : null}
-          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined} therapistBadge />)}
+          {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined} therapistBadge mark={marks.get(r.a.id)} />)}
         </Card>
 
         {sideColumn ? (

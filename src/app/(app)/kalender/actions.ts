@@ -12,7 +12,8 @@ import { hasOwnCalendar } from "@/lib/auth/permissions";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinToUtc } from "@/lib/format";
 import { conflictMessage, createInternalAppointments, moveAppointment, rescheduleAppointment, type MoveInput } from "@/server/appointments";
-import { saveCalendarMode, saveCalendarOptions } from "@/server/calendar-board";
+import { canSetCalendarSlot, saveCalendarMode, saveCalendarOptions, saveCalendarSlot } from "@/server/calendar-board";
+import { isSlotStep, type SlotStep } from "@/lib/calendar-grid";
 import { DECEASED_BLOCKED_MSG } from "@/lib/patient-deceased";
 import { keepOptionParams, parseOptionParams, resolveCalendarOptions, sanitizeIdList, toStoredOptions } from "@/lib/calendar-options";
 import { assignFeedAppointmentPatient } from "@/server/calendar-feeds";
@@ -299,4 +300,29 @@ export async function saveCalendarOptionsAction(form: FormData) {
   });
   revalidatePath("/kalender");
   redirect(`/kalender${p.size ? `?${p}` : ""}`);
+}
+
+const slotSchema = z.object({
+  slotMin: z.coerce.number().refine(isSlotStep),
+  // aus der einfachen Ansicht: zugleich in die vollständige Ansicht (Zeitachse) wechseln
+  mode: z.literal("full").optional(),
+  // zurück zur aktuellen Kalenderansicht – nur Pfade unter /kalender (kein offener Redirect)
+  back: z.string().max(2000).regex(/^\/kalender(\?[^\s\\]*)?$/).optional(),
+});
+
+/**
+ * Raster der Zeitachse aus der Kalender-Werkzeugleiste (Auswahl „Raster“) – dieselbe persönliche Einstellung wie unter
+ * Einstellungen → Kalender, dieselbe Rechteprüfung (canSetCalendarSlot: nicht im Support-Modus).
+ */
+export async function setCalendarSlotAction(form: FormData) {
+  const auth = await requireAuth("appointments.read");
+  const parsed = slotSchema.safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => v !== "")));
+  const back = parsed.success && parsed.data.back ? parsed.data.back : "/kalender";
+  if (parsed.success && canSetCalendarSlot(auth)) {
+    await saveCalendarSlot(auth.user.id, parsed.data.slotMin as SlotStep);
+    if (parsed.data.mode) await saveCalendarMode(auth.user.id, "full");
+    revalidatePath("/kalender");
+    revalidatePath("/einstellungen/kalender");
+  }
+  redirect(back);
 }

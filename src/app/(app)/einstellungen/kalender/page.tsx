@@ -3,7 +3,8 @@ import { ActionForm } from "@/components/action-form";
 import { Card, CardTitle } from "@/components/ui";
 import { getSession, requireAuth } from "@/lib/auth/session";
 import { gridScale, SLOT_STEP_LABELS, SLOT_STEPS } from "@/lib/calendar-grid";
-import { calendarSlotOf } from "@/server/calendar-board";
+import { calendarModeOf, calendarSlotOf, canSetCalendarSlot } from "@/server/calendar-board";
+import { setCalendarModeAction } from "../../kalender/actions";
 import { saveCalendarSlotAction } from "./actions";
 
 export const metadata = { title: "Kalender" };
@@ -21,6 +22,8 @@ export default async function CalendarSettings() {
   const auth = await requireAuth("appointments.read");
   const session = await getSession();
   const current = calendarSlotOf(session?.user.prefs);
+  // Das Raster wirkt nur in der vollständigen Ansicht (Zeitachse) – die einfache Ansicht ist eine Terminliste
+  const simple = calendarModeOf(session?.user.prefs) === "simple";
   return (
     <div className="flex flex-col gap-6">
       <Card>
@@ -29,9 +32,24 @@ export default async function CalendarSettings() {
           Gilt für die vollständige Kalenderansicht (Tag und Woche): jede Rasterzeile trägt ihre Uhrzeit, ein Klick in eine freie Zeile legt dort
           einen Termin an, beim Ziehen rasten Termine im gewählten Raster ein. Termine zu anderen Zeiten (z. B. 10:20 bei 15 Minuten) stehen weiterhin
           genau an ihrer Uhrzeit. Gilt nur für dein Konto. Weitere Anzeige-Optionen (Behandler:innen, Hausbesuche, Feiertage …) findest du im{" "}
-          <Link href="/kalender" className="font-semibold text-primary hover:underline">Kalender</Link> unter „Anzeige“.
+          <Link href="/kalender" className="font-semibold text-primary hover:underline">Kalender</Link> unter „Anzeige“; das Raster lässt sich dort in
+          Tag und Woche auch direkt über „Raster“ umstellen.
         </p>
-        {auth.support ? (
+        {simple && !auth.support ? (
+          <div role="status" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-info-soft px-4 py-3 text-sm text-info-soft-text">
+            <p className="min-w-0 flex-1">
+              Dein Kalender steht auf <strong>„Einfach“</strong> (Terminliste ohne Zeitachse) – dort ist das Raster nicht zu sehen. Es wirkt in der
+              Ansicht <strong>„Vollständig“</strong>.
+            </p>
+            <form action={setCalendarModeAction}>
+              <input type="hidden" name="ansicht" value="tag" />
+              <button type="submit" name="mode" value="full" className="h-11 cursor-pointer rounded-xl bg-primary px-4 text-[15px] font-semibold text-on-primary hover:bg-primary-hover">
+                Vollständige Ansicht öffnen
+              </button>
+            </form>
+          </div>
+        ) : null}
+        {!canSetCalendarSlot(auth) ? (
           <p className="text-sm text-muted">Im Support-Modus nicht änderbar.</p>
         ) : (
           <ActionForm action={saveCalendarSlotAction}>

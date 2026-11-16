@@ -1,6 +1,8 @@
 /**
  * Kalender-Anzeige: Raster unter Einstellungen → Kalender umstellen (Zeitachse beschriftet jede Rasterzeile),
- * Symbole N (Neupatient:in) und R (Rechnung offen) im Termin-Block, Anzeige-Filter „Hausbesuche“ samt „Alle einblenden“.
+ * Symbole N (Neupatient:in) und R (Rechnung offen) im Termin-Block, Anzeige-Filter „Hausbesuche“ samt „Alle einblenden“,
+ * dieselben Markierungen wie auf „Heute“ (N/R + Kürzel der Behandler:in) auch in der Liste („Einfach“) und in Tag/Woche,
+ * Auswahl „Raster“ direkt in der Kalender-Werkzeugleiste.
  * Termine werden direkt in der DB angelegt (Woche in ferner Zukunft, erfundene Person).
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -35,9 +37,9 @@ async function asOrg<T>(fn: (c: PoolClient) => Promise<T>): Promise<T> {
   }
 }
 
-/** Kalender-Einstellungen der Demo-Person zurücksetzen (Raster, Anzeige-Optionen) – users hat keine RLS */
+/** Kalender-Einstellungen der Demo-Person zurücksetzen (Raster, Anzeige-Optionen, Ansicht) – users hat keine RLS */
 async function resetPrefs() {
-  await pool.query("update users set prefs = prefs #- '{calendar,slotMin}' #- '{calendar,options}' where email = $1", [DEMO_EMAIL]);
+  await pool.query("update users set prefs = prefs #- '{calendar,slotMin}' #- '{calendar,options}' #- '{calendar,mode}' where email = $1", [DEMO_EMAIL]);
 }
 
 async function cleanup() {
@@ -131,3 +133,67 @@ test("Anzeige-Filter: Hausbesuche ausblenden", async () => {
   await page.reload();
   await expect(page.locator(`a[href="/kalender/termin/${ids.home}"]`)).toBeVisible();
 });
+
+/** Terminzeile der Liste („Einfach“) zu einem Termin */
+const listRow = (id: string) => page.locator("[data-appt-row]").filter({ has: page.locator(`a[href^="/kalender/termin/${id}"]`) });
+
+test("Liste („Einfach“): dieselben Markierungen wie auf „Heute“ – N/R und Kürzel der Behandler:in", async () => {
+  await page.goto(`/kalender?modus=einfach&ansicht=woche&datum=${MONDAY}`);
+  const first = listRow(ids.first);
+  await expect(first.getByRole("img", { name: "Neupatient:in" })).toBeVisible();
+  await expect(first.getByRole("img", { name: "Rechnung offen" })).toBeVisible();
+  await expect(first.getByTestId("behandler-kuerzel")).toBeVisible();
+  await expect(first.getByTestId("behandler-kuerzel")).toHaveAccessibleName(/^Behandler:in: /);
+  const second = listRow(ids.second);
+  await expect(second.getByRole("img", { name: "Rechnung offen" })).toBeVisible();
+  await expect(second.getByRole("img", { name: "Neupatient:in" })).toHaveCount(0);
+  // künftiger Hausbesuch: kein R, aber das Kürzel
+  await expect(listRow(ids.home).locator("[data-mark]")).toHaveCount(0);
+  await expect(listRow(ids.home).getByTestId("behandler-kuerzel")).toBeVisible();
+  // Anzeige-Filter „Hausbesuche“ wirkt auch hier (Markierungen nur für angezeigte Termine)
+  await page.goto(`/kalender?modus=einfach&ansicht=woche&datum=${MONDAY}&hb=0`);
+  await expect(listRow(ids.home)).toHaveCount(0);
+  await expect(listRow(ids.first).getByRole("img", { name: "Neupatient:in" })).toBeVisible();
+});
+
+test("Tag und Woche: Kürzel der Behandler:in im Termin-Block neben N/R", async () => {
+  for (const ansicht of ["woche", "tag"] as const) {
+    await page.goto(`/kalender?modus=voll&ansicht=${ansicht}&datum=2031-06-17`);
+    const block = page.locator(`a[href="/kalender/termin/${ids.first}"]`);
+    await expect(block.getByTestId("behandler-kuerzel")).toBeVisible();
+    await expect(block.getByRole("img", { name: "Neupatient:in" })).toBeVisible();
+  }
+});
+
+test("Auswahl „Raster“ in der Werkzeugleiste: setzt die Einstellung, Ansicht und Datum bleiben", async () => {
+  await page.goto(`/kalender?modus=voll&ansicht=woche&datum=${MONDAY}`);
+  const raster = page.getByRole("combobox", { name: "Raster der Zeitachse" }).first();
+  await raster.selectOption("60");
+  await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]')).toHaveAttribute("data-raster", "60");
+  await expect(page).toHaveURL(new RegExp(`ansicht=woche&datum=${MONDAY}`));
+  // nur volle Stunden beschriftet
+  await expect(page.locator("[data-zeitachse]", { hasText: /^09:30$/ })).toHaveCount(0);
+  await expect(page.locator("[data-zeitachse]", { hasText: /^09:00$/ }).first()).toBeAttached();
+  await expect(page.getByRole("combobox", { name: "Raster der Zeitachse" }).first()).toHaveValue("60");
+  // dieselbe Einstellung wie unter Einstellungen → Kalender
+  await page.goto("/einstellungen/kalender");
+  await expect(page.getByRole("radio", { name: /^60 Minuten/ })).toBeChecked();
+  // Monat hat keine Zeitachse → keine Auswahl
+  await page.goto(`/kalender?modus=voll&ansicht=monat&datum=${MONDAY}`);
+  await expect(page.getByRole("combobox", { name: "Raster der Zeitachse" })).toHaveCount(0);
+});
+
+test("Raster aus der Liste („Einfach“): wechselt in die vollständige Ansicht mit Zeitachse", async () => {
+  await page.goto(`/kalender?modus=einfach&ansicht=tag&datum=2031-06-17`);
+  await page.getByRole("combobox", { name: "Raster der Zeitachse" }).first().selectOption("30");
+  await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]').first()).toHaveAttribute("data-raster", "30");
+  await expect(page).toHaveURL(/ansicht=tag&datum=2031-06-17/);
+  await expect(page.locator("[data-zeitachse]", { hasText: /^09:30$/ }).first()).toBeAttached();
+  // zurück auf „Einfach“: Einstellungsseite zeigt den Hinweis samt Knopf zur vollständigen Ansicht
+  await pool.query("update users set prefs = jsonb_set(prefs, '{calendar,mode}', '\"simple\"') where email = $1", [DEMO_EMAIL]);
+  await page.goto("/einstellungen/kalender");
+  await expect(page.getByRole("status").filter({ hasText: "„Einfach“" })).toBeVisible();
+  await page.getByRole("button", { name: "Vollständige Ansicht öffnen" }).click();
+  await expect(page.locator("[data-dnd-col]").first()).toHaveAttribute("data-raster", "30");
+});
+

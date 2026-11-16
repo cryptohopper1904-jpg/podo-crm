@@ -11,9 +11,10 @@ const navBtn = "inline-flex size-11 shrink-0 items-center justify-center rounded
  *
  * Handy (< sm) – höchstens zwei Zeilen, damit der Kalender früh beginnt:
  *   1. ‹ [Datum ▾] › Heute   (Datum öffnet den Datumswähler)
- *   2. [Tag | Woche | Monat] ⋯   (⋯ = Einfach/Vollständig, Anzeige, Sperrzeit)
+ *   2. [Tag | Woche | Monat] ⋯   (⋯ = Einfach/Vollständig, Anzeige, Raster, Sperrzeit)
  *   „+ Termin“ schwebt unten rechts über der Bottom-Navigation.
- * Ab sm: Titel links, ‹ Heute › · Sperrzeit · + Termin rechts; darunter Zeitraum, Einfach/Vollständig und Anzeige.
+ * Ab sm: Titel links, ‹ Heute › · Sperrzeit · + Termin rechts; darunter Zeitraum, Einfach/Vollständig, Anzeige und
+ * (Tag/Woche der vollständigen Ansicht) Raster.
  */
 export function CalendarHeader({
   title,
@@ -28,6 +29,7 @@ export function CalendarHeader({
   tabs,
   modeSwitch,
   panel,
+  raster,
   blockHref,
   newHref,
 }: {
@@ -46,6 +48,8 @@ export function CalendarHeader({
   /** Einfach/Vollständig – wird für Handy (Menü) und breite Bildschirme je einmal gerendert */
   modeSwitch: (place: "menu" | "bar") => ReactNode;
   panel: (place: "menu" | "bar") => ReactNode;
+  /** Auswahl „Raster“ (nur Tag/Woche der vollständigen Ansicht) */
+  raster?: ((place: "menu" | "bar") => ReactNode) | null;
   blockHref: string | null;
   newHref: string | null;
 }) {
@@ -98,16 +102,19 @@ export function CalendarHeader({
             ) : null}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <SegmentedControl label="Ansicht" items={tabs} className="max-sm:flex-1 max-sm:flex-nowrap max-sm:[&>a]:flex-1" />
+        {/* ab sm umbrechend (iPad: Raster in eigener Zeile statt gequetschter Ansicht-Tabs), auf dem Handy eine Zeile */}
+        <div className="flex items-center gap-2 sm:flex-wrap">
+          <SegmentedControl label="Ansicht" items={tabs} className="max-sm:flex-1 max-sm:flex-nowrap max-sm:[&>a]:flex-1 sm:shrink-0" />
           <div className="flex flex-wrap items-center gap-2 max-sm:hidden">
             {modeSwitch("bar")}
             {panel("bar")}
+            {raster?.("bar")}
           </div>
           <div className="sm:hidden">
             <MoreMenu>
               {modeSwitch("menu")}
               {panel("menu")}
+              {raster?.("menu")}
               {blockHref ? (
                 <LinkButton variant="secondary" href={blockHref} className="w-full justify-start">
                   <Ban size={18} aria-hidden /> Sperrzeit eintragen

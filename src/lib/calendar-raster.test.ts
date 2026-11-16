@@ -3,7 +3,7 @@
  * für alle Rasterweiten 60/30/15/10/5 Minuten.
  */
 import { describe, expect, it } from "vitest";
-import { freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, minFreeMin, SLOT_STEPS, type SlotStep } from "./calendar-grid";
+import { freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, minFreeMin, SLOT_STEP_SHORT, SLOT_STEPS, type SlotStep } from "./calendar-grid";
 import { dropStartMin, resizeDuration, snapMin } from "./calendar-dnd";
 
 const RANGE = { startMin: 7 * 60, endMin: 20 * 60 };
@@ -33,6 +33,12 @@ describe("gridScale", () => {
       // 10:20 bei Achsenbeginn 07:00 → 200 Minuten
       expect(200 * pxPerMin).toBeCloseTo((200 / 60) * gridScale(step).hourPx);
     }
+  });
+});
+
+describe("SLOT_STEP_SHORT (Auswahl „Raster“ im Kalender)", () => {
+  it("Kurzbeschriftung für jede Rasterweite in der Reihenfolge 1 h, 30, 15, 10, 5 min", () => {
+    expect(SLOT_STEPS.map((s) => SLOT_STEP_SHORT[s])).toEqual(["1 h", "30 min", "15 min", "10 min", "5 min"]);
   });
 });
 
