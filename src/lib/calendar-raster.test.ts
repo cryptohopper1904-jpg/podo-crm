@@ -3,7 +3,7 @@
  * für alle Rasterweiten 60/30/15/10/5 Minuten.
  */
 import { describe, expect, it } from "vitest";
-import { freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, minFreeMin, SLOT_STEPS, type SlotStep } from "./calendar-grid";
+import { calendarBackTarget, freeParts, gridScale, gridSlots, isSlotStep, mergeIntervals, minFreeMin, SLOT_STEP_SHORT, SLOT_STEPS, type SlotStep } from "./calendar-grid";
 import { dropStartMin, resizeDuration, snapMin } from "./calendar-dnd";
 
 const RANGE = { startMin: 7 * 60, endMin: 20 * 60 };
@@ -33,6 +33,12 @@ describe("gridScale", () => {
       // 10:20 bei Achsenbeginn 07:00 → 200 Minuten
       expect(200 * pxPerMin).toBeCloseTo((200 / 60) * gridScale(step).hourPx);
     }
+  });
+});
+
+describe("SLOT_STEP_SHORT (Auswahl „Raster“ im Kalender)", () => {
+  it("Kurzbeschriftung für jede Rasterweite in der Reihenfolge 1 h, 30, 15, 10, 5 min", () => {
+    expect(SLOT_STEPS.map((s) => SLOT_STEP_SHORT[s])).toEqual(["1 h", "30 min", "15 min", "10 min", "5 min"]);
   });
 });
 
@@ -140,5 +146,33 @@ describe("Ziehen im Raster", () => {
     expect(at(686)).toBe(55); // +16 min → +15
     expect(at(640)).toBe(10); // −30 min
     expect(at(600)).toBe(5); // weit nach oben → Mindestdauer
+  });
+});
+
+describe("calendarBackTarget (Rücksprung nach „Raster“ in der Werkzeugleiste)", () => {
+  it.each(["/kalender", "/kalender?ansicht=woche&datum=2031-06-16", "/kalender?ansicht=tag&datum=2031-06-17&hb=0"])("übernimmt %s", (v) => {
+    expect(calendarBackTarget(v)).toBe(v);
+  });
+  it.each([
+    "//evil.example",
+    "//evil.example/kalender",
+    "https://evil.example/kalender",
+    "/kalender/../x",
+    "/kalender/termin/1",
+    "/kalender@evil.example",
+    "/kalender.evil.example",
+    "/kalender?x=\\\\evil.example",
+    "/kalender\\evil",
+    "\\\\evil.example",
+    "/kalender?x=1 y",
+    "/kalender?x=1\n",
+    "/heute",
+    "",
+    `/kalender?${"a".repeat(2000)}`,
+    null,
+    undefined,
+    42,
+  ])("lehnt %j ab → /kalender", (v) => {
+    expect(calendarBackTarget(v)).toBe("/kalender");
   });
 });

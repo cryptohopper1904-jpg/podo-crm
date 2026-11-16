@@ -3,7 +3,8 @@ import type { CSSProperties, ReactNode } from "react";
 import { Badge } from "@/components/ui";
 import { absentOn, addDaysIso, berlinParts, dayInterval, freeParts, gridRange, gridScale, gridSlots, minFreeMin, initials, layoutLanes, mergeIntervals, monthWeeks, outsideRanges, SLOT_MIN, toHhmm, type FullView, type SlotStep } from "@/lib/calendar-grid";
 import { isoWeek, passesDisplayFilter, visibleWeekDays, type CalendarOptions } from "@/lib/calendar-options";
-import { MARK_LABELS, type AppointmentMark } from "@/lib/appointment-marks";
+import { MARK_LABELS, markKinds, type AppointmentMark } from "@/lib/appointment-marks";
+import { AppointmentMarks, MarkLegend } from "@/components/appointment-marks";
 import { holidayOn, type StateCode } from "@/lib/holidays";
 import { SCHOOL_HOLIDAYS_META, schoolHolidayOn, schoolHolidaysCovered } from "@/lib/school-holidays";
 import { dotStyle, colorVar, type TherapistColor } from "@/lib/therapist-colors";
@@ -67,7 +68,7 @@ export type FullCalendarProps = {
   billed: Set<string>;
   /** Raster der Zeitachse (Einstellungen → Kalender) */
   slot: SlotStep;
-  /** Symbole im Termin-Block: N (Neupatient:in), R (Rechnung offen/geschrieben) */
+  /** Symbole N (Neupatient:in), R (Rechnung offen/geschrieben) – Tag/Woche: alle Termine, Monat: Termine des gewählten Tags */
   marks: Map<string, AppointmentMark>;
   /** Hinweis „x Termine durch den Anzeige-Filter ausgeblendet … Alle einblenden“ (Seite, gleiche Zählung wie „Einfach“) */
   filterHint: ReactNode;
@@ -156,13 +157,8 @@ export function FullCalendar(props: FullCalendarProps) {
         {props.canWrite ? <span>Freie Zeit anklicken = neuer Termin oder Sperrzeit</span> : null}
         {props.canMove && props.view !== "monat" ? <span>Termin ziehen = verschieben (Touch: lange drücken), unteren Rand ziehen = Dauer ändern</span> : null}
         {props.canMove && props.view === "monat" ? <span className="max-sm:hidden">Termin auf einen anderen Tag ziehen = verschieben (Uhrzeit bleibt; Touch: lange drücken)</span> : null}
-        {props.view !== "monat" && props.marks.size ? (
-          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="inline-flex items-center gap-1"><MarkBadge kind="newPatient" /> {MARK_LABELS.newPatient}</span>
-            <span className="inline-flex items-center gap-1"><MarkBadge kind="open" /> {MARK_LABELS.open}</span>
-            <span className="inline-flex items-center gap-1"><MarkBadge kind="written" /> {MARK_LABELS.written}</span>
-          </span>
-        ) : null}
+        {/* Monat: Symbole nur in der Tagesliste auf dem Handy */}
+        {[...props.marks.values()].some((m) => markKinds(m).length) ? <span className={props.view === "monat" ? "sm:hidden" : "contents"}><MarkLegend /></span> : null}
         {props.board.team.length > 1 ? (
           <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Farben der Behandler:innen">
             {props.board.team.map((t) => (
@@ -442,7 +438,7 @@ function TimeGridView({ view, day, focusDay, today, now, rows, busyRows, board, 
                 {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} pxPerMin={scale.pxPerMin} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
-                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} pxPerMin={scale.pxPerMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} mark={marks.get(b.row.a.id)} />
+                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} pxPerMin={scale.pxPerMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche" || c.key === "ohne"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} mark={marks.get(b.row.a.id)} />
                 ))}
                 {nowMin !== null ? (
                   <div className="pointer-events-none absolute inset-x-0 z-[3] h-0.5 bg-accent" style={{ top: px(nowMin - range.startMin) }} aria-hidden>
@@ -466,31 +462,6 @@ function busyIn(busy: Interval[] | null, range: Interval): Interval[] {
     .filter((b) => b.endMin > b.startMin);
 }
 
-/**
- * Symbol im Termin-Block: „N“ Neupatient:in (Akzentfarbe), „R“ Rechnung offen (grau) / geschrieben (grün).
- * Farben aus den Tokens (hell/dunkel, Kontrast ≥ 4,5:1); die Bedeutung steht zusätzlich in title/aria-label.
- */
-export function MarkBadge({ kind }: { kind: "newPatient" | "open" | "written" }) {
-  const cls =
-    kind === "newPatient"
-      ? "bg-accent-soft text-accent-soft-text ring-accent-soft-text/50"
-      : kind === "written"
-        ? "bg-primary text-on-primary ring-primary"
-        : "bg-surface text-muted ring-border-strong";
-  const label = MARK_LABELS[kind];
-  return (
-    <span
-      role="img"
-      aria-label={label}
-      title={label}
-      data-mark={kind}
-      className={`inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] leading-none font-bold no-underline ring-1 ${cls}`}
-    >
-      {kind === "newPatient" ? "N" : "R"}
-    </span>
-  );
-}
-
 function Block({
   b,
   rangeStart,
@@ -505,6 +476,7 @@ function Block({
   rangeStart: number;
   pxPerMin: number;
   overlap: boolean;
+  /** Kürzel der Behandler:in im Block – nur wo die Spalte gemischt ist (Woche, Tag „Ohne Zuordnung“), nicht in Spalten je Behandler:in */
   showTherapist: boolean;
   color: TherapistColor | null;
   move: ReturnType<typeof moveAttrs>;
@@ -532,8 +504,24 @@ function Block({
   const tint = color && a.status !== "cancelled" && a.status !== "no_show" ? { background: colorVar(color, "soft"), color: colorVar(color, "text") } : {};
   const done = a.status === "done" ? "✓ " : "";
   const blockH = Math.max(14, Math.round(h) - 1);
-  // Symbole N/R: nur ab 20 px Blockhöhe (sonst nur im Tooltip); rechts Platz reservieren, damit kein Text darunter liegt
-  const badges = mark && blockH >= 20 ? ([mark.newPatient ? "newPatient" : null, mark.invoice].filter(Boolean) as ("newPatient" | "open" | "written")[]) : [];
+  // Markierungen wie auf „Heute“ (N/R + Kürzel der Behandler:in): nur ab 20 px Blockhöhe (sonst nur im Tooltip).
+  // Platz: ab 52 px eigene Zeile unten rechts; zweizeilige Blöcke rechts in der Zeitzeile (der Name behält die volle
+  // Breite); einzeilige (20–29 px) unten rechts mit reserviertem Rand, damit kein Text darunter liegt.
+  // Kürzel nur in gemischten Spalten, nicht in einzeiligen Blöcken (Farbe steht im linken Rand) und nicht in schmalen
+  // Spuren nebeneinander liegender Termine (b.lanes > 1) – dort nur N/R.
+  const kinds = blockH >= 20 ? markKinds(mark) : [];
+  const withTherapist = blockH >= 20 && h >= 30 && showTherapist && !!therapist && b.lanes === 1;
+  const place = !kinds.length && !withTherapist ? null : h >= 52 ? "line" : h >= 30 ? "top" : "corner";
+  // Schmale Spuren: was nicht passt, bricht in eine abgeschnittene zweite Zeile um (fit) – nie halb sichtbar; passt nicht
+  // einmal ein Symbol (Block-Inhalt < 16 px, Container-Query auf dem Block), entfallen die Symbole (Tooltip nennt sie)
+  const marksEl = place ? (
+    <span
+      className={`pointer-events-none flex min-w-0 max-w-full shrink-0 justify-end @max-[16px]:hidden ${place === "line" ? "mt-auto pb-px" : place === "corner" ? "absolute right-1 bottom-0.5 left-1.5" : "ml-auto"}`}
+      data-testid="termin-symbole"
+    >
+      <AppointmentMarks mark={mark} therapist={withTherapist ? therapist : null} color={color} size="sm" fit />
+    </span>
+  ) : null;
   const title = [
     `${time} Uhr`,
     name,
@@ -554,7 +542,7 @@ function Block({
       title={title}
       draggable={false}
       {...move.attrs}
-      className={`group absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary py-0.5 pl-1.5 ${badges.length === 2 ? "pr-[2.375rem]" : badges.length ? "pr-[1.375rem]" : "pr-1.5"} text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
+      className={`group @container absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary py-0.5 pl-1.5 pr-1.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
       style={{
         top: px(b.startMin - rangeStart),
         height: `${blockH}px`,
@@ -565,22 +553,21 @@ function Block({
       }}
     >
       {h < 30 ? (
-        <span className="truncate"><span className="tabular-nums">{done}{toHhmm(b.startMin)}</span> <strong>{name}</strong></span>
+        // einzeilig: rechts Platz (Außenabstand, damit der Text nicht in die Polsterung läuft) für die Symbole (je 16 px + 2 px Abstand, hier ohne Kürzel), außer sie entfallen (zu schmal)
+        <span className={`truncate ${place === "corner" ? (kinds.length > 1 ? "mr-[40px]" : "mr-[22px]") : ""} @max-[16px]:mr-0`}>
+          <span className="tabular-nums">{done}{toHhmm(b.startMin)}</span> <strong>{name}</strong>
+        </span>
       ) : (
         <>
-          <span className="truncate text-xs tabular-nums">{done}{time}{a.homeVisit ? " · HB" : ""}</span>
+          <span className="flex min-w-0 items-start gap-1">
+            <span className="min-w-0 truncate text-xs tabular-nums">{done}{time}{a.homeVisit ? " · HB" : ""}</span>
+            {place === "top" ? marksEl : null}
+          </span>
           <strong className="truncate">{name}</strong>
-          {sub && h >= 46 ? <span className="truncate">{sub}</span> : null}
-          {showTherapist && therapist && h >= 62 ? <span className="truncate">{therapist}</span> : null}
+          {sub && h >= (place === "line" ? 66 : 46) ? <span className="truncate">{sub}</span> : null}
         </>
       )}
-      {badges.length ? (
-        <span className="pointer-events-none absolute right-1 bottom-0.5 flex gap-0.5" data-testid="termin-symbole">
-          {badges.map((k) => (
-            <MarkBadge key={k} kind={k} />
-          ))}
-        </span>
-      ) : null}
+      {place === "line" || place === "corner" ? marksEl : null}
       {move.movable && h >= 22 ? (
         <span data-resize="" className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" title="Ziehen = Dauer ändern" aria-hidden>
           <span className="mx-auto mt-[3px] block h-0.5 w-6 rounded-full bg-current opacity-0 group-hover:opacity-40" />
@@ -721,7 +708,7 @@ function MonthGrid({ day, today, rows, board, state, canWrite, calHref, options,
  * Monat auf dem Handy: kompaktes Raster (Tageszahl + Punkte in den Farben der Behandler:innen, ab 5 Terminen Anzahl)
  * ohne seitliches Scrollen; Antippen eines Tages zeigt darunter dessen Termine (Server-Navigation, Monat bleibt).
  */
-function MonthCompact({ day, focusDay, today, rows, board, state, canWrite, calHref, options }: FullCalendarProps) {
+function MonthCompact({ day, focusDay, today, rows, board, state, canWrite, calHref, options, marks }: FullCalendarProps) {
   const weeks = monthWeeks(day);
   const month = day.slice(0, 7);
   const selected = focusDay && focusDay.slice(0, 7) === month ? focusDay : today.slice(0, 7) === month ? today : `${month}-01`;
@@ -810,10 +797,11 @@ function MonthCompact({ day, focusDay, today, rows, board, state, canWrite, calH
                       {toHhmm(berlinParts(r.a.startsAt).min)}–{toHhmm(berlinParts(r.a.endsAt).min)}
                     </span>
                     <span className="inline-block h-8 w-1 shrink-0 rounded" style={c ? dotStyle(c) : undefined} aria-hidden />
-                    <span className="flex min-w-0 flex-col">
+                    <span className="flex min-w-0 flex-1 flex-col">
                       <span className={`truncate font-semibold ${r.a.status === "cancelled" ? "text-muted line-through" : ""}`}>{personName(r)}</span>
                       <span className="truncate text-sm text-muted">{[r.therapist, st].filter(Boolean).join(" · ")}</span>
                     </span>
+                    <AppointmentMarks mark={marks.get(r.a.id)} therapist={r.therapist} color={c} />
                   </Link>
                 </li>
               );

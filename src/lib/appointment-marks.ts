@@ -44,6 +44,17 @@ export function markFor(a: MarkInput, now: Date, newPatient: boolean, billed: bo
   };
 }
 
+export type MarkKind = "newPatient" | InvoiceMark;
+
+/** Symbole eines Termins in fester Reihenfolge: N, dann R (offen/geschrieben); ohne Markierung keine */
+export function markKinds(mark: AppointmentMark | null | undefined): MarkKind[] {
+  if (!mark) return [];
+  const out: MarkKind[] = [];
+  if (mark.newPatient) out.push("newPatient");
+  if (mark.invoice) out.push(mark.invoice);
+  return out;
+}
+
 /** Beschriftung für Bildschirmleser/Tooltip */
 export const MARK_LABELS = {
   newPatient: "Neupatient:in",

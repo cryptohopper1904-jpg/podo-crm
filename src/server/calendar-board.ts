@@ -138,6 +138,14 @@ export function calendarSlotOf(prefs: UserPrefs | null | undefined): SlotStep {
   return isSlotStep(v) ? v : SLOT_MIN;
 }
 
+/**
+ * Darf die Person das Raster ändern (Einstellungen → Kalender und Auswahl „Raster“ im Kalender)? Wer den Kalender sieht –
+ * außer im Support-Modus (Plattform-Admin im fremden Konto, dort wird nichts gespeichert).
+ */
+export function canSetCalendarSlot(auth: Pick<AuthContext, "can" | "support">): boolean {
+  return auth.can("appointments.read") && !auth.support;
+}
+
 /** Raster merken (users.prefs.calendar.slotMin; Standard 15 wird nicht gespeichert) – eigene Einstellung der angemeldeten Person. */
 export async function saveCalendarSlot(userId: string, step: SlotStep): Promise<void> {
   await db.transaction(async (tx) => {

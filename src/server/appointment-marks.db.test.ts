@@ -180,6 +180,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const ohneSperre = await marks.calendarAppointmentInfo(auth, rows.map((x) => x.id), { marks: true, dragLock: false, now });
     expect(ohneSperre.billed.size).toBe(0);
     expect(ohneSperre.marks).toEqual(info.marks);
+    // Monatsansicht: Symbole nur für die Termine des gewählten Tags, Zieh-Sperre weiter für alle
+    const nurTag = await marks.calendarAppointmentInfo(auth, rows.map((x) => x.id), { marks: true, dragLock: true, markIds: [quittung.id, ueberDoku.id], now });
+    expect([...nurTag.marks.keys()].sort()).toEqual([quittung.id, ueberDoku.id].sort());
+    expect(nurTag.marks.get(quittung.id)).toEqual(info.marks.get(quittung.id));
+    expect(nurTag.billed).toEqual(info.billed);
+    // markIds außerhalb der Ansicht (fremde/ungültige IDs) liefern nichts
+    const fremd = await marks.calendarAppointmentInfo(auth, [quittung.id], { marks: true, dragLock: false, markIds: [ueberDoku.id, "kein-uuid"], now });
+    expect(fremd.marks.size).toBe(0);
   });
 
   it("Rechnung: grau ohne bzw. mit Entwurf/storniertem Beleg, grün mit ausgestelltem; nur erledigt oder vorbei", async () => {

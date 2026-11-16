@@ -105,4 +105,20 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await cb.saveCalendarOptions(u, () => null);
     expect(await read()).toEqual({ changelog: { seenId: "x" }, calendar: { mode: "full" } });
   });
+  it("Raster: wer den Kalender sieht, darf es ändern – nicht im Support-Modus; gemerkt je Person, Ansicht bleibt", async () => {
+    const auth = (support: boolean, read = true) => ({ support: support ? { grantId: "g" } : null, can: (p: string) => p === "appointments.read" && read }) as unknown as AuthContext;
+    expect(cb.canSetCalendarSlot(auth(false))).toBe(true);
+    expect(cb.canSetCalendarSlot(auth(true))).toBe(false);
+    expect(cb.canSetCalendarSlot(auth(false, false))).toBe(false);
+    const u = await f.user();
+    await cb.saveCalendarMode(u, "full");
+    await cb.saveCalendarSlot(u, 60);
+    const prefs = async () => (await f.pool.query("select prefs from users where id = $1", [u])).rows[0].prefs;
+    expect((await prefs()).calendar).toEqual({ mode: "full", slotMin: 60 });
+    expect(cb.calendarSlotOf(await prefs())).toBe(60);
+    // Standard 15 Minuten wird nicht gespeichert
+    await cb.saveCalendarSlot(u, 15);
+    expect((await prefs()).calendar).toEqual({ mode: "full" });
+    expect(cb.calendarSlotOf(await prefs())).toBe(15);
+  });
 });
