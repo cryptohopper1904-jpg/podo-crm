@@ -28,7 +28,9 @@ import {
 import { Badge, LinkButton } from "@/components/ui";
 import { getAuth } from "@/lib/auth/session";
 import { HeroShots } from "./_content/hero-shots";
-import { JsonLd, softwareApplicationLd } from "./_content/json-ld";
+import { ExplainerVideoPlayer } from "./_content/explainer-video-player";
+import { EXPLAINER_VIDEO_NOTE } from "./_content/explainer-video";
+import { JsonLd, softwareApplicationLd, videoObjectLd } from "./_content/json-ld";
 import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
 import { DemoDataNote, ScreenshotFrame, ShotImage } from "./_content/screenshot-frame";
 import { SHOTS, type Screenshot } from "./_content/screenshots";
@@ -191,6 +193,17 @@ export default async function Landing() {
           {/* Echte Screenshots mit erfundenen Demodaten */}
           <HeroShots />
         </div>
+      </section>
+
+      {/* Erklärvideo: Click-to-load vom eigenen Server (kein Laden vor dem Klick, siehe ExplainerVideoPlayer) */}
+      <section aria-labelledby="erklaervideo" className="mx-auto max-w-4xl px-4 pb-14 sm:px-6">
+        <JsonLd data={videoObjectLd()} />
+        <h2 id="erklaervideo" className="text-center font-display text-2xl font-semibold tracking-tight sm:text-3xl">PodoHero in zweieinhalb Minuten</h2>
+        <p className="mx-auto mt-2 max-w-2xl text-center text-muted">Vom Tagesüberblick bis zum Kassenabschluss – ein kurzer Rundgang durch die Software.</p>
+        <div className="mt-6">
+          <ExplainerVideoPlayer />
+        </div>
+        <p className="mx-auto mt-3 max-w-3xl text-center text-xs text-muted sm:text-sm" data-testid="erklaervideo-hinweis">{EXPLAINER_VIDEO_NOTE}</p>
       </section>
 
       {/* Alles drin */}

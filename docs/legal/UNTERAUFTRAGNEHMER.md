@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Grundlage ist die interne Übersicht `docs/compliance/UNTERAUFTRAGNEHMER.md`. Konkrete Anbieter, Verträge und Standorte sind vom Betreiber vor dem Echtbetrieb einzutragen und zu prüfen.
 >
-> Version 0.3 · Stand 14.11.2026
+> Version 0.4 · Stand 16.11.2026
 
 ## 1. Unterauftragnehmer des Betreibers
 
@@ -10,7 +10,7 @@ Diese Dienstleister setzen wir selbst ein, um PodoHero zu betreiben. Sie verarbe
 
 | Dienst | Zweck | Standort | Daten | Status |
 |---|---|---|---|---|
-| Hetzner Online GmbH (PodoHero-Cloud) | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt) | AVV und § 203-Verpflichtung **abzuschließen** |
+| Hetzner Online GmbH (PodoHero-Cloud) | Server, Datenbank, verschlüsselte Dateiablage, Datensicherung; Hosting der öffentlichen Website (einschließlich Erklärvideo) | Deutschland | alle Praxisdaten (Fotos und Dokumente verschlüsselt); beim Aufruf der Website technisch notwendige Verbindungsdaten (u. a. IP-Adresse) | AVV und § 203-Verpflichtung **abzuschließen** |
 | Hetzner Online GmbH (Storage Box) | zweite Kopie der bereits verschlüsselten Datensicherung | Deutschland | nur verschlüsselte Sicherungen (Schlüssel liegt nicht beim Speicheranbieter) | **einzurichten** |
 
 <!-- TODO (Betreiber): System- und Vertriebs-E-Mail-Versand (SMTP_URL in deploy/.env) – Anbieter, Standort und AVV hier eintragen, BEVOR Vertriebs-E-Mails versendet werden (Datenschutzerklärung Abschnitt 6a/7 verweist hierher); bis dahin versenden Praxen über ihren eigenen SMTP-Zugang (Abschnitt 2). -->

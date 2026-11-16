@@ -47,6 +47,6 @@ export function proxy(request: NextRequest) {
 export const config = {
   // screenshots: Bildschirmfotos der Website mit Demodaten (public/screenshots) – statisch, ohne Sitzung
   // splash: iOS-Startbildschirme der installierten App (public/splash), brand: Logo-Dateien (public/brand),
-  // sw.js: Service Worker (nur genau diese Datei)
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons/|screenshots/|splash/|brand/|manifest.webmanifest|sw\\.js$).*)"],
+  // sw.js: Service Worker (nur genau diese Datei), video: Erklärvideo der Startseite (public/video, Demodaten)
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons/|screenshots/|splash/|brand/|video/|manifest.webmanifest|sw\\.js$).*)"],
 };
