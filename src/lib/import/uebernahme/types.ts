@@ -18,6 +18,12 @@ export type FileKind =
   | "doctolib.patients"
   | "podohero.excel"
   | "pododesk.cashbook"
+  | "pododesk.patients"
+  | "pododesk.doctors"
+  | "pododesk.services"
+  | "pododesk.appointments"
+  | "pododesk.users"
+  | "pododesk.practice"
   | "pdf"
   | "unknown";
 
@@ -130,6 +136,96 @@ export interface TinanaInvoice {
   paidAt: string | null;
 }
 
+// ───────────── Pododesk (Gesamtexport) ─────────────
+export interface PododeskPatient {
+  row: number;
+  /** interne ID (Quell-ID, externalIds.pododesk) */
+  id: string;
+  /** Patient:innen-Nr. in Pododesk (nur als Hinweis, extra.pododeskNumber) */
+  number: string | null;
+  salutation: "Herr" | "Frau" | "Divers" | null;
+  gender: "female" | "male" | "diverse" | null;
+  title: string | null;
+  firstName: string | null;
+  lastName: string;
+  birthDate: string | null;
+  street: string | null;
+  zip: string | null;
+  city: string | null;
+  country: string | null;
+  phoneLandline: string | null;
+  phoneMobile: string | null;
+  email: string | null;
+  insurerName: string | null;
+  /** „krankenkasse“ nur als Verweis (Ziffern) exportiert */
+  insurerRef: string | null;
+  insurerIk: string | null;
+  insuranceNumber: string | null;
+  insuranceStatus: string | null;
+  insuranceType: "gkv" | "pkv" | "self";
+  /** Verweise auf aerzte.csv */
+  gpId: string | null;
+  specialistId: string | null;
+  notes: string | null;
+  deceased: boolean;
+  deceasedOn: string | null;
+  patientSince: string | null;
+  occupation: string | null;
+  referrer: string | null;
+  previousPractice: string | null;
+  frequency: string | null;
+}
+
+export interface PododeskDoctor {
+  id: string;
+  name: string;
+  city: string | null;
+}
+
+export interface PododeskService {
+  row: number;
+  id: string;
+  code: string;
+  name: string;
+  priceCents: number;
+  vatRate: number;
+  durationMin: number | null;
+  deleted: boolean;
+}
+
+export interface PododeskAppointment {
+  row: number;
+  id: string;
+  /** ISO (UTC) */
+  startsAt: string;
+  endsAt: string;
+  patientId: string | null;
+  therapistId: string | null;
+  homeVisit: boolean;
+  services: { id: string; kk: boolean }[];
+  notes: string | null;
+  cancelled: boolean;
+  cancelledOn: string | null;
+  cancelReason: string | null;
+  organizational: boolean;
+  /** Anzahl verkaufter Produkte am Termin (nicht übernommen) */
+  products: number;
+}
+
+export interface PododeskUser {
+  id: string;
+  name: string;
+  /** #rrggbb */
+  color: string | null;
+  disabled: boolean;
+}
+
+export interface PododeskPractice {
+  slotMin: number | null;
+  defaultDurationMin: number | null;
+  currency: string | null;
+}
+
 export interface CashbookSummary {
   rows: number;
   firstDate: string | null;
@@ -162,6 +258,12 @@ export interface DetectedFile {
   doctolibPatients?: PatientDraft[];
   excel?: ImportResult;
   cashbook?: CashbookSummary;
+  pododeskPatients?: PododeskPatient[];
+  pododeskDoctors?: PododeskDoctor[];
+  pododeskServices?: PododeskService[];
+  pododeskAppointments?: PododeskAppointment[];
+  pododeskUsers?: PododeskUser[];
+  pododeskPractice?: PododeskPractice;
   pdf?: Uint8Array;
 }
 

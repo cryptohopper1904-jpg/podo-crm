@@ -260,6 +260,8 @@ async function runInner(deps: RunDeps, a: RunArgs): Promise<{ summary: ApplySumm
           appointments: summary.appointments,
           prescriptions: summary.prescriptions,
           documents: summary.documents,
+          services: summary.services,
+          therapistColors: summary.therapistColors,
           excel: summary.excel,
           skipped: {
             patients: plan.totals.patientsExisting,

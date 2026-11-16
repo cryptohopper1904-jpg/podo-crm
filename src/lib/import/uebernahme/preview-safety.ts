@@ -31,6 +31,10 @@ export interface UebernahmePreview {
   warningsTotal: number;
   samples: ImportPlan["samples"];
   cashbook: ImportPlan["cashbook"];
+  /** Vorschläge aus den Pododesk-Praxisstammdaten (nur Zahlen, keine Personendaten) */
+  practiceHints: string[];
+  /** Kalenderfarben, die für Teammitglieder ohne Farbe gesetzt werden */
+  therapistColors: number;
   decisions: Pick<DuplicateDecision, "key" | "who" | "sourceLabel" | "candidates" | "defaultChoice">[];
   decisionsTotal: number;
   hasWork: boolean;
@@ -50,6 +54,8 @@ export function toPreview(plan: ImportPlan): UebernahmePreview {
     warningsTotal: plan.warnings.length,
     samples: plan.samples,
     cashbook: plan.cashbook,
+    practiceHints: plan.practiceHints.slice(0, 20),
+    therapistColors: plan.therapistColors.length,
     decisions: plan.decisions.slice(0, PREVIEW_MAX).map(({ key, who, sourceLabel, candidates, defaultChoice }) => ({ key, who, sourceLabel, candidates, defaultChoice })),
     decisionsTotal: plan.decisions.length,
     hasWork: plan.hasWork,

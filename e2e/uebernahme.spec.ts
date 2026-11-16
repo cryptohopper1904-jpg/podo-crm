@@ -66,3 +66,42 @@ test("unbekannte Datei: klare Meldung mit den unterstützten Formaten", async ({
   await expect(page.getByText(/Format nicht erkannt\. Unterstützt werden: Tinana/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Import ausführen" })).toHaveCount(0);
 });
+
+const PODODESK = path.resolve(__dirname, "../src/lib/import/__fixtures__/pododesk/gesamtexport");
+const PODODESK_FILES = ["patienten.csv", "termine.csv", "leistungenPrivat.csv", "aerzte.csv", "users.csv", "praxisstammdaten.csv"].map((f) => path.join(PODODESK, f));
+
+async function previewPododesk(page: Page) {
+  await page.goto("/einstellungen/import");
+  await page.getByLabel(/Exportdateien Ihrer bisherigen Software/).setInputFiles(PODODESK_FILES);
+  await page.getByRole("button", { name: "Dateien prüfen" }).click();
+  await expect(page.getByRole("heading", { name: "Erkannte Dateien" })).toBeVisible();
+}
+
+test("Pododesk-Gesamtexport: alle sechs Dateien erkannt, Vorschläge aus den Stammdaten, Import, erneuter Upload legt nichts doppelt an", async ({ page }) => {
+  await loginDemoWithFreshTotp(page);
+  await previewPododesk(page);
+  const files = page.getByRole("heading", { name: "Erkannte Dateien" }).locator("..");
+  await expect(files.getByText("Pododesk – Patient:innen · 3 Datensätze → Patient:innen")).toBeVisible();
+  await expect(files.getByText(/Pododesk – Termine · 7 Datensätze → Termine/)).toBeVisible();
+  await expect(files.getByText(/Pododesk – Leistungen \(privat\) · 4 Datensätze → Leistungen/)).toBeVisible();
+  await expect(files.getByText(/Pododesk – Ärzt:innen/)).toBeVisible();
+  await expect(files.getByText(/Pododesk – Mitarbeitende/)).toBeVisible();
+  await expect(files.getByText(/Bankverbindung, PayPal- und sevDesk-Zugangsdaten werden nicht gelesen/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Vorschläge aus den Praxisstammdaten/ })).toBeVisible();
+  await expect(page.getByText(/Terminraster in Pododesk: 15 Minuten/)).toBeVisible();
+
+  const runButton = page.getByRole("button", { name: "Import ausführen" });
+  if (await runButton.isVisible()) {
+    await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Beispielmann");
+    await runButton.click();
+    await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
+    await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?/)).toBeVisible();
+  }
+
+  await previewPododesk(page);
+  await expect(page.getByText("Nichts Neues zu übernehmen.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import ausführen" })).toHaveCount(0);
+
+  await page.goto("/kunden?q=Beispielmann");
+  await expect(page.getByRole("link", { name: /Beispielmann/ }).first()).toBeVisible();
+});

@@ -14,6 +14,7 @@ import { collectFiles } from "./collect";
 import { applyPlan, loadExisting } from "./persist";
 import { buildPlan } from "./plan";
 import { tinanaUpload } from "./plan.test";
+import { pododeskUpload } from "./pododesk.test";
 import { writeDoctolibPatientsCsv } from "@/integrations/doctolib/csv";
 import { ChoiceConflictError, ImportBusyError, previewUebernahme, runUebernahme, StaleSnapshotError, StoreTimeoutError, TokenUsedError, type RunDeps } from "./run";
 import { persistImport } from "../excel/persist";
@@ -44,11 +45,11 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
   }
 
   /** wie die Server Action: Sperre, Bestand laden, Plan, schreiben – eine Transaktion */
-  async function run(p: { org: string; user: string }, files: Awaited<ReturnType<typeof collectFiles>>, mode: PrescriptionMode = "billed") {
+  async function run(p: { org: string; user: string }, files: Awaited<ReturnType<typeof collectFiles>>, mode: PrescriptionMode = "billed", now = new Date("2026-01-13T08:00:00Z")) {
     return inOrg(p.org, async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"pnum:" + p.org}))`);
       const existing = await loadExisting(tx as never, p.org, files.filter((f) => f.kind === "pdf").map((f) => f.sha256));
-      const plan = buildPlan(files, existing, { prescriptionMode: mode, now: new Date("2026-01-13T08:00:00Z") });
+      const plan = buildPlan(files, existing, { prescriptionMode: mode, now });
       const summary = await applyPlan(tx as never, p.org, p.user, plan, (d) => storeEncrypted(p.org, d));
       return { plan, summary };
     });
@@ -499,5 +500,68 @@ type TxOf = Parameters<Parameters<Db["transaction"]>[0]>[0];
       runUebernahme(d, { org: k.org, userId: k.user, files: [{ name: "patients_export_2026-01-15.csv", data: new TextEncoder().encode(csv) }], opts: { ...opts, choices }, tokenHash: `k3-${stamp}`, auditMeta: {} }),
     ).rejects.toThrow(new ChoiceConflictError("Nr. 1 und 2 können jeweils nur einmal verknüpft werden, bitte erneut prüfen."));
     expect((await counts(k.org)).patients).toBe(2);
+  });
+  it("Pododesk-Gesamtexport: Patient:innen, Leistungen, Termine und Farbe – zweiter Lauf legt nichts doppelt an, überschreibt nichts", async () => {
+    const pd = await practice("pododesk");
+    // vorhandene Leistung mit gleichem Kürzel bleibt unverändert
+    await inOrg(pd.org, (tx) => tx.insert(s.services).values({ organizationId: pd.org, code: "NAG", name: "Nagelpflege (Bestand)", priceCents: 3100, vatRate: 0 }));
+    const PD_NOW = new Date("2026-11-16T10:00:00Z");
+    const first = await run(pd, await pododeskUpload(), "billed", PD_NOW);
+    expect(first.summary).toMatchObject({ patientsCreated: 3, patientsLinked: 0, appointments: 5, prescriptions: 0, documents: 0, services: 2, therapistColors: 1, excel: null });
+
+    const rows = await inOrg(pd.org, async (tx) => ({
+      patients: await tx.select().from(s.patients).where(eq(s.patients.organizationId, pd.org)),
+      appts: await tx.select().from(s.appointments).where(eq(s.appointments.organizationId, pd.org)),
+      links: await tx.select().from(s.appointmentServices).where(eq(s.appointmentServices.organizationId, pd.org)),
+      services: await tx.select().from(s.services).where(eq(s.services.organizationId, pd.org)),
+      member: (await tx.select().from(s.memberships).where(eq(s.memberships.organizationId, pd.org)))[0],
+      consents: await tx.select().from(s.consents).where(eq(s.consents.organizationId, pd.org)),
+      reminders: await tx.select().from(s.reminderLog).where(eq(s.reminderLog.organizationId, pd.org)),
+      users: await tx.select({ id: s.memberships.id }).from(s.memberships).where(eq(s.memberships.organizationId, pd.org)),
+    }));
+    const paula = rows.patients.find((p) => p.lastName === "Beispiel")!;
+    expect(paula).toMatchObject({
+      externalIds: { pododesk: "1" },
+      source: "pododesk-import",
+      preferredChannel: "none",
+      insuranceType: "gkv",
+      insurerName: "Beispiel-BKK",
+      insuranceNumber: "X000000001",
+      gpName: "Dr. med. Hanna Beispielarzt",
+      email: "paula.beispiel@example.org",
+      birthDate: "1953-04-15",
+    });
+    // Einwilligungen aus Pododesk (emailErinnerung/smsReminder/emailNewsletter) werden nie übernommen
+    expect(rows.consents).toEqual([]);
+    expect(rows.reminders).toEqual([]);
+    expect(rows.patients.every((p) => p.preferredChannel === "none")).toBe(true);
+    expect((rows.patients.find((p) => p.lastName === "Beispiel-Muster")!.extra as Record<string, { date: string }>).deceased.date).toBe("2026-10-01");
+    // keine Nutzerkonten aus users.csv
+    expect(rows.users).toHaveLength(1);
+    expect(rows.member.color).toBe("teal");
+    // Leistungen: zwei neu, „NAG“ unverändert, gelöschte „ALT“ nicht
+    expect(rows.services.map((x) => x.code).sort()).toEqual(["DFa2 priv.", "NAG", "PKB"]);
+    expect(rows.services.find((x) => x.code === "NAG")).toMatchObject({ name: "Nagelpflege (Bestand)", priceCents: 3100, vatRate: 0 });
+    expect(rows.services.find((x) => x.code === "DFa2 priv.")).toMatchObject({ priceCents: 1200, vatRate: 19, durationMin: 30, requiresTherapeuticPurpose: false });
+    expect(rows.services.find((x) => x.code === "PKB")).toMatchObject({ priceCents: 4500, vatRate: 0, durationMin: 45, requiresTherapeuticPurpose: true });
+    // Termine: Quelle „import“ (nicht abrechenbar), UTC korrekt, Zuordnung über Quell-IDs
+    expect(rows.appts.every((a) => a.source === "import" && a.externalId?.startsWith("pododesk:"))).toBe(true);
+    const a101 = rows.appts.find((a) => a.externalId === "pododesk:101")!;
+    expect(a101).toMatchObject({ status: "done", therapistId: pd.user, patientId: paula.id });
+    expect(a101.startsAt.toISOString()).toBe("2026-01-13T08:00:00.000Z");
+    expect(rows.appts.find((a) => a.externalId === "pododesk:102")!.startsAt.toISOString()).toBe("2026-07-01T07:00:00.000Z");
+    expect(rows.appts.find((a) => a.externalId === "pododesk:103")).toMatchObject({ status: "planned" });
+    expect(rows.appts.find((a) => a.externalId === "pododesk:104")).toMatchObject({ status: "cancelled" });
+    const svc = new Map(rows.services.map((x) => [x.id, x.code]));
+    const linksOf = (ext: string) => rows.links.filter((l) => l.appointmentId === rows.appts.find((a) => a.externalId === ext)!.id).map((l) => svc.get(l.serviceId));
+    expect(linksOf("pododesk:101")).toEqual(["DFa2 priv."]);
+    expect(linksOf("pododesk:103")).toEqual(["NAG"]);
+    expect(linksOf("pododesk:104")).toEqual([]);
+
+    const second = await run(pd, await pododeskUpload(), "billed", PD_NOW);
+    expect(second.summary).toMatchObject({ patientsCreated: 0, patientsLinked: 0, appointments: 0, services: 0, therapistColors: 0 });
+    expect(second.plan.hasWork).toBe(false);
+    const after = await counts(pd.org);
+    expect(after).toMatchObject({ patients: 3, appointments: 5, services: rows.links.length });
   });
 });

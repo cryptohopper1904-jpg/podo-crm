@@ -88,8 +88,8 @@ describe("Erkennung: andere Quellen", () => {
   });
 
   it("jede Fixture-Datei wird erkannt (keine „unbekannt“)", () => {
-    for (const sub of ["tinana", "pododesk"]) {
-      for (const name of readdirSync(path.join(FIX, sub))) {
+    for (const sub of ["tinana", "pododesk", "pododesk/gesamtexport"]) {
+      for (const name of readdirSync(path.join(FIX, sub)).filter((n) => n.endsWith(".csv"))) {
         expect(recognize(new TextDecoder().decode(fx(sub, name))), `${sub}/${name}`).not.toBeNull();
       }
     }
