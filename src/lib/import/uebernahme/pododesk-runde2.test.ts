@@ -86,14 +86,14 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
     expect(plan.patientsCreate.some((p) => p.values.externalIds.pododesk === "1")).toBe(false);
     expect(plan.totals.patientsExisting).toBe(0);
     const w = warningsOf(plan);
-    expect(w).toContain("Pododesk-ID 1 gehört im Bestand zu einer anderen Person – nicht verknüpft, bitte prüfen");
+    expect(w).toContain("Pododesk-ID 1: Nr. 41 im Bestand ist nicht sicher dieselbe Person (anderer Name, anderes Geburtsdatum) – nicht verknüpft");
     // Termine 101, 103, 107 gehören zu Pododesk-ID 1 → nicht zugeordnet
     expect(plan.appointments.map((a) => a.externalId).sort()).toEqual(["pododesk:102", "pododesk:104"]);
     expect(plan.appointments.some((a) => "existingId" in a.patient && a.patient.existingId === "fremd")).toBe(false);
-    expect(w).toMatch(/3 Termine gehören zu Pododesk-IDs, die im Bestand einer anderen Person zugeordnet sind – nicht übernommen/);
+    expect(w).toMatch(/3 Termine gehören zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist – nicht übernommen/);
   });
 
-  it("(b) nur der Name weicht ab (z. B. Heirat, Geburtsdatum gleich) → dieselbe Person; gleicher Name mit anderem Geburtsdatum → Konflikt (R3-1)", async () => {
+  it("(b) nur der Name weicht ab (z. B. Heirat) bzw. gleicher Name mit anderem Geburtsdatum → je eine Entscheidung, Standard „nicht verknüpfen“ (R4-B)", async () => {
     const zip = buildZip(FILES.map((n) => ({ path: n, data: fx(n) })));
     const existing = empty({
       patients: [
@@ -102,10 +102,15 @@ describe("B1: mehrere Pododesk-Praxen (ID-Kollision)", () => {
       ],
     });
     const plan = buildPlan(await collectFiles([{ name: "export.zip", data: zip }]), existing, { prescriptionMode: "billed", now: NOW });
-    expect(plan.totals.patientsExisting).toBe(1);
-    const w = warningsOf(plan);
-    expect(w).not.toMatch(/Pododesk-ID 1 gehört im Bestand zu einer anderen Person/);
-    expect(w).toMatch(/Pododesk-ID 2 gehört im Bestand zu einer anderen Person/);
+    expect(plan.totals.patientsExisting).toBe(0);
+    expect(plan.decisions.map((d) => [d.key, d.defaultChoice, d.candidates[0].reason])).toEqual([
+      ["pododesk:1", "new", "gleiche Pododesk-ID, anderer Name, gleiches Geburtsdatum"],
+      ["pododesk:2", "new", "gleiche Pododesk-ID, gleicher Name, anderes Geburtsdatum"],
+    ]);
+    // Auswahl „verknüpfen“ für die Heirat → dieselbe Person
+    const chosen = buildPlan(await collectFiles([{ name: "export.zip", data: zip }]), existing, { prescriptionMode: "billed", now: NOW, choices: { "pododesk:1": "p1" } });
+    expect(chosen.totals.patientsExisting).toBe(1);
+    expect(warningsOf(chosen)).toMatch(/Pododesk-ID 2: Nr\. 2 im Bestand ist nicht sicher dieselbe Person/);
   });
 });
 

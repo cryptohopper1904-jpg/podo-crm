@@ -13,9 +13,11 @@
  *  - Rechnungen aus Fremdsystemen werden nie PodoHero-Rechnungen: nur deren PDFs landen als Dokument bei der Patient:in –
  *    und nur, wenn die Rechnung genau einer Person aus der hochgeladenen Tinana-Patientendatei (mit Tinana-ID) zugeordnet
  *    werden kann. Ein Namenstreffer nur im Bestand (ohne Geburtsdatum/ID) reicht nicht.
- *  - Pododesk-Gesamtexport: Patient:innen über die Pododesk-ID (externalIds.pododesk), Termine über ihre ID
- *    („pododesk:<id>“, Quelle „import“), Leistungen über das Kürzel (vorhandene bleiben unverändert). Mitarbeitende werden
- *    nur über den Namen zugeordnet, nie als Nutzerkonten angelegt; Praxisstammdaten ergeben nur Vorschläge.
+ *  - Pododesk-Gesamtexport: Patient:innen über die Pododesk-ID (externalIds.pododesk) – automatisch nur bei gleichem
+ *    Namen und Geburtsdatum, sonst Entscheidung in der Vorschau mit Standard „nicht verknüpfen“. Termine über ihre ID
+ *    („pododesk:<id>“, Quelle „import“) und nur zu Personen aus der mitgeladenen patienten.csv. Leistungen über das
+ *    Kürzel (vorhandene bleiben unverändert). Mitarbeitende werden nur über den Namen zugeordnet, nie als Nutzerkonten
+ *    angelegt; Praxisstammdaten ergeben nur Vorschläge.
  */
 import { findDuplicates as findFileDuplicates } from "../excel/parse";
 import type { ImportResult, PatientImportDraft } from "../excel/types";
@@ -61,15 +63,18 @@ export type SourceKey = "tinana" | "doctolib" | "pododesk";
 const SOURCE_LABEL: Record<SourceKey, string> = { tinana: "Tinana", doctolib: "Doctolib", pododesk: "Pododesk" };
 
 /**
- * Bestandsperson mit derselben Pododesk-ID ist dieselbe Person, wenn (a) der Name gleich ist und die Geburtsdaten sich
- * nicht widersprechen (eines darf fehlen) oder (b) beide Geburtsdaten vorhanden und gleich sind (Namenswechsel, z. B.
- * Heirat). Alles andere – auch anderer Name ohne Geburtsdaten – ist ein Konflikt (R3-1).
+ * Bestandsperson mit derselben Pododesk-ID: sicher dieselbe Person nur bei gleichem Namen UND gleichem Geburtsdatum
+ * (beide vorhanden). Pododesk-IDs sind nur je Praxis eindeutig – jeder andere Fall (Namenswechsel, fehlendes oder
+ * abweichendes Geburtsdatum) wird in der Vorschau entschieden, Standard „nicht verknüpfen“ (R4-B).
+ * Liefert null bei sicherem Treffer, sonst den Unterschied für Auswahl und Hinweis.
  */
-function samePododeskPerson(hit: Pick<ExistingPatient, "firstName" | "lastName" | "birthDate">, v: Pick<PatientCreate["values"], "firstName" | "lastName" | "birthDate">): boolean {
+function pododeskIdDoubt(hit: Pick<ExistingPatient, "firstName" | "lastName" | "birthDate">, v: Pick<PatientCreate["values"], "firstName" | "lastName" | "birthDate">): string | null {
   const a = hit.birthDate || null;
   const b = v.birthDate || null;
-  if (a && b && a === b) return true;
-  return nameKey(hit.firstName, hit.lastName) === nameKey(v.firstName, v.lastName) && !(a && b && a !== b);
+  const sameName = nameKey(hit.firstName, hit.lastName) === nameKey(v.firstName, v.lastName);
+  const bd = !a || !b ? "Geburtsdatum fehlt" : a === b ? "gleiches Geburtsdatum" : "anderes Geburtsdatum";
+  if (sameName && bd === "gleiches Geburtsdatum") return null;
+  return `${sameName ? "gleicher Name" : "anderer Name"}, ${bd}`;
 }
 
 export type PatientRef = { existingId: string } | { ref: string };
@@ -181,6 +186,8 @@ export interface DuplicateDecision {
   defaultChoice: string;
   /** tatsächlich verwendete Auswahl */
   choice: string;
+  /** Beschriftung der Auswahl "new", falls nicht „neu anlegen“ (gleiche Pododesk-ID: „nicht verknüpfen“, R4-B) */
+  newLabel?: string;
 }
 
 export interface ChoiceConflict {
@@ -484,7 +491,8 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   const tinanaByName = new Map<string, Map<string, PatientRef>>();
   /** Namen gelöschter Personen (Art. 17) aus der Tinana-Patientendatei – PDFs: „gelöscht, nicht übernommen“ */
   const tinanaErasedNames = new Set<string>();
-  /** Quell-IDs („pododesk:…“), die im Bestand einer anderen Person gehören – weder verknüpft noch Termine zugeordnet (B1) */
+  /** Quell-IDs („pododesk:…“), deren Bestandsperson nicht sicher dieselbe ist und nicht verknüpft wurde – weder
+   *  verknüpft noch Termine zugeordnet (B1, R4-B) */
   const idConflicts = new Set<string>();
   /** Bestandspersonen, die in diesem Lauf schon eine Quell-ID bekommen (je Quelle nur eine) */
   const linkedNow: Record<SourceKey, Set<string>> = { tinana: new Set<string>(), doctolib: new Set<string>(), pododesk: new Set<string>() };
@@ -534,11 +542,31 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       erasedWarning(who, person);
       return done(null);
     }
-    // Pododesk-IDs sind nur je Praxis eindeutig (fortlaufende Zahlen): über die ID nur verknüpfen, wenn die Person
-    // erkennbar dieselbe ist – sonst landen Termine bei der falschen Person (Code-Review B1, Runde 3 R3-1)
-    if (hit && key === "pododesk" && !samePododeskPerson(hit, values)) {
+    // Pododesk-IDs sind nur je Praxis eindeutig (fortlaufende Zahlen): über die ID automatisch nur verknüpfen, wenn
+    // Name und Geburtsdatum übereinstimmen – sonst entscheidet die Praxis, Standard „nicht verknüpfen“ (B1, R3-1, R4-B).
+    // „Neu anlegen“ gibt es hier nicht: die Pododesk-ID stünde dann bei zwei Personen.
+    const doubt = hit && key === "pododesk" ? pododeskIdDoubt(hit, values) : null;
+    if (hit && doubt) {
+      const wanted = opts.choices?.[ext];
+      const choice = wanted === hit.id ? hit.id : "new";
+      decisions.push({
+        key: ext,
+        who,
+        sourceLabel,
+        candidates: [{ id: hit.id, number: hit.number, reason: `gleiche Pododesk-ID, ${doubt}` }],
+        defaultChoice: "new",
+        choice,
+        newLabel: "nicht verknüpfen (Person und Termine nicht übernehmen)",
+      });
+      if (choice === hit.id) {
+        totals.patientsExisting++;
+        warnings.push({ message: `${who}: mit Nr. ${hit.number} verknüpft (gleiche Pododesk-ID, ${doubt}; Ihre Auswahl) – nichts überschrieben.` });
+        return done({ existingId: hit.id });
+      }
       idConflicts.add(ext);
-      warnings.push({ message: `Pododesk-ID ${extId.slice(0, 50)} gehört im Bestand zu einer anderen Person – nicht verknüpft, bitte prüfen (Nr. ${hit.number}; ${who} aus dem Upload wurde nicht übernommen).` });
+      warnings.push({
+        message: `Pododesk-ID ${extId.slice(0, 50)}: Nr. ${hit.number} im Bestand ist nicht sicher dieselbe Person (${doubt}) – nicht verknüpft, ${who} und Termine nicht übernommen. Wählen Sie in der Vorschau „verknüpfen mit Nr. ${hit.number}“, wenn es dieselbe Person ist.`,
+      });
       target.set(ext, null);
       return null;
     }
@@ -1165,6 +1193,8 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   let deletedService = 0;
   let linkedFuture = 0;
   let idConflict = 0;
+  /** Termine, deren Patient-ID nicht in der hochgeladenen patienten.csv steht (R4-A) */
+  let notInPatients = 0;
   /** Termin-IDs, die im Bestand schon zu einer anderen Person gehören (R3-2) */
   const apptCollisions: string[] = [];
   let links = c.linksBefore;
@@ -1184,6 +1214,12 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
       idConflict++;
       continue;
     }
+    // nur Personen aus der mitgeladenen patienten.csv – nie still über eine Bestands-ID (R4-A)
+    if (ext && !c.target.has(ext)) {
+      totals.appointmentsUnassigned++;
+      notInPatients++;
+      continue;
+    }
     const known = ext ? c.byExt.get(ext) : undefined;
     if (existing.appointmentRefs.has(externalId)) {
       // Termin-IDs sind wie Patienten-IDs nur je Praxis eindeutig: „bereits übernommen“ nur, wenn der vorhandene Termin
@@ -1199,15 +1235,15 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
       totals.appointmentsExisting++;
       continue;
     }
-    if ((ext && c.target.has(ext) && c.target.get(ext) === null) || known?.erased) {
+    if (ext && c.target.get(ext) === null) {
       totals.appointmentsUnassigned++;
       erased++;
       continue;
     }
-    const patient = ext ? c.target.get(ext) ?? (known ? { existingId: known.id } : null) : null;
+    const patient = ext ? c.target.get(ext) ?? null : null;
     if (!patient) {
       totals.appointmentsUnassigned++;
-      warnings.push({ row: a.row, message: `Termin ${dateDe(a.startsAt)}: ${a.patientId ? "Patient:in nicht in patienten.csv – nicht übernommen. Bitte patienten.csv aus demselben Export mit hochladen." : "ohne Patient:in – nicht übernommen."}` });
+      warnings.push({ row: a.row, message: `Termin ${dateDe(a.startsAt)}: ohne Patient:in – nicht übernommen.` });
       continue;
     }
     if (a.patientId && c.pdDeceased.has(a.patientId) && future && !a.cancelled) {
@@ -1300,7 +1336,14 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   if (products) warnings.push({ message: `An ${plural(products, "Termin", "Terminen")} wurden Produkte verkauft – Produktverkäufe werden nicht übernommen.` });
   if (unknownTherapist) warnings.push({ message: `${plural(unknownTherapist, "Termin verweist", "Termine verweisen")} auf Mitarbeitende, die nicht in users.csv stehen – ohne Behandler:in übernommen. Laden Sie users.csv mit hoch.` });
   if (deletedService) warnings.push({ message: `${plural(deletedService, "Termin verweist", "Termine verweisen")} auf eine in Pododesk gelöschte Leistung – nur als Hinweis in der Terminnotiz übernommen.` });
-  if (idConflict) warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, die im Bestand einer anderen Person zugeordnet sind – nicht übernommen. Bitte prüfen, ob der Export aus derselben Praxis stammt.` });
+  if (idConflict) {
+    warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist – nicht übernommen. Bitte prüfen Sie die Auswahl in der Vorschau und ob der Export aus derselben Praxis stammt.` });
+  }
+  if (notInPatients) {
+    warnings.push({
+      message: `${plural(notInPatients, "Termin verweist", "Termine verweisen")} auf Patient:innen, die nicht in der hochgeladenen patienten.csv stehen – nicht übernommen. Bitte laden Sie patienten.csv und termine.csv aus demselben Pododesk-Export gemeinsam hoch.`,
+    });
+  }
   if (apptCollisions.length === 1) {
     warnings.push({ message: `Pododesk-Termin ${apptCollisions[0].slice(0, 50)} kollidiert mit einem bereits übernommenen Termin einer anderen Person – nicht übernommen. Bitte prüfen, ob der Export aus derselben Praxis stammt.` });
   } else if (apptCollisions.length) {

@@ -130,7 +130,9 @@ function Preview({ p }: { p: UebernahmePreview }) {
           <h3 id="ueb-dup" className="mb-1 font-semibold">Mögliche Dubletten – bitte je Person entscheiden</h3>
           <p className="mb-2 text-muted">
             Verknüpfen ergänzt bei der vorhandenen Person nur die Herkunfts-ID und hängt Termine und Verordnungen an; es wird nichts überschrieben.
-            Jede vorhandene Person kann nur einmal verknüpft werden. Zahlen gelten für die angezeigte Auswahl – nach Änderung erneut prüfen.
+            Jede vorhandene Person kann nur einmal verknüpft werden. Steht dieselbe Pododesk-ID im Bestand bei einer Person mit anderem Namen oder ohne übereinstimmendes
+            Geburtsdatum, ist „nicht verknüpfen“ voreingestellt: Person und Termine werden dann nicht übernommen. Zahlen gelten für die angezeigte Auswahl – nach Änderung
+            erneut prüfen.
           </p>
           <ul className="flex flex-col gap-2">
             {p.decisions.map((d) => (
@@ -144,13 +146,13 @@ function Preview({ p }: { p: UebernahmePreview }) {
                       verknüpfen mit Nr. {c.number} ({c.reason})
                     </option>
                   ))}
-                  <option value="new">neu anlegen</option>
+                  <option value="new">{d.newLabel ?? "neu anlegen"}</option>
                 </Select>
               </li>
             ))}
           </ul>
           {p.decisionsTotal > p.decisions.length ? (
-            <p className="mt-2 text-muted">Weitere {p.decisionsTotal - p.decisions.length} mit Standardauswahl (verknüpfen bei genau einer Person mit gleichem Namen und Geburtsdatum, sonst neu anlegen).</p>
+            <p className="mt-2 text-muted">Weitere {p.decisionsTotal - p.decisions.length} mit Standardauswahl (verknüpfen bei genau einer Person mit gleichem Namen und Geburtsdatum, sonst neu anlegen; bei gleicher Pododesk-ID nicht verknüpfen).</p>
           ) : null}
         </section>
       ) : null}

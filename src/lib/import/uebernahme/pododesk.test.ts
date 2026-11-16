@@ -242,15 +242,24 @@ describe("Pododesk-Gesamtexport: Plan", () => {
     expect(neu.totals.patientsNew).toBe(2);
   });
 
-  it("Termine ohne patienten.csv: nur bekannte Quell-IDs aus dem Bestand werden zugeordnet", async () => {
-    const files = await collectFiles([{ name: "termine.csv", data: fx("termine.csv") }]);
-    const plan = buildPlan(files, empty({ patients: [{ id: "p1", number: 1, firstName: "P", lastName: "B", birthDate: null, email: null, phoneMobile: null, externalIds: { pododesk: "1" } }] }), { prescriptionMode: "billed", now: NOW });
-    expect(plan.appointments.map((a) => a.externalId).sort()).toEqual(["pododesk:101", "pododesk:103", "pododesk:107"]);
-    expect(plan.appointments.every((a) => "existingId" in a.patient && a.patient.existingId === "p1")).toBe(true);
-    expect(plan.totals.appointmentsUnassigned).toBe(3);
+  it("Termine ohne patienten.csv werden nicht übernommen; mit patienten.csv nur deren Personen (R4-A), Wiederholungslauf bleibt gleich", async () => {
+    const bestandP1 = empty({ patients: [{ id: "p1", number: 1, firstName: "P", lastName: "B", birthDate: null, email: null, phoneMobile: null, externalIds: { pododesk: "1" } }] });
+    const only = await collectFiles([{ name: "termine.csv", data: fx("termine.csv") }]);
+    expect(only[0]).toMatchObject({ status: "rejected", note: expect.stringMatching(/nur zusammen mit patienten\.csv/) });
+    const plan0 = buildPlan(only, bestandP1, { prescriptionMode: "billed", now: NOW });
+    expect(plan0.appointments).toEqual([]);
+    expect(plan0.hasWork).toBe(false);
+
+    // beide Dateien: Bestandsperson Nr. 1 (anderer Name, ohne Geburtsdatum) ist nicht sicher Pododesk-ID 1 → Entscheidung
+    const both = await collectFiles([
+      { name: "patienten.csv", data: fx("patienten.csv") },
+      { name: "termine.csv", data: fx("termine.csv") },
+    ]);
+    const plan = buildPlan(both, bestandP1, { prescriptionMode: "billed", now: NOW });
+    expect(plan.decisions.map((d) => [d.key, d.defaultChoice])).toEqual([["pododesk:1", "new"]]);
+    expect(plan.appointments.some((a) => "existingId" in a.patient)).toBe(false);
     const w = plan.warnings.map((x) => x.message).join("\n");
-    expect(w).toMatch(/nicht in patienten\.csv/);
+    expect(w).toMatch(/3 Termine gehören zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist/);
     expect(w).toMatch(/nicht in users\.csv/);
-    expect(w).toMatch(/künftige?r? Pododesk-Termine? gehör/);
   });
 });

@@ -90,7 +90,7 @@ export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits
     seen.set(hash, d);
     out.push(d);
   }
-  return rejectSeveralPododeskPractices(out);
+  return requirePododeskPatients(rejectSeveralPododeskPractices(out));
 }
 
 export const ONE_PODODESK_NOTE = "Mehrere unterschiedliche Pododesk-Exporte – bitte nur einen Export hochladen. Mehrere Pododesk-Praxen in einem PodoHero-Konto werden derzeit nicht unterstützt.";
@@ -110,6 +110,21 @@ function rejectSeveralPododeskPractices(files: DetectedFile[]): DetectedFile[] {
   for (const d of files) if (counts(d)) count.set(d.kind, (count.get(d.kind) ?? 0) + 1);
   return files.map((d) =>
     counts(d) && count.get(d.kind)! > 1 ? { ...stub({ name: d.name, data: new Uint8Array() }, d.sha256), size: d.size, label: d.label, note: ONE_PODODESK_NOTE } : d,
+  );
+}
+
+export const PODODESK_TERMINE_NOTE = "termine.csv nur zusammen mit patienten.csv aus demselben Pododesk-Export – bitte laden Sie beide Dateien gemeinsam hoch.";
+
+/**
+ * Termine werden nur Personen aus der mitgeladenen patienten.csv zugeordnet (R4-A): ohne sie könnte eine Pododesk-ID
+ * aus einem anderen Export still bei einer Bestandsperson landen. Fehlt patienten.csv (oder wurde sie abgelehnt),
+ * wird termine.csv als Ganzes nicht übernommen.
+ */
+function requirePododeskPatients(files: DetectedFile[]): DetectedFile[] {
+  const usable = (d: DetectedFile) => d.status !== "duplicate" && d.status !== "rejected";
+  if (files.some((d) => d.kind === "pododesk.patients" && usable(d))) return files;
+  return files.map((d) =>
+    d.kind === "pododesk.appointments" && usable(d) ? { ...stub({ name: d.name, data: new Uint8Array() }, d.sha256), size: d.size, label: d.label, note: PODODESK_TERMINE_NOTE } : d,
   );
 }
 

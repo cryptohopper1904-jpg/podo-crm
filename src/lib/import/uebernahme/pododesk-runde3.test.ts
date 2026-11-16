@@ -46,51 +46,49 @@ async function planFor(existing: ExistingPatient, upload: { vorname: string; nac
   ]);
   return buildPlan(files, empty({ patients: [existing] }), { prescriptionMode: "billed", now: NOW });
 }
-const CONFLICT = "Pododesk-ID 1 gehört im Bestand zu einer anderen Person – nicht verknüpft, bitte prüfen";
+/** R4-B löst R3-1 ab: automatisch nur bei gleichem Namen UND gleichem Geburtsdatum, sonst Entscheidung (Standard „nicht verknüpfen“) */
+const DOUBT = "Pododesk-ID 1: Nr. 7 im Bestand ist nicht sicher dieselbe Person";
+const undecided = (plan: Awaited<ReturnType<typeof planFor>>) => {
+  expect(warningsOf(plan)).toContain(DOUBT);
+  expect(plan.decisions[0]).toMatchObject({ key: "pododesk:1", defaultChoice: "new", choice: "new" });
+  expect(plan.appointments).toEqual([]);
+  expect(plan.patientsCreate).toEqual([]);
+  expect(plan.totals.patientsExisting).toBe(0);
+};
 
-describe("R3-1: Pododesk-ID-Abgleich nur bei passendem Namen bzw. Geburtsdatum", () => {
-  it("anderer Name, beide ohne Geburtsdatum → Konflikt, Termin nicht zugeordnet", async () => {
-    const plan = await planFor(bestand("Hans", "Meier", null), { vorname: "Erika", nachname: "Muster", geburtsdatum: "" });
-    expect(warningsOf(plan)).toContain(CONFLICT);
-    expect(plan.appointments).toEqual([]);
-    expect(plan.patientsCreate).toEqual([]);
-    expect(plan.totals.patientsExisting).toBe(0);
+describe("R3-1 (seit R4-B): Pododesk-ID-Abgleich", () => {
+  it("anderer Name, beide ohne Geburtsdatum → Entscheidung, Termin nicht zugeordnet", async () => {
+    undecided(await planFor(bestand("Hans", "Meier", null), { vorname: "Erika", nachname: "Muster", geburtsdatum: "" }));
   });
 
-  it("anderer Name, gleiches Geburtsdatum (z. B. Heirat) → verknüpft", async () => {
-    const plan = await planFor(bestand("Hans", "Meier", "1950-01-01"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" });
-    expect(warningsOf(plan)).not.toContain(CONFLICT);
-    expect(plan.totals.patientsExisting).toBe(1);
-    expect(plan.appointments.map((a) => a.patient)).toEqual([{ existingId: "e1" }]);
+  it("anderer Name, gleiches Geburtsdatum (z. B. Heirat) → Entscheidung statt still verknüpft", async () => {
+    undecided(await planFor(bestand("Hans", "Meier", "1950-01-01"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" }));
   });
 
-  it("gleicher Name, anderes Geburtsdatum → Konflikt", async () => {
-    const plan = await planFor(bestand("Erika", "Muster", "1940-02-02"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" });
-    expect(warningsOf(plan)).toContain(CONFLICT);
-    expect(plan.appointments).toEqual([]);
+  it("gleicher Name, anderes Geburtsdatum → Entscheidung", async () => {
+    undecided(await planFor(bestand("Erika", "Muster", "1940-02-02"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" }));
   });
 
-  it("gleicher Name, ein Geburtsdatum fehlt → verknüpft (beide Richtungen)", async () => {
+  it("gleicher Name, ein oder beide Geburtsdaten fehlen → Entscheidung (alle Richtungen)", async () => {
     for (const [ex, up] of [
       [null, "1950-01-01"],
       ["1950-01-01", ""],
+      [null, ""],
     ] as const) {
-      const plan = await planFor(bestand("Erika", "Muster", ex), { vorname: "Erika", nachname: "Muster", geburtsdatum: up });
-      expect(warningsOf(plan)).not.toContain(CONFLICT);
-      expect(plan.appointments.map((a) => a.patient)).toEqual([{ existingId: "e1" }]);
+      undecided(await planFor(bestand("Erika", "Muster", ex), { vorname: "Erika", nachname: "Muster", geburtsdatum: up }));
     }
   });
 
-  it("gleicher Name, beide ohne Geburtsdatum → verknüpft", async () => {
-    const plan = await planFor(bestand("Erika", "Muster", null), { vorname: "Erika", nachname: "Muster", geburtsdatum: "" });
+  it("gleicher Name und gleiches Geburtsdatum → verknüpft", async () => {
+    const plan = await planFor(bestand("Erika", "Muster", "1950-01-01"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" });
+    expect(plan.decisions).toEqual([]);
     expect(plan.appointments.map((a) => a.patient)).toEqual([{ existingId: "e1" }]);
   });
 
-  it("alles verschieden → Konflikt", async () => {
+  it("alles verschieden → Entscheidung, Sammelhinweis zu den Terminen", async () => {
     const plan = await planFor(bestand("Hans", "Meier", "1940-02-02"), { vorname: "Erika", nachname: "Muster", geburtsdatum: "1950-01-01" });
-    expect(warningsOf(plan)).toContain(CONFLICT);
-    expect(plan.appointments).toEqual([]);
-    expect(warningsOf(plan)).toMatch(/1 Termin gehört zu Pododesk-IDs, die im Bestand einer anderen Person zugeordnet sind/);
+    undecided(plan);
+    expect(warningsOf(plan)).toMatch(/1 Termin gehört zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist/);
   });
 });
 

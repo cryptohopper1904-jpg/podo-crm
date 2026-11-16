@@ -70,7 +70,7 @@ export interface UebernahmePreview {
   practiceHints: string[];
   /** Kalenderfarben, die für Teammitglieder ohne Farbe gesetzt werden */
   therapistColors: number;
-  decisions: Pick<DuplicateDecision, "key" | "who" | "sourceLabel" | "candidates" | "defaultChoice">[];
+  decisions: Pick<DuplicateDecision, "key" | "who" | "sourceLabel" | "candidates" | "defaultChoice" | "newLabel">[];
   decisionsTotal: number;
   hasWork: boolean;
 }
@@ -97,7 +97,7 @@ export function toPreview(plan: ImportPlan): UebernahmePreview {
     cashbook: plan.cashbook,
     practiceHints: plan.practiceHints.slice(0, 20),
     therapistColors: plan.therapistColors.length,
-    decisions: plan.decisions.slice(0, PREVIEW_MAX).map(({ key, who, sourceLabel, candidates, defaultChoice }) => ({ key, who, sourceLabel, candidates, defaultChoice })),
+    decisions: plan.decisions.slice(0, PREVIEW_MAX).map(({ key, who, sourceLabel, candidates, defaultChoice, newLabel }) => ({ key, who, sourceLabel, candidates, defaultChoice, newLabel })),
     decisionsTotal: plan.decisions.length,
     hasWork: plan.hasWork,
   };
