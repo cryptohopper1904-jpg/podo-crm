@@ -1,0 +1,5 @@
+﻿"id";"kuerzel";"beschreibung";"regelbehandlungszeitMin";"regelbehandlungszeitMax";"mehrwertsteuer";"verguetung";"deleted";"createdAt";"createdBy";"modifiedAt";"modifiedBy";"debitoorId";"vorbereitungsbedarf";"vorbereitungsnotiz";"equipment";"disableForCalendarPlan";"appointmentColor";"onlineBookable";"onlineBookableTherapeuten";"onlineBookableNewPatients";"onlineBookableReturningPatients"
+1;"DFa2 priv.";"Hornhautabtragung (beide Füße)";15;30;"19.00";1200;false;"2026-01-02T08:00:00.000Z";1;"2026-01-02T08:00:00.000Z";1;;false;;;true;"#e4ecb4";false;;true;true
+2;"PKB";"Podologische Komplexbehandlung";45;45;"0.00";4500;false;"2026-01-02T08:00:00.000Z";1;"2026-01-02T08:00:00.000Z";1;;false;;;true;"#b4d4ec";false;;true;true
+3;"ALT";"Alte Leistung";30;30;"19.00";900;true;"2026-01-02T08:00:00.000Z";1;"2026-01-02T08:00:00.000Z";1;;false;;;true;;false;;true;true
+4;"NAG";"Nagelbehandlung";20;;"19.00";2000;false;"2026-01-02T08:00:00.000Z";1;"2026-01-02T08:00:00.000Z";1;;false;;;true;;false;;true;true

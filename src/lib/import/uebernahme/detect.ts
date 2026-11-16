@@ -12,6 +12,7 @@ import { parseDateLoose, parseDoctolibPatientsCsv } from "@/integrations/doctoli
 import { parseWorkbook } from "../excel/parse";
 import { decimalCents, parseTinanaAppointments, parseTinanaDoctors, parseTinanaInvoices, parseTinanaPatients, parseTinanaPrescriptions } from "./tinana";
 import { MAX_UPLOAD_BYTES } from "@/lib/upload-limits";
+import { parsePododeskAppointments, parsePododeskDoctors, parsePododeskPatients, parsePododeskPractice, parsePododeskServices, parsePododeskUsers, pododeskFileOf, restrictColumns, type PododeskFile } from "./pododesk";
 import { decodeBounded, parseCsvBounded, tableFromRows, TextLimitError, textSignature, type Table, type TextSignature } from "./text";
 import type { DetectedFile, FileKind, SourceId } from "./types";
 import { isZip, unzip, ZipError, type ZipLimits } from "./zip";
@@ -30,6 +31,8 @@ export interface Recognizer {
   /** info/rejected statt import */
   status?: "info" | "rejected";
   note?: string;
+  /** Datei des Pododesk-Gesamtexports: nur die erlaubten Spalten werden gelesen (restrictColumns) */
+  pododesk?: PododeskFile;
 }
 
 const has = (sig: TextSignature, ...cols: string[]) => cols.every((c) => sig.headers.includes(c));
@@ -134,6 +137,67 @@ export const RECOGNIZERS: Recognizer[] = [
     target: "Patient:innen",
     match: (s) => has(s, "last_name", "first_name") && (has(s, "import_identifier") || has(s, "insurance_sector") || has(s, "regular_doctor_name")),
   },
+  // Pododesk-Gesamtexport: Erkennung über die Pflichtspalten der jeweiligen Datei (einzeln oder im ZIP), zusätzliche Spalten erlaubt
+  {
+    kind: "pododesk.patients",
+    source: "pododesk",
+    label: "Pododesk – Patient:innen",
+    target: "Patient:innen",
+    match: (s) => pododeskFileOf(s.headers) === "patienten",
+    fileName: /^patienten\.csv$/i,
+    pododesk: "patienten",
+  },
+  {
+    kind: "pododesk.appointments",
+    source: "pododesk",
+    label: "Pododesk – Termine",
+    target: "Termine",
+    match: (s) => pododeskFileOf(s.headers) === "termine",
+    fileName: /^termine\.csv$/i,
+    pododesk: "termine",
+  },
+  {
+    kind: "pododesk.services",
+    source: "pododesk",
+    label: "Pododesk – Leistungen (privat)",
+    target: "Leistungen",
+    match: (s) => pododeskFileOf(s.headers) === "leistungenPrivat",
+    fileName: /^leistungenPrivat\.csv$/i,
+    pododesk: "leistungenPrivat",
+  },
+  {
+    kind: "pododesk.doctors",
+    source: "pododesk",
+    label: "Pododesk – Ärzt:innen",
+    target: "Haus- und Fachärzt:in bei den Patient:innen",
+    match: (s) => pododeskFileOf(s.headers) === "aerzte",
+    fileName: /^aerzte\.csv$/i,
+    status: "info",
+    note: "PodoHero hat keine eigene Ärzteliste. Die Datei ergänzt bei neu übernommenen Patient:innen den Namen der Hausärzt:in und der Fachärzt:in.",
+    pododesk: "aerzte",
+  },
+  {
+    kind: "pododesk.users",
+    source: "pododesk",
+    label: "Pododesk – Mitarbeitende",
+    target: "Zuordnung der Termine zum Team",
+    match: (s) => pododeskFileOf(s.headers) === "users",
+    fileName: /^users\.csv$/i,
+    status: "info",
+    note: "Mitarbeitende werden nicht als Nutzerkonten angelegt, sondern über den Namen Ihrem Team in PodoHero zugeordnet. Zugangsdaten, Tokens und Kontaktdaten werden nicht gelesen.",
+    pododesk: "users",
+  },
+  {
+    kind: "pododesk.practice",
+    source: "pododesk",
+    label: "Pododesk – Praxisstammdaten",
+    target: "nur Vorschläge",
+    match: (s) => pododeskFileOf(s.headers) === "praxisstammdaten",
+    fileName: /^praxisstammdaten\.csv$/i,
+    status: "info",
+    note: "Es wird nichts automatisch geändert. Bankverbindung, PayPal- und sevDesk-Zugangsdaten werden nicht gelesen.",
+    pododesk: "praxisstammdaten",
+  },
   {
     kind: "pododesk.cashbook",
     source: "pododesk",
@@ -150,7 +214,7 @@ export const SUPPORTED_FORMATS = [
   "Tinana: Datenexport Patienten, Termine, Verordnungen, Ärzte, Rechnungen (CSV) und Rechnungs-PDFs (ZIP)",
   "Doctolib: Patientenliste (CSV)",
   "PodoHero/Excel: „Podologie Rechnungsmanager“ (XLSX)",
-  "Pododesk: Kassenbuch (CSV, nur Hinweis auf den Anfangsbestand)",
+  "Pododesk: Gesamtexport „Praxisdaten“ (ZIP oder einzelne CSV-Dateien) und Kassenbuch (CSV, nur Hinweis auf den Anfangsbestand)",
   "Alles auch als ZIP (höchstens eine Ebene verschachtelt)",
 ];
 
@@ -257,6 +321,8 @@ export async function analyzeFile(name: string, data: Uint8Array): Promise<Detec
     throw e;
   }
   const rec = RECOGNIZERS.find((r) => r.match(sig))!;
+  // Pododesk: nicht benötigte und sensible Spalten (Bankdaten, Tokens, Einwilligungs-Schalter …) sofort verwerfen
+  if (rec.pododesk) table = restrictColumns(table, rec.pododesk);
   const out: DetectedFile = { ...base, kind: rec.kind, source: rec.source, label: rec.label, target: rec.target, status: rec.status ?? "import", note: rec.note, records: table.records.length };
   // Trennzeichen aus der Erkennung an die Parser weitergeben (A-H7)
   const d = sig.delimiter as Delimiter;
@@ -286,6 +352,28 @@ export async function analyzeFile(name: string, data: Uint8Array): Promise<Detec
         const r = parseDoctolibPatientsCsv(text, d);
         return { ...out, records: r.patients.length, doctolibPatients: r.patients, issues: r.issues.map((i) => ({ file: name, row: i.row, message: i.message })) };
       }
+      case "pododesk.patients": {
+        const r = parsePododeskPatients(table, name);
+        return { ...out, records: r.patients.length, pododeskPatients: r.patients, issues: r.issues };
+      }
+      case "pododesk.appointments": {
+        const r = parsePododeskAppointments(table, name);
+        return { ...out, records: r.appointments.length, pododeskAppointments: r.appointments, issues: r.issues };
+      }
+      case "pododesk.services": {
+        const r = parsePododeskServices(table, name);
+        return { ...out, records: r.services.length, pododeskServices: r.services, issues: r.issues };
+      }
+      case "pododesk.doctors": {
+        const list = parsePododeskDoctors(table);
+        return { ...out, records: list.length, pododeskDoctors: list };
+      }
+      case "pododesk.users": {
+        const list = parsePododeskUsers(table);
+        return { ...out, records: list.length, pododeskUsers: list };
+      }
+      case "pododesk.practice":
+        return { ...out, pododeskPractice: parsePododeskPractice(table) };
       case "pododesk.cashbook": {
         const c = cashbookSummary(table);
         return { ...out, records: c.rows, cashbook: c };

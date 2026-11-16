@@ -81,6 +81,12 @@ function Preview({ p }: { p: UebernahmePreview }) {
           <Line label="PDFs schon da / nicht zuordenbar" value={`${t.documentsExisting} / ${t.documentsUnassigned}`} muted />
           <Line label="Fremd-Rechnungen (nur Info)" value={t.invoicesInfo} muted />
         </dl>
+        {t.servicesNew || t.servicesExisting || p.therapistColors ? (
+          <dl className="rounded-xl bg-surface-2 p-4 text-sm md:col-span-2">
+            <Line label="Leistungen neu / Kürzel schon vorhanden" value={`${t.servicesNew} / ${t.servicesExisting}`} />
+            {p.therapistColors ? <Line label="Kalenderfarben für Teammitglieder ohne Farbe" value={p.therapistColors} /> : null}
+          </dl>
+        ) : null}
         {t.excel ? (
           <dl className="rounded-xl bg-surface-2 p-4 text-sm md:col-span-2">
             <Line label="Excel: Patient:innen neu / schon übernommen" value={`${t.excel.patientsNew} / ${t.excel.patientsExisting}`} />
@@ -94,6 +100,17 @@ function Preview({ p }: { p: UebernahmePreview }) {
           Kassenbuch erkannt ({plural(p.cashbook.rows, "Buchung", "Buchungen")}{p.cashbook.lastDate ? `, bis ${p.cashbook.lastDate.split("-").reverse().join(".")}` : ""}). Es wird nicht nachgebucht.
           {p.cashbook.lastBalanceCents !== null ? ` Letzter Kassenbestand: ${money(p.cashbook.lastBalanceCents)} – tragen Sie ihn unter Kasse als Anfangsbestand ein.` : ""}
         </p>
+      ) : null}
+
+      {p.practiceHints.length ? (
+        <section aria-labelledby="ueb-practice" className="rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
+          <h3 id="ueb-practice" className="mb-1 font-semibold">Vorschläge aus den Praxisstammdaten (werden nicht automatisch übernommen)</h3>
+          <ul className="list-disc pl-5">
+            {p.practiceHints.map((h, i) => (
+              <li key={i}>{h}</li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {[...p.samples.patients, ...p.samples.appointments, ...p.samples.prescriptions, ...p.samples.documents].length ? (
@@ -113,7 +130,9 @@ function Preview({ p }: { p: UebernahmePreview }) {
           <h3 id="ueb-dup" className="mb-1 font-semibold">Mögliche Dubletten – bitte je Person entscheiden</h3>
           <p className="mb-2 text-muted">
             Verknüpfen ergänzt bei der vorhandenen Person nur die Herkunfts-ID und hängt Termine und Verordnungen an; es wird nichts überschrieben.
-            Jede vorhandene Person kann nur einmal verknüpft werden. Zahlen gelten für die angezeigte Auswahl – nach Änderung erneut prüfen.
+            Jede vorhandene Person kann nur einmal verknüpft werden. Steht dieselbe Pododesk-ID im Bestand bei einer Person mit anderem Namen oder ohne übereinstimmendes
+            Geburtsdatum, ist „nicht verknüpfen“ voreingestellt: Person und Termine werden dann nicht übernommen. Zahlen gelten für die angezeigte Auswahl – nach Änderung
+            erneut prüfen.
           </p>
           <ul className="flex flex-col gap-2">
             {p.decisions.map((d) => (
@@ -127,13 +146,13 @@ function Preview({ p }: { p: UebernahmePreview }) {
                       verknüpfen mit Nr. {c.number} ({c.reason})
                     </option>
                   ))}
-                  <option value="new">neu anlegen</option>
+                  <option value="new">{d.newLabel ?? "neu anlegen"}</option>
                 </Select>
               </li>
             ))}
           </ul>
           {p.decisionsTotal > p.decisions.length ? (
-            <p className="mt-2 text-muted">Weitere {p.decisionsTotal - p.decisions.length} mit Standardauswahl (verknüpfen bei genau einer Person mit gleichem Namen und Geburtsdatum, sonst neu anlegen).</p>
+            <p className="mt-2 text-muted">Weitere {p.decisionsTotal - p.decisions.length} mit Standardauswahl (verknüpfen bei genau einer Person mit gleichem Namen und Geburtsdatum, sonst neu anlegen; bei gleicher Pododesk-ID nicht verknüpfen).</p>
           ) : null}
         </section>
       ) : null}
@@ -235,6 +254,8 @@ export function UebernahmeForm({ action }: { action: (s: UebernahmeState, f: For
           <p>
             Angelegt: {plural(r.patientsCreated, "Patient:in", "Patient:innen")}, {plural(r.appointments, "Termin", "Termine")}, {plural(r.prescriptions, "Verordnung", "Verordnungen")},{" "}
             {plural(r.documents, "Dokument", "Dokumente")}
+            {r.services ? `, ${plural(r.services, "Leistung", "Leistungen")}` : ""}
+            {r.therapistColors ? `; Kalenderfarbe für ${plural(r.therapistColors, "Teammitglied", "Teammitglieder")} gesetzt` : ""}
             {r.patientsLinked ? `; ${plural(r.patientsLinked, "vorhandene Patient:in", "vorhandene Patient:innen")} verknüpft` : ""}.
             {r.excel
               ? ` Excel: ${plural(r.excel.patients, "Patient:in", "Patient:innen")}, ${plural(r.excel.services, "Leistung", "Leistungen")}, ${plural(r.excel.vouchers, "Gutschein", "Gutscheine")}, ${plural(r.excel.invoices, "Rechnung", "Rechnungen")}, ${plural(r.excel.fixedCosts, "Fixkosten-Eintrag", "Fixkosten-Einträge")}.`

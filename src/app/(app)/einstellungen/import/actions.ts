@@ -1,5 +1,7 @@
 "use server";
 
+import { errorForLog, safeWarnings } from "@/lib/import/uebernahme/preview-safety";
+import { stripControl } from "@/lib/import/uebernahme/text";
 import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -64,7 +66,8 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
       fileName: up.name,
       preview: {
         counts: result.report.counts,
-        warnings: result.report.warnings.slice(0, 200),
+        // gekürzt und maskiert wie im Übernahme-Assistenten (R3-9)
+        warnings: safeWarnings(result.report.warnings),
         warningsTotal: result.report.warnings.length,
         duplicates: result.report.duplicates,
         collectiveParts: result.report.collectiveParts,
@@ -98,13 +101,14 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
         fixedCosts: s.fixedCosts,
         renumbered: s.renumberedPatients.length,
         sequences: s.sequences.map((q) => `${q.key} ${q.year}: weiter ab ${q.next}`),
-        warnings: s.warnings.map((w) => `${w.sheet}${w.row ? ` Zeile ${w.row}` : ""}: ${w.message}`).slice(0, 100),
+        warnings: safeWarnings(s.warnings.slice(0, 100)).map((w) => `${w.sheet}${w.row ? ` Zeile ${w.row}` : ""}: ${w.message}`),
       },
     };
   } catch (e) {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.excel.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
-    console.error("[import.excel]", e instanceof Error ? e.message : e);
+    // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
+    console.error("[import.excel]", errorForLog(e));
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte Datei prüfen oder den Support kontaktieren." };
   }
 }
@@ -121,7 +125,8 @@ export type DoctolibImportState =
 
 function decodeCsv(data: Uint8Array): string {
   const utf8 = new TextDecoder("utf-8").decode(data);
-  return utf8.includes("�") ? new TextDecoder("windows-1252").decode(data) : utf8;
+  // Steuerzeichen (NUL …) entfernen – Postgres lehnt NUL ab (AppSec A-B2)
+  return stripControl(utf8.includes("�") ? new TextDecoder("windows-1252").decode(data) : utf8);
 }
 
 async function existingDoctolibIds(org: string): Promise<Set<string>> {
@@ -150,7 +155,7 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
       preview: {
         total: drafts.length,
         existing: drafts.length - fresh.length,
-        issues: issues.slice(0, 100),
+        issues: safeWarnings(issues),
         sample: fresh.slice(0, 8).map((d) => [d.firstName, d.lastName].filter(Boolean).join(" ")),
       },
     };
@@ -187,7 +192,8 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
     });
   } catch (e) {
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
-    console.error("[import.doctolib]", e instanceof Error ? e.message : e);
+    // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
+    console.error("[import.doctolib]", errorForLog(e));
     return { error: "Import abgebrochen, es wurde nichts gespeichert." };
   }
   await audit({ organizationId: org, userId: auth.user.id, action: "import.doctolib.run", meta: { sha256: up.hash, created } });

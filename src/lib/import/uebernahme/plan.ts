@@ -13,6 +13,11 @@
  *  - Rechnungen aus Fremdsystemen werden nie PodoHero-Rechnungen: nur deren PDFs landen als Dokument bei der Patient:in –
  *    und nur, wenn die Rechnung genau einer Person aus der hochgeladenen Tinana-Patientendatei (mit Tinana-ID) zugeordnet
  *    werden kann. Ein Namenstreffer nur im Bestand (ohne Geburtsdatum/ID) reicht nicht.
+ *  - Pododesk-Gesamtexport: Patient:innen über die Pododesk-ID (externalIds.pododesk) – automatisch nur bei gleichem
+ *    Namen und Geburtsdatum, sonst Entscheidung in der Vorschau mit Standard „nicht verknüpfen“. Termine über ihre ID
+ *    („pododesk:<id>“, Quelle „import“) und nur zu Personen aus der mitgeladenen patienten.csv. Leistungen über das
+ *    Kürzel (vorhandene bleiben unverändert). Mitarbeitende werden nur über den Namen zugeordnet, nie als Nutzerkonten
+ *    angelegt; Praxisstammdaten ergeben nur Vorschläge.
  */
 import { findDuplicates as findFileDuplicates } from "../excel/parse";
 import type { ImportResult, PatientImportDraft } from "../excel/types";
@@ -20,7 +25,8 @@ import { doctolibPatientValues } from "@/integrations/doctolib/patient-values";
 import { EXCEL_PAYMENTS_HINT } from "./help";
 import { plural } from "./plural";
 import { mapAppointmentStatus, normName, prescriptionComplete, validSourceId } from "./tinana";
-import type { CashbookSummary, DetectedFile, ImportIssue, PrescriptionMode, TinanaPatient, TinanaPrescription } from "./types";
+import type { CashbookSummary, DetectedFile, ImportIssue, PododeskDoctor, PododeskPatient, PrescriptionMode, TinanaPatient, TinanaPrescription } from "./types";
+import { paletteColor } from "./pododesk";
 
 export interface ExistingPatient {
   id: string;
@@ -39,13 +45,36 @@ export interface ExistingSnapshot {
   patients: ExistingPatient[];
   /** appointments.external_id der Quelle „import“ */
   appointmentRefs: Set<string>;
+  /** appointments.external_id („pododesk:…“) → patient_id des vorhandenen Termins (Kollisionsprüfung, R3-2) */
+  appointmentPatients?: Map<string, string>;
   /** prescriptions.external_ref */
   prescriptionRefs: Set<string>;
   /** `${patientId}|${sha256}` vorhandener Dokumente */
   documentHashes: Set<string>;
-  therapists: { id: string; name: string }[];
+  /** color: memberships.color (Paletten-Schlüssel oder null = automatisch) */
+  therapists: { id: string; name: string; color?: string | null }[];
   locations: { id: string; name: string }[];
-  services: { id: string; name: string; code: string }[];
+  /** auch archivierte Leistungen (active=false), damit ein Kürzel nie doppelt angelegt wird; fehlt active = aktiv */
+  services: { id: string; name: string; code: string; active?: boolean }[];
+}
+
+/** Quellen mit stabiler Patienten-ID (externalIds-Schlüssel) */
+export type SourceKey = "tinana" | "doctolib" | "pododesk";
+const SOURCE_LABEL: Record<SourceKey, string> = { tinana: "Tinana", doctolib: "Doctolib", pododesk: "Pododesk" };
+
+/**
+ * Bestandsperson mit derselben Pododesk-ID: sicher dieselbe Person nur bei gleichem Namen UND gleichem Geburtsdatum
+ * (beide vorhanden). Pododesk-IDs sind nur je Praxis eindeutig – jeder andere Fall (Namenswechsel, fehlendes oder
+ * abweichendes Geburtsdatum) wird in der Vorschau entschieden, Standard „nicht verknüpfen“ (R4-B).
+ * Liefert null bei sicherem Treffer, sonst den Unterschied für Auswahl und Hinweis.
+ */
+function pododeskIdDoubt(hit: Pick<ExistingPatient, "firstName" | "lastName" | "birthDate">, v: Pick<PatientCreate["values"], "firstName" | "lastName" | "birthDate">): string | null {
+  const a = hit.birthDate || null;
+  const b = v.birthDate || null;
+  const sameName = nameKey(hit.firstName, hit.lastName) === nameKey(v.firstName, v.lastName);
+  const bd = !a || !b ? "Geburtsdatum fehlt" : a === b ? "gleiches Geburtsdatum" : "anderes Geburtsdatum";
+  if (sameName && bd === "gleiches Geburtsdatum") return null;
+  return `${sameName ? "gleicher Name" : "anderer Name"}, ${bd}`;
 }
 
 export type PatientRef = { existingId: string } | { ref: string };
@@ -79,7 +108,7 @@ export interface PatientCreate {
 
 export interface PatientLink {
   patientId: string;
-  key: "tinana" | "doctolib";
+  key: SourceKey;
   externalId: string;
 }
 
@@ -95,6 +124,23 @@ export interface AppointmentCreate {
   notes: string | null;
   homeVisit: boolean;
   serviceIds: string[];
+  /** Kürzel von Leistungen, die dieser Lauf neu anlegt (servicesCreate) */
+  serviceCodes?: string[];
+}
+
+/** Neue Leistung (Pododesk „Leistungen privat“); vorhandene Kürzel werden nur zugeordnet, nie geändert */
+export interface ServiceCreate {
+  code: string;
+  name: string;
+  priceCents: number;
+  vatRate: number;
+  durationMin: number;
+}
+
+/** Kalenderfarbe für ein Teammitglied ohne eigene Farbe (nur wenn bisher „automatisch“) */
+export interface TherapistColorSet {
+  userId: string;
+  color: string;
 }
 
 export interface PrescriptionCreate {
@@ -140,6 +186,8 @@ export interface DuplicateDecision {
   defaultChoice: string;
   /** tatsächlich verwendete Auswahl */
   choice: string;
+  /** Beschriftung der Auswahl "new", falls nicht „neu anlegen“ (gleiche Pododesk-ID: „nicht verknüpfen“, R4-B) */
+  newLabel?: string;
 }
 
 export interface ChoiceConflict {
@@ -180,6 +228,8 @@ export interface PlanTotals {
   documentsExisting: number;
   documentsUnassigned: number;
   invoicesInfo: number;
+  servicesNew: number;
+  servicesExisting: number;
   excel: { patientsNew: number; patientsExisting: number; services: number; vouchers: number; invoices: number; fixedCosts: number } | null;
 }
 
@@ -190,6 +240,10 @@ export interface ImportPlan {
   appointments: AppointmentCreate[];
   prescriptions: PrescriptionCreate[];
   documents: DocumentCreate[];
+  servicesCreate: ServiceCreate[];
+  therapistColors: TherapistColorSet[];
+  /** Vorschläge aus den Pododesk-Praxisstammdaten – werden nicht automatisch übernommen */
+  practiceHints: string[];
   decisions: DuplicateDecision[];
   /** dieselbe Bestandsperson für mehrere Zeilen gewählt – der Import wird dann abgelehnt (S4) */
   conflicts: ChoiceConflict[];
@@ -220,7 +274,9 @@ const dateDe = (iso: string) => {
 const STATUS_DE = { planned: "geplant", done: "erledigt", cancelled: "abgesagt", no_show: "nicht erschienen" } as const;
 
 /** Feldlängen begrenzen (fremde Exporte können beliebig lange Felder enthalten) */
-export const FIELD_MAX = { name: 100, title: 50, street: 200, zip: 20, city: 100, phone: 50, email: 254, notes: 5000, apptTitle: 300, apptNotes: 10_000, doctor: 200, short: 100 } as const;
+export const FIELD_MAX = { name: 100, title: 50, street: 200, zip: 20, city: 100, phone: 50, email: 254, notes: 5000, apptTitle: 300, apptNotes: 10_000, doctor: 200, short: 100, serviceName: 200 } as const;
+/** höchstens so viele Verknüpfungen Termin–Leistung je Lauf (AppSec A-H1); darüber stehen die Leistungen nur in der Notiz */
+export const MAX_SERVICE_LINKS = 200_000;
 const clip = (v: string | null | undefined, max: number): string | null => (v == null ? null : v.length > max ? v.slice(0, max) : v);
 
 function clipValues(v: PatientCreate["values"]): PatientCreate["values"] {
@@ -322,6 +378,8 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     documentsExisting: 0,
     documentsUnassigned: 0,
     invoicesInfo: 0,
+    servicesNew: 0,
+    servicesExisting: 0,
     excel: null,
   };
   const samples = { patients: [] as string[], appointments: [] as string[], prescriptions: [] as string[], documents: [] as string[] };
@@ -347,7 +405,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   existing.patients.forEach((e, i) => {
     byId.set(e.id, e);
     order.set(e.id, i);
-    for (const k of ["tinana", "doctolib"]) {
+    for (const k of ["tinana", "doctolib", "pododesk"]) {
       const v = e.externalIds[k];
       if (typeof v === "string" || typeof v === "number") byExt.set(`${k}:${v}`, e);
     }
@@ -433,8 +491,11 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   const tinanaByName = new Map<string, Map<string, PatientRef>>();
   /** Namen gelöschter Personen (Art. 17) aus der Tinana-Patientendatei – PDFs: „gelöscht, nicht übernommen“ */
   const tinanaErasedNames = new Set<string>();
+  /** Quell-IDs („pododesk:…“), deren Bestandsperson nicht sicher dieselbe ist und nicht verknüpft wurde – weder
+   *  verknüpft noch Termine zugeordnet (B1, R4-B) */
+  const idConflicts = new Set<string>();
   /** Bestandspersonen, die in diesem Lauf schon eine Quell-ID bekommen (je Quelle nur eine) */
-  const linkedNow = { tinana: new Set<string>(), doctolib: new Set<string>() };
+  const linkedNow: Record<SourceKey, Set<string>> = { tinana: new Set<string>(), doctolib: new Set<string>(), pododesk: new Set<string>() };
   const linkedIds = new Set<string>();
   const refKey = (r: PatientRef) => ("existingId" in r ? `e:${r.existingId}` : `r:${r.ref}`);
   const addIndex = (map: Map<string, Map<string, PatientRef>>, key: string | null, r: PatientRef) => {
@@ -461,7 +522,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
    * Ziel für eine Person aus dem Upload. `linkable` = die Quelle liefert eine stabile ID (sonst wird nichts verknüpft,
    * sondern nur wiedererkannt). Liefert null für gelöschte Personen.
    */
-  const resolvePatient = (key: "tinana" | "doctolib", extId: string, raw: PatientCreate["values"], sourceLabel: string, linkable = true): PatientRef | null => {
+  const resolvePatient = (key: SourceKey, extId: string, raw: PatientCreate["values"], sourceLabel: string, linkable = true): PatientRef | null => {
     const ext = `${key}:${extId}`;
     if (target.has(ext)) return target.get(ext)!;
     const values = clipValues(raw);
@@ -480,6 +541,34 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       totals.patientsErased++;
       erasedWarning(who, person);
       return done(null);
+    }
+    // Pododesk-IDs sind nur je Praxis eindeutig (fortlaufende Zahlen): über die ID automatisch nur verknüpfen, wenn
+    // Name und Geburtsdatum übereinstimmen – sonst entscheidet die Praxis, Standard „nicht verknüpfen“ (B1, R3-1, R4-B).
+    // „Neu anlegen“ gibt es hier nicht: die Pododesk-ID stünde dann bei zwei Personen.
+    const doubt = hit && key === "pododesk" ? pododeskIdDoubt(hit, values) : null;
+    if (hit && doubt) {
+      const wanted = opts.choices?.[ext];
+      const choice = wanted === hit.id ? hit.id : "new";
+      decisions.push({
+        key: ext,
+        who,
+        sourceLabel,
+        candidates: [{ id: hit.id, number: hit.number, reason: `gleiche Pododesk-ID, ${doubt}` }],
+        defaultChoice: "new",
+        choice,
+        newLabel: "nicht verknüpfen (Person und Termine nicht übernehmen)",
+      });
+      if (choice === hit.id) {
+        totals.patientsExisting++;
+        warnings.push({ message: `${who}: mit Nr. ${hit.number} verknüpft (gleiche Pododesk-ID, ${doubt}; Ihre Auswahl) – nichts überschrieben.` });
+        return done({ existingId: hit.id });
+      }
+      idConflicts.add(ext);
+      warnings.push({
+        message: `Pododesk-ID ${extId.slice(0, 50)}: Nr. ${hit.number} im Bestand ist nicht sicher dieselbe Person (${doubt}) – nicht verknüpft, ${who} und Termine nicht übernommen. Wählen Sie in der Vorschau „verknüpfen mit Nr. ${hit.number}“, wenn es dieselbe Person ist.`,
+      });
+      target.set(ext, null);
+      return null;
     }
     if (hit) {
       totals.patientsExisting++;
@@ -531,7 +620,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     patientsCreate.push({ ref: ext, sourceLabel, pseudonym: who, values });
     totals.patientsNew++;
     const otherId = linkable && taken && !exact.length;
-    if (otherId) warnings.push({ message: `${who}: gleiche Person ist bereits mit anderer ${key === "tinana" ? "Tinana" : "Doctolib"}-ID verknüpft – neu angelegt, bitte prüfen.` });
+    if (otherId) warnings.push({ message: `${who}: gleiche Person ist bereits mit anderer ${SOURCE_LABEL[key]}-ID verknüpft – neu angelegt, bitte prüfen.` });
     if (candidates.length && linkable) warnings.push({ message: `${who}: mögliche Dublette zu ${candidates.map((c) => `Nr. ${c.number}`).join(", ")} – wird neu angelegt (Auswahl in der Vorschau).` });
     else if (sameperson.length > 1 && !otherId) warnings.push({ message: `${who}: mehrere gleichnamige Personen mit diesem Geburtsdatum vorhanden – neu angelegt, bitte prüfen.` });
     else {
@@ -582,6 +671,25 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     resolvePatient("doctolib", d.externalId ?? stable, values, "Doctolib", !!d.externalId);
   }
 
+  // ───── Pododesk-Patient:innen (Gesamtexport) ─────
+  const pdDoctors = new Map<string, PododeskDoctor>();
+  for (const d of active.flatMap((f) => f.pododeskDoctors ?? [])) if (!pdDoctors.has(d.id)) pdDoctors.set(d.id, d);
+  /** Pododesk-Patienten-IDs, die als verstorben exportiert wurden (keine künftigen Termine übernehmen) */
+  const pdDeceased = new Set<string>();
+  let missingDoctorRefs = 0;
+  for (const p of dedupe(active.flatMap((d) => d.pododeskPatients ?? []), (x) => x.id)) {
+    if (p.deceased) pdDeceased.add(p.id);
+    missingDoctorRefs += [p.gpId, p.specialistId].filter((x) => x && !pdDoctors.has(x)).length;
+    resolvePatient("pododesk", p.id, pododeskValues(p, pdDoctors, now), "Pododesk");
+  }
+  if (missingDoctorRefs) {
+    warnings.push({
+      message: pdDoctors.size
+        ? `${plural(missingDoctorRefs, "Verweis", "Verweise")} auf Haus- oder Fachärzt:innen nicht in aerzte.csv gefunden – ohne Ärzt:in übernommen.`
+        : `Patient:innen verweisen auf Haus- oder Fachärzt:innen – laden Sie aerzte.csv aus dem Pododesk-Export mit hoch, damit die Namen übernommen werden.`,
+    });
+  }
+
   // Dubletten innerhalb des Uploads (gleiche Kriterien wie beim Excel-Import)
   const pseudoDrafts = patientsCreate.map((c, i) => ({ row: i + 1, legacyId: null, lastName: c.values.lastName, firstName: c.values.firstName, birthDate: c.values.birthDate, email: c.values.email, phoneMobile: c.values.phoneMobile, phoneLandline: c.values.phoneLandline }) as unknown as PatientImportDraft);
   for (const g of findFileDuplicates(pseudoDrafts)) {
@@ -595,7 +703,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   const therapistByName = new Map<string, string[]>();
   for (const t of existing.therapists) pushTo(therapistByName, normName(t.name), t.id);
   const locationByName = new Map(existing.locations.map((l) => [normName(l.name), l.id]));
-  const servicesByLength = [...existing.services].filter((s) => s.name.trim()).sort((a, b) => b.name.length - a.name.length);
+  const servicesByLength = [...existing.services].filter((s) => s.active !== false && s.name.trim()).sort((a, b) => b.name.length - a.name.length);
   const unmatchedTherapists = new Set<string>();
   const appointments: AppointmentCreate[] = [];
   let pastPlanned = 0;
@@ -674,6 +782,21 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   if (linkedFuture) {
     warnings.push({ message: `${plural(linkedFuture, "künftiger Termin gehört", "künftige Termine gehören")} zu Patient:innen, die schon in PodoHero geführt werden (verknüpft oder früher übernommen). Haben diese Personen in PodoHero bereits in Terminerinnerungen eingewilligt, erhalten sie dafür Erinnerungen.` });
   }
+  // ───── Pododesk: Leistungen, Team, Termine, Praxisstammdaten ─────
+  const pd = planPododesk(active, existing, {
+    now,
+    target,
+    byExt,
+    idConflicts,
+    linksBefore: appointments.reduce((n, a) => n + a.serviceIds.length + (a.serviceCodes?.length ?? 0), 0),
+    pdDeceased,
+    therapistByName,
+    unmatchedTherapists,
+    warnings,
+    totals,
+    samples,
+  });
+  for (const a of pd.appointments) appointments.push(a);
   if (unmatchedTherapists.size) {
     warnings.push({ message: `Behandler:in ohne gleichnamiges Teammitglied: ${[...unmatchedTherapists].slice(0, 10).join(", ")} – Termine ohne Behandler:in übernommen. Legen Sie das Team vorher unter Einstellungen → Team an, wenn die Termine zugeordnet werden sollen.` });
   }
@@ -872,10 +995,10 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
 
   const files: FileSummary[] = detected.map((d) => ({ name: d.name, label: d.label, target: d.target, status: d.status, records: d.records, note: d.note }));
   const hasWork =
-    patientsCreate.length + patientsLink.length + appointments.length + prescriptions.length + documents.length > 0 ||
+    patientsCreate.length + patientsLink.length + appointments.length + prescriptions.length + documents.length + pd.servicesCreate.length + pd.therapistColors.length > 0 ||
     !!(excel && (totals.excel!.patientsNew || excel.services.length || excel.vouchers.length || excel.invoices.length || excel.fixedCosts.length));
   for (const c of conflicts) warnings.push({ message: choiceConflictMessage(c) });
-  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, decisions, conflicts, excel, cashbook, totals, warnings, samples, hasWork };
+  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, servicesCreate: pd.servicesCreate, therapistColors: pd.therapistColors, practiceHints: pd.practiceHints, decisions, conflicts, excel, cashbook, totals, warnings, samples, hasWork };
 }
 
 function dedupe<T>(list: T[], key: (x: T) => string): T[] {
@@ -886,4 +1009,354 @@ function dedupe<T>(list: T[], key: (x: T) => string): T[] {
     seen.add(k);
     return true;
   });
+}
+
+// ───────────── Pododesk (Gesamtexport) ─────────────
+const clipX = (v: string | null | undefined, max = 200) => (v ? v.slice(0, max) : v);
+
+/**
+ * Werte einer neuen Person aus patienten.csv. Einwilligungen (emailErinnerung, smsReminder, emailNewsletter,
+ * callReminder) liest der Parser gar nicht erst – neue Personen haben keinen Kanal (preferred_channel „none“, in
+ * applyPlan gesetzt) und bekommen keine Erinnerungen, bis die Praxis in PodoHero neu einholt.
+ */
+function pododeskValues(p: PododeskPatient, doctors: Map<string, PododeskDoctor>, now: Date): PatientCreate["values"] {
+  const extra: Record<string, unknown> = {};
+  if (p.gender) extra.gender = p.gender;
+  if (p.number) extra.pododeskNumber = clipX(p.number, 50);
+  if (p.country && !/^(de|deu|deutschland|germany)$/i.test(p.country)) extra.country = clipX(p.country, 100);
+  if (p.insurerIk) extra.payerIk = p.insurerIk;
+  if (p.insurerRef) extra.pododeskInsurerRef = clipX(p.insurerRef, 50);
+  if (p.insuranceStatus) extra.insuranceStatus = clipX(p.insuranceStatus, 50);
+  const gp = p.gpId ? doctors.get(p.gpId) : undefined;
+  const specialist = p.specialistId ? doctors.get(p.specialistId) : undefined;
+  if (gp?.city) extra.gp_city = clipX(gp.city, 100);
+  if (specialist) extra.specialist = clipX(specialist.name);
+  if (p.patientSince) extra.patientSince = p.patientSince;
+  if (p.occupation) extra.occupation = clipX(p.occupation, 100);
+  if (p.referrer) extra.referrer = clipX(p.referrer);
+  if (p.previousPractice) extra.previousPractice = clipX(p.previousPractice);
+  if (p.frequency) extra.pododeskFrequency = clipX(p.frequency, 50);
+  // „verstorben“ wie die Markierung in der Akte (src/lib/patient-deceased.ts): keine Erinnerungen, keine neuen Termine
+  if (p.deceased) extra.deceased = { date: p.deceasedOn, markedAt: now.toISOString(), markedBy: null };
+  return {
+    salutation: p.salutation,
+    title: p.title,
+    lastName: p.lastName,
+    firstName: p.firstName,
+    birthDate: p.birthDate,
+    street: p.street,
+    zip: p.zip,
+    city: p.city,
+    phoneMobile: p.phoneMobile,
+    phoneLandline: p.phoneLandline,
+    email: p.email,
+    insuranceType: p.insuranceType,
+    insurerName: p.insurerName,
+    insuranceNumber: p.insuranceNumber,
+    gpName: gp ? gp.name : null,
+    notes: p.notes,
+    extra,
+    externalIds: { pododesk: p.id },
+    source: "pododesk-import",
+  };
+}
+
+const normCode = (c: string) => c.normalize("NFC").trim().toLowerCase();
+/** Kalenderraster, die PodoHero anbietet (users.prefs.calendar.slotMin) */
+const SLOT_OPTIONS = [5, 10, 15, 30, 60];
+
+interface PododeskCtx {
+  now: Date;
+  target: Map<string, PatientRef | null>;
+  byExt: Map<string, ExistingPatient>;
+  idConflicts: Set<string>;
+  /** Verknüpfungen Termin–Leistung aus anderen Quellen dieses Laufs (für MAX_SERVICE_LINKS) */
+  linksBefore: number;
+  pdDeceased: Set<string>;
+  therapistByName: Map<string, string[]>;
+  unmatchedTherapists: Set<string>;
+  warnings: ImportIssue[];
+  totals: PlanTotals;
+  samples: ImportPlan["samples"];
+}
+
+/**
+ * Leistungen, Team-Zuordnung, Termine und Praxis-Vorschläge aus dem Pododesk-Gesamtexport.
+ *  - Leistungen: vorhandene Kürzel (auch archivierte) werden nur zugeordnet, nie geändert; gelöschte nicht übernommen.
+ *  - Team: nur Zuordnung über den Namen; keine Nutzerkonten. Kalenderfarbe nur, wenn bisher keine gewählt ist.
+ *  - Termine: Quelle „import“ (nie abrechenbar), vergangene als erledigt, abgesagte als abgesagt, organisatorische
+ *    Termine nicht übernommen (Hinweis), künftige Termine verstorbener Personen nicht übernommen.
+ */
+function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: PododeskCtx) {
+  const { now, warnings, totals } = c;
+  const servicesCreate: ServiceCreate[] = [];
+  const therapistColors: TherapistColorSet[] = [];
+  const practiceHints: string[] = [];
+  const appointments: AppointmentCreate[] = [];
+
+  // ───── Praxisstammdaten (nur Vorschläge) ─────
+  const practice = active.find((d) => d.pododeskPractice)?.pododeskPractice ?? null;
+  if (practice) {
+    if (practice.slotMin !== null) {
+      practiceHints.push(
+        SLOT_OPTIONS.includes(practice.slotMin)
+          ? `Terminraster in Pododesk: ${practice.slotMin} Minuten. In PodoHero stellt jede Person das Raster unter Einstellungen → Kalender selbst ein (Standard 15 Minuten).`
+          : `Terminraster in Pododesk: ${practice.slotMin} Minuten. PodoHero bietet 5, 10, 15, 30 oder 60 Minuten (Einstellungen → Kalender).`,
+      );
+    }
+    if (practice.defaultDurationMin !== null && practice.defaultDurationMin > 0) {
+      practiceHints.push(`Standard-Behandlungsdauer in Pododesk: ${practice.defaultDurationMin} Minuten. Übernommene Leistungen ohne eigene Behandlungszeit erhalten diese Dauer; in PodoHero legen Sie die Dauer je Leistung fest (Einstellungen → Leistungen).`);
+    }
+    if (practice.currency && practice.currency.toUpperCase() !== "EUR") {
+      practiceHints.push(`Währung in Pododesk: ${practice.currency.slice(0, 10)}. PodoHero rechnet in Euro – bitte die Preise der übernommenen Leistungen prüfen.`);
+    }
+  }
+  const defaultDuration = practice?.defaultDurationMin && practice.defaultDurationMin >= 5 && practice.defaultDurationMin <= 480 ? practice.defaultDurationMin : 30;
+
+  // ───── Leistungen ─────
+  type ServiceTarget = { existingId: string } | { code: string };
+  const serviceTarget = new Map<string, ServiceTarget>();
+  const serviceCodeById = new Map<string, string>();
+  const existingByCode = new Map<string, string>();
+  for (const sv of existing.services) if (!existingByCode.has(normCode(sv.code))) existingByCode.set(normCode(sv.code), sv.id);
+  const newByCode = new Map<string, ServiceCreate>();
+  let deleted = 0;
+  /** in Pododesk gelöschte Leistungen ohne gleiches Kürzel im Bestand – an alten Terminen nur als Hinweis (S2) */
+  const deletedIds = new Set<string>();
+  const dupCodes = new Set<string>();
+  for (const sv of dedupe(active.flatMap((d) => d.pododeskServices ?? []), (x) => x.id)) {
+    const code = clip(sv.code.trim(), 50)!;
+    const nc = normCode(code);
+    serviceCodeById.set(sv.id, code);
+    const ex = existingByCode.get(nc);
+    if (sv.deleted) {
+      deleted++;
+      // gelöschte Leistung: nicht anlegen; alte Termine verweisen ggf. auf ein vorhandenes gleiches Kürzel
+      if (ex) serviceTarget.set(sv.id, { existingId: ex });
+      else deletedIds.add(sv.id);
+      continue;
+    }
+    if (ex) {
+      serviceTarget.set(sv.id, { existingId: ex });
+      totals.servicesExisting++;
+      continue;
+    }
+    const dup = newByCode.get(nc);
+    if (dup) {
+      dupCodes.add(code);
+      serviceTarget.set(sv.id, { code: dup.code });
+      continue;
+    }
+    const create: ServiceCreate = { code, name: clip(sv.name.trim(), FIELD_MAX.serviceName) || code, priceCents: Math.min(sv.priceCents, 10_000_000), vatRate: sv.vatRate, durationMin: sv.durationMin ?? defaultDuration };
+    servicesCreate.push(create);
+    newByCode.set(nc, create);
+    serviceTarget.set(sv.id, { code });
+    totals.servicesNew++;
+  }
+  if (deleted) warnings.push({ message: `${plural(deleted, "in Pododesk gelöschte Leistung wird", "in Pododesk gelöschte Leistungen werden")} nicht übernommen.` });
+  if (dupCodes.size) warnings.push({ message: `Kürzel mehrfach in leistungenPrivat.csv: ${[...dupCodes].slice(0, 10).join(", ")} – nur die erste Leistung wird angelegt.` });
+  if (servicesCreate.some((s) => s.vatRate !== 0)) {
+    warnings.push({ message: "Leistungen mit Mehrwertsteuer werden mit dem Steuersatz aus Pododesk angelegt. Prüfen Sie unter Einstellungen → Leistungen, ob Heilbehandlungen steuerfrei sind (0 %, § 4 Nr. 14 UStG)." });
+  }
+  if (newByCode.size || totals.servicesExisting) {
+    warnings.push({ message: "Terminfarben und Online-Buchbarkeit der Pododesk-Leistungen werden nicht übernommen. Vorhandene Leistungen mit gleichem Kürzel bleiben unverändert." });
+  }
+
+  // ───── Team (nur Zuordnung) ─────
+  const pdUsers = new Map(active.flatMap((d) => d.pododeskUsers ?? []).map((u) => [u.id, u]));
+  const therapistOf = new Map<string, string | null>();
+  const memberById = new Map(existing.therapists.map((t) => [t.id, t]));
+  const colored = new Set<string>();
+  for (const u of pdUsers.values()) {
+    const ids = c.therapistByName.get(normName(u.name));
+    const id = ids?.length === 1 ? ids[0] : null;
+    therapistOf.set(u.id, id);
+    if (!id || u.disabled || colored.has(id)) continue;
+    const m = memberById.get(id);
+    const color = paletteColor(u.color);
+    if (m && (m.color === null || m.color === undefined) && color) {
+      therapistColors.push({ userId: id, color });
+      colored.add(id);
+    }
+  }
+
+  // ───── Termine ─────
+  let organizational = 0;
+  let organizationalFuture = 0;
+  let pastDone = 0;
+  let erased = 0;
+  let deceasedFuture = 0;
+  let kk = 0;
+  let products = 0;
+  let unknownTherapist = 0;
+  let unknownService = 0;
+  let deletedService = 0;
+  let linkedFuture = 0;
+  let idConflict = 0;
+  /** Termine, deren Patient-ID nicht in der hochgeladenen patienten.csv steht (R4-A) */
+  let notInPatients = 0;
+  /** Termin-IDs, die im Bestand schon zu einer anderen Person gehören (R3-2) */
+  const apptCollisions: string[] = [];
+  let links = c.linksBefore;
+  /** Termine, deren Leistungen wegen MAX_SERVICE_LINKS nur in der Notiz stehen */
+  let linksCapped = 0;
+  for (const a of dedupe(active.flatMap((d) => d.pododeskAppointments ?? []), (x) => x.id)) {
+    const future = new Date(a.startsAt).getTime() >= now.getTime();
+    if (a.organizational) {
+      organizational++;
+      if (future) organizationalFuture++;
+      continue;
+    }
+    const externalId = `pododesk:${a.id}`;
+    const ext = a.patientId ? `pododesk:${a.patientId}` : null;
+    if (ext && c.idConflicts.has(ext)) {
+      totals.appointmentsUnassigned++;
+      idConflict++;
+      continue;
+    }
+    // nur Personen aus der mitgeladenen patienten.csv – nie still über eine Bestands-ID (R4-A)
+    if (ext && !c.target.has(ext)) {
+      totals.appointmentsUnassigned++;
+      notInPatients++;
+      continue;
+    }
+    const known = ext ? c.byExt.get(ext) : undefined;
+    if (existing.appointmentRefs.has(externalId)) {
+      // Termin-IDs sind wie Patienten-IDs nur je Praxis eindeutig: „bereits übernommen“ nur, wenn der vorhandene Termin
+      // zur aufgelösten Person gehört – sonst stammt er aus einem anderen Export (R3-2)
+      const owner = existing.appointmentPatients?.get(externalId);
+      const t = ext ? c.target.get(ext) : undefined;
+      const mine = t ? ("existingId" in t ? t.existingId : null) : known?.id ?? null;
+      if (owner !== undefined && owner !== mine) {
+        totals.appointmentsUnassigned++;
+        apptCollisions.push(a.id);
+        continue;
+      }
+      totals.appointmentsExisting++;
+      continue;
+    }
+    if (ext && c.target.get(ext) === null) {
+      totals.appointmentsUnassigned++;
+      erased++;
+      continue;
+    }
+    const patient = ext ? c.target.get(ext) ?? null : null;
+    if (!patient) {
+      totals.appointmentsUnassigned++;
+      warnings.push({ row: a.row, message: `Termin ${dateDe(a.startsAt)}: ohne Patient:in – nicht übernommen.` });
+      continue;
+    }
+    if (a.patientId && c.pdDeceased.has(a.patientId) && future && !a.cancelled) {
+      totals.appointmentsUnassigned++;
+      deceasedFuture++;
+      continue;
+    }
+    // Pododesk exportiert keinen Status „erledigt/nicht erschienen“: vergangen → erledigt, abgesagt → abgesagt
+    const status: AppointmentCreate["status"] = a.cancelled ? "cancelled" : future ? "planned" : "done";
+    if (status === "done") pastDone++;
+    if (status === "planned" && "existingId" in patient) linkedFuture++;
+    let therapistId: string | null = null;
+    if (a.therapistId) {
+      const u = pdUsers.get(a.therapistId);
+      if (!u) unknownTherapist++;
+      else {
+        therapistId = therapistOf.get(u.id) ?? null;
+        if (!therapistId) c.unmatchedTherapists.add(clip(u.name, FIELD_MAX.name)!);
+      }
+    }
+    const serviceIds = new Set<string>();
+    const serviceCodes = new Set<string>();
+    const labels: string[] = [];
+    let hasKk = false;
+    for (const ref of a.services) {
+      if (ref.kk) {
+        hasKk = true;
+        labels.push(`Kassenleistung Nr. ${ref.id}`);
+        continue;
+      }
+      const t = serviceTarget.get(ref.id);
+      if (!t && deletedIds.has(ref.id)) {
+        deletedService++;
+        labels.push(`${serviceCodeById.get(ref.id)} (gelöschte Leistung)`);
+        continue;
+      }
+      labels.push(serviceCodeById.get(ref.id) ?? `Nr. ${ref.id}`);
+      if (!t) unknownService++;
+      else if ("existingId" in t) serviceIds.add(t.existingId);
+      else serviceCodes.add(t.code);
+    }
+    // Obergrenze je Lauf (A-H1): darüber nur der Hinweis in der Notiz („Leistungen (Pododesk): …“)
+    if (serviceIds.size + serviceCodes.size) {
+      if (links + serviceIds.size + serviceCodes.size > MAX_SERVICE_LINKS) {
+        linksCapped++;
+        serviceIds.clear();
+        serviceCodes.clear();
+      } else links += serviceIds.size + serviceCodes.size;
+    }
+    if (hasKk) kk++;
+    if (a.products) products++;
+    const notes = [
+      a.notes,
+      labels.length ? `Leistungen (Pododesk): ${labels.join(", ")}` : null,
+      hasKk ? "Kassenleistung ohne Preis übernommen – die Verordnung ist nicht im Pododesk-Export." : null,
+      a.cancelled ? `Abgesagt in Pododesk${a.cancelledOn ? ` am ${a.cancelledOn.split("-").reverse().join(".")}` : ""}${a.cancelReason ? `: ${a.cancelReason}` : ""}` : null,
+      a.products ? `${plural(a.products, "Produkt", "Produkte")} am Termin verkauft (nicht übernommen)` : null,
+      "Übernommen aus Pododesk",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    appointments.push({
+      externalId,
+      patient,
+      therapistId,
+      locationId: null,
+      startsAt: a.startsAt,
+      endsAt: a.endsAt,
+      status,
+      title: null,
+      notes: clip(notes, FIELD_MAX.apptNotes),
+      homeVisit: a.homeVisit,
+      serviceIds: [...serviceIds],
+      serviceCodes: [...serviceCodes],
+    });
+    totals.appointmentsNew++;
+    if (c.samples.appointments.length < 5) c.samples.appointments.push(`${dateDe(a.startsAt)} · Pododesk · ${STATUS_DE[status]}`);
+  }
+  if (pastDone) {
+    warnings.push({ message: `${plural(pastDone, "vergangener Pododesk-Termin wird", "vergangene Pododesk-Termine werden")} als erledigt übernommen (Pododesk exportiert nicht, ob jemand nicht erschienen ist). Übernommene Termine können in PodoHero nicht erneut abgerechnet werden.` });
+  }
+  if (erased) warnings.push({ message: `${plural(erased, "Termin gehört", "Termine gehören")} zu Personen, deren Kontaktdaten gelöscht wurden – nicht übernommen.` });
+  if (deceasedFuture) warnings.push({ message: `${plural(deceasedFuture, "künftiger Termin gehört", "künftige Termine gehören")} zu als verstorben markierten Personen – nicht übernommen.` });
+  if (organizational) {
+    warnings.push({
+      message: `${plural(organizational, "organisatorischer Termin", "organisatorische Termine")} (z. B. Besprechungen) nicht übernommen${organizationalFuture ? ` – davon ${organizationalFuture} in der Zukunft: Tragen Sie diese bei Bedarf als Sperrzeit im Kalender ein` : ""}.`,
+    });
+  }
+  if (kk) warnings.push({ message: `${plural(kk, "Termin enthält", "Termine enthalten")} Kassenleistungen: Sie stehen nur als Hinweis in der Terminnotiz (ohne Preis); Verordnungen sind nicht im Pododesk-Export.` });
+  if (products) warnings.push({ message: `An ${plural(products, "Termin", "Terminen")} wurden Produkte verkauft – Produktverkäufe werden nicht übernommen.` });
+  if (unknownTherapist) warnings.push({ message: `${plural(unknownTherapist, "Termin verweist", "Termine verweisen")} auf Mitarbeitende, die nicht in users.csv stehen – ohne Behandler:in übernommen. Laden Sie users.csv mit hoch.` });
+  if (deletedService) warnings.push({ message: `${plural(deletedService, "Termin verweist", "Termine verweisen")} auf eine in Pododesk gelöschte Leistung – nur als Hinweis in der Terminnotiz übernommen.` });
+  if (idConflict) {
+    warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist – nicht übernommen. Bitte prüfen Sie die Auswahl in der Vorschau und ob der Export aus derselben Praxis stammt.` });
+  }
+  if (notInPatients) {
+    warnings.push({
+      message: `${plural(notInPatients, "Termin verweist", "Termine verweisen")} auf Patient:innen, die nicht in der hochgeladenen patienten.csv stehen – nicht übernommen. Bitte laden Sie patienten.csv und termine.csv aus demselben Pododesk-Export gemeinsam hoch.`,
+    });
+  }
+  if (apptCollisions.length === 1) {
+    warnings.push({ message: `Pododesk-Termin ${apptCollisions[0].slice(0, 50)} kollidiert mit einem bereits übernommenen Termin einer anderen Person – nicht übernommen. Bitte prüfen, ob der Export aus derselben Praxis stammt.` });
+  } else if (apptCollisions.length) {
+    warnings.push({
+      message: `${apptCollisions.length.toLocaleString("de-DE")} Pododesk-Termine kollidieren mit bereits übernommenen Terminen anderer Personen – nicht übernommen (z. B. Termin ${apptCollisions[0].slice(0, 50)}). Bitte prüfen, ob der Export aus derselben Praxis stammt.`,
+    });
+  }
+  if (linksCapped) {
+    warnings.push({ message: `Mehr als ${MAX_SERVICE_LINKS.toLocaleString("de-DE")} Leistungen an Terminen – bei ${plural(linksCapped, "Termin stehen", "Terminen stehen")} die Leistungen nur in der Terminnotiz.` });
+  }
+  if (unknownService) warnings.push({ message: `${plural(unknownService, "Leistung an Terminen ist", "Leistungen an Terminen sind")} nicht in leistungenPrivat.csv – nur als Hinweis in der Terminnotiz übernommen.` });
+  if (linkedFuture) {
+    warnings.push({ message: `${plural(linkedFuture, "künftiger Pododesk-Termin gehört", "künftige Pododesk-Termine gehören")} zu Patient:innen, die schon in PodoHero geführt werden. Haben diese Personen in PodoHero bereits in Terminerinnerungen eingewilligt, erhalten sie dafür Erinnerungen.` });
+  }
+  return { servicesCreate, therapistColors, practiceHints, appointments };
 }

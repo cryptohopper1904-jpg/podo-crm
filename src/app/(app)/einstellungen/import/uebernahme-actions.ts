@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit";
 import { denyAccess, requestMeta, requireAuth } from "@/lib/auth/session";
 import { MAX_UPLOAD_FILES } from "@/lib/import/uebernahme/collect";
 import type { ApplySummary } from "@/lib/import/uebernahme/persist";
-import { toPreview, uebernahmeLimiter, type UebernahmePreview } from "@/lib/import/uebernahme/preview-safety";
+import { errorForLog, toPreview, uebernahmeLimiter, type UebernahmePreview } from "@/lib/import/uebernahme/preview-safety";
 import { ChoiceConflictError, DB_TIMEOUT_MESSAGE, ImportBusyError, isDbTimeout, previewUebernahme, runUebernahme, StaleSnapshotError, StoreTimeoutError, TokenUsedError } from "@/lib/import/uebernahme/run";
 import type { InputFile, PrescriptionMode } from "@/lib/import/uebernahme/types";
 import { canonicalPreviewToken, signPreviewToken, verifyPreviewToken } from "@/lib/preview-token";
@@ -90,7 +90,10 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
       return { previewToken: plan.hasWork ? signPreviewToken(binding) : undefined, preview: toPreview(plan) };
     } catch (e) {
       if (e instanceof ImportBusyError) return { error: e.message };
-      throw e;
+      if (isDbTimeout(e)) return { error: DB_TIMEOUT_MESSAGE };
+      // nicht weiterwerfen: die Fehlermeldung (z. B. aus der Datenbank) enthielte Klardaten im Log/Fehlerbericht (R3-6)
+      console.error("[import.uebernahme.preview]", errorForLog(e));
+      return { error: "Die Vorschau konnte nicht erstellt werden. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
     }
   }
 
@@ -118,7 +121,8 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
     if (e instanceof ImportBusyError || e instanceof TokenUsedError || e instanceof StaleSnapshotError || e instanceof ChoiceConflictError || e instanceof StoreTimeoutError) return { error: e.message };
     if (isDbTimeout(e)) return { error: DB_TIMEOUT_MESSAGE };
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
-    console.error("[import.uebernahme]", e instanceof Error ? e.message : e);
+    // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
+    console.error("[import.uebernahme]", errorForLog(e));
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
   }
   revalidatePath("/kunden");

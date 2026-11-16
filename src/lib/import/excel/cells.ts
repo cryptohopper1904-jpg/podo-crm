@@ -48,10 +48,13 @@ function normalize(v: CellValue, rowNumber: number): ReadCell {
   return { value: String(v) };
 }
 
+/** Steuerzeichen außer Tabulator/Zeilenumbruch – Postgres lehnt NUL in Texten ab (AppSec A-B2, wie uebernahme/text.ts) */
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]", "g");
+
 export function asString(v: Primitive): string | null {
   if (v === null) return null;
   if (v instanceof Date) return toIsoDate(v);
-  const s = String(v).replace(/ /g, " ").trim();
+  const s = String(v).replace(/ /g, " ").replace(CONTROL_CHARS, "").trim();
   return s === "" ? null : s;
 }
 
