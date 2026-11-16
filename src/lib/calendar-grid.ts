@@ -19,6 +19,14 @@ export const DEFAULT_RANGE = { startMin: 7 * 60, endMin: 20 * 60 } as const;
 export const SLOT_STEPS = [60, 30, 15, 10, 5] as const;
 export type SlotStep = (typeof SLOT_STEPS)[number];
 export const isSlotStep = (v: unknown): v is SlotStep => SLOT_STEPS.includes(v as SlotStep);
+
+/**
+ * Rücksprung nach „Raster“ in der Werkzeugleiste: nur genau /kalender mit optionaler Query (ohne Leerraum und Backslash) –
+ * kein offener Redirect („//host“, „/kalender@host“, „/kalender/../x“ und Backslashes werden abgelehnt).
+ */
+export const CALENDAR_BACK_RE = /^\/kalender(\?[^\s\\]*)?$/;
+/** Gültiges Rücksprungziel oder „/kalender“ */
+export const calendarBackTarget = (v: unknown): string => (typeof v === "string" && v.length <= 2000 && CALENDAR_BACK_RE.test(v) ? v : "/kalender");
 export const SLOT_STEP_LABELS: Record<SlotStep, string> = {
   60: "60 Minuten",
   30: "30 Minuten",

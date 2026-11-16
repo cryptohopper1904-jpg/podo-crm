@@ -144,6 +144,8 @@ test("Liste („Einfach“): dieselben Markierungen wie auf „Heute“ – N/R 
   await expect(first.getByRole("img", { name: "Rechnung offen" })).toBeVisible();
   await expect(first.getByTestId("behandler-kuerzel")).toBeVisible();
   await expect(first.getByTestId("behandler-kuerzel")).toHaveAccessibleName(/^Behandler:in: /);
+  // Legende N/R, sobald ein Symbol angezeigt wird
+  await expect(page.getByTestId("symbol-legende")).toBeVisible();
   const second = listRow(ids.second);
   await expect(second.getByRole("img", { name: "Rechnung offen" })).toBeVisible();
   await expect(second.getByRole("img", { name: "Neupatient:in" })).toHaveCount(0);
@@ -156,13 +158,17 @@ test("Liste („Einfach“): dieselben Markierungen wie auf „Heute“ – N/R 
   await expect(listRow(ids.first).getByRole("img", { name: "Neupatient:in" })).toBeVisible();
 });
 
-test("Tag und Woche: Kürzel der Behandler:in im Termin-Block neben N/R", async () => {
-  for (const ansicht of ["woche", "tag"] as const) {
-    await page.goto(`/kalender?modus=voll&ansicht=${ansicht}&datum=2031-06-17`);
-    const block = page.locator(`a[href="/kalender/termin/${ids.first}"]`);
-    await expect(block.getByTestId("behandler-kuerzel")).toBeVisible();
-    await expect(block.getByRole("img", { name: "Neupatient:in" })).toBeVisible();
-  }
+test("Woche: Kürzel der Behandler:in im Termin-Block neben N/R; Tag mit Spalten je Behandler:in: nur N/R", async () => {
+  await page.goto(`/kalender?modus=voll&ansicht=woche&datum=2031-06-17`);
+  let block = page.locator(`a[href="/kalender/termin/${ids.first}"]`);
+  await expect(block.getByTestId("behandler-kuerzel")).toBeVisible();
+  await expect(block.getByRole("img", { name: "Neupatient:in" })).toBeVisible();
+  await expect(page.getByTestId("symbol-legende")).toBeVisible();
+  // Tag: die Spalte steht schon für die Behandler:in – kein Kürzel in jedem Block
+  await page.goto(`/kalender?modus=voll&ansicht=tag&datum=2031-06-17`);
+  block = page.locator(`a[href="/kalender/termin/${ids.first}"]`);
+  await expect(block.getByRole("img", { name: "Neupatient:in" })).toBeVisible();
+  await expect(block.getByTestId("behandler-kuerzel")).toHaveCount(0);
 });
 
 test("Auswahl „Raster“ in der Werkzeugleiste: setzt die Einstellung, Ansicht und Datum bleiben", async () => {
@@ -184,7 +190,17 @@ test("Auswahl „Raster“ in der Werkzeugleiste: setzt die Einstellung, Ansicht
 });
 
 test("Raster aus der Liste („Einfach“): wechselt in die vollständige Ansicht mit Zeitachse", async () => {
+  // Platzhalter als aktueller Wert: auch das schon gespeicherte Raster (60 aus dem Test davor) wechselt in die Zeitachse
   await page.goto(`/kalender?modus=einfach&ansicht=tag&datum=2031-06-17`);
+  const listRaster = page.getByRole("combobox", { name: "Raster der Zeitachse" }).first();
+  await expect(listRaster).toHaveValue("");
+  await expect(listRaster.locator("option:checked")).toHaveText(/öffnet Zeitachse/);
+  await listRaster.selectOption("60");
+  await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]').first()).toHaveAttribute("data-raster", "60");
+  await expect(page).toHaveURL(/ansicht=tag&datum=2031-06-17/);
+  // anderes Raster aus der Liste
+  await pool.query("update users set prefs = jsonb_set(prefs, '{calendar,mode}', '\"simple\"') where email = $1", [DEMO_EMAIL]);
+  await page.goto(`/kalender?ansicht=tag&datum=2031-06-17`);
   await page.getByRole("combobox", { name: "Raster der Zeitachse" }).first().selectOption("30");
   await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]').first()).toHaveAttribute("data-raster", "30");
   await expect(page).toHaveURL(/ansicht=tag&datum=2031-06-17/);

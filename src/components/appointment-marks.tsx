@@ -37,6 +37,7 @@ export function AppointmentMarks({
   therapist,
   color,
   size = "md",
+  fit = false,
   className = "",
 }: {
   mark?: AppointmentMark | null;
@@ -44,12 +45,17 @@ export function AppointmentMarks({
   therapist?: string | null;
   color?: TherapistColor | null;
   size?: "sm" | "md";
+  /**
+   * Schmaler Platz (Termin-Block): nur ganze Symbole zeigen – was nicht in eine Zeile passt, bricht in eine
+   * abgeschnittene zweite Zeile um (nie halb sichtbar); die Bedeutung steht zusätzlich im Tooltip des Blocks.
+   */
+  fit?: boolean;
   className?: string;
 }) {
   const kinds = markKinds(mark);
   if (!kinds.length && !therapist) return null;
   return (
-    <span data-testid="termin-markierungen" className={`inline-flex shrink-0 items-center ${size === "md" ? "gap-1" : "gap-0.5"} ${className}`}>
+    <span data-testid="termin-markierungen" className={`inline-flex items-center ${fit ? `min-w-0 max-w-full flex-wrap justify-end overflow-hidden ${size === "md" ? "h-6" : "h-4"}` : "shrink-0"} ${size === "md" ? "gap-1" : "gap-0.5"} ${className}`}>
       {kinds.map((k) => (
         <MarkBadge key={k} kind={k} size={size} />
       ))}
@@ -58,10 +64,10 @@ export function AppointmentMarks({
   );
 }
 
-/** Legende der Symbole N/R (Kalender) */
-export function MarkLegend() {
+/** Legende der Symbole N/R (Kalender, Liste, Heute) */
+export function MarkLegend({ className = "" }: { className?: string }) {
   return (
-    <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+    <span className={`inline-flex flex-wrap items-center gap-x-3 gap-y-1 ${className}`} data-testid="symbol-legende">
       <span className="inline-flex items-center gap-1"><MarkBadge kind="newPatient" /> {MARK_LABELS.newPatient}</span>
       <span className="inline-flex items-center gap-1"><MarkBadge kind="open" /> {MARK_LABELS.open}</span>
       <span className="inline-flex items-center gap-1"><MarkBadge kind="written" /> {MARK_LABELS.written}</span>

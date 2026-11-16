@@ -18,7 +18,8 @@ import { collectiveReminderYear } from "@/lib/year-end";
 import { collectiveOverview } from "@/server/appointment-billing";
 import { listAppointments } from "@/server/appointments";
 import { appointmentMarks } from "@/server/appointment-marks";
-import type { AppointmentMark } from "@/lib/appointment-marks";
+import { markKinds, type AppointmentMark } from "@/lib/appointment-marks";
+import { MarkLegend } from "@/components/appointment-marks";
 import { failingCalendarFeeds } from "@/server/calendar-feeds";
 import { voiceQuotaFor } from "@/server/voice";
 import { VoiceQuotaBanner } from "@/components/voice-quota-banner";
@@ -169,6 +170,8 @@ export default async function TodayPage(props: PageProps<"/heute">) {
             </p>
           ) : null}
           {appts.length === 0 ? <Empty title="Heute keine Termine" /> : appts.map((r) => <AppointmentRow key={r.a.id} row={r} canDoc={auth.can("medical.write")} canEdit={auth.can("appointments.write")} overlap={overlaps.has(r.a.id)} from="/heute" color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined} therapistBadge mark={marks.get(r.a.id)} />)}
+          {/* Legende N/R, sobald ein Termin ein Symbol trägt (kompakt, auch auf Touch) */}
+          {appts.some((r) => markKinds(marks.get(r.a.id)).length) ? <p className="mt-3 border-t border-border pt-3 text-xs text-muted"><MarkLegend /></p> : null}
         </Card>
 
         {sideColumn ? (

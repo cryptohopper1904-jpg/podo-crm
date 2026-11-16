@@ -4,8 +4,8 @@ import { colorVar, type TherapistColor } from "@/lib/therapist-colors";
 const SIZE = {
   /** Terminzeile (Heute, Kalender-Liste) */
   md: "size-7 text-[12px]",
-  /** Termin-Block der Zeitachse – so groß wie die Symbole N/R */
-  sm: "size-4 text-[8px] tracking-tighter",
+  /** Termin-Block der Zeitachse – so hoch wie die Symbole N/R, als schmale Pille (zwei Buchstaben in 9 px lesbar) */
+  sm: "h-4 min-w-5 px-[3px] text-[9px]",
 } as const;
 
 /**

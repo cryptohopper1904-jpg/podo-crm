@@ -8,7 +8,9 @@ import { setCalendarSlotAction } from "./actions";
 /**
  * Auswahl „Raster“ in der Kalender-Werkzeugleiste (Tag/Woche): setzt dieselbe persönliche Einstellung wie
  * Einstellungen → Kalender und lädt die Ansicht neu. In der einfachen Ansicht (Liste ohne Zeitachse) wechselt die Auswahl
- * zusätzlich in die vollständige Ansicht (`switchToFull`), damit das Raster sichtbar wird. Ohne Recht (Support-Modus) nur
+ * zusätzlich in die vollständige Ansicht (`switchToFull`), damit das Raster sichtbar wird – dort zeigt die Auswahl den
+ * Platzhalter „Zeitachse …“ als aktuellen Wert, damit jede echte Auswahl (auch das schon gespeicherte Raster) wechselt;
+ * der Wechsel in „Vollständig“ bleibt gespeichert (gewollt). Ohne Recht (Support-Modus) nur
  * Anzeige – der Server prüft das Recht ohnehin selbst (setCalendarSlotAction).
  */
 export function RasterSelect({ slot, editable, back, wide = false, switchToFull = false }: { slot: SlotStep; editable: boolean; back: string; wide?: boolean; switchToFull?: boolean }) {
@@ -33,14 +35,22 @@ export function RasterSelect({ slot, editable, back, wide = false, switchToFull 
         <span>Raster</span>
         <select
           name="slotMin"
-          defaultValue={slot}
+          defaultValue={switchToFull ? "" : slot}
           key={slot}
           onChange={() => form.current?.requestSubmit()}
           className={`h-9 cursor-pointer rounded-lg bg-transparent px-1 text-[15px] font-semibold focus:outline-2 focus:outline-primary ${wide ? "ml-auto" : ""}`}
-          aria-label="Raster der Zeitachse"
+          aria-label={`Raster der Zeitachse${switchToFull ? " (Auswahl öffnet die vollständige Ansicht)" : ""}`}
         >
+          {switchToFull ? (
+            <option value="" disabled>
+              · öffnet Zeitachse …
+            </option>
+          ) : null}
           {SLOT_STEPS.map((s) => (
-            <option key={s} value={s}>{SLOT_STEP_SHORT[s]}</option>
+            <option key={s} value={s}>
+              {SLOT_STEP_SHORT[s]}
+              {switchToFull && s === slot ? " (aktuell)" : ""}
+            </option>
           ))}
         </select>
       </label>

@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { AppointmentRow } from "@/components/appointment-row";
+import { MarkLegend } from "@/components/appointment-marks";
+import { markKinds } from "@/lib/appointment-marks";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { Badge, Card, cx, Empty, LinkButton, segmentGroupCls, segmentItemCls } from "@/components/ui";
 import { getSession, requireAuth } from "@/lib/auth/session";
@@ -251,6 +253,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
             </p>
           ) : null}
           {schoolUncovered ? <p className="text-xs text-muted">Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {SCHOOL_HOLIDAYS_META.coverage.to.split("-").reverse().join(".")}.</p> : null}
+          {/* Legende N/R, sobald ein angezeigter Termin ein Symbol trägt (kompakt, auch auf Touch) */}
+          {dates.some((iso) => byDay(iso).some((r) => markKinds(marks.get(r.a.id)).length)) ? <MarkLegend className="text-xs text-muted" /> : null}
           {dates.map((iso) => {
             const list = byDay(iso);
             const holiday = options.holidays ? holidayOn(iso, state) : null;

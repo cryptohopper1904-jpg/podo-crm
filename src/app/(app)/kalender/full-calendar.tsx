@@ -158,7 +158,7 @@ export function FullCalendar(props: FullCalendarProps) {
         {props.canMove && props.view !== "monat" ? <span>Termin ziehen = verschieben (Touch: lange drücken), unteren Rand ziehen = Dauer ändern</span> : null}
         {props.canMove && props.view === "monat" ? <span className="max-sm:hidden">Termin auf einen anderen Tag ziehen = verschieben (Uhrzeit bleibt; Touch: lange drücken)</span> : null}
         {/* Monat: Symbole nur in der Tagesliste auf dem Handy */}
-        {props.marks.size ? <span className={props.view === "monat" ? "sm:hidden" : "contents"}><MarkLegend /></span> : null}
+        {[...props.marks.values()].some((m) => markKinds(m).length) ? <span className={props.view === "monat" ? "sm:hidden" : "contents"}><MarkLegend /></span> : null}
         {props.board.team.length > 1 ? (
           <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Farben der Behandler:innen">
             {props.board.team.map((t) => (
@@ -438,7 +438,7 @@ function TimeGridView({ view, day, focusDay, today, now, rows, busyRows, board, 
                 {options.blocks ? <BlockOverlays board={board} target={c.key === "ohne" ? "none" : (c.therapistId ?? "all")} dateIso={c.dateIso} range={range} showPerson={view === "woche" && team.length > 1} pxPerMin={scale.pxPerMin} /> : null}
                 {/* Termine */}
                 {blocks.map((b) => (
-                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} pxPerMin={scale.pxPerMin} overlap={overlaps.has(b.row.a.id)} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} mark={marks.get(b.row.a.id)} />
+                  <Block key={b.row.a.id} b={b} rangeStart={range.startMin} pxPerMin={scale.pxPerMin} overlap={overlaps.has(b.row.a.id)} showTherapist={view === "woche" || c.key === "ohne"} color={colorOf(board, b.row.a.therapistId)} move={moveAttrs(b.row, canMove, billed)} mark={marks.get(b.row.a.id)} />
                 ))}
                 {nowMin !== null ? (
                   <div className="pointer-events-none absolute inset-x-0 z-[3] h-0.5 bg-accent" style={{ top: px(nowMin - range.startMin) }} aria-hidden>
@@ -467,6 +467,7 @@ function Block({
   rangeStart,
   pxPerMin,
   overlap,
+  showTherapist,
   color,
   move,
   mark,
@@ -475,6 +476,8 @@ function Block({
   rangeStart: number;
   pxPerMin: number;
   overlap: boolean;
+  /** Kürzel der Behandler:in im Block – nur wo die Spalte gemischt ist (Woche, Tag „Ohne Zuordnung“), nicht in Spalten je Behandler:in */
+  showTherapist: boolean;
   color: TherapistColor | null;
   move: ReturnType<typeof moveAttrs>;
   mark?: AppointmentMark;
@@ -503,15 +506,20 @@ function Block({
   const blockH = Math.max(14, Math.round(h) - 1);
   // Markierungen wie auf „Heute“ (N/R + Kürzel der Behandler:in): nur ab 20 px Blockhöhe (sonst nur im Tooltip).
   // Platz: ab 52 px eigene Zeile unten rechts; zweizeilige Blöcke rechts in der Zeitzeile (der Name behält die volle
-  // Breite); einzeilige unten rechts mit reserviertem Rand, damit kein Text darunter liegt.
-  const count = blockH >= 20 ? markKinds(mark).length + (therapist ? 1 : 0) : 0;
-  const place = !count ? null : h >= 52 ? "line" : h >= 30 ? "top" : "corner";
-  const marksEl = count ? (
+  // Breite); einzeilige (20–29 px) unten rechts mit reserviertem Rand, damit kein Text darunter liegt.
+  // Kürzel nur in gemischten Spalten, nicht in einzeiligen Blöcken (Farbe steht im linken Rand) und nicht in schmalen
+  // Spuren nebeneinander liegender Termine (b.lanes > 1) – dort nur N/R.
+  const kinds = blockH >= 20 ? markKinds(mark) : [];
+  const withTherapist = blockH >= 20 && h >= 30 && showTherapist && !!therapist && b.lanes === 1;
+  const place = !kinds.length && !withTherapist ? null : h >= 52 ? "line" : h >= 30 ? "top" : "corner";
+  // Schmale Spuren: was nicht passt, bricht in eine abgeschnittene zweite Zeile um (fit) – nie halb sichtbar; passt nicht
+  // einmal ein Symbol (Block-Inhalt < 16 px, Container-Query auf dem Block), entfallen die Symbole (Tooltip nennt sie)
+  const marksEl = place ? (
     <span
-      className={`pointer-events-none flex shrink-0 justify-end ${place === "line" ? "mt-auto pb-px" : place === "corner" ? "absolute right-1 bottom-0.5" : "ml-auto"}`}
+      className={`pointer-events-none flex min-w-0 max-w-full shrink-0 justify-end @max-[16px]:hidden ${place === "line" ? "mt-auto pb-px" : place === "corner" ? "absolute right-1 bottom-0.5 left-1.5" : "ml-auto"}`}
       data-testid="termin-symbole"
     >
-      <AppointmentMarks mark={mark} therapist={therapist} color={color} size="sm" />
+      <AppointmentMarks mark={mark} therapist={withTherapist ? therapist : null} color={color} size="sm" fit />
     </span>
   ) : null;
   const title = [
@@ -534,20 +542,21 @@ function Block({
       title={title}
       draggable={false}
       {...move.attrs}
-      className={`group absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary py-0.5 pl-1.5 pr-1.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
+      className={`group @container absolute z-[2] flex flex-col overflow-hidden rounded-md border-l-[3px] border-primary py-0.5 pl-1.5 pr-1.5 text-xs leading-tight shadow-sm outline-offset-1 hover:brightness-95 focus-visible:z-[4] dark:hover:brightness-110 ${tone} ${overlap ? "ring-2 ring-accent" : ""} ${move.movable ? "cursor-grab touch-manipulation select-none [-webkit-touch-callout:none]" : ""}`}
       style={{
         top: px(b.startMin - rangeStart),
         height: `${blockH}px`,
         left: `calc(${(b.lane / b.lanes) * 100}% + 2px)`,
         width: `calc(${100 / b.lanes}% - 4px)`,
         borderLeftColor: color ? colorVar(color) : undefined,
-        // je Markierung 16 px + 2 px Abstand, damit die Zeilen darüber nicht unter den Symbolen liegen
-        ...(place === "corner" ? { paddingRight: `${count * 18 + 4}px` } : {}),
         ...tint,
       }}
     >
       {h < 30 ? (
-        <span className="truncate"><span className="tabular-nums">{done}{toHhmm(b.startMin)}</span> <strong>{name}</strong></span>
+        // einzeilig: rechts Platz (Außenabstand, damit der Text nicht in die Polsterung läuft) für die Symbole (je 16 px + 2 px Abstand, hier ohne Kürzel), außer sie entfallen (zu schmal)
+        <span className={`truncate ${place === "corner" ? (kinds.length > 1 ? "mr-[40px]" : "mr-[22px]") : ""} @max-[16px]:mr-0`}>
+          <span className="tabular-nums">{done}{toHhmm(b.startMin)}</span> <strong>{name}</strong>
+        </span>
       ) : (
         <>
           <span className="flex min-w-0 items-start gap-1">
