@@ -4,6 +4,7 @@
  *
  * Excel: höchstens eine XLSX-Datei je Lauf (weitere werden vor dem Parsen abgelehnt), Makro-Dateien (.xlsm) nie –
  * auch nicht innerhalb eines ZIPs (AppSec B2). Doppelte Dateien werden vor dem Parsen über den SHA-256 erkannt.
+ * Pododesk: je Lauf nur ein Export (mehrere unterschiedliche Dateien derselben Art werden abgelehnt, B1).
  */
 import { createHash } from "node:crypto";
 import { analyzeFile, isPdf, isXlsmName, isXlsxName, XLSM_NOTE } from "./detect";
@@ -89,7 +90,24 @@ export async function collectFiles(files: InputFile[], limits: Partial<ZipLimits
     seen.set(hash, d);
     out.push(d);
   }
-  return out;
+  return rejectSeveralPododeskPractices(out);
+}
+
+export const ONE_PODODESK_NOTE = "Bitte jeden Pododesk-Export einzeln übernehmen (je Praxis ein Lauf).";
+
+/**
+ * Pododesk-IDs sind nur innerhalb einer Praxis eindeutig (fortlaufende Zahlen). Zwei unterschiedliche Dateien derselben
+ * Art (z. B. zwei patienten.csv) stammen fast immer aus zwei Praxen – zusammengeführt würden Termine der falschen
+ * Person zugeordnet (Code-Review B1). Deshalb werden alle Dateien dieser Art abgelehnt; gleicher Inhalt zweimal ist
+ * schon als „doppelt“ markiert und zählt nicht.
+ */
+function rejectSeveralPododeskPractices(files: DetectedFile[]): DetectedFile[] {
+  const count = new Map<string, number>();
+  const counts = (d: DetectedFile) => d.source === "pododesk" && d.status !== "duplicate" && d.status !== "rejected";
+  for (const d of files) if (counts(d)) count.set(d.kind, (count.get(d.kind) ?? 0) + 1);
+  return files.map((d) =>
+    counts(d) && count.get(d.kind)! > 1 ? { ...stub({ name: d.name, data: new Uint8Array() }, d.sha256), size: d.size, label: d.label, note: ONE_PODODESK_NOTE } : d,
+  );
 }
 
 /** wird als Text (CSV) geparst: kein PDF, kein ZIP/XLSX */

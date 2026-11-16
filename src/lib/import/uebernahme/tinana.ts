@@ -349,7 +349,8 @@ export function parseTinanaPrescriptions(text: string | Table, file?: string, de
     if (!p.issuedAt) issues.push({ file, row: p.rows[0], message: "Ausstelldatum fehlt – Verordnung wird nicht übernommen." });
     if (!p.diagnosisGroup) issues.push({ file, row: p.rows[0], message: "Diagnosegruppe fehlt – Verordnung wird nicht übernommen." });
     if (!p.units) issues.push({ file, row: p.rows[0], message: "Behandlungseinheiten fehlen – Verordnung wird nicht übernommen." });
-    if (p.formType && !/muster\s*13/i.test(p.formType)) issues.push({ file, row: p.rows[0], message: `Formular „${p.formType}“ (nicht Muster 13) – bitte nach dem Import prüfen.` });
+    // Formulartyp in der Meldung gekürzt (AppSec A-B1: lange Meldungen verlangsamen die Maskierung der Vorschau)
+    if (p.formType && !/muster\s*13/i.test(p.formType)) issues.push({ file, row: p.rows[0], message: `Formular „${p.formType.slice(0, 50)}“ (nicht Muster 13) – bitte nach dem Import prüfen.` });
   }
   return { prescriptions, issues };
 }

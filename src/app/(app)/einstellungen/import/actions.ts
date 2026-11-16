@@ -1,5 +1,7 @@
 "use server";
 
+import { errorForLog } from "@/lib/import/uebernahme/preview-safety";
+import { stripControl } from "@/lib/import/uebernahme/text";
 import { assertPatientCapacity, PatientLimitError } from "@/server/patient-limit";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -104,7 +106,8 @@ export async function excelImportAction(_: ExcelImportState, form: FormData): Pr
   } catch (e) {
     await audit({ organizationId: org, userId: auth.user.id, action: "import.excel.failed", meta: { sha256: up.hash, error: e instanceof Error ? e.name : "Error" } });
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
-    console.error("[import.excel]", e instanceof Error ? e.message : e);
+    // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
+    console.error("[import.excel]", errorForLog(e));
     return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte Datei prüfen oder den Support kontaktieren." };
   }
 }
@@ -121,7 +124,8 @@ export type DoctolibImportState =
 
 function decodeCsv(data: Uint8Array): string {
   const utf8 = new TextDecoder("utf-8").decode(data);
-  return utf8.includes("�") ? new TextDecoder("windows-1252").decode(data) : utf8;
+  // Steuerzeichen (NUL …) entfernen – Postgres lehnt NUL ab (AppSec A-B2)
+  return stripControl(utf8.includes("�") ? new TextDecoder("windows-1252").decode(data) : utf8);
 }
 
 async function existingDoctolibIds(org: string): Promise<Set<string>> {
@@ -187,7 +191,8 @@ export async function doctolibImportAction(_: DoctolibImportState, form: FormDat
     });
   } catch (e) {
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
-    console.error("[import.doctolib]", e instanceof Error ? e.message : e);
+    // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
+    console.error("[import.doctolib]", errorForLog(e));
     return { error: "Import abgebrochen, es wurde nichts gespeichert." };
   }
   await audit({ organizationId: org, userId: auth.user.id, action: "import.doctolib.run", meta: { sha256: up.hash, created } });

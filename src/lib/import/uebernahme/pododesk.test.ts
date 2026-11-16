@@ -70,12 +70,12 @@ describe("Pododesk-Gesamtexport: Erkennung", () => {
     expect(renamed.kind).toBe("pododesk.patients");
   });
 
-  it("nur exakte Spaltensätze: eine Spalte mehr oder weniger wird nicht als Pododesk erkannt", () => {
+  it("Pflichtspalten: Reihenfolge egal, zusätzliche Spalten erlaubt, fehlende Pflichtspalte → nicht erkannt (S3)", () => {
     const h = PODODESK_HEADERS.patienten.map((x) => x.toLowerCase());
     expect(pododeskFileOf(h)).toBe("patienten");
     expect(pododeskFileOf([...h].reverse())).toBe("patienten");
     expect(pododeskFileOf(h.slice(1))).toBeNull();
-    expect(pododeskFileOf([...h, "extra"])).toBeNull();
+    expect(pododeskFileOf([...h, "extra"])).toBe("patienten");
   });
 });
 
@@ -200,8 +200,15 @@ describe("Pododesk-Gesamtexport: Plan", () => {
   });
 
   it("zweiter Lauf: vorhandene Quell-IDs, Termine und Kürzel → nichts Neues; Farbe nur wenn leer", async () => {
+    // dieselben Personen (Name + Geburtsdatum wie im Export); eine andere Person unter derselben ID wird nicht
+    // automatisch als vorhanden gewertet (B1, pododesk-runde2.test.ts)
+    const people = [
+      ["1", "Paula", "Beispiel", "1953-04-15"],
+      ["2", "Bruno", "Beispielmann", "1947-10-05"],
+      ["3", "Greta", "Beispiel-Muster", "1939-06-20"],
+    ];
     const existing = empty({
-      patients: ["1", "2", "3"].map((id, i) => ({ id: `p${id}`, number: i + 1, firstName: "X", lastName: `Y${id}`, birthDate: null, email: null, phoneMobile: null, externalIds: { pododesk: id } })),
+      patients: people.map(([id, firstName, lastName, birthDate], i) => ({ id: `p${id}`, number: i + 1, firstName, lastName, birthDate, email: null, phoneMobile: null, externalIds: { pododesk: id } })),
       appointmentRefs: new Set(["101", "102", "103", "104", "107"].map((x) => `pododesk:${x}`)),
       services: [
         { id: "s1", code: "dfa2 priv.", name: "Hornhaut", active: true },

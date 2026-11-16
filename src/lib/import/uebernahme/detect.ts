@@ -137,7 +137,7 @@ export const RECOGNIZERS: Recognizer[] = [
     target: "Patient:innen",
     match: (s) => has(s, "last_name", "first_name") && (has(s, "import_identifier") || has(s, "insurance_sector") || has(s, "regular_doctor_name")),
   },
-  // Pododesk-Gesamtexport: Erkennung über den exakten Spaltensatz der jeweiligen Datei (einzeln oder im ZIP)
+  // Pododesk-Gesamtexport: Erkennung über die Pflichtspalten der jeweiligen Datei (einzeln oder im ZIP), zusätzliche Spalten erlaubt
   {
     kind: "pododesk.patients",
     source: "pododesk",

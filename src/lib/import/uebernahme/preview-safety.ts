@@ -8,18 +8,51 @@ import type { DuplicateDecision, FileSummary, ImportPlan, PlanTotals } from "./p
 /** Vorschau + Import zusammen: höchstens 20 Durchläufe je Person und Praxis in 10 Minuten */
 export const uebernahmeLimiter = createRateLimiter({ windowMs: 10 * 60_000, max: 20, maxKeys: 2_000 });
 
-const EMAIL = /[^\s@„“"'()<>,;]+@[^\s@„“"'()<>,;]*\.[^\s@„“"'()<>,;]*[^\s@„“"'()<>,;.]/g;
+/**
+ * E-Mail-Adressen: Teil vor und nach dem „@“ mit festen Obergrenzen (64 bzw. 253 Zeichen wie RFC 5321) und ohne
+ * verschachtelte Quantoren – der Aufwand bleibt linear in der Länge der Meldung (AppSec A-B1, ReDoS). Ob der Teil nach
+ * dem „@“ einen Punkt enthält, prüft emailMask, nicht der reguläre Ausdruck.
+ */
+const EMAIL = /[^\s@„“"'()<>,;]{1,64}@[^\s@„“"'()<>,;]{1,253}/g;
 /** Telefonnummern: beginnt mit + oder 0, mindestens 7 Ziffern (Rechnungsnummern wie RE-2026-00001 bleiben) */
 const PHONE = /(?:\+|\b0)\d[\d /-]{5,}\d/g;
 const SENSITIVE = /geburt|e-?mail|telefon|handy|mobil|festnetz/i;
 
+function emailMask(m: string): string {
+  const at = m.indexOf("@");
+  // Punkte am Ende gehören zum Satz, nicht zur Adresse
+  const domain = m.slice(at + 1).replace(/\.+$/, "");
+  if (!domain.includes(".")) return m;
+  return `***@***${m.slice(at + 1 + domain.length)}`;
+}
+
 export function maskPii(message: string): string {
-  let m = message.replace(EMAIL, "***@***").replace(PHONE, "***");
+  let m = message.replace(EMAIL, emailMask).replace(PHONE, "***");
   if (SENSITIVE.test(m)) {
-    // Rohwerte in Anführungszeichen bzw. Klammern (z. B. „31.02.1950“, (0151 …)) – nicht das Pseudonym „(Jg. 1950)“
-    m = m.replace(/„[^“]*“/g, "„***“").replace(/\((?!Jg\. \d{4}\))[^()]*\d[^()]*\)/g, "(***)");
+    // Rohwerte in Anführungszeichen bzw. Klammern (z. B. „31.02.1950“, (0151 …)) – nicht das Pseudonym „(Jg. 1950)“;
+    // Inhalt höchstens 200 Zeichen (kein quadratisches Zurücksetzen bei langen Meldungen, A-B1)
+    m = m.replace(/„[^“]{0,200}“/g, "„***“").replace(/\((?!Jg\. \d{4}\))[^()\d]{0,200}\d[^()]{0,200}\)/g, "(***)");
   }
   return m;
+}
+
+/** Meldungen und Dateinotizen in der Vorschau: höchstens so viele Zeichen (vor dem Maskieren gekürzt, A-B1) */
+export const PREVIEW_MESSAGE_MAX = 500;
+const short = (s: string) => (s.length > PREVIEW_MESSAGE_MAX ? `${s.slice(0, PREVIEW_MESSAGE_MAX)}…` : s);
+
+/**
+ * Fehler für das Server-Log: nur Fehlerart und – falls vorhanden – Fehlercode (z. B. Postgres „22021“), nie die
+ * Meldung. Datenbankfehler enthalten die Abfrage samt Parametern, also Klardaten von Patient:innen (AppSec A-B2).
+ */
+export function errorForLog(e: unknown): string {
+  if (!(e instanceof Error)) return "unbekannter Fehler";
+  const codeOf = (x: unknown) => {
+    const c = x && typeof x === "object" && "code" in x ? (x as { code: unknown }).code : undefined;
+    return typeof c === "string" && /^[A-Z0-9_]{1,40}$/i.test(c) ? c : null;
+  };
+  const code = codeOf(e) ?? codeOf(e.cause);
+  const name = /^[A-Za-z][A-Za-z0-9_]{0,60}$/.test(e.name) ? e.name : "Error";
+  return code ? `${name} ${code}` : name;
 }
 
 /** Vorschau, wie sie an den Browser geht (gekürzt, Klardaten maskiert) */
@@ -46,11 +79,12 @@ const PREVIEW_MAX = 200;
 export function toPreview(plan: ImportPlan): UebernahmePreview {
   return {
     // gekürzt wie die Hinweise (AppSec A-H4: ein ZIP mit Tausenden Einträgen bläht sonst die Antwort auf)
-    files: plan.files.slice(0, PREVIEW_MAX).map((f) => ({ ...f, note: f.note ? maskPii(f.note) : f.note })),
+    files: plan.files.slice(0, PREVIEW_MAX).map((f) => ({ ...f, note: f.note ? maskPii(short(f.note)) : f.note })),
     filesTotal: plan.files.length,
     totals: plan.totals,
-    // E-Mail-Adressen, Geburtsdaten und Telefonnummern in Hinweisen maskiert (Vorschau zeigt keine Klardaten)
-    warnings: plan.warnings.slice(0, PREVIEW_MAX).map((w) => ({ ...w, message: maskPii(w.message) })),
+    // E-Mail-Adressen, Geburtsdaten und Telefonnummern in Hinweisen maskiert (Vorschau zeigt keine Klardaten);
+    // erst kürzen, dann maskieren (A-B1: Aufwand je Meldung begrenzt)
+    warnings: plan.warnings.slice(0, PREVIEW_MAX).map((w) => ({ ...w, message: maskPii(short(w.message)) })),
     warningsTotal: plan.warnings.length,
     samples: plan.samples,
     cashbook: plan.cashbook,

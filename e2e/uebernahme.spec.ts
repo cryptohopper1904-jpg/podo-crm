@@ -36,16 +36,15 @@ test("Tinana-Export hochladen, Vorschau prüfen, importieren – Patient:innen s
   await expect(files.getByText(/Tinana – Umsatzbericht/)).toBeVisible();
   await expect(files.getByText(/Bericht \(Auswertung\), kein Datenexport/)).toBeVisible();
 
-  // Beim ersten Lauf (frische Datenbank) gibt es etwas zu übernehmen; bei einem lokalen Wiederholungslauf ist schon alles da
+  // Erster Lauf auf frischer Datenbank (CI/Seed): es gibt etwas zu übernehmen – feste Prüfung statt „falls sichtbar“
   const runButton = page.getByRole("button", { name: "Import ausführen" });
-  if (await runButton.isVisible()) {
-    await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" })).toBeVisible();
-    // keine Klarnamen in den Beispielzeilen
-    await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Musterfrau");
-    await runButton.click();
-    await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
-    await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?, \d+ Verordnung(en)?/)).toBeVisible();
-  }
+  await expect(runButton).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" })).toBeVisible();
+  // keine Klarnamen in den Beispielzeilen
+  await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Musterfrau");
+  await runButton.click();
+  await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
+  await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?, \d+ Verordnung(en)?/)).toBeVisible();
 
   // erneuter Upload derselben Dateien: nichts Neues
   await preview(page);
@@ -91,12 +90,11 @@ test("Pododesk-Gesamtexport: alle sechs Dateien erkannt, Vorschläge aus den Sta
   await expect(page.getByText(/Terminraster in Pododesk: 15 Minuten/)).toBeVisible();
 
   const runButton = page.getByRole("button", { name: "Import ausführen" });
-  if (await runButton.isVisible()) {
-    await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Beispielmann");
-    await runButton.click();
-    await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
-    await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?/)).toBeVisible();
-  }
+  await expect(runButton).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Beispiele (pseudonymisiert)" }).locator("..")).not.toContainText("Beispielmann");
+  await runButton.click();
+  await expect(page.getByText("Übernahme abgeschlossen.")).toBeVisible();
+  await expect(page.getByText(/Angelegt: \d+ Patient:(in|innen), \d+ Termine?/)).toBeVisible();
 
   await previewPododesk(page);
   await expect(page.getByText("Nichts Neues zu übernehmen.")).toBeVisible();

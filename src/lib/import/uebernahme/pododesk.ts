@@ -65,8 +65,8 @@ export const PODODESK_COLUMNS: Record<PododeskFile, readonly string[]> = {
     "versichertenstatus",
   ],
   praxisstammdaten: ["terminraster", "standardbehandlungsdauer", "currency"],
-  termine: ["id", "beginn", "ende", "patient", "hausbesuch", "leistungen", "notizen", "therapeut", "absagegrund", "absagedatum", "istorganisatorisch", "isallday", "products"],
-  users: ["id", "vorname", "nachname", "farbe", "istherapeut", "disabled"],
+  termine: ["id", "beginn", "ende", "patient", "hausbesuch", "leistungen", "notizen", "therapeut", "absagegrund", "absagedatum", "istorganisatorisch", "products"],
+  users: ["id", "vorname", "nachname", "farbe", "isttherapeut", "disabled"],
 };
 
 /** Ausdrücklich verworfene sensible Spalten (Dokumentation + Test; verworfen wird ohnehin alles außerhalb PODODESK_COLUMNS) */
@@ -76,13 +76,30 @@ export const PODODESK_SENSITIVE = {
   patienten: ["emailerinnerung", "emailnewsletter", "smsreminder", "callreminder", "bild", "sevdeskid", "debitoorid"],
 } as const;
 
-const lower = (h: readonly string[]) => h.map((x) => x.toLowerCase());
-const SIGNATURES = Object.fromEntries(Object.entries(PODODESK_HEADERS).map(([k, v]) => [k, [...lower(v)].sort().join("|")])) as Record<PododeskFile, string>;
+/**
+ * Zusätzliche Erkennungsspalten für Dateien mit wenigen gelesenen Spalten (nur Erkennung, werden nicht gelesen): die
+ * gelesenen Ärzte-Spalten sind eine Teilmenge der Patientendatei – eine Patientendatei ohne Geburtsdatum soll nicht als
+ * Ärzteliste gelten.
+ */
+const PODODESK_MARKERS: Partial<Record<PododeskFile, readonly string[]>> = {
+  aerzte: ["lanr", "bsnr"],
+  praxisstammdaten: ["firmenbezeichnung"],
+};
+/** Pflichtspalten je Datei, die genaueste (meiste Pflichtspalten) zuerst */
+const REQUIRED = (Object.keys(PODODESK_COLUMNS) as PododeskFile[])
+  .map((k) => [k, [...PODODESK_COLUMNS[k], ...(PODODESK_MARKERS[k] ?? [])]] as const)
+  .sort((a, b) => b[1].length - a[1].length);
 
-/** Datei des Gesamtexports über den exakten Spaltensatz (Reihenfolge egal, Groß-/Kleinschreibung egal) */
+/**
+ * Datei des Gesamtexports über ihre Pflichtspalten (die gelesenen Spalten PODODESK_COLUMNS, bei Ärzten und
+ * Praxisstammdaten zusätzlich PODODESK_MARKERS): alle müssen vorhanden
+ * sein, zusätzliche Spalten (z. B. aus einer neueren Pododesk-Version) sind erlaubt und werden von restrictColumns
+ * verworfen. Passen mehrere Dateien, gewinnt die mit den meisten Pflichtspalten. Reihenfolge und Groß-/Kleinschreibung
+ * egal (Kopfzeile ist normalisiert).
+ */
 export function pododeskFileOf(headers: string[]): PododeskFile | null {
-  const sig = [...headers].sort().join("|");
-  return (Object.keys(SIGNATURES) as PododeskFile[]).find((k) => SIGNATURES[k] === sig) ?? null;
+  const have = new Set(headers);
+  return REQUIRED.find(([, cols]) => cols.every((c) => have.has(c)))?.[0] ?? null;
 }
 
 /** Nur erlaubte Spalten behalten – alle anderen Werte werden entfernt, bevor ein Parser sie sieht. */
@@ -237,6 +254,9 @@ export function parsePododeskDoctors(t: Table): PododeskDoctor[] {
 }
 
 // ───────────── Leistungen (privat) ─────────────
+/** zulässige Umsatzsteuersätze (wie excel/parse.ts) */
+const VAT_RATES = [0, 7, 19];
+
 export function parsePododeskServices(t: Table, file?: string): { services: PododeskService[]; issues: ImportIssue[] } {
   const issues: ImportIssue[] = [];
   const services: PododeskService[] = [];
@@ -245,21 +265,29 @@ export function parsePododeskServices(t: Table, file?: string): { services: Podo
     if (Object.values(r.values).every((x) => !x)) continue;
     const id = v("id");
     const code = v("kuerzel");
+    // Kürzel und Rohwerte in Hinweisen gekürzt (AppSec A-B1: lange Meldungen verlangsamen die Maskierung der Vorschau)
+    const codeShort = code ? code.slice(0, 50) : "";
     if (!id || !code) {
       issues.push({ file, row: r.row, message: "Leistung ohne ID oder Kürzel – übersprungen." });
       continue;
     }
     const cents = v("verguetung");
     const priceCents = cents && /^-?\d+$/.test(cents) ? Number(cents) : null;
-    if (cents && (priceCents === null || priceCents < 0)) issues.push({ file, row: r.row, message: `Leistung ${code}: Vergütung nicht lesbar – Preis 0 übernommen, bitte prüfen.` });
+    if (cents && (priceCents === null || priceCents < 0)) issues.push({ file, row: r.row, message: `Leistung ${codeShort}: Vergütung nicht lesbar – Preis 0 übernommen, bitte prüfen.` });
     const vatRaw = v("mehrwertsteuer");
+    const vatShort = vatRaw ? vatRaw.slice(0, 20) : "";
     const vatNum = vatRaw ? Number(vatRaw.replace(",", ".")) : 0;
-    let vatRate = Number.isFinite(vatNum) && vatNum >= 0 && vatNum <= 100 ? Math.round(vatNum) : null;
-    if (vatRate !== null && vatRate !== vatNum) issues.push({ file, row: r.row, message: `Leistung ${code}: MwSt ${vatRaw} % auf ${vatRate} % gerundet.` });
-    if (vatRate === null) {
-      issues.push({ file, row: r.row, message: `Leistung ${code}: MwSt nicht lesbar – 19 % angenommen, bitte prüfen.` });
+    // nur die deutschen Sätze 0, 7 und 19 % – alles andere 19 % mit Hinweis (wie der Excel-Import, S4/A-H3)
+    let vatRate: number;
+    if (!Number.isFinite(vatNum)) {
+      issues.push({ file, row: r.row, message: `Leistung ${codeShort}: MwSt nicht lesbar – 19 % angenommen, bitte prüfen.` });
       vatRate = 19;
-    }
+    } else if (!VAT_RATES.includes(vatNum)) {
+      issues.push({ file, row: r.row, message: `Leistung ${codeShort}: Ungewöhnlicher Steuersatz ${vatShort} % – 19 % angenommen, bitte prüfen.` });
+      vatRate = 19;
+    } else vatRate = vatNum;
+    // Dauer: die Regelbehandlungszeit „max“ zuerst – so ist im Kalender genug Zeit eingeplant (kürzen ist leichter als
+    // Überschneidungen auflösen); ohne Max die Min-Angabe
     const dur = [v("regelbehandlungszeitmax"), v("regelbehandlungszeitmin")].map((x) => (x && /^\d+$/.test(x) ? Number(x) : null)).find((x) => x !== null && x > 0) ?? null;
     services.push({
       row: r.row,
@@ -276,29 +304,44 @@ export function parsePododeskServices(t: Table, file?: string): { services: Podo
 }
 
 // ───────────── Termine ─────────────
-/** termine.leistungen: `[{"istKKLeistung":false,"id":3}]` → Liste; ungültig → null */
-export function parseServiceRefs(v: string | null): { id: string; kk: boolean }[] | null {
-  if (!v) return [];
-  if (v.length > 10_000) return null;
+/** höchstens so viele Leistungen je Termin (AppSec A-H1; echte Termine haben eine bis drei) */
+export const MAX_SERVICES_PER_APPOINTMENT = 10;
+/** JSON-Felder (leistungen, products) über dieser Länge werden nicht gelesen (AppSec A-H2) */
+const JSON_FIELD_MAX = 10_000;
+
+/** termine.leistungen → Liste (höchstens MAX_SERVICES_PER_APPOINTMENT) und ob es mehr waren; ungültig → null */
+function serviceRefsOf(v: string | null): { refs: { id: string; kk: boolean }[]; more: boolean } | null {
+  if (!v) return { refs: [], more: false };
+  if (v.length > JSON_FIELD_MAX) return null;
   try {
     const raw: unknown = JSON.parse(v);
     if (!Array.isArray(raw)) return null;
-    const out: { id: string; kk: boolean }[] = [];
-    for (const x of raw.slice(0, 50)) {
+    const refs: { id: string; kk: boolean }[] = [];
+    let more = false;
+    for (const x of raw) {
       if (!x || typeof x !== "object") continue;
       const o = x as Record<string, unknown>;
       const id = typeof o.id === "number" || typeof o.id === "string" ? String(o.id) : null;
       if (!id || !validSourceId(id)) continue;
-      out.push({ id, kk: o.istKKLeistung === true || o.istKKLeistung === "true" });
+      if (refs.length >= MAX_SERVICES_PER_APPOINTMENT) {
+        more = true;
+        break;
+      }
+      refs.push({ id, kk: o.istKKLeistung === true || o.istKKLeistung === "true" });
     }
-    return out;
+    return { refs, more };
   } catch {
     return null;
   }
 }
 
+/** termine.leistungen: `[{"istKKLeistung":false,"id":3}]` → Liste (höchstens 10); ungültig → null */
+export function parseServiceRefs(v: string | null): { id: string; kk: boolean }[] | null {
+  return serviceRefsOf(v)?.refs ?? null;
+}
+
 const jsonCount = (v: string | null) => {
-  if (!v) return 0;
+  if (!v || v.length > JSON_FIELD_MAX) return 0;
   try {
     const a: unknown = JSON.parse(v);
     return Array.isArray(a) ? a.length : 0;
@@ -331,8 +374,10 @@ export function parsePododeskAppointments(t: Table, file?: string): { appointmen
       endsAt = new Date(new Date(startsAt).getTime() + 30 * 60_000).toISOString();
       if (!organizational) issues.push({ file, row: r.row, message: "Ende fehlt oder liegt vor dem Beginn – 30 Minuten angenommen." });
     }
-    const services = parseServiceRefs(v("leistungen"));
-    if (services === null) issues.push({ file, row: r.row, message: "Leistungen des Termins nicht lesbar – ohne Leistungen übernommen." });
+    const parsed = serviceRefsOf(v("leistungen"));
+    const services = parsed?.refs ?? null;
+    if (parsed === null) issues.push({ file, row: r.row, message: "Leistungen des Termins nicht lesbar – ohne Leistungen übernommen." });
+    else if (parsed.more) issues.push({ file, row: r.row, message: `Termin mit mehr als ${MAX_SERVICES_PER_APPOINTMENT} Leistungen – nur die ersten ${MAX_SERVICES_PER_APPOINTMENT} übernommen.` });
     const cancelledOn = parsePododeskDate(v("absagedatum"));
     const cancelReason = v("absagegrund");
     appointments.push({

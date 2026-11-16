@@ -36,13 +36,22 @@ export function hasBom(data: Uint8Array): boolean {
   return data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf;
 }
 
-/** UTF-8 (mit/ohne BOM); bei ungültigem UTF-8 Windows-1252 (Excel unter Windows). */
+/**
+ * Steuerzeichen außer Tabulator und Zeilenumbruch (U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+007F). Postgres
+ * lehnt NUL in Texten ab – der Fehler bräche den ganzen Lauf ab und enthielte die Abfrage samt Klardaten (AppSec A-B2).
+ */
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]", "g");
+export const stripControl = (s: string) => s.replace(CONTROL_CHARS, "");
+
+/** UTF-8 (mit/ohne BOM); bei ungültigem UTF-8 Windows-1252 (Excel unter Windows). Steuerzeichen entfernt (A-B2). */
 export function decodeText(data: Uint8Array): string {
+  let text: string;
   try {
-    return stripBom(new TextDecoder("utf-8", { fatal: true }).decode(data));
+    text = stripBom(new TextDecoder("utf-8", { fatal: true }).decode(data));
   } catch {
-    return new TextDecoder("windows-1252").decode(data);
+    text = new TextDecoder("windows-1252").decode(data);
   }
+  return stripControl(text);
 }
 
 /** Kopfzeilen-Name normalisiert: ohne Anführungszeichen, klein, Leerzeichen zusammengefasst. */
@@ -149,14 +158,17 @@ export function readTable(text: string, delimiter?: Delimiter, limits: TextLimit
   return tableFromRows(parseCsvBounded(text, delimiter, limits));
 }
 
-/** Bereits zerlegte Zeilen → Tabelle (analyzeFile zerlegt jede Datei nur einmal) */
+/**
+ * Bereits zerlegte Zeilen → Tabelle (analyzeFile zerlegt jede Datei nur einmal). Steuerzeichen (NUL …) werden aus
+ * Kopfzeile und Feldern entfernt – zusätzlich zu decodeText, falls Zeilen aus anderer Quelle kommen (A-B2).
+ */
 export function tableFromRows(rows: string[][]): Table {
   if (!rows.length) return { headers: [], records: [] };
-  const headers = rows[0].map(normHeader);
+  const headers = rows[0].map((h) => normHeader(stripControl(h)));
   const records = rows.slice(1).map((r, i) => {
     const values: Record<string, string> = {};
     headers.forEach((h, k) => {
-      if (h && values[h] === undefined) values[h] = (r[k] ?? "").trim();
+      if (h && values[h] === undefined) values[h] = stripControl(r[k] ?? "").trim();
     });
     return { row: i + 2, values };
   });
