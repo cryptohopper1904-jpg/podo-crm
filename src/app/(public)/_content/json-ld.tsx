@@ -1,3 +1,4 @@
+import { EXPLAINER_VIDEO } from "./explainer-video";
 import { absoluteUrl, OG_IMAGE, SITE_NAME } from "./site";
 
 /**
@@ -54,5 +55,21 @@ export function articleLd(a: { title: string; description: string; path: string;
     image: absoluteUrl(OG_IMAGE.url),
     author: { "@type": "Organization", name: `${SITE_NAME}-Redaktion` },
     publisher: { "@type": "Organization", name: SITE_NAME, logo: { "@type": "ImageObject", url: absoluteUrl("/icons/icon-512.png") } },
+  };
+}
+
+/** Erklärvideo der Startseite (schema.org VideoObject); Dateien liegen auf dem eigenen Server (public/video). */
+export function videoObjectLd() {
+  const v = EXPLAINER_VIDEO;
+  return {
+    "@context": "https://schema.org",
+    "@type": "VideoObject",
+    name: v.title,
+    description: v.description,
+    thumbnailUrl: [absoluteUrl(v.wide.poster.jpg)],
+    contentUrl: absoluteUrl(v.wide.src),
+    uploadDate: v.uploadDate,
+    duration: v.durationIso,
+    inLanguage: "de",
   };
 }

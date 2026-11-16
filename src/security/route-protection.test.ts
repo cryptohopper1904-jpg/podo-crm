@@ -87,7 +87,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx", "/offlinex", "/appx", "/apps", "/sw.jsx", "/splashx"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx", "/offlinex", "/appx", "/apps", "/sw.jsx", "/splashx", "/videox", "/videos"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
@@ -136,6 +136,14 @@ describe("Proxy: Routen-Schutz", () => {
     // public/splash/* (iOS-Startbildschirme) ebenso
     expect(runsProxy("/splash/apple-splash-1170x2532.png")).toBe(false);
     expect(runsProxy("/splashx")).toBe(true);
+    // public/video/* (Erklärvideo der Startseite: Video, Untertitel, Poster)
+    expect(runsProxy("/video/podohero-erklaervideo-v2.mp4")).toBe(false);
+    expect(runsProxy("/video/podohero-erklaervideo-v2.de.vtt")).toBe(false);
+    expect(runsProxy("/video")).toBe(true);
+    expect(runsProxy("/videox")).toBe(true);
+    expect(runsProxy("/videos/x")).toBe(true);
+    expect(runsProxy("/VIDEO/x")).toBe(true);
+    expect(runsProxy("/Video/podohero-erklaervideo-v2.mp4")).toBe(true);
     // public/brand/* und genau /sw.js
     expect(runsProxy("/brand/podohero-mark.svg")).toBe(false);
     expect(runsProxy("/brandx")).toBe(true);

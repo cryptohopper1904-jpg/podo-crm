@@ -2,7 +2,7 @@
 
 > **Entwurf – vor Verwendung anwaltlich prüfen lassen.** Diese Vorlage ist keine Rechtsberatung.
 >
-> Version 0.5 · Stand 14.11.2026
+> Version 0.6 · Stand 16.11.2026
 
 Diese Datenschutzerklärung gilt für die **Website** von PodoHero und für die **Konten der Praxen**, die PodoHero nutzen. Für die Daten der Patientinnen und Patienten, die eine Praxis in PodoHero verarbeitet, ist die jeweilige **Praxis Verantwortliche**; wir verarbeiten diese Daten nur in ihrem Auftrag (siehe [Auftragsverarbeitungsvertrag](/avv)). Patientinnen und Patienten wenden sich mit Fragen bitte an ihre Praxis.
 
@@ -26,7 +26,18 @@ Beim Aufruf der Website verarbeitet unser Server technisch notwendige Daten: IP-
 - **Rechtsgrundlage:** Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse an einem sicheren Betrieb)
 - **Speicherdauer:** Sicherheitsprotokolle der Anwendung siehe Abschnitt 4
 
-<!-- TODO (Betreiber): Speicherdauer der Server-Protokolle festlegen und hier angeben. Stand deploy/: Caddy schreibt keine Zugriffsprotokolle (kein `log`-Eintrag im Caddyfile); für die Docker-Container-Logs ist in deploy/docker-compose.yml keine Rotation/Begrenzung konfiguriert (Standard json-file ohne Löschfrist) – z. B. logging max-size/max-file setzen und die resultierende Frist hier eintragen. -->
+<!-- TODO (Betreiber): Speicherdauer der Server-Protokolle erst angeben, wenn belegt. Stand 16.11.2026: Container-Logs werden per logrotate nach 7 Tagen gelöscht (deploy/log-retention.sh), ABER (1) im Subdomain-Modus erfasst das die Zugriffslogs des vorhandenen Host-Caddy nicht (BETRIEB.md 4.4 – prüfen, ob dort ein `log`-Eintrag besteht, ggf. `roll_keep_for 168h`), und (2) für den Server sind Hetzner-Backups aktiv (Backup-Fenster 02–06 Uhr, bis zu 7 Sicherungen) – Logs liegen damit bis zu ca. 14 Tage in Sicherungen. Danach Frist eintragen (z. B. „höchstens 14 Tage einschließlich Sicherungen“). -->
+
+### Erklärvideo auf der Startseite
+
+Das Erklärvideo auf unserer Startseite liegt auf unserem eigenen Server und wird nicht über YouTube, Vimeo oder andere Video-Plattformen eingebunden. Beim Aufruf der Startseite lädt Ihr Browser nur das Vorschaubild. Videodatei und Untertitel ruft er erst ab, wenn Sie auf „Abspielen“ klicken. Dabei verarbeitet unser Server dieselben technisch notwendigen Daten wie beim Aufruf der Website (IP-Adresse, Datum und Uhrzeit, aufgerufene Datei, übertragene Datenmenge, Browser-Kennung); weil das Video in Teilstücken geladen wird, können dabei mehrere Abrufe entstehen. Wir setzen dafür keine Cookies, nutzen keine Analyse- oder Tracking-Dienste und werten nicht aus, ob oder wie lange Sie das Video ansehen. Abgesehen vom üblichen Zwischenspeicher (Cache) Ihres Browsers wird nichts auf Ihrem Gerät gespeichert.
+
+- **Zweck:** Bereitstellung des Videos auf Ihre Anforderung
+- **Rechtsgrundlage:** Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse, unser Angebot verständlich zu erklären); Zwischenspeicherung im Browser: § 25 Abs. 2 Nr. 2 TDDDG
+- **Empfänger:** unser Hosting-Dienstleister als Auftragsverarbeiter (siehe Abschnitt 7 und [Unterauftragnehmer](/unterauftragnehmer))
+- **Speicherdauer:** wie beim Aufruf der Website (siehe oben)
+
+Die Sprecherstimme wurde vorab einmalig mit einem KI-Dienst erzeugt; beim Abspielen findet keine KI-Verarbeitung statt und es werden keine Daten an einen KI-Anbieter übermittelt. Alle im Video gezeigten Namen, Telefonnummern und Gesundheitsangaben sind erfundene Demo-Daten.
 
 **Keine Tracking- oder Analyse-Dienste, keine Werbe-Cookies.** Schriften werden von unserem eigenen Server geladen, es werden keine Inhalte von Google Fonts oder vergleichbaren Diensten nachgeladen.
 

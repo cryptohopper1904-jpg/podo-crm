@@ -1,1 +1,2 @@
 src/lib/import/__fixtures__/** -text
+*.mp4 binary -diff
