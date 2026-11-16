@@ -3,6 +3,8 @@ import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { AppointmentRow } from "@/components/appointment-row";
+import { MarkLegend } from "@/components/appointment-marks";
+import { markKinds } from "@/lib/appointment-marks";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { Badge, Card, cx, Empty, LinkButton, segmentGroupCls, segmentItemCls } from "@/components/ui";
 import { getSession, requireAuth } from "@/lib/auth/session";
@@ -31,8 +33,8 @@ import { withOrg } from "@/db";
 import { services } from "@/db/schema";
 import { billedAppointmentIds, listAppointments, therapists } from "@/server/appointments";
 import { teamColors } from "@/server/therapist-colors";
-import { calendarBoard, calendarModeOf, calendarOptionsOf, calendarSlotOf } from "@/server/calendar-board";
-import { calendarAppointmentInfo } from "@/server/appointment-marks";
+import { calendarBoard, calendarModeOf, calendarOptionsOf, calendarSlotOf, canSetCalendarSlot } from "@/server/calendar-board";
+import { appointmentMarks, calendarAppointmentInfo } from "@/server/appointment-marks";
 import { setCalendarModeAction } from "./actions";
 import { CalendarOptionsPanel } from "./calendar-options-panel";
 import { FilterHint } from "./filter-hint";
@@ -43,6 +45,7 @@ import { canCreateBlocks } from "@/server/calendar-blocks";
 import { CalendarHeader } from "./calendar-header";
 import { DATE_SLOT, ViewportDefault } from "./calendar-header-parts";
 import { NewAppointmentHost } from "./new-appointment-dialog";
+import { RasterSelect } from "./raster-select";
 
 export const metadata = { title: "Kalender" };
 
@@ -196,7 +199,11 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
   // „Quittung“ direkt in der Zeile: erledigte, noch nicht abgerechnete Termine (nur mit Recht auf Belege)
   // übernommene Termine (Quelle „import“) wurden in der bisherigen Software abgerechnet – keine Quittung (S1)
   const doneIds = auth.can("invoices.write") ? rows.filter((r) => r.a.status === "done" && r.patient && r.a.source !== "import").map((r) => r.a.id) : [];
-  const billed = doneIds.length ? await billedAppointmentIds(auth, doneIds) : new Set<string>();
+  // Markierungen wie auf „Heute“: Symbole N/R (eine Abfrage für alle angezeigten Termine) + Kürzel der Behandler:in
+  const [billed, marks] = await Promise.all([
+    doneIds.length ? billedAppointmentIds(auth, doneIds) : new Set<string>(),
+    appointmentMarks(auth, rows.map((r) => r.a.id)),
+  ]);
   const canWrite = auth.can("appointments.write");
   const listHref = (p: { ansicht?: "tag" | "woche"; datum?: string }) => `/kalender?datum=${p.datum ?? day}${(p.ansicht ?? view) === "woche" ? "&ansicht=woche" : ""}${keep}`;
   const fullTitle = view === "woche" ? `Woche ab ${weekdayLong(`${start}T12:00:00Z`)}${options.weekNumbers ? ` · KW ${isoWeek(start)}` : ""}` : weekdayLong(`${day}T12:00:00Z`);
@@ -220,6 +227,11 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
           ]}
           modeSwitch={(place) => <ModeSwitch mode="simple" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
           panel={(place) => panel(view, place)}
+          raster={
+            canSetCalendarSlot(auth)
+              ? (place) => <RasterSelect slot={calendarSlotOf(session?.user.prefs)} editable back={`/kalender?ansicht=${view}&datum=${day}${optKeep}`} wide={place === "menu"} switchToFull />
+              : null
+          }
           blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
           newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
         />
@@ -241,6 +253,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
             </p>
           ) : null}
           {schoolUncovered ? <p className="text-xs text-muted">Keine Schulferien-Daten für (Teile) dieses Zeitraums – vorhanden bis {SCHOOL_HOLIDAYS_META.coverage.to.split("-").reverse().join(".")}.</p> : null}
+          {/* Legende N/R, sobald ein angezeigter Termin ein Symbol trägt (kompakt, auch auf Touch) */}
+          {dates.some((iso) => byDay(iso).some((r) => markKinds(marks.get(r.a.id)).length)) ? <MarkLegend className="text-xs text-muted" /> : null}
           {dates.map((iso) => {
             const list = byDay(iso);
             const holiday = options.holidays ? holidayOn(iso, state) : null;
@@ -284,6 +298,8 @@ export default async function CalendarPage(props: PageProps<"/kalender">) {
                       overlap={overlaps.has(r.a.id)}
                       from={`/kalender?datum=${day}${view === "woche" ? "&ansicht=woche" : ""}${keep}`}
                       color={r.a.therapistId ? colors.get(r.a.therapistId) : undefined}
+                      therapistBadge
+                      mark={marks.get(r.a.id)}
                     />
                   ))
                 )}
@@ -344,11 +360,12 @@ async function FullPage({
   const overlaps = feedOverlapIds(rows);
   // Ziehen zum Verschieben: nur mit Schreibrecht, nicht im Support- oder Nur-Lesen-Modus (Abo abgelaufen)
   const canMove = auth.can("appointments.write") && !auth.support && !auth.readOnly;
-  // Zieh-Sperre „abgerechnet“ und Symbole N/R (nur Tag/Woche – Monat zeigt keine Termin-Blöcke) in einer Transaktion
+  // Zieh-Sperre „abgerechnet“ und Symbole N/R in einer Transaktion. Monat: Symbole nur für die Tagesliste des gewählten
+  // Tags (Handy) – das Monatsraster zeigt keine Symbole, die Zieh-Sperre braucht es für alle Termine
   const { billed, marks } = await calendarAppointmentInfo(
     auth,
     rows.map((r) => r.a.id),
-    { marks: view !== "monat", dragLock: canMove },
+    { marks: true, dragLock: canMove, ...(view === "monat" ? { markIds: rows.filter((r) => berlinDateIso(r.a.startsAt) === day).map((r) => r.a.id) } : {}) },
   );
   const calHref = (p: { ansicht?: FullView; datum?: string }) => `/kalender?ansicht=${p.ansicht ?? view}&datum=${p.datum ?? day}${keep}`;
   const prev = view === "tag" ? addDays(day, -1) : view === "woche" ? addDays(day, -7) : shiftMonthIso(day, -1);
@@ -376,6 +393,7 @@ async function FullPage({
           tabs={tabs.map(([v, label]) => ({ href: calHref({ ansicht: v }), label, active: view === v }))}
           modeSwitch={(place) => <ModeSwitch mode="full" day={day} ansicht={view} persist={persist} optKeep={optKeep} wide={place === "menu"} />}
           panel={(place) => panel(view, place)}
+          raster={view === "monat" ? null : (place) => <RasterSelect slot={slot} editable={canSetCalendarSlot(auth)} back={calHref({})} wide={place === "menu"} />}
           blockHref={canCreateBlocks(auth) ? `/kalender/sperrzeit/neu?datum=${day}` : null}
           newHref={canWrite ? `/kalender/neu?datum=${day}` : null}
         />

@@ -1,6 +1,6 @@
 /** Symbole N (Neupatient:in) und R (Rechnung offen/geschrieben) im Termin-Block – reine Regeln. */
 import { describe, expect, it } from "vitest";
-import { invoiceRelevant, markFor } from "./appointment-marks";
+import { invoiceRelevant, markFor, markKinds } from "./appointment-marks";
 
 const now = new Date("2026-11-15T12:00:00Z");
 const past = new Date("2026-11-15T10:00:00Z");
@@ -40,5 +40,16 @@ describe("markFor", () => {
   });
   it("Neupatient:in mit erledigtem, abgerechnetem Termin: N und R grün", () => {
     expect(markFor({ status: "done", endsAt: past, patientId: p }, now, true, true)).toEqual({ newPatient: true, invoice: "written" });
+  });
+});
+
+describe("markKinds (Reihenfolge der Symbole in Liste, Heute, Tag/Woche)", () => {
+  it("N vor R, ohne Markierung leer", () => {
+    expect(markKinds({ newPatient: true, invoice: "written" })).toEqual(["newPatient", "written"]);
+    expect(markKinds({ newPatient: false, invoice: "open" })).toEqual(["open"]);
+    expect(markKinds({ newPatient: true, invoice: null })).toEqual(["newPatient"]);
+    expect(markKinds({ newPatient: false, invoice: null })).toEqual([]);
+    expect(markKinds(undefined)).toEqual([]);
+    expect(markKinds(null)).toEqual([]);
   });
 });

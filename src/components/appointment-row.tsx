@@ -5,7 +5,8 @@ import { appointmentEditLock } from "@/lib/appointment-edit";
 import { timeDe } from "@/lib/format";
 import { dotStyle, type TherapistColor } from "@/lib/therapist-colors";
 import { RiskBadges } from "./risk-badges";
-import { TherapistBadge } from "./therapist-badge";
+import { markKinds, type AppointmentMark } from "@/lib/appointment-marks";
+import { AppointmentMarks } from "./appointment-marks";
 import { Badge } from "./ui";
 import { withReturn } from "@/lib/back-link";
 
@@ -47,7 +48,7 @@ const Gap = ({ wide = false }: { wide?: boolean }) => <span aria-hidden classNam
  * Die Umbrüche hängen an der Breite der Liste (Container-Query), nicht des Fensters – so brechen alle Zeilen
  * einer Liste gleich um: schmal Aktionen in eigener Zeile (weiterhin bündig), breit alles in einer Zeile.
  */
-export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color, billable = false, therapistBadge = false }: {
+export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, color, billable = false, therapistBadge = false, mark }: {
   row: ApptRow;
   canDoc: boolean;
   canEdit: boolean;
@@ -64,8 +65,10 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
    * (die aufrufende Seite prüft Recht und Abrechnungsstand, z. B. billedAppointmentIds).
    */
   billable?: boolean;
-  /** Behandler:in als rundes Kürzel-Badge in der Kalenderfarbe statt als Name (Startseite „Heute“) */
+  /** Behandler:in als rundes Kürzel-Badge in der Kalenderfarbe statt als Name (Heute, Kalender-Liste) */
   therapistBadge?: boolean;
+  /** Symbole N (Neupatient:in) und R (Rechnung offen/geschrieben) – src/server/appointment-marks.ts */
+  mark?: AppointmentMark | null;
 }) {
   const { a, patient, feed } = row;
   const apptHref = from ? withReturn(`/kalender/termin/${a.id}`, from, !from.startsWith("/kalender")) : `/kalender/termin/${a.id}`;
@@ -81,6 +84,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
   // übernommene Termine (Quelle „import“) nie abrechnen (S1)
   const showReceipt = billable && !!patient && a.status === "done" && a.source !== "import";
   const who = patient ? [patient.firstName, patient.lastName].filter(Boolean).join(" ") : (a.title ?? "");
+  // Markierungen rechts neben dem Namen: N/R und Kürzel der Behandler:in (gleiche Komponente wie in Tag/Woche)
+  const hasMarks = markKinds(mark).length > 0 || (therapistBadge && !!row.therapist);
   return (
     <div data-appt-row className={`@container border-t border-border py-3 first:border-t-0 ${cancelled ? "opacity-50" : ""}`}>
       <div className="grid grid-cols-[5.75rem_4px_minmax(0,1fr)] items-center gap-x-3 gap-y-2 @xl:grid-cols-[6.75rem_4px_minmax(0,1fr)_7.5rem] @min-[62.5rem]:grid-cols-[6.75rem_4px_minmax(10rem,1fr)_7.5rem_auto]">
@@ -92,11 +97,11 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
           aria-hidden
         />
         <div className="col-start-3 row-start-1 min-w-0">
-          <p className={`font-semibold ${therapistBadge && row.therapist ? "flex items-start justify-between gap-2" : ""}`}>
+          <p className={`font-semibold ${hasMarks ? "flex items-start justify-between gap-2" : ""}`}>
             <span className="min-w-0">
               {patient ? <Link href={`/kunden/${patient.id}`} className="hover:text-primary">{[patient.firstName, patient.lastName].filter(Boolean).join(" ")}</Link> : a.title}
             </span>
-            {therapistBadge && row.therapist ? <TherapistBadge name={row.therapist} color={color} /> : null}
+            {hasMarks ? <AppointmentMarks mark={mark} therapist={therapistBadge ? row.therapist : null} color={color} /> : null}
           </p>
           <p className="text-sm text-muted">{patient ? a.title : a.notes}{a.homeVisit ? ` · Hausbesuch${patient?.city ? ` ${patient.city}` : ""}` : ""}{row.therapist && !therapistBadge ? (
               <>

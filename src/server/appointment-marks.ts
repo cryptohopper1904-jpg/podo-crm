@@ -32,13 +32,14 @@ export type CalendarAppointmentInfo = {
  * Zieh-Sperre „abgerechnet“ für die Termine einer Ansicht – in EINER Transaktion mit Praxis-Kontext (RLS), zusätzlich
  * auf die Praxis gefiltert, ohne N+1. Status, Ende und Patient:in kommen aus der DB (nicht vom Aufrufer); fremde IDs
  * liefern nichts. Regeln siehe src/lib/appointment-marks.ts. „R“ nur mit Recht auf Belege (invoices.read).
- * `marks: false` (Monatsansicht) bzw. `dragLock: false` (kein Verschieben) lassen den jeweiligen Teil weg.
+ * `marks: false` bzw. `dragLock: false` (kein Verschieben) lassen den jeweiligen Teil weg; `markIds` beschränkt die Symbole
+ * auf einen Teil der Termine (Monatsansicht: nur die Tagesliste des gewählten Tags).
  * Index: appointments_org_patient (organization_id, patient_id, starts_at), treatment_records_patient.
  */
 export async function calendarAppointmentInfo(
   auth: AuthContext,
   appointmentIds: readonly string[],
-  opts: { marks: boolean; dragLock: boolean; now?: Date },
+  opts: { marks: boolean; dragLock: boolean; markIds?: readonly string[]; now?: Date },
 ): Promise<CalendarAppointmentInfo> {
   assertCan(auth, "appointments.read");
   const org = auth.organization.id;
@@ -49,7 +50,9 @@ export async function calendarAppointmentInfo(
   const withInvoice = auth.can("invoices.read");
   return withOrg(org, async (tx) => {
     const billed = opts.dragLock ? await billedIdsInTx(tx, org, ids) : new Set<string>();
-    if (!opts.marks) return { marks, billed };
+    const only = opts.markIds ? new Set(opts.markIds) : null;
+    const markIds = only ? ids.filter((id) => only.has(id)) : ids;
+    if (!opts.marks || !markIds.length) return { marks, billed };
     // Termine aus der DB (nur dieser Praxis) samt N-Regel in einer Abfrage
     const rows = await tx
       .select({
@@ -77,7 +80,7 @@ export async function calendarAppointmentInfo(
         )`,
       })
       .from(a0)
-      .where(and(eq(a0.organizationId, org), inArray(a0.id, ids), isNotNull(a0.patientId)));
+      .where(and(eq(a0.organizationId, org), inArray(a0.id, markIds), isNotNull(a0.patientId)));
     const billable: string[] = withInvoice ? rows.filter((r) => invoiceRelevant(r, now)).map((r) => r.id) : [];
     const written = await writtenIdsInTx(tx, org, billable);
     for (const r of rows) {
