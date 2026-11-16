@@ -419,10 +419,11 @@ test("Leistungen: Kategorie umbenennen, Leistung archivieren gibt das Kürzel fr
 });
 
 test("Heute: Hinweis „Bestand knapp“ mit Link zum Nachbestellen", async () => {
-  await insertLowStockProduct(`Fußcreme ${run}`, 0, 5);
+  // Bestand > 0: der Hinweis muss den echten Bestand zeigen (früher immer 0, siehe stockSum in src/server/products.ts)
+  await insertLowStockProduct(`Fußcreme ${run}`, 2, 5);
   await page.goto("/heute");
   const hint = page.getByRole("status").filter({ hasText: "Bestand knapp" });
-  await expect(hint).toContainText(`E2E Fußcreme ${run} (0 von mind. 5)`);
+  await expect(hint).toContainText(`E2E Fußcreme ${run} (2 von mind. 5)`);
   await hint.getByRole("link", { name: "nachbestellen" }).click();
   await expect(page).toHaveURL(/\/produkte\/nachbestellen$/);
 });

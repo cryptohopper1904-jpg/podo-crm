@@ -200,6 +200,17 @@ const toInt = (v: Primitive): number | null => {
   return n === null ? null : Math.round(n);
 };
 
+/**
+ * Bezugs-ID aus Excel (Patient, Leistung, Gutschein, Rechnung): nur sichere Ganzzahlen. Größere Werte verlieren als
+ * Zahl Stellen und würden beim Wiederabgleich als „1e+21“ o. Ä. verglichen – dann ohne ID übernehmen (mit Hinweis).
+ */
+function toLegacyId(ctx: Ctx, sheet: SheetName, row: number, v: Primitive, label = "ID"): number | null {
+  const n = toInt(v);
+  if (n === null || Number.isSafeInteger(n)) return n;
+  ctx.warn(sheet, row, `${label} „${asString(v)}“ ist zu groß – wird ohne ${label} übernommen.`);
+  return null;
+}
+
 function phone(ctx: Ctx, sheet: SheetName, row: number, v: Primitive): string | null {
   if (v === null) return null;
   if (typeof v === "number") {
@@ -278,7 +289,7 @@ function parsePatients(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     if (v.birthDate !== null && !birthDate) ctx.warn(sheet, row.number, `Geburtsdatum nicht lesbar („${asString(v.birthDate)}“).`);
     const email = asString(v.email)?.toLowerCase() ?? null;
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ctx.warn(sheet, row.number, `E-Mail-Adresse wirkt ungültig („${email}“).`);
-    const legacyId = toInt(v.id);
+    const legacyId = toLegacyId(ctx, sheet, row.number, v.id);
     // unplausibel große IDs würden die Patientennummern dahinter verschieben (Nummer = ID): neue Nummer, ID bleibt Bezug
     if (legacyId !== null && legacyId > MAX_LEGACY_PATIENT_ID) {
       ctx.warn(
@@ -286,7 +297,7 @@ function parsePatients(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
         row.number,
         `ID ${legacyId} ist zu groß für eine Patientennummer (höchstens ${MAX_LEGACY_PATIENT_ID.toLocaleString("de-DE")}) – neue Patientennummer wird vergeben, die ID bleibt als Bezug (Rechnungen, Gutscheine) erhalten.`,
       );
-    } else if (legacyId === null) ctx.warn(sheet, row.number, "ID fehlt – neue Patientennummer wird vergeben.");
+    } else if (legacyId === null) ctx.warn(sheet, row.number, toInt(v.id) === null ? "ID fehlt – neue Patientennummer wird vergeben." : "Neue Patientennummer wird vergeben.");
     out.push({
       row: row.number,
       legacyId,
@@ -406,7 +417,7 @@ function parseServices(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     if (vatRate < 0) vatRate = 0;
     const durationMin = toMinutes(v.duration) ?? 30;
     if (v.duration === null) ctx.warn(sheet, row.number, "Dauer fehlt – 30 Minuten angenommen.");
-    out.push({ row: row.number, legacyId: toInt(v.id), code, name: asString(v.name) ?? code, priceCents, vatRate, durationMin });
+    out.push({ row: row.number, legacyId: toLegacyId(ctx, sheet, row.number, v.id), code, name: asString(v.name) ?? code, priceCents, vatRate, durationMin });
     count.imported++;
   }
   return out;
@@ -466,7 +477,7 @@ function parseVouchers(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     if (remainingCents !== null && (remainingCents < 0 || remainingCents > amountCents)) {
       ctx.warn(sheet, row.number, "Restbetrag liegt außerhalb von 0 … Betrag.");
     }
-    out.push({ row: row.number, legacyId: toInt(v.id), code, issuedAt, validUntil, amountCents, remainingCents, note: asString(v.note) });
+    out.push({ row: row.number, legacyId: toLegacyId(ctx, sheet, row.number, v.id), code, issuedAt, validUntil, amountCents, remainingCents, note: asString(v.note) });
     count.imported++;
   }
   return out;
@@ -636,7 +647,7 @@ function parseInvoices(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
     }
     if (totalCents < 0) totalCents = 0;
 
-    const gsId = toInt(v.gsId);
+    const gsId = toLegacyId(ctx, sheet, row.number, v.gsId, "GS-ID");
     const pay = parsePayment(asString(v.payment), totalCents, { cash: toCents(v.aCash), card: toCents(v.aCard), transfer: toCents(v.aTransfer), voucher: toCents(v.aVoucher) }, gsId);
     pay.warnings.forEach((w) => ctx.warn(sheet, row.number, w));
     const srRefRaw = v.srId;
@@ -646,12 +657,12 @@ function parseInvoices(ctx: Ctx, ws: ExcelJS.Worksheet | undefined, report: Impo
       srRef: kind === "collective" ? null : srRef,
       draft: {
         row: row.number,
-        legacyId: toInt(v.id),
+        legacyId: toLegacyId(ctx, sheet, row.number, v.id),
         number,
         issuedAt,
         kind,
         typeRaw,
-        patientLegacyId: toInt(v.patientId),
+        patientLegacyId: toLegacyId(ctx, sheet, row.number, v.patientId, "Patienten-ID"),
         lastName: asString(v.lastName),
         firstName: asString(v.firstName),
         paymentRaw: asString(v.payment),

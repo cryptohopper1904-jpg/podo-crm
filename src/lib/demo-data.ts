@@ -127,6 +127,6 @@ export async function seedDemoPracticeData(tx: Tx, orgId: string, ownerUserId: s
   ]);
   await tx.insert(s.tasks).values([
     { organizationId: orgId, title: "Sterilisator: Validierung bis Monatsende beauftragen", kind: "hygiene" },
-    { organizationId: orgId, title: "Doctolib-Partnerantrag stellen", kind: "manual" },
+    { organizationId: orgId, title: "Verordnungen für nächste Woche prüfen", kind: "manual" },
   ]);
 }

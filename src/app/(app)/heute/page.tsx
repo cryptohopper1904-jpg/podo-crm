@@ -28,6 +28,7 @@ import { todaySections } from "@/lib/view-level";
 import { currentViewLevel } from "@/server/view-level";
 import { lowStockProducts } from "@/server/products";
 import { lowStockSummary } from "@/lib/stock";
+import { CHANNEL_LABEL } from "@/lib/reminders";
 
 export const metadata = { title: "Heute" };
 
@@ -174,7 +175,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
               <ul className="flex flex-col gap-3">
                 {stats.recent.map((m) => (
                   <li key={m.id} className="rounded-xl bg-bg p-3">
-                    <p className="text-xs text-muted">{m.channel} · {timeDe(m.receivedAt)}</p>
+                    <p className="text-xs text-muted">{CHANNEL_LABEL[m.channel] ?? m.channel} · {timeDe(m.receivedAt)}</p>
                     <p className="mt-1 line-clamp-2 text-sm">{m.body}</p>
                     {m.aiSuggestion ? <p className="mt-2 text-xs font-semibold text-primary">KI-Vorschlag bereit</p> : null}
                   </li>

@@ -72,8 +72,12 @@ export const correctionInput = z.object({
 });
 export type CorrectionInput = z.infer<typeof correctionInput>;
 
-/** Bestand je Produkt (Summe der Bewegungen) */
-const stockSum = sql<number>`coalesce((select sum(m.quantity) from stock_movements m where m.product_id = ${products.id} and m.organization_id = ${products.organizationId}), 0)::bigint`.mapWith(Number);
+/**
+ * Bestand je Produkt (Summe der Bewegungen). Die Außenspalten stehen bewusst ausgeschrieben als "products"."…":
+ * Drizzle rendert ${products.id} in der Select-Liste einer Abfrage ohne Join unqualifiziert ("id") – in der
+ * Unterabfrage hieße das m.id bzw. m.organization_id, die Summe wäre immer 0 (Bug „Bestand knapp: 0 von mind. …“).
+ */
+const stockSum = sql<number>`coalesce((select sum(m.quantity) from stock_movements m where m.product_id = "products"."id" and m.organization_id = "products"."organization_id"), 0)::bigint`.mapWith(Number);
 
 export async function listProducts(auth: AuthContext) {
   assertCan(auth, "invoices.read");
@@ -246,7 +250,8 @@ export async function listSuppliers(auth: AuthContext) {
     tx
       .select({
         supplier: suppliers,
-        products: sql<number>`(select count(*) from products p where p.supplier_id = ${suppliers.id} and p.organization_id = ${suppliers.organizationId} and p.active)::int`,
+        // Außenspalten ausgeschrieben – ${suppliers.id} würde hier unqualifiziert als "id" (= p.id) gerendert, siehe stockSum
+        products: sql<number>`(select count(*) from products p where p.supplier_id = "suppliers"."id" and p.organization_id = "suppliers"."organization_id" and p.active)::int`,
       })
       .from(suppliers)
       .where(eq(suppliers.organizationId, org))

@@ -13,12 +13,11 @@ import { kimPatientSuggestions, loadKimConnection } from "@/server/kim";
 import { onlineRequestMessageAppointmentId } from "@/lib/online-request";
 import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
 import { aiReplyChannel, aiReplySettings } from "@/lib/ai-replies";
+import { CHANNEL_LABEL } from "@/lib/reminders";
 import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { markDoneAction, matchPatientAction, sendReplyAction, suggestReplyAction, syncKimAction } from "./actions";
 
 export const metadata = { title: "Posteingang" };
-
-const CHANNEL_LABEL: Record<string, string> = { email: "E-Mail", whatsapp: "WhatsApp", sms: "SMS", phone: "Telefon", letter: "Brief", none: "–", kim: "KIM" };
 
 type Row = { m: typeof messages.$inferSelect; patient: { id: string; number: number; firstName: string | null; lastName: string } | null };
 

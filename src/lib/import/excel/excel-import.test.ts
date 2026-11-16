@@ -149,6 +149,28 @@ describe("parseWorkbook", () => {
     expect(report.skippedEmptyRows).toBe(3);
   });
 
+  it("Bezugs-IDs außerhalb sicherer Ganzzahlen: ohne ID übernehmen (kein Abgleich über „1e+21“)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const p = wb.addWorksheet("Patienten");
+    p.addRow(["ID", "Anrede", "Titel", "Nachname", "Vorname"]);
+    p.addRow([1e21, "Frau", null, "Beispiel", "Erika"]);
+    p.addRow(["9007199254740993", "Herr", null, "Mustermann", "Max"]);
+    p.addRow([Number.MAX_SAFE_INTEGER, "Herr", null, "Probe", "Paul"]);
+    const g = wb.addWorksheet("Gutscheine");
+    g.addRow(["ID", "Gutscheinnummer", "Datum", "Gültig bis", "Betrag", "Restbetrag", "Hinweis"]);
+    g.addRow([1e21, "G2026-0001", new Date(Date.UTC(2026, 0, 5)), null, 50, 50, null]);
+    const res = await parseWorkbook(new Uint8Array((await wb.xlsx.writeBuffer()) as ArrayBuffer), { today: "2026-11-07" });
+    expect(res.patients.map((x) => x.legacyId)).toEqual([null, null, Number.MAX_SAFE_INTEGER]);
+    expect(res.vouchers[0].legacyId).toBeNull();
+    const big = res.report.warnings.filter((w) => /ist zu groß – wird ohne ID übernommen/.test(w.message));
+    expect(big.map((w) => [w.sheet, w.row])).toEqual([
+      ["Patienten", 2],
+      ["Patienten", 3],
+      ["Gutscheine", 2],
+    ]);
+    expect(res.report.warnings.some((w) => w.sheet === "Patienten" && w.row === 2 && /ID fehlt/.test(w.message))).toBe(false);
+  });
+
   it("meldet unlesbare Dateien statt zu werfen", async () => {
     const res = await parseWorkbook(new Uint8Array([1, 2, 3]));
     expect(res.patients).toEqual([]);

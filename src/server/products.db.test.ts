@@ -69,6 +69,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const ohne = await add("Ohne Bestandsführung", false, 5);
     const genug = await add("Genug da", true, 1);
     await products.bookReceipt(auth, { productId: genug, quantity: 3, occurredOn: today });
+    const knapp = await add("Knapp mit Bestand", true, 5);
+    await products.bookReceipt(auth, { productId: knapp, quantity: 3, occurredOn: today });
     const archiviert = await add("Archiviert knapp", true, 4);
     await products.setProductActive(auth, archiviert, false);
     const low = await products.lowStockProducts(auth);
@@ -77,6 +79,11 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(low.map((p) => p.id)).not.toContain(genug);
     expect(low.map((p) => p.id)).not.toContain(archiviert);
     expect(low.find((p) => p.id === salbe)).toMatchObject({ stock: 0, minStock: 2 });
+    // tatsächlicher Bestand, nicht 0 (Unterabfrage darf nicht auf stock_movements.id auflösen)
+    expect(low.find((p) => p.id === knapp)).toMatchObject({ stock: 3, minStock: 5 });
+    // gleiche Ursache bei der Produktzahl je Lieferant
+    const sup = await products.listSuppliers(auth);
+    expect(sup.find((r) => r.supplier.name === "Fußpflege-Großhandel")?.products).toBe(1);
   });
 
   it("Verkauf zum Mitnehmen: 19 %, Katalogpreis, Bestand sinkt beim Ausstellen und steigt beim Storno", async () => {

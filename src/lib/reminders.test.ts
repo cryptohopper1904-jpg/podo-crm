@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHANNEL_LABEL,
   chooseChannel,
   grantedConsents,
   parseReminderSettings,
@@ -126,5 +127,13 @@ describe("Rückholung und Spangen-Kontrolle", () => {
       base({ patients, consents, lastVisit: new Map([["p1", weeksAgo(10)]]), braceEpisodes: [{ id: "e1", patientId: "p1", startedAt: "2026-08-01", lastRecordAt: weeksAgo(10) }] }),
     );
     expect(plan.planned.map((p) => p.kind)).toEqual(["recall"]);
+  });
+});
+
+describe("CHANNEL_LABEL", () => {
+  it("hat für jeden Kanal der Datenbank eine deutsche Bezeichnung (Posteingang, Heute)", async () => {
+    const { channelEnum } = await import("@/db/schema");
+    for (const c of channelEnum.enumValues) expect(CHANNEL_LABEL[c], c).toBeTruthy();
+    expect([CHANNEL_LABEL.sms, CHANNEL_LABEL.phone, CHANNEL_LABEL.email, CHANNEL_LABEL.whatsapp]).toEqual(["SMS", "Telefon", "E-Mail", "WhatsApp"]);
   });
 });
