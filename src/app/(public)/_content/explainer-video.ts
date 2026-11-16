@@ -25,11 +25,11 @@ export const EXPLAINER_VIDEO = {
   /** Länge 2:36 */
   durationIso: "PT2M36S",
   durationLabel: "2:36",
-  uploadDate: "2026-11-16",
+  uploadDate: "2026-11-16T00:00:00+01:00",
 } as const;
 
 /** Schmale Viewports: entspricht Tailwind „max-sm“ (unter 40rem = 640px), damit Poster-Zuschnitt und Videodatei zusammenpassen. */
-export const NARROW_QUERY = "(max-width: 639.98px)";
+export const NARROW_QUERY = "(max-width: 39.99rem)";
 
 /** Hinweis unter dem Video (wörtlich, rechtlich abgestimmt – nicht ohne Prüfung ändern). */
 export const EXPLAINER_VIDEO_NOTE =
