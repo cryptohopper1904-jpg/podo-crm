@@ -565,9 +565,11 @@ export function bildeAbrechnungsfall(
   if (kreuzBestaetigt(vo, ergaenzung) && !zeitraeume.some(enthaelt) && pflichtigerTermin && !abweichungen.length) hinweise.push(HINWEIS_KREUZ);
   // L2/Hinweis 1: #111 meldet die Befreiung einer anderen Kasse schon in `notes` („… von einer anderen Krankenkasse
   // (IK …) als auf der Verordnung …“) → dann keinen zweiten, gleichbedeutenden Hinweis
+  // IK vergleichen wie #111 (normalizeId): Leerzeichen zählen nicht
+  const ikOhneLeerzeichen = (ik: string) => ik.replace(/\s+/g, "");
   const ikHinweisInNotes = hinweise.some((n) => n.includes("von einer anderen Krankenkasse"));
   for (const b of ikHinweisInNotes ? [] : zeitraeume) {
-    if (enthaelt(b) && b.insurerIk && patient.insurerIk && b.insurerIk !== patient.insurerIk) {
+    if (enthaelt(b) && b.insurerIk && patient.insurerIk && ikOhneLeerzeichen(b.insurerIk) !== ikOhneLeerzeichen(patient.insurerIk)) {
       hinweise.push(`Befreiung ${b.von} bis ${b.bis} ist von einer anderen Krankenkasse (IK ${b.insurerIk}) als auf der Verordnung (IK ${patient.insurerIk}) – bitte prüfen.`);
     }
   }

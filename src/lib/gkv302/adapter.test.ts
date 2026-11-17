@@ -389,6 +389,14 @@ describe("S5 Hinweise: Snapshot-notes und Befreiung einer anderen Kasse", () => 
     });
     expect(r.hinweise).toEqual([]);
   });
+
+  it("gleiches insurerIk mit Leerzeichen („99 002 0015“) → kein Hinweis (wie normalizeId in #111)", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), snapshot([P78020("2026-10-05", 0, { exempt: true })], 0), {
+      ...ergaenzung,
+      befreiungen: [{ von: "2026-01-01", bis: "2026-12-31", insurerIk: "99 002 0015" }],
+    });
+    expect(r.hinweise).toEqual([]);
+  });
 });
 
 describe("S6 Befreiungen als {von, bis} oder {validFrom, validTo} (#111 CopaymentExemption)", () => {
