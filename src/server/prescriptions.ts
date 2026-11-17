@@ -18,14 +18,14 @@ import {
   autoExpiryApplies,
   blocksBilling,
   canTransition,
-  copaymentOverpaid,
+  copaymentPaidHint,
   evaluatePrescription,
   exemptOn,
   exemptionSummary,
   frequencyDeviation,
   frequencyDeviationText,
   hasAnlage3Fields,
-  mergePositions,
+  preparePositions,
   priceSnapshot,
   remedyCostCents,
   startDeadline,
@@ -38,6 +38,7 @@ import {
 } from "@/lib/rules/prescription";
 import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
+import { EURO_INPUT_MAX_CENTS } from "@/lib/euro-input";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
 
@@ -366,8 +367,10 @@ export async function savePrescription(
   if (blocked) return blocked;
   const org = auth.organization.id;
   const today = berlinDateIso();
-  // doppelte Positionsnummern zusammenfassen (Einheiten addieren) – PR #111 Review-Runde 2
-  const positions = mergePositions(d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })).filter((p) => p.label || p.position));
+  // erst jede Zeile prüfen (Einheiten ≥ 1), dann doppelte Positionsnummern zusammenfassen – PR #111 Runde 2/3 (H-2)
+  const prepared = preparePositions(d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })));
+  if ("error" in prepared) return { error: prepared.error };
+  const positions = prepared.positions;
   // UI1/UI2: Höchstmenge laut Katalog ist abrechenbar, mehr nicht – trotzdem speichern (Warnung), siehe validatePrescription
   const check = validatePrescription({ issuedAt: d.issuedAt, diagnosisGroup: d.diagnosisGroup, units: d.units, positions, icd10: d.icd10, today });
   if (check.errors.length) return { error: check.errors[0] };
@@ -494,8 +497,10 @@ export async function changePrescriptionStatus(
       // Preis-Snapshot mit den echten Behandlungstagen (Preis nach Behandlungsdatum, Zuzahlung je Tag)
       const [pt] = await tx.select({ birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions, insurerIk: patients.insurerIk }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, vo.patientId)));
       const dates = (await usageFor(tx, org, [vo.id])).get(vo.id) ?? [];
-      // vorzeitig beendet (Abbruchvermerk) → 78610 nur einmal je Tag ansetzen (Review-Runde 2)
-      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly: !!note });
+      // vorzeitig beendet = Abbruchvermerk UND weniger Einheiten erbracht als verordnet → 78610 nur einmal je Tag
+      // (Runde 2; Runde 3 H-4: ein alter Vermerk nach Wiederaufnahme und vollständiger Behandlung zählt nicht)
+      const endedEarly = !!note && used < vo.units;
+      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly });
       // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
       if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
@@ -530,10 +535,22 @@ export async function setCopaymentPaid(
   const blocked = gkvGuard(auth.organization, "copayment");
   if (blocked) return blocked;
   const org = auth.organization.id;
-  if (input.amountCents !== undefined && input.amountCents !== null && (!Number.isInteger(input.amountCents) || input.amountCents < 0 || input.amountCents > 1_000_000)) return { error: "Betrag ungültig." };
-  const done = await withOrg(org, async (tx) => {
-    const [vo] = await tx.select({ copaymentCents: prescriptions.copaymentCents }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))).for("update");
+  if (input.amountCents !== undefined && input.amountCents !== null) {
+    if (!Number.isInteger(input.amountCents) || input.amountCents < 0) return { error: "Betrag ungültig." };
+    if (input.amountCents > EURO_INPUT_MAX_CENTS) return { error: "Betrag ist zu groß." };
+  }
+  const done = await withOrg(org, async (tx): Promise<{ error: string } | { values: { copaymentPaidCents: number | null; copaymentPaidMethod: string | null }; expected: number | null } | null> => {
+    const [vo] = await tx
+      .select({ copaymentCents: prescriptions.copaymentCents, remedyCostCents: prescriptions.remedyCostCents, positions: prescriptions.positions })
+      .from(prescriptions)
+      .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId)))
+      .for("update");
     if (!vo) return null;
+    // Obergrenze: Heilmittelkosten der VO (Snapshot, sonst Schätzung nach Anlage 2), ohne bekannte Kosten 10.000 € (Runde 3, V-1/B2)
+    if (input.paid && input.amountCents !== undefined && input.amountCents !== null) {
+      const limit = copaymentLimitCents(vo.remedyCostCents, vo.positions);
+      if (limit !== null && input.amountCents > limit) return { error: `Betrag ist höher als die Heilmittelkosten der Verordnung (${(limit / 100).toFixed(2).replace(".", ",")} €) – bitte prüfen.` };
+    }
     const values = input.paid
       ? { copaymentPaidAt: new Date(), copaymentPaidCents: input.amountCents ?? vo.copaymentCents ?? null, copaymentPaidMethod: input.method ?? null }
       : { copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null };
@@ -541,10 +558,20 @@ export async function setCopaymentPaid(
     return { values, expected: vo.copaymentCents };
   });
   if (!done) return { error: "Verordnung nicht gefunden." };
+  if ("error" in done) return { error: done.error };
   const { values } = done;
   await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid, cents: values.copaymentPaidCents, method: values.copaymentPaidMethod } });
-  const warning = copaymentOverpaid(values.copaymentPaidCents, done.expected);
+  // Über- oder Unterzahlung (Restbetrag) nur als Hinweis (Runde 3, S4)
+  const warning = input.paid ? copaymentPaidHint(values.copaymentPaidCents, done.expected) : null;
   return warning ? { warning } : {};
+}
+
+/** Höchstbetrag „Zuzahlung erhalten“: Heilmittelkosten laut Snapshot bzw. Schätzung (heutige Preise); null = unbekannt. */
+function copaymentLimitCents(snapshotRemedyCents: number | null, positions: PrescriptionRow["positions"]): number | null {
+  if (snapshotRemedyCents !== null && snapshotRemedyCents > 0) return snapshotRemedyCents;
+  const today = berlinDateIso();
+  const est = remedyCostCents(positions.map((p) => ({ units: p.units, priceCents: p.position ? priceFor(p.position, today)?.cents : null })));
+  return est.complete && est.cents > 0 ? est.cents : null;
 }
 
 // ───────────────────────── Abrechnungslauf ─────────────────────────

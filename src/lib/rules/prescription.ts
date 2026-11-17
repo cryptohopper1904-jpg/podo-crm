@@ -392,18 +392,27 @@ export function copaymentOverpaid(paidCents: number | null | undefined, expected
   return `Erhaltener Betrag (${eur(paidCents)} €) liegt über der berechneten Zuzahlung (${eur(expectedCents)} €) – bitte prüfen (Tippfehler? Zuviel bitte erstatten).`;
 }
 
+/** „Zuzahlung erhalten“: Hinweis bei Über- oder Unterzahlung (Restbetrag offen) – nicht blockierend (Runde 3, S4). */
+export function copaymentPaidHint(paidCents: number | null | undefined, expectedCents: number | null | undefined): string | null {
+  if (paidCents === null || paidCents === undefined || expectedCents === null || expectedCents === undefined) return null;
+  if (paidCents < expectedCents) return `Restbetrag ${((expectedCents - paidCents) / 100).toFixed(2).replace(".", ",")} € offen.`;
+  return copaymentOverpaid(paidCents, expectedCents);
+}
+
 export type PrescriptionPosition = { position?: string; label: string; units: number };
 
 /**
- * Doppelte Positionsnummern zusammenfassen (Einheiten addieren, Bezeichnung der ersten Zeile) – PR #111 Review-Runde 2.
- * Sonst verteilte der Preis-Snapshot dieselbe Position zweimal je Behandlungstag. Vergleich nach Positionsnummer
- * (ohne Leerzeichen); Zeilen ohne Nummer bleiben unverändert. Reihenfolge der ersten Vorkommen bleibt erhalten.
+ * Doppelte Positionsnummern zusammenfassen (Einheiten addieren, Bezeichnung/Nummer der ersten Zeile) – PR #111 Runde 2/3.
+ * Sonst verteilte der Preis-Snapshot dieselbe Position zweimal je Behandlungstag. Schlüssel ist die ZL-Nummer
+ * (`toZlHpnr`: 78020, 68020 und 88020 sind dieselbe Leistung, Anlage 2 § 1 Abs. 2), sonst die Nummer ohne Leerzeichen;
+ * Zeilen ohne Nummer bleiben unverändert. Reihenfolge der ersten Vorkommen bleibt erhalten. Die Einheiten müssen vorher
+ * geprüft sein (`preparePositions`) – sonst verrechnete eine negative Zeile eine andere.
  */
 export function mergePositions<P extends PrescriptionPosition>(positions: P[]): P[] {
   const out: P[] = [];
   const byCode = new Map<string, P>();
   for (const p of positions) {
-    const code = p.position?.replace(/\s+/g, "") || null;
+    const code = positionKey(p.position);
     const prev = code ? byCode.get(code) : undefined;
     if (prev) {
       prev.units += p.units;
@@ -414,6 +423,23 @@ export function mergePositions<P extends PrescriptionPosition>(positions: P[]): 
     out.push(copy);
   }
   return out;
+}
+
+/** Vergleichsschlüssel einer Positionsnummer: ZL-Nummer, sonst die Nummer ohne Leerzeichen; ohne Nummer null */
+function positionKey(position: string | null | undefined): string | null {
+  const raw = position?.replace(/\s+/g, "") || null;
+  return raw ? (toZlHpnr(raw) ?? raw) : null;
+}
+
+/**
+ * Positionen einer Eingabe vorbereiten (Runde 3, H-2): leere Zeilen weglassen, JEDE Zeile muss ganze Einheiten ≥ 1 haben
+ * (erst prüfen, dann `mergePositions` – [5, −3] darf nicht zu 2 verrechnet werden).
+ */
+export function preparePositions<P extends PrescriptionPosition>(rows: P[]): { positions: P[] } | { error: string } {
+  const filled = rows.filter((p) => p.label?.trim() || p.position?.trim());
+  const bad = filled.find((p) => !Number.isInteger(p.units) || p.units < 1);
+  if (bad) return { error: `Position „${bad.label || bad.position}“: Einheiten fehlen oder sind ungültig (ganze Zahl ab 1).` };
+  return { positions: mergePositions(filled) };
 }
 
 export type SnapshotLine = {
@@ -479,11 +505,19 @@ export function priceSnapshot(input: {
   const dates = [...input.treatmentDates].sort();
   const lines: SnapshotLine[] = [];
   const notes: string[] = [];
+  // doppelte Positionen (auch ZL/KH/KB-Nummer derselben Leistung) zusammenfassen – sonst entstünden je Tag zwei Zeilen
+  // derselben Position, die der Export (#110) als „Position doppelt“ ablehnt (Runde 3, B1)
+  const positions = mergePositions(input.positions);
+  for (const m of positions) {
+    const key = positionKey(m.position);
+    const n = key ? input.positions.filter((p) => positionKey(p.position) === key).length : 0;
+    if (n > 1) notes.push(`Position ${key} steht mehrfach auf der Verordnung – zusammengefasst (${m.units} Einheiten).`);
+  }
   let complete = dates.length > 0;
   let remedy = 0;
   let percent = 0;
   const de = (iso: string) => iso.split("-").reverse().join(".");
-  const left = new Map(input.positions.map((p, i) => [i, p.units]));
+  const left = new Map(positions.map((p, i) => [i, p.units]));
   // Einheiten je Tag und Position (zwei Einträge am selben Tag → Hinweis)
   const perDayPosition = new Map<string, number>();
   let firstDayPriced = false;
@@ -496,7 +530,7 @@ export function priceSnapshot(input: {
       notes.push(`Befreiung am ${date.split("-").reverse().join(".")} ist von einer anderen Krankenkasse (IK ${exemption.insurerIk}) als auf der Verordnung (IK ${input.insurerIk}) – bitte prüfen.`);
     }
     const daysLeft = dates.length - di;
-    input.positions.forEach((p, pi) => {
+    positions.forEach((p, pi) => {
       const rest = left.get(pi) ?? 0;
       if (rest <= 0) return;
       const perDay = input.endedEarly ? 1 : Math.max(1, positionInfo(p.position)?.maxPerDay ?? 1);
@@ -518,7 +552,7 @@ export function priceSnapshot(input: {
       lines.push({ date, position: toZlHpnr(p.position) ?? p.position ?? p.label, units, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
     });
   });
-  input.positions.forEach((p, pi) => {
+  positions.forEach((p, pi) => {
     const rest = left.get(pi) ?? 0;
     if (rest > 0 && dates.length) {
       const code = toZlHpnr(p.position) ?? p.position ?? p.label;
@@ -531,8 +565,25 @@ export function priceSnapshot(input: {
   // Gebühr höchstens bis zu den Kosten abzüglich 10-%-Anteil (nie negativ) → Zuzahlung = Anteil + Gebühr ≤ Kosten
   const flatDue = first && firstDayPriced && !(firstAge !== null && firstAge < COPAYMENT_FREE_UNDER_AGE) && !exemptOn(input.exemptions, first) && remedy > 0;
   const flat = flatDue ? Math.max(0, Math.min(COPAYMENT_FLAT_CENTS, remedy - percent)) : 0;
+  const eur = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+  if (flatDue && flat < COPAYMENT_FLAT_CENTS) notes.push(`Pauschale auf ${eur(flat)} € gedeckelt (Kosten ${eur(remedy)} € − 10 % ${eur(percent)} €).`);
   const copay = Math.min(remedy, percent + flat);
-  return { rulesVersion: RULES_VERSION, computedOn: input.computedOn, remedyCents: remedy, copaymentPercentCents: percent, flatFeeCents: flat, copaymentCents: copay, complete, lines, notes: [...new Set(notes)] };
+  // je (Tag, Position) genau EINE Zeile: zwei Behandlungseinträge am selben Tag zusammenfassen (Runde 3, B1)
+  const merged: SnapshotLine[] = [];
+  const byKey = new Map<string, SnapshotLine>();
+  for (const l of lines) {
+    const key = `${l.date}|${l.position}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      const copy = { ...l };
+      byKey.set(key, copy);
+      merged.push(copy);
+      continue;
+    }
+    prev.units += l.units;
+    prev.copayCents = prev.copayCents === null && l.copayCents === null ? null : (prev.copayCents ?? 0) + (l.copayCents ?? 0);
+  }
+  return { rulesVersion: RULES_VERSION, computedOn: input.computedOn, remedyCents: remedy, copaymentPercentCents: percent, flatFeeCents: flat, copaymentCents: copay, complete, lines: merged, notes: [...new Set(notes)] };
 }
 
 /**
@@ -722,6 +773,8 @@ export type PrescriptionEvaluation = {
   /** letzter Tag vor Gültigkeitsverlust durch Unterbrechung (nur laufende, begonnene VOs) */
   interruptionBy: string | null;
   interrupted: boolean;
+  /** Bezugspunkt der 12-Wochen-Unterbrechung (letzte Behandlung, Wiederaufnahme oder Übernahme) – für Meldungen */
+  interruptionSince: { label: string; date: string } | null;
   /** Grund, die Verordnung als „Frist überschritten“ zu kennzeichnen (null = gültig) */
   expiry: "start_missed" | "interrupted" | null;
   light: Light;
@@ -761,7 +814,8 @@ export function evaluatePrescription(p: {
   // Übernahme ohne erfassten Tag ab dem Übernahmedatum (Review-Runde 2, S-2)
   const lastTreatment = sorted[sorted.length - 1] ?? (startedElsewhere && p.importedOn ? p.importedOn : undefined);
   const lastDate = p.reopenedOn && (!lastTreatment || p.reopenedOn > lastTreatment) ? p.reopenedOn : lastTreatment;
-  const anchorLabel = lastDate === p.reopenedOn ? "der Wiederaufnahme" : firstDate ? "der letzten Behandlung" : "der Übernahme in PodoHero";
+  const anchorLabel = lastDate && lastDate === p.reopenedOn ? "der Wiederaufnahme" : firstDate ? "der letzten Behandlung" : "der Übernahme in PodoHero";
+  const interruptionSince = lastDate ? { label: anchorLabel, date: lastDate } : null;
   const daysToStartDeadline = daysBetween(p.today, startBy);
   const startState: PrescriptionEvaluation["startState"] = firstDate || startConfirmed
     ? "started"
@@ -798,7 +852,7 @@ export function evaluatePrescription(p: {
   else if (!running) light = "gray";
   else if (expiry || (firstDate && firstDate > startBy && !p.reopenedOn)) light = "red";
   else if (startState === "soon" || startedElsewhere || freq.length || (unitsRemaining <= 1 && unitsUsed > 0)) light = "yellow";
-  return { startBy, daysToStartDeadline, startState, unitsUsed, unitsRemaining, frequency: freq, interruptionBy, interrupted, expiry, light, messages };
+  return { startBy, daysToStartDeadline, startState, unitsUsed, unitsRemaining, frequency: freq, interruptionBy, interrupted, interruptionSince, expiry, light, messages };
 }
 
 /**

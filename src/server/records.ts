@@ -11,6 +11,7 @@ import { assertCan } from "./authz";
 import { gkvGuard } from "@/lib/features";
 import {
   FREQUENCY_NOTE_MIN,
+  INTERRUPTION_WEEKS,
   acceptsUnit,
   anlage3Findings,
   evaluatePrescription,
@@ -122,8 +123,9 @@ export async function prescriptionGate(
   });
   if (ev.expiry === "start_missed") return { error: `Frist überschritten: Die Behandlung hätte bis ${ev.startBy.split("-").reverse().join(".")} beginnen müssen – die Verordnung ist ungültig.` };
   if (ev.expiry === "interrupted") {
-    const since = dates.length ? "der letzten Behandlung" : vo.reopenedAt ? "der Wiederaufnahme" : "der Übernahme in PodoHero";
-    return { error: `Frist überschritten: Seit ${since} sind mehr als 12 Wochen vergangen – die Verordnung ist ungültig.` };
+    // Bezugspunkt aus der Bewertung (letzte Behandlung, Wiederaufnahme oder Übernahme) – Runde 3, H-6
+    const since = ev.interruptionSince ? `${ev.interruptionSince.label} (${ev.interruptionSince.date.split("-").reverse().join(".")})` : "der letzten Behandlung";
+    return { error: `Frist überschritten: Seit ${since} sind mehr als ${INTERRUPTION_WEEKS} Wochen vergangen – die Verordnung ist ungültig.` };
   }
   if (hasAnlage3Fields(vo.rulesVersion)) {
     const [o] = await tx.select({ ik: organizations.ik }).from(organizations).where(eq(organizations.id, org));

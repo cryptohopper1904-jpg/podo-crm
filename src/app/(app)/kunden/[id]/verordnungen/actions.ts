@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth/session";
-import { parseEuroInputCents } from "@/lib/euro-input";
+import { EURO_INPUT_MAX_LENGTH, parseEuroInputCents } from "@/lib/euro-input";
 import { PRESCRIPTION_STATUSES } from "@/lib/rules/prescription";
 import type { OcrSuggestion } from "@/integrations/ocr/schema";
 import { extractPrescriptionFromMedia } from "@/server/ocr";
@@ -48,7 +48,7 @@ const copaymentPaidSchema = z.object({
   patientId: z.string().uuid(),
   paid: z.enum(["0", "1"]),
   /** Betrag in Euro („12,50“, „12.5“, „1.234,56“); leer = berechnete Zuzahlung – Parser: src/lib/euro-input.ts */
-  amount: z.string().max(40).optional(),
+  amount: z.string().max(EURO_INPUT_MAX_LENGTH, "Betrag ungültig – bitte z. B. 12,50 eingeben.").optional(),
   method: z.preprocess((v) => (v === "" ? undefined : v), z.enum(Object.keys(COPAYMENT_METHODS) as [CopaymentMethod, ...CopaymentMethod[]]).optional()),
 });
 
@@ -57,7 +57,7 @@ export type CopaymentPaidState = { error?: string; warning?: string } | undefine
 export async function copaymentPaidAction(_: CopaymentPaidState, form: FormData): Promise<CopaymentPaidState> {
   const auth = await requireAuth("medical.write");
   const parsed = copaymentPaidSchema.safeParse(Object.fromEntries(form));
-  if (!parsed.success) return { error: "Ungültige Anfrage – bitte Seite neu laden." };
+  if (!parsed.success) return { error: parsed.error.issues.find((i) => i.path[0] === "amount")?.message ?? "Ungültige Anfrage – bitte Seite neu laden." };
   const d = parsed.data;
   const amount = d.paid === "1" ? parseEuroInputCents(d.amount) : null;
   if (amount !== null && typeof amount === "object") return { error: amount.error };

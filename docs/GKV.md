@@ -55,10 +55,11 @@ und die KBV-Richtlinie zur Vergabe der Betriebsstättennummer.
 | Doppelte Positionen | gleiche Positionsnummer mehrfach auf der VO → beim Speichern zusammengefasst (Einheiten addiert) | Review PR #111 Runde 2 | `mergePositions` |
 | „In Behandlung“ | bei mit PodoHero erfassten VOs nur durch die erste dokumentierte Einheit (`statusAfterUnit`), nicht per Statuswechsel; „anderswo begonnen“ gilt nur für Übernahmen/Altbestand | Beginnfrist HeilM-RL § 15; Review PR #111 Runde 2 S-1 | `canTransition`, `evaluatePrescription` |
 | Abrechnungsreif | nur mit vollständigem Preis-Snapshot (jede Position mit Positionsnummer und Preis am Behandlungstag) | Vertrag § 8 Abs. 1 (Zuzahlung aus den Kosten); Review PR #111 S2 | `changePrescriptionStatus` |
+| Snapshot-Zeilen | je (Behandlungstag, ZL-Positionsnummer) genau eine Zeile: zwei Einträge am selben Tag werden zusammengefasst (Einheiten/Zuzahlung addiert, Hinweis „zwei Behandlungseinträge“), doppelte Positionen auf der VO vorher (Hinweis „mehrfach auf der Verordnung“); gedeckelte Pauschale steht als Hinweis | Export #110 (Position je Tag eindeutig); Review PR #111 Runde 3 | `priceSnapshot`, `mergePositions` |
 | 78610 je Tag | bis zu zweimal je Tag; im Snapshot so verteilt, dass die verordneten Einheiten auf die Behandlungstage passen; vorzeitig beendete VO (Abbruchvermerk) nur einmal je Tag; jede Annahme „2 × am Tag“, nicht verteilbare Einheiten und zwei Einträge am selben Tag stehen als Hinweis im Snapshot | Anlage 2 § 2 Abs. 2 Buchst. c | `GkvPosition.maxPerDay`, `priceSnapshot` |
 | Abgerechnet | unveränderbar (DB-Trigger `prescriptions_billed_lock`), nur „Zuzahlung erhalten“ (Datum, Betrag, Zahlungsart) darf nachgetragen werden; Neuberechnung des Snapshots (abrechnungsreif → abgeschlossen → abrechnungsreif) protokolliert den alten Snapshot | GoBD-Nachvollziehbarkeit; Review PR #111 S1 | Migration 0062 |
 | Abrechnungslauf | nur Verordnungen mit vollständigem Preis-Snapshot | Review PR #111 Runde 2 | `createBillingBatch` |
-| „Zuzahlung erhalten“ | nur Vermerk (Barzahlung zusätzlich in der Kasse erfassen); Betrag streng geprüft (Punkt nur als Tausendertrenner im Muster 1.234,56, sonst Dezimaltrenner); über der berechneten Zuzahlung → Hinweis | Review PR #111 Runde 2 | `parseEuroInputCents`, `copaymentOverpaid` |
+| „Zuzahlung erhalten“ | nur Vermerk (Barzahlung zusätzlich in der Kasse erfassen); Betrag streng geprüft (Punkt bzw. Leerzeichen nur als Tausendertrenner im Muster 1.234,56 / 1 234,56, sonst Punkt = Dezimaltrenner; höchstens 20 Zeichen); höchstens die Heilmittelkosten der VO (Snapshot bzw. Schätzung), ohne bekannte Kosten 10.000 €; über bzw. unter der berechneten Zuzahlung → Hinweis (Restbetrag offen) | Review PR #111 Runde 2 | `parseEuroInputCents`, `copaymentOverpaid` |
 | Löschung der Person | abgerechnete Verordnung (`billed_at`) oder erhaltene Zuzahlung (`copayment_paid_at`) = aufbewahrungspflichtig, keine vollständige Löschung | § 147 AO; AppSec PR #111 N1 | `retentionFacts`, `podo_delete_patient` (0062) |
 | Zuzahlungsbefreiung | nur mit gültiger Bescheinigung der Kasse (Kreuz auf der VO genügt nicht); über den Jahreswechsel neu prüfen; Bescheinigung einer anderen Kasse als auf der VO → Hinweis „bitte prüfen“; höchstens 50 Einträge je Person | Vertrag § 8 Abs. 3; Anlage 3 Buchst. a1; SGB V § 62 Abs. 1 | `exemptOn`, Befreiungskarte, CHECK `patients_copayment_exemptions_max` |
 | Pflichtangaben VO | siehe nächster Abschnitt | Anlage 3 Ziff. 3 und 5 | `anlage3Findings` |
@@ -126,6 +127,30 @@ Im Terminformular (Seite und Fenster) ist eine laufende Verordnung der Person vo
 Abs. 5). Warnungen beim Planen: Restmenge (inkl. schon geplanter, nicht dokumentierter Termine), Termin nach dem
 spätesten Behandlungsbeginn, mehr als 12 Wochen Abstand, Frequenzabweichung (dann bei der Behandlung Begründung nötig).
 Gespeichert wird trotzdem (`appointments.prescription_id`). Die Einheit zählt erst mit der Behandlungsdoku.
+
+## Deploy-Hinweise (PR #111)
+
+- Migration `0062_gkv_review.sql` nur über `scripts/migrate.ts` (eine Transaktion) bzw. `psql -1` einspielen: Sie setzt
+  `FORCE ROW LEVEL SECURITY` für `appointments`/`prescriptions` kurz aus; bricht sie ohne Transaktion ab, bliebe FORCE aus.
+- **Altbestand „in Behandlung“ ohne Behandlungseintrag** (Review H-5): Verordnungen mit älterem App-Regelwerk (nicht
+  `import-…`, nicht ab `podo-2026-11`) gelten als „anderswo begonnen“; die 12-Wochen-Unterbrechung zählt jetzt ab
+  `created_at`. Wie viele dadurch nach dem Deploy nicht mehr buchbar wären, zählt diese **reine Lese-Abfrage** (als
+  Eigentümer-/Admin-Rolle ausführen, sonst filtert RLS; nicht automatisch ausgeführt):
+
+```sql
+-- Nur lesen. Zählt je Praxis die laufenden Altbestand-VOs ohne Behandlungseintrag, deren 12-Wochen-Frist ab Anlage
+-- (bzw. ab einer späteren Wiederaufnahme) abgelaufen ist (evaluatePrescription: heute > Bezugstag + 84 Tage).
+SELECT p.organization_id, count(*) AS gesperrt
+  FROM prescriptions p
+ WHERE p.status = 'active'
+   AND coalesce(p.rules_version, '') NOT LIKE 'import-%'
+   AND NOT (coalesce(p.rules_version, '') ~ '^podo-\d{4}-\d{2}' AND substring(p.rules_version FROM 6 FOR 7) >= '2026-11')
+   AND NOT EXISTS (SELECT 1 FROM treatment_records t WHERE t.prescription_id = p.id)
+   AND greatest((p.created_at AT TIME ZONE 'Europe/Berlin')::date, coalesce(p.reopened_at, '-infinity'::date))
+       < (now() AT TIME ZONE 'Europe/Berlin')::date - 84
+ GROUP BY p.organization_id
+ ORDER BY gesperrt DESC;
+```
 
 ## Offene Punkte (fachlich prüfen)
 

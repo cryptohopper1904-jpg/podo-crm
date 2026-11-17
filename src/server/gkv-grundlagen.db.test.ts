@@ -382,6 +382,67 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     }
   });
 
+  it("Runde 3 V-1/B2: „Zuzahlung erhalten“ höchstens bis zu den Heilmittelkosten; zu große Eingaben → Fehler statt 500", async () => {
+    const id = await vo({ issuedAt: today, units: 1 }); // 1 × 78020 → Kosten laut Anlage 2 (Schätzung)
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 6000 })).toEqual({ error: expect.stringMatching(/höher als die Heilmittelkosten/) });
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1_000_001 })).toEqual({ error: "Betrag ist zu groß." });
+    // ohne bekannte Kosten (keine Positionsnummer): feste Grenze 10.000 €
+    const free = await vo({ issuedAt: today, units: 1 });
+    await fx.asOrg(org, (c) => c.query(`update prescriptions set positions = '[{"label":"ohne Nummer","units":1}]' where id = $1`, [free]));
+    expect(await presc.setCopaymentPaid(auth, { id: free, patientId: patient, paid: true, amountCents: 1_000_000 })).not.toHaveProperty("error");
+    // Server-Action: riesige Eingaben werden zur Fehlermeldung (kein integer out of range)
+    const { copaymentPaidAction } = await import("@/app/(app)/kunden/[id]/verordnungen/actions");
+    const form = (amount: string) => {
+      const f = new FormData();
+      for (const [k, v] of Object.entries({ id, patientId: patient, paid: "1", amount, method: "cash" })) f.set(k, v);
+      return f;
+    };
+    expect(await copaymentPaidAction(undefined, form("21474836,48"))).toEqual({ error: "Betrag ist zu groß." });
+    expect(await copaymentPaidAction(undefined, form("99999999"))).toEqual({ error: "Betrag ist zu groß." });
+    expect(await copaymentPaidAction(undefined, form("12 50"))).toHaveProperty("error");
+    expect(await copaymentPaidAction(undefined, form("x".repeat(21)))).toHaveProperty("error");
+    const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_at from prescriptions where id = $1", [id])).rows);
+    expect(row.copayment_paid_at).toBeNull();
+  });
+
+  it("Runde 3 H-2: doppelte Positionen mit negativer Zeile werden abgelehnt, nicht verrechnet", async () => {
+    const parsed = presc.prescriptionInput.parse({
+      patientId: patient, issuedAt: today, diagnosisGroup: "DF", units: "6",
+      positions: JSON.stringify([{ position: "78020", label: "groß", units: 5 }, { position: "78020", label: "groß", units: -3 }]),
+    });
+    expect(await presc.savePrescription(auth, parsed)).toEqual({ error: expect.stringMatching(/Einheiten/) });
+  });
+
+  it("Runde 3 H-4/H-6: Wiederaufnahme → alle Einheiten erbracht → abrechnungsreif: 78610 nicht als „vorzeitig beendet“; Fehlertext mit Bezugspunkt", async () => {
+    const p = await fx.patient(org, { lastName: "Spange" });
+    await fx.asOrg(org, (c) => c.query("update patients set birth_date = '1950-03-01' where id = $1", [p]));
+    const id = await fx.asOrg(org, async (c) =>
+      (
+        await c.query(
+          `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version,
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, interruption_note, expired_reason)
+           values ($1,$2,$3,'UI1',2,'expired',($3::date + 28),'[{"position":"78610","label":"Spange","units":4}]',$4,
+             'L60.0','109911114','A000500015','1','123456601','123456789',true,'a','Pause wegen Urlaub der Patientin','start_missed') returning id`,
+          [org, p, addDaysIso(today, -60), RULES_VERSION],
+        )
+      ).rows[0].id as string,
+    );
+    await pastRecord(id, addDaysIso(today, -50), p);
+    expect(await presc.changePrescriptionStatus(auth, { id, patientId: p, to: "active", interruptionNote: "Beginn war rechtzeitig, Doku nachgetragen" })).toEqual({ ok: true });
+    await dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: p, prescriptionId: id, findings: "o. B.", servicesText: "x" }));
+    expect((await status(id)).status).toBe("completed");
+    expect(await presc.changePrescriptionStatus(auth, { id, patientId: p, to: "billing_ready" })).toEqual({ ok: true });
+    const [row] = await fx.asOrg(org, async (c) => (await c.query("select price_snapshot from prescriptions where id = $1", [id])).rows);
+    expect(row.price_snapshot.lines.map((l: { units: number }) => l.units)).toEqual([2, 2]);
+    // H-6: Wiederaufnahme vor über 12 Wochen, danach keine Behandlung → Fehlertext nennt die Wiederaufnahme
+    const q = await fx.asOrg(org, async (c) =>
+      (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, rules_version, reopened_at) values ($1,$2,$3,'DF',2,'open',($3::date + 28),$4,$5) returning id", [org, p, addDaysIso(today, -200), RULES_VERSION, addDaysIso(today, -100)])).rows[0].id as string,
+    );
+    await expect(
+      dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: p, prescriptionId: q, findings: "o. B.", servicesText: "x" })),
+    ).rejects.toThrow(/Seit der Wiederaufnahme \(\d{2}\.\d{2}\.\d{4}\) sind mehr als 12 Wochen vergangen/);
+  });
+
   it("A5: höchstens 50 Befreiungen je Person (CHECK)", async () => {
     const p = await fx.patient(org, { lastName: "Viele" });
     const list = Array.from({ length: 51 }, (_, i) => ({ id: `e${i}`, validFrom: today, validTo: today }));
@@ -413,7 +474,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect("id" in batch).toBe(true);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set copayment_cents = 0 where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set status = 'completed' where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1506, method: "card" })).toEqual({});
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1506, method: "card" })).toEqual({ warning: "Restbetrag 0,13 € offen." });
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_cents, copayment_paid_method, copayment_paid_at from prescriptions where id = $1", [id])).rows);
     expect(row).toMatchObject({ copayment_paid_cents: 1506, copayment_paid_method: "card" });
     expect(row.copayment_paid_at).not.toBeNull();

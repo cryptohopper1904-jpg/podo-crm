@@ -29,6 +29,7 @@ END $$;
 -- Datenbereinigung als Tabelleneigentümer: FORCE RLS gilt auch für den Eigentümer – ohne app.org_id sähe die
 -- Unterabfrage KEINE Verordnung und das UPDATE leerte jeden Verweis (bzw. änderte nichts). Für beide Tabellen für die
 -- Dauer der Bereinigung aussetzen (Muster wie 0017) und direkt danach wieder einschalten.
+-- Nur über scripts/migrate.ts (eine Transaktion) bzw. psql -1 einspielen – sonst bleibt FORCE bei einem Fehler aus.
 ALTER TABLE appointments NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE prescriptions NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 -- Verweise auf nicht (mehr) vorhandene Verordnungen (Spalte war bisher ohne FK) vor dem FK leeren – sie zeigen ins Leere.

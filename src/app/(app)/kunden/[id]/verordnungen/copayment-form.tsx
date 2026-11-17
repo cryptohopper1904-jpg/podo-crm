@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { FormError } from "@/components/ui";
+import { EURO_INPUT_MAX_LENGTH } from "@/lib/euro-input";
 import { copaymentPaidAction, type CopaymentPaidState } from "./actions";
 
 /**
@@ -19,7 +20,7 @@ export function CopaymentPaidForm({ id, patientId, paid, copaymentCents, methods
       <div className="flex flex-wrap items-center gap-2">
         {paid ? null : (
           <>
-            <input name="amount" inputMode="decimal" placeholder={(copaymentCents / 100).toFixed(2).replace(".", ",")} aria-label="erhaltener Betrag in Euro" maxLength={20} className="h-9 w-24 rounded-lg border border-border bg-surface px-2 text-sm" />
+            <input name="amount" inputMode="decimal" placeholder={(copaymentCents / 100).toFixed(2).replace(".", ",")} aria-label="erhaltener Betrag in Euro" maxLength={EURO_INPUT_MAX_LENGTH} className="h-9 w-24 rounded-lg border border-border bg-surface px-2 text-sm" />
             <select name="method" aria-label="Zahlungsart" defaultValue="cash" aria-describedby={`copay-hint-${id}`} className="h-9 rounded-lg border border-border bg-surface px-2 text-sm">
               {Object.entries(methods).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
