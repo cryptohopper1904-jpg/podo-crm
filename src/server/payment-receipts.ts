@@ -12,7 +12,7 @@ import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
 import { buildInvoiceSnapshot, readInvoiceSnapshot } from "@/lib/invoice-snapshot";
 import { invoiceRecipient, paidAtIssue } from "@/lib/invoice-view";
-import { isRegisterMethod, REGISTER_METHODS, usesExternalRegister } from "@/lib/kasse/model";
+import { isRegisterMethod, REGISTER_METHODS } from "@/lib/kasse/model";
 import { nextNumber } from "@/lib/numbering";
 import {
   PAYMENT_RECEIPT_VERSION,
@@ -59,13 +59,13 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
     .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, invoiceId), inArray(payments.id, paymentIds)));
   // Reihenfolge wie gebucht (paymentIds), nicht nach paid_at (in einer Transaktion gleich)
   pays.sort((a, b) => paymentIds.indexOf(a.payment.id) - paymentIds.indexOf(b.payment.id));
-  const register = pays.filter((p) => isRegisterMethod(p.payment.method));
+  // Zahlungen der eigenen Praxiskasse (register 'external'): den Kassenbeleg stellt die Praxiskasse aus, PodoHero
+  // nicht. Maßgeblich ist die Kennzeichnung der Zahlung, nicht die aktuelle Einstellung (Migration 0063).
+  const register = pays.filter((p) => isRegisterMethod(p.payment.method) && p.payment.register !== "external");
   if (!register.length) return [];
 
   const [o] = await tx.select().from(organizations).where(eq(organizations.id, org));
   const settings = (o.settings ?? {}) as Record<string, unknown>;
-  // Eigene Praxiskasse: den Kassenbeleg stellt die Praxiskasse aus, PodoHero nicht
-  if (usesExternalRegister(settings)) return [];
   const docSettings = readDocumentSettings(settings);
   // Praxisangaben wie heute (der Zahlungsbeleg ist ein neuer Beleg); Empfänger:in wie auf der Rechnung
   const orgSnap = buildInvoiceSnapshot({
@@ -306,8 +306,6 @@ export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: str
     .from(invoices)
     .where(and(eq(invoices.organizationId, org), eq(invoices.id, invoiceId)));
   if (!inv || inv.status === "draft" || !inv.number) return [];
-  const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  if (usesExternalRegister(orgRow?.settings)) return [];
   const legacy = !!inv.source && inv.source !== "crm";
   const rows = await tx
     .select({
@@ -325,6 +323,8 @@ export async function paymentsMissingReceipt(tx: Tx, org: string, invoiceId: str
         eq(payments.organizationId, org),
         eq(payments.invoiceId, invoiceId),
         inArray(payments.method, [...REGISTER_METHODS]),
+        // in der eigenen Praxiskasse erfasst → Beleg kommt von dort (Kennzeichnung der Zahlung, nicht die Einstellung)
+        eq(payments.register, "podohero"),
         gte(payments.paidAt, PAYMENT_RECEIPTS_SINCE),
         legacy ? sql`coalesce(${payments.externalRef}, '') not ilike 'excel:%'` : undefined,
         notExists(tx.select({ one: sql`1` }).from(paymentReceipts).where(and(eq(paymentReceipts.organizationId, org), eq(paymentReceipts.paymentId, payments.id)))),
@@ -358,11 +358,12 @@ export async function createMissingPaymentReceipt(auth: AuthContext, invoiceId: 
     if (!missing) {
       // nur für eine verständliche Meldung: was ist das für eine Zahlung?
       const [p] = await tx
-        .select({ method: payments.method })
+        .select({ method: payments.method, register: payments.register })
         .from(payments)
         .where(and(eq(payments.organizationId, org), eq(payments.invoiceId, invoiceId), eq(payments.id, paymentId)));
       if (!p) throw new PaymentReceiptError("Zahlung nicht gefunden.");
       if (!isRegisterMethod(p.method)) throw new PaymentReceiptError("Für Überweisungen und Zahlungslinks gibt es keinen Kassenbeleg.");
+      if (p.register === "external") throw new PaymentReceiptError("Diese Zahlung ist in der Praxiskasse erfasst – den Kassenbeleg gibt die Praxiskasse aus.");
       throw new PaymentReceiptError(
         "Für diese Zahlung wird kein nachträglicher Zahlungsbeleg erstellt: sie wurde beim Ausstellen erfasst (steht auf dem Beleg selbst) oder vor Einführung der Zahlungsbelege gebucht.",
       );

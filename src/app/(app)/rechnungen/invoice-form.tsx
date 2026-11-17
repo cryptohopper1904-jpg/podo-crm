@@ -69,6 +69,7 @@ export function InvoiceForm({
   openReceipts = [],
   receiptsYear,
   alreadyBilled = [],
+  externalRegister = false,
 }: {
   patients: PatientOpt[];
   services: Service[];
@@ -93,6 +94,8 @@ export function InvoiceForm({
   openReceipts?: OpenReceipt[];
   /** Jahr der Sammelrechnung: angeboten werden die Quittungen dieses Jahres */
   receiptsYear?: number;
+  /** Praxis nutzt die eigene Praxiskasse: Zahlungen nur vermerken, Feld „Bon-Nr. Praxiskasse“ */
+  externalRegister?: boolean;
 }) {
   const [state, action, pending] = useActionState(createInvoiceAction, undefined);
   const svcById = useMemo(() => new Map(services.map((s) => [s.id, s])), [services]);
@@ -872,7 +875,7 @@ export function InvoiceForm({
               ? "Optional – nur den noch offenen Betrag der Sammelrechnung erfassen (Quittungen und Anzahlungen sind oben bereits angerechnet). Mischzahlung möglich."
               : "Optional – sofort bezahlte Beträge erfassen. Mischzahlung (z. B. Gutschein + bar) möglich."}
         </p>
-        <PaymentsEditor rows={payments} onChange={setPayments} openCents={Math.max(0, openAfterDeposits)} />
+        <PaymentsEditor rows={payments} onChange={setPayments} openCents={Math.max(0, openAfterDeposits)} externalRegister={externalRegister} />
         {kind === "receipt" && paid !== totals.totalCents ? (
           <p className="mt-3 text-sm font-medium text-danger">Für eine Quittung muss die Zahlung genau {money(totals.totalCents)} betragen.</p>
         ) : null}

@@ -393,11 +393,31 @@ export function reviveBons(raw: unknown[]): Bon[] {
 
 
 /**
- * Praxis-Einstellung „Bar/Karte über die eigene (TSE-)Kasse“: Die Praxis erfasst Kassenvorgänge in ihrem bestehenden,
- * zertifizierten Kassensystem. PodoHero vermerkt Zahlungen dann nur an der Rechnung – ohne eigene TSE-Signatur, ohne
- * eigenen Kassenbeleg und ohne Tagesabschluss/DSFinV-K (das liefert die Praxiskasse).
+ * Praxis-Einstellung „Eigene Praxiskasse verwenden“: Die Praxis erfasst Kassenvorgänge (Bar/Karte/Gutschein) in ihrem
+ * bestehenden, zertifizierten Kassensystem. PodoHero vermerkt diese Zahlungen dann nur an der Rechnung – ohne eigene
+ * TSE-Signatur, ohne Zahlungsbeleg und ohne Tagesabschluss/DSFinV-K/Kassenbuch (das liefert die Praxiskasse).
+ * Die Einstellung entscheidet NUR beim Buchen; danach zählt die Kennzeichnung der Zahlung (payments.register).
  */
 export const usesExternalRegister = (settings: unknown): boolean =>
   !!settings && typeof settings === "object" && (settings as Record<string, unknown>).externalCashRegister === true;
 
-export const EXTERNAL_REGISTER_NOTE = "Zahlung in der Praxiskasse erfasst.";
+/** Kassensystem einer Zahlung (payments.register, Migration 0063) */
+export type PaymentRegister = "podohero" | "external";
+
+/** Präfix der Bon-Nr. der Praxiskasse in payments.external_ref – vergibt nur der Server */
+export const PRAXISKASSE_REF_PREFIX = "praxiskasse:";
+/** Bon-Nr. der Praxiskasse: höchstens 40 Zeichen, nur Buchstaben, Ziffern, „-“ und „/“ */
+export const PRAXISKASSE_BON_RE = /^[A-Za-z0-9/-]{1,40}$/;
+
+/** Bon-Nr. aus payments.external_ref („praxiskasse:<Nr>“), sonst null */
+export function praxiskasseBonNr(externalRef: string | null | undefined): string | null {
+  if (!externalRef?.startsWith(PRAXISKASSE_REF_PREFIX)) return null;
+  const nr = externalRef.slice(PRAXISKASSE_REF_PREFIX.length);
+  return PRAXISKASSE_BON_RE.test(nr) ? nr : null;
+}
+
+/** Vermerk auf Belegen und in der Rechnungsansicht für Zahlungen der eigenen Praxiskasse (register = external) */
+export function externalRegisterNote(externalRef: string | null | undefined): string {
+  const nr = praxiskasseBonNr(externalRef);
+  return `Zahlung in der Praxiskasse erfasst${nr ? ` (Bon-Nr. ${nr})` : ""}. Den Kassenbeleg gibt die Praxiskasse aus.`;
+}

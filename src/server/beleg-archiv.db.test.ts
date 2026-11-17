@@ -303,9 +303,20 @@ afterEach(() => vi.restoreAllMocks());
     const missing = await withOrg(org, (tx) => receipts.paymentsMissingReceipt(tx, org, inv.id));
     expect(missing).toEqual([]);
     drawn = [];
-    await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [pay("cash", 6500)] }));
+    // Quittung „bar beim Ausstellen“ mit Bon-Nr. der Praxiskasse: Vermerk statt TSE-Angaben
+    const q = await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [{ method: "cash", amountCents: 6500, voucherCode: null, externalRef: null, registerReceiptNo: "Q-17/1" }] }));
     expect(drawn).not.toContain("TSE-Angaben");
-    expect(drawn.join("\n")).not.toContain("TESTMODUS");
+    const text = drawn.join(" ").replace(/\s+/g, " ");
+    expect(text).not.toContain("TESTMODUS");
+    expect(text).toContain("Zahlung in der Praxiskasse erfasst (Bon-Nr. Q-17/1). Den Kassenbeleg gibt die Praxiskasse aus.");
+    const qb = await bundle(org, q.id);
+    expect(qb.payments.map((p) => p.register)).toEqual(["external"]);
+    // Rechnung, beim Ausstellen per Karte bezahlt (ohne Bon-Nr.): Vermerk im Abschnitt Zahlungen ohne Bon-Nr.
+    drawn = [];
+    await invoices.createInvoice(auth, base(patient, { payments: [pay("card", 6500)] }));
+    const text2 = drawn.join(" ").replace(/\s+/g, " ");
+    expect(text2).toContain("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(text2).not.toContain("Bon-Nr.");
   });
 
   it("Storno: Neudruck wie ausgestellt mit Anrechnungszeilen und Stornovermerk, ohne GiroCode; Anzahlung wieder anrechenbar", async () => {

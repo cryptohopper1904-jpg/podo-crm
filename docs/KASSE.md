@@ -71,6 +71,65 @@ keine Freigabe – ob das auf eure Praxis zutrifft, klärt bitte die Steuerberat
 - **Prüfung im Betrieb**: `scripts/verify-hash-chains.ts` und `deploy/restore-test.sh` prüfen auch die Kette der
   Kassenabschlüsse und lückenlose Z-Nummern je Praxis.
 
+## 2a. Eigene Praxiskasse (Praxis hat ein eigenes zertifiziertes Kassensystem mit TSE)
+
+Hat die Praxis bereits eine eigene, zertifizierte Kasse mit TSE, kann die Inhaber:in unter **Kasse → „Eigene
+Praxiskasse verwenden“** umschalten (Recht `settings.manage`). Pflichtangabe „Kassensystem / Grund“ (z. B. Hersteller,
+Modell und TSE-Seriennummer der Praxiskasse, 3–200 Zeichen) und eine Bestätigung; das Umschalten wird mit
+`{from, to, offenePosten, reason}` protokolliert (Audit `kasse.external_register`).
+
+**Voraussetzung zum Umschalten (beide Richtungen):** keine offenen PodoHero-Kassenvorgänge – also keine Bar-, Karten-
+oder Gutscheinzahlung der PodoHero-Kasse ohne Tagesabschluss und keine offene Einlage/Entnahme. Sonst: „Bitte zuerst den
+Tagesabschluss machen.“ Die Prüfung läuft in derselben Transaktion unter dem Kassen-Lock; Buchungen lesen die Einstellung
+gesperrt (`FOR SHARE`), sodass nie eine PodoHero-Zahlung „zwischen“ Prüfung und Umschalten entsteht.
+
+**Was dann passiert:**
+
+- Bar-, Karten- und Gutscheinzahlungen werden an der Rechnung **nur vermerkt**: ohne PodoHero-TSE-Signatur, ohne
+  Zahlungsbeleg (kein ZB-Nummernkreis), ohne PodoHero-Kassenbuch, Tagesabschluss und DSFinV-K. Jede Zahlung trägt dafür
+  die unveränderliche Kennzeichnung `payments.register = 'external'` (Migration 0063, vom Server gesetzt, per Trigger
+  unveränderlich). **Maßgeblich ist diese Kennzeichnung, nicht die aktuelle Einstellung**: Schaltet die Praxis später
+  zurück, kommen frühere Vermerke trotzdem nie in einen PodoHero-Z-Bon und gelten nie als „Beleg fehlt“; PodoHero-Zahlungen
+  von vorher behalten umgekehrt ihren Zahlungsbeleg bzw. den Hinweis „Beleg fehlt“. Überweisung und Zahlungslink sind
+  keine Kassenvorgänge und bleiben unverändert.
+- Beim Erfassen gibt es das Feld **„Bon-Nr. Praxiskasse“** (optional, max. 40 Zeichen, nur Buchstaben, Ziffern, `-`
+  und `/`). Gespeichert als `external_ref = 'praxiskasse:<Nr>'` – das Präfix setzt nur der Server.
+- Rechnungs-PDF, Quittung („bar beim Ausstellen“) und Rechnungsansicht tragen statt der TSE-Angaben den Vermerk
+  „Zahlung in der Praxiskasse erfasst (Bon-Nr. …). Den Kassenbeleg gibt die Praxiskasse aus.“
+- Die Kasse-Seite zeigt keinen Kassenbestand, keine Einlagen/Entnahmen und keinen Tagesabschluss mehr, sondern die Liste
+  **„Kassenvermerke“** (Datum, Rechnung, Zahlart, Betrag, Bon-Nr.) mit Tagessumme je Zahlart zum Abgleich mit dem Z-Bon
+  der Praxiskasse, plus CSV-Download (Recht `cash.export`). Frühere PodoHero-Abschlüsse bleiben einsehbar und über
+  `/kasse/export` exportierbar (Aufbewahrung).
+
+**Arbeitsablauf am Tresen:**
+
+1. **Erst die Praxiskasse:** Zahlung in der Praxiskasse buchen – als **„Zahlung auf Rechnung“ (Forderungsauflösung)**,
+   nicht als neuer Umsatz, denn die Rechnung (mit USt-Ausweis) stellt PodoHero aus. Den Kassenbon der Praxiskasse
+   aushändigen.
+2. **Dann der Vermerk in PodoHero:** an der Rechnung „Zahlung erfassen“, Zahlart wie in der Praxiskasse, Bon-Nr. der
+   Praxiskasse eintragen.
+3. **Abends:** Z-Bon der Praxiskasse mit den Tagessummen unter „Kassenvermerke“ abgleichen.
+
+**Gutscheine:** Den Gutscheinbestand (Verkauf, Restguthaben, Einlösung) führt weiterhin PodoHero. Verkauf und Einlösung
+müssen zusätzlich in der Praxiskasse erfasst werden (Einzweck-/Mehrzweckgutschein dort entsprechend buchen).
+
+**SumUp:** Läuft eine Kartenzahlung über die PodoHero-SumUp-Anbindung (Terminal), bucht PodoHero sie als Vermerk
+(`register = 'external'`, `external_ref` bleibt `sumup:…`) und legt für jeden Eingang eine Meldung im Posteingang an
+(„Kartenzahlung … bitte in der Praxiskasse erfassen“). Die Zahlung muss zusätzlich in der Praxiskasse erfasst werden.
+
+**Offene Fragen an die Steuerberatung:**
+
+- **§ 146a AO:** Ist PodoHero im Modus „eigene Praxiskasse“ selbst ein elektronisches Aufzeichnungssystem (es erfasst
+  Zahlart, Betrag und Zeitpunkt jeder Barzahlung)? Wenn ja, bräuchte auch PodoHero eine TSE und eine Meldung – oder
+  genügt die Erfassung in der Praxiskasse, wenn PodoHero nur die Forderung ausbucht?
+- **§ 14c UStG:** Weist die Praxiskasse beim Buchen „auf Rechnung“ ggf. erneut USt aus (Bon zusätzlich zur Rechnung)?
+  Dann droht ein unberechtigter/doppelter Steuerausweis – Buchungsart in der Praxiskasse festlegen.
+- **Gutscheine:** Ausgabe und Einlösung in zwei Systemen – Einzweck-/Mehrzweck-Behandlung und Nachweis abstimmen.
+- **SumUp:** Kartenzahlung über PodoHero-SumUp und zusätzlich in der Praxiskasse – zählt die Praxiskasse sie als
+  Umsatz oder nur als Zahlungseingang? Doppelerfassung im Kassenbuch vermeiden.
+- **Umstellungszeitpunkt:** Wechsel nur nach einem Tagesabschluss – reicht das als Dokumentation, oder muss die
+  PodoHero-Kasse (Mock-TSE) gesondert außer Betrieb genommen bzw. abgemeldet werden?
+
 ## 3. Offene Punkte (mit Steuerberatung / TSE-Anbieter klären)
 
 Im Code als `// TODO DSFinV-K prüfen` markiert:

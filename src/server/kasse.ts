@@ -42,9 +42,12 @@ import {
   type KasseMovement,
   type KassePayment,
   type MovementKind,
+  praxiskasseBonNr,
+  REGISTER_METHODS,
   usesExternalRegister,
 } from "@/lib/kasse/model";
 import { renderZBonPdf } from "@/lib/kasse/zbon-pdf";
+import { writeCsv } from "@/integrations/csv";
 import { log } from "@/lib/log";
 import { chainHash } from "@/lib/records";
 
@@ -114,7 +117,9 @@ async function loadItems(tx: Tx, org: string, filter: ItemsFilter) {
       : // übernommene Altzahlungen (Excel-Import, external_ref „excel:…“) stehen im Kassenbuch des bisherigen Systems und
         // kommen nie in einen Abschluss (Buchhaltung K1/BA, Migration 0060 – gleiche Bedingung im Trigger). Maßgeblich ist
         // die Herkunft der ZAHLUNG: Neueingänge auf übernommene Altrechnungen gehören in die PodoHero-Kasse.
-        and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil), notImportedPayment);
+        // Zahlungen der eigenen Praxiskasse (register 'external', Migration 0063) stehen in deren Z-Bon, nie in einem
+        // PodoHero-Abschluss – maßgeblich ist die Kennzeichnung der Zahlung, nicht die aktuelle Einstellung.
+        and(isNull(payments.cashClosingId), lte(payments.paidAt, filter.openUntil), notImportedPayment, eq(payments.register, "podohero"));
   const movCond =
     "closingIds" in filter
       ? filter.closingIds.length
@@ -242,6 +247,8 @@ export async function kasseOverview(auth: AuthContext) {
     const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
     return {
       externalRegister: usesExternalRegister(orgRow?.settings),
+      /** beim Umschalten angegebenes Kassensystem (z. B. Hersteller + TSE-Seriennummer) */
+      externalRegisterInfo: typeof (orgRow?.settings as Record<string, unknown> | null)?.externalCashRegisterInfo === "string" ? String((orgRow!.settings as Record<string, unknown>).externalCashRegisterInfo) : null,
       today,
       lastClosing: last,
       closedToday: last?.businessDate === today,
@@ -256,23 +263,157 @@ export async function kasseOverview(auth: AuthContext) {
 }
 
 // ───────────────────────── Eigene Praxiskasse ─────────────────────────
+export const EXTERNAL_REGISTER_LOCKED = "Bitte zuerst den Tagesabschluss machen.";
+const EXTERNAL_REGISTER_ACTIVE = "Die Praxis nutzt ihre eigene Praxiskasse – Kassenbuch und Tagesabschluss werden dort geführt.";
+
+/** „Kassensystem/Grund“ beim Umschalten, z. B. Hersteller + TSE-Seriennummer der Praxiskasse (steht im Audit-Protokoll) */
+export const externalRegisterReason = fiscalText(3, 200, "Bitte das Kassensystem bzw. den Grund angeben (mind. 3 Zeichen).");
+
+/** Einstellung in der laufenden Transaktion lesen; FOR SHARE sperrt gegen gleichzeitiges Umschalten (FOR UPDATE). */
+async function externalRegisterActive(tx: Tx, org: string) {
+  const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("share");
+  return usesExternalRegister(o?.settings);
+}
+
+/** Offene (keinem Abschluss zugeordnete) Kassenvorgänge der PodoHero-Kasse: Bar/Karte/Gutschein + Kassenbuch */
+async function openPodoHeroItems(tx: Tx, org: string) {
+  const [p] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(payments)
+    .where(and(eq(payments.organizationId, org), isNull(payments.cashClosingId), eq(payments.register, "podohero"), inArray(payments.method, [...REGISTER_METHODS]), notImportedPayment));
+  const [m] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(cashMovements)
+    .where(and(eq(cashMovements.organizationId, org), isNull(cashMovements.cashClosingId)));
+  return (p?.n ?? 0) + (m?.n ?? 0);
+}
+
 /**
- * Schaltet „Bar/Karte über die eigene (TSE-)Kasse“ um (Praxisinhaber:in, settings.manage). Wirkt nur auf künftige
- * Zahlungen; bereits signierte Zahlungen und Abschlüsse bleiben unverändert. Protokolliert.
+ * Schaltet „Eigene Praxiskasse verwenden“ um (Praxisinhaber:in, settings.manage). Nur ohne offene PodoHero-Kassenvorgänge
+ * (Bar/Karte/Gutschein ohne Abschluss, Einlagen/Entnahmen) – sonst stünde eine Zahlung in keinem Z-Bon oder doppelt.
+ * Geprüft in EINER Transaktion unter dem Kassen-Lock (wie der Tagesabschluss) und mit gesperrter Praxis-Zeile
+ * (Buchungen lesen die Einstellung FOR SHARE). Wirkt nur auf künftige Zahlungen; jede Zahlung trägt ihre Kennzeichnung
+ * (payments.register). Protokolliert mit Kassensystem/Grund.
  */
-export async function setExternalRegister(auth: AuthContext, on: boolean) {
+export async function setExternalRegister(auth: AuthContext, on: boolean, reason: string) {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
+  const parsed = externalRegisterReason.safeParse(reason);
+  if (!parsed.success) throw new KasseError(parsed.error.issues[0]?.message ?? "Kassensystem/Grund ungültig.");
   await withOrg(org, async (tx) => {
+    await lockClosing(tx, org);
     const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("update");
-    if (usesExternalRegister(o?.settings) === on) return;
+    const current = usesExternalRegister(o?.settings);
+    if (current === on) return;
+    const open = await openPodoHeroItems(tx, org);
+    if (open > 0) throw new KasseError(EXTERNAL_REGISTER_LOCKED);
     await tx
       .update(organizations)
-      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ externalCashRegister: on })}::jsonb` })
+      .set({
+        settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ externalCashRegister: on, externalCashRegisterInfo: on ? parsed.data : null })}::jsonb`,
+      })
       .where(eq(organizations.id, org));
-    await audit({ organizationId: org, userId: auth.user.id, action: "kasse.external_register", entity: "organization", entityId: org, meta: { on } }, tx);
+    await audit(
+      {
+        organizationId: org,
+        userId: auth.user.id,
+        action: "kasse.external_register",
+        entity: "organization",
+        entityId: org,
+        meta: { from: current ? "external" : "podohero", to: on ? "external" : "podohero", offenePosten: open, reason: parsed.data },
+      },
+      tx,
+    );
   });
 }
+
+/** Anzeige: nutzt die Praxis die eigene Praxiskasse? (Formulare zeigen dann „Bon-Nr. Praxiskasse“ statt TSE-Hinweis) */
+export async function externalRegisterEnabled(auth: AuthContext) {
+  const org = auth.organization.id;
+  const [o] = await withOrg(org, (tx) => tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)));
+  return usesExternalRegister(o?.settings);
+}
+
+export type ExternalRegisterEntry = {
+  id: string;
+  paidAt: Date;
+  invoiceId: string;
+  invoiceNumber: string | null;
+  method: KasseMethod;
+  amountCents: number;
+  bonNr: string | null;
+  /** über die PodoHero-SumUp-Anbindung eingegangen (muss zusätzlich in der Praxiskasse erfasst werden) */
+  viaSumup: boolean;
+};
+
+/**
+ * Kassenvermerke: in PodoHero vermerkte Zahlungen der eigenen Praxiskasse (register 'external') im Zeitraum
+ * (Buchungstage Europe/Berlin), mit Tagessumme je Zahlart als Abgleichhilfe zum Z-Bon der Praxiskasse.
+ */
+export async function externalRegisterEntries(auth: AuthContext, from: string, to: string) {
+  assertCan(auth, "cash.read");
+  return loadExternalRegisterEntries(auth.organization.id, from, to);
+}
+
+async function loadExternalRegisterEntries(org: string, from: string, to: string) {
+  const range = exportRangeInput.safeParse({ from, to });
+  if (!range.success) throw new KasseError(range.error.issues[0]?.message ?? "Zeitraum ungültig.");
+  const rows = await withOrg(org, (tx) =>
+    tx
+      .select({ p: payments, invoiceNumber: invoices.number })
+      .from(payments)
+      .innerJoin(invoices, and(eq(invoices.id, payments.invoiceId), eq(invoices.organizationId, org)))
+      .where(
+        and(
+          eq(payments.organizationId, org),
+          eq(payments.register, "external"),
+          gte(payments.paidAt, berlinToUtc(range.data.from, "00:00")),
+          sql`${payments.paidAt} < ${dayEnd(range.data.to)}`,
+        ),
+      )
+      .orderBy(asc(payments.paidAt), asc(payments.id))
+      .limit(5000),
+  );
+  const entries: ExternalRegisterEntry[] = rows.map((r) => ({
+    id: r.p.id,
+    paidAt: r.p.paidAt,
+    invoiceId: r.p.invoiceId,
+    invoiceNumber: r.invoiceNumber,
+    method: r.p.method as KasseMethod,
+    amountCents: r.p.amountCents,
+    bonNr: praxiskasseBonNr(r.p.externalRef),
+    viaSumup: !!r.p.externalRef?.toLowerCase().startsWith("sumup:"),
+  }));
+  const byDay = new Map<string, Record<string, number>>();
+  for (const e of entries) {
+    const d = berlinDateIso(e.paidAt);
+    const m = byDay.get(d) ?? {};
+    m[e.method] = (m[e.method] ?? 0) + e.amountCents;
+    byDay.set(d, m);
+  }
+  const days = [...byDay.entries()].map(([date, byMethod]) => ({ date, byMethod, totalCents: Object.values(byMethod).reduce((s, x) => s + x, 0) }));
+  return { from: range.data.from, to: range.data.to, entries, days, truncated: rows.length >= 5000 };
+}
+
+const METHOD_CSV: Record<string, string> = { cash: "Bar", card: "Karte", voucher: "Gutschein" };
+
+/** CSV der Kassenvermerke (Recht cash.export; Semikolon, Dezimalkomma, UTF-8 mit BOM; Formel-Injection neutralisiert) */
+export async function externalRegisterCsv(auth: AuthContext, from: string, to: string) {
+  assertCan(auth, "cash.export");
+  const org = auth.organization.id;
+  const list = await loadExternalRegisterEntries(org, from, to);
+  const cents = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+  const time = (d: Date) => new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit" }).format(d);
+  const rows: unknown[][] = [
+    ["Datum", "Uhrzeit", "Rechnungsnummer", "Zahlart", "Betrag", "Bon-Nr. Praxiskasse"],
+    ...list.entries.map((e) => [dateDeIso(berlinDateIso(e.paidAt)), time(e.paidAt), e.invoiceNumber ?? "", METHOD_CSV[e.method] ?? e.method, cents(e.amountCents), e.bonNr ?? ""]),
+  ];
+  const [o] = await withOrg(org, (tx) => tx.select({ slug: organizations.slug }).from(organizations).where(eq(organizations.id, org)));
+  await audit({ organizationId: org, userId: auth.user.id, action: "kasse.kassenvermerke_export", entity: "organization", entityId: org, meta: { from: list.from, to: list.to, count: list.entries.length } });
+  return { text: writeCsv(rows), filename: `kassenvermerke-${(o?.slug ?? "praxis").replace(/[^a-z0-9-]/g, "")}-${list.from}-${list.to}.csv`, count: list.entries.length };
+}
+
+const dateDeIso = (iso: string) => iso.split("-").reverse().join(".");
 
 // ───────────────────────── Einlagen / Entnahmen ─────────────────────────
 export async function addCashMovement(auth: AuthContext, input: MovementInput) {
@@ -283,6 +424,8 @@ export async function addCashMovement(auth: AuthContext, input: MovementInput) {
   try {
     // Bewegung und Audit-Eintrag in EINER Transaktion – nie Fiskaldaten ohne Audit
     return await withOrg(org, async (tx) => {
+      // eigene Praxiskasse: keine zweite Kasse – das Kassenbuch führt die Praxiskasse
+      if (await externalRegisterActive(tx, org)) throw new KasseError(EXTERNAL_REGISTER_ACTIVE);
       const [row] = await tx.insert(cashMovements).values({ organizationId: org, kind: parsed.kind, amountCents: signed, reason: parsed.reason, createdBy: auth.user.id }).returning();
       await audit({ organizationId: org, userId: auth.user.id, action: "kasse.movement", entity: "cash_movement", entityId: row.id, meta: { kind: parsed.kind, amountCents: signed } }, tx);
       return row;
@@ -319,16 +462,13 @@ export async function closeDay(auth: AuthContext, input: ClosingInput): Promise<
     throw new KasseError(e instanceof Error ? e.message : "Zählprotokoll ungültig.");
   }
   const withTse = !fiscalIsTestMode();
-  const external = await withOrg(org, async (tx) => {
-    const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-    return usesExternalRegister(o?.settings);
-  });
-  if (external) throw new KasseError("Die Praxis nutzt ihre eigene Kasse – den Tagesabschluss bitte dort machen.");
 
   let created: ClosingRow;
   try {
     created = await withOrg(org, async (tx) => {
       await lockClosing(tx, org);
+      // eigene Praxiskasse: Tagesabschluss/Z-Bon macht die Praxiskasse (Einstellung unter dem Kassen-Lock geprüft)
+      if (await externalRegisterActive(tx, org)) throw new KasseError(EXTERNAL_REGISTER_ACTIVE);
       const prev = await lastClosing(tx, org);
       if (prev && parsedInput.businessDate <= prev.businessDate) {
         throw new KasseError(prev.businessDate === parsedInput.businessDate ? "Dieser Tag ist bereits abgeschlossen." : "Der Buchungstag liegt vor dem letzten Abschluss.");

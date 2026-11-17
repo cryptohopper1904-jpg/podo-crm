@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chainHash } from "@/lib/records";
-import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment, usesExternalRegister } from "./model";
+import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment, usesExternalRegister, externalRegisterNote, praxiskasseBonNr } from "./model";
 
 const p = (id: string, method: KassePayment["method"], amountCents: number, minute: number): KassePayment => ({
   id,
@@ -162,5 +162,14 @@ describe("usesExternalRegister", () => {
     expect(usesExternalRegister({ externalCashRegister: "true" })).toBe(false);
     expect(usesExternalRegister({})).toBe(false);
     expect(usesExternalRegister(null)).toBe(false);
+  });
+});
+
+describe("Vermerk eigene Praxiskasse", () => {
+  it("mit und ohne Bon-Nr.; fremde Präfixe werden nicht als Bon-Nr. gelesen", () => {
+    expect(externalRegisterNote("praxiskasse:Z-17/0815")).toBe("Zahlung in der Praxiskasse erfasst (Bon-Nr. Z-17/0815). Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(externalRegisterNote(null)).toBe("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(externalRegisterNote("sumup:abc")).toBe("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(praxiskasseBonNr("praxiskasse:a b")).toBeNull();
   });
 });
