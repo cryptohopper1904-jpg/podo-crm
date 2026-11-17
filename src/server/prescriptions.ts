@@ -18,12 +18,14 @@ import {
   autoExpiryApplies,
   blocksBilling,
   canTransition,
+  copaymentOverpaid,
   evaluatePrescription,
   exemptOn,
   exemptionSummary,
   frequencyDeviation,
   frequencyDeviationText,
   hasAnlage3Fields,
+  mergePositions,
   priceSnapshot,
   remedyCostCents,
   startDeadline,
@@ -108,8 +110,10 @@ async function usageFor(tx: Tx, org: string, ids: string[]) {
   return map;
 }
 
-export function evaluate(vo: Pick<PrescriptionRow, "issuedAt" | "urgent" | "units" | "status" | "frequencyPerWeek" | "startBy" | "reopenedAt">, dates: string[], today = berlinDateIso()) {
+export function evaluate(vo: Pick<PrescriptionRow, "issuedAt" | "urgent" | "units" | "status" | "frequencyPerWeek" | "startBy" | "reopenedAt" | "rulesVersion" | "createdAt">, dates: string[], today = berlinDateIso()) {
   return evaluatePrescription({
+    rulesVersion: vo.rulesVersion,
+    importedOn: vo.createdAt ? berlinDateIso(vo.createdAt) : null,
     issuedAt: vo.issuedAt,
     urgent: vo.urgent,
     units: vo.units,
@@ -362,7 +366,8 @@ export async function savePrescription(
   if (blocked) return blocked;
   const org = auth.organization.id;
   const today = berlinDateIso();
-  const positions = d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })).filter((p) => p.label || p.position);
+  // doppelte Positionsnummern zusammenfassen (Einheiten addieren) – PR #111 Review-Runde 2
+  const positions = mergePositions(d.positions.map((p) => ({ ...(p.position ? { position: p.position } : {}), label: p.label, units: p.units })).filter((p) => p.label || p.position));
   // UI1/UI2: Höchstmenge laut Katalog ist abrechenbar, mehr nicht – trotzdem speichern (Warnung), siehe validatePrescription
   const check = validatePrescription({ issuedAt: d.issuedAt, diagnosisGroup: d.diagnosisGroup, units: d.units, positions, icd10: d.icd10, today });
   if (check.errors.length) return { error: check.errors[0] };
@@ -477,7 +482,7 @@ export async function changePrescriptionStatus(
     // Abbruch-/Unterbrechungsvermerk (der geht in den Abrechnungsexport) → reopen_note (PR #111 C1)
     const reopen = vo.status === "expired" && (input.to === "open" || input.to === "active");
     const note = reopen ? input.interruptionNote?.trim() || null : input.interruptionNote?.trim() || vo.interruptionNote;
-    const t = canTransition(vo.status as PrescriptionStatus, input.to, { unitsUsed: used, units: vo.units, interruptionNote: note });
+    const t = canTransition(vo.status as PrescriptionStatus, input.to, { unitsUsed: used, units: vo.units, interruptionNote: note, rulesVersion: vo.rulesVersion });
     if (!t.ok) return { error: t.reason };
     const extra: Partial<typeof prescriptions.$inferInsert> = reopen ? {} : { interruptionNote: note ?? null };
     let auditMeta: Record<string, unknown> = {};
@@ -489,7 +494,8 @@ export async function changePrescriptionStatus(
       // Preis-Snapshot mit den echten Behandlungstagen (Preis nach Behandlungsdatum, Zuzahlung je Tag)
       const [pt] = await tx.select({ birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions, insurerIk: patients.insurerIk }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, vo.patientId)));
       const dates = (await usageFor(tx, org, [vo.id])).get(vo.id) ?? [];
-      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null });
+      // vorzeitig beendet (Abbruchvermerk) → 78610 nur einmal je Tag ansetzen (Review-Runde 2)
+      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly: !!note });
       // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
       if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
@@ -513,11 +519,13 @@ export type CopaymentMethod = keyof typeof COPAYMENT_METHODS;
 /**
  * Zuzahlung als erhalten markieren (Datum, Betrag, Zahlungsart) bzw. zurücksetzen. Betrag ohne Angabe = berechnete
  * Zuzahlung. Vorbereitung für die Zuzahlungsquittung (Paket B). Auch nach „abgerechnet“ erlaubt (Trigger 0062).
+ * Nur Vermerk – eine Barzahlung wird zusätzlich in der Kasse erfasst. Liegt der Betrag über der berechneten
+ * Zuzahlung, wird gespeichert, aber gewarnt (`warning`).
  */
 export async function setCopaymentPaid(
   auth: AuthContext,
   input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null },
-): Promise<{ error: string } | undefined> {
+): Promise<{ error: string } | { warning?: string }> {
   assertCan(auth, "medical.write");
   const blocked = gkvGuard(auth.organization, "copayment");
   if (blocked) return blocked;
@@ -530,10 +538,13 @@ export async function setCopaymentPaid(
       ? { copaymentPaidAt: new Date(), copaymentPaidCents: input.amountCents ?? vo.copaymentCents ?? null, copaymentPaidMethod: input.method ?? null }
       : { copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null };
     await tx.update(prescriptions).set(values).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id)));
-    return values;
+    return { values, expected: vo.copaymentCents };
   });
   if (!done) return { error: "Verordnung nicht gefunden." };
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid, cents: done.copaymentPaidCents, method: done.copaymentPaidMethod } });
+  const { values } = done;
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid, cents: values.copaymentPaidCents, method: values.copaymentPaidMethod } });
+  const warning = copaymentOverpaid(values.copaymentPaidCents, done.expected);
+  return warning ? { warning } : {};
 }
 
 // ───────────────────────── Abrechnungslauf ─────────────────────────
@@ -558,6 +569,10 @@ export async function createBillingBatch(auth: AuthContext, ids: string[], opts:
       .where(and(eq(prescriptions.organizationId, org), inArray(prescriptions.id, ids), eq(prescriptions.status, "billing_ready")))
       .for("update");
     if (rows.length !== ids.length) return { error: "Einige Verordnungen sind nicht (mehr) abrechnungsreif. Bitte Seite neu laden." };
+    // ohne vollständigen Preis-Snapshot keine korrekten Heilmittelkosten/Zuzahlung (Altbestand vor dem Snapshot,
+    // fehlender Preis) → nicht übergeben; „Abrechnungsreif zurücknehmen“ und neu setzen erzeugt den Snapshot (Review-Runde 2)
+    const incomplete = rows.filter((r) => !(r.priceSnapshot as PriceSnapshot | null)?.complete);
+    if (incomplete.length) return { error: `${incomplete.length === 1 ? "Eine Verordnung hat" : `${incomplete.length} Verordnungen haben`} keinen vollständigen Preis-Snapshot – bitte „Abrechnungsreif zurücknehmen“ und erneut auf „Abrechnungsreif“ setzen (Preise prüfen).` };
     const total = rows.reduce((s, r) => s + (r.copaymentCents ?? 0), 0);
     // Heilmittelkosten aus den Preis-Snapshots (fehlt einer → Summe unvollständig, Spalte bleibt trotzdem die Summe der vorhandenen)
     const remedyTotal = rows.reduce((s, r) => s + (r.remedyCostCents ?? 0), 0);

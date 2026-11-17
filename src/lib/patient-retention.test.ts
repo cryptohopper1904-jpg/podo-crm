@@ -35,6 +35,12 @@ describe("Aufbewahrung je Patient:in (Gesamt-Review H3)", () => {
     expect(retentionDecision({ ...none, lastAnamnesisAt: new Date("2026-01-01") }, now).mode).toBe("anonymize");
     expect(retentionDecision({ ...none, recordMediaCount: 1 }, now).mode).toBe("anonymize");
   });
+  it("GKV: abgerechnete Verordnung bzw. erhaltene Zuzahlung sperrt die vollständige Löschung (AppSec N1)", () => {
+    const d = retentionDecision({ ...none, lastPrescriptionBillingAt: new Date("2026-11-02T10:00:00Z") }, now);
+    if (d.mode !== "anonymize") throw new Error("erwartet anonymize");
+    expect(d.retainUntil.toISOString().slice(0, 10)).toBe("2034-12-31");
+    expect(d.reasons[0]).toMatch(/Verordnungen.*Zuzahlungen/);
+  });
   it("abgelaufene Frist wird als abgelaufen gekennzeichnet", () => {
     const d = retentionDecision({ ...none, lastTreatmentAt: new Date("2010-01-01T00:00:00Z") }, now);
     expect(d.mode === "anonymize" && d.expired).toBe(true);

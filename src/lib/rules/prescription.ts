@@ -176,9 +176,15 @@ export const NOTE_MIN = 5;
 export function canTransition(
   from: PrescriptionStatus,
   to: PrescriptionStatus,
-  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null } = {},
+  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null; rulesVersion?: string | null } = {},
 ): { ok: true } | { ok: false; reason: string } {
   if (!TRANSITIONS[from]?.includes(to)) return { ok: false, reason: `Statuswechsel ${STATUS_LABEL[from]} → ${STATUS_LABEL[to]} ist nicht erlaubt.` };
+  // „in Behandlung“ ohne erfasste Einheit gibt es nur bei Übernahmen/Altbestand (Beginn im Fremdsystem). Bei mit
+  // PodoHero erfassten Verordnungen setzt erst die dokumentierte Einheit den Status (statusAfterUnit) – sonst ließe sich
+  // die Beginnfrist per Statuswechsel umgehen (PR #111 Review-Runde 2, S-1).
+  if (to === "active" && (ctx.unitsUsed ?? 0) === 0 && autoExpiryApplies(ctx.rulesVersion)) {
+    return { ok: false, reason: "„In Behandlung“ wird mit der ersten dokumentierten Behandlung gesetzt – bitte die Behandlung in der Doku erfassen." };
+  }
   if (from === "active" && to === "billing_ready" && !(ctx.interruptionNote && ctx.interruptionNote.trim().length >= 5)) {
     return { ok: false, reason: "Vorzeitige Abrechnung nur mit Begründung des Behandlungsabbruchs." };
   }
@@ -379,7 +385,36 @@ export function copaymentCents(costCents: number, opts: { exempt?: boolean; ageY
   return Math.min(costCents, COPAYMENT_FLAT_CENTS + Math.round((costCents * COPAYMENT_PERCENT) / 100));
 }
 
+/** „Zuzahlung erhalten“: Hinweis, wenn der erhaltene Betrag über der berechneten Zuzahlung liegt (nicht blockierend). */
+export function copaymentOverpaid(paidCents: number | null | undefined, expectedCents: number | null | undefined): string | null {
+  if (paidCents === null || paidCents === undefined || expectedCents === null || expectedCents === undefined || paidCents <= expectedCents) return null;
+  const eur = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+  return `Erhaltener Betrag (${eur(paidCents)} €) liegt über der berechneten Zuzahlung (${eur(expectedCents)} €) – bitte prüfen (Tippfehler? Zuviel bitte erstatten).`;
+}
+
 export type PrescriptionPosition = { position?: string; label: string; units: number };
+
+/**
+ * Doppelte Positionsnummern zusammenfassen (Einheiten addieren, Bezeichnung der ersten Zeile) – PR #111 Review-Runde 2.
+ * Sonst verteilte der Preis-Snapshot dieselbe Position zweimal je Behandlungstag. Vergleich nach Positionsnummer
+ * (ohne Leerzeichen); Zeilen ohne Nummer bleiben unverändert. Reihenfolge der ersten Vorkommen bleibt erhalten.
+ */
+export function mergePositions<P extends PrescriptionPosition>(positions: P[]): P[] {
+  const out: P[] = [];
+  const byCode = new Map<string, P>();
+  for (const p of positions) {
+    const code = p.position?.replace(/\s+/g, "") || null;
+    const prev = code ? byCode.get(code) : undefined;
+    if (prev) {
+      prev.units += p.units;
+      continue;
+    }
+    const copy = { ...p };
+    if (code) byCode.set(code, copy);
+    out.push(copy);
+  }
+  return out;
+}
 
 export type SnapshotLine = {
   date: string;
@@ -421,7 +456,11 @@ export type PriceSnapshot = {
  *  - höchstens die Kosten der erbrachten Heilmittel ([Vertrag] § 8 Abs. 1).
  *  - Positionen mit Tageshöchstmenge (78610: „dürfen zweimal je Tag abgegeben werden“, [Anlage 2] § 2 Abs. 2 Buchst. c)
  *    werden auf die Behandlungstage verteilt: je Tag so viele wie nötig, damit die verordneten Einheiten auf die
- *    vorhandenen Tage passen, höchstens `maxPerDay` (PR #111 S3).
+ *    vorhandenen Tage passen, höchstens `maxPerDay` (PR #111 S3). Vorzeitig beendete Verordnung (`endedEarly`,
+ *    Abbruchvermerk) → nur eine je Tag. Jede Annahme „2 × am Tag“ und nicht verteilbare Einheiten stehen in `notes`.
+ *  - Verordnungsblattgebühr höchstens bis zu den Kosten abzüglich des 10-%-Anteils, damit
+ *    `copaymentCents = copaymentPercentCents + flatFeeCents` gilt (wie #110 betraege.ts).
+ *  - zwei Behandlungseinträge am selben Tag mit derselben Position → Hinweis in `notes` (nicht blockierend).
  * Annahme (docs/GKV.md, offene Punkte): Die Einheiten je Position werden den Behandlungstagen in zeitlicher
  * Reihenfolge zugeordnet (je Tag eine Einheit jeder Position, solange vorhanden). Die tatsächlich abgegebenen
  * Positionen je Tag erfasst PodoHero (noch) nicht einzeln.
@@ -434,6 +473,8 @@ export function priceSnapshot(input: {
   computedOn: string;
   /** IK der Krankenkasse laut Verordnung – Befreiung einer anderen Kasse → Hinweis (Vertrag § 8 Abs. 3: Bescheinigung „der Krankenkasse“) */
   insurerIk?: string | null;
+  /** Verordnung vorzeitig beendet (Abbruch-/Unterbrechungsvermerk) → Positionen mit Tageshöchstmenge nur einmal je Tag */
+  endedEarly?: boolean;
 }): PriceSnapshot {
   const dates = [...input.treatmentDates].sort();
   const lines: SnapshotLine[] = [];
@@ -441,7 +482,10 @@ export function priceSnapshot(input: {
   let complete = dates.length > 0;
   let remedy = 0;
   let percent = 0;
+  const de = (iso: string) => iso.split("-").reverse().join(".");
   const left = new Map(input.positions.map((p, i) => [i, p.units]));
+  // Einheiten je Tag und Position (zwei Einträge am selben Tag → Hinweis)
+  const perDayPosition = new Map<string, number>();
   let firstDayPriced = false;
   dates.forEach((date, di) => {
     const age = ageOn(input.birthDate, date);
@@ -455,13 +499,18 @@ export function priceSnapshot(input: {
     input.positions.forEach((p, pi) => {
       const rest = left.get(pi) ?? 0;
       if (rest <= 0) return;
-      const perDay = Math.max(1, positionInfo(p.position)?.maxPerDay ?? 1);
+      const perDay = input.endedEarly ? 1 : Math.max(1, positionInfo(p.position)?.maxPerDay ?? 1);
       const units = Math.min(perDay, Math.max(1, Math.ceil(rest / daysLeft)), rest);
       left.set(pi, rest - units);
+      const code = toZlHpnr(p.position) ?? p.position ?? p.label;
+      if (units > 1) notes.push(`${units} × ${code} am ${de(date)} angenommen – bitte mit Doku abgleichen.`);
+      const key = `${date}|${code}`;
+      perDayPosition.set(key, (perDayPosition.get(key) ?? 0) + 1);
+      if (perDayPosition.get(key) === 2) notes.push(`Zwei Einheiten ${code} am ${de(date)} (zwei Behandlungseinträge) – bitte prüfen, ob abrechenbar.`);
       const pr = p.position ? priceFor(p.position, date) : null;
       if (!pr) {
         complete = false;
-        notes.push(`Kein Preis für Position ${p.position ?? p.label} am ${date.split("-").reverse().join(".")} hinterlegt.`);
+        notes.push(`Kein Preis für Position ${p.position ?? p.label} am ${de(date)} hinterlegt.`);
       } else if (di === 0) firstDayPriced = true;
       const copay = pr && pr.copayCents === null ? null : pr && !minor && !exempt ? pr.copayCents! * units : 0;
       remedy += (pr?.cents ?? 0) * units;
@@ -469,10 +518,19 @@ export function priceSnapshot(input: {
       lines.push({ date, position: toZlHpnr(p.position) ?? p.position ?? p.label, units, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
     });
   });
+  input.positions.forEach((p, pi) => {
+    const rest = left.get(pi) ?? 0;
+    if (rest > 0 && dates.length) {
+      const code = toZlHpnr(p.position) ?? p.position ?? p.label;
+      notes.push(`${rest} ${rest === 1 ? "Einheit" : "Einheiten"} ${code} nicht verteilbar (${dates.length} Behandlungstage${input.endedEarly ? ", vorzeitig beendet" : ""}) – nicht angesetzt.`);
+    }
+  });
   if (input.birthDate === null || input.birthDate === undefined) notes.push("Geburtsdatum fehlt – Zuzahlungspflicht (ab 18) bitte prüfen.");
   const first = dates[0];
   const firstAge = first ? ageOn(input.birthDate, first) : null;
-  const flat = first && firstDayPriced && !(firstAge !== null && firstAge < COPAYMENT_FREE_UNDER_AGE) && !exemptOn(input.exemptions, first) && remedy > 0 ? COPAYMENT_FLAT_CENTS : 0;
+  // Gebühr höchstens bis zu den Kosten abzüglich 10-%-Anteil (nie negativ) → Zuzahlung = Anteil + Gebühr ≤ Kosten
+  const flatDue = first && firstDayPriced && !(firstAge !== null && firstAge < COPAYMENT_FREE_UNDER_AGE) && !exemptOn(input.exemptions, first) && remedy > 0;
+  const flat = flatDue ? Math.max(0, Math.min(COPAYMENT_FLAT_CENTS, remedy - percent)) : 0;
   const copay = Math.min(remedy, percent + flat);
   return { rulesVersion: RULES_VERSION, computedOn: input.computedOn, remedyCents: remedy, copaymentPercentCents: percent, flatFeeCents: flat, copaymentCents: copay, complete, lines, notes: [...new Set(notes)] };
 }
@@ -681,6 +739,13 @@ export function evaluatePrescription(p: {
   startBy?: string | null;
   /** Tag der Wiederaufnahme aus „Frist überschritten“ (prescriptions.reopened_at), s. canTransition */
   reopenedOn?: string | null;
+  /**
+   * Regelwerk der Verordnung. Nur Übernahmen/Altbestand (!autoExpiryApplies) dürfen „in Behandlung“ ohne erfassten
+   * Behandlungstag sein (Beginn im Fremdsystem); fehlt die Angabe, gilt das wie bisher als Übernahme.
+   */
+  rulesVersion?: string | null;
+  /** Tag der Übernahme/Erfassung in PodoHero (created_at) – Unterbrechung einer Übernahme ohne erfassten Tag zählt ab hier */
+  importedOn?: string | null;
 }): PrescriptionEvaluation {
   const startBy = p.startBy ?? startDeadline(p.issuedAt, p.urgent);
   const unitsUsed = p.treatmentDates.length;
@@ -688,12 +753,15 @@ export function evaluatePrescription(p: {
   const sorted = [...p.treatmentDates].sort();
   const firstDate = sorted[0];
   // Status „in Behandlung“ ohne erfassten Behandlungstag: Beginn liegt außerhalb von PodoHero (Übernahme aus anderer
-  // Praxissoftware) → Beginnfrist gilt als eingehalten (PR #111 C1). Ebenso nach bestätigter Wiederaufnahme.
-  const startedElsewhere = !firstDate && p.status === "active";
+  // Praxissoftware) → Beginnfrist gilt als eingehalten (PR #111 C1) – aber nur für Übernahmen/Altbestand, nicht für mit
+  // PodoHero erfasste Verordnungen (Review-Runde 2, S-1). Ebenso nach bestätigter Wiederaufnahme.
+  const startedElsewhere = !firstDate && p.status === "active" && !autoExpiryApplies(p.rulesVersion);
   const startConfirmed = startedElsewhere || !!p.reopenedOn;
-  // Unterbrechung zählt ab der letzten Behandlung bzw. ab der Wiederaufnahme, falls diese später liegt
-  const lastTreatment = sorted[sorted.length - 1];
+  // Unterbrechung zählt ab der letzten Behandlung bzw. ab der Wiederaufnahme, falls diese später liegt; bei einer
+  // Übernahme ohne erfassten Tag ab dem Übernahmedatum (Review-Runde 2, S-2)
+  const lastTreatment = sorted[sorted.length - 1] ?? (startedElsewhere && p.importedOn ? p.importedOn : undefined);
   const lastDate = p.reopenedOn && (!lastTreatment || p.reopenedOn > lastTreatment) ? p.reopenedOn : lastTreatment;
+  const anchorLabel = lastDate === p.reopenedOn ? "der Wiederaufnahme" : firstDate ? "der letzten Behandlung" : "der Übernahme in PodoHero";
   const daysToStartDeadline = daysBetween(p.today, startBy);
   const startState: PrescriptionEvaluation["startState"] = firstDate || startConfirmed
     ? "started"
@@ -710,11 +778,17 @@ export function evaluatePrescription(p: {
   const messages: string[] = [];
   const de = (iso: string) => iso.split("-").reverse().join(".");
   if (firstDate && firstDate > startBy && !p.reopenedOn) messages.push(`Behandlungsbeginn (${de(firstDate)}) nach der Frist (${de(startBy)}).`);
-  if (startedElsewhere) messages.push("Behandlungsbeginn nicht in PodoHero erfasst (Übernahme oder manuell „in Behandlung“) – Unterbrechung wird ab der ersten erfassten Behandlung geprüft.");
+  if (startedElsewhere) {
+    messages.push(
+      p.importedOn
+        ? `Übernommene Verordnung ohne erfassten Behandlungstag – Beginn und letzte Behandlung bitte mit der Vorakte abgleichen. Die ${INTERRUPTION_WEEKS}-Wochen-Unterbrechung zählt ab der Übernahme (${de(p.importedOn)}).`
+        : "Behandlungsbeginn nicht in PodoHero erfasst (Übernahme) – Unterbrechung wird ab der ersten erfassten Behandlung geprüft.",
+    );
+  }
   if (p.reopenedOn) messages.push(`Aus „Frist überschritten“ wiederaufgenommen am ${de(p.reopenedOn)} (Begründung in der Akte) – Unterbrechungsfrist ab diesem Tag.`);
   if (startState === "missed") messages.push(`Behandlungsbeginn bis ${de(startBy)} verpasst – Verordnung ist ungültig (Frist überschritten).`);
   if (startState === "soon") messages.push(`Behandlung muss bis ${de(startBy)} beginnen (noch ${daysToStartDeadline} Tage).`);
-  if (interrupted) messages.push(`Seit ${lastDate === lastTreatment ? "der letzten Behandlung" : "der Wiederaufnahme"} (${de(lastDate!)}) mehr als ${INTERRUPTION_WEEKS} Wochen – Verordnung ist ungültig (Frist überschritten).`);
+  if (interrupted) messages.push(`Seit ${anchorLabel} (${de(lastDate!)}) mehr als ${INTERRUPTION_WEEKS} Wochen – Verordnung ist ungültig (Frist überschritten).`);
   else if (interruptionBy && daysBetween(p.today, interruptionBy) <= 14) messages.push(`Nächste Behandlung spätestens ${de(interruptionBy)} – sonst verliert die Verordnung ihre Gültigkeit (${INTERRUPTION_WEEKS} Wochen Unterbrechung).`);
   for (const w of freq) messages.push(`Abstand ${w.gapDays} Tage (${de(w.from)} → ${de(w.to)}) überschreitet die Frequenz (max. ${w.allowedDays} Tage + 2 Werktage).`);
   if (running && unitsRemaining > 0 && unitsRemaining <= 1 && unitsUsed > 0) messages.push("Letzte Einheit – Folgeverordnung anfragen.");
@@ -723,7 +797,7 @@ export function evaluatePrescription(p: {
   if (p.status === "billing_ready") light = "blue";
   else if (!running) light = "gray";
   else if (expiry || (firstDate && firstDate > startBy && !p.reopenedOn)) light = "red";
-  else if (startState === "soon" || freq.length || (unitsRemaining <= 1 && unitsUsed > 0)) light = "yellow";
+  else if (startState === "soon" || startedElsewhere || freq.length || (unitsRemaining <= 1 && unitsUsed > 0)) light = "yellow";
   return { startBy, daysToStartDeadline, startState, unitsUsed, unitsRemaining, frequency: freq, interruptionBy, interrupted, expiry, light, messages };
 }
 

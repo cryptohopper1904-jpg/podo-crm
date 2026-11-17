@@ -2,6 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import { useActionState, useRef, useState, type FormEvent } from "react";
+import { deviationHint } from "@/lib/deviation-hint";
 import { Camera, Check, ChevronDown, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
 import { FootFindings } from "@/components/foot3d";
@@ -70,8 +71,10 @@ export function DokuForm({
   const [ai, setAi] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
   const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
+  // Server-Hinweis gehört zur beim Speichern gewählten VO: nach einem Wechsel der Auswahl verwerfen (bis zum nächsten Speichern)
+  const [staleState, setStaleState] = useState<DokuFormState>(undefined);
   // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
-  const deviationText = selectedVo?.deviationText ?? (selectedVo ? (state?.deviationText ?? null) : null);
+  const deviationText = deviationHint({ selected: !!selectedVo, pageText: selectedVo?.deviationText, serverText: state?.deviationText, serverStale: state === staleState });
   const fileRef = useRef<HTMLInputElement>(null);
   // Pflicht-Bestätigung: eigene Meldung am Feld statt der flüchtigen Browser-Blase (Systemsprache)
   const confirmRef = useRef<HTMLInputElement>(null);
@@ -136,7 +139,10 @@ export function DokuForm({
         <Card>
           <h2 className="mb-3 font-display text-lg font-semibold">Verordnung</h2>
           <Field label="Behandlung auf Verordnung buchen" hint="Mit dem Speichern wird eine Einheit der Verordnung gezählt.">
-            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => setPrescriptionId(e.target.value)}>
+            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => {
+                setPrescriptionId(e.target.value);
+                setStaleState(state);
+              }}>
               <option value="">– ohne Verordnung (Selbstzahler) –</option>
               {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </Select>

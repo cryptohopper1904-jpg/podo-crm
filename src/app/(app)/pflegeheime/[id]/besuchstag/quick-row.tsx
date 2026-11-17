@@ -2,6 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
+import { deviationHint } from "@/lib/deviation-hint";
 import { Check } from "lucide-react";
 import { Button, Input, Select, cx } from "@/components/ui";
 import { quickRecordAction, type QuickRecordState } from "../../actions";
@@ -15,8 +16,10 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
   const [picked, setPicked] = useState<string[]>([]);
   const [prescriptionId, setPrescriptionId] = useState(prescriptions.length === 1 ? prescriptions[0].id : "");
   const done = !!state?.ok;
+  // Server-Hinweis gehört zur beim Speichern gewählten VO: nach einem Wechsel der Auswahl verwerfen (bis zum nächsten Speichern)
+  const [staleState, setStaleState] = useState<QuickRecordState>(undefined);
   // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
-  const deviation = prescriptions.find((p) => p.id === prescriptionId)?.deviationText ?? (prescriptionId ? (state?.deviationText ?? null) : null);
+  const deviation = deviationHint({ selected: !!prescriptionId, pageText: prescriptions.find((p) => p.id === prescriptionId)?.deviationText, serverText: state?.deviationText, serverStale: state === staleState });
   const servicesText = services.filter((s) => picked.includes(s.id)).map((s) => s.name).join(", ");
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-2">
@@ -45,7 +48,11 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
         <div className="flex flex-wrap items-center gap-2">
           <Input name="findings" placeholder="Kurzbefund (z. B. o. B., Hyperkeratose re. Ferse)" className="min-w-56 flex-1" maxLength={2000} aria-label="Kurzbefund" />
           {prescriptions.length ? (
-            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => setPrescriptionId(e.target.value)} className="w-auto max-w-72" aria-label="Verordnung">
+            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => {
+                setPrescriptionId(e.target.value);
+                setStaleState(state);
+              }}
+              className="w-auto max-w-72" aria-label="Verordnung">
               <option value="">ohne Verordnung</option>
               {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </Select>

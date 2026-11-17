@@ -558,6 +558,8 @@ export const appointments = pgTable(
     /** erster Termin je Person (Auswertung: neue vs. wiederkehrende Patient:innen) */
     index("appointments_org_patient").on(t.organizationId, t.patientId, t.startsAt),
     uniqueIndex("appointments_external").on(t.organizationId, t.source, t.externalId),
+    /** Termine je Verordnung (Planung, ON DELETE SET NULL) – Migration 0062 */
+    index("appointments_prescription_id").on(t.prescriptionId).where(sql`${t.prescriptionId} is not null`),
   ],
 );
 

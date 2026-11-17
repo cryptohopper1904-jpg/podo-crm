@@ -8,14 +8,13 @@ import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, p
 import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName, money } from "@/lib/format";
-import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, hasAnlage3Fields, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
-import { COPAYMENT_METHODS } from "@/server/prescriptions";
+import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, copaymentOverpaid, hasAnlage3Fields, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
 import { ocrStatus } from "@/server/ocr";
-import { listPatientPrescriptions } from "@/server/prescriptions";
+import { COPAYMENT_METHODS, listPatientPrescriptions } from "@/server/prescriptions";
 import { INSURED_STATUS, kvnrProblem } from "@/lib/rules/gkv-ids";
 import type { PriceSnapshot } from "@/lib/rules/prescription";
 import { ExemptionsCard } from "./exemptions-card";
-import { copaymentPaidAction } from "./actions";
+import { CopaymentPaidForm } from "./copayment-form";
 import { PrescriptionForm, type PrescriptionInitial } from "./prescription-form";
 import { StatusControls } from "./status-controls";
 
@@ -177,21 +176,9 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                           </Badge>
                         ) : <Badge tone="warn">offen</Badge>
                       ) : null}
+                      {vo.copaymentPaidAt && copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents) ? <span className="text-xs font-medium text-warn-soft-text">{copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents)}</span> : null}
                       {canWrite && (current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
-                        <form action={copaymentPaidAction} className="flex flex-wrap items-center gap-2">
-                          <input type="hidden" name="id" value={vo.id} />
-                          <input type="hidden" name="patientId" value={id} />
-                          <input type="hidden" name="paid" value={vo.copaymentPaidAt ? "0" : "1"} />
-                          {vo.copaymentPaidAt ? null : (
-                            <>
-                              <input name="amount" inputMode="decimal" placeholder={((vo.copaymentCents ?? 0) / 100).toFixed(2).replace(".", ",")} aria-label="erhaltener Betrag in Euro" className="h-9 w-24 rounded-lg border border-border bg-surface px-2 text-sm" />
-                              <select name="method" aria-label="Zahlungsart" defaultValue="cash" className="h-9 rounded-lg border border-border bg-surface px-2 text-sm">
-                                {Object.entries(COPAYMENT_METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                              </select>
-                            </>
-                          )}
-                          <button type="submit" className="text-xs font-semibold text-primary">{vo.copaymentPaidAt ? "zurücksetzen" : "als erhalten markieren"}</button>
-                        </form>
+                        <CopaymentPaidForm id={vo.id} patientId={id} paid={!!vo.copaymentPaidAt} copaymentCents={vo.copaymentCents ?? 0} methods={COPAYMENT_METHODS} />
                       ) : null}
                     </dd>
                   </div>
@@ -255,6 +242,7 @@ function PriceSnapshotLine({ snap }: { snap: PriceSnapshot }) {
       {snap.flatFeeCents ? ` (davon ${money(snap.flatFeeCents)} je Verordnung)` : ""}
       {versions ? <span className="text-xs text-muted"> · Preisstand {versions}</span> : null}
       {!snap.complete ? <span className="ml-1 font-medium text-warn-soft-text">– unvollständig: {snap.notes.join(" ")}</span> : null}
+      {snap.complete && snap.notes.length ? <span className="mt-1 block text-xs font-medium text-warn-soft-text">Bitte prüfen: {snap.notes.join(" ")}</span> : null}
     </p>
   );
 }

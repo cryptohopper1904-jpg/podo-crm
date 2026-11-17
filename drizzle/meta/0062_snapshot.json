@@ -498,6 +498,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "appointments_prescription_id": {
+          "name": "appointments_prescription_id",
+          "columns": [
+            {
+              "expression": "prescription_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"appointments\".\"prescription_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {

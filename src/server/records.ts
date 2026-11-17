@@ -107,9 +107,24 @@ export async function prescriptionGate(
     .from(treatmentRecords)
     .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, input.prescriptionId)));
   const dates = recs.map((r) => berlinDateIso(r.treatedAt)).sort();
-  const ev = evaluatePrescription({ issuedAt: vo.issuedAt, urgent: vo.urgent, units: vo.units, status: vo.status, frequency: vo.frequencyPerWeek, treatmentDates: dates, today: input.date, startBy: vo.startBy, reopenedOn: vo.reopenedAt });
+  const ev = evaluatePrescription({
+    issuedAt: vo.issuedAt,
+    urgent: vo.urgent,
+    units: vo.units,
+    status: vo.status,
+    frequency: vo.frequencyPerWeek,
+    treatmentDates: dates,
+    today: input.date,
+    startBy: vo.startBy,
+    reopenedOn: vo.reopenedAt,
+    rulesVersion: vo.rulesVersion,
+    importedOn: vo.createdAt ? berlinDateIso(vo.createdAt) : null,
+  });
   if (ev.expiry === "start_missed") return { error: `Frist überschritten: Die Behandlung hätte bis ${ev.startBy.split("-").reverse().join(".")} beginnen müssen – die Verordnung ist ungültig.` };
-  if (ev.expiry === "interrupted") return { error: "Frist überschritten: Seit der letzten Behandlung sind mehr als 12 Wochen vergangen – die Verordnung ist ungültig." };
+  if (ev.expiry === "interrupted") {
+    const since = dates.length ? "der letzten Behandlung" : vo.reopenedAt ? "der Wiederaufnahme" : "der Übernahme in PodoHero";
+    return { error: `Frist überschritten: Seit ${since} sind mehr als 12 Wochen vergangen – die Verordnung ist ungültig.` };
+  }
   if (hasAnlage3Fields(vo.rulesVersion)) {
     const [o] = await tx.select({ ik: organizations.ik }).from(organizations).where(eq(organizations.id, org));
     const start = anlage3Findings({ ...vo, icd10Second: vo.icd10Second, frequency: vo.frequencyPerWeek, practiceIk: o?.ik ?? null }).find((f) => f.level === "start");

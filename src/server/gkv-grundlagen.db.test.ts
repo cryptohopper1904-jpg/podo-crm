@@ -257,6 +257,131 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect(a.prescription_id).toBe(own);
   });
 
+  it("H1: Nur-Lesen-Modus und fehlendes medical.write setzen keine Verordnung auf „Frist überschritten“ (canAutoExpire)", async () => {
+    const p = await fx.patient(org, { lastName: "Lesemodus" });
+    const id = await fx.asOrg(org, async (c) =>
+      (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, rules_version) values ($1,$2,$3,'DF',2,'open',($3::date + 28),$4) returning id", [org, p, addDaysIso(today, -40), RULES_VERSION])).rows[0].id as string,
+    );
+    const readOnly = { ...(auth as object), readOnly: true } as never;
+    const noWrite = { ...(auth as object), role: "assistant", can: (perm: string) => perm !== "medical.write" } as never;
+    expect(presc.canAutoExpire(readOnly)).toBe(false);
+    expect(presc.canAutoExpire(noWrite)).toBe(false);
+    expect(presc.canAutoExpire(auth)).toBe(true);
+    await presc.listPatientPrescriptions(readOnly, p);
+    await presc.listRunningPrescriptions(readOnly);
+    await presc.listPatientPrescriptions(noWrite, p);
+    await presc.listRunningPrescriptions(noWrite);
+    expect((await status(id)).status).toBe("open");
+    await presc.listPatientPrescriptions(auth, p);
+    expect(await status(id)).toEqual({ status: "expired", expired_reason: "start_missed" });
+  });
+
+  it("S-1: neue Verordnung lässt sich ohne Einheit nicht manuell auf „in Behandlung“ setzen – Frist bleibt verpasst", async () => {
+    const p = await fx.patient(org, { lastName: "Statuswechsel" });
+    const id = await fx.asOrg(org, async (c) =>
+      (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, rules_version) values ($1,$2,$3,'DF',2,'open',($3::date + 28),$4) returning id", [org, p, addDaysIso(today, -77), RULES_VERSION])).rows[0].id as string,
+    );
+    expect(await presc.changePrescriptionStatus(auth, { id, patientId: p, to: "active" })).toMatchObject({ error: expect.stringMatching(/ersten dokumentierten Behandlung/) });
+    await presc.listPatientPrescriptions(auth, p);
+    expect(await status(id)).toEqual({ status: "expired", expired_reason: "start_missed" });
+  });
+
+  it("S-2: übernommene VO „in Behandlung“ ohne erfassten Tag: Unterbrechung ab Übernahme, nach 12 Wochen nicht buchbar, kein Auto-Ablauf", async () => {
+    const p = await fx.patient(org, { lastName: "Uebernahme" });
+    const id = await fx.asOrg(org, async (c) =>
+      (
+        await c.query(
+          "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version, created_at) values ($1,$2,$3,'DF',6,'active',($3::date + 28),'[{\"position\":\"78020\",\"label\":\"groß\",\"units\":6}]','import-tinana', now() - interval '90 days') returning id",
+          [org, p, addDaysIso(today, -120)],
+        )
+      ).rows[0].id as string,
+    );
+    const list = await presc.listPatientPrescriptions(auth, p);
+    const ev = list!.prescriptions.find((x) => x.id === id)!.evaluation;
+    expect(ev.expiry).toBe("interrupted");
+    expect(ev.messages.join(" ")).toMatch(/Übernahme/);
+    expect((await status(id)).status).toBe("active"); // nicht automatisch abgelaufen
+    await expect(
+      dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: p, prescriptionId: id, findings: "o. B.", servicesText: "x" })),
+    ).rejects.toThrow(/Übernahme in PodoHero.*12 Wochen/);
+    // frisch übernommen: gelb + Hinweis beim Buchen, buchbar
+    const fresh = await fx.asOrg(org, async (c) =>
+      (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, rules_version) values ($1,$2,$3,'DF',6,'active',($3::date + 28),'import-tinana') returning id", [org, p, addDaysIso(today, -120)])).rows[0].id as string,
+    );
+    const bookable = await dbm.withOrg(org, (tx) => presc.bookablePrescriptions(tx, org, p));
+    const b = bookable.find((x) => x.id === fresh)!;
+    expect(b.warning).toMatch(/Übernommene Verordnung ohne erfassten Behandlungstag/);
+    expect(bookable.some((x) => x.id === id)).toBe(false);
+    const again = await presc.listPatientPrescriptions(auth, p);
+    expect(again!.prescriptions.find((x) => x.id === fresh)!.evaluation.light).toBe("yellow");
+  });
+
+  it("Abrechnungslauf nur mit vollständigem Preis-Snapshot", async () => {
+    const p = await fx.patient(org, { lastName: "OhneSnapshot" });
+    const id = await fx.asOrg(org, async (c) =>
+      (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, rules_version) values ($1,$2,$3,'DF',1,'billing_ready',($3::date + 28),$4) returning id", [org, p, today, RULES_VERSION])).rows[0].id as string,
+    );
+    expect(await presc.createBillingBatch(auth, [id], { partner: "manual" })).toMatchObject({ error: expect.stringMatching(/Preis-Snapshot/) });
+    await fx.asOrg(org, (c) => c.query(`update prescriptions set price_snapshot = '{"complete": false, "lines": [], "notes": []}' where id = $1`, [id]));
+    expect(await presc.createBillingBatch(auth, [id], { partner: "manual" })).toMatchObject({ error: expect.stringMatching(/Preis-Snapshot/) });
+    expect((await status(id)).status).toBe("billing_ready");
+  });
+
+  it("N1: abgerechnete Verordnung bzw. erhaltene Zuzahlung sperren die vollständige Löschung (App + podo_delete_patient)", async () => {
+    const deletion = await import("./patient-deletion");
+    const mk = async (name: string, extra: string) => {
+      const p = await fx.patient(org, { lastName: name });
+      await fx.asOrg(org, (c) => c.query(`insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status ${extra ? `, ${extra}` : ""}) values ($1,$2,$3,'DF',1,'cancelled' ${extra ? ", now()" : ""})`, [org, p, today]));
+      return p;
+    };
+    const billed = await mk("Abgerechnet", "billed_at");
+    const paid = await mk("Bezahlt", "copayment_paid_at");
+    const plain = await mk("Ohne", "");
+    for (const p of [billed, paid]) {
+      expect((await deletion.deletionStatus(auth, p))!.mode).toBe("anonymize");
+      await expect(fx.asOrg(org, (c) => c.query("select podo_delete_patient($1::uuid)", [p]))).rejects.toThrow(/Aufbewahrungspflichtige Daten/);
+    }
+    expect((await deletion.deletionStatus(auth, plain))!.mode).toBe("delete");
+    const [r] = await fx.asOrg(org, async (c) => (await c.query("select podo_delete_patient($1::uuid) as ok", [plain])).rows);
+    expect(r.ok).toBe(true);
+  });
+
+  it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", async (ctx) => {
+    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+    try {
+      const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
+      if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
+      const org2 = await fx.org();
+      const p2 = await fx.patient(org2, { lastName: "Fremdpraxis" });
+      const foreign = await fx.asOrg(org2, async (c) => (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id", [org2, p2, today])).rows[0].id as string);
+      const own = await vo({ issuedAt: today, units: 1 });
+      const c = await owner.connect();
+      let legacy: string, ok: string;
+      try {
+        await c.query("begin");
+        await c.query("set local session_replication_role = replica");
+        const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
+        legacy = (await c.query(ins, [org, patient, foreign])).rows[0].id;
+        ok = (await c.query(ins, [org, patient, own])).rows[0].id;
+        await c.query("commit");
+      } finally {
+        c.release();
+      }
+      await runMigration("_gkv_review.sql");
+      const rows = await fx.asOrg(org, async (cl) => (await cl.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows);
+      expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
+      expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
+      const force = await owner.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
+      expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
+      const idx = await owner.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
+      expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
+      const fn = await owner.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
+      expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+    } finally {
+      await owner.end();
+    }
+  });
+
   it("A5: höchstens 50 Befreiungen je Person (CHECK)", async () => {
     const p = await fx.patient(org, { lastName: "Viele" });
     const list = Array.from({ length: 51 }, (_, i) => ({ id: `e${i}`, validFrom: today, validTo: today }));
@@ -288,7 +413,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect("id" in batch).toBe(true);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set copayment_cents = 0 where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set status = 'completed' where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1506, method: "card" })).toBeUndefined();
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1506, method: "card" })).toEqual({});
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_cents, copayment_paid_method, copayment_paid_at from prescriptions where id = $1", [id])).rows);
     expect(row).toMatchObject({ copayment_paid_cents: 1506, copayment_paid_method: "card" });
     expect(row.copayment_paid_at).not.toBeNull();
