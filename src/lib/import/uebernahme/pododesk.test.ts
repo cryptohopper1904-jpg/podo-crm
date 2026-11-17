@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { collectFiles } from "./collect";
 import { analyzeFile } from "./detect";
 import { buildPlan, type ExistingSnapshot } from "./plan";
-import { paletteColor, parseServiceRefs, parseUtc, PODODESK_COLUMNS, PODODESK_HEADERS, PODODESK_SENSITIVE, pododeskFileOf, restrictColumns } from "./pododesk";
+import { paletteColor, parseServiceRefs, parseUtc, PODODESK_COLUMNS, PODODESK_OPTIONAL_COLUMNS, PODODESK_HEADERS, PODODESK_SENSITIVE, pododeskFileOf, restrictColumns } from "./pododesk";
 import { toPreview } from "./preview-safety";
 import { readTable } from "./text";
 import { buildZip } from "./zip";
@@ -93,8 +93,9 @@ describe("Pododesk-Gesamtexport: sensible Spalten werden verworfen", () => {
   it("restrictColumns behält nur die erlaubten Spalten", () => {
     const text = new TextDecoder().decode(fx("praxisstammdaten.csv"));
     const t = restrictColumns(readTable(text), "praxisstammdaten");
-    expect(t.headers.sort()).toEqual([...PODODESK_COLUMNS.praxisstammdaten].sort());
-    expect(Object.keys(t.records[0].values).sort()).toEqual(["currency", "standardbehandlungsdauer", "terminraster"]);
+    expect(t.headers.sort()).toEqual([...PODODESK_COLUMNS.praxisstammdaten, ...(PODODESK_OPTIONAL_COLUMNS.praxisstammdaten ?? [])].sort());
+    // Kassenzulassung/IK optional gelesen (Vorschlag für Einstellungen → Praxis), im Beispiel leer
+    expect(Object.keys(t.records[0].values).sort()).toEqual(["currency", "institutionskennzeichen", "kassenzulassung", "standardbehandlungsdauer", "terminraster"]);
     for (const k of PODODESK_SENSITIVE.praxisstammdaten) expect(t.records[0].values[k]).toBeUndefined();
     const u = restrictColumns(readTable(new TextDecoder().decode(fx("users.csv"))), "users");
     for (const k of PODODESK_SENSITIVE.users) expect(u.records[0].values[k]).toBeUndefined();
@@ -167,7 +168,10 @@ describe("Pododesk-Gesamtexport: Plan", () => {
       externalIds: { pododesk: "1" },
       source: "pododesk-import",
     });
-    expect(paula.values.extra).toMatchObject({ payerIk: "100000001", pododeskNumber: "1001", gp_city: "Musterstadt", occupation: "Lehrerin", patientSince: "2020-05-04" });
+    expect(paula.values.extra).toMatchObject({ pododeskNumber: "1001", gp_city: "Musterstadt", occupation: "Lehrerin", patientSince: "2020-05-04" });
+    // IK der Kasse in der eigenen Spalte (Migration 0061)
+    expect(paula.values.insurerIk).toBe("100000001");
+    expect(paula.values.extra).not.toHaveProperty("payerIk");
     expect(plan.patientsCreate.find((p) => p.values.lastName === "Beispielmann")!.values.extra).toMatchObject({ specialist: "Dr. Felix Facharzt-Beispiel" });
     expect(plan.patientsCreate.find((p) => p.values.lastName === "Beispiel-Muster")!.values.extra.deceased).toMatchObject({ date: "2026-10-01" });
     // Leistungen: gelöschte nicht, Dauer aus der Regelbehandlungszeit

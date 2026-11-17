@@ -8,6 +8,7 @@ import { sequential } from "@/lib/seq";
 import { therapists } from "@/server/appointments";
 import { canCreateBlocks } from "@/server/calendar-blocks";
 import { servicesByUsage } from "@/server/service-catalog";
+import { feature } from "@/lib/features";
 
 /** Leistung in der Auswahl „Neuer Termin“ */
 export type NewAppointmentService = { id: string; code: string; name: string; durationMin: number };
@@ -39,6 +40,8 @@ export async function newAppointmentData(auth: Awaited<ReturnType<typeof require
     defaultTherapistId: team.some((t) => t.id === auth.user.id) ? auth.user.id : (team[0]?.id ?? ""),
     blocksTab: canCreateBlocks(auth),
     canCreatePatients: auth.can("patients.write"),
+    /** Verordnung zum Termin wählbar (Kassen-Themen aktiv) */
+    gkv: feature(auth.organization, "verordnungen"),
   };
 }
 export type NewAppointmentData = Awaited<ReturnType<typeof newAppointmentData>>;

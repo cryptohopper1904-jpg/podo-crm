@@ -224,6 +224,11 @@ export interface PododeskPractice {
   slotMin: number | null;
   defaultDurationMin: number | null;
   currency: string | null;
+  /** institutionskennzeichen (nur Ziffern, ungeprüft) */
+  ik?: string | null;
+  /** kassenzulassung: Rohwert und – falls als Datum lesbar – JJJJ-MM-TT */
+  admissionRaw?: string | null;
+  admissionDate?: string | null;
 }
 
 export interface CashbookSummary {

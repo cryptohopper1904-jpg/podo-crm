@@ -8,6 +8,7 @@ import type { patients } from "@/db/schema";
 import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, Select, Textarea } from "@/components/ui";
 import { AddressAutocomplete, ZipInput } from "@/components/address-autocomplete";
 import { savePatientAction } from "./actions";
+import { INSURED_STATUS } from "@/lib/rules/gkv-ids";
 
 type P = typeof patients.$inferSelect;
 
@@ -39,7 +40,14 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
   const kassenFields = (
     <>
       <Field label={privateOnly ? "Krankenkasse (optional)" : "Krankenkasse"}><Input name="insurerName" defaultValue={patient?.insurerName ?? ""} /></Field>
-      <Field label={privateOnly ? "Versichertennummer (optional)" : "Versichertennummer"}><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} /></Field>
+      <Field label={privateOnly ? "Versichertennummer (optional)" : "Versichertennummer"} hint="KVNR: 1 Buchstabe + 9 Ziffern"><Input name="insuranceNumber" defaultValue={patient?.insuranceNumber ?? ""} maxLength={20} autoCapitalize="characters" /></Field>
+      <Field label="IK der Krankenkasse" hint="9 Ziffern (Kostenträgerkennung)"><Input name="insurerIk" defaultValue={patient?.insurerIk ?? ""} inputMode="numeric" maxLength={11} /></Field>
+      <Field label="Versichertenstatus">
+        <Select name="insuredStatus" defaultValue={patient?.insuredStatus ?? ""}>
+          <option value="">–</option>
+          {Object.entries(INSURED_STATUS).map(([k, v]) => <option key={k} value={k}>{k} · {v}</option>)}
+        </Select>
+      </Field>
     </>
   );
   return (
@@ -110,7 +118,7 @@ export function PatientForm({ patient, privateOnly = false }: { patient?: P; pri
             </Select>
           </Field>
           {privateOnly ? (
-            <details className="sm:col-span-2" open={!!(patient?.insurerName || patient?.insuranceNumber)}>
+            <details className="sm:col-span-2" open={!!(patient?.insurerName || patient?.insuranceNumber || patient?.insurerIk)}>
               <summary className="flex min-h-11 cursor-pointer items-center text-sm font-semibold text-muted">Kassendaten (optional)</summary>
               <div className="grid gap-4 sm:grid-cols-2">{kassenFields}</div>
             </details>

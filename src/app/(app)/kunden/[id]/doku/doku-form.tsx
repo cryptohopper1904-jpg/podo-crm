@@ -2,6 +2,7 @@
 
 import { keepValues } from "@/lib/forms";
 import { useActionState, useRef, useState, type FormEvent } from "react";
+import { deviationHint } from "@/lib/deviation-hint";
 import { Camera, Check, ChevronDown, Loader2, Mic, ScanLine, Square, Trash2 } from "lucide-react";
 import type { FootPoint } from "@/db/schema";
 import { FootFindings } from "@/components/foot3d";
@@ -40,7 +41,7 @@ export function DokuForm({
   activeBrace: { id: string; side: string; toe: number; braceType: string | null; stage: string | null } | null;
   voiceEnabled: boolean;
   /** buchbare Verordnungen (open/active mit Resteinheiten) */
-  prescriptions?: { id: string; label: string; remaining: number; warning: string | null }[];
+  prescriptions?: { id: string; label: string; remaining: number; warning: string | null; deviationText?: string | null }[];
   defaultPrescriptionId?: string | null;
 }) {
   const [state, action, pending] = useActionState<DokuFormState, FormData>(saveTreatmentAction, undefined);
@@ -70,6 +71,10 @@ export function DokuForm({
   const [ai, setAi] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
   const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
+  // Server-Hinweis gehört zur beim Speichern gewählten VO: nach einem Wechsel der Auswahl verwerfen (bis zum nächsten Speichern)
+  const [staleState, setStaleState] = useState<DokuFormState>(undefined);
+  // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
+  const deviationText = deviationHint({ selected: !!selectedVo, pageText: selectedVo?.deviationText, serverText: state?.deviationText, serverStale: state === staleState });
   const fileRef = useRef<HTMLInputElement>(null);
   // Pflicht-Bestätigung: eigene Meldung am Feld statt der flüchtigen Browser-Blase (Systemsprache)
   const confirmRef = useRef<HTMLInputElement>(null);
@@ -134,7 +139,10 @@ export function DokuForm({
         <Card>
           <h2 className="mb-3 font-display text-lg font-semibold">Verordnung</h2>
           <Field label="Behandlung auf Verordnung buchen" hint="Mit dem Speichern wird eine Einheit der Verordnung gezählt.">
-            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => setPrescriptionId(e.target.value)}>
+            <Select name="prescriptionId" value={prescriptionId} onChange={(e) => {
+                setPrescriptionId(e.target.value);
+                setStaleState(state);
+              }}>
               <option value="">– ohne Verordnung (Selbstzahler) –</option>
               {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </Select>
@@ -143,6 +151,15 @@ export function DokuForm({
             <p className={cx("mt-3 rounded-xl p-3 text-sm font-medium", selectedVo.warning ? "bg-warn-soft text-warn-soft-text" : "bg-primary-soft text-primary-soft-text")}>
               Nach dieser Behandlung noch {selectedVo.remaining - 1} Einheit(en) offen.{selectedVo.warning ? ` ${selectedVo.warning}` : ""}
             </p>
+          ) : null}
+          {deviationText ? (
+            <Field
+              label="Begründung der Frequenzabweichung (Pflicht)"
+              hint={`${deviationText} Abweichung nur nach Absprache mit der verordnenden Ärztin/dem Arzt – Absprache hier dokumentieren (Vertrag § 125 Podologie § 7 Abs. 6, HeilM-RL § 16 Abs. 3).`}
+              className="mt-3"
+            >
+              <Textarea name="frequencyDeviationNote" rows={2} minLength={5} maxLength={500} required placeholder="z. B. Absprache mit Dr. … am …: Termin wegen Krankenhausaufenthalt verschoben" />
+            </Field>
           ) : null}
         </Card>
       ) : null}

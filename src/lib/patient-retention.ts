@@ -24,6 +24,11 @@ export type RetentionFacts = {
   lastInvoiceAt: Date | null;
   /** letzter Kassenvorgang (Bar/Karte/Gutschein) auf eine Rechnung der Person – Kassen-Einzelaufzeichnung */
   lastRegisterPaymentAt?: Date | null;
+  /**
+   * GKV: letzte Abrechnung einer Verordnung (prescriptions.billed_at) bzw. letzte erhaltene Zuzahlung
+   * (copayment_paid_at) – Abrechnungsunterlage gegenüber der Kasse bzw. Buchungsvorgang (AppSec N1, PR #111)
+   */
+  lastPrescriptionBillingAt?: Date | null;
 };
 
 export type RetentionDecision =
@@ -54,6 +59,10 @@ export function retentionDecision(f: RetentionFacts, now = new Date()): Retentio
   if (f.lastRegisterPaymentAt) {
     reasons.push(`Kassenaufzeichnungen (§ 147 AO, KassenSichV: ${CASH_RECORD_YEARS} Jahre ab Ende des Jahres des Kassenvorgangs)`);
     until.push(endOfYearPlus(f.lastRegisterPaymentAt, CASH_RECORD_YEARS));
+  }
+  if (f.lastPrescriptionBillingAt) {
+    reasons.push(`Abgerechnete Verordnungen und erhaltene Zuzahlungen (§ 147 AO, § 302 SGB V: ${BOOKING_DOCUMENT_YEARS} Jahre ab Ende des Jahres, ${RETENTION_HEMMUNG_NOTE})`);
+    until.push(endOfYearPlus(f.lastPrescriptionBillingAt, BOOKING_DOCUMENT_YEARS));
   }
   if (!reasons.length) return { mode: "delete", reasons: [], retainUntil: null };
   const retainUntil = new Date(Math.max(...until.map((d) => d.getTime())));

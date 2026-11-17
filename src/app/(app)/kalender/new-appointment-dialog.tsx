@@ -304,6 +304,7 @@ export function NewAppointmentHost({ enabled, fallbackDate, children }: { enable
                 }}
                 blocksTab={data.blocksTab}
                 canCreatePatients={data.canCreatePatients}
+                gkv={data.gkv}
                 patients={data.patients}
                 services={data.services}
                 team={team}

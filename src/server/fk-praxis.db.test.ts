@@ -30,13 +30,13 @@ type Case = { table: string; col: string; target: string; insert: (w: World, ref
 
 /** Je abgesicherter Spalte: minimale Zeile, die getestete Spalte zeigt auf `ref`, alle übrigen Verweise auf die eigene Praxis. */
 const CASES: Case[] = [
-  ...(["patient_id", "location_id"] as const).map((col) => ({
+  ...(["patient_id", "location_id", "prescription_id"] as const).map((col) => ({
     table: "appointments",
     col,
-    target: col === "patient_id" ? "patients" : "locations",
+    target: col === "patient_id" ? "patients" : col === "location_id" ? "locations" : "prescriptions",
     insert: (w: World, ref: string): [string, unknown[]] => [
-      "insert into appointments (organization_id, patient_id, location_id, starts_at, ends_at) values ($1,$2,$3, now(), now() + interval '30 minutes')",
-      [w.org, col === "patient_id" ? ref : w.patient, col === "location_id" ? ref : w.location],
+      "insert into appointments (organization_id, patient_id, location_id, prescription_id, starts_at, ends_at) values ($1,$2,$3,$4, now(), now() + interval '30 minutes')",
+      [w.org, col === "patient_id" ? ref : w.patient, col === "location_id" ? ref : w.location, col === "prescription_id" ? ref : w.prescription],
     ],
   })),
   ...(["appointment_id", "service_id"] as const).map((col) => ({

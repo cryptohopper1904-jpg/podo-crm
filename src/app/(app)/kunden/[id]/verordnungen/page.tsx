@@ -8,10 +8,13 @@ import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, p
 import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName, money } from "@/lib/format";
-import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
+import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, copaymentOverpaid, hasAnlage3Fields, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
 import { ocrStatus } from "@/server/ocr";
-import { listPatientPrescriptions } from "@/server/prescriptions";
-import { copaymentPaidAction } from "./actions";
+import { COPAYMENT_METHODS, listPatientPrescriptions } from "@/server/prescriptions";
+import { INSURED_STATUS, kvnrProblem } from "@/lib/rules/gkv-ids";
+import type { PriceSnapshot } from "@/lib/rules/prescription";
+import { ExemptionsCard } from "./exemptions-card";
+import { CopaymentPaidForm } from "./copayment-form";
 import { PrescriptionForm, type PrescriptionInitial } from "./prescription-form";
 import { StatusControls } from "./status-controls";
 
@@ -52,6 +55,16 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
         therapyReportRequested: editing.therapyReportRequested,
         positions: editing.positions,
         scanMediaId: editing.scanMediaId,
+        icd10Second: editing.icd10Second ?? "",
+        diagnosisText: editing.diagnosisText ?? "",
+        leitsymptomatik: editing.leitsymptomatik ?? "",
+        leitsymptomatikText: editing.leitsymptomatikText ?? "",
+        insurerIk: editing.insurerIk ?? "",
+        insuranceNumber: editing.insuranceNumber ?? "",
+        insuredStatus: editing.insuredStatus ?? "",
+        accident: editing.accident,
+        bvg: editing.bvg,
+        doctorSigned: editing.doctorSigned ?? false,
       }
     : {
         issuedAt: berlinDateIso(),
@@ -68,6 +81,17 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
         copaymentExempt: false,
         therapyReportRequested: false,
         positions: [],
+        icd10Second: "",
+        diagnosisText: "",
+        leitsymptomatik: "",
+        leitsymptomatikText: "",
+        // Personalienfeld aus der Akte vorbelegen (auf der Verordnung prüfen)
+        insurerIk: data.patient.insurerIk ?? "",
+        insuranceNumber: data.patient.insuranceNumber ?? "",
+        insuredStatus: data.patient.insuredStatus ?? "",
+        accident: false,
+        bvg: false,
+        doctorSigned: false,
       };
   const hints = typeof sp.hinweise === "string" ? sp.hinweise.split("\n").filter(Boolean).slice(0, 5) : [];
 
@@ -78,8 +102,9 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
           <BackLink href={`/kunden/${id}`} label={`Akte ${fullName(data.patient)}`} />
           <h1 className={pageTitleCls}>Verordnungen</h1>
           <p className="text-sm text-muted">
-            {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}` : "Hinweis: Patient ist nicht als GKV-versichert hinterlegt."}
+            {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insurerIk ? ` · IK ${data.patient.insurerIk}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}${data.patient.insuredStatus ? ` · Status ${data.patient.insuredStatus} (${INSURED_STATUS[data.patient.insuredStatus as keyof typeof INSURED_STATUS] ?? "?"})` : ""}` : "Hinweis: Patient ist nicht als GKV-versichert hinterlegt."}
           </p>
+          {data.patient.insuranceType === "gkv" && kvnrProblem(data.patient.insuranceNumber) ? <p className="text-sm font-medium text-warn-soft-text">{kvnrProblem(data.patient.insuranceNumber)}</p> : null}
         </div>
         {canWrite && !showForm ? <LinkButton href={`/kunden/${id}/verordnungen?neu=1`}><Plus size={18} aria-hidden /> Neue Verordnung</LinkButton> : null}
       </header>
@@ -107,12 +132,15 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
         </section>
       ) : null}
 
+      <ExemptionsCard patientId={id} exemptions={data.patient.copaymentExemptions} canWrite={canWrite} insurerName={data.patient.insurerName} insurerIk={data.patient.insurerIk} />
+
       {data.prescriptions.length === 0 ? (
         <Empty title="Noch keine Verordnungen">Ärztliche Heilmittelverordnungen (Muster 13) hier erfassen – Fristen, Einheiten und Zuzahlung werden automatisch geprüft.</Empty>
       ) : (
         <div className="flex flex-col gap-4">
           {data.prescriptions.map((vo) => {
             const ev = vo.evaluation;
+            const current = hasAnlage3Fields(vo.rulesVersion);
             const group = DIAGNOSIS_GROUPS[vo.diagnosisGroup as DiagnosisGroup];
             return (
               <Card key={vo.id}>
@@ -136,17 +164,21 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   <div>
                     <dt className="text-muted">Zuzahlung</dt>
                     <dd className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold">{vo.copaymentExempt ? "befreit" : money(vo.copaymentCents)}</span>
-                      {!vo.copaymentExempt && (vo.copaymentCents ?? 0) > 0 ? (
-                        vo.copaymentPaidAt ? <Badge tone="primary">erhalten {dateDe(vo.copaymentPaidAt)}</Badge> : <Badge tone="warn">offen</Badge>
+                      {/* neues Regelwerk: Befreiung nur per Bescheinigung je Behandlungstag – das Kreuz auf der VO ist nur Info */}
+                      <span className="font-semibold">{vo.copaymentExempt && !current ? "befreit" : money(vo.copaymentCents)}</span>
+                      {vo.copaymentExempt && current ? <Badge>„zuzahlungsfrei“ angekreuzt</Badge> : null}
+                      {(current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
+                        vo.copaymentPaidAt ? (
+                          <Badge tone="primary">
+                            erhalten {dateDe(vo.copaymentPaidAt)}
+                            {vo.copaymentPaidCents !== null ? ` · ${money(vo.copaymentPaidCents)}` : ""}
+                            {vo.copaymentPaidMethod ? ` · ${COPAYMENT_METHODS[vo.copaymentPaidMethod as keyof typeof COPAYMENT_METHODS] ?? vo.copaymentPaidMethod}` : ""}
+                          </Badge>
+                        ) : <Badge tone="warn">offen</Badge>
                       ) : null}
-                      {canWrite && !vo.copaymentExempt && (vo.copaymentCents ?? 0) > 0 ? (
-                        <form action={copaymentPaidAction}>
-                          <input type="hidden" name="id" value={vo.id} />
-                          <input type="hidden" name="patientId" value={id} />
-                          <input type="hidden" name="paid" value={vo.copaymentPaidAt ? "0" : "1"} />
-                          <button type="submit" className="text-xs font-semibold text-primary">{vo.copaymentPaidAt ? "zurücksetzen" : "als erhalten markieren"}</button>
-                        </form>
+                      {vo.copaymentPaidAt && copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents) ? <span className="text-xs font-medium text-warn-soft-text">{copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents)}</span> : null}
+                      {canWrite && (current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
+                        <CopaymentPaidForm id={vo.id} patientId={id} paid={!!vo.copaymentPaidAt} copaymentCents={vo.copaymentCents ?? 0} methods={COPAYMENT_METHODS} />
                       ) : null}
                     </dd>
                   </div>
@@ -159,13 +191,30 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   {vo.scanMediaId && auth.can("medical.read") ? (
                     <a href={`/api/media/${vo.scanMediaId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary"><FileImage size={16} aria-hidden /> Foto der Verordnung</a>
                   ) : null}
-                  {vo.rulesVersion && vo.rulesVersion !== RULES_VERSION && !vo.rulesVersion.startsWith("import-") ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
+                  {vo.rulesVersion && !current && !vo.rulesVersion.startsWith("import-") ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
                 </div>
+                {vo.findings.length ? (
+                  <ul className="mt-3 flex flex-col gap-1" aria-label="Prüfung der Pflichtangaben (Anlage 3)">
+                    {vo.findings.map((f) => (
+                      <li key={f.code} className={f.level === "warning" ? "rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-soft-text" : "rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger-soft-text"}>
+                        {f.level === "start" ? "Fehler – Behandlung darf nicht beginnen: " : f.level === "billing" ? "Fehler – vor der Abrechnung korrigieren: " : "Bitte prüfen: "}
+                        {f.message} <span className="text-xs opacity-80">({f.source})</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {vo.status === "expired" ? (
+                  <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger-soft-text">
+                    Frist überschritten{vo.expiredReason === "start_missed" ? " – Behandlungsbeginn verpasst" : vo.expiredReason === "interrupted" ? " – mehr als 12 Wochen Unterbrechung" : ""}. Die Verordnung bleibt zur Nachvollziehbarkeit gespeichert.
+                  </p>
+                ) : null}
+                {vo.priceSnapshot ? <PriceSnapshotLine snap={vo.priceSnapshot as unknown as PriceSnapshot} /> : null}
                 {ev.messages.length ? (
                   <ul className="mt-3 flex flex-col gap-1">
                     {ev.messages.map((m) => <li key={m} className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-soft-text">{m}</li>)}
                   </ul>
                 ) : null}
+                {vo.reopenNote ? <p className="mt-3 text-sm"><span className="text-muted">Wiederaufgenommen{vo.reopenedAt ? ` am ${dateDe(vo.reopenedAt)}` : ""}:</span> {vo.reopenNote}</p> : null}
                 {vo.interruptionNote ? <p className="mt-3 text-sm"><span className="text-muted">Abbruch-/Unterbrechungsvermerk:</span> {vo.interruptionNote}</p> : null}
                 {vo.dates.length ? <p className="mt-3 text-xs text-muted">Behandlungstage: {vo.dates.map((d) => dateDe(d)).join(", ")}</p> : null}
                 {canWrite ? (
@@ -179,7 +228,21 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
           })}
         </div>
       )}
-      <p className="mt-6 text-xs text-muted">Regelwerk {RULES_VERSION} – vor Echtbetrieb gegen aktuelle HeilM-RL/§125-Vertrag prüfen. Einheiten werden über die Behandlungsdoku gezählt (Feld „Verordnung“).</p>
+      <p className="mt-6 text-xs text-muted">Regelwerk {RULES_VERSION} (Quellen und Stand: docs/GKV.md). Einheiten werden über die Behandlungsdoku gezählt (Feld „Verordnung“).</p>
     </div>
+  );
+}
+
+/** Preis-Snapshot (bei Abrechnungsreife): Heilmittelkosten, Zuzahlung, Tabellenstand */
+function PriceSnapshotLine({ snap }: { snap: PriceSnapshot }) {
+  const versions = [...new Set(snap.lines.map((l) => l.tableVersion).filter(Boolean))].join(", ");
+  return (
+    <p className="mt-3 text-sm">
+      <span className="text-muted">Preis-Snapshot vom {dateDe(snap.computedOn)}:</span> Heilmittelkosten {money(snap.remedyCents)} · Zuzahlung {money(snap.copaymentCents)}
+      {snap.flatFeeCents ? ` (davon ${money(snap.flatFeeCents)} je Verordnung)` : ""}
+      {versions ? <span className="text-xs text-muted"> · Preisstand {versions}</span> : null}
+      {!snap.complete ? <span className="ml-1 font-medium text-warn-soft-text">– unvollständig: {snap.notes.join(" ")}</span> : null}
+      {snap.complete && snap.notes.length ? <span className="mt-1 block text-xs font-medium text-warn-soft-text">Bitte prüfen: {snap.notes.join(" ")}</span> : null}
+    </p>
   );
 }

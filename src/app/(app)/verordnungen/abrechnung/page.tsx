@@ -23,8 +23,9 @@ export default async function BillingPage() {
       group: vo.diagnosisGroup,
       issuedAt: dateDe(vo.issuedAt),
       units: `${ev.unitsUsed}/${vo.units}`,
-      copayment: vo.copaymentExempt ? "befreit" : `${money(vo.copaymentCents)}${vo.copaymentPaidAt ? " ✓" : " (offen)"}`,
-      warning: missing.length ? `Fehlt: ${missing.join(", ")}` : null,
+      remedy: vo.remedyCostCents === null ? "–" : money(vo.remedyCostCents),
+      copayment: `${money(vo.copaymentCents)}${(vo.copaymentCents ?? 0) > 0 ? (vo.copaymentPaidAt ? " ✓" : " (offen)") : ""}`,
+      warning: [missing.length ? `Fehlt: ${missing.join(", ")}` : null, vo.remedyCostCents === null ? "Kein Preis-Snapshot (erneut auf abrechnungsreif setzen)" : null].filter(Boolean).join(" · ") || null,
     };
   });
   return (
@@ -46,14 +47,15 @@ export default async function BillingPage() {
           <Empty title="Noch keine Abrechnungsläufe" />
         ) : (
           <Table>
-            <thead><tr><th>Erstellt</th><th>Partner</th><th>Verordnungen</th><th>Summe Zuzahlungen</th><th>Status</th><th>Export</th></tr></thead>
+            <thead><tr><th>Erstellt</th><th>Partner</th><th>Verordnungen</th><th>Heilmittelkosten</th><th>Summe Zuzahlungen</th><th>Status</th><th>Export</th></tr></thead>
             <tbody>
               {batches.map((b) => (
                 <tr key={b.id}>
                   <td>{dateTimeDe(b.createdAt)}{b.note ? <div className="text-xs text-muted">{b.note}</div> : null}</td>
                   <td>{PARTNER[b.partner] ?? b.partner}</td>
                   <td className="tabular-nums">{b.prescriptionCount}</td>
-                  <td className="tabular-nums">{money(b.totalCents)}</td>
+                  <td className="tabular-nums">{b.remedyTotalCents === null ? "–" : money(b.remedyTotalCents)}</td>
+                  <td className="tabular-nums">{money(b.copaymentTotalCents ?? b.totalCents)}</td>
                   <td>{b.exportedAt ? <Badge tone="primary">exportiert {dateDe(b.exportedAt)}</Badge> : <Badge tone="warn">noch nicht exportiert</Badge>}</td>
                   <td><a href={`/api/export/gkv-batch/${b.id}`} className="inline-flex items-center gap-1 font-semibold text-primary"><Download size={16} aria-hidden /> CSV</a></td>
                 </tr>

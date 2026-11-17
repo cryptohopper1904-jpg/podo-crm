@@ -5,10 +5,9 @@ import { withOrg } from "@/db";
 import { billingContacts, patients, services, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
-import { mapSequential } from "@/lib/seq";
 import { assertCan } from "./authz";
 import { feature } from "@/lib/features";
-import { bookablePrescriptions } from "./prescriptions";
+import { bookablePrescriptionsFor, type BookablePrescription } from "./prescriptions";
 
 const opt = (max: number) => z.preprocess((v) => (typeof v === "string" ? v.trim() || null : v), z.string().max(max).nullable().optional());
 
@@ -135,8 +134,8 @@ export async function visitDay(auth: AuthContext, id: string) {
     const lastBy = new Map(last.map((l) => [l.patientId, l.last]));
     // Verordnungsdetails (Diagnosegruppe) nur für Behandler:innen
     // Praxis nur für Privat-/Selbstzahler: keine Verordnungen (src/lib/features.ts); Sammelrechnung bleibt
-    const vos = medical && feature(auth.organization, "verordnungen") ? await mapSequential(residents, async (r) => [r.id, await bookablePrescriptions(tx, org, r.id)] as const) : [];
-    const vosBy = new Map(vos);
+    // eine Abfrage für alle Bewohner:innen (kein N+1), rein lesend (PR #111 H1/C2)
+    const vosBy = medical && feature(auth.organization, "verordnungen") ? await bookablePrescriptionsFor(tx, org, ids) : new Map<string, BookablePrescription[]>();
     const svc = await tx
       .select({ id: services.id, code: services.code, name: services.name })
       .from(services)

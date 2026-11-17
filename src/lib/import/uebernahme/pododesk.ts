@@ -69,6 +69,14 @@ export const PODODESK_COLUMNS: Record<PododeskFile, readonly string[]> = {
   users: ["id", "vorname", "nachname", "farbe", "isttherapeut", "disabled"],
 };
 
+/**
+ * Optional gelesene Spalten (nicht für die Erkennung erforderlich, ältere Exporte haben sie ggf. nicht):
+ * Kassenzulassung und IK – nur als Vorschlag für Einstellungen → Praxis.
+ */
+export const PODODESK_OPTIONAL_COLUMNS: Partial<Record<PododeskFile, readonly string[]>> = {
+  praxisstammdaten: ["kassenzulassung", "institutionskennzeichen"],
+};
+
 /** Ausdrücklich verworfene sensible Spalten (Dokumentation + Test; verworfen wird ohnehin alles außerhalb PODODESK_COLUMNS) */
 export const PODODESK_SENSITIVE = {
   praxisstammdaten: ["iban", "bic", "bank", "paypalemail", "sevdeskapikey", "sevdeskuser"],
@@ -104,7 +112,7 @@ export function pododeskFileOf(headers: string[]): PododeskFile | null {
 
 /** Nur erlaubte Spalten behalten – alle anderen Werte werden entfernt, bevor ein Parser sie sieht. */
 export function restrictColumns(t: Table, file: PododeskFile): Table {
-  const allowed = new Set(PODODESK_COLUMNS[file]);
+  const allowed = new Set([...PODODESK_COLUMNS[file], ...(PODODESK_OPTIONAL_COLUMNS[file] ?? [])]);
   return {
     headers: t.headers.filter((h) => allowed.has(h)),
     records: t.records.map((r) => {
@@ -420,7 +428,28 @@ export function parsePododeskPractice(t: Table): PododeskPractice {
     const x = nz(r[k]);
     return x && /^\d{1,4}$/.test(x) ? Number(x) : null;
   };
-  return { slotMin: int("terminraster"), defaultDurationMin: int("standardbehandlungsdauer"), currency: nz(r.currency) };
+  const ikRaw = nz(r.institutionskennzeichen)?.replace(/\s+/g, "") ?? null;
+  const adm = nz(r.kassenzulassung);
+  return {
+    slotMin: int("terminraster"),
+    defaultDurationMin: int("standardbehandlungsdauer"),
+    currency: nz(r.currency),
+    ik: ikRaw && /^\d{1,12}$/.test(ikRaw) ? ikRaw : null,
+    admissionRaw: adm && !/^(false|0|nein|no)$/i.test(adm) ? adm.slice(0, 60) : null,
+    admissionDate: admissionDateOf(adm),
+  };
+}
+
+/** „2019-04-01“, „2019-04-01T00:00:00Z“ oder „01.04.2019“ → JJJJ-MM-TT (gültiges Kalenderdatum), sonst null */
+function admissionDateOf(v: string | null): string | null {
+  if (!v) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+  const de = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(v);
+  const [y, m, d] = iso ? [Number(iso[1]), Number(iso[2]), Number(iso[3])] : de ? [Number(de[3]), Number(de[2]), Number(de[1])] : [0, 0, 0];
+  if (!y) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 /**

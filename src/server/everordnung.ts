@@ -138,6 +138,9 @@ export async function importEverordnung(auth: AuthContext, text: string, choice:
     copaymentExempt: s.coverage.copaymentExempt,
     therapyReportRequested: s.therapyReport,
     positions: JSON.stringify(positions),
+    // Personalienfeld (Anlage 3 Buchst. a); Stempel/Unterschrift: qualifizierte elektronische Signatur → nicht abgefragt
+    insurerIk: s.coverage.ik ?? "",
+    insuranceNumber: s.patient.kvnr ?? "",
   });
   if (!input.success) return { error: input.error.issues[0]?.message ?? "Daten der eVerordnung unvollständig." };
 
@@ -175,6 +178,7 @@ export async function importEverordnung(auth: AuthContext, text: string, choice:
             insuranceType: s.coverage.kind ?? "gkv",
             insurerName: s.coverage.insurerName,
             insuranceNumber: s.patient.kvnr,
+            insurerIk: s.coverage.ik,
             gpName: s.practitioner.name,
             source: "everordnung",
           })

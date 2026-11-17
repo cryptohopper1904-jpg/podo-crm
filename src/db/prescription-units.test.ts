@@ -43,13 +43,15 @@ const url = process.env.TEST_DATABASE_URL;
   });
 
   const ctx = () => ({ org: orgId, userId, role: "therapist" as const });
-  const create = (patient: string) =>
-    dbm.withOrg(orgId, (tx) => mod.insertTreatmentRecord(tx, ctx(), { patientId: patient, prescriptionId: voId, findings: "o. B.", servicesText: "Komplexbehandlung" }));
+  const create = (patient: string, frequencyDeviationNote?: string) =>
+    dbm.withOrg(orgId, (tx) => mod.insertTreatmentRecord(tx, ctx(), { patientId: patient, prescriptionId: voId, findings: "o. B.", servicesText: "Komplexbehandlung", frequencyDeviationNote }));
   const status = () => dbm.withOrg(orgId, async (tx) => (await tx.execute(`select status from prescriptions where id = '${voId}'`)).rows[0]?.status);
 
   it("zählt Einheiten und setzt den Status", async () => {
     await create(patientId);
     expect(await status()).toBe("active");
+    // zweite Behandlung am selben Tag (z. B. Befundung + Behandlung): kein neuer Behandlungsabstand → keine
+    // Frequenzabweichung, keine Begründung nötig (PR #111 C5; Abweichung mit Begründung: gkv-grundlagen.db.test.ts)
     await create(patientId);
     expect(await status()).toBe("completed");
     await expect(create(patientId)).rejects.toBeInstanceOf(mod.RecordInputError);
