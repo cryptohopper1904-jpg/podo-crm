@@ -15,11 +15,15 @@ import {
   DIAGNOSIS_GROUPS,
   RULES_VERSION,
   anlage3Findings,
+  autoExpiryApplies,
   blocksBilling,
   canTransition,
   evaluatePrescription,
+  exemptOn,
+  exemptionSummary,
   frequencyDeviation,
   frequencyDeviationText,
+  hasAnlage3Fields,
   priceSnapshot,
   remedyCostCents,
   startDeadline,
@@ -28,8 +32,9 @@ import {
   type Finding,
   type FrequencyDeviation,
   type PrescriptionStatus,
+  type PriceSnapshot,
 } from "@/lib/rules/prescription";
-import { INSURED_STATUS } from "@/lib/rules/gkv-ids";
+import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
@@ -103,7 +108,7 @@ async function usageFor(tx: Tx, org: string, ids: string[]) {
   return map;
 }
 
-function evaluate(vo: PrescriptionRow, dates: string[], today = berlinDateIso()) {
+export function evaluate(vo: Pick<PrescriptionRow, "issuedAt" | "urgent" | "units" | "status" | "frequencyPerWeek" | "startBy" | "reopenedAt">, dates: string[], today = berlinDateIso()) {
   return evaluatePrescription({
     issuedAt: vo.issuedAt,
     urgent: vo.urgent,
@@ -113,6 +118,7 @@ function evaluate(vo: PrescriptionRow, dates: string[], today = berlinDateIso())
     treatmentDates: dates,
     today,
     startBy: vo.startBy,
+    reopenedOn: vo.reopenedAt,
   });
 }
 
@@ -122,9 +128,9 @@ async function practiceIk(tx: Tx, org: string): Promise<string | null> {
   return o?.ik ?? null;
 }
 
-/** Pflichtangaben nach Anlage 3 – nur für Verordnungen, die mit dem aktuellen Regelwerk erfasst wurden (ältere hatten die Felder nicht). */
+/** Pflichtangaben nach Anlage 3 – nur für Verordnungen ab dem Regelwerk mit den Anlage-3-Feldern (hasAnlage3Fields, PR #111 C3). */
 export function findingsFor(vo: PrescriptionRow, practiceIkValue: string | null): Finding[] {
-  if (vo.rulesVersion !== RULES_VERSION) return [];
+  if (!hasAnlage3Fields(vo.rulesVersion)) return [];
   return anlage3Findings({
     diagnosisGroup: vo.diagnosisGroup,
     issuedAt: vo.issuedAt,
@@ -151,12 +157,15 @@ export function findingsFor(vo: PrescriptionRow, practiceIkValue: string | null)
 /**
  * Abgelaufene Verordnungen als „Frist überschritten“ kennzeichnen (status expired + Grund) – nie löschen.
  * Beginnfrist verpasst (HeilM-RL § 15, Vertrag § 6 Abs. 4) oder 12 Wochen Unterbrechung (Vertrag § 7 Abs. 7).
- * Läuft beim Lesen (Übersicht, Akte, Doku-Auswahl, Terminplanung); gibt die IDs der geänderten Verordnungen zurück.
+ * Nur in protokollierten Pfaden mit Schreibrecht (canAutoExpire: Akte, Übersicht; danach auditExpired) – lesende
+ * Pfade (Doku-Auswahl, Terminplanung, Besuchstag) filtern nur (PR #111 H1/C2). Nur Verordnungen ab dem aktuellen
+ * Regelwerk (autoExpiryApplies) – Übernahmen und Altbestand nicht (PR #111 C1). Gibt die geänderten IDs zurück.
  */
 export async function expireOverdue(tx: Tx, org: string, rows: PrescriptionRow[], usage: Map<string, string[]>, today = berlinDateIso()): Promise<string[]> {
   const changed: string[] = [];
   for (const r of rows) {
     if (r.status !== "open" && r.status !== "active") continue;
+    if (!autoExpiryApplies(r.rulesVersion)) continue;
     const ev = evaluate(r, usage.get(r.id) ?? [], today);
     if (!ev.expiry) continue;
     const done = await tx
@@ -171,6 +180,11 @@ export async function expireOverdue(tx: Tx, org: string, rows: PrescriptionRow[]
     }
   }
   return changed;
+}
+
+/** Darf dieser Aufruf Verordnungen automatisch ablaufen lassen? Schreibrecht, kein Support-/Nur-Lesen-Modus (H1). */
+export function canAutoExpire(auth: AuthContext): boolean {
+  return auth.can("medical.write") && !auth.support && !auth.readOnly;
 }
 
 async function auditExpired(auth: AuthContext, ids: string[]) {
@@ -212,7 +226,7 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
     if (!p) return null;
     const rows = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.patientId, patientId))).orderBy(desc(prescriptions.issuedAt), desc(prescriptions.createdAt));
     const usage = await usageFor(tx, org, rows.map((r) => r.id));
-    const expired = auth.can("medical.write") ? await expireOverdue(tx, org, rows, usage) : [];
+    const expired = canAutoExpire(auth) ? await expireOverdue(tx, org, rows, usage) : [];
     const ik = await practiceIk(tx, org);
     return {
       patient: p,
@@ -244,48 +258,63 @@ export type BookablePrescription = {
   issuedAt: string;
   urgent: boolean;
   startBy: string | null;
+  reopenedAt: string | null;
+  /** Beginn erfasst, außerhalb erfolgt (Übernahme) oder per Wiederaufnahme bestätigt → keine Beginnfrist-Warnung */
+  started: boolean;
   dates: string[];
 };
 
 /**
- * Für die Doku und die Terminplanung: Verordnungen der Person, auf die noch Einheiten gebucht werden können.
- * Kennzeichnet dabei abgelaufene Verordnungen (expireOverdue). `medical` = false: Bezeichnung ohne Diagnosegruppe.
+ * Für die Doku, die Terminplanung und den Besuchstag: Verordnungen der Personen, auf die noch Einheiten gebucht werden
+ * können – je Person, mit EINER Abfrage für alle (Besuchstag ohne N+1). Rein lesend: abgelaufene Verordnungen werden
+ * nur ausgefiltert, nicht gekennzeichnet (PR #111 H1/C2 – das passiert nur in protokollierten Pfaden, expireOverdue).
+ * `medical` = false: Bezeichnung ohne Diagnosegruppe.
  */
-export async function bookablePrescriptions(tx: Tx, org: string, patientId: string, opts: { medical?: boolean; today?: string } = {}): Promise<BookablePrescription[]> {
+export async function bookablePrescriptionsFor(tx: Tx, org: string, patientIds: string[], opts: { medical?: boolean; today?: string } = {}): Promise<Map<string, BookablePrescription[]>> {
+  const out = new Map<string, BookablePrescription[]>();
+  if (!patientIds.length) return out;
   const today = opts.today ?? berlinDateIso();
   const rows = await tx
     .select()
     .from(prescriptions)
-    .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.patientId, patientId), inArray(prescriptions.status, ["open", "active"])))
-    .orderBy(asc(prescriptions.issuedAt));
+    .where(and(eq(prescriptions.organizationId, org), inArray(prescriptions.patientId, patientIds), inArray(prescriptions.status, ["open", "active"])))
+    .orderBy(asc(prescriptions.issuedAt), asc(prescriptions.createdAt));
   const usage = await usageFor(tx, org, rows.map((r) => r.id));
-  await expireOverdue(tx, org, rows, usage, today);
-  return rows
-    .filter((r) => r.status === "open" || r.status === "active")
-    .map((r) => {
-      const dates = usage.get(r.id) ?? [];
-      const ev = evaluate(r, dates, today);
-      const lastDate = dates.at(-1) ?? null;
-      const deviation = frequencyDeviation({ group: r.diagnosisGroup, frequency: r.frequencyPerWeek, lastDate, date: today });
-      const label = opts.medical === false ? `Verordnung vom ${dateDe(r.issuedAt)} · noch ${ev.unitsRemaining} von ${r.units} Einheiten` : prescriptionLabel(r, ev.unitsRemaining);
-      return {
-        id: r.id,
-        label,
-        remaining: ev.unitsRemaining,
-        units: r.units,
-        warning: ev.messages[0] ?? null,
-        deviation,
-        deviationText: deviation ? frequencyDeviationText(deviation) : null,
-        lastDate,
-        diagnosisGroup: r.diagnosisGroup,
-        frequency: r.frequencyPerWeek ?? (DIAGNOSIS_GROUPS[r.diagnosisGroup as DiagnosisGroup]?.defaultFrequency ?? null),
-        issuedAt: r.issuedAt,
-        urgent: r.urgent,
-        startBy: r.startBy,
-        dates,
-      };
-    })
-    .filter((r) => r.remaining > 0);
+  for (const r of rows) {
+    const dates = usage.get(r.id) ?? [];
+    const ev = evaluate(r, dates, today);
+    // abgelaufen (wie prescriptionGate) oder keine Einheit mehr frei → nicht buchbar
+    if (ev.expiry || ev.unitsRemaining <= 0) continue;
+    const lastDate = dates.at(-1) ?? null;
+    const deviation = frequencyDeviation({ group: r.diagnosisGroup, frequency: r.frequencyPerWeek, lastDate, date: today });
+    const label = opts.medical === false ? `Verordnung vom ${dateDe(r.issuedAt)} · noch ${ev.unitsRemaining} von ${r.units} Einheiten` : prescriptionLabel(r, ev.unitsRemaining);
+    const list = out.get(r.patientId) ?? [];
+    list.push({
+      id: r.id,
+      label,
+      remaining: ev.unitsRemaining,
+      units: r.units,
+      warning: ev.messages[0] ?? null,
+      deviation,
+      deviationText: deviation ? frequencyDeviationText(deviation) : null,
+      lastDate,
+      diagnosisGroup: r.diagnosisGroup,
+      frequency: r.frequencyPerWeek ?? (DIAGNOSIS_GROUPS[r.diagnosisGroup as DiagnosisGroup]?.defaultFrequency ?? null),
+      issuedAt: r.issuedAt,
+      urgent: r.urgent,
+      startBy: r.startBy,
+      reopenedAt: r.reopenedAt,
+      started: ev.startState === "started",
+      dates,
+    });
+    out.set(r.patientId, list);
+  }
+  return out;
+}
+
+/** wie bookablePrescriptionsFor, für eine Person */
+export async function bookablePrescriptions(tx: Tx, org: string, patientId: string, opts: { medical?: boolean; today?: string } = {}): Promise<BookablePrescription[]> {
+  return (await bookablePrescriptionsFor(tx, org, [patientId], opts)).get(patientId) ?? [];
 }
 
 /** Übersicht aller laufenden Verordnungen der Praxis (Ampel). */
@@ -301,7 +330,7 @@ export async function listRunningPrescriptions(auth: AuthContext, statuses: Pres
       .where(and(eq(prescriptions.organizationId, org), inArray(prescriptions.status, statuses)))
       .orderBy(asc(prescriptions.startBy), asc(prescriptions.issuedAt));
     const usage = await usageFor(tx, org, list.map((r) => r.vo.id));
-    const expired = auth.can("medical.write") ? await expireOverdue(tx, org, list.map((r) => r.vo), usage) : [];
+    const expired = canAutoExpire(auth) ? await expireOverdue(tx, org, list.map((r) => r.vo), usage) : [];
     const ik = await practiceIk(tx, org);
     // Ohne medizinisches Leserecht (Empfang): nur Fristen/Einheiten, keine Diagnose-/Arztdetails
     const out = list
@@ -362,11 +391,16 @@ export async function savePrescription(
     const catalogPrice = new Map(priced.map((s) => [s.gkvPosition, s.priceCents]));
     const cost = remedyCostCents(positions.map((x) => ({ units: x.units, priceCents: x.position ? (priceFor(x.position, today)?.cents ?? catalogPrice.get(x.position)) : null })));
     const maxUnits = Math.max(0, ...positions.map((x) => x.units));
-    const estimate = priceSnapshot({ positions, treatmentDates: Array.from({ length: maxUnits }, () => today), birthDate: p.birthDate, exemptions: p.copaymentExemptions, computedOn: today });
+    const estimate = priceSnapshot({ positions, treatmentDates: Array.from({ length: maxUnits }, () => today), birthDate: p.birthDate, exemptions: p.copaymentExemptions, computedOn: today, insurerIk: d.insurerIk });
     const warnings = [...check.warnings];
     if (!cost.complete) warnings.push("Für mindestens eine Position gibt es keinen Preis in der Vergütungsliste Podologie (Anlage 2) – Zuzahlung bitte prüfen.");
-    if (d.copaymentExempt && !p.copaymentExemptions.some((e) => e.validFrom <= today && today <= e.validTo)) {
+    const exemption = exemptOn(p.copaymentExemptions, today);
+    if (d.copaymentExempt && !exemption) {
       warnings.push("„Zuzahlungsfrei“ ist angekreuzt, aber es ist keine gültige Befreiungsbescheinigung hinterlegt – auf die Zuzahlung darf nur mit Bescheinigung verzichtet werden.");
+    }
+    // Bescheinigung „der Krankenkasse“ (Vertrag § 8 Abs. 3): von einer anderen Kasse als auf der VO → bitte prüfen
+    if (exemption?.insurerIk && d.insurerIk && normalizeId(exemption.insurerIk) !== normalizeId(d.insurerIk)) {
+      warnings.push(`Die gültige Befreiungsbescheinigung ist von einer anderen Krankenkasse (IK ${exemption.insurerIk}) als auf der Verordnung (IK ${d.insurerIk}) – bitte prüfen (Kassenwechsel?).`);
     }
     const ik = await practiceIk(tx, org);
     const values = {
@@ -433,44 +467,73 @@ export async function changePrescriptionStatus(
   const blocked = gkvGuard(auth.organization, "verordnungen");
   if (blocked) return blocked;
   const org = auth.organization.id;
+  const today = berlinDateIso();
   const result = await withOrg(org, async (tx) => {
     const [vo] = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))).for("update");
     if (!vo) return { error: "Verordnung nicht gefunden." };
     if (input.to === "billed") return { error: "„Abgerechnet“ wird nur über einen Abrechnungslauf gesetzt." };
     const used = (await usageFor(tx, org, [vo.id])).get(vo.id)?.length ?? 0;
-    const note = input.interruptionNote?.trim() || vo.interruptionNote;
+    // Wiederaufnahme aus „Frist überschritten“: Begründung kommt im selben Feld, gehört aber nicht in den
+    // Abbruch-/Unterbrechungsvermerk (der geht in den Abrechnungsexport) → reopen_note (PR #111 C1)
+    const reopen = vo.status === "expired" && (input.to === "open" || input.to === "active");
+    const note = reopen ? input.interruptionNote?.trim() || null : input.interruptionNote?.trim() || vo.interruptionNote;
     const t = canTransition(vo.status as PrescriptionStatus, input.to, { unitsUsed: used, units: vo.units, interruptionNote: note });
     if (!t.ok) return { error: t.reason };
-    const extra: Partial<typeof prescriptions.$inferInsert> = {};
+    const extra: Partial<typeof prescriptions.$inferInsert> = reopen ? {} : { interruptionNote: note ?? null };
+    let auditMeta: Record<string, unknown> = {};
     if (input.to === "billing_ready") {
       // Pflichtangaben (Anlage 3): Korrekturen müssen vor Einreichung zur Abrechnung erfolgt sein
       const findings = findingsFor(vo, await practiceIk(tx, org));
       const block = findings.find((f) => f.level !== "warning");
       if (blocksBilling(findings) && block) return { error: `Noch nicht abrechnungsreif: ${block.message}` };
       // Preis-Snapshot mit den echten Behandlungstagen (Preis nach Behandlungsdatum, Zuzahlung je Tag)
-      const [pt] = await tx.select({ birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, vo.patientId)));
+      const [pt] = await tx.select({ birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions, insurerIk: patients.insurerIk }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, vo.patientId)));
       const dates = (await usageFor(tx, org, [vo.id])).get(vo.id) ?? [];
-      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: berlinDateIso() });
+      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null });
+      // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
+      if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
+      // bisherigen Snapshot nachvollziehbar halten, wenn neu berechnet wird (billing_ready → completed → billing_ready, S1)
+      auditMeta = { snapshot: { remedyCents: snap.remedyCents, copaymentCents: snap.copaymentCents, computedOn: snap.computedOn }, ...(vo.priceSnapshot ? { previousSnapshot: vo.priceSnapshot } : {}) };
     }
+    if (vo.status === "billing_ready" && input.to === "completed" && vo.priceSnapshot) auditMeta = { previousSnapshot: vo.priceSnapshot };
     if (input.to === "expired") extra.expiredReason = vo.expiredReason ?? "manual";
-    await tx.update(prescriptions).set({ status: input.to, interruptionNote: note ?? null, ...extra }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, vo.id)));
-    return { ok: true as const, from: vo.status };
+    if (reopen) Object.assign(extra, { expiredReason: null, reopenedAt: today, reopenNote: note });
+    await tx.update(prescriptions).set({ status: input.to, ...extra }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, vo.id)));
+    return { ok: true as const, from: vo.status, meta: reopen ? { reopen: true, note, expiredReason: vo.expiredReason } : auditMeta };
   });
   if ("error" in result) return { error: result.error ?? "Fehler" };
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.status", entity: "prescription", entityId: input.id, meta: { from: result.from, to: input.to } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.status", entity: "prescription", entityId: input.id, meta: { from: result.from, to: input.to, ...result.meta } });
   return { ok: true };
 }
 
-export async function setCopaymentPaid(auth: AuthContext, input: { id: string; patientId: string; paid: boolean }): Promise<{ error: string } | undefined> {
+export const COPAYMENT_METHODS = { cash: "bar", card: "Karte", transfer: "Überweisung", other: "sonstig" } as const;
+export type CopaymentMethod = keyof typeof COPAYMENT_METHODS;
+
+/**
+ * Zuzahlung als erhalten markieren (Datum, Betrag, Zahlungsart) bzw. zurücksetzen. Betrag ohne Angabe = berechnete
+ * Zuzahlung. Vorbereitung für die Zuzahlungsquittung (Paket B). Auch nach „abgerechnet“ erlaubt (Trigger 0062).
+ */
+export async function setCopaymentPaid(
+  auth: AuthContext,
+  input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null },
+): Promise<{ error: string } | undefined> {
   assertCan(auth, "medical.write");
   const blocked = gkvGuard(auth.organization, "copayment");
   if (blocked) return blocked;
   const org = auth.organization.id;
-  await withOrg(org, (tx) =>
-    tx.update(prescriptions).set({ copaymentPaidAt: input.paid ? new Date() : null }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))),
-  );
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid } });
+  if (input.amountCents !== undefined && input.amountCents !== null && (!Number.isInteger(input.amountCents) || input.amountCents < 0 || input.amountCents > 1_000_000)) return { error: "Betrag ungültig." };
+  const done = await withOrg(org, async (tx) => {
+    const [vo] = await tx.select({ copaymentCents: prescriptions.copaymentCents }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId))).for("update");
+    if (!vo) return null;
+    const values = input.paid
+      ? { copaymentPaidAt: new Date(), copaymentPaidCents: input.amountCents ?? vo.copaymentCents ?? null, copaymentPaidMethod: input.method ?? null }
+      : { copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null };
+    await tx.update(prescriptions).set(values).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id)));
+    return values;
+  });
+  if (!done) return { error: "Verordnung nicht gefunden." };
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid, cents: done.copaymentPaidCents, method: done.copaymentPaidMethod } });
 }
 
 // ───────────────────────── Abrechnungslauf ─────────────────────────
@@ -549,6 +612,7 @@ export const GKV_BATCH_HEADER = [
   "BVG",
   "Heilmittelkosten EUR",
   "Preisstand",
+  "Zuzahlungsfrei angekreuzt (VO)",
 ];
 
 /** Zeilen für den neutralen CSV-Export eines Abrechnungslaufs (Übergabe an ein Abrechnungszentrum). */
@@ -599,7 +663,9 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       vo.positions.map((x) => `${x.position ?? ""}:${x.label}:${x.units}`).join(" | "),
       dates.join(" | "),
       euro(vo.copaymentCents),
-      vo.copaymentExempt ? "ja" : "nein",
+      // tatsächliche Befreiung je Behandlungstag aus dem Preis-Snapshot (Bescheinigung/minderjährig, PR #111 B1);
+      // das Kreuz auf der VO steht in der Spalte „Zuzahlungsfrei angekreuzt (VO)“
+      exemptionSummary(vo.priceSnapshot as PriceSnapshot | null),
       vo.copaymentPaidAt ? berlinDateIso(vo.copaymentPaidAt) : "",
       vo.therapyReportRequested ? "ja" : "nein",
       vo.interruptionNote ?? "",
@@ -615,6 +681,7 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       vo.bvg ? "ja" : "nein",
       vo.remedyCostCents === null ? "" : euro(vo.remedyCostCents),
       [...new Set(((vo.priceSnapshot as { lines?: { tableVersion: string | null }[] } | null)?.lines ?? []).map((l) => l.tableVersion).filter(Boolean))].join(" | "),
+      vo.copaymentExempt ? "ja" : "nein",
     ]);
   }
   await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.export", entity: "billing_batch", entityId: batchId, meta: { count: data.rows.length } });

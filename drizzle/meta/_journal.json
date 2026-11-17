@@ -435,6 +435,13 @@
       "when": 1794903253946,
       "tag": "0061_gkv_grundlagen",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1794906305286,
+      "tag": "0062_gkv_review",
+      "breakpoints": true
     }
   ]
 }

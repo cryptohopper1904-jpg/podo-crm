@@ -34,10 +34,12 @@ und die KBV-Richtlinie zur Vergabe der Betriebsstättennummer.
 | Regel | Wert | Quelle | Code |
 |---|---|---|---|
 | Spätester Behandlungsbeginn | 28 Kalendertage nach Ausstellung, dringlich 14 | HeilM-RL § 15 Abs. 1; Vertrag § 6 Abs. 3; Anlage 3 Buchst. e | `START_DEADLINE_DAYS` |
-| Beginn verpasst → ungültig | „Frist überschritten“ (Status `expired`, Grund `start_missed`) | HeilM-RL § 15 Abs. 2; Vertrag § 6 Abs. 4 | `evaluatePrescription`, `expireOverdue` |
+| Beginn verpasst → ungültig | „Frist überschritten“ (Status `expired`, Grund `start_missed`); nicht bei Status „in Behandlung“ ohne erfassten Behandlungstag (Beginn außerhalb von PodoHero, z. B. Übernahme) | HeilM-RL § 15 Abs. 2; Vertrag § 6 Abs. 4 | `evaluatePrescription`, `expireOverdue` |
+| Automatischer Ablauf | nur Verordnungen ab Regelwerk `podo-2026-11` (`RULES_MIN_ANLAGE3`), nur in protokollierten Pfaden mit Schreibrecht (Akte, Übersicht; nicht Support-/Nur-Lesen-Modus); Doku-Auswahl, Terminplanung und Besuchstag filtern nur | Produktentscheidung (Review PR #111 H1/C1) | `autoExpiryApplies`, `canAutoExpire` |
+| Rückweg aus „Frist überschritten“ | nur mit Begründung (≥ 5 Zeichen, protokolliert, `reopen_note`); Beginnfrist gilt dann als bestätigt, 12-Wochen-Frist zählt ab der Wiederaufnahme | Produktentscheidung (Review PR #111 C1) – Verantwortung der Praxis | `canTransition`, `reopenedOn` |
 | Unterbrechung | ungültig nach 12 Kalenderwochen nach der letzten Behandlung | Vertrag § 7 Abs. 7 (HeilM-RL § 16 Abs. 4 Satz 5: die 14-Tage-Regel gilt für Podologie nicht) | `INTERRUPTION_WEEKS` |
 | Frequenz-Toleranz | ± 2 Werktage ohne Rücksprache | Vertrag § 7 Abs. 6 | `FREQUENCY_TOLERANCE_WORKDAYS` |
-| Frequenzabweichung darüber | nur nach Absprache mit der Ärztin/dem Arzt, auf der VO dokumentieren → Begründung je Behandlung Pflicht | HeilM-RL § 16 Abs. 3; Anlage 3 Buchst. i a) | `frequencyDeviation`, `prescriptionGate` |
+| Frequenzabweichung darüber | nur nach Absprache mit der Ärztin/dem Arzt, auf der VO dokumentieren → Begründung je Behandlung Pflicht; zwei Einträge am **selben Tag** (z. B. Befundung + Behandlung) sind keine Abweichung | HeilM-RL § 16 Abs. 3; Anlage 3 Buchst. i a); Vertrag § 7 Abs. 6 (Abstand zwischen Behandlungen) | `frequencyDeviation`, `prescriptionGate` |
 | Keine Frequenz auf der VO | Katalog-Frequenz gilt (DF/NF/QF: alle 4–6 Wochen) | Anlage 3 Buchst. i b); Heilmittelkatalog | `DIAGNOSIS_GROUPS[].defaultFrequency` |
 | UI1/UI2-Frequenz | nur Empfehlung, keine Begründung nötig | Anlage 3 Buchst. i | `frequencyBinding: false` |
 | Höchstmenge je VO | DF/NF/QF 6, UI1 8, UI2 4 (darüber: nur Höchstmenge abrechenbar, Arzt informieren) | Heilmittelkatalog; Anlage 3 Buchst. f b) | `maxUnitsPerPrescription` |
@@ -48,8 +50,12 @@ und die KBV-Richtlinie zur Vergabe der Betriebsstättennummer.
 | Hausbesuch | 79933/79934 nur mit „Hausbesuch: ja“ auf der VO | Anlage 3 Buchst. c; Anlage 2 § 2 Abs. 2 Buchst. e | `anlage3Findings` |
 | Zuzahlung | 10 % der Kosten + 10 € je Verordnung, höchstens die Kosten | SGB V § 61 Satz 3, § 32 Abs. 2; Vertrag § 8 Abs. 1 | `priceSnapshot` |
 | 10-%-Anteil | nach dem Alter am **Behandlungstag** (ab Vollendung des 18. Lebensjahres) | Vertrag § 8 Abs. 2 Satz 1–2 | `priceSnapshot` |
-| 10 € Verordnungsblattgebühr | nach dem **ersten Behandlungstag** | Vertrag § 8 Abs. 2 Satz 3 | `priceSnapshot` |
-| Zuzahlungsbefreiung | nur mit gültiger Bescheinigung der Kasse (Kreuz auf der VO genügt nicht); über den Jahreswechsel neu prüfen | Vertrag § 8 Abs. 3; Anlage 3 Buchst. a1; SGB V § 62 Abs. 1 | `exemptOn`, Befreiungskarte |
+| 10 € Verordnungsblattgebühr | nach dem **ersten Behandlungstag**; nur, wenn für diesen Tag ein Preis hinterlegt ist | Vertrag § 8 Abs. 2 Satz 3 | `priceSnapshot` |
+| Zuzahlung je Snapshot-Zeile | `null` = Position ohne Zuzahlung laut Anlage 2 (78220, 78530); `0` = befreit bzw. unter 18 | Anlage 2 § 2/§ 3 (Spalte „davon Zuzahlung (nachrichtlich)“) | `SnapshotLine.copayCents` |
+| Abrechnungsreif | nur mit vollständigem Preis-Snapshot (jede Position mit Positionsnummer und Preis am Behandlungstag) | Vertrag § 8 Abs. 1 (Zuzahlung aus den Kosten); Review PR #111 S2 | `changePrescriptionStatus` |
+| 78610 je Tag | bis zu zweimal je Tag; im Snapshot so verteilt, dass die verordneten Einheiten auf die Behandlungstage passen | Anlage 2 § 2 Abs. 2 Buchst. c | `GkvPosition.maxPerDay`, `priceSnapshot` |
+| Abgerechnet | unveränderbar (DB-Trigger `prescriptions_billed_lock`), nur „Zuzahlung erhalten“ (Datum, Betrag, Zahlungsart) darf nachgetragen werden; Neuberechnung des Snapshots (abrechnungsreif → abgeschlossen → abrechnungsreif) protokolliert den alten Snapshot | GoBD-Nachvollziehbarkeit; Review PR #111 S1 | Migration 0062 |
+| Zuzahlungsbefreiung | nur mit gültiger Bescheinigung der Kasse (Kreuz auf der VO genügt nicht); über den Jahreswechsel neu prüfen; Bescheinigung einer anderen Kasse als auf der VO → Hinweis „bitte prüfen“; höchstens 50 Einträge je Person | Vertrag § 8 Abs. 3; Anlage 3 Buchst. a1; SGB V § 62 Abs. 1 | `exemptOn`, Befreiungskarte, CHECK `patients_copayment_exemptions_max` |
 | Pflichtangaben VO | siehe nächster Abschnitt | Anlage 3 Ziff. 3 und 5 | `anlage3Findings` |
 | IK-Prüfziffer | Stellen 3–8 × 2,1,2,1,2,1, Quersummen addieren, mod 10 | KVNR-RL Anlage 1 (Beispiel IK 109911114) | `isValidIk` |
 | KVNR | Buchstabe + 8 Ziffern + Prüfziffer; Buchstabe → 01–26, Faktoren 1,2,1,2…, Quersummen, mod 10 | KVNR-RL Tabelle 1, Anlage 1 (A000500015, C000500021) | `isValidKvnr` |
@@ -71,8 +77,10 @@ und die KBV-Richtlinie zur Vergabe der Betriebsstättennummer.
   KVNR-Prüfziffer passt nicht, DF-ICD nicht eindeutig, Leitsymptomatik fehlt (DF/NF/QF), Frequenz fehlt, Höchstmenge
   überschritten.
 
-Die Prüfung gilt nur für Verordnungen, die mit dem aktuellen Regelwerk erfasst wurden (ältere hatten die Felder noch
-nicht). Fristen (Beginn, Unterbrechung) und die Frequenz-Begründung gelten für alle laufenden Verordnungen.
+Die Prüfung gilt für Verordnungen ab dem Regelwerk `podo-2026-11` (`hasAnlage3Fields`, auch für spätere Fassungen);
+ältere und übernommene Verordnungen hatten die Felder nicht. Fristen (Beginn, Unterbrechung) und die
+Frequenz-Begründung werden bei der Buchung für alle laufenden Verordnungen geprüft; automatisch auf „Frist
+überschritten“ gesetzt werden aber nur Verordnungen ab `podo-2026-11` (Übernahmen und Altbestand bleiben, wie sie sind).
 
 ## Vergütung (Anlage 2)
 
@@ -83,7 +91,9 @@ speichert PodoHero je Verordnung einen **Preis-Snapshot** (Positionen, Preise je
 Zuzahlung je Tag, Befreiung, Minderjährigkeit) sowie die Heilmittelkosten (`prescriptions.price_snapshot`,
 `remedy_cost_cents`). Der Abrechnungslauf summiert Heilmittelkosten und Zuzahlungen (`billing_batches.remedy_total_cents`,
 `copayment_total_cents`), der CSV-Export enthält zusätzlich IK der Praxis, LEGS, Kassen-IK, Status, 2. ICD,
-Leitsymptomatik, Unfall/BVG, Heilmittelkosten und Preisstand.
+Leitsymptomatik, Unfall/BVG, Heilmittelkosten und Preisstand. Die Spalte „Zuzahlungsbefreit“ kommt aus dem Snapshot
+(„ja“, „nein“, „minderjährig“ oder „gemischt (TT.MM.JJJJ befreit | …)“ je Behandlungstag); das Kreuz der Verordnung
+steht in „Zuzahlungsfrei angekreuzt (VO)“ (letzte Spalte).
 
 Neue Fassung: neue Version mit `validFrom` anhängen, bestehende Werte nie ändern; `RULES_VERSION` hochsetzen.
 
@@ -128,3 +138,17 @@ Gespeichert wird trotzdem (`appointments.prescription_id`). Die Einheit zählt e
 10. **UI-Begründungsfeld** (Lokalisation des Zehs, Anlage 3 Buchst. o2) und das Bestätigungsfeld (Unterschrift je
     Behandlung, Buchst. o) sind noch nicht abgebildet.
 11. Kalender-Badge „VO“ am Termin: noch nicht umgesetzt (optional).
+12. **Pauschale bei 18. Geburtstag im Behandlungszeitraum**: Ist die 10-€-Verordnungsblattgebühr fällig, wenn die Person
+    erst nach dem ersten Termin 18 wird? Aktuell ist der erste Behandlungstag maßgeblich (Vertrag § 8 Abs. 2 Satz 3).
+13. **Wiederaufnahme aus „Frist überschritten“**: PodoHero erlaubt sie mit Begründung (z. B. Beginn rechtzeitig, aber nicht
+    erfasst) und zählt die 12-Wochen-Frist ab der Wiederaufnahme. Ob Kassen das so akzeptieren, ist nicht belegt – die
+    Verantwortung liegt bei der Praxis; bitte mit dem Abrechnungszentrum klären.
+14. **Übernahmen mit Status „in Behandlung“**: Beginnfrist gilt als eingehalten, Unterbrechung wird erst ab der ersten in
+    PodoHero erfassten Behandlung geprüft (die Termine im Altsystem sind nicht bekannt).
+15. **Storno/Korrektur eines Abrechnungslaufs**: abgerechnete Verordnungen sind gesperrt; ein Weg für Rückläufer/Korrekturen
+    der Kasse fehlt noch.
+16. **Pflegeheim-Praxen**: Bei Besuchstagen im festen Rhythmus (z. B. alle 3 Wochen) kann die verordnete Frequenz
+    (DF/NF/QF: alle 4–6 Wochen) unterschritten werden – dann ist je Behandlung eine Begründung (Absprache mit der Ärztin/dem
+    Arzt) Pflicht. Ob eine einmalige Absprache für die ganze Verordnung genügt, ist nicht belegt.
+17. **78610-Verteilung**: Wie viele 78610 an welchem Tag abgegeben wurden, erfasst PodoHero nicht; der Snapshot verteilt
+    (höchstens 2 je Tag, Anlage 2 § 2 Abs. 2 Buchst. c).

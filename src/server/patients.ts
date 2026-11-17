@@ -39,7 +39,8 @@ export const patientInput = z.object({
   preferredChannel: z.enum(["email", "whatsapp", "sms", "phone", "letter", "none"]).default("none"),
   insuranceType: z.enum(["gkv", "pkv", "self", "beihilfe"]).default("self"),
   insurerName: optText,
-  insuranceNumber: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "").toUpperCase() || null : v), z.string().max(20).nullable().optional()),
+  /** Freitext wie bisher (bis 500); bei GKV als KVNR normalisiert, s. unten (PR #111 C4) */
+  insuranceNumber: optText,
   /** IK der Krankenkasse (9 Ziffern, Prüfziffer: src/lib/rules/gkv-ids.ts) */
   insurerIk: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "") || null : v), z.string().regex(/^\d{9}$/, "IK der Krankenkasse hat 9 Ziffern.").nullable().optional()),
   /** Versichertenstatus 1/3/5 (Mitglied/Familie/Rentner) */
@@ -55,7 +56,16 @@ export const patientInput = z.object({
   risk_neuropathy: z.preprocess((v) => v === "on", z.boolean()).optional(),
   risk_mrsa: z.preprocess((v) => v === "on", z.boolean()).optional(),
   risk_allergies: optText,
-});
+})
+  // GKV: Versichertennummer ist die KVNR (10 Zeichen, KVNR-Richtlinie § 290 SGB V) → ohne Leerzeichen, Großbuchstaben,
+  // höchstens 20 Zeichen (Prüfziffer nur als Hinweis an der Verordnung). Privat/Beihilfe/Selbstzahler: Nummern anderer
+  // Systeme bleiben unverändert (bisherige Regel, bis 500 Zeichen).
+  .superRefine((d, ctx) => {
+    if (d.insuranceType === "gkv" && d.insuranceNumber && d.insuranceNumber.replace(/\s+/g, "").length > 20) {
+      ctx.addIssue({ code: "custom", path: ["insuranceNumber"], message: "Versichertennummer zu lang – die KVNR hat 10 Zeichen (z. B. A123456780)." });
+    }
+  })
+  .transform((d) => (d.insuranceType === "gkv" && d.insuranceNumber ? { ...d, insuranceNumber: d.insuranceNumber.replace(/\s+/g, "").toUpperCase() } : d));
 export type PatientInput = z.infer<typeof patientInput>;
 
 export function toPatientValues(d: PatientInput) {

@@ -7,6 +7,7 @@ import { patients, type CopaymentExemptionRow } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { gkvGuard } from "@/lib/features";
+import { isValidIsoDate } from "@/lib/iso-date";
 import { assertCan } from "./authz";
 
 /**
@@ -15,7 +16,8 @@ import { assertCan } from "./authz";
  * Gespeichert als Liste an der Person (patients.copayment_exemptions); ausgewertet je Behandlungstag
  * (src/lib/rules/prescription.ts, exemptOn/priceSnapshot).
  */
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum fehlt.");
+// echtes Kalenderdatum (kein 2026-02-30, Jahr 2000–2100) – sonst rechnet exemptOn per Zeichenvergleich falsch (PR #111 A2)
+const isoDate = z.string().refine((v) => isValidIsoDate(v), "Datum fehlt oder ist ungültig.");
 
 export const exemptionInput = z
   .object({
@@ -49,19 +51,36 @@ export async function addCopaymentExemption(auth: AuthContext, d: z.infer<typeof
   });
   if (done === false) return { error: "Patient nicht gefunden." };
   if (done === null) return { error: "Zu viele Einträge – bitte alte Befreiungen entfernen." };
-  await audit({ organizationId: org, userId: auth.user.id, action: "patient.copayment_exemption.add", entity: "patient", entityId: d.patientId, meta: { validFrom: d.validFrom, validTo: d.validTo } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "patient.copayment_exemption.add", entity: "patient", entityId: d.patientId, meta: { id: row.id, validFrom: d.validFrom, validTo: d.validTo, insurerName: d.insurerName, insurerIk: d.insurerIk } });
   return { ok: true };
 }
 
-export async function removeCopaymentExemption(auth: AuthContext, input: { patientId: string; id: string }): Promise<void> {
+/**
+ * Entfernt eine Bescheinigung. Protokolliert nur, wenn wirklich ein Eintrag entfernt wurde – mit Zeitraum und Kasse,
+ * damit nachvollziehbar bleibt, welche Befreiung für die Zuzahlung galt (PR #111 A4, Buchhaltung).
+ */
+export async function removeCopaymentExemption(auth: AuthContext, input: { patientId: string; id: string }): Promise<{ removed: boolean }> {
   assertCan(auth, "medical.write");
-  if (gkvGuard(auth.organization, "copayment")) return;
+  if (gkvGuard(auth.organization, "copayment")) return { removed: false };
   const org = auth.organization.id;
-  await withOrg(org, (tx) =>
-    tx
+  const removed = await withOrg(org, async (tx) => {
+    const [p] = await tx.select({ list: patients.copaymentExemptions }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId))).for("update");
+    const hit = p?.list.find((e) => e.id === input.id);
+    if (!p || !hit) return null;
+    await tx
       .update(patients)
       .set({ copaymentExemptions: sql`coalesce((select jsonb_agg(e) from jsonb_array_elements(${patients.copaymentExemptions}) e where e->>'id' <> ${input.id}), '[]'::jsonb)` })
-      .where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId))),
-  );
-  await audit({ organizationId: org, userId: auth.user.id, action: "patient.copayment_exemption.remove", entity: "patient", entityId: input.patientId, meta: { id: input.id } });
+      .where(and(eq(patients.organizationId, org), eq(patients.id, input.patientId)));
+    return hit;
+  });
+  if (!removed) return { removed: false };
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "patient.copayment_exemption.remove",
+    entity: "patient",
+    entityId: input.patientId,
+    meta: { id: input.id, validFrom: removed.validFrom, validTo: removed.validTo, insurerName: removed.insurerName ?? null, insurerIk: removed.insurerIk ?? null },
+  });
+  return { removed: true };
 }

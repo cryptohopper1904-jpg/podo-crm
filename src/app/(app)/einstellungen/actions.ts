@@ -3,7 +3,7 @@
 import { log } from "@/lib/log";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, type Tx } from "@/db";
 import { memberships, organizations, users } from "@/db/schema";
@@ -20,6 +20,7 @@ import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/prac
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
 import { ikProblem, isLegsCode } from "@/lib/rules/gkv-ids";
+import { isValidIsoDate } from "@/lib/iso-date";
 import {
   createServiceCategory,
   deleteServiceCategory,
@@ -497,7 +498,8 @@ export async function saveGkvMasterDataAction(_: SettingsState, form: FormData):
     .object({
       ik: z.string().trim().max(20).optional().transform((v) => (v ? v.replace(/\s+/g, "") : null)),
       legsCode: z.string().trim().max(10).optional().transform((v) => v || null),
-      gkvAdmissionDate: z.string().trim().optional().transform((v) => v || null).refine((v) => v === null || /^\d{4}-\d{2}-\d{2}$/.test(v), "Zulassungsdatum ungültig."),
+      // echtes Kalenderdatum in plausiblem Bereich (PR #111 A2)
+      gkvAdmissionDate: z.string().trim().optional().transform((v) => v || null).refine((v) => v === null || isValidIsoDate(v, { minYear: 1990, maxYear: 2100 }), "Zulassungsdatum ungültig."),
       gkvContractNote: opt,
     })
     .safeParse(Object.fromEntries([...form.entries()].filter(([, v]) => typeof v === "string")));
@@ -521,13 +523,17 @@ export async function applyGkvSuggestionAction(_: SettingsState, form: FormData)
   const ik = String(form.get("ik") ?? "").replace(/\s+/g, "") || null;
   const admission = String(form.get("gkvAdmissionDate") ?? "") || null;
   if (ik && ikProblem(ik, "IK aus dem Import")) return { error: ikProblem(ik, "IK aus dem Import")! };
-  if (admission && !/^\d{4}-\d{2}-\d{2}$/.test(admission)) return { error: "Zulassungsdatum ungültig." };
-  const [o] = await db.select({ ik: organizations.ik, gkvAdmissionDate: organizations.gkvAdmissionDate }).from(organizations).where(eq(organizations.id, auth.organization.id));
-  const values: { ik?: string; gkvAdmissionDate?: string } = {};
-  if (ik && !o?.ik) values.ik = ik;
-  if (admission && !o?.gkvAdmissionDate) values.gkvAdmissionDate = admission;
+  if (admission && !isValidIsoDate(admission, { minYear: 1990, maxYear: 2100 })) return { error: "Zulassungsdatum ungültig." };
+  // atomar: nur in LEERE Felder schreiben (bedingte Updates statt Lesen-dann-Schreiben, PR #111 A3) – parallel
+  // gespeicherte Werte aus Einstellungen → Praxis werden so nie überschrieben
+  const orgId = auth.organization.id;
+  const values = await db.transaction(async (tx) => {
+    const out: { ik?: string; gkvAdmissionDate?: string } = {};
+    if (ik && (await tx.update(organizations).set({ ik }).where(and(eq(organizations.id, orgId), isNull(organizations.ik))).returning({ id: organizations.id })).length) out.ik = ik;
+    if (admission && (await tx.update(organizations).set({ gkvAdmissionDate: admission }).where(and(eq(organizations.id, orgId), isNull(organizations.gkvAdmissionDate))).returning({ id: organizations.id })).length) out.gkvAdmissionDate = admission;
+    return out;
+  });
   if (!Object.keys(values).length) return { ok: "Nichts übernommen – die Felder sind bereits ausgefüllt (Einstellungen → Praxis)." };
-  await db.update(organizations).set(values).where(eq(organizations.id, auth.organization.id));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.gkv_master_data", meta: { source: "import-suggestion", ik: !!values.ik, admission: !!values.gkvAdmissionDate } });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Übernommen – bitte unter Einstellungen → Praxis → Kassenzulassung prüfen." };

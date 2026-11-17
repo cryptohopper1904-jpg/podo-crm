@@ -70,6 +70,8 @@ export function DokuForm({
   const [ai, setAi] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState(defaultPrescriptionId && prescriptions.some((p) => p.id === defaultPrescriptionId) ? defaultPrescriptionId : "");
   const selectedVo = prescriptions.find((p) => p.id === prescriptionId);
+  // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
+  const deviationText = selectedVo?.deviationText ?? (selectedVo ? (state?.deviationText ?? null) : null);
   const fileRef = useRef<HTMLInputElement>(null);
   // Pflicht-Bestätigung: eigene Meldung am Feld statt der flüchtigen Browser-Blase (Systemsprache)
   const confirmRef = useRef<HTMLInputElement>(null);
@@ -144,10 +146,10 @@ export function DokuForm({
               Nach dieser Behandlung noch {selectedVo.remaining - 1} Einheit(en) offen.{selectedVo.warning ? ` ${selectedVo.warning}` : ""}
             </p>
           ) : null}
-          {selectedVo?.deviationText ? (
+          {deviationText ? (
             <Field
               label="Begründung der Frequenzabweichung (Pflicht)"
-              hint={`${selectedVo.deviationText} Abweichung nur nach Absprache mit der verordnenden Ärztin/dem Arzt – Absprache hier dokumentieren (Vertrag § 125 Podologie § 7 Abs. 6, HeilM-RL § 16 Abs. 3).`}
+              hint={`${deviationText} Abweichung nur nach Absprache mit der verordnenden Ärztin/dem Arzt – Absprache hier dokumentieren (Vertrag § 125 Podologie § 7 Abs. 6, HeilM-RL § 16 Abs. 3).`}
               className="mt-3"
             >
               <Textarea name="frequencyDeviationNote" rows={2} minLength={5} maxLength={500} required placeholder="z. B. Absprache mit Dr. … am …: Termin wegen Krankenhausaufenthalt verschoben" />

@@ -50,9 +50,9 @@ const url = process.env.TEST_DATABASE_URL;
   it("zählt Einheiten und setzt den Status", async () => {
     await create(patientId);
     expect(await status()).toBe("active");
-    // zweite Behandlung am selben Tag weicht von der Katalog-Frequenz (DF: alle 4–6 Wochen) ab → Begründung Pflicht
-    await expect(create(patientId)).rejects.toThrow(/Frequenz unterschritten/);
-    await create(patientId, "Absprache mit Dr. Beispiel: Kontrolle am selben Tag");
+    // zweite Behandlung am selben Tag (z. B. Befundung + Behandlung): kein neuer Behandlungsabstand → keine
+    // Frequenzabweichung, keine Begründung nötig (PR #111 C5; Abweichung mit Begründung: gkv-grundlagen.db.test.ts)
+    await create(patientId);
     expect(await status()).toBe("completed");
     await expect(create(patientId)).rejects.toBeInstanceOf(mod.RecordInputError);
   });

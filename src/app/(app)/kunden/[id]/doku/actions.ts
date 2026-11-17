@@ -15,7 +15,8 @@ import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/r
 import { RecordInputError, checkTreatmentRefs, insertTreatmentRecord, lockPatientChain } from "@/server/records";
 import { berlinDateIso } from "@/lib/format";
 
-export type DokuFormState = { error?: string } | undefined;
+/** `deviationText`: Frequenzabweichung ohne Begründung → Formular zeigt das Begründungsfeld (PR #111 C5) */
+export type DokuFormState = { error?: string; deviationText?: string | null } | undefined;
 
 const text = z.string().trim().max(5000).optional().transform((v) => (v ? v : null));
 
@@ -128,7 +129,7 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
     });
   } catch (e) {
     // fachlicher Fehler → Transaktion (inkl. Spangen-Episode) wurde zurückgerollt
-    if (e instanceof RecordInputError) return { error: e.message };
+    if (e instanceof RecordInputError) return { error: e.message, deviationText: e.deviationText };
     throw e;
   }
   if ("error" in recordId) return { error: recordId.error };

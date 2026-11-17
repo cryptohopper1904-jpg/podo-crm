@@ -43,7 +43,8 @@ export async function removeResidentAction(form: FormData) {
   revalidatePath("/pflegeheime");
 }
 
-export type QuickRecordState = { error?: string; ok?: string } | undefined;
+/** `deviationText`: Frequenzabweichung ohne Begründung → Zeile zeigt das Begründungsfeld (PR #111 C5) */
+export type QuickRecordState = { error?: string; ok?: string; deviationText?: string | null } | undefined;
 
 const quickSchema = z.object({
   careHomeId: z.string().uuid(),
@@ -68,7 +69,7 @@ export async function quickRecordAction(_: QuickRecordState, form: FormData): Pr
     { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null, frequencyDeviationNote: d.frequencyDeviationNote, servicesText: d.servicesText, findings: d.findings, structured: { mode: "care_home", careHomeId: d.careHomeId } },
     { mode: "care_home" },
   );
-  if ("error" in res) return { error: res.error };
+  if ("error" in res) return { error: res.error, deviationText: res.deviationText ?? null };
   revalidatePath(`/kunden/${d.patientId}`);
   return { ok: "Gespeichert" };
 }

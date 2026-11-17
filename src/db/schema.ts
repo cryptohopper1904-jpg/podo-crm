@@ -547,7 +547,8 @@ export const appointments = pgTable(
     title: text("title"),
     notes: text("notes"),
     homeVisit: boolean("home_visit").notNull().default(false),
-    prescriptionId: uuid("prescription_id"),
+    /** geplante Behandlung auf diese Verordnung (gleiche Praxis: Trigger appointments_fk_same_org, Migration 0062) */
+    prescriptionId: uuid("prescription_id").references(() => prescriptions.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -620,8 +621,11 @@ export const prescriptions = pgTable("prescriptions", {
   bvg: boolean("bvg").notNull().default(false),
   /** Arztstempel + Unterschrift vorhanden (Anlage 3 Buchst. n); null = nicht erfasst (Altbestand, Import) */
   doctorSigned: boolean("doctor_signed"),
-  /** warum „Frist überschritten“ (status expired): start_missed | interrupted */
+  /** warum „Frist überschritten“ (status expired): start_missed | interrupted | manual */
   expiredReason: text("expired_reason"),
+  /** Wiederaufnahme aus „Frist überschritten“ (Tag + Pflichtbegründung, s. canTransition) – Fristen ab diesem Tag */
+  reopenedAt: date("reopened_at"),
+  reopenNote: text("reopen_note"),
   /** Heilmittelkosten laut Preis-Snapshot (bei Abrechnungsreife) */
   remedyCostCents: integer("remedy_cost_cents"),
   /** Preis-Snapshot je Verordnung bei Abrechnungsreife (Positionen, Preise, Tabellenstand, Zuzahlung je Tag) */
@@ -637,12 +641,15 @@ export const prescriptions = pgTable("prescriptions", {
   /** open | active | completed | billing_ready | billed | expired | cancelled */
   status: text("status").notNull().default("open"),
   doctorBsnr: text("doctor_bsnr"),
-  /** Behandlungseinheiten je Position, z. B. [{ position: "78100", label: "Hornhautabtragung", units: 6 }] */
+  /** Behandlungseinheiten je Position (Anlage 2), z. B. [{ position: "78020", label: "Podologische Behandlung (groß)", units: 6 }] */
   positions: jsonb("positions").$type<{ position?: string; label: string; units: number }[]>().notNull().default([]),
   therapyReportRequested: boolean("therapy_report_requested").notNull().default(false),
   /** Zuzahlung erhalten (10 € + 10 %) */
   copaymentCents: integer("copayment_cents"),
   copaymentPaidAt: timestamp("copayment_paid_at", { withTimezone: true }),
+  /** erhaltener Betrag und Zahlungsart (cash | card | transfer | other) – Vorbereitung Zuzahlungsquittung (Paket B) */
+  copaymentPaidCents: integer("copayment_paid_cents"),
+  copaymentPaidMethod: text("copayment_paid_method"),
   interruptionNote: text("interruption_note"),
   scanMediaId: uuid("scan_media_id"),
   /** Herkunft: paper (Muster 13), ocr (Foto + KI-Auslesung, bestätigt), everordnung (TI/FHIR) */

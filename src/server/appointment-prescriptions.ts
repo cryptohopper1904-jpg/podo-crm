@@ -47,6 +47,8 @@ function warningsFor(vo: BookablePrescription, planned: string[], newDates: stri
     urgent: vo.urgent,
     issuedAt: vo.issuedAt,
     startBy: vo.startBy,
+    started: vo.started,
+    reopenedOn: vo.reopenedAt,
     units: vo.units,
     treatmentDates: vo.dates,
     plannedDates: planned,
@@ -66,8 +68,12 @@ export async function planningForPatient(
     const vos = await bookablePrescriptions(tx, org, input.patientId, { medical });
     const planned = await plannedDates(tx, org, vos.map((v) => v.id));
     const options = vos.map((v) => ({ id: v.id, label: v.label, remaining: v.remaining, units: v.units }));
-    // Vorschlag: ausdrücklich gewählte, sonst die älteste laufende Verordnung (Vertrag § 7 Abs. 5: erst die frühere zu Ende)
-    const selectedId = input.prescriptionId === "" ? null : (vos.find((v) => v.id === input.prescriptionId)?.id ?? vos[0]?.id ?? null);
+    // Vorschlag: ausdrücklich gewählte, sonst die älteste laufende Verordnung (Vertrag § 7 Abs. 5: erst die frühere zu Ende).
+    // Ausdrücklich gewählte, die nicht (mehr) buchbar ist → keine stille Ersatzauswahl, sondern Hinweis (PR #111 Nice).
+    if (input.prescriptionId && !vos.some((v) => v.id === input.prescriptionId)) {
+      return { options, selectedId: null, warnings: ["Die gewählte Verordnung ist nicht mehr buchbar (abgeschlossen, Frist überschritten oder keine Einheit frei) – bitte eine andere wählen oder ohne Verordnung planen."] };
+    }
+    const selectedId = input.prescriptionId === "" ? null : (input.prescriptionId ?? vos[0]?.id ?? null);
     const vo = vos.find((v) => v.id === selectedId);
     return { options, selectedId, warnings: vo ? warningsFor(vo, planned.get(vo.id) ?? [], input.dates) : [] };
   });

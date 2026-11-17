@@ -11,12 +11,12 @@ import { assertCan } from "./authz";
 import { gkvGuard } from "@/lib/features";
 import {
   FREQUENCY_NOTE_MIN,
-  RULES_VERSION,
   acceptsUnit,
   anlage3Findings,
   evaluatePrescription,
   frequencyDeviation,
   frequencyDeviationText,
+  hasAnlage3Fields,
   statusAfterUnit,
   type FrequencyDeviation,
   type PrescriptionStatus,
@@ -48,8 +48,19 @@ export type NewTreatment = {
   frequencyDeviationNote?: string | null;
 };
 
-/** Fachlicher Fehler – wird geworfen, damit die umgebende Transaktion zurückgerollt wird. */
-export class RecordInputError extends Error {}
+/**
+ * Fachlicher Fehler – wird geworfen, damit die umgebende Transaktion zurückgerollt wird. `deviationText`: Die Behandlung
+ * weicht von der Frequenz ab und die Begründung fehlt – das Formular zeigt dann das Begründungsfeld (PR #111 C5), auch
+ * wenn es beim Laden der Seite noch keine Abweichung gab (z. B. Besuchstag über Mitternacht, parallele Doku).
+ */
+export class RecordInputError extends Error {
+  constructor(
+    message: string,
+    readonly deviationText: string | null = null,
+  ) {
+    super(message);
+  }
+}
 
 /** Serialisiert die Hash-Kette eines Patienten (parallele Einträge dürfen nicht verzweigen). */
 export async function lockPatientChain(tx: Tx, patientId: string) {
@@ -88,7 +99,7 @@ export async function prescriptionGate(
   tx: Tx,
   org: string,
   input: { prescriptionId: string; date: string; frequencyDeviationNote?: string | null },
-): Promise<{ error: string } | { deviation: FrequencyDeviation | null }> {
+): Promise<{ error: string; deviationText?: string } | { deviation: FrequencyDeviation | null }> {
   const [vo] = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.prescriptionId)));
   if (!vo) return { error: "Verordnung nicht gefunden." };
   const recs = await tx
@@ -96,17 +107,18 @@ export async function prescriptionGate(
     .from(treatmentRecords)
     .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, input.prescriptionId)));
   const dates = recs.map((r) => berlinDateIso(r.treatedAt)).sort();
-  const ev = evaluatePrescription({ issuedAt: vo.issuedAt, urgent: vo.urgent, units: vo.units, status: vo.status, frequency: vo.frequencyPerWeek, treatmentDates: dates, today: input.date, startBy: vo.startBy });
+  const ev = evaluatePrescription({ issuedAt: vo.issuedAt, urgent: vo.urgent, units: vo.units, status: vo.status, frequency: vo.frequencyPerWeek, treatmentDates: dates, today: input.date, startBy: vo.startBy, reopenedOn: vo.reopenedAt });
   if (ev.expiry === "start_missed") return { error: `Frist überschritten: Die Behandlung hätte bis ${ev.startBy.split("-").reverse().join(".")} beginnen müssen – die Verordnung ist ungültig.` };
   if (ev.expiry === "interrupted") return { error: "Frist überschritten: Seit der letzten Behandlung sind mehr als 12 Wochen vergangen – die Verordnung ist ungültig." };
-  if (vo.rulesVersion === RULES_VERSION) {
+  if (hasAnlage3Fields(vo.rulesVersion)) {
     const [o] = await tx.select({ ik: organizations.ik }).from(organizations).where(eq(organizations.id, org));
     const start = anlage3Findings({ ...vo, icd10Second: vo.icd10Second, frequency: vo.frequencyPerWeek, practiceIk: o?.ik ?? null }).find((f) => f.level === "start");
     if (start) return { error: `Behandlung auf diese Verordnung noch nicht möglich: ${start.message}` };
   }
   const deviation = frequencyDeviation({ group: vo.diagnosisGroup, frequency: vo.frequencyPerWeek, lastDate: dates.at(-1), date: input.date });
   if (deviation && (input.frequencyDeviationNote ?? "").trim().length < FREQUENCY_NOTE_MIN) {
-    return { error: `${frequencyDeviationText(deviation)} Bitte die Absprache mit der Ärztin/dem Arzt als Begründung eintragen.` };
+    const text = frequencyDeviationText(deviation);
+    return { error: `${text} Bitte die Absprache mit der Ärztin/dem Arzt im Feld „Begründung der Frequenzabweichung“ eintragen.`, deviationText: text };
   }
   return { deviation };
 }
@@ -145,7 +157,7 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
   let structured = input.structured ?? {};
   if (input.prescriptionId) {
     const gate = await prescriptionGate(tx, org, { prescriptionId: input.prescriptionId, date: berlinDateIso(treatedAt), frequencyDeviationNote: input.frequencyDeviationNote });
-    if ("error" in gate) throw new RecordInputError(gate.error);
+    if ("error" in gate) throw new RecordInputError(gate.error, gate.deviationText ?? null);
     // Abweichung + Begründung gehen in die Hash-Kette ein (structured) – Dokumentation „auf der Verordnung“ (Anlage 3 Buchst. i a)
     if (gate.deviation) structured = { ...structured, frequencyDeviation: { ...gate.deviation, note: input.frequencyDeviationNote!.trim().slice(0, 500) } };
   }
@@ -212,7 +224,7 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
 }
 
 /** Komfortfunktion: eigener Mandanten-Kontext + Audit. Gibt Fehlertext statt Exception zurück. */
-export async function createTreatmentRecord(auth: AuthContext, input: NewTreatment, auditMeta: Record<string, unknown> = {}): Promise<{ id: string } | { error: string }> {
+export async function createTreatmentRecord(auth: AuthContext, input: NewTreatment, auditMeta: Record<string, unknown> = {}): Promise<{ id: string } | { error: string; deviationText?: string | null }> {
   assertCan(auth, "medical.write");
   if (input.prescriptionId) {
     const blocked = gkvGuard(auth.organization, "verordnungen");
@@ -224,7 +236,7 @@ export async function createTreatmentRecord(auth: AuthContext, input: NewTreatme
     await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: rec.id, meta: { patientId: input.patientId, prescriptionId: input.prescriptionId ?? null, ...auditMeta } });
     return rec;
   } catch (e) {
-    if (e instanceof RecordInputError) return { error: e.message };
+    if (e instanceof RecordInputError) return { error: e.message, deviationText: e.deviationText };
     throw e;
   }
 }

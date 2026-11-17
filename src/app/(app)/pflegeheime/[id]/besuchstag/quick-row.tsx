@@ -15,7 +15,8 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
   const [picked, setPicked] = useState<string[]>([]);
   const [prescriptionId, setPrescriptionId] = useState(prescriptions.length === 1 ? prescriptions[0].id : "");
   const done = !!state?.ok;
-  const deviation = prescriptions.find((p) => p.id === prescriptionId)?.deviationText ?? null;
+  // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
+  const deviation = prescriptions.find((p) => p.id === prescriptionId)?.deviationText ?? (prescriptionId ? (state?.deviationText ?? null) : null);
   const servicesText = services.filter((s) => picked.includes(s.id)).map((s) => s.name).join(", ");
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-2">
@@ -60,7 +61,11 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
           </Button>
         </div>
       </fieldset>
-      {deviation ? <p className="text-xs text-warn-soft-text">{deviation}</p> : null}
+      {deviation ? (
+        <p className="text-xs text-warn-soft-text">
+          {deviation} Abweichung nur nach Absprache mit der verordnenden Ärztin/dem Arzt – Absprache im Feld „Begründung“ dokumentieren. Zwei Einträge am selben Tag (z. B. Befundung und Behandlung) gelten nicht als Abweichung.
+        </p>
+      ) : null}
       {state?.error ? <p role="alert" className="text-sm font-medium text-danger">{state.error}</p> : null}
     </form>
   );

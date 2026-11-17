@@ -8,7 +8,8 @@ import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, p
 import { TrafficLight } from "@/components/traffic-light";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName, money } from "@/lib/format";
-import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
+import { DIAGNOSIS_GROUPS, RULES_VERSION, STATUS_LABEL, hasAnlage3Fields, type DiagnosisGroup, type PrescriptionStatus } from "@/lib/rules/prescription";
+import { COPAYMENT_METHODS } from "@/server/prescriptions";
 import { ocrStatus } from "@/server/ocr";
 import { listPatientPrescriptions } from "@/server/prescriptions";
 import { INSURED_STATUS, kvnrProblem } from "@/lib/rules/gkv-ids";
@@ -140,6 +141,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
         <div className="flex flex-col gap-4">
           {data.prescriptions.map((vo) => {
             const ev = vo.evaluation;
+            const current = hasAnlage3Fields(vo.rulesVersion);
             const group = DIAGNOSIS_GROUPS[vo.diagnosisGroup as DiagnosisGroup];
             return (
               <Card key={vo.id}>
@@ -164,16 +166,30 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                     <dt className="text-muted">Zuzahlung</dt>
                     <dd className="flex flex-wrap items-center gap-2">
                       {/* neues Regelwerk: Befreiung nur per Bescheinigung je Behandlungstag – das Kreuz auf der VO ist nur Info */}
-                      <span className="font-semibold">{vo.copaymentExempt && vo.rulesVersion !== RULES_VERSION ? "befreit" : money(vo.copaymentCents)}</span>
-                      {vo.copaymentExempt && vo.rulesVersion === RULES_VERSION ? <Badge>„zuzahlungsfrei“ angekreuzt</Badge> : null}
-                      {(vo.rulesVersion === RULES_VERSION || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
-                        vo.copaymentPaidAt ? <Badge tone="primary">erhalten {dateDe(vo.copaymentPaidAt)}</Badge> : <Badge tone="warn">offen</Badge>
+                      <span className="font-semibold">{vo.copaymentExempt && !current ? "befreit" : money(vo.copaymentCents)}</span>
+                      {vo.copaymentExempt && current ? <Badge>„zuzahlungsfrei“ angekreuzt</Badge> : null}
+                      {(current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
+                        vo.copaymentPaidAt ? (
+                          <Badge tone="primary">
+                            erhalten {dateDe(vo.copaymentPaidAt)}
+                            {vo.copaymentPaidCents !== null ? ` · ${money(vo.copaymentPaidCents)}` : ""}
+                            {vo.copaymentPaidMethod ? ` · ${COPAYMENT_METHODS[vo.copaymentPaidMethod as keyof typeof COPAYMENT_METHODS] ?? vo.copaymentPaidMethod}` : ""}
+                          </Badge>
+                        ) : <Badge tone="warn">offen</Badge>
                       ) : null}
-                      {canWrite && (vo.rulesVersion === RULES_VERSION || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
-                        <form action={copaymentPaidAction}>
+                      {canWrite && (current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
+                        <form action={copaymentPaidAction} className="flex flex-wrap items-center gap-2">
                           <input type="hidden" name="id" value={vo.id} />
                           <input type="hidden" name="patientId" value={id} />
                           <input type="hidden" name="paid" value={vo.copaymentPaidAt ? "0" : "1"} />
+                          {vo.copaymentPaidAt ? null : (
+                            <>
+                              <input name="amount" inputMode="decimal" placeholder={((vo.copaymentCents ?? 0) / 100).toFixed(2).replace(".", ",")} aria-label="erhaltener Betrag in Euro" className="h-9 w-24 rounded-lg border border-border bg-surface px-2 text-sm" />
+                              <select name="method" aria-label="Zahlungsart" defaultValue="cash" className="h-9 rounded-lg border border-border bg-surface px-2 text-sm">
+                                {Object.entries(COPAYMENT_METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                              </select>
+                            </>
+                          )}
                           <button type="submit" className="text-xs font-semibold text-primary">{vo.copaymentPaidAt ? "zurücksetzen" : "als erhalten markieren"}</button>
                         </form>
                       ) : null}
@@ -188,7 +204,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   {vo.scanMediaId && auth.can("medical.read") ? (
                     <a href={`/api/media/${vo.scanMediaId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary"><FileImage size={16} aria-hidden /> Foto der Verordnung</a>
                   ) : null}
-                  {vo.rulesVersion && vo.rulesVersion !== RULES_VERSION && !vo.rulesVersion.startsWith("import-") ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
+                  {vo.rulesVersion && !current && !vo.rulesVersion.startsWith("import-") ? <Badge>Regelwerk {vo.rulesVersion}</Badge> : null}
                 </div>
                 {vo.findings.length ? (
                   <ul className="mt-3 flex flex-col gap-1" aria-label="Prüfung der Pflichtangaben (Anlage 3)">
@@ -211,6 +227,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                     {ev.messages.map((m) => <li key={m} className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-soft-text">{m}</li>)}
                   </ul>
                 ) : null}
+                {vo.reopenNote ? <p className="mt-3 text-sm"><span className="text-muted">Wiederaufgenommen{vo.reopenedAt ? ` am ${dateDe(vo.reopenedAt)}` : ""}:</span> {vo.reopenNote}</p> : null}
                 {vo.interruptionNote ? <p className="mt-3 text-sm"><span className="text-muted">Abbruch-/Unterbrechungsvermerk:</span> {vo.interruptionNote}</p> : null}
                 {vo.dates.length ? <p className="mt-3 text-xs text-muted">Behandlungstage: {vo.dates.map((d) => dateDe(d)).join(", ")}</p> : null}
                 {canWrite ? (
