@@ -26,7 +26,6 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
 import { fiscalRef } from "@/integrations/tse";
-import { usesExternalRegister } from "@/lib/kasse/model";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
 import { depositAllowed } from "@/lib/deposit-rules";
@@ -274,9 +273,6 @@ async function applyPayments(
 
   const voucherUse = new Map<string, number>();
   const paymentIds: string[] = [];
-  // Eigene Praxiskasse: Kassenvorgang dort erfasst, hier nur vermerkt (keine PodoHero-TSE-Signatur)
-  const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  const external = usesExternalRegister(orgRow?.settings);
   for (const p of list) {
     let voucherId: string | null = null;
     if (p.method === "voucher") {
@@ -308,7 +304,7 @@ async function applyPayments(
     // „excel:“ kennzeichnet übernommene Altzahlungen (Import) – sie kommen nie in die Kasse (Migration 0060, Buchhaltung BB)
     if (refLower.startsWith("excel:")) throw new InvoiceError("Die Referenz darf nicht mit „excel:“ beginnen.");
     let signed: SignedPayment | null = null;
-    if (needsSignature(p.method) && !external) {
+    if (needsSignature(p.method)) {
       signed = await signPayment(inv, p.method, p.amountCents, vatGroups);
       if (p.method === "cash") externalRef = fiscalRef(signed.signature);
     }

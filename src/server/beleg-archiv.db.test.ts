@@ -288,26 +288,6 @@ afterEach(() => vi.restoreAllMocks());
     expect(list[0]).toMatchObject({ method: "card", amountCents: 3000, archived: true, tseFailed: false });
   });
 
-  it("eigene Praxiskasse: Bar/Karte nur vermerkt – keine TSE-Signatur, kein Zahlungsbeleg, keine TSE-Angaben auf der Quittung", async () => {
-    const { org, auth, patient } = await setup();
-    await f.asOrg(org, (c) => c.query(`update organizations set settings = settings || '{"externalCashRegister": true}'::jsonb where id = $1`, [org]));
-    const inv = await invoices.createInvoice(auth, base(patient));
-    const res = await invoices.addPayments(auth, inv.id, [pay("cash", 2500)]);
-    expect(res.receipts).toEqual([]);
-    const r1 = await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:t-ext-${inv.id}`, amountCents: 1000, method: "card" });
-    expect(r1.status).toBe("gebucht");
-    const view = await bundle(org, inv.id);
-    expect(view.paymentReceipts).toEqual([]);
-    const sigs = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from fiscal_transactions where organization_id = $1", [org])).rows[0].n);
-    expect(sigs).toBe(0);
-    const missing = await withOrg(org, (tx) => receipts.paymentsMissingReceipt(tx, org, inv.id));
-    expect(missing).toEqual([]);
-    drawn = [];
-    await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [pay("cash", 6500)] }));
-    expect(drawn).not.toContain("TSE-Angaben");
-    expect(drawn.join("\n")).not.toContain("TESTMODUS");
-  });
-
   it("Storno: Neudruck wie ausgestellt mit Anrechnungszeilen und Stornovermerk, ohne GiroCode; Anzahlung wieder anrechenbar", async () => {
     const { org, auth, patient } = await setup();
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Nagelspange", amountCents: 1500, vatRate: 0, method: "cash", notes: null });

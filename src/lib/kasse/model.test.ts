@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chainHash } from "@/lib/records";
-import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment, usesExternalRegister } from "./model";
+import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment } from "./model";
 
 const p = (id: string, method: KassePayment["method"], amountCents: number, minute: number): KassePayment => ({
   id,
@@ -153,14 +153,5 @@ describe("Kasse: Anzahlung (Quittung für die Sammelrechnung)", () => {
     const refund: KassePayment = { ...p("r", "cash", -6500, 6), invoiceNumber: "GS2026-0001", vatGroups: [{ rate: 0, grossCents: -6500 }], deposit: true };
     const [bon] = buildBons({ zNumber: 1, firstBonNr: 1, closedAt: new Date(), openingCents: 0, openingIsNew: false, differenceCents: 0, payments: [refund], movements: [] });
     expect(bon.lines).toEqual([expect.objectContaining({ gvTyp: "AnzahlungEinstellung", grossCents: -6500 })]);
-  });
-});
-
-describe("usesExternalRegister", () => {
-  it("nur bei ausdrücklichem true", () => {
-    expect(usesExternalRegister({ externalCashRegister: true })).toBe(true);
-    expect(usesExternalRegister({ externalCashRegister: "true" })).toBe(false);
-    expect(usesExternalRegister({})).toBe(false);
-    expect(usesExternalRegister(null)).toBe(false);
   });
 });

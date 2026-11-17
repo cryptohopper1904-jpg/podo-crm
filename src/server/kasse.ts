@@ -42,7 +42,6 @@ import {
   type KasseMovement,
   type KassePayment,
   type MovementKind,
-  usesExternalRegister,
 } from "@/lib/kasse/model";
 import { renderZBonPdf } from "@/lib/kasse/zbon-pdf";
 import { log } from "@/lib/log";
@@ -239,9 +238,7 @@ export async function kasseOverview(auth: AuthContext) {
       payments: open.payments,
       movements: open.movements,
     });
-    const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
     return {
-      externalRegister: usesExternalRegister(orgRow?.settings),
       today,
       lastClosing: last,
       closedToday: last?.businessDate === today,
@@ -252,25 +249,6 @@ export async function kasseOverview(auth: AuthContext) {
       recent,
       tseMode: fiscalIsTestMode() ? ("none" as const) : ("fiskaly" as const),
     };
-  });
-}
-
-// ───────────────────────── Eigene Praxiskasse ─────────────────────────
-/**
- * Schaltet „Bar/Karte über die eigene (TSE-)Kasse“ um (Praxisinhaber:in, settings.manage). Wirkt nur auf künftige
- * Zahlungen; bereits signierte Zahlungen und Abschlüsse bleiben unverändert. Protokolliert.
- */
-export async function setExternalRegister(auth: AuthContext, on: boolean) {
-  assertCan(auth, "settings.manage");
-  const org = auth.organization.id;
-  await withOrg(org, async (tx) => {
-    const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("update");
-    if (usesExternalRegister(o?.settings) === on) return;
-    await tx
-      .update(organizations)
-      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ externalCashRegister: on })}::jsonb` })
-      .where(eq(organizations.id, org));
-    await audit({ organizationId: org, userId: auth.user.id, action: "kasse.external_register", entity: "organization", entityId: org, meta: { on } }, tx);
   });
 }
 
@@ -319,11 +297,6 @@ export async function closeDay(auth: AuthContext, input: ClosingInput): Promise<
     throw new KasseError(e instanceof Error ? e.message : "Zählprotokoll ungültig.");
   }
   const withTse = !fiscalIsTestMode();
-  const external = await withOrg(org, async (tx) => {
-    const [o] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-    return usesExternalRegister(o?.settings);
-  });
-  if (external) throw new KasseError("Die Praxis nutzt ihre eigene Kasse – den Tagesabschluss bitte dort machen.");
 
   let created: ClosingRow;
   try {

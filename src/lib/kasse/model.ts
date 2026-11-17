@@ -391,13 +391,3 @@ export function reviveBons(raw: unknown[]): Bon[] {
   }));
 }
 
-
-/**
- * Praxis-Einstellung „Bar/Karte über die eigene (TSE-)Kasse“: Die Praxis erfasst Kassenvorgänge in ihrem bestehenden,
- * zertifizierten Kassensystem. PodoHero vermerkt Zahlungen dann nur an der Rechnung – ohne eigene TSE-Signatur, ohne
- * eigenen Kassenbeleg und ohne Tagesabschluss/DSFinV-K (das liefert die Praxiskasse).
- */
-export const usesExternalRegister = (settings: unknown): boolean =>
-  !!settings && typeof settings === "object" && (settings as Record<string, unknown>).externalCashRegister === true;
-
-export const EXTERNAL_REGISTER_NOTE = "Zahlung in der Praxiskasse erfasst.";
