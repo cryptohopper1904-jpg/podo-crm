@@ -8,7 +8,7 @@ import { dateDe, money } from "@/lib/format";
 
 /**
  * Gutschein-Motive zum Ausdrucken (Wunsch der Pilotpraxis: Vorlagen nach Geschmack oder Anlass, mit Praxislogo).
- * Format DIN lang (210 × 99 mm, drei passen auf A4). Feste Farben statt Theme-Tokens, damit der Druck in Hell- und
+ * Format DIN lang (210 × 99 mm); im Druck auf die bedruckbare A4-Breite verkleinert (PRINT_CSS in page.tsx). Feste Farben statt Theme-Tokens, damit der Druck in Hell- und
  * Dunkelmodus gleich aussieht; Schriften lokal (fontsource), keine externen Abrufe.
  */
 export const VOUCHER_MOTIFS = [
@@ -41,7 +41,7 @@ const DMSERIF = "'DM Serif Display', Georgia, serif";
 const P: CSSProperties = { margin: 0 };
 const caps = (size: number, spacing: string, color?: string): CSSProperties => ({ ...P, fontSize: size, letterSpacing: spacing, textTransform: "uppercase", color });
 
-/** Kartenrahmen: exakt DIN lang, auf schmalen Bildschirmen seitlich scrollbar */
+/** Kartenrahmen: am Bildschirm exakt DIN lang, auf schmalen Bildschirmen seitlich scrollbar (Druck: siehe PRINT_CSS) */
 function Frame({ children, style }: { children: ReactNode; style: CSSProperties }) {
   return (
     <div className="voucher-card mx-auto max-w-full overflow-x-auto">

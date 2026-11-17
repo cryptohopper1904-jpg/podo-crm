@@ -146,7 +146,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
             <Gap wide />
           )}
           <Link href={apptHref} className={slotSecondary}>
-            {/* Erledigte Termine (Doku/Rechnung erfasst) nur noch ansehen – „Ändern“ erst nach Rücknahme des Status */}
+            {/* Nur die Beschriftung: erledigte Termine heißen hier „Details“ statt „Ändern“ (Praxis-Wunsch). Die Detailseite
+                bleibt bearbeitbar – Sperren regelt allein appointmentEditLock (Doctolib, Kalender-Abo, abgerechnet). */}
             {canEdit && a.status !== "done" && !appointmentEditLock(a, !!feed) ? "Ändern" : "Details"}
           </Link>
           {/* Ohne Bearbeitungsrecht hat keine Zeile Losfahren/Nicht da/Absagen – dann entfallen die drei Slots ganz */}

@@ -10,14 +10,19 @@ import { VOUCHER_MOTIFS, VoucherCard, parseMotif } from "./voucher-card";
 
 export const metadata = { title: "Gutschein" };
 
-/** Gedruckt wird nur die Gutscheinkarte, in Farbe (Motiv). */
+/**
+ * Gedruckt wird nur die Gutscheinkarte, in Farbe (Motiv). Die Karte ist 210 mm breit (DIN lang), A4 hat mit 10 mm
+ * Rand nur 190 mm bedruckbar → im Druck auf 188 mm verkleinert (zoom 188/210, Höhe proportional ≈ 89 mm), mittig, mit
+ * dünner grauer Schnittlinie. Der Bildschirm-Wrapper (`overflow-x-auto`) darf im Druck nichts abschneiden.
+ */
 const PRINT_CSS = `
-@page { size: A4; margin: 15mm; }
+@page { size: A4; margin: 10mm; }
 @media print {
   main { padding: 0 !important; }
   .voucher-page > :not(.voucher-card) { display: none !important; }
   .voucher-card, .voucher-card * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .voucher-card { break-inside: avoid; }
+  .voucher-card { break-inside: avoid; overflow: visible !important; max-width: none !important; }
+  .voucher-card > section { zoom: calc(188 / 210); margin: 0 auto; outline: 0.25mm solid #9ca3af; }
 }`;
 
 export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) {

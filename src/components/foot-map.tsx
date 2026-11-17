@@ -31,7 +31,7 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
                 className={onToggle ? "cursor-pointer" : undefined}
                 aria-hidden
               >
-                {onToggle ? <circle cx={p.x} cy={p.y} r={10} fill="transparent" /> : null}
+                {onToggle ? <circle cx={p.x} cy={p.y} r={8} fill="transparent" /> : null}
                 <circle
                   cx={p.x}
                   cy={p.y}
