@@ -66,8 +66,16 @@ export interface FeldSpez {
   art: FeldArt;
   /** feste Länge (z. B. 9 für ein IK) */
   laenge?: number;
-  /** Höchstlänge (z. B. 35 für "..35"); bei Beträgen (dezimal gesetzt) die Zahl der Vorkommastellen ("..10,2" → 10) */
+  /**
+   * Höchstlänge (z. B. 35 für "..35"); bei Beträgen (dezimal gesetzt) die Zahl der Stellen insgesamt einschließlich
+   * der Nachkommastellen ("..10,2" → höchstens 10 Ziffern, davon 2 nach dem Komma; Minus/Komma zählen nicht)
+   */
   max?: number;
+  /**
+   * Einzige dokumentierte Ausnahme (SKO „..2,2“, Skonto z. B. 2,00 %): `max` zählt hier nur die Vorkommastellen,
+   * weil „2 Stellen insgesamt“ nur 0,xx % zuließe. Erprobungsfrage, siehe docs/GKV-302.md „Auslegungen“.
+   */
+  maxNurVorkomma?: boolean;
   /** Mindestlänge (z. B. 22 bei EVO "22..256") */
   min?: number;
   /** Nachkommastellen bei Beträgen (z. B. 2 für "..10,2"); Wert wird dann als Zahl übergeben */
@@ -127,13 +135,20 @@ function pruefeFeld(spez: FeldSpez, roh: FeldWert, ort: string, fehler: Gkv302Fe
       fehler.push({ art: "format", pfad: ort, meldung: `„${spez.name}“ muss eine Zahl mit ${spez.dezimal} Nachkommastellen sein (z. B. 12,30), erhalten: „${text}“.` });
       return text;
     }
-    // Lesart „..m,n“ (einheitlich für alle Betragsfelder): höchstens m Vorkommastellen plus genau n Nachkommastellen;
-    // Minus und Komma zählen nicht (TA1 V21 5.1 Abs. 8–10, S. 11–12). Nur diese Lesart ist mit SKO „..2,2“ (S. 35,
-    // z. B. 2,00 %) vereinbar; die strengere Lesart „m Stellen insgesamt“ ließe dort nur 0,xx zu. Im
-    // Erprobungsverfahren zu bestätigen (docs/GKV-302.md, Auslegungen).
-    const vorkomma = text.replace(/^-/, "").split(",")[0].replace(/^0+(?=\d)/, "");
-    if (spez.max !== undefined && vorkomma.length > spez.max) {
-      fehler.push({ art: "laenge", pfad: ort, meldung: `„${spez.name}“ hat ${vorkomma.length} Vorkommastellen, erlaubt sind höchstens ${spez.max} (Format ..${spez.max},${spez.dezimal}).` });
+    // Lesart „..m,n“: höchstens m Stellen insgesamt, davon genau n Nachkommastellen; Minus und Komma zählen nicht
+    // (TA1 V21 5.1 Abs. 8–10, S. 11–12: „Anzahl Stellen … höchstmögliche Stellenbelegung“, „Das Minuszeichen und das
+    // Dezimalzeichen werden bei der Ermittlung der maximalen Länge … nicht mitgezählt“). Führende Nullen zählen nicht
+    // (Abs. 10: „+,15+“ zulässig). Einzige Ausnahme: SKO „..2,2“ (`maxNurVorkomma`), Erprobungsfrage.
+    const vorkomma = text.replace(/^-/, "").split(",")[0].replace(/^0+/, "");
+    const stellen = spez.maxNurVorkomma ? vorkomma.length : vorkomma.length + spez.dezimal;
+    if (spez.max !== undefined && stellen > spez.max) {
+      fehler.push({
+        art: "laenge",
+        pfad: ort,
+        meldung: spez.maxNurVorkomma
+          ? `„${spez.name}“ hat ${vorkomma.length} Vorkommastellen, erlaubt sind höchstens ${spez.max} (Format ..${spez.max},${spez.dezimal}, Ausnahme: Vorkommastellen).`
+          : `„${spez.name}“ hat ${stellen} Stellen, erlaubt sind höchstens ${spez.max} einschließlich ${spez.dezimal} Nachkommastellen (Format ..${spez.max},${spez.dezimal}).`,
+      });
     }
     return text;
   }

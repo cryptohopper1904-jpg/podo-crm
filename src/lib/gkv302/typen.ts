@@ -131,9 +131,9 @@ export interface Einzelleistung {
    */
   zuzahlungsfaehig?: boolean;
   /**
-   * Zeitbezug je Position: bei Zuzahlungskennzeichen 2, 4 oder 5 (VKZ ≠ 03), ob der Termin in den
-   * zuzahlungspflichtigen Zeitraum fällt (Pflicht). Bei VKZ 03 optional: `false` nimmt die Position von der
-   * Forderung aus. Bei "3" gilt ja, bei "0"/"1" nein.
+   * Zeitbezug je Position: bei Zuzahlungskennzeichen 2, 4 oder 5 (VKZ ≠ 03) und bei VKZ 03 mit ZK 5, ob der Termin
+   * in den zuzahlungspflichtigen Zeitraum fällt (Pflicht). Bei VKZ 03 mit ZK 1/2 optional: `false` nimmt die
+   * Position von der Forderung aus. Bei "3" gilt ja, bei "0"/"1" nein.
    */
   zuzahlungspflichtig?: boolean;
 }
@@ -162,8 +162,8 @@ export interface Abrechnungsfall {
   /** ZHE Zuzahlungskennzeichen (Anlage 3 8.1.3) */
   zuzahlungskennzeichen: Zuzahlungskennzeichen;
   /**
-   * Bei Zuzahlungskennzeichen 2, 4, 5 (VKZ ≠ 03): ob die Pauschale (10,00 €) je Verordnung anfällt (Pflicht).
-   * Bei VKZ 03 optional: Standard ja, `false` nimmt die Pauschale von der Forderung aus.
+   * Bei Zuzahlungskennzeichen 2, 4, 5 (VKZ ≠ 03) und bei VKZ 03 mit ZK 5: ob die Pauschale (10,00 €) je Verordnung
+   * anfällt (Pflicht). Bei VKZ 03 mit ZK 1/2 optional: Standard ja, `false` nimmt die Pauschale von der Forderung aus.
    */
   pauschaleZuzahlung?: boolean;
   /**

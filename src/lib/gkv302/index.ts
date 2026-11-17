@@ -19,5 +19,5 @@ export type { Begleitzettel } from "./begleitzettel";
 export { KEIN_KRYPTOMODUL } from "./sicherheit";
 export type { Gkv302Kryptomodul, SignierUndVerschluesselAuftrag, ZertifikatsReferenz } from "./sicherheit";
 export { bildeAbrechnungsfall } from "./adapter";
-export type { PodoHeroAbrechnungsquelle, PodoHeroVerordnung, PodoHeroPatient, PodoHeroBehandlung, ErgaenzendeVerordnungsdaten } from "./adapter";
+export type { PodoHeroAbrechnungsquelle, PodoHeroVerordnung, PodoHeroPatient, PodoHeroBehandlung, PreisSnapshot, PreisSnapshotZeile, Befreiungszeitraum, ErgaenzendeVerordnungsdaten } from "./adapter";
 export { zerlegeEdifact, maskiere, alsLatin1, ausLatin1 } from "./edifact";

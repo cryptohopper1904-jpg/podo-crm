@@ -113,7 +113,8 @@ export const UST: SegmentSpez = {
 export const SKO: SegmentSpez = {
   kennung: "SKO",
   elemente: [
-    { name: "Skonto in Prozent", typ: "N", art: "M", max: 2, dezimal: 2 },
+    // TA1 V21 S. 35: „..2,2“ – einzige Ausnahme von der Lesart „Stellen insgesamt“ (sonst nur 0,xx %), siehe edifact.ts
+    { name: "Skonto in Prozent", typ: "N", art: "M", max: 2, dezimal: 2, maxNurVorkomma: true },
     { name: "Zahlungsziel", typ: "N", art: "M", max: 3 },
   ],
 };

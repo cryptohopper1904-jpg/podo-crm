@@ -64,14 +64,16 @@ export interface FallBetraege {
  * Ob für eine Position Zuzahlung anfällt.
  * - Grundvoraussetzung: Die Position unterliegt laut Vergütungsliste der Zuzahlung (`zuzahlungsfaehig`, Standard ja;
  *   `false` z. B. für Positionen ohne Zuzahlungsbetrag in der Vergütungsvereinbarung Podologie, Anlage 2).
- * - VKZ 03 (Zuzahlungsforderung): unabhängig vom Zuzahlungskennzeichen, das hier nur den Grund nennt (1, 2 oder 5);
- *   gefordert wird die Zuzahlung aller übermittelten Positionen, „auch nur Teile … z. B. nur ein Teil der Termine“
- *   (TA1 V21 7.4.2.1–7.4.2.4, S. 167–168). Einzelne Positionen lassen sich mit `zuzahlungspflichtig: false` ausnehmen.
+ * - VKZ 03 (Zuzahlungsforderung): das Zuzahlungskennzeichen nennt nur den Grund (1, 2 oder 5). Bei 1 und 2 wird
+ *   die Zuzahlung aller übermittelten Positionen gefordert, „auch nur Teile … z. B. nur ein Teil der Termine“
+ *   (TA1 V21 7.4.2.1–7.4.2.2, S. 167–168); einzelne Positionen lassen sich mit `zuzahlungspflichtig: false` ausnehmen.
+ *   Bei 5 (Wechsel zuzahlungsfrei → zuzahlungspflichtig, 7.4.2.3, S. 168) fällt Zuzahlung nur für die Positionen nach
+ *   dem Wechsel an: Angabe je Position verpflichtend, kein Standard „ja“ (nur `zuzahlungspflichtig: true` zählt).
  * - sonst Anlage 3 V21 8.1.3: 3 immer, 0/1 nie, 2/4/5 laut Angabe je Position.
  */
 export function positionZuzahlungspflichtig(fall: Abrechnungsfall, l: Einzelleistung, vkz: string = "01"): boolean {
   if (l.zuzahlungsfaehig === false) return false;
-  if (vkz === "03") return l.zuzahlungspflichtig !== false;
+  if (vkz === "03" && fall.zuzahlungskennzeichen !== "5") return l.zuzahlungspflichtig !== false;
   switch (fall.zuzahlungskennzeichen) {
     case "3":
       return true;
@@ -83,9 +85,12 @@ export function positionZuzahlungspflichtig(fall: Abrechnungsfall, l: Einzelleis
   }
 }
 
-/** Pauschale je Verordnung (TA1 V21 5.5.3.3 BES/GZF, S. 73–74); bei VKZ 03 Standard ja, `false` nimmt sie aus. */
+/**
+ * Pauschale je Verordnung (TA1 V21 5.5.3.3 BES/GZF, S. 73–74); bei VKZ 03 mit ZK 1/2 Standard ja (`false` nimmt sie
+ * aus), bei VKZ 03 mit ZK 5 nur mit ausdrücklicher Angabe `true` (wie ZK 2/4/5 sonst).
+ */
 function pauschaleFaellt(fall: Abrechnungsfall, vkz: string): boolean {
-  if (vkz === "03") return fall.pauschaleZuzahlung !== false;
+  if (vkz === "03" && fall.zuzahlungskennzeichen !== "5") return fall.pauschaleZuzahlung !== false;
   switch (fall.zuzahlungskennzeichen) {
     case "3":
       return true;

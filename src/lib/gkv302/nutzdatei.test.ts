@@ -403,9 +403,42 @@ describe("B1/C3 VKZ 03: Zuzahlung unabhängig vom Zuzahlungskennzeichen (TA1 V21
     expect(r.text).toContain("GZF+17,12+7,12+10,00'");
   });
 
-  it("ZK 5: einzelne Positionen lassen sich mit zuzahlungspflichtig = false ausnehmen", () => {
-    const b = fallBetraege({ ...testFall1(), zuzahlungskennzeichen: "5", leistungen: testFall1().leistungen.map((l, i) => ({ ...l, zuzahlungspflichtig: i !== 0 })) }, 10, 1000, "03");
+  it("ZK 5: Zuzahlung nur für Positionen mit zuzahlungspflichtig = true, Pauschale nur mit pauschaleZuzahlung = true (R2-2/F2)", () => {
+    const b = fallBetraege({ ...testFall1(), zuzahlungskennzeichen: "5", pauschaleZuzahlung: true, leistungen: testFall1().leistungen.map((l, i) => ({ ...l, zuzahlungspflichtig: i !== 0 })) }, 10, 1000, "03");
     expect(b.prozentualeZuzahlungCent).toBe(877 - 356);
+    expect(b.pauschaleZuzahlungCent).toBe(1000);
+  });
+});
+
+describe("R2-2/F2 VKZ 03 + ZK 5: Angabe je Position und Pauschale verpflichtend, kein Standard „ja“ (TA1 V21 7.4.2.3, S. 168)", () => {
+  it("ohne Angaben fällt keine Zuzahlung an", () => {
+    const b = fallBetraege({ ...testFall1(), zuzahlungskennzeichen: "5" }, 10, 1000, "03");
+    expect(b.prozentualeZuzahlungCent).toBe(0);
+    expect(b.pauschaleZuzahlungCent).toBe(0);
+  });
+
+  it("fehlende Angaben → Pflichtfeld-Fehler je Position und für die Pauschale", () => {
+    const f = fehlerVon(korrekturDatei("03", (fall) => {
+      fall.zuzahlungskennzeichen = "5";
+      fall.nachweisErfolgloserEinzug = NACHWEIS;
+    }));
+    expect(f).toContainEqual(expect.objectContaining({ art: "pflichtfeld", pfad: expect.stringContaining("pauschaleZuzahlung") }));
+    expect(f).toContainEqual(expect.objectContaining({ art: "pflichtfeld", pfad: expect.stringContaining("leistungen[0].zuzahlungspflichtig") }));
+  });
+
+  it("mit Angaben: nur die Positionen nach dem Statuswechsel", () => {
+    const r = erzeugeNutzdatendatei(korrekturDatei("03", (fall) => {
+      fall.zuzahlungskennzeichen = "5";
+      fall.nachweisErfolgloserEinzug = NACHWEIS;
+      fall.pauschaleZuzahlung = false;
+      fall.leistungen.forEach((l) => (l.zuzahlungspflichtig = l.datum === "2026-10-19"));
+    }));
+    expect(r.text).toContain("GZF+3,56+3,56+0,00'");
+  });
+
+  it("ZK 1/2 bleiben beim Standard „alle übermittelten Positionen“", () => {
+    const b = fallBetraege({ ...testFall1(), zuzahlungskennzeichen: "2" }, 10, 1000, "03");
+    expect(b.prozentualeZuzahlungCent).toBe(877);
     expect(b.pauschaleZuzahlungCent).toBe(1000);
   });
 });
@@ -492,11 +525,20 @@ describe("B5 Kilometer mit Nachkommastellen (Rundung je Position)", () => {
     expect(b.pauschaleZuzahlungCent).toBe(337);
   });
 
-  it("Lesart „..4,2“: bis zu 4 Vorkommastellen, z. B. 120,50 km", () => {
-    const d = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 120.5, einzelpreisCent: 30, datum: "2026-10-05" }]));
-    expect(erzeugeNutzdatendatei(d).text).toContain("+120,50+0,30+");
-    const zuViel = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 12345, einzelpreisCent: 30, datum: "2026-10-05" }]));
-    expect(fehlerVon(zuViel)).toContainEqual(expect.objectContaining({ art: "laenge", meldung: expect.stringContaining("Vorkommastellen") }));
+  it("R2-3 Lesart „..4,2“ = 4 Stellen insgesamt: 99,50 km zulässig, 120,50 km zu lang", () => {
+    const d = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 99.5, einzelpreisCent: 30, datum: "2026-10-05" }]));
+    expect(erzeugeNutzdatendatei(d).text).toContain("+99,50+0,30+");
+    const zuViel = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 120.5, einzelpreisCent: 30, datum: "2026-10-05" }]));
+    expect(fehlerVon(zuViel)).toContainEqual(expect.objectContaining({ art: "laenge", meldung: expect.stringContaining("5 Stellen, erlaubt sind höchstens 4") }));
+  });
+
+  it("R2-3 MWS-Satz „..5,2“: 19,00 zulässig, 1000,00 zu lang; Betrag ohne führende Nullen gezählt", () => {
+    const d = mitFall((f) => (f.leistungen[0].mehrwertsteuerProzent = 19));
+    d.leistungserbringer[0].praxis.mehrwertsteuerVereinbart = true;
+    expect(fehlerVon(d)).toEqual([]);
+    const zuViel = mitFall((f) => (f.leistungen[0].mehrwertsteuerProzent = 1000));
+    zuViel.leistungserbringer[0].praxis.mehrwertsteuerVereinbart = true;
+    expect(fehlerVon(zuViel)).toContainEqual(expect.objectContaining({ art: "laenge", pfad: expect.stringContaining("Mehrwertsteuersatz") }));
   });
 });
 
@@ -556,7 +598,7 @@ describe("B8 Rechnungsnummern eindeutig, auch innerhalb einer Sammelrechnung", (
   });
 });
 
-describe("Lesart „..m,n“ einheitlich: SKO „..2,2“", () => {
+describe("R2-3 SKO „..2,2“ als einzige Ausnahme (2 Vorkommastellen)", () => {
   it("Skonto 2,00 % zulässig, 100,00 % zu lang", () => {
     const d = testDatei();
     d.leistungserbringer[0].praxis.skonto = [{ prozent: 2, zahlungszielTage: 10 }];

@@ -209,7 +209,8 @@ function pruefeFall(fall: Abrechnungsfall, k: FallKontext, pfad: string, fehler:
   } else if (fall.nachweisErfolgloserEinzug) {
     fehler.push({ art: "kombination", pfad: `${pfad}.nachweisErfolgloserEinzug`, meldung: "Nachweis über den erfolglosen Einzug nur bei Verarbeitungskennzeichen 03." });
   }
-  if (vkz !== "03" && ["2", "4", "5"].includes(zk)) {
+  // ZK 2/4/5 (bei VKZ 03 nur 5, TA1 V21 7.4.2.3, S. 168): Angabe je Position und Pauschale verpflichtend
+  if (vkz !== "03" ? ["2", "4", "5"].includes(zk) : zk === "5") {
     if (fall.pauschaleZuzahlung === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.pauschaleZuzahlung`, meldung: `Bei Zuzahlungskennzeichen ${zk} muss angegeben werden, ob die Pauschale je Verordnung anfällt.` });
     fall.leistungen?.forEach((l, i) => {
       if (l.zuzahlungspflichtig === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.leistungen[${i}].zuzahlungspflichtig`, meldung: `Bei Zuzahlungskennzeichen ${zk} muss je Position angegeben werden, ob Zuzahlung anfällt.` });
