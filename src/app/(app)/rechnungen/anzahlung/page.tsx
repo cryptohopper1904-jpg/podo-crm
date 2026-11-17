@@ -133,7 +133,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
           <DepositForm
             smallBusiness={smallBusiness}
             tseTestMode={fiscalIsTestMode()}
-                externalRegister={externalRegister}
+            externalRegister={externalRegister}
             descriptionPlaceholder="z. B. Nagelspange"
             defaults={{ patientId: chosen.id, appointmentId: null, treatmentRecordId: null, description: "", amount: "", vatRate: 0 }}
           />

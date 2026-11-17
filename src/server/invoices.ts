@@ -135,7 +135,7 @@ export const paymentInput = z.object({
    */
   registerReceiptNo: z.preprocess(
     emptyToNull,
-    z.string().trim().max(40, "Bon-Nr. der Praxiskasse: höchstens 40 Zeichen.").regex(PRAXISKASSE_BON_RE, "Bon-Nr. der Praxiskasse: nur Buchstaben, Ziffern, „-“ und „/“.").nullable().optional(),
+    z.string().trim().max(40, "Bon-Nr. der Praxiskasse: höchstens 40 Zeichen.").regex(PRAXISKASSE_BON_RE, "Bon-Nr. der Praxiskasse: nur Buchstaben, Ziffern, „-“ und „/“, am Anfang ein Buchstabe oder eine Ziffer.").nullable().optional(),
   ),
 });
 export type PaymentInput = z.infer<typeof paymentInput>;

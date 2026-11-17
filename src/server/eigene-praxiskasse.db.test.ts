@@ -245,4 +245,86 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect((await kasse.externalRegisterEntries(other.auth, today, today)).entries).toEqual([]);
     void org;
   });
+
+  it("Support-Zugang darf die eigene Praxiskasse nicht umschalten (AppSec H1)", async () => {
+    const { org, user } = await setup();
+    const support = { organization: { id: org, name: "T", slug: "t", smallBusiness: false }, user: { id: user, name: "Support" }, can: () => true, support: { grantId: "x" } } as never;
+    await expect(kasse.setExternalRegister(support, true, REASON)).rejects.toThrow(/Support/);
+    const s = await f.asOrg(org, async (c) => (await c.query("select settings from organizations where id = $1", [org])).rows[0].settings);
+    expect(s?.externalCashRegister).toBeUndefined();
+  });
+
+  it("CSV: negative Beträge als Zahl (kein Apostroph), Freitext weiter neutralisiert; Bon-Nr. nicht mit „-“ am Anfang", async () => {
+    const { auth, invoice, org, user, q } = await setup();
+    const inv = await invoice();
+    await kasse.setExternalRegister(auth, true, REASON);
+    await expect(invoices.addPayments(auth, inv, [{ method: "cash", amountCents: 100, registerReceiptNo: "-12" }])).rejects.toThrow(/Bon-Nr/);
+    await invoices.addPayments(auth, inv, [{ method: "cash", amountCents: 3000, registerReceiptNo: "B-7" }]);
+    // Erstattung (negativ) als Vermerk auf einer Altrechnung, deren Nummer mit einem Formelzeichen beginnt
+    const legacy = await f.asOrg(org, async (c) => {
+      const id = (await c.query("insert into invoices (organization_id, status, source) values ($1,'draft','excel-import') returning id", [org])).rows[0].id as string;
+      await c.query("insert into invoice_lines (organization_id, invoice_id, description, unit_price_cents, total_cents, vat_rate, position) values ($1,$2,'Altbestand',1250,1250,0,1)", [org, id]);
+      await c.query("update invoices set status='paid', number='=1+2', issued_at=current_date, total_cents=1250, net_cents=1250, paid_cents=1250 where id=$1", [id]);
+      return id;
+    });
+    await q("insert into payments (organization_id, invoice_id, method, amount_cents, register, created_by) values ($1,$2,'cash',-1250,'external',$3)", [org, legacy, user]);
+    const csv = await kasse.externalRegisterCsv(auth, today, today);
+    const lines = csv.text.replace(/^\uFEFF/, "").trim().split("\r\n");
+    expect(lines.some((l) => l.endsWith(";'=1+2;Bar;-12,50;"))).toBe(true);
+    expect(lines.some((l) => l.endsWith(";Bar;30,00;B-7"))).toBe(true);
+    expect(csv.text).not.toContain("'-12,50");
+  });
+
+  it("CSV: mehr als 5000 Vermerke → Fehler „Zeitraum verkleinern“ statt still abzuschneiden (AppSec H2)", async () => {
+    const { auth, invoice, org, user, q } = await setup();
+    const inv = await invoice();
+    await q("insert into payments (organization_id, invoice_id, method, amount_cents, register, created_by) select $1, $2, 'cash', 1, 'external', $3 from generate_series(1, 5001)", [org, inv, user]);
+    await expect(kasse.externalRegisterCsv(auth, today, today)).rejects.toThrow(/Zeitraum verkleinern/);
+    expect((await kasse.externalRegisterEntries(auth, today, today)).truncated).toBe(true);
+  });
+
+  it("Erstattung Fall A: Zahlung in der Praxiskasse, zurückgeschaltet → Erstattung folgt der Einstellung (PodoHero, signiert)", async () => {
+    const { auth, invoice, q } = await setup();
+    const inv = await invoice();
+    await kasse.setExternalRegister(auth, true, REASON);
+    await invoices.addPayments(auth, inv, [{ method: "cash", amountCents: 2000 }]);
+    await kasse.setExternalRegister(auth, false, REASON);
+    const credit = await invoices.cancelInvoice(auth, inv, "Doppelt erstellt");
+    await invoices.addPayments(auth, credit.id, [{ method: "cash", amountCents: -2000 }]);
+    const [refund] = await q<{ id: string; register: string; amount_cents: number }>("select id, register, amount_cents from payments where invoice_id = $1", [credit.id]);
+    expect(refund).toMatchObject({ register: "podohero", amount_cents: -2000 });
+    expect(await q("select 1 from fiscal_transactions where payment_id = $1", [refund.id])).toHaveLength(1);
+    expect((await kasse.kasseOverview(auth)).calc.cashPaymentsCents).toBe(-2000);
+  });
+
+  it("Erstattung Fall B: Zahlung über die PodoHero-Kasse, umgeschaltet → Erstattung ist Vermerk (extern, ohne Signatur/Beleg)", async () => {
+    const { auth, invoice, q } = await setup();
+    const inv = await invoice();
+    await invoices.addPayments(auth, inv, [{ method: "cash", amountCents: 2000 }]);
+    await kasse.closeDay(auth, { businessDate: today, denominations: den(2000), openingCents: 0 });
+    await kasse.setExternalRegister(auth, true, REASON);
+    const credit = await invoices.cancelInvoice(auth, inv, "Doppelt erstellt");
+    const r = await invoices.addPayments(auth, credit.id, [{ method: "cash", amountCents: -2000, registerReceiptNo: "S-1" }]);
+    expect(r.receipts).toEqual([]);
+    const [refund] = await q<{ id: string; register: string; external_ref: string }>("select id, register, external_ref from payments where invoice_id = $1", [credit.id]);
+    expect(refund).toMatchObject({ register: "external", external_ref: "praxiskasse:S-1" });
+    expect(await q("select 1 from fiscal_transactions where payment_id = $1", [refund.id])).toHaveLength(0);
+  });
+
+  it("Gutschein-Einlösung im externen Modus: Vermerk, Restguthaben korrekt, kein Zahlungsbeleg", async () => {
+    const { auth, invoice, q, org } = await setup();
+    const inv = await invoice();
+    const code = `G-EXT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    await q("insert into vouchers (organization_id, code, issued_at, valid_until, amount_cents) values ($1,$2,current_date, current_date + 365, 5000)", [org, code]);
+    await kasse.setExternalRegister(auth, true, REASON);
+    const r = await invoices.addPayments(auth, inv, [{ method: "voucher", amountCents: 3000, voucherCode: code }]);
+    expect(r.receipts).toEqual([]);
+    const [p] = await q<{ id: string; register: string }>("select id, register from payments where invoice_id = $1", [inv]);
+    expect(p.register).toBe("external");
+    expect(await q("select 1 from payment_receipts where payment_id = $1", [p.id])).toHaveLength(0);
+    expect(await q("select 1 from fiscal_transactions where payment_id = $1", [p.id])).toHaveLength(0);
+    // Restguthaben 20 €: 25 € abgelehnt, 20 € möglich
+    await expect(invoices.addPayments(auth, inv, [{ method: "voucher", amountCents: 2500, voucherCode: code }])).rejects.toThrow(/Restguthaben/);
+    await invoices.addPayments(auth, inv, [{ method: "voucher", amountCents: 2000, voucherCode: code }]);
+  });
 });

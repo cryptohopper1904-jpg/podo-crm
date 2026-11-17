@@ -9,6 +9,11 @@
 --  - podo_payment_closing_guard (zuletzt 0060): Zahlungen der Praxiskasse ('external') nie einem Kassenabschluss
 --    zuordnen; bei der Zuordnung darf sich register nicht ändern; Rückdatierung wie beim Import erlaubt (sie kommen
 --    nie in einen PodoHero-Abschluss, ein abgeschlossener Zeitraum ändert sich dadurch nicht)
+--  - Rückdatierung bei 'external' ist BEWUSST erlaubt: Diese Zahlungen kommen nie in einen PodoHero-Abschluss
+--    (Zuordnung unten verboten), ein abgeschlossener PodoHero-Zeitraum (Z-Bon, Hash-Kette) ändert sich dadurch nicht;
+--    'external' setzt nur der Server (Einstellung „eigene Praxiskasse“), danach unveränderlich.
+--  - Beide Funktionen mit festem search_path (wie 0056; CREATE OR REPLACE ohne SET setzte ihn zurück – sonst
+--    könnte eine temporäre Tabelle cash_closings der App-Rolle die Prüfung unterlaufen, AppSec B1 PR #113).
 -- Idempotent: ADD COLUMN IF NOT EXISTS / Constraint nur wenn fehlend / CREATE OR REPLACE / DROP TRIGGER IF EXISTS.
 ALTER TABLE "payments" ADD COLUMN IF NOT EXISTS "register" text DEFAULT 'podohero' NOT NULL;
 --> statement-breakpoint
@@ -18,7 +23,8 @@ DO $$ BEGIN
   END IF;
 END $$;
 --> statement-breakpoint
-CREATE OR REPLACE FUNCTION podo_payment_register_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION podo_payment_register_immutable() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NEW.register IS DISTINCT FROM OLD.register THEN
     RAISE EXCEPTION 'Das Kassensystem einer Zahlung ist unveränderlich.' USING ERRCODE = 'P0001';
@@ -31,7 +37,8 @@ DROP TRIGGER IF EXISTS payments_register_immutable ON payments;
 CREATE TRIGGER payments_register_immutable BEFORE UPDATE OF register ON payments
   FOR EACH ROW EXECUTE FUNCTION podo_payment_register_immutable();
 --> statement-breakpoint
-CREATE OR REPLACE FUNCTION podo_payment_closing_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION podo_payment_closing_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE locked boolean; c_org uuid; c_at timestamptz;
 BEGIN
   IF TG_OP = 'INSERT' THEN

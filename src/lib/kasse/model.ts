@@ -9,16 +9,13 @@ import { createHash } from "node:crypto";
 import { allocateByVat } from "@/integrations/tse/types";
 import { vatPortion } from "@/lib/invoice-math";
 import { canonical } from "@/lib/records";
-import { countedTotal, MOVEMENT_LABEL, type MovementKind } from "./labels";
+import { countedTotal, isRegisterMethod, type KasseMethod, MOVEMENT_LABEL, type MovementKind, PRAXISKASSE_BON_RE } from "./labels";
 
 export * from "./labels";
 export * from "./chain";
 
 // ───────────────────────── Eingangsdaten ─────────────────────────
-export type KasseMethod = "cash" | "card" | "transfer" | "voucher" | "payment_link";
-/** Zahlarten, die an der Kasse (Empfang) entstehen und in die Einzelaufzeichnung (DSFinV-K) gehören */
-export const REGISTER_METHODS: readonly KasseMethod[] = ["cash", "card", "voucher"];
-export const isRegisterMethod = (m: string) => (REGISTER_METHODS as readonly string[]).includes(m);
+// KasseMethod, REGISTER_METHODS, isRegisterMethod: in ./labels (auch im Browser nutzbar), oben re-exportiert
 
 export type KassePerson = { id: string; name: string } | null;
 
@@ -406,8 +403,6 @@ export type PaymentRegister = "podohero" | "external";
 
 /** Präfix der Bon-Nr. der Praxiskasse in payments.external_ref – vergibt nur der Server */
 export const PRAXISKASSE_REF_PREFIX = "praxiskasse:";
-/** Bon-Nr. der Praxiskasse: höchstens 40 Zeichen, nur Buchstaben, Ziffern, „-“ und „/“ */
-export const PRAXISKASSE_BON_RE = /^[A-Za-z0-9/-]{1,40}$/;
 
 /** Bon-Nr. aus payments.external_ref („praxiskasse:<Nr>“), sonst null */
 export function praxiskasseBonNr(externalRef: string | null | undefined): string | null {
@@ -418,6 +413,8 @@ export function praxiskasseBonNr(externalRef: string | null | undefined): string
 
 /** Vermerk auf Belegen und in der Rechnungsansicht für Zahlungen der eigenen Praxiskasse (register = external) */
 export function externalRegisterNote(externalRef: string | null | undefined): string {
+  // über die PodoHero-SumUp-Anbindung eingegangen: in der Praxiskasse noch zu erfassen (Buchhaltung 7)
+  if (externalRef?.toLowerCase().startsWith("sumup:")) return "Über SumUp eingegangen – in der Praxiskasse zu erfassen.";
   const nr = praxiskasseBonNr(externalRef);
   return `Zahlung in der Praxiskasse erfasst${nr ? ` (Bon-Nr. ${nr})` : ""}. Den Kassenbeleg gibt die Praxiskasse aus.`;
 }

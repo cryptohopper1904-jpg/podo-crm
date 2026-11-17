@@ -80,7 +80,9 @@ Modell und TSE-Seriennummer der Praxiskasse, 3–200 Zeichen) und eine Bestätig
 
 **Voraussetzung zum Umschalten (beide Richtungen):** keine offenen PodoHero-Kassenvorgänge – also keine Bar-, Karten-
 oder Gutscheinzahlung der PodoHero-Kasse ohne Tagesabschluss und keine offene Einlage/Entnahme. Sonst: „Bitte zuerst den
-Tagesabschluss machen.“ Die Prüfung läuft in derselben Transaktion unter dem Kassen-Lock; Buchungen lesen die Einstellung
+Tagesabschluss machen.“ Kamen nach dem heutigen Tagesabschluss noch PodoHero-Kassenzahlungen dazu, ist heute kein
+weiterer Abschluss möglich – dann erst **am nächsten Tag** nach dessen Tagesabschluss umschalten. Im Support-Modus ist
+das Umschalten gesperrt. Die Prüfung läuft in derselben Transaktion unter dem Kassen-Lock; Buchungen lesen die Einstellung
 gesperrt (`FOR SHARE`), sodass nie eine PodoHero-Zahlung „zwischen“ Prüfung und Umschalten entsteht.
 
 **Was dann passiert:**
@@ -110,12 +112,29 @@ gesperrt (`FOR SHARE`), sodass nie eine PodoHero-Zahlung „zwischen“ Prüfung
    Praxiskasse eintragen.
 3. **Abends:** Z-Bon der Praxiskasse mit den Tagessummen unter „Kassenvermerke“ abgleichen.
 
-**Gutscheine:** Den Gutscheinbestand (Verkauf, Restguthaben, Einlösung) führt weiterhin PodoHero. Verkauf und Einlösung
-müssen zusätzlich in der Praxiskasse erfasst werden (Einzweck-/Mehrzweckgutschein dort entsprechend buchen).
+**Gutscheine:** Den Verkauf (Geldeingang) erfasst nur die Praxiskasse. PodoHero vergibt Code und Wert. Die Einlösung
+bucht die Praxiskasse als Zahlart Gutschein auf die PodoHero-Rechnung, PodoHero vermerkt sie (Restguthaben führt
+PodoHero, kein Zahlungsbeleg).
+
+**Erstattung und Storno:** Erst in der Praxiskasse als Auszahlung bzw. Storno „auf Rechnung“ mit Verweis auf den
+Ursprungsbon buchen, dann in PodoHero an der Stornorechnung die Erstattung vermerken – mit der Bon-Nr. des Storno-Bons.
+Das Kennzeichen der Erstattung folgt der Einstellung **zum Zeitpunkt der Erstattung**, nicht der ursprünglichen Zahlung:
+- Zahlung lief über die Praxiskasse, inzwischen ist wieder die PodoHero-Kasse aktiv: Die Erstattung ist ein
+  PodoHero-Kassenvorgang (TSE-signiert, im nächsten Z-Bon). In der Praxiskasse zusätzlich nur, wenn das Geld dort
+  ausgezahlt wird – dann bitte vorher zurückschalten bzw. mit der Steuerberatung klären.
+- Sonderfall: Zahlung lief über die PodoHero-Kasse, Erstattung nach dem Umschalten: Die Erstattung ist ein Vermerk der
+  Praxiskasse (ohne PodoHero-TSE, nicht im PodoHero-Z-Bon) und muss in der Praxiskasse gebucht werden; der Ursprungsbon
+  steht im PodoHero-Z-Bon bzw. Zahlungsbeleg (ZB-Nr. als Verweis angeben).
+
+**Zurückschalten auf die PodoHero-Kasse:** Der Anfangsbestand des nächsten PodoHero-Abschlusses ist der zuletzt
+gezählte PodoHero-Bestand. Weicht das Bargeld in der Schublade davon ab (Bargeld lief zwischenzeitlich über die
+Praxiskasse), den Bestand vor der ersten Zahlung per **Einlage/Entnahme** im Kassenbuch abgleichen. Nach dem
+Zurückschalten bleiben die Kassenvermerke unter „Frühere Kassenvermerke“ auf der Kasse-Seite abrufbar.
 
 **SumUp:** Läuft eine Kartenzahlung über die PodoHero-SumUp-Anbindung (Terminal), bucht PodoHero sie als Vermerk
 (`register = 'external'`, `external_ref` bleibt `sumup:…`) und legt für jeden Eingang eine Meldung im Posteingang an
-(„Kartenzahlung … bitte in der Praxiskasse erfassen“). Die Zahlung muss zusätzlich in der Praxiskasse erfasst werden.
+(„Kartenzahlung … bitte in der Praxiskasse erfassen“). Rechnungsansicht und PDF zeigen dazu „Über SumUp eingegangen –
+in der Praxiskasse zu erfassen.“ Die Zahlung muss zusätzlich in der Praxiskasse erfasst werden.
 
 **Offene Fragen an die Steuerberatung:**
 
@@ -129,6 +148,16 @@ müssen zusätzlich in der Praxiskasse erfasst werden (Einzweck-/Mehrzweckgutsch
   Umsatz oder nur als Zahlungseingang? Doppelerfassung im Kassenbuch vermeiden.
 - **Umstellungszeitpunkt:** Wechsel nur nach einem Tagesabschluss – reicht das als Dokumentation, oder muss die
   PodoHero-Kasse (Mock-TSE) gesondert außer Betrieb genommen bzw. abgemeldet werden?
+- **Meldung beim Zurückschalten (§ 146a Abs. 4 AO):** Muss die Wieder-Inbetriebnahme der PodoHero-Kasse (bzw. die
+  Außerbetriebnahme der Praxiskasse) gemeldet werden?
+- **Erstattung über zwei Systeme:** Zahlung in einem System, Erstattung im anderen (siehe „Erstattung und Storno“) –
+  zulässig, und wie ist der Verweis auf den Ursprungsbon zu dokumentieren?
+- **Einzweckgutschein und § 14c UStG:** Beim Einzweckgutschein entsteht die USt beim Verkauf – weist die Praxiskasse
+  beim Verkauf und PodoHero auf der Rechnung bei der Einlösung erneut USt aus?
+- **Doppelbuchung Lexoffice + Kassenexport:** Rechnungen gehen aus PodoHero nach Lexoffice, Kasseneinnahmen über den
+  Export der Praxiskasse in die Buchhaltung – wie wird eine doppelte Erfassung der Zahlung vermieden?
+- **Kleinbetragsrechnung (§ 33 UStDV):** Gilt der Bon der Praxiskasse zusammen mit der PodoHero-Rechnung als zwei
+  Rechnungen über dieselbe Leistung? Reicht für Kleinbeträge der Bon allein?
 
 ## 3. Offene Punkte (mit Steuerberatung / TSE-Anbieter klären)
 

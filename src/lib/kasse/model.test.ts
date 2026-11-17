@@ -169,7 +169,17 @@ describe("Vermerk eigene Praxiskasse", () => {
   it("mit und ohne Bon-Nr.; fremde Präfixe werden nicht als Bon-Nr. gelesen", () => {
     expect(externalRegisterNote("praxiskasse:Z-17/0815")).toBe("Zahlung in der Praxiskasse erfasst (Bon-Nr. Z-17/0815). Den Kassenbeleg gibt die Praxiskasse aus.");
     expect(externalRegisterNote(null)).toBe("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
-    expect(externalRegisterNote("sumup:abc")).toBe("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
     expect(praxiskasseBonNr("praxiskasse:a b")).toBeNull();
+  });
+});
+
+describe("Vermerk eigene Praxiskasse: SumUp und Bon-Nr.", () => {
+  it("SumUp-Eingang: eigener Text", () => {
+    expect(externalRegisterNote("sumup:t-1")).toBe("Über SumUp eingegangen – in der Praxiskasse zu erfassen.");
+    expect(externalRegisterNote("SUMUP:t-1")).toBe("Über SumUp eingegangen – in der Praxiskasse zu erfassen.");
+  });
+  it("Bon-Nr. darf nicht mit „-“ beginnen", () => {
+    expect(praxiskasseBonNr("praxiskasse:-12")).toBeNull();
+    expect(praxiskasseBonNr("praxiskasse:12-3/4")).toBe("12-3/4");
   });
 });

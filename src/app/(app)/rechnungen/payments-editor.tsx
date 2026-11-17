@@ -4,11 +4,9 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button, Field, Input, Select } from "@/components/ui";
 import { money, parseMoney } from "@/lib/format";
 import { PAYMENT_METHOD_LABEL, PAYMENT_METHODS, type PaymentMethod } from "@/lib/invoice-labels";
+import { isRegisterMethod, PRAXISKASSE_BON_PATTERN } from "@/lib/kasse/labels";
 
 export type PaymentRow = { key: string; method: PaymentMethod; amount: string; voucherCode: string; /** Bon-Nr. der eigenen Praxiskasse */ registerReceiptNo?: string };
-
-/** Kassenvorgänge (wie REGISTER_METHODS in src/lib/kasse/model.ts) – nur hier gibt es eine Bon-Nr. der Praxiskasse */
-const REGISTER_ROW_METHODS: readonly string[] = ["cash", "card", "voucher"];
 
 let seq = 0;
 export const newPaymentRow = (amountCents?: number, method: PaymentMethod = "cash"): PaymentRow => ({
@@ -27,7 +25,7 @@ export function paymentsToJson(rows: PaymentRow[], sign: 1 | -1 = 1) {
         amountCents: (parseMoney(r.amount) ?? 0) * sign,
         voucherCode: r.voucherCode || null,
         // Präfix „praxiskasse:“ setzt der Server; ohne eigene Praxiskasse lehnt der Server eine Bon-Nr. ab
-        registerReceiptNo: REGISTER_ROW_METHODS.includes(r.method) && r.registerReceiptNo?.trim() ? r.registerReceiptNo.trim() : null,
+        registerReceiptNo: isRegisterMethod(r.method) && r.registerReceiptNo?.trim() ? r.registerReceiptNo.trim() : null,
       }))
       .filter((r) => r.amountCents !== 0),
   );
@@ -77,20 +75,20 @@ export function PaymentsEditor({
               aria-invalid={r.amount !== "" && parseMoney(r.amount) === null}
             />
           </Field>
-          {r.method === "voucher" || (externalRegister && REGISTER_ROW_METHODS.includes(r.method)) ? (
+          {r.method === "voucher" || (externalRegister && isRegisterMethod(r.method)) ? (
             <div className="flex flex-col gap-3">
               {r.method === "voucher" ? (
                 <Field label="Gutscheincode">
                   <Input value={r.voucherCode} placeholder="G2026-0001" onChange={(e) => update(r.key, { voucherCode: e.target.value.toUpperCase() })} autoComplete="off" />
                 </Field>
               ) : null}
-              {externalRegister && REGISTER_ROW_METHODS.includes(r.method) ? (
+              {externalRegister && isRegisterMethod(r.method) ? (
                 <Field label="Bon-Nr. Praxiskasse (optional)">
                   <Input
                     value={r.registerReceiptNo ?? ""}
                     maxLength={40}
-                    pattern="[A-Za-z0-9\/\-]*"
-                    title="Nur Buchstaben, Ziffern, - und /"
+                    pattern={PRAXISKASSE_BON_PATTERN}
+                    title="Nur Buchstaben, Ziffern, - und /; am Anfang ein Buchstabe oder eine Ziffer"
                     placeholder="z. B. 4711"
                     onChange={(e) => update(r.key, { registerReceiptNo: e.target.value })}
                     autoComplete="off"
@@ -118,7 +116,7 @@ export function PaymentsEditor({
           </div>
         </div>
       ))}
-      {externalRegister && rows.some((r) => REGISTER_ROW_METHODS.includes(r.method)) ? (
+      {externalRegister && rows.some((r) => isRegisterMethod(r.method)) ? (
         <p className="rounded-xl bg-info-soft px-3 py-2 text-xs text-info-soft-text">
           Eigene Praxiskasse: Bar-, Karten- und Gutscheinzahlungen bitte zuerst in der Praxiskasse erfassen – PodoHero vermerkt sie hier nur
           (ohne TSE-Signatur und ohne PodoHero-Kassenbeleg).

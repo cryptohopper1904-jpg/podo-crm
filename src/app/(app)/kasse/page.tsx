@@ -3,6 +3,7 @@ import { FileDown, FileText } from "lucide-react";
 import { Badge, Button, Card, CardTitle, Empty, Field, Input, LinkButton, PageHeader, Stat, Table } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, dateTimeDe, money, timeDe } from "@/lib/format";
+import { addDaysIso } from "@/lib/invoice-math";
 import { PAYMENT_METHOD_LABEL } from "@/lib/invoice-labels";
 import { MOVEMENT_LABEL } from "@/lib/kasse/labels";
 import { exportRangeInput, externalRegisterEntries, kasseOverview, NO_TSE_NOTE } from "@/server/kasse";
@@ -66,7 +67,7 @@ export default async function KassePage(props: PageProps<"/kasse">) {
             (Tagesabschluss).
           </p>
         )}
-        {auth.can("settings.manage") ? <ExternalRegisterForm active={ext} /> : null}
+        {auth.can("settings.manage") && !auth.support ? <ExternalRegisterForm active={ext} /> : null}
       </section>
 
       {fiscalLiveBlockedReason() && !ext ? (
@@ -83,7 +84,7 @@ export default async function KassePage(props: PageProps<"/kasse">) {
       ) : null}
 
       {ext ? (
-        <ExternalRegisterSection auth={auth} searchParams={await props.searchParams} />
+        <ExternalRegisterSection auth={auth} searchParams={await props.searchParams} active />
       ) : (
         <>
       <h2 className="mb-3 font-display text-xl font-semibold">Offene Einnahmen (noch nicht abgeschlossen)</h2>
@@ -169,6 +170,15 @@ export default async function KassePage(props: PageProps<"/kasse">) {
         </>
       )}
 
+      {!ext && data.firstExternalDate ? (
+        <details className="mb-8 rounded-xl border border-border bg-surface px-4 py-3">
+          <summary className="cursor-pointer font-display text-lg font-semibold">Frühere Kassenvermerke (eigene Praxiskasse)</summary>
+          <div className="mt-4">
+            <ExternalRegisterSection auth={auth} searchParams={await props.searchParams} active={false} defaultFrom={data.firstExternalDate} />
+          </div>
+        </details>
+      ) : null}
+
       {canWrite && !ext ? (
         <section className="mb-8" aria-labelledby="abschluss">
           <h2 id="abschluss" className="mb-3 font-display text-xl font-semibold">Tagesabschluss</h2>
@@ -240,20 +250,36 @@ export default async function KassePage(props: PageProps<"/kasse">) {
  * Eigene Praxiskasse: keine zweite Kasse in PodoHero – stattdessen die Kassenvermerke (in PodoHero vermerkte Zahlungen
  * der Praxiskasse) mit Tagessumme je Zahlart als Abgleichhilfe zum Z-Bon der Praxiskasse, plus CSV.
  */
-async function ExternalRegisterSection({ auth, searchParams }: { auth: Awaited<ReturnType<typeof requireAuth>>; searchParams: Record<string, string | string[] | undefined> }) {
+async function ExternalRegisterSection({
+  auth,
+  searchParams,
+  active,
+  defaultFrom,
+}: {
+  auth: Awaited<ReturnType<typeof requireAuth>>;
+  searchParams: Record<string, string | string[] | undefined>;
+  /** eigene Praxiskasse aktiv (sonst: frühere Vermerke nach dem Zurückschalten, ohne SumUp-Hinweis) */
+  active: boolean;
+  /** Vorgabe „Von“ (frühere Vermerke: erster Vermerk, höchstens drei Jahre zurück) */
+  defaultFrom?: string;
+}) {
   const today = berlinDateIso();
-  const from = typeof searchParams.from === "string" ? searchParams.from : today;
+  const earliest = addDaysIso(today, -3 * 365);
+  const fallbackFrom = defaultFrom ? (defaultFrom < earliest ? earliest : defaultFrom) : today;
+  const from = typeof searchParams.from === "string" ? searchParams.from : fallbackFrom;
   const to = typeof searchParams.to === "string" ? searchParams.to : today;
   const range = exportRangeInput.safeParse({ from, to });
   const list = range.success ? await externalRegisterEntries(auth, range.data.from, range.data.to) : null;
   const csvHref = range.success ? `/api/kasse/kassenvermerke?from=${range.data.from}&to=${range.data.to}` : null;
   return (
-    <section className="mb-8" aria-labelledby="kassenvermerke">
-      <p className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text" role="note">
-        <strong>SumUp:</strong> Kartenzahlungen am SumUp-Terminal über die PodoHero-Anbindung bucht PodoHero nur als Vermerk. Sie müssen <strong>zusätzlich in der Praxiskasse</strong> als Kartenzahlung erfasst werden – für jeden Eingang erscheint eine
-        Meldung im Posteingang.
-      </p>
-      <h2 id="kassenvermerke" className="mb-3 font-display text-xl font-semibold">Kassenvermerke</h2>
+    <section className={active ? "mb-8" : ""} aria-labelledby={active ? "kassenvermerke" : undefined} aria-label={active ? undefined : "Frühere Kassenvermerke"}>
+      {active ? (
+        <p className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text" role="note">
+          <strong>SumUp:</strong> Kartenzahlungen am SumUp-Terminal über die PodoHero-Anbindung bucht PodoHero nur als Vermerk. Sie müssen <strong>zusätzlich in der Praxiskasse</strong> als Kartenzahlung erfasst werden – für jeden Eingang erscheint eine
+          Meldung im Posteingang.
+        </p>
+      ) : null}
+      {active ? <h2 id="kassenvermerke" className="mb-3 font-display text-xl font-semibold">Kassenvermerke</h2> : null}
       <p className="mb-4 text-sm text-muted">
         In PodoHero vermerkte Bar-, Karten- und Gutscheinzahlungen, die in der Praxiskasse erfasst sind. Die Tagessummen je Zahlart helfen
         beim Abgleich mit dem Z-Bon der Praxiskasse.

@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/lib/auth/session";
 import { parseMoney } from "@/lib/format";
 import { DENOMINATIONS } from "@/lib/kasse/labels";
-import { addCashMovement, closeDay, closingInput, externalRegisterReason, KasseError, movementInput, retryClosingRegistration, setExternalRegister } from "@/server/kasse";
+import { addCashMovement, closeDay, closingInput, EXTERNAL_REGISTER_SUPPORT_DENIED, externalRegisterReason, KasseError, movementInput, retryClosingRegistration, setExternalRegister } from "@/server/kasse";
 
 export type KasseState = { error?: string; ok?: string } | undefined;
 
@@ -79,6 +79,7 @@ export async function retryRegistrationAction(form: FormData) {
  */
 export async function setExternalRegisterAction(_: KasseState, form: FormData): Promise<KasseState> {
   const auth = await requireAuth("settings.manage");
+  if (auth.support) return { error: EXTERNAL_REGISTER_SUPPORT_DENIED };
   const on = form.get("on") === "1";
   if (form.get("confirm") !== "on") return { error: "Bitte das Umschalten bestätigen." };
   const reason = externalRegisterReason.safeParse(form.get("reason") ?? "");

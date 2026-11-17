@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { keepValues } from "@/lib/forms";
 import { Button, Card, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { DEPOSIT_METHODS, PAYMENT_METHOD_LABEL, type DepositMethod } from "@/lib/invoice-labels";
+import { PRAXISKASSE_BON_PATTERN } from "@/lib/kasse/labels";
 import { createDepositAction } from "../actions";
 
 export type DepositDefaults = {
@@ -69,7 +70,7 @@ export function DepositForm({
           </Field>
           {externalRegister && (method === "cash" || method === "card") ? (
             <Field label="Bon-Nr. Praxiskasse (optional)">
-              <Input name="registerReceiptNo" maxLength={40} pattern="[A-Za-z0-9\/\-]*" title="Nur Buchstaben, Ziffern, - und /" placeholder="z. B. 4711" autoComplete="off" />
+              <Input name="registerReceiptNo" maxLength={40} pattern={PRAXISKASSE_BON_PATTERN} title="Nur Buchstaben, Ziffern, - und /; am Anfang ein Buchstabe oder eine Ziffer" placeholder="z. B. 4711" autoComplete="off" />
             </Field>
           ) : null}
           <Field label="Hinweis auf der Quittung (optional)" className="sm:col-span-2">

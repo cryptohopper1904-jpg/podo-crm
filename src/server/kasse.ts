@@ -48,6 +48,7 @@ import {
 } from "@/lib/kasse/model";
 import { renderZBonPdf } from "@/lib/kasse/zbon-pdf";
 import { writeCsv } from "@/integrations/csv";
+import { neutralizeCsvCell } from "@/lib/csv-safe";
 import { log } from "@/lib/log";
 import { chainHash } from "@/lib/records";
 
@@ -245,7 +246,13 @@ export async function kasseOverview(auth: AuthContext) {
       movements: open.movements,
     });
     const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
+    // frühester Kassenvermerk (eigene Praxiskasse) – auch nach dem Zurückschalten abrufbar (Buchhaltung 5)
+    const [firstExt] = await tx
+      .select({ at: sql<Date | null>`min(${payments.paidAt})` })
+      .from(payments)
+      .where(and(eq(payments.organizationId, org), eq(payments.register, "external")));
     return {
+      firstExternalDate: firstExt?.at ? berlinDateIso(new Date(firstExt.at)) : null,
       externalRegister: usesExternalRegister(orgRow?.settings),
       /** beim Umschalten angegebenes Kassensystem (z. B. Hersteller + TSE-Seriennummer) */
       externalRegisterInfo: typeof (orgRow?.settings as Record<string, unknown> | null)?.externalCashRegisterInfo === "string" ? String((orgRow!.settings as Record<string, unknown>).externalCashRegisterInfo) : null,
@@ -264,6 +271,9 @@ export async function kasseOverview(auth: AuthContext) {
 
 // ───────────────────────── Eigene Praxiskasse ─────────────────────────
 export const EXTERNAL_REGISTER_LOCKED = "Bitte zuerst den Tagesabschluss machen.";
+export const EXTERNAL_REGISTER_SUPPORT_DENIED = "Im Support-Modus kann das Kassensystem der Praxis nicht umgestellt werden.";
+/** höchstens so viele Kassenvermerke je Abruf/Export */
+const EXTERNAL_ENTRIES_MAX = 5000;
 const EXTERNAL_REGISTER_ACTIVE = "Die Praxis nutzt ihre eigene Praxiskasse – Kassenbuch und Tagesabschluss werden dort geführt.";
 
 /** „Kassensystem/Grund“ beim Umschalten, z. B. Hersteller + TSE-Seriennummer der Praxiskasse (steht im Audit-Protokoll) */
@@ -297,6 +307,8 @@ async function openPodoHeroItems(tx: Tx, org: string) {
  */
 export async function setExternalRegister(auth: AuthContext, on: boolean, reason: string) {
   assertCan(auth, "settings.manage");
+  // Support-Zugang (Break-Glass) darf das Kassensystem der Praxis nicht umstellen (AppSec H1)
+  if (auth.support) throw new KasseError(EXTERNAL_REGISTER_SUPPORT_DENIED);
   const org = auth.organization.id;
   const parsed = externalRegisterReason.safeParse(reason);
   if (!parsed.success) throw new KasseError(parsed.error.issues[0]?.message ?? "Kassensystem/Grund ungültig.");
@@ -372,9 +384,10 @@ async function loadExternalRegisterEntries(org: string, from: string, to: string
         ),
       )
       .orderBy(asc(payments.paidAt), asc(payments.id))
-      .limit(5000),
+      .limit(EXTERNAL_ENTRIES_MAX + 1),
   );
-  const entries: ExternalRegisterEntry[] = rows.map((r) => ({
+  const truncated = rows.length > EXTERNAL_ENTRIES_MAX;
+  const entries: ExternalRegisterEntry[] = rows.slice(0, EXTERNAL_ENTRIES_MAX).map((r) => ({
     id: r.p.id,
     paidAt: r.p.paidAt,
     invoiceId: r.p.invoiceId,
@@ -392,25 +405,40 @@ async function loadExternalRegisterEntries(org: string, from: string, to: string
     byDay.set(d, m);
   }
   const days = [...byDay.entries()].map(([date, byMethod]) => ({ date, byMethod, totalCents: Object.values(byMethod).reduce((s, x) => s + x, 0) }));
-  return { from: range.data.from, to: range.data.to, entries, days, truncated: rows.length >= 5000 };
+  return { from: range.data.from, to: range.data.to, entries, days, truncated };
 }
 
 const METHOD_CSV: Record<string, string> = { cash: "Bar", card: "Karte", voucher: "Gutschein" };
 
-/** CSV der Kassenvermerke (Recht cash.export; Semikolon, Dezimalkomma, UTF-8 mit BOM; Formel-Injection neutralisiert) */
+/**
+ * CSV der Kassenvermerke (Recht cash.export; Semikolon, Dezimalkomma, UTF-8 mit BOM). Formel-Injection: Textzellen
+ * (Rechnungsnummer – auch aus Altbestand –, Bon-Nr.) werden neutralisiert; der Betrag ist eine vom Server erzeugte Zahl
+ * und bleibt eine Zahl (auch negativ, z. B. „-12,50“ bei Erstattungen – sonst würde der Formelschutz sie zu Text).
+ * Mehr als EXTERNAL_ENTRIES_MAX Einträge: Fehler statt still abgeschnitten.
+ */
 export async function externalRegisterCsv(auth: AuthContext, from: string, to: string) {
   assertCan(auth, "cash.export");
   const org = auth.organization.id;
   const list = await loadExternalRegisterEntries(org, from, to);
-  const cents = (c: number) => (c / 100).toFixed(2).replace(".", ",");
+  if (list.truncated) throw new KasseError(`Mehr als ${EXTERNAL_ENTRIES_MAX} Kassenvermerke im Zeitraum – bitte den Zeitraum verkleinern.`);
+  const cents = (c: number) => `${c < 0 ? "-" : ""}${Math.floor(Math.abs(c) / 100)},${String(Math.abs(c) % 100).padStart(2, "0")}`;
   const time = (d: Date) => new Intl.DateTimeFormat("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit" }).format(d);
+  const text = (v: string) => neutralizeCsvCell(v);
   const rows: unknown[][] = [
     ["Datum", "Uhrzeit", "Rechnungsnummer", "Zahlart", "Betrag", "Bon-Nr. Praxiskasse"],
-    ...list.entries.map((e) => [dateDeIso(berlinDateIso(e.paidAt)), time(e.paidAt), e.invoiceNumber ?? "", METHOD_CSV[e.method] ?? e.method, cents(e.amountCents), e.bonNr ?? ""]),
+    ...list.entries.map((e) => [
+      dateDeIso(berlinDateIso(e.paidAt)),
+      time(e.paidAt),
+      text(e.invoiceNumber ?? ""),
+      METHOD_CSV[e.method] ?? text(e.method),
+      cents(e.amountCents),
+      text(e.bonNr ?? ""),
+    ]),
   ];
   const [o] = await withOrg(org, (tx) => tx.select({ slug: organizations.slug }).from(organizations).where(eq(organizations.id, org)));
   await audit({ organizationId: org, userId: auth.user.id, action: "kasse.kassenvermerke_export", entity: "organization", entityId: org, meta: { from: list.from, to: list.to, count: list.entries.length } });
-  return { text: writeCsv(rows), filename: `kassenvermerke-${(o?.slug ?? "praxis").replace(/[^a-z0-9-]/g, "")}-${list.from}-${list.to}.csv`, count: list.entries.length };
+  // neutralize: false – Textzellen sind oben einzeln neutralisiert, der Betrag soll Zahl bleiben
+  return { text: writeCsv(rows, { neutralize: false }), filename: `kassenvermerke-${(o?.slug ?? "praxis").replace(/[^a-z0-9-]/g, "")}-${list.from}-${list.to}.csv`, count: list.entries.length };
 }
 
 const dateDeIso = (iso: string) => iso.split("-").reverse().join(".");

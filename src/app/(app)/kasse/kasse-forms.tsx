@@ -151,7 +151,11 @@ export function ExternalRegisterForm({ active }: { active: boolean }) {
       <input type="hidden" name="on" value={active ? "0" : "1"} />
       <Field
         label="Kassensystem / Grund *"
-        hint={active ? "z. B. „Praxiskasse außer Betrieb, ab heute wieder PodoHero“ – steht im Protokoll" : "z. B. Hersteller und Modell der Praxiskasse mit TSE-Seriennummer – steht im Protokoll"}
+        hint={
+          active
+            ? "z. B. „Praxiskasse außer Betrieb, ab heute wieder PodoHero“ – steht im Protokoll, keine Patientendaten"
+            : "z. B. Hersteller und Modell der Praxiskasse mit TSE-Seriennummer – steht im Protokoll, keine Patientendaten"
+        }
       >
         <Input name="reason" minLength={3} maxLength={200} required placeholder={active ? "Grund für das Zurückschalten" : "Hersteller, Modell, TSE-Seriennummer"} />
       </Field>
