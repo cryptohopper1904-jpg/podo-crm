@@ -6,6 +6,7 @@ import { invoices, messages, organizations, payments, webhookEvents } from "@/db
 import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWhatsAppWebhook } from "@/integrations/webhooks";
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
+import { usesExternalRegister } from "@/lib/kasse/model";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { archivePaymentReceipts, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
 import { adapterFor, logSync } from "./integrations";
@@ -304,7 +305,8 @@ export async function recordProviderPayment(organizationId: string, input: Provi
     // trotzdem gebucht (das Geld ist eingegangen) und der Ausfall im Posteingang gemeldet (TSE-Ausfall dokumentieren).
     let signed: SignedPayment | null = null;
     let signFailed = false;
-    if (needsSignature(input.method)) {
+    const [orgRow] = await t.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, organizationId));
+    if (needsSignature(input.method) && !usesExternalRegister(orgRow?.settings)) {
       // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
       const vatGroups = (await payableVatGroups(t, organizationId, [inv.id])).get(inv.id) ?? [];
       try {
