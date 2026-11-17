@@ -8,6 +8,7 @@ import { MOVEMENT_LABEL } from "@/lib/kasse/labels";
 import { kasseOverview, NO_TSE_NOTE } from "@/server/kasse";
 import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { CloseDayForm, MovementForm } from "./kasse-forms";
+import { setExternalRegisterAction } from "./actions";
 
 export const metadata = { title: "Kasse" };
 
@@ -44,12 +45,35 @@ export default async function KassePage() {
         }
       />
 
-      {fiscalLiveBlockedReason() ? (
+      <section aria-label="Kassensystem" className="mb-6 rounded-xl border border-border bg-surface px-4 py-3 text-sm">
+        {data.externalRegister ? (
+          <p>
+            <strong>Eigene Praxiskasse aktiv.</strong> Bar-, Karten- und Gutscheinzahlungen werden in PodoHero nur an der Rechnung vermerkt
+            – ohne TSE-Signatur, ohne Kassenbeleg und ohne Tagesabschluss. Beleg, TSE und Tagesabschluss kommen aus Ihrer Praxiskasse;
+            jede Zahlung muss dort ebenfalls erfasst werden.
+          </p>
+        ) : (
+          <p>
+            <strong>Nutzen Sie bereits eine eigene Kasse mit TSE?</strong> Dann kann PodoHero Zahlungen nur vermerken; Beleg, TSE und
+            Tagesabschluss bleiben in Ihrer Praxiskasse.
+          </p>
+        )}
+        {auth.can("settings.manage") ? (
+          <form action={setExternalRegisterAction} className="mt-2">
+            <input type="hidden" name="on" value={data.externalRegister ? "0" : "1"} />
+            <button type="submit" className="rounded-lg border border-border bg-surface px-3 py-1.5 font-semibold hover:bg-surface-2">
+              {data.externalRegister ? "Wieder mit PodoHero-Kasse arbeiten" : "Eigene Praxiskasse verwenden"}
+            </button>
+          </form>
+        ) : null}
+      </section>
+
+      {fiscalLiveBlockedReason() && !data.externalRegister ? (
         <p className="mb-6 rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
           <strong>Echtbetrieb der TSE gesperrt.</strong> {fiscalLiveBlockedReason()}
         </p>
       ) : null}
-      {data.tseMode === "none" ? (
+      {data.tseMode === "none" && !data.externalRegister ? (
         <p className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text" role="note">
           <strong>Keine TSE angebunden.</strong> Abschlüsse werden als „{NO_TSE_NOTE}“ gekennzeichnet. Wer Bargeld mit einem
           elektronischen Aufzeichnungssystem erfasst, braucht eine zertifizierte TSE und muss die Kasse beim Finanzamt melden – bitte mit der
@@ -137,7 +161,7 @@ export default async function KassePage() {
         </div>
       )}
 
-      {canWrite ? (
+      {canWrite && !data.externalRegister ? (
         <section className="mb-8" aria-labelledby="abschluss">
           <h2 id="abschluss" className="mb-3 font-display text-xl font-semibold">Tagesabschluss</h2>
           {data.closedToday ? (

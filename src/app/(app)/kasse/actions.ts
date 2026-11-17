@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/lib/auth/session";
 import { parseMoney } from "@/lib/format";
 import { DENOMINATIONS } from "@/lib/kasse/labels";
-import { addCashMovement, closeDay, closingInput, KasseError, movementInput, retryClosingRegistration } from "@/server/kasse";
+import { addCashMovement, closeDay, closingInput, KasseError, movementInput, retryClosingRegistration, setExternalRegister } from "@/server/kasse";
 
 export type KasseState = { error?: string; ok?: string } | undefined;
 
@@ -71,4 +71,10 @@ export async function retryRegistrationAction(form: FormData) {
   }
   revalidatePath(`/kasse/abschluss/${id}`);
   redirect(`/kasse/abschluss/${encodeURIComponent(id)}${ok ? "" : "?tse=fehler"}`);
+}
+
+export async function setExternalRegisterAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  await setExternalRegister(auth, form.get("on") === "1");
+  revalidatePath("/kasse");
 }
