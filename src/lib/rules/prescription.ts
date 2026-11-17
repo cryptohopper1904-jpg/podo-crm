@@ -486,7 +486,9 @@ export type PriceSnapshot = {
  *    Abbruchvermerk) → nur eine je Tag. Jede Annahme „2 × am Tag“ und nicht verteilbare Einheiten stehen in `notes`.
  *  - Verordnungsblattgebühr höchstens bis zu den Kosten abzüglich des 10-%-Anteils, damit
  *    `copaymentCents = copaymentPercentCents + flatFeeCents` gilt (wie #110 betraege.ts).
- *  - zwei Behandlungseinträge am selben Tag mit derselben Position → Hinweis in `notes` (nicht blockierend).
+ *  - Behandlungseinträge werden je Kalendertag zusammengefasst, bevor verteilt wird: je (Tag, Position) genau eine Zeile
+ *    mit höchstens `maxPerDay` Einheiten; mehrere Einträge am selben Tag → Hinweis (nicht blockierend), Rest „nicht
+ *    verteilbar“ (Runde 3 B1, Runde 4 V-1).
  * Annahme (docs/GKV.md, offene Punkte): Die Einheiten je Position werden den Behandlungstagen in zeitlicher
  * Reihenfolge zugeordnet (je Tag eine Einheit jeder Position, solange vorhanden). Die tatsächlich abgegebenen
  * Positionen je Tag erfasst PodoHero (noch) nicht einzeln.
@@ -513,23 +515,27 @@ export function priceSnapshot(input: {
     const n = key ? input.positions.filter((p) => positionKey(p.position) === key).length : 0;
     if (n > 1) notes.push(`Position ${key} steht mehrfach auf der Verordnung – zusammengefasst (${m.units} Einheiten).`);
   }
-  let complete = dates.length > 0;
+  // Behandlungseinträge je Kalendertag zusammenfassen, BEVOR verteilt wird (Runde 4, V-1): je Tag und Position
+  // höchstens `maxPerDay` (78610: 2, sonst 1; vorzeitig beendet: 1) – mehrere Einträge am selben Tag erhöhen das nicht
+  const entriesPerDay = new Map<string, number>();
+  for (const d of dates) entriesPerDay.set(d, (entriesPerDay.get(d) ?? 0) + 1);
+  const days = [...entriesPerDay.keys()];
+  let complete = days.length > 0;
   let remedy = 0;
   let percent = 0;
   const de = (iso: string) => iso.split("-").reverse().join(".");
   const left = new Map(positions.map((p, i) => [i, p.units]));
-  // Einheiten je Tag und Position (zwei Einträge am selben Tag → Hinweis)
-  const perDayPosition = new Map<string, number>();
   let firstDayPriced = false;
-  dates.forEach((date, di) => {
+  // Befreiung einer anderen Kasse: ein Hinweis je Befreiung (nicht je Tag); IK normalisiert vergleichen (Runde 4)
+  const foreignExemptions = new Set<CopaymentExemption>();
+  days.forEach((date, di) => {
+    const entries = entriesPerDay.get(date) ?? 1;
     const age = ageOn(input.birthDate, date);
     const minor = age !== null && age < COPAYMENT_FREE_UNDER_AGE;
     const exemption = exemptOn(input.exemptions, date);
     const exempt = !!exemption;
-    if (exemption?.insurerIk && input.insurerIk && exemption.insurerIk !== input.insurerIk) {
-      notes.push(`Befreiung am ${date.split("-").reverse().join(".")} ist von einer anderen Krankenkasse (IK ${exemption.insurerIk}) als auf der Verordnung (IK ${input.insurerIk}) – bitte prüfen.`);
-    }
-    const daysLeft = dates.length - di;
+    if (exemption?.insurerIk && input.insurerIk && normalizeId(exemption.insurerIk) !== normalizeId(input.insurerIk)) foreignExemptions.add(exemption);
+    const daysLeft = days.length - di;
     positions.forEach((p, pi) => {
       const rest = left.get(pi) ?? 0;
       if (rest <= 0) return;
@@ -537,10 +543,8 @@ export function priceSnapshot(input: {
       const units = Math.min(perDay, Math.max(1, Math.ceil(rest / daysLeft)), rest);
       left.set(pi, rest - units);
       const code = toZlHpnr(p.position) ?? p.position ?? p.label;
-      if (units > 1) notes.push(`${units} × ${code} am ${de(date)} angenommen – bitte mit Doku abgleichen.`);
-      const key = `${date}|${code}`;
-      perDayPosition.set(key, (perDayPosition.get(key) ?? 0) + 1);
-      if (perDayPosition.get(key) === 2) notes.push(`Zwei Einheiten ${code} am ${de(date)} (zwei Behandlungseinträge) – bitte prüfen, ob abrechenbar.`);
+      if (perDay === 1 && entries > 1) notes.push(`${entries} Behandlungseinträge am ${de(date)} – nur 1 Einheit ${code} abrechenbar, bitte prüfen.`);
+      else if (units > entries) notes.push(`${units} × ${code} am ${de(date)} angenommen – bitte mit Doku abgleichen.`);
       const pr = p.position ? priceFor(p.position, date) : null;
       if (!pr) {
         complete = false;
@@ -549,14 +553,17 @@ export function priceSnapshot(input: {
       const copay = pr && pr.copayCents === null ? null : pr && !minor && !exempt ? pr.copayCents! * units : 0;
       remedy += (pr?.cents ?? 0) * units;
       percent += copay ?? 0;
-      lines.push({ date, position: toZlHpnr(p.position) ?? p.position ?? p.label, units, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
+      lines.push({ date, position: code, units, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
     });
   });
+  for (const e of foreignExemptions) {
+    notes.push(`Befreiung (gültig ${de(e.validFrom)}–${de(e.validTo)}) ist von einer anderen Krankenkasse (IK ${e.insurerIk}) als auf der Verordnung (IK ${input.insurerIk}) – bitte prüfen.`);
+  }
   positions.forEach((p, pi) => {
     const rest = left.get(pi) ?? 0;
-    if (rest > 0 && dates.length) {
+    if (rest > 0 && days.length) {
       const code = toZlHpnr(p.position) ?? p.position ?? p.label;
-      notes.push(`${rest} ${rest === 1 ? "Einheit" : "Einheiten"} ${code} nicht verteilbar (${dates.length} Behandlungstage${input.endedEarly ? ", vorzeitig beendet" : ""}) – nicht angesetzt.`);
+      notes.push(`${rest} ${rest === 1 ? "Einheit" : "Einheiten"} ${code} nicht verteilbar (${days.length} ${days.length === 1 ? "Behandlungstag" : "Behandlungstage"}${input.endedEarly ? ", vorzeitig beendet" : ""}) – nicht angesetzt.`);
     }
   });
   if (input.birthDate === null || input.birthDate === undefined) notes.push("Geburtsdatum fehlt – Zuzahlungspflicht (ab 18) bitte prüfen.");
@@ -568,22 +575,7 @@ export function priceSnapshot(input: {
   const eur = (c: number) => (c / 100).toFixed(2).replace(".", ",");
   if (flatDue && flat < COPAYMENT_FLAT_CENTS) notes.push(`Pauschale auf ${eur(flat)} € gedeckelt (Kosten ${eur(remedy)} € − 10 % ${eur(percent)} €).`);
   const copay = Math.min(remedy, percent + flat);
-  // je (Tag, Position) genau EINE Zeile: zwei Behandlungseinträge am selben Tag zusammenfassen (Runde 3, B1)
-  const merged: SnapshotLine[] = [];
-  const byKey = new Map<string, SnapshotLine>();
-  for (const l of lines) {
-    const key = `${l.date}|${l.position}`;
-    const prev = byKey.get(key);
-    if (!prev) {
-      const copy = { ...l };
-      byKey.set(key, copy);
-      merged.push(copy);
-      continue;
-    }
-    prev.units += l.units;
-    prev.copayCents = prev.copayCents === null && l.copayCents === null ? null : (prev.copayCents ?? 0) + (l.copayCents ?? 0);
-  }
-  return { rulesVersion: RULES_VERSION, computedOn: input.computedOn, remedyCents: remedy, copaymentPercentCents: percent, flatFeeCents: flat, copaymentCents: copay, complete, lines: merged, notes: [...new Set(notes)] };
+  return { rulesVersion: RULES_VERSION, computedOn: input.computedOn, remedyCents: remedy, copaymentPercentCents: percent, flatFeeCents: flat, copaymentCents: copay, complete, lines, notes: [...new Set(notes)] };
 }
 
 /**

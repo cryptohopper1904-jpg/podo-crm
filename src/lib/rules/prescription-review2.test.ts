@@ -37,7 +37,7 @@ describe("Review-Runde 2 PR #111", () => {
   it("zwei Behandlungseinträge am selben Tag → Hinweis, nicht blockierend", () => {
     const snap = priceSnapshot({ positions: [{ position: "78020", label: "groß", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
     expect(snap.complete).toBe(true);
-    expect(snap.notes).toContain("Zwei Einheiten 78020 am 02.11.2026 (zwei Behandlungseinträge) – bitte prüfen, ob abrechenbar.");
+    expect(snap.notes).toContain("2 Behandlungseinträge am 02.11.2026 – nur 1 Einheit 78020 abrechenbar, bitte prüfen.");
     const ok = priceSnapshot({ positions: [{ position: "78020", label: "groß", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-30"], ...old, computedOn: "2026-12-01" });
     expect(ok.notes).toEqual([]);
   });

@@ -14,6 +14,7 @@ import {
   DIAGNOSIS_GROUP_CODES,
   DIAGNOSIS_GROUPS,
   RULES_VERSION,
+  addDaysIso,
   anlage3Findings,
   autoExpiryApplies,
   blocksBilling,
@@ -399,7 +400,9 @@ export async function savePrescription(
     const catalogPrice = new Map(priced.map((s) => [s.gkvPosition, s.priceCents]));
     const cost = remedyCostCents(positions.map((x) => ({ units: x.units, priceCents: x.position ? (priceFor(x.position, today)?.cents ?? catalogPrice.get(x.position)) : null })));
     const maxUnits = Math.max(0, ...positions.map((x) => x.units));
-    const estimate = priceSnapshot({ positions, treatmentDates: Array.from({ length: maxUnits }, () => today), birthDate: p.birthDate, exemptions: p.copaymentExemptions, computedOn: today, insurerIk: d.insurerIk });
+    // Schätzung: je Einheit ein eigener (gedachter) Behandlungstag ab heute – mehrere Einträge am selben Tag zählen seit
+    // Runde 4 nur einmal je Tag (priceSnapshot), gleiche Tage würden die Zuzahlung zu niedrig schätzen
+    const estimate = priceSnapshot({ positions, treatmentDates: Array.from({ length: maxUnits }, (_, i) => addDaysIso(today, i)), birthDate: p.birthDate, exemptions: p.copaymentExemptions, computedOn: today, insurerIk: d.insurerIk });
     const warnings = [...check.warnings];
     if (!cost.complete) warnings.push("Für mindestens eine Position gibt es keinen Preis in der Vergütungsliste Podologie (Anlage 2) – Zuzahlung bitte prüfen.");
     const exemption = exemptOn(p.copaymentExemptions, today);

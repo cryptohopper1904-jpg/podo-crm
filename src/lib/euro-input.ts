@@ -17,10 +17,10 @@ export const EURO_INPUT_MAX_LENGTH = 20;
 const THOUSANDS_DOT = /^\d{1,3}(\.\d{3})+(,\d{1,2})?$/;
 const THOUSANDS_SPACE = /^\d{1,3}( \d{3})+(,\d{1,2})?$/;
 const PLAIN = /^\d+([.,]\d{1,2})?$/;
-const EDGE = /^[\s €]+|[\s €]+$/g;
+const EDGE = /^[\s\u00a0€]+|[\s\u00a0€]+$/g;
 
 export function parseEuroInputCents(input: string | null | undefined): number | null | { error: string } {
-  const s = (input ?? "").replace(EDGE, "").replace(/ /g, " ");
+  const s = (input ?? "").replace(EDGE, "").replace(/\u00a0/g, " ");
   if (!s) return null;
   let normalized: string;
   if (THOUSANDS_DOT.test(s)) normalized = s.replace(/\./g, "").replace(",", ".");

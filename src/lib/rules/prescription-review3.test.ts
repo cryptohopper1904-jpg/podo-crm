@@ -6,12 +6,13 @@ describe("Review-Runde 3 PR #111", () => {
   const old = { birthDate: "1950-01-01", exemptions: [] };
   const keys = (lines: { date: string; position: string }[]) => lines.map((l) => `${l.date}|${l.position}`);
 
-  it("B1 Fall H: zwei Einträge am selben Tag (78010 × 2) → EINE Zeile je (Tag, Position), Hinweis „zwei Behandlungseinträge“", () => {
+  it("B1 Fall H: zwei Einträge am selben Tag (78010 × 2) → EINE Zeile, nur 1 Einheit abrechenbar (Tageshöchstmenge 1), Hinweis", () => {
     const snap = priceSnapshot({ positions: [{ position: "78010", label: "klein", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
     expect(snap.lines).toHaveLength(1);
-    expect(snap.lines[0]).toMatchObject({ date: "2026-11-02", position: "78010", units: 2, copayCents: 2 * 361 });
-    expect(snap.remedyCents).toBe(2 * 3610);
-    expect(snap.notes.join(" ")).toMatch(/Zwei Einheiten 78010 am 02\.11\.2026 \(zwei Behandlungseinträge\)/);
+    expect(snap.lines[0]).toMatchObject({ date: "2026-11-02", position: "78010", units: 1, copayCents: 361 });
+    expect(snap.remedyCents).toBe(3610);
+    expect(snap.notes).toContain("2 Behandlungseinträge am 02.11.2026 – nur 1 Einheit 78010 abrechenbar, bitte prüfen.");
+    expect(snap.notes.join(" ")).toMatch(/1 Einheit 78010 nicht verteilbar/);
     expect(new Set(keys(snap.lines)).size).toBe(snap.lines.length);
   });
 
@@ -28,9 +29,9 @@ describe("Review-Runde 3 PR #111", () => {
     expect(snap.notes.join(" ")).not.toMatch(/zwei Behandlungseinträge/);
   });
 
-  it("B1: Zuzahlung je Zeile: null nur, wenn alle zusammengefassten Zeilen null sind", () => {
+  it("B1: Zuzahlung je Zeile bleibt null (Position ohne Zuzahlung) auch bei zwei Einträgen am selben Tag (Runde 4: 1 Einheit je Tag)", () => {
     const snap = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
-    expect(snap.lines).toEqual([expect.objectContaining({ units: 2, copayCents: null })]);
+    expect(snap.lines).toEqual([expect.objectContaining({ units: 1, copayCents: null })]);
   });
 
   it("H-3/S5: mergePositions fasst ZL/KH/KB-Nummern derselben Leistung zusammen", () => {
