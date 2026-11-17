@@ -543,7 +543,8 @@ export function priceSnapshot(input: {
       const units = Math.min(perDay, Math.max(1, Math.ceil(rest / daysLeft)), rest);
       left.set(pi, rest - units);
       const code = toZlHpnr(p.position) ?? p.position ?? p.label;
-      if (perDay === 1 && entries > 1) notes.push(`${entries} Behandlungseinträge am ${de(date)} – nur 1 Einheit ${code} abrechenbar, bitte prüfen.`);
+      // mehr Einträge als die Tageshöchstmenge (78610: 2, sonst 1) → Hinweis; zwei Einträge bei 78610 sind zulässig
+      if (entries > perDay) notes.push(`${entries} Behandlungseinträge am ${de(date)} – nur ${perDay} ${perDay === 1 ? "Einheit" : "Einheiten"} ${code} abrechenbar, bitte prüfen.`);
       else if (units > entries) notes.push(`${units} × ${code} am ${de(date)} angenommen – bitte mit Doku abgleichen.`);
       const pr = p.position ? priceFor(p.position, date) : null;
       if (!pr) {
