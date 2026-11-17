@@ -217,10 +217,13 @@ describe("R2-4 vorgegebenes Kennzeichen mit Verarbeitungskennzeichen", () => {
   });
 
   it("F4: ZK „1“ vorgegeben ohne VKZ, Snapshot mit Zuzahlung (2 × 78020 = 10,12 € + 10,00 €) → Abweichung", () => {
+    // seit Runde 4 (B1) greift schon die Prüfung Kreuz „gebührenfrei“ (R2-5); die Gegenrechnung entfällt dann
     const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1950-03-15"), snapshot([P78020("2026-07-06"), P78020("2026-08-03")]), { ...ergaenzung, zuzahlungskennzeichen: "1" });
     expect(r.fall.zuzahlungskennzeichen).toBe("1");
-    expect(r.abweichungen).toContainEqual(expect.stringContaining("Snapshot 506 Cent, berechnet 0 Cent"));
-    expect(r.abweichungen).toContainEqual(expect.stringContaining("Pauschale im Preis-Snapshot 1000 Cent, berechnet 0 Cent"));
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("gebührenfrei"));
+    // ohne Kreuz: Kennzeichen widerspricht Alter/Befreiung
+    const ohneKreuz = bildeAbrechnungsfall("1", vo, patient("1950-03-15"), snapshot([P78020("2026-07-06"), P78020("2026-08-03")]), { ...ergaenzung, zuzahlungskennzeichen: "1" });
+    expect(ohneKreuz.abweichungen).toEqual(["Vorgegebenes Zuzahlungskennzeichen 1 passt nicht zu Alter/Befreiung (abgeleitet 3)."]);
   });
 
   it("abweichender Betrag wird auch bei vorgegebenem Kennzeichen mit VKZ erkannt", () => {
@@ -435,5 +438,154 @@ describe("Hinweis 2: nur zuzahlungsfreie Positionen mit 18. Geburtstag im Behand
       ],
     });
     expect(r.abweichungen).toContainEqual(expect.stringContaining("nur Positionen ohne Zuzahlung"));
+  });
+});
+
+// ───────────── Review-Runde 4 (Gegenbeispiele der Prüfer) ─────────────
+
+describe("B1 vorgegebenes Zuzahlungskennzeichen bei VKZ ≠ 03: alle Prüfungen laufen weiter", () => {
+  it("P2: Kind, ZK 3 vorgegeben, Snapshot mit Zuzahlung → Abweichungen (Zeile und Kennzeichen)", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("2012-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "3" });
+    expect(r.fall.zuzahlungskennzeichen).toBe("3");
+    expect(r.abweichungen).toContainEqual("Vorgegebenes Zuzahlungskennzeichen 3 passt nicht zu Alter/Befreiung (abgeleitet 0).");
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("nach Alter/Befreiung aber zuzahlungsfrei"));
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("Pauschale im Preis-Snapshot 1000 Cent"));
+  });
+
+  it("X1/P3: befreit laut Zeitraum, ZK 3 vorgegeben, Snapshot mit 5,06 € + 10,00 € → Abweichung (abgeleitet 1)", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "3", befreiungen: [{ validFrom: "2026-01-01", validTo: "2026-12-31" }] });
+    expect(r.abweichungen).toContainEqual("Vorgegebenes Zuzahlungskennzeichen 3 passt nicht zu Alter/Befreiung (abgeleitet 1).");
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("nicht als befreit gekennzeichnet"));
+  });
+
+  it("S4h/N18: Kreuz „gebührenfrei“ ohne Bescheinigung und ohne Bestätigung, ZK 3 vorgegeben → Abweichung „gebührenfrei“", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "3" });
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("gebührenfrei"));
+    expect(r.hinweise).toEqual([]);
+  });
+
+  it("S4g: Kreuz bestätigt, ZK 1 vorgegeben, Snapshot mit Zuzahlung → Abweichung (abgeleitet 3)", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1950-03-15"), snapshot([P78020("2026-07-06")]), { ...ergaenzung, zuzahlungskennzeichen: "1", kreuzOhneBescheinigungBestaetigt: true });
+    expect(r.abweichungen).toContainEqual("Vorgegebenes Zuzahlungskennzeichen 1 passt nicht zu Alter/Befreiung (abgeleitet 3).");
+  });
+
+  it("Pauschale am ersten Behandlungstag wird auch bei vorgegebenem ZK geprüft", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")], 0), { ...ergaenzung, zuzahlungskennzeichen: "3" });
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("Pauschale fehlt im Preis-Snapshot"));
+  });
+
+  it("stimmiges vorgegebenes ZK 3 (volljährig, ohne Befreiung) → keine Abweichung", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05"), P78020("2026-10-19")]), { ...ergaenzung, zuzahlungskennzeichen: "3" });
+    expect(r.abweichungen).toEqual([]);
+    expect(r.fehlendeAngaben).toEqual([]);
+  });
+
+  it("ZK 2 bleibt bewusst zulässiger Sonderfall (keine Kennzeichen-Abweichung), Prüfungen laufen trotzdem", () => {
+    const ok = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "2" });
+    expect(ok.abweichungen).toEqual([]);
+    const kind = bildeAbrechnungsfall("1", vo, patient("2012-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "2" });
+    expect(kind.abweichungen).not.toContainEqual(expect.stringContaining("Vorgegebenes Zuzahlungskennzeichen"));
+    expect(kind.abweichungen).toContainEqual(expect.stringContaining("nach Alter/Befreiung aber zuzahlungsfrei"));
+  });
+
+  it("VKZ 03 bleibt wie bisher (ZK 1 trotz Zuzahlung im Snapshot, keine Kennzeichen-Abweichung)", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, zuzahlungskennzeichen: "1", verarbeitungskennzeichen: "03" });
+    expect(r.abweichungen).toEqual([]);
+  });
+
+  it("ohne Snapshot: Kind, ZK 3 vorgegeben → Abweichung (abgeleitet 0)", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("2012-01-01"), behandlungen, { ...ergaenzung, zuzahlungskennzeichen: "3" });
+    expect(r.abweichungen).toContainEqual("Vorgegebenes Zuzahlungskennzeichen 3 passt nicht zu Alter/Befreiung (abgeleitet 0).");
+  });
+
+  it("ohne Snapshot: Kreuz ohne Zeitraum, ZK 1 vorgegeben → fehlende Angabe „Zeitraum der Zuzahlungsbefreiung“", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), behandlungen, { ...ergaenzung, zuzahlungskennzeichen: "1" });
+    expect(r.fehlendeAngaben).toContainEqual(expect.stringContaining("Zeitraum der Zuzahlungsbefreiung"));
+  });
+});
+
+describe("L1 Hinweis zum bestätigten Kreuz nur bei tatsächlicher Zuzahlung und ohne Abweichungen", () => {
+  it("bestätigt, aber Snapshot ohne Zuzahlung und ohne Pauschale → Abweichung, kein Hinweis", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), snapshot([P78020("2026-10-05", 0)], 0), { ...ergaenzung, kreuzOhneBescheinigungBestaetigt: true });
+    expect(r.abweichungen).not.toEqual([]);
+    expect(r.hinweise).toEqual([]);
+  });
+
+  it("bestätigt, Abweichung erst aus der Gegenrechnung (400 statt 506 Cent) → kein Hinweis", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), snapshot([P78020("2026-10-05", 400)]), { ...ergaenzung, kreuzOhneBescheinigungBestaetigt: true });
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("Snapshot 400 Cent, berechnet 506 Cent"));
+    expect(r.hinweise).toEqual([]);
+  });
+
+  it("bestätigt, aber Kind (kein Termin pflichtig) → kein Hinweis", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("2012-01-01"), snapshot([P78020("2026-10-05", 0, { minor: true })], 0), { ...ergaenzung, kreuzOhneBescheinigungBestaetigt: true });
+    expect(r.fall.zuzahlungskennzeichen).toBe("0");
+    expect(r.hinweise).toEqual([]);
+  });
+});
+
+describe("L2 kein doppelter Hinweis zur Befreiung einer anderen Kasse", () => {
+  const notiz = "Befreiung am 05.10.2026 ist von einer anderen Krankenkasse (IK 990000006) als auf der Verordnung (IK 990020015) – bitte prüfen.";
+  it("notes von #111 enthalten den Hinweis schon → nur dieser eine Hinweis", () => {
+    const s = { ...snapshot([P78020("2026-10-05", 0, { exempt: true })], 0), notes: [notiz] };
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), s, { ...ergaenzung, befreiungen: [{ validFrom: "2026-01-01", validTo: "2026-12-31", insurerIk: "990000006" }] });
+    expect(r.hinweise).toEqual([notiz]);
+  });
+});
+
+describe("Hinweis 2/3: robuste Befreiungen und echte Kalenderprüfung", () => {
+  it("Befreiung null bzw. kein Objekt → fehlende Angabe statt TypeError", () => {
+    for (const b of [null, 5, "x"]) {
+      const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, befreiungen: [b as never] });
+      expect(r.fehlendeAngaben).toContainEqual(expect.stringContaining("Befreiungszeitraum gültig von–bis"));
+    }
+  });
+
+  it("unmögliches Datum im Befreiungszeitraum (2026-02-30) → fehlende Angabe", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, befreiungen: [{ validFrom: "2026-02-30", validTo: "2026-12-31" }] });
+    expect(r.fehlendeAngaben).toContainEqual(expect.stringContaining("Befreiungszeitraum gültig von–bis"));
+  });
+
+  it("unmögliches Geburtsdatum, Behandlungsdatum und Verordnungsdatum → fehlende Angaben", () => {
+    const geb = bildeAbrechnungsfall("1", vo, patient("2010-02-30"), snapshot([P78020("2026-10-05")]), ergaenzung);
+    expect(geb.fehlendeAngaben).toContainEqual(expect.stringContaining("Geburtsdatum"));
+    const beh = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-02-30")]), ergaenzung);
+    expect(beh.fehlendeAngaben).toContainEqual(expect.stringContaining("Behandlungsdatum"));
+    const vd = bildeAbrechnungsfall("1", { ...vo, issuedAt: "2026-02-30" }, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), ergaenzung);
+    expect(vd.fehlendeAngaben).toContainEqual(expect.stringContaining("Verordnungsdatum"));
+  });
+
+  it("Geburtsdatum mit unbekanntem Tag/Monat (JJJJ-MM-00, JJJJ-00-00) bleibt zulässig", () => {
+    for (const g of ["1960-05-00", "1960-00-00"]) {
+      const r = bildeAbrechnungsfall("1", vo, patient(g), snapshot([P78020("2026-10-05")]), ergaenzung);
+      expect(r.fehlendeAngaben).toEqual([]);
+    }
+  });
+});
+
+describe("Hinweis 6: Absicherungstests", () => {
+  it("N1: Kreuz bestätigt + echte Befreiung über den ganzen Zeitraum, Snapshot (falsch) mit Zuzahlung → Abweichung, kein Hinweis", () => {
+    const r = bildeAbrechnungsfall("1", { ...vo, copaymentExempt: true }, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, kreuzOhneBescheinigungBestaetigt: true, befreiungen: [{ von: "2026-01-01", bis: "2026-12-31" }] });
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("nach Alter/Befreiung aber zuzahlungsfrei"));
+    expect(r.hinweise).toEqual([]);
+  });
+
+  it("N2: Bestätigung ohne Kreuz ist wirkungslos", () => {
+    const s = snapshot([P78020("2026-10-05")]);
+    const mit = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), s, { ...ergaenzung, kreuzOhneBescheinigungBestaetigt: true });
+    const ohne = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), s, ergaenzung);
+    expect(mit).toEqual(ohne);
+    expect(mit.hinweise).toEqual([]);
+  });
+
+  it("N8: Geburt 2008-11-00, Termin 2026-12-03 (nach spätest möglichem 18. Geburtstag) als minor → Abweichung „volljährig“", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("2008-11-00"), snapshot([P78020("2026-12-03", 0, { minor: true })], 0), ergaenzung);
+    expect(r.abweichungen).toContainEqual(expect.stringContaining("laut Geburtsdatum aber volljährig"));
+  });
+
+  it("notes mit Duplikaten und Nicht-Strings → je Text ein Hinweis", () => {
+    const s = { ...snapshot([P78020("2026-10-05")]), notes: ["x", "x", 5 as unknown as string, null as unknown as string] };
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), s, ergaenzung);
+    expect(r.hinweise).toEqual(["x"]);
   });
 });

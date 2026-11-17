@@ -45,7 +45,8 @@ function deDatum(iso: IsoDatum): string {
 
 // ───────────────────────── Hilfen ─────────────────────────
 
-function datumGueltig(iso: string, nullenErlaubt = false): boolean {
+/** echtes Kalenderdatum „JJJJ-MM-TT“; mit `nullenErlaubt` auch „JJJJ-MM-00“ und „JJJJ-00-00“ (Geburtsdatum, TA1 NAD) */
+export function datumGueltig(iso: string, nullenErlaubt = false): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return false;
   const [j, mo, t] = [Number(m[1]), Number(m[2]), Number(m[3])];
