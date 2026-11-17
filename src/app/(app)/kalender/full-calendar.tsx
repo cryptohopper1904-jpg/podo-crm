@@ -357,11 +357,12 @@ function TimeGridView({ view, day, focusDay, today, now, rows, busyRows, board, 
               {slots.map((m) => (
                 <span
                   key={m}
-                  data-zeitachse=""
+                  data-zeitachse={toHhmm(m)}
                   className={`absolute right-1.5 -translate-y-1/2 text-[11px] leading-none tabular-nums first:translate-y-0.5 ${m % 60 === 0 ? "font-semibold text-text" : "text-muted"}`}
                   style={{ top: px(m - range.startMin) }}
                 >
-                  {toHhmm(m)}
+                  {/* Volle Stunde mit Uhrzeit, dazwischen nur die Minuten (15/30/45 bzw. 10/20 …) – ruhiger zu lesen */}
+                  {m % 60 === 0 ? toHhmm(m) : String(m % 60).padStart(2, "0")}
                 </span>
               ))}
             </div>

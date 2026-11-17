@@ -12,7 +12,7 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
   const mirror = side === "left";
   return (
     <figure className="flex flex-col items-center gap-2">
-      <svg viewBox="0 0 130 230" className="h-72 w-auto" role="group" aria-label={`Fuß ${side === "left" ? "links" : "rechts"}`}>
+      <svg viewBox="0 0 130 230" className="h-72 w-auto select-none" role="group" aria-label={`Fuß ${side === "left" ? "links" : "rechts"}`} style={onToggle ? { touchAction: "manipulation" } : undefined}>
         <g transform={mirror ? "translate(130,0) scale(-1,1)" : undefined}>
           <path
             d="M30 40 C 25 15, 50 8, 52 28 C 55 10, 70 10, 70 26 C 74 14, 86 18, 85 32 C 90 24, 100 30, 96 42 C 104 38, 110 48, 104 58 C 112 90, 106 130, 100 160 C 96 190, 90 222, 62 222 C 34 222, 30 196, 30 170 C 30 140, 22 110, 24 80 C 25 62, 26 50, 30 40 Z"
@@ -24,7 +24,14 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
             const key = `${side}:${p.id}`;
             const on = selected.has(key);
             return (
-              <g key={p.id}>
+              <g
+                key={p.id}
+                // Direkt in den Fuß tippen (Maus/Touch). Tastatur/Screenreader nutzen die Buttons darunter.
+                onClick={onToggle ? () => onToggle(side, p.id) : undefined}
+                className={onToggle ? "cursor-pointer" : undefined}
+                aria-hidden
+              >
+                {onToggle ? <circle cx={p.x} cy={p.y} r={8} fill="transparent" /> : null}
                 <circle
                   cx={p.x}
                   cy={p.y}

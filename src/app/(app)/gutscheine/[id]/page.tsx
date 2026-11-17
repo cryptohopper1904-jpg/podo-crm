@@ -1,28 +1,34 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Gift } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, Stat, Table, BackLink, pageTitleCls } from "@/components/ui";
 import { PrintButton } from "@/components/print-button";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, money } from "@/lib/format";
 import { getOrganizationForPrint, getVoucher } from "@/server/vouchers";
 import { backHref } from "@/lib/back-link";
+import { VOUCHER_MOTIFS, VoucherCard, parseMotif } from "./voucher-card";
 
 export const metadata = { title: "Gutschein" };
 
-/** Gedruckt wird nur die Gutscheinkarte (Format etwa DIN lang). */
+/**
+ * Gedruckt wird nur die Gutscheinkarte, in Farbe (Motiv). Die Karte ist 210 mm breit (DIN lang), A4 hat mit 10 mm
+ * Rand nur 190 mm bedruckbar → im Druck auf 188 mm verkleinert (zoom 188/210, Höhe proportional ≈ 89 mm), mittig, mit
+ * dünner grauer Schnittlinie. Der Bildschirm-Wrapper (`overflow-x-auto`) darf im Druck nichts abschneiden.
+ */
 const PRINT_CSS = `
-@page { size: A4; margin: 15mm; }
+@page { size: A4; margin: 10mm; }
 @media print {
   main { padding: 0 !important; }
   .voucher-page > :not(.voucher-card) { display: none !important; }
-  .voucher-card, .voucher-card * { color: #000 !important; background: transparent !important; border-color: #888 !important; }
-  .voucher-card { border-width: 2px !important; border-style: dashed !important; }
+  .voucher-card, .voucher-card * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .voucher-card { break-inside: avoid; overflow: visible !important; max-width: none !important; }
+  .voucher-card > section { zoom: calc(188 / 210); margin: 0 auto; outline: 0.25mm solid #9ca3af; }
 }`;
 
 export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) {
   const { id } = await props.params;
-  const { von } = await props.searchParams;
+  const { von, motiv } = await props.searchParams;
+  const motif = parseMotif(motiv);
   const auth = await requireAuth("invoices.read");
   const [data, org] = await Promise.all([getVoucher(auth, id), getOrganizationForPrint(auth)]);
   if (!data) notFound();
@@ -44,37 +50,31 @@ export default async function VoucherPage(props: PageProps<"/gutscheine/[id]">) 
         <Stat label="Gültig bis" value={dateDe(v.validUntil)} tone={data.expired ? "accent" : "neutral"} sub={v.purpose === "single" ? "Einzweck-Gutschein" : "Mehrzweck-Gutschein"} />
       </div>
 
-      <section
-        aria-label="Gutscheinkarte"
-        className="voucher-card mx-auto w-full max-w-[180mm] rounded-[var(--radius-card)] border-2 border-dashed border-primary bg-primary-soft p-8 text-primary-soft-text"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-6">
-          <div>
-            <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-widest">
-              <Gift size={18} aria-hidden /> Gutschein
-            </p>
-            <p className="mt-3 font-display text-5xl font-bold tabular-nums">{money(v.amountCents)}</p>
-            <p className="mt-2 text-sm">einlösbar für alle Leistungen und Produkte{v.purpose === "single" ? " laut Vermerk" : ""}</p>
-          </div>
-          <div className="text-right">
-            <p className="font-display text-xl font-semibold">{org?.name}</p>
-            {org?.street ? <p className="text-sm">{org.street}</p> : null}
-            <p className="text-sm">{[org?.zip, org?.city].filter(Boolean).join(" ")}</p>
-            {org?.phone ? <p className="text-sm">Tel. {org.phone}</p> : null}
-          </div>
-        </div>
-        <div className="mt-8 flex flex-wrap items-end justify-between gap-4 border-t border-current/30 pt-4">
-          <div>
-            <p className="text-xs uppercase tracking-wide">Gutscheincode</p>
-            <p className="font-mono text-2xl font-bold tracking-wider">{v.code}</p>
-          </div>
-          <div className="text-right text-sm">
-            <p>Ausgestellt am {dateDe(v.issuedAt)}</p>
-            <p className="font-semibold">Gültig bis {dateDe(v.validUntil)}</p>
-          </div>
-        </div>
-        <p className="mt-4 text-xs">Keine Barauszahlung. Restguthaben bleibt bis zum Ablauf erhalten.</p>
-      </section>
+      <nav aria-label="Motiv wählen" className="no-print flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold">Motiv:</span>
+        {VOUCHER_MOTIFS.map((m) => {
+          const q = new URLSearchParams({ motiv: m.id, ...(typeof von === "string" ? { von } : {}) });
+          const on = m.id === motif;
+          return (
+            <Link
+              key={m.id}
+              href={`/gutscheine/${v.id}?${q}`}
+              replace
+              scroll={false}
+              aria-current={on ? "true" : undefined}
+              className={`rounded-full px-3 py-1.5 text-sm font-semibold ${on ? "bg-primary text-on-primary" : "border border-border bg-surface hover:bg-surface-2"}`}
+            >
+              {m.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <VoucherCard
+        motif={motif}
+        org={org}
+        v={{ code: v.code, amountCents: v.amountCents, issuedAt: v.issuedAt, validUntil: v.validUntil, single: v.purpose === "single" }}
+      />
 
       {v.note ? (
         <Card className="no-print">

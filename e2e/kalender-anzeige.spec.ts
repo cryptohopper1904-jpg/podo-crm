@@ -98,8 +98,10 @@ test("Symbole N und R im Termin-Block (Woche)", async () => {
   await expect(page.locator(`a[href="/kalender/termin/${ids.home}"] [data-mark]`)).toHaveCount(0);
   // Standard-Raster 15 Minuten: Zeile 09:15 beschriftet, 09:05 nicht
   await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]')).toHaveAttribute("data-raster", "15");
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:15$/ }).first()).toBeAttached();
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:05$/ })).toHaveCount(0);
+  await expect(page.locator(`[data-zeitachse="09:15"]`).first()).toBeAttached();
+  await expect(page.locator(`[data-zeitachse="09:15"]`).first()).toHaveText("15");
+  await expect(page.locator(`[data-zeitachse="09:00"]`).first()).toHaveText("09:00");
+  await expect(page.locator(`[data-zeitachse="09:05"]`)).toHaveCount(0);
 });
 
 test("Raster unter Einstellungen → Kalender auf 5 Minuten: jede Zeile beschriftet, Termin bleibt an seiner Uhrzeit", async () => {
@@ -111,7 +113,7 @@ test("Raster unter Einstellungen → Kalender auf 5 Minuten: jede Zeile beschrif
   await page.goto(`/kalender?modus=voll&ansicht=woche&datum=${MONDAY}`);
   const col = page.locator('[data-dnd-col][data-date="2031-06-17"]');
   await expect(col).toHaveAttribute("data-raster", "5");
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:05$/ }).first()).toBeAttached();
+  await expect(page.locator(`[data-zeitachse="09:05"]`).first()).toBeAttached();
   // 192 px je Stunde: der Termin um 09:05 liegt 125 Minuten nach 07:00 → 400 px unter der Spaltenoberkante
   await expect(col.locator(`a[href="/kalender/termin/${ids.first}"]`)).toHaveCSS("top", "400px");
   // Klickfläche „neuer Termin“ im 5-Minuten-Raster
@@ -178,8 +180,8 @@ test("Auswahl „Raster“ in der Werkzeugleiste: setzt die Einstellung, Ansicht
   await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]')).toHaveAttribute("data-raster", "60");
   await expect(page).toHaveURL(new RegExp(`ansicht=woche&datum=${MONDAY}`));
   // nur volle Stunden beschriftet
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:30$/ })).toHaveCount(0);
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:00$/ }).first()).toBeAttached();
+  await expect(page.locator(`[data-zeitachse="09:30"]`)).toHaveCount(0);
+  await expect(page.locator(`[data-zeitachse="09:00"]`).first()).toBeAttached();
   await expect(page.getByRole("combobox", { name: "Raster der Zeitachse" }).first()).toHaveValue("60");
   // dieselbe Einstellung wie unter Einstellungen → Kalender
   await page.goto("/einstellungen/kalender");
@@ -204,7 +206,7 @@ test("Raster aus der Liste („Einfach“): wechselt in die vollständige Ansich
   await page.getByRole("combobox", { name: "Raster der Zeitachse" }).first().selectOption("30");
   await expect(page.locator('[data-dnd-col][data-date="2031-06-17"]').first()).toHaveAttribute("data-raster", "30");
   await expect(page).toHaveURL(/ansicht=tag&datum=2031-06-17/);
-  await expect(page.locator("[data-zeitachse]", { hasText: /^09:30$/ }).first()).toBeAttached();
+  await expect(page.locator(`[data-zeitachse="09:30"]`).first()).toBeAttached();
   // zurück auf „Einfach“: Einstellungsseite zeigt den Hinweis samt Knopf zur vollständigen Ansicht
   await pool.query("update users set prefs = jsonb_set(prefs, '{calendar,mode}', '\"simple\"') where email = $1", [DEMO_EMAIL]);
   await page.goto("/einstellungen/kalender");
