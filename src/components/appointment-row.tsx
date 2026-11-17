@@ -146,7 +146,8 @@ export function AppointmentRow({ row, canDoc, canEdit, overlap = false, from, co
             <Gap wide />
           )}
           <Link href={apptHref} className={slotSecondary}>
-            {canEdit && !appointmentEditLock(a, !!feed) ? "Ändern" : "Details"}
+            {/* Erledigte Termine (Doku/Rechnung erfasst) nur noch ansehen – „Ändern“ erst nach Rücknahme des Status */}
+            {canEdit && a.status !== "done" && !appointmentEditLock(a, !!feed) ? "Ändern" : "Details"}
           </Link>
           {/* Ohne Bearbeitungsrecht hat keine Zeile Losfahren/Nicht da/Absagen – dann entfallen die drei Slots ganz */}
           {showDrive ? <Link href={`/touren/losfahren?termin=${a.id}`} className={slotSecondary}>Losfahren</Link> : canEdit ? <Gap /> : null}
