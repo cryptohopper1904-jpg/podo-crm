@@ -15,7 +15,8 @@ import { NO_HOURS_NOTE, openingSummary } from "@/lib/opening-hours";
 import { parseOnlineBookingSettings } from "@/lib/portal-booking";
 import { practiceWebsite, readDocumentSettings } from "@/lib/practice-documents";
 import { LOGO_KINDS, LOGO_LABEL, logoInfo } from "@/server/practice-logos";
-import { removeLogoAction, saveBankTaxAction, saveBillingModeAction, savePracticeAction } from "../actions";
+import { removeLogoAction, saveBankTaxAction, saveBillingModeAction, saveGkvMasterDataAction, savePracticeAction } from "../actions";
+import { LEGS_PODOLOGIE, ikProblem } from "@/lib/rules/gkv-ids";
 import { DocumentsForm } from "./documents-form";
 import { DunningForm } from "./dunning-form";
 import { ImprintForm } from "./imprint-form";
@@ -52,6 +53,29 @@ export default async function PracticeSettings() {
         </div>
       </ActionForm>
     </Card>
+    {isPrivateOnly(o) ? null : (
+      <Card id="kassenzulassung" className="scroll-mt-24">
+        <h2 className="mb-1 font-display text-lg font-semibold">Kassenzulassung (GKV)</h2>
+        <p className="mb-4 text-sm text-muted">
+          Für die Abrechnung mit den Krankenkassen: Institutionskennzeichen (IK) der Praxis, Leistungserbringergruppe laut Vergütungsliste und Stand der Zulassung.
+          Quellen und Stand: docs/GKV.md.
+        </p>
+        {o.ik && ikProblem(o.ik) ? <p className="mb-3 rounded-xl bg-warn-soft px-4 py-3 text-sm font-medium text-warn-soft-text">{ikProblem(o.ik, "Gespeichertes IK")}</p> : null}
+        <ActionForm action={saveGkvMasterDataAction}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="IK der Praxis" hint="9 Ziffern, Prüfziffer wird geprüft"><Input name="ik" defaultValue={o.ik ?? ""} inputMode="numeric" maxLength={11} autoComplete="off" /></Field>
+            <Field label="Leistungserbringergruppe">
+              <Select name="legsCode" defaultValue={o.legsCode ?? ""}>
+                <option value="">– bitte wählen –</option>
+                {Object.entries(LEGS_PODOLOGIE).map(([k, v]) => <option key={k} value={k}>{k} · {v.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="Zulassung seit"><Input type="date" name="gkvAdmissionDate" defaultValue={o.gkvAdmissionDate ?? ""} /></Field>
+            <Field label="Vertragsstand" hint="z. B. Vertrag § 125 Podologie i. d. F. 16.06.2025"><Input name="gkvContractNote" defaultValue={o.gkvContractNote ?? ""} maxLength={300} /></Field>
+          </div>
+        </ActionForm>
+      </Card>
+    )}
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>

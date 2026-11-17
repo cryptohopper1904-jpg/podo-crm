@@ -1,0 +1,89 @@
+import "server-only";
+import { and, eq, inArray, isNull, notExists } from "drizzle-orm";
+import { withOrg, type Tx } from "@/db";
+import { appointments, prescriptions, treatmentRecords } from "@/db/schema";
+import type { AuthContext } from "@/lib/auth/session";
+import { feature } from "@/lib/features";
+import { berlinDateIso } from "@/lib/format";
+import { planningWarnings } from "@/lib/rules/prescription";
+import { assertCan } from "./authz";
+import { bookablePrescriptions, type BookablePrescription } from "./prescriptions";
+
+/**
+ * Termine gegen Verordnung: Auswahl im Terminformular (vorgeschlagen: offene/aktive Verordnung der Person) und
+ * Warnungen beim Planen (Restmenge inkl. schon geplanter Termine, Beginnfrist, 12-Wochen-Unterbrechung, Frequenz).
+ * Nur Hinweise – gespeichert wird trotzdem. Ohne GKV (billingMode private_only) gibt es keine Auswahl.
+ */
+
+export type PlanningOption = { id: string; label: string; remaining: number; units: number };
+export type PlanningResult = { options: PlanningOption[]; selectedId: string | null; warnings: string[] };
+
+/** geplante, noch nicht dokumentierte Termine je Verordnung (Berliner Datum) */
+async function plannedDates(tx: Tx, org: string, ids: string[], excludeAppointmentId?: string): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (!ids.length) return map;
+  const rows = await tx
+    .select({ id: appointments.id, prescriptionId: appointments.prescriptionId, startsAt: appointments.startsAt })
+    .from(appointments)
+    .where(
+      and(
+        eq(appointments.organizationId, org),
+        inArray(appointments.prescriptionId, ids),
+        inArray(appointments.status, ["planned", "confirmed"]),
+        notExists(tx.select({ x: treatmentRecords.id }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.appointmentId, appointments.id)))),
+      ),
+    );
+  for (const r of rows) {
+    if (!r.prescriptionId || r.id === excludeAppointmentId) continue;
+    map.set(r.prescriptionId, [...(map.get(r.prescriptionId) ?? []), berlinDateIso(r.startsAt)]);
+  }
+  return map;
+}
+
+function warningsFor(vo: BookablePrescription, planned: string[], newDates: string[]): string[] {
+  return planningWarnings({
+    group: vo.diagnosisGroup,
+    frequency: vo.frequency,
+    urgent: vo.urgent,
+    issuedAt: vo.issuedAt,
+    startBy: vo.startBy,
+    units: vo.units,
+    treatmentDates: vo.dates,
+    plannedDates: planned,
+    newDates,
+  });
+}
+
+export async function planningForPatient(
+  auth: AuthContext,
+  input: { patientId: string; dates: string[]; prescriptionId?: string | null },
+): Promise<PlanningResult> {
+  assertCan(auth, "appointments.read");
+  if (!feature(auth.organization, "verordnungen")) return { options: [], selectedId: null, warnings: [] };
+  const org = auth.organization.id;
+  const medical = auth.can("medical.read");
+  return withOrg(org, async (tx) => {
+    const vos = await bookablePrescriptions(tx, org, input.patientId, { medical });
+    const planned = await plannedDates(tx, org, vos.map((v) => v.id));
+    const options = vos.map((v) => ({ id: v.id, label: v.label, remaining: v.remaining, units: v.units }));
+    // Vorschlag: ausdrücklich gewählte, sonst die älteste laufende Verordnung (Vertrag § 7 Abs. 5: erst die frühere zu Ende)
+    const selectedId = input.prescriptionId === "" ? null : (vos.find((v) => v.id === input.prescriptionId)?.id ?? vos[0]?.id ?? null);
+    const vo = vos.find((v) => v.id === selectedId);
+    return { options, selectedId, warnings: vo ? warningsFor(vo, planned.get(vo.id) ?? [], input.dates) : [] };
+  });
+}
+
+/**
+ * Prüft beim Anlegen, ob die Verordnung zur Person gehört und noch läuft (in der Buchungs-Transaktion).
+ * Gibt eine Fehlermeldung zurück oder null.
+ */
+export async function checkAppointmentPrescription(tx: Tx, org: string, patientId: string | null, prescriptionId: string): Promise<string | null> {
+  if (!patientId) return "Eine Verordnung lässt sich nur einem Termin mit Patient:in zuordnen.";
+  const [vo] = await tx
+    .select({ id: prescriptions.id, status: prescriptions.status })
+    .from(prescriptions)
+    .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, prescriptionId), eq(prescriptions.patientId, patientId), isNull(prescriptions.billedAt)));
+  if (!vo) return "Die Verordnung gehört nicht zu dieser Patient:in.";
+  if (vo.status !== "open" && vo.status !== "active") return "Auf diese Verordnung können keine Termine mehr geplant werden (abgeschlossen oder Frist überschritten).";
+  return null;
+}

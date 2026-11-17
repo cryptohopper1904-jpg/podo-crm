@@ -10,7 +10,8 @@ import { filterCatalog, parseCatalogQuery, SORTS, type CatalogView } from "@/lib
 import { isArchivedCode, MAX_ARCHIVED_CODES, MAX_SERVICE_CODE_LENGTH, restoredCode } from "@/lib/service-codes";
 import { archivedServicesBlockingCodes, listServiceCategories, serviceUsageCounts } from "@/server/service-catalog";
 import { feature } from "@/lib/features";
-import { money } from "@/lib/format";
+import { berlinDateIso, money } from "@/lib/format";
+import { GKV_POSITIONS, positionInfo, priceFor } from "@/lib/rules/podologie-verguetung";
 import { currentCatalogView } from "@/server/catalog-prefs";
 import { CatalogToolbar, catalogQs } from "../../_catalog/catalog-toolbar";
 import { releaseArchivedCodesAction, saveServiceAction, setServiceActiveAction } from "../actions";
@@ -60,7 +61,18 @@ function ServiceFields({ s, gkv = true, categories }: { s?: Service; gkv?: boole
         <Select name="vatRate" defaultValue={String(s?.vatRate ?? 0)}><option value="0">0 % (Heilbehandlung)</option><option value="7">7 %</option><option value="19">19 %</option></Select>
       </Field>
       <Field label="Dauer (Min)"><Input name="durationMin" type="number" defaultValue={s?.durationMin ?? 30} min={0} max={480} /></Field>
-      {gkv ? <Field label="GKV-Pos."><Input name="gkvPosition" defaultValue={s?.gkvPosition ?? ""} /></Field> : <input type="hidden" name="gkvPosition" value={s?.gkvPosition ?? ""} />}
+      {gkv ? (
+        <Field label="GKV-Position" hint="Kopplung an die bundeseinheitliche Vergütungsliste Podologie (Anlage 2)">
+          <Select name="gkvPosition" defaultValue={s?.gkvPosition ?? ""}>
+            <option value="">– keine (nur privat) –</option>
+            {s?.gkvPosition && !positionInfo(s.gkvPosition) ? <option value={s.gkvPosition}>{s.gkvPosition} (nicht in der Vergütungsliste)</option> : null}
+            {GKV_POSITIONS.map((p) => {
+              const pr = priceFor(p.hpnr, berlinDateIso());
+              return <option key={p.hpnr} value={p.hpnr}>{p.hpnr} · {p.label}{pr ? ` · ${money(pr.cents)}` : ""}</option>;
+            })}
+          </Select>
+        </Field>
+      ) : <input type="hidden" name="gkvPosition" value={s?.gkvPosition ?? ""} />}
     </div>
   );
 }

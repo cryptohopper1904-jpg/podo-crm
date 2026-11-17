@@ -1,7 +1,7 @@
 "use client";
 
 import { keepValues } from "@/lib/forms";
-import { useActionState, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button, Card, Checkbox, Field, FieldSlot, FormActions, FormError, Input, LinkButton, Select, Textarea } from "@/components/ui";
 import type { PickerPatient } from "@/lib/calendar-patient-search";
@@ -9,6 +9,7 @@ import { createAppointmentAction, createAppointmentInDialogAction, type DialogAp
 import { FreeSlotFinder, type PickedSlot } from "../free-slot-finder";
 import { SlotWarning, slotQueryFromForm, type SlotQuery } from "../slot-warning";
 import { PatientPicker } from "./patient-picker";
+import { PrescriptionPlanner, type PlannerQuery } from "../prescription-planner";
 
 type S = { id: string; code: string; name: string; durationMin: number };
 type T = { id: string; name: string };
@@ -30,6 +31,7 @@ export function AppointmentForm({
   onCreated,
   onCancel,
   apply,
+  gkv = false,
 }: {
   patients: PickerPatient[];
   services: S[];
@@ -46,6 +48,8 @@ export function AppointmentForm({
   onCancel?: () => void;
   /** Datum/Uhrzeit/Behandler:in übernehmen (z. B. Klick auf einen anderen freien Platz im Kalender); `n` ändert sich je Klick */
   apply?: { date?: string; time?: string; therapistId?: string; n: number } | null;
+  /** Kassen-Themen aktiv (billingMode): Verordnung zum Termin wählbar */
+  gkv?: boolean;
 }) {
   const dialog = variant === "dialog";
   const [state, action, pending] = useActionState((dialog ? createAppointmentInDialogAction : createAppointmentAction) as (s: DialogApptState, f: FormData) => Promise<DialogApptState>, undefined);
@@ -57,6 +61,13 @@ export function AppointmentForm({
   const [durOverride, setDurOverride] = useState<{ forDuration: number; value: number } | null>(null);
   const slotDuration = durOverride?.forDuration === duration ? durOverride.value : duration;
   const error = pending ? null : state?.error;
+  const [plan, setPlan] = useState<PlannerQuery>({ patientId: defaults.patientId, date: defaults.date, repeatWeeks: 0, repeatCount: 1 });
+  const pickPatient = useCallback((id: string) => setPlan((p) => (p.patientId === id ? p : { ...p, patientId: id })), []);
+  const readPlan = (f: HTMLFormElement, patientId?: string) => {
+    const fd = new FormData(f);
+    const num = (k: string, d: number) => (Number.isFinite(Number(fd.get(k))) && String(fd.get(k) ?? "") !== "" ? Number(fd.get(k)) : d);
+    setPlan((p) => ({ patientId: patientId ?? p.patientId, date: String(fd.get("date") ?? ""), repeatWeeks: num("repeatWeeks", 0), repeatCount: num("repeatCount", 1) }));
+  };
   /** Vorschlag aus „Freien Termin finden“ ins Formular übernehmen */
   const pick = (p: PickedSlot) => {
     const f = formRef.current;
@@ -69,6 +80,7 @@ export function AppointmentForm({
     set("time", p.time);
     set("therapistId", p.therapistId);
     setSlot(slotQueryFromForm(f, duration));
+    readPlan(f);
     f.querySelector<HTMLInputElement>("input[name=time]")?.focus();
   };
   const applySlot = useEffectEvent((a: NonNullable<typeof apply>) => {
@@ -97,6 +109,7 @@ export function AppointmentForm({
           const q = slotQueryFromForm(e.currentTarget, duration);
           if ((e.target as unknown as { name?: string }).name === "durationMin") setDurOverride({ forDuration: duration, value: q.durationMin });
           setSlot(q);
+          readPlan(e.currentTarget);
         }}
         className="flex flex-col gap-6"
         aria-busy={pending || undefined}
@@ -110,6 +123,7 @@ export function AppointmentForm({
               defaultId={defaults.patientId}
               name="patientId"
               canCreate={canCreatePatients}
+              onChange={pickPatient}
               hint={blocksTab ? "Pause, Schulung o. Ä. ohne Patient:in: Reiter „Sperrzeit“ oben." : "Ohne Patient:in: unter „Weitere Optionen“ einen Titel angeben."}
             />
           </div>
@@ -141,6 +155,7 @@ export function AppointmentForm({
             </Field>
           </div>
           <div className="mt-4"><SlotWarning query={{ ...slot, durationMin: slotDuration }} /></div>
+          {gkv ? <div className="mt-4"><PrescriptionPlanner query={plan} /></div> : null}
         </Card>
         <details className="group rounded-[var(--radius-card)] border border-border bg-surface">
           <summary className="flex min-h-12 cursor-pointer list-none items-center gap-2 px-5 font-semibold [&::-webkit-details-marker]:hidden">

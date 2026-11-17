@@ -12,7 +12,7 @@ export const metadata = { title: "Neuer Termin" };
 export default async function NewAppointmentPage(props: PageProps<"/kalender/neu">) {
   const auth = await requireAuth("appointments.write");
   const sp = await props.searchParams;
-  const { patients: pts, services: svc, team, defaultTherapistId, canCreatePatients } = await newAppointmentData(auth);
+  const { patients: pts, services: svc, team, defaultTherapistId, canCreatePatients, gkv } = await newAppointmentData(auth);
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title="Neuer Termin" />
@@ -30,6 +30,7 @@ export default async function NewAppointmentPage(props: PageProps<"/kalender/neu
         cancelHref={`/kalender${typeof sp.datum === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.datum) ? `?datum=${sp.datum}` : ""}`}
         blocksTab={canCreateBlocks(auth)}
         canCreatePatients={canCreatePatients}
+        gkv={gkv}
         patients={pts}
         services={svc}
         team={team}

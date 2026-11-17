@@ -21,6 +21,7 @@ import { seriesStarts } from "@/lib/appointment-series";
 import { CREATE_REQUEST_ID, findDuplicates, insertPatient, parseBirthDate, patientCreatedByRequest, patientInput, toPatientValues } from "@/server/patients";
 import { changeAppointmentStatus, offerAfterCancel, UNDO_GRACE_MS, type StatusResult } from "@/server/calendar-status";
 import { durationFromServices } from "@/lib/appointment-duration";
+import { feature } from "@/lib/features";
 
 export type ApptFormState = { error?: string; conflict?: boolean } | undefined;
 
@@ -39,6 +40,7 @@ const schema = z.object({
   repeatWeeks: z.coerce.number({ error: "Wiederholung bitte als Zahl angeben." }).int("Wiederholung bitte in ganzen Wochen.").min(0, "Wiederholung: 0 bis 26 Wochen.").max(26, "Wiederholung: 0 bis 26 Wochen.").default(0),
   repeatCount: z.coerce.number({ error: "Anzahl bitte als Zahl angeben." }).int("Anzahl bitte als ganze Zahl.").min(1, "Anzahl Termine: 1 bis 12.").max(12, "Anzahl Termine: 1 bis 12.").default(1),
   allowConflict: z.literal("1").optional(),
+  prescriptionId: z.uuid("Verordnung ungültig.").optional(),
 });
 
 /** Termin(e) aus dem Formular anlegen – gemeinsam für die Seite /kalender/neu und das Fenster im Kalender. */
@@ -79,6 +81,8 @@ async function createFromForm(form: FormData): Promise<{ ok: false; state: NonNu
     homeVisit: !!d.homeVisit,
     serviceIds: svc.map((x) => x.id),
     allowConflict: !!d.allowConflict,
+    // Verordnung nur mit aktiven Kassen-Themen (billingMode); sonst still ignorieren
+    prescriptionId: d.prescriptionId && feature(auth.organization, "verordnungen") ? d.prescriptionId : null,
   });
   if (!res.ok && "deceased" in res) return fail({ error: DECEASED_BLOCKED_MSG });
   if (!res.ok) return fail(res.conflict ? { error: conflictMessage(res), conflict: true } : { error: res.error });

@@ -43,14 +43,16 @@ const url = process.env.TEST_DATABASE_URL;
   });
 
   const ctx = () => ({ org: orgId, userId, role: "therapist" as const });
-  const create = (patient: string) =>
-    dbm.withOrg(orgId, (tx) => mod.insertTreatmentRecord(tx, ctx(), { patientId: patient, prescriptionId: voId, findings: "o. B.", servicesText: "Komplexbehandlung" }));
+  const create = (patient: string, frequencyDeviationNote?: string) =>
+    dbm.withOrg(orgId, (tx) => mod.insertTreatmentRecord(tx, ctx(), { patientId: patient, prescriptionId: voId, findings: "o. B.", servicesText: "Komplexbehandlung", frequencyDeviationNote }));
   const status = () => dbm.withOrg(orgId, async (tx) => (await tx.execute(`select status from prescriptions where id = '${voId}'`)).rows[0]?.status);
 
   it("zählt Einheiten und setzt den Status", async () => {
     await create(patientId);
     expect(await status()).toBe("active");
-    await create(patientId);
+    // zweite Behandlung am selben Tag weicht von der Katalog-Frequenz (DF: alle 4–6 Wochen) ab → Begründung Pflicht
+    await expect(create(patientId)).rejects.toThrow(/Frequenz unterschritten/);
+    await create(patientId, "Absprache mit Dr. Beispiel: Kontrolle am selben Tag");
     expect(await status()).toBe("completed");
     await expect(create(patientId)).rejects.toBeInstanceOf(mod.RecordInputError);
   });

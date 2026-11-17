@@ -19,6 +19,7 @@
  *    Kürzel (vorhandene bleiben unverändert). Mitarbeitende werden nur über den Namen zugeordnet, nie als Nutzerkonten
  *    angelegt; Praxisstammdaten ergeben nur Vorschläge.
  */
+import { isValidIk, parseInsuredStatus } from "@/lib/rules/gkv-ids";
 import { findDuplicates as findFileDuplicates } from "../excel/parse";
 import type { ImportResult, PatientImportDraft } from "../excel/types";
 import { doctolibPatientValues } from "@/integrations/doctolib/patient-values";
@@ -98,12 +99,22 @@ export interface PatientCreate {
     insuranceType: "gkv" | "pkv" | "self" | "beihilfe";
     insurerName?: string | null;
     insuranceNumber?: string | null;
+    /** IK der Krankenkasse (9 Ziffern; Migration 0061 – früher extra.payerIk) */
+    insurerIk?: string | null;
+    /** Versichertenstatus 1/3/5 (nur eindeutig erkannte Werte) */
+    insuredStatus?: string | null;
     gpName: string | null;
     notes: string | null;
     extra: Record<string, unknown>;
     externalIds: Record<string, string>;
     source: string;
   };
+}
+
+/** Kassenzulassung aus Fremddaten (nur Vorschlag) */
+export interface PracticeSuggestion {
+  ik: string | null;
+  admissionDate: string | null;
 }
 
 export interface PatientLink {
@@ -161,6 +172,8 @@ export interface PrescriptionCreate {
     copaymentExempt: boolean;
     therapyReportRequested: boolean;
     positions: { position?: string; label: string; units: number }[];
+    insurerIk?: string | null;
+    insuranceNumber?: string | null;
     status: "billed" | "active";
     importData: Record<string, unknown>;
   };
@@ -244,6 +257,8 @@ export interface ImportPlan {
   therapistColors: TherapistColorSet[];
   /** Vorschläge aus den Pododesk-Praxisstammdaten – werden nicht automatisch übernommen */
   practiceHints: string[];
+  /** Kassenzulassung aus den Pododesk-Praxisstammdaten – nur Vorschlag, Übernahme per Klick (Einstellungen → Import) */
+  practiceSuggestion: PracticeSuggestion | null;
   decisions: DuplicateDecision[];
   /** dieselbe Bestandsperson für mehrere Zeilen gewählt – der Import wird dann abgelehnt (S4) */
   conflicts: ChoiceConflict[];
@@ -650,7 +665,9 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     if (rx) {
       values.insurerName = rx.insurerName;
       values.insuranceNumber = rx.insuranceNumber;
-      if (rx.payerIk) values.extra.payerIk = rx.payerIk;
+      // IK der Kasse in die eigene Spalte (gültiges Format), sonst als Rohwert in extra
+      if (rx.payerIk && /^\d{9}$/.test(rx.payerIk)) values.insurerIk = rx.payerIk;
+      else if (rx.payerIk) values.extra.payerIk = rx.payerIk;
       if (values.insuranceType === "self" && rx.insurerName) values.insuranceType = "gkv";
     } else if (!p.insuranceRaw) {
       warnings.push({ row: p.row, message: `${pseudonym(p.firstName, p.lastName, p.birthDate)}: Versicherungsart fehlt – als Selbstzahler:in übernommen.` });
@@ -859,6 +876,8 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
         urgent: p.urgent,
         copaymentExempt: p.copaymentExempt,
         therapyReportRequested: p.therapyReportRequested,
+        insurerIk: p.payerIk && /^\d{9}$/.test(p.payerIk) ? p.payerIk : null,
+        insuranceNumber: clip(p.insuranceNumber, FIELD_MAX.short),
         positions: p.positions.map((x) => ({ ...(x.position ? { position: x.position.slice(0, 20) } : {}), label: x.label.slice(0, FIELD_MAX.city), units: x.units })),
         status: opts.prescriptionMode,
         importData: {
@@ -998,7 +1017,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     patientsCreate.length + patientsLink.length + appointments.length + prescriptions.length + documents.length + pd.servicesCreate.length + pd.therapistColors.length > 0 ||
     !!(excel && (totals.excel!.patientsNew || excel.services.length || excel.vouchers.length || excel.invoices.length || excel.fixedCosts.length));
   for (const c of conflicts) warnings.push({ message: choiceConflictMessage(c) });
-  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, servicesCreate: pd.servicesCreate, therapistColors: pd.therapistColors, practiceHints: pd.practiceHints, decisions, conflicts, excel, cashbook, totals, warnings, samples, hasWork };
+  return { files, patientsCreate, patientsLink, appointments, prescriptions, documents, servicesCreate: pd.servicesCreate, therapistColors: pd.therapistColors, practiceHints: pd.practiceHints, practiceSuggestion: pd.practiceSuggestion, decisions, conflicts, excel, cashbook, totals, warnings, samples, hasWork };
 }
 
 function dedupe<T>(list: T[], key: (x: T) => string): T[] {
@@ -1024,9 +1043,10 @@ function pododeskValues(p: PododeskPatient, doctors: Map<string, PododeskDoctor>
   if (p.gender) extra.gender = p.gender;
   if (p.number) extra.pododeskNumber = clipX(p.number, 50);
   if (p.country && !/^(de|deu|deutschland|germany)$/i.test(p.country)) extra.country = clipX(p.country, 100);
-  if (p.insurerIk) extra.payerIk = p.insurerIk;
+
   if (p.insurerRef) extra.pododeskInsurerRef = clipX(p.insurerRef, 50);
   if (p.insuranceStatus) extra.insuranceStatus = clipX(p.insuranceStatus, 50);
+  const insuredStatus = parseInsuredStatus(p.insuranceStatus);
   const gp = p.gpId ? doctors.get(p.gpId) : undefined;
   const specialist = p.specialistId ? doctors.get(p.specialistId) : undefined;
   if (gp?.city) extra.gp_city = clipX(gp.city, 100);
@@ -1053,6 +1073,8 @@ function pododeskValues(p: PododeskPatient, doctors: Map<string, PododeskDoctor>
     insuranceType: p.insuranceType,
     insurerName: p.insurerName,
     insuranceNumber: p.insuranceNumber,
+    insurerIk: p.insurerIk && /^\d{9}$/.test(p.insurerIk) ? p.insurerIk : null,
+    insuredStatus,
     gpName: gp ? gp.name : null,
     notes: p.notes,
     extra,
@@ -1092,6 +1114,7 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   const servicesCreate: ServiceCreate[] = [];
   const therapistColors: TherapistColorSet[] = [];
   const practiceHints: string[] = [];
+  let practiceSuggestion: PracticeSuggestion | null = null;
   const appointments: AppointmentCreate[] = [];
 
   // ───── Praxisstammdaten (nur Vorschläge) ─────
@@ -1107,9 +1130,22 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
     if (practice.defaultDurationMin !== null && practice.defaultDurationMin > 0) {
       practiceHints.push(`Standard-Behandlungsdauer in Pododesk: ${practice.defaultDurationMin} Minuten. Übernommene Leistungen ohne eigene Behandlungszeit erhalten diese Dauer; in PodoHero legen Sie die Dauer je Leistung fest (Einstellungen → Leistungen).`);
     }
+    if (practice.ik) {
+      practiceHints.push(
+        isValidIk(practice.ik)
+          ? `Institutionskennzeichen (IK) in Pododesk: ${practice.ik}. Übernahme als IK der Praxis unten per Klick (oder unter Einstellungen → Praxis → Kassenzulassung).`
+          : `Institutionskennzeichen in Pododesk (${practice.ik.slice(0, 12)}) hat ein ungültiges Format bzw. eine falsche Prüfziffer – bitte unter Einstellungen → Praxis selbst eintragen.`,
+      );
+    }
+    if (practice.admissionRaw) {
+      practiceHints.push(`Kassenzulassung in Pododesk: ${practice.admissionDate ? practice.admissionDate.split("-").reverse().join(".") : practice.admissionRaw.slice(0, 40)}. Bitte unter Einstellungen → Praxis → Kassenzulassung prüfen.`);
+    }
     if (practice.currency && practice.currency.toUpperCase() !== "EUR") {
       practiceHints.push(`Währung in Pododesk: ${practice.currency.slice(0, 10)}. PodoHero rechnet in Euro – bitte die Preise der übernommenen Leistungen prüfen.`);
     }
+  }
+  if (practice && ((practice.ik && isValidIk(practice.ik)) || practice.admissionDate)) {
+    practiceSuggestion = { ik: practice.ik && isValidIk(practice.ik) ? practice.ik : null, admissionDate: practice.admissionDate ?? null };
   }
   const defaultDuration = practice?.defaultDurationMin && practice.defaultDurationMin >= 5 && practice.defaultDurationMin <= 480 ? practice.defaultDurationMin : 30;
 
@@ -1358,5 +1394,5 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   if (linkedFuture) {
     warnings.push({ message: `${plural(linkedFuture, "künftiger Pododesk-Termin gehört", "künftige Pododesk-Termine gehören")} zu Patient:innen, die schon in PodoHero geführt werden. Haben diese Personen in PodoHero bereits in Terminerinnerungen eingewilligt, erhalten sie dafür Erinnerungen.` });
   }
-  return { servicesCreate, therapistColors, practiceHints, appointments };
+  return { servicesCreate, therapistColors, practiceHints, practiceSuggestion, appointments };
 }

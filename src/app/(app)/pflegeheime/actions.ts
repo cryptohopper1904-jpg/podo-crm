@@ -51,6 +51,7 @@ const quickSchema = z.object({
   servicesText: z.string().trim().max(1000).optional().transform((v) => v || null),
   findings: z.string().trim().max(2000).optional().transform((v) => v || null),
   prescriptionId: z.preprocess((v) => (v === "" ? undefined : v), z.string().uuid().optional()),
+  frequencyDeviationNote: z.string().trim().max(500).optional().transform((v) => v || null),
   confirm: z.literal("on", { message: "Bitte die Prüfung bestätigen." }),
 });
 
@@ -64,7 +65,7 @@ export async function quickRecordAction(_: QuickRecordState, form: FormData): Pr
   if (!(await isResident(auth, d.careHomeId, d.patientId))) return { error: "Patient wohnt nicht in diesem Pflegeheim." };
   const res = await createTreatmentRecord(
     auth,
-    { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null, servicesText: d.servicesText, findings: d.findings, structured: { mode: "care_home", careHomeId: d.careHomeId } },
+    { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null, frequencyDeviationNote: d.frequencyDeviationNote, servicesText: d.servicesText, findings: d.findings, structured: { mode: "care_home", careHomeId: d.careHomeId } },
     { mode: "care_home" },
   );
   if ("error" in res) return { error: res.error };

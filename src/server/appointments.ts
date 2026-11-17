@@ -1,4 +1,5 @@
 import "server-only";
+import { checkAppointmentPrescription } from "./appointment-prescriptions";
 import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
@@ -157,6 +158,8 @@ export type InternalAppointmentInput = {
   homeVisit: boolean;
   serviceIds: string[];
   allowConflict: boolean;
+  /** geplante Behandlung auf diese Verordnung (geprüft: gleiche Person, laufend) */
+  prescriptionId?: string | null;
 };
 
 export const ARCHIVED_PATIENT_MSG = "Diese Patient:in ist archiviert – neue Termine sind nicht möglich.";
@@ -189,6 +192,10 @@ export async function createInternalAppointments(
     if (input.patientId && input.occurrences.some((s) => s > now) && (await patientIsDeceased(tx, org, input.patientId, { lock: true }))) {
       return { ok: false as const, deceased: true as const };
     }
+    if (input.prescriptionId) {
+      const voError = await checkAppointmentPrescription(tx, org, input.patientId, input.prescriptionId);
+      if (voError) return { ok: false as const, error: voError };
+    }
     if (!input.allowConflict) {
       const clashes: SlotClash[] = [];
       for (const s of input.occurrences) {
@@ -213,6 +220,7 @@ export async function createInternalAppointments(
           title: input.title,
           notes: input.notes,
           homeVisit: input.homeVisit,
+          prescriptionId: input.prescriptionId ?? null,
         })
         .returning({ id: appointments.id });
       if (input.serviceIds.length) await tx.insert(appointmentServices).values(input.serviceIds.map((serviceId) => ({ organizationId: org, appointmentId: a.id, serviceId })));

@@ -5,7 +5,9 @@ import { useActionState, useRef, useState, type ReactNode } from "react";
 import { Camera, Loader2, Plus, ScanText, Trash2, X } from "lucide-react";
 import { Badge, Button, Card, Checkbox, Field, FormError, Input, Select, cx } from "@/components/ui";
 import { LOW_CONFIDENCE, OCR_FIELD_LABELS, type OcrFieldKey, type OcrFields, type OcrSuggestion } from "@/integrations/ocr/schema";
-import { DIAGNOSIS_GROUPS, FREQUENCY_OPTIONS, START_DEADLINE_DAYS, START_DEADLINE_URGENT_DAYS, startDeadline, type DiagnosisGroup } from "@/lib/rules/prescription";
+import { DIAGNOSIS_GROUPS, FREQUENCY_OPTIONS, LEITSYMPTOMATIK_FREE, START_DEADLINE_DAYS, START_DEADLINE_URGENT_DAYS, startDeadline, type DiagnosisGroup } from "@/lib/rules/prescription";
+import { INSURED_STATUS, ikProblem, kvnrProblem, lanrProblem } from "@/lib/rules/gkv-ids";
+import { positionFits, positionsForGroup } from "@/lib/rules/podologie-verguetung";
 import { readPrescriptionPhotoAction, savePrescriptionAction, type PrescriptionFormState } from "./actions";
 
 type Position = { position?: string; label: string; units: number };
@@ -26,6 +28,16 @@ export type PrescriptionInitial = {
   therapyReportRequested: boolean;
   positions: Position[];
   scanMediaId?: string | null;
+  icd10Second: string;
+  diagnosisText: string;
+  leitsymptomatik: string;
+  leitsymptomatikText: string;
+  insurerIk: string;
+  insuranceNumber: string;
+  insuredStatus: string;
+  accident: boolean;
+  bvg: boolean;
+  doctorSigned: boolean;
 };
 
 const deDate = (iso: string) => (/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}` : "–");
@@ -68,6 +80,9 @@ export function PrescriptionForm({
   const [urgent, setUrgent] = useState(initial.urgent);
   const [units, setUnits] = useState(initial.units);
   const [frequency, setFrequency] = useState(initial.frequencyPerWeek);
+  const [leit, setLeit] = useState(initial.leitsymptomatik);
+  // Live-Prüfung der Kennungen (Prüfziffer) – Hinweis am Feld, gespeichert wird trotzdem (Warnung in der Übersicht)
+  const [idHints, setIdHints] = useState<{ ik: string | null; kvnr: string | null; lanr: string | null }>({ ik: null, kvnr: null, lanr: null });
   const [positions, setPositions] = useState<Position[]>(initial.positions.length ? initial.positions : [{ label: "", units: initial.units }]);
   const [scanId, setScanId] = useState<string | null>(initial.scanMediaId ?? null);
   const [scanPreview, setScanPreview] = useState<string | null>(null);
@@ -104,6 +119,8 @@ export function PrescriptionForm({
     if (v.positions) setPositions(v.positions.value.map((p) => ({ ...p })));
     setInitial((i) => ({
       ...i,
+      insurerIk: v.insurerIk?.value ?? i.insurerIk,
+      insuranceNumber: v.insuranceNumber?.value ?? i.insuranceNumber,
       doctorName: v.doctorName?.value ?? i.doctorName,
       doctorLanr: v.doctorLanr?.value ?? i.doctorLanr,
       doctorBsnr: v.doctorBsnr?.value ?? i.doctorBsnr,
@@ -268,6 +285,22 @@ export function PrescriptionForm({
           <Field label="ICD-10" hint={hint("icd10", rule.icdHint)}>
             <Input name="icd10" defaultValue={initial.icd10} placeholder="E11.74" autoCapitalize="characters" />
           </Field>
+          <Field label="ICD-10 (2., optional)">
+            <Input name="icd10Second" defaultValue={initial.icd10Second} placeholder="z. B. G63.2" autoCapitalize="characters" />
+          </Field>
+          <Field label="Diagnose (Klartext)" hint="Pflicht, wenn kein ICD-10 auf der Verordnung steht">
+            <Input name="diagnosisText" defaultValue={initial.diagnosisText} maxLength={300} />
+          </Field>
+          <Field label="Leitsymptomatik">
+            <Select name="leitsymptomatik" value={leit} onChange={(e) => setLeit(e.target.value)}>
+              <option value="">– nicht angegeben –</option>
+              {Object.entries(rule.leitsymptomatik).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              <option value={LEITSYMPTOMATIK_FREE}>patientenindividuell (Freitext)</option>
+            </Select>
+          </Field>
+          {leit === LEITSYMPTOMATIK_FREE ? (
+            <Field label="Leitsymptomatik (Freitext)"><Input name="leitsymptomatikText" defaultValue={initial.leitsymptomatikText} maxLength={300} /></Field>
+          ) : null}
           <Field label="Verordnete Einheiten" hint={hint("units", `Höchstmenge je VO für ${rule.code}: ${rule.maxUnitsPerPrescription}`)}>
             <Input type="number" name="units" min={1} max={99} value={units} onChange={(e) => setUnits(Number(e.target.value))} required />
           </Field>
@@ -282,8 +315,12 @@ export function PrescriptionForm({
         <div className="mt-3 grid gap-x-6 sm:grid-cols-2">
           <Checkbox name="urgent" checked={urgent} onChange={(e) => setUrgent(e.target.checked)} label={<>Dringlicher Behandlungsbedarf (Beginn innerhalb 14 Tagen){conf("urgent")}</>} />
           <Checkbox name="homeVisit" defaultChecked={initial.homeVisit} label={<>Hausbesuch verordnet{conf("homeVisit")}</>} />
-          <Checkbox name="copaymentExempt" defaultChecked={initial.copaymentExempt} label="Zuzahlungsbefreit (Befreiungsausweis liegt vor)" />
+          <Checkbox name="copaymentExempt" defaultChecked={initial.copaymentExempt} label="„Zuzahlungsfrei“ auf der Verordnung angekreuzt (maßgeblich ist die Befreiungsbescheinigung)" />
           <Checkbox name="therapyReportRequested" defaultChecked={initial.therapyReportRequested} label="Therapiebericht angefordert" />
+          <Checkbox name="accident" defaultChecked={initial.accident} label="Unfallfolgen" />
+          <Checkbox name="bvg" defaultChecked={initial.bvg} label="BVG (Bundesversorgungsgesetz)" />
+          <input type="hidden" name="doctorSignedAsked" value="1" />
+          <Checkbox name="doctorSigned" defaultChecked={initial.doctorSigned} label="Arztstempel und Unterschrift vorhanden" />
         </div>
         <p className="mt-3 rounded-xl bg-info-soft p-3 text-sm text-info-soft-text">
           Spätester Behandlungsbeginn: <strong>{/^\d{4}-\d{2}-\d{2}$/.test(issuedAt) ? deDate(startDeadline(issuedAt, urgent)) : "–"}</strong>{" "}
@@ -292,10 +329,30 @@ export function PrescriptionForm({
       </Card>
 
       <Card>
+        <h3 className="mb-3 font-display text-lg font-semibold">Versicherte:r (Personalienfeld)</h3>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label="Versichertennummer (KVNR)" hint={idHints.kvnr ?? "1 Buchstabe + 9 Ziffern"}>
+            <Input name="insuranceNumber" defaultValue={initial.insuranceNumber} maxLength={12} autoCapitalize="characters" onBlur={(e) => setIdHints((h) => ({ ...h, kvnr: kvnrProblem(e.target.value) }))} />
+          </Field>
+          <Field label="IK der Krankenkasse" hint={idHints.ik ?? "Kostenträgerkennung, 9 Ziffern"}>
+            <Input name="insurerIk" defaultValue={initial.insurerIk} inputMode="numeric" maxLength={11} onBlur={(e) => setIdHints((h) => ({ ...h, ik: ikProblem(e.target.value) }))} />
+          </Field>
+          <Field label="Status">
+            <Select name="insuredStatus" defaultValue={initial.insuredStatus}>
+              <option value="">– nicht angegeben –</option>
+              {Object.entries(INSURED_STATUS).map(([k, v]) => <option key={k} value={k}>{k} · {v}</option>)}
+            </Select>
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
         <h3 className="mb-3 font-display text-lg font-semibold">Verordnender Arzt</h3>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Name / Praxis" hint={hint("doctorName")}><Input name="doctorName" defaultValue={initial.doctorName} /></Field>
-          <Field label="LANR" hint={hint("doctorLanr", "9 Ziffern")}><Input name="doctorLanr" defaultValue={initial.doctorLanr} inputMode="numeric" pattern="\d{9}" maxLength={9} /></Field>
+          <Field label="LANR" hint={hint("doctorLanr", idHints.lanr ?? "9 Ziffern, Prüfziffer an Stelle 7")}>
+            <Input name="doctorLanr" defaultValue={initial.doctorLanr} inputMode="numeric" pattern="\d{9}" maxLength={9} onBlur={(e) => setIdHints((h) => ({ ...h, lanr: lanrProblem(e.target.value) }))} />
+          </Field>
           <Field label="BSNR" hint={hint("doctorBsnr", "9 Ziffern")}><Input name="doctorBsnr" defaultValue={initial.doctorBsnr} inputMode="numeric" pattern="\d{9}" maxLength={9} /></Field>
         </div>
       </Card>
@@ -311,25 +368,30 @@ export function PrescriptionForm({
                   value={p.position ?? ""}
                   onChange={(e) => {
                     const code = e.target.value;
-                    const hit = catalog.find((c) => c.position === code);
+                    const hit = catalog.find((c) => c.position === code) ?? positionsForGroup(group).map((x) => ({ position: x.hpnr, label: x.label })).find((c) => c.position === code);
                     setPos(i, { position: code || undefined, ...(hit && !p.label ? { label: hit.label } : {}) });
                   }}
                 />
               </Field>
-              <Field label="Bezeichnung"><Input value={p.label} onChange={(e) => setPos(i, { label: e.target.value })} placeholder="z. B. Hornhautabtragung" /></Field>
+              <Field label="Bezeichnung" hint={p.position && !positionFits(p.position, group, issuedAt).ok ? (positionFits(p.position, group, issuedAt) as { reason: string }).reason : undefined}><Input value={p.label} onChange={(e) => setPos(i, { label: e.target.value })} placeholder="z. B. Hornhautabtragung" /></Field>
               <Field label="Einheiten"><Input type="number" min={1} max={99} value={p.units} onChange={(e) => setPos(i, { units: Number(e.target.value) })} /></Field>
               <Button type="button" variant="ghost" aria-label="Position entfernen" disabled={positions.length === 1} onClick={() => setPositions((ps) => ps.filter((_, j) => j !== i))}>
                 <Trash2 size={18} aria-hidden />
               </Button>
             </div>
           ))}
-          <datalist id="vo-positions">{catalog.map((c) => <option key={c.position} value={c.position}>{c.label}</option>)}</datalist>
+          <datalist id="vo-positions">
+            {positionsForGroup(group).map((x) => <option key={x.hpnr} value={x.hpnr}>{x.label}</option>)}
+            {catalog.filter((c) => !positionsForGroup(group).some((x) => x.hpnr === c.position)).map((c) => <option key={c.position} value={c.position}>{c.label}</option>)}
+          </datalist>
           <div>
             <Button type="button" variant="secondary" disabled={positions.length >= 10} onClick={() => setPositions((ps) => [...ps, { label: "", units }])}>
               <Plus size={18} aria-hidden /> Position
             </Button>
           </div>
-          <p className="text-xs text-muted">Die Zuzahlung (10 € je Verordnung + 10 % der Kosten) wird aus den Preisen der Leistungen mit passender GKV-Positionsnummer berechnet.</p>
+          <p className="text-xs text-muted">
+            Preise aus der bundeseinheitlichen Vergütungsliste Podologie (Anlage 2, nach Behandlungsdatum). Zuzahlung: 10 % je Behandlungstag (ab 18, ohne gültige Befreiung) + 10 € je Verordnung; endgültig beim Setzen auf „abrechnungsreif“.
+          </p>
         </div>
       </Card>
     </>

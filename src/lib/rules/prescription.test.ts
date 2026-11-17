@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  DIAGNOSIS_GROUPS,
+  addWorkdaysIso,
+  anlage3Findings,
+  blocksBilling,
+  blocksStart,
+  frequencyDeviation,
+  icdMatchesGroup,
+  planningWarnings,
+  priceSnapshot,
   START_DEADLINE_DAYS,
   START_DEADLINE_URGENT_DAYS,
   acceptsUnit,
@@ -134,5 +143,110 @@ describe("Ampel", () => {
   });
   it("blau = abrechnungsreif", () => {
     expect(evaluatePrescription({ ...vo, status: "billing_ready", treatmentDates: ["2026-11-02"], today: "2027-06-01" }).light).toBe("blue");
+  });
+});
+
+describe("Paket A: Fristen, Frequenz, Zuzahlung je Tag, Anlage 3", () => {
+  it("UI2: Höchstmenge 4 je Verordnung (Heilmittelkatalog)", () => {
+    expect(DIAGNOSIS_GROUPS.UI2.maxUnitsPerPrescription).toBe(4);
+    expect(DIAGNOSIS_GROUPS.UI1.maxUnitsPerPrescription).toBe(8);
+  });
+  it("Werktage Mo–Sa", () => {
+    expect(addWorkdaysIso("2026-11-13", 2)).toBe("2026-11-16"); // Fr → Sa, (So), Mo
+    expect(addWorkdaysIso("2026-11-16", -2)).toBe("2026-11-13");
+  });
+  it("Frequenzabweichung über ± 2 Werktage braucht Begründung (Vertrag § 7 Abs. 6)", () => {
+    const base = { group: "DF", frequency: "1x alle 4-6 Wochen", lastDate: "2026-10-01" };
+    expect(frequencyDeviation({ ...base, date: "2026-10-29" })).toBeNull(); // genau 4 Wochen
+    expect(frequencyDeviation({ ...base, date: "2026-10-27" })).toBeNull(); // 2 Werktage früher
+    expect(frequencyDeviation({ ...base, date: "2026-10-26" })).toMatchObject({ kind: "under" });
+    expect(frequencyDeviation({ ...base, date: "2026-11-14" })).toBeNull(); // 6 Wochen + 2 Werktage
+    expect(frequencyDeviation({ ...base, date: "2026-11-16" })).toMatchObject({ kind: "over" });
+  });
+  it("ohne Frequenz gilt die Katalog-Frequenz, UI nur Empfehlung, erste Behandlung nie", () => {
+    expect(frequencyDeviation({ group: "NF", frequency: null, lastDate: "2026-10-01", date: "2026-10-05" })).toMatchObject({ kind: "under" });
+    expect(frequencyDeviation({ group: "UI1", frequency: "1x wöchentlich", lastDate: "2026-10-01", date: "2026-12-01" })).toBeNull();
+    expect(frequencyDeviation({ group: "DF", frequency: "1x alle 4-6 Wochen", lastDate: null, date: "2026-12-01" })).toBeNull();
+  });
+  it("12 Wochen Unterbrechung → Frist überschritten (Vertrag § 7 Abs. 7)", () => {
+    const vo = { issuedAt: "2026-01-01", urgent: false, units: 6, status: "active", frequency: "1x alle 4-6 Wochen", treatmentDates: ["2026-01-10"] };
+    expect(evaluatePrescription({ ...vo, today: "2026-04-04" }).expiry).toBeNull(); // 84 Tage
+    expect(evaluatePrescription({ ...vo, today: "2026-04-05" })).toMatchObject({ expiry: "interrupted", light: "red" });
+    expect(evaluatePrescription({ ...vo, status: "open", treatmentDates: [], today: "2026-01-30" }).expiry).toBe("start_missed");
+  });
+  it("Preis-Snapshot: Zuzahlung je Behandlungstag, Volljährigkeit am Behandlungstag, Gebühr nach erstem Tag", () => {
+    const positions = [{ position: "78020", label: "groß", units: 3 }];
+    // wird am 2026-08-02 18 Jahre alt
+    const snap = priceSnapshot({ positions, treatmentDates: ["2026-07-20", "2026-08-02", "2026-09-01"], birthDate: "2008-08-02", exemptions: [], computedOn: "2026-09-02" });
+    expect(snap.remedyCents).toBe(3 * 5192);
+    expect(snap.lines.map((l) => l.minor)).toEqual([true, false, false]);
+    expect(snap.copaymentPercentCents).toBe(2 * 519);
+    // erster Behandlungstag minderjährig → keine Verordnungsblattgebühr (Vertrag § 8 Abs. 2 Satz 3)
+    expect(snap.flatFeeCents).toBe(0);
+    expect(snap.complete).toBe(true);
+  });
+  it("Preis-Snapshot: Befreiung gilt je Tag (Kalenderjahr), Deckel bei den Kosten", () => {
+    const positions = [{ position: "78030", label: "Befundung", units: 2 }];
+    const exemptions = [{ validFrom: "2026-01-01", validTo: "2026-12-31" }];
+    const snap = priceSnapshot({ positions, treatmentDates: ["2026-12-20", "2027-01-10"], birthDate: "1950-01-01", exemptions, computedOn: "2027-01-11" });
+    expect(snap.lines.map((l) => l.exempt)).toEqual([true, false]);
+    expect(snap.flatFeeCents).toBe(0); // erster Tag befreit
+    expect(snap.copaymentPercentCents).toBe(36);
+    // ohne Befreiung: 10 € Gebühr, aber höchstens die Kosten (2 × 3,57 €)
+    const capped = priceSnapshot({ positions, treatmentDates: ["2026-12-20", "2027-01-10"], birthDate: "1950-01-01", exemptions: [], computedOn: "2027-01-11" });
+    expect(capped.copaymentCents).toBe(714);
+  });
+  it("Preis-Snapshot meldet fehlende Preise", () => {
+    const snap = priceSnapshot({ positions: [{ position: "78020", label: "x", units: 1 }], treatmentDates: ["2025-06-01"], birthDate: "1950-01-01", exemptions: [], computedOn: "2025-06-02" });
+    expect(snap.complete).toBe(false);
+    expect(snap.notes[0]).toMatch(/Kein Preis/);
+  });
+  it("ICD-10 ↔ Diagnosegruppe", () => {
+    expect(icdMatchesGroup("DF", "E11.74")).toBe("ok");
+    expect(icdMatchesGroup("DF", "E10.40")).toBe("ok");
+    expect(icdMatchesGroup("DF", "G63.2*")).toBe("ok");
+    expect(icdMatchesGroup("DF", "E11.9")).toBe("check");
+    expect(icdMatchesGroup("UI1", "L60.0")).toBe("ok");
+    expect(icdMatchesGroup("UI2", "L60.1")).toBe("wrong");
+    expect(icdMatchesGroup("NF", "G60.0")).toBe("ok");
+  });
+  it("Anlage 3: vollständige Verordnung ohne Befunde, fehlende Pflichtangaben je Stufe", () => {
+    const ok = {
+      diagnosisGroup: "DF", issuedAt: "2026-11-01", units: 6, icd10: "E11.74", leitsymptomatik: "c", frequency: "1x alle 4-6 Wochen",
+      positions: [{ position: "78020", label: "groß", units: 6 }], homeVisit: false, insurerIk: "109911114", insuranceNumber: "A000500015",
+      insuredStatus: "1", doctorLanr: "123456601", doctorBsnr: "123456789", doctorSigned: true, practiceIk: "109911114",
+    };
+    expect(anlage3Findings(ok)).toEqual([]);
+    const levels = (v: Partial<Omit<typeof ok, "doctorSigned">> & { doctorSigned?: boolean | null }) => Object.fromEntries(anlage3Findings({ ...ok, ...v }).map((f) => [f.code, f.level]));
+    expect(levels({ insuranceNumber: "" })).toEqual({ kvnr_missing: "start" });
+    expect(levels({ insurerIk: "" })).toEqual({ insurer_ik_missing: "start" });
+    expect(levels({ doctorLanr: "" })).toEqual({ lanr_missing: "start" });
+    expect(levels({ doctorSigned: false })).toEqual({ signature_missing: "start" });
+    expect(levels({ icd10: "" })).toEqual({ diagnosis_missing: "start" });
+    expect(levels({ insuredStatus: "" })).toEqual({ status_missing: "warning" });
+    expect(levels({ doctorBsnr: "" })).toEqual({ bsnr_missing: "warning" });
+    expect(levels({ doctorLanr: "123456701" })).toEqual({ lanr_check: "warning" });
+    expect(levels({ insuranceNumber: "A000500016" })).toEqual({ kvnr_check: "warning" });
+    expect(levels({ insurerIk: "109911115" })).toEqual({ insurer_ik_check: "billing" });
+    expect(levels({ icd10: "E11.9" })).toEqual({ icd_group: "warning" });
+    expect(levels({ leitsymptomatik: "" })).toEqual({ leitsymptomatik_missing: "warning" });
+    expect(levels({ frequency: "" })).toEqual({ frequency_missing: "warning" });
+    expect(levels({ practiceIk: "" })).toEqual({ practice_ik_missing: "billing" });
+    expect(levels({ positions: [{ position: "79933", label: "HB", units: 6 }] })).toEqual({ home_visit: "billing" });
+    expect(levels({ diagnosisGroup: "UI1", icd10: "L60.1", positions: [{ position: "78610", label: "Spange", units: 6 }] })).toEqual({ icd_group: "billing" });
+    expect(levels({ positions: [{ position: "78610", label: "Spange", units: 6 }] })).toEqual({ position_group: "billing" });
+    expect(levels({ units: 8 })).toEqual({ units_max: "warning" });
+    expect(levels({ doctorSigned: null })).toEqual({});
+    expect(blocksStart(anlage3Findings({ ...ok, doctorSigned: false }))).toBe(true);
+    expect(blocksBilling(anlage3Findings({ ...ok, practiceIk: "" }))).toBe(true);
+    expect(blocksBilling(anlage3Findings({ ...ok, insuredStatus: "" }))).toBe(false);
+  });
+  it("Terminplanung: Restmenge inkl. geplanter Termine, Frist, Frequenz", () => {
+    const base = { group: "DF", frequency: "1x alle 4-6 Wochen", urgent: false, issuedAt: "2026-11-01", units: 6 };
+    expect(planningWarnings({ ...base, treatmentDates: [], plannedDates: [], newDates: ["2026-11-10"] })).toEqual([]);
+    expect(planningWarnings({ ...base, treatmentDates: [], plannedDates: [], newDates: ["2026-12-01"] })[0]).toMatch(/spätesten Behandlungsbeginn/);
+    expect(planningWarnings({ ...base, treatmentDates: ["2026-11-05", "2026-12-03", "2027-01-07", "2027-02-04"], plannedDates: ["2027-03-04"], newDates: ["2027-04-01", "2027-04-29"] })[0]).toMatch(/Nur noch 1 von 6/);
+    expect(planningWarnings({ ...base, treatmentDates: ["2026-11-05"], plannedDates: [], newDates: ["2026-11-12"] })[0]).toMatch(/Frequenz unterschritten/);
+    expect(planningWarnings({ ...base, treatmentDates: ["2026-11-05"], plannedDates: [], newDates: ["2027-02-01"] }).join(" ")).toMatch(/12 Wochen/);
   });
 });

@@ -44,7 +44,10 @@ describe("Übernahme-Plan (Tinana)", () => {
     // Kasse/Versichertennummer aus der jüngsten Verordnung
     const erika = plan.patientsCreate.find((p) => p.values.lastName === "Musterfrau")!;
     expect(erika.values).toMatchObject({ insurerName: "Beispiel-BKK", insuranceNumber: "A000000001", externalIds: { tinana: "10000000-0000-4000-8000-000000000001" }, source: "tinana-import" });
-    expect(erika.values.extra).toMatchObject({ payerIk: "100000001", gender: "female" });
+    // IK der Kasse in der eigenen Spalte (Migration 0061), nicht mehr in extra
+    expect(erika.values.insurerIk).toBe("100000001");
+    expect(erika.values.extra).toMatchObject({ gender: "female" });
+    expect(erika.values.extra).not.toHaveProperty("payerIk");
     // Termine: vergangen + Stattgefunden → erledigt; Zukunft geplant
     expect(plan.appointments.map((a) => a.status)).toEqual(["done", "planned", "planned"]);
     expect(plan.appointments[0].notes).toMatch(/Dokumentation \(Tinana\): Hornhaut/);

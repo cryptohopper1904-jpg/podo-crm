@@ -7,7 +7,7 @@ import { Button, Input, Select, cx } from "@/components/ui";
 import { quickRecordAction, type QuickRecordState } from "../../actions";
 
 type Service = { id: string; code: string; name: string };
-type Vo = { id: string; label: string; remaining: number; warning: string | null };
+type Vo = { id: string; label: string; remaining: number; warning: string | null; deviationText?: string | null };
 
 /** Eine Zeile der Listen-Doku: Leistungs-Chips + kurzer Befund + Speichern. */
 export function QuickRow({ careHomeId, patientId, services, prescriptions }: { careHomeId: string; patientId: string; services: Service[]; prescriptions: Vo[] }) {
@@ -15,6 +15,7 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
   const [picked, setPicked] = useState<string[]>([]);
   const [prescriptionId, setPrescriptionId] = useState(prescriptions.length === 1 ? prescriptions[0].id : "");
   const done = !!state?.ok;
+  const deviation = prescriptions.find((p) => p.id === prescriptionId)?.deviationText ?? null;
   const servicesText = services.filter((s) => picked.includes(s.id)).map((s) => s.name).join(", ");
   return (
     <form onSubmit={keepValues(action)} className="flex flex-col gap-2">
@@ -48,6 +49,9 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
               {prescriptions.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
             </Select>
           ) : null}
+          {deviation ? (
+            <Input name="frequencyDeviationNote" required minLength={5} maxLength={500} placeholder="Begründung Frequenzabweichung (Absprache Arzt)" className="min-w-56 flex-1" aria-label="Begründung Frequenzabweichung" title={deviation} />
+          ) : null}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" name="confirm" required className="size-5 accent-[var(--primary)]" /> geprüft
           </label>
@@ -56,6 +60,7 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
           </Button>
         </div>
       </fieldset>
+      {deviation ? <p className="text-xs text-warn-soft-text">{deviation}</p> : null}
       {state?.error ? <p role="alert" className="text-sm font-medium text-danger">{state.error}</p> : null}
     </form>
   );

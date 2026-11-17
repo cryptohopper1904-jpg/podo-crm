@@ -162,6 +162,15 @@ export const organizations = pgTable("organizations", {
   smallBusiness: boolean("small_business").notNull().default(false),
   /** Bundesland für Feiertage, z. B. "BB" */
   state: text("state").notNull().default("BB"),
+  // ── Kassenzulassung (GKV, docs/GKV.md) ──
+  /** Institutionskennzeichen der Praxis (9 Ziffern, Prüfziffer: src/lib/rules/gkv-ids.ts) – Vertrag § 125 Podologie § 17 */
+  ik: text("ik"),
+  /** Leistungserbringergruppenschlüssel (7100501 Podologie …), Anlage 2 Vergütung § 1 Abs. 1 */
+  legsCode: text("legs_code"),
+  /** Datum der Kassenzulassung (§ 124 SGB V) */
+  gkvAdmissionDate: date("gkv_admission_date"),
+  /** Zulassungs-/Vertragsstand (Freitext, z. B. „Vertrag § 125 Podologie i. d. F. 16.06.2025“) */
+  gkvContractNote: text("gkv_contract_note"),
   settings: jsonb("settings").$type<Record<string, unknown>>().notNull().default({}),
   // ── SaaS-Abo (Phase 3) ──
   /** trial | starter | praxis | plus | internal */
@@ -372,6 +381,9 @@ export const passwordResets = pgTable(
 );
 
 // ───────────────────────── Patienten ─────────────────────────
+/** Befreiungsbescheinigung (Zuzahlung) – Gültig-von/-bis, Kasse; Typ wie CopaymentExemption in src/lib/rules/prescription.ts */
+export type CopaymentExemptionRow = { id: string; validFrom: string; validTo: string; insurerName?: string | null; insurerIk?: string | null; note?: string | null; createdAt?: string };
+
 export type RiskFlags = {
   diabetes?: boolean;
   diabetesType?: string;
@@ -417,6 +429,12 @@ export const patients = pgTable(
     insuranceType: insuranceTypeEnum("insurance_type").notNull().default("self"),
     insurerName: text("insurer_name"),
     insuranceNumber: text("insurance_number"),
+    /** IK der Krankenkasse (Kostenträgerkennung, 9 Ziffern) – früher extra.payerIk (Migration 0061) */
+    insurerIk: text("insurer_ik"),
+    /** Versichertenstatus/Versichertenart: 1 Mitglied, 3 Familienversichert, 5 Rentner (src/lib/rules/gkv-ids.ts) */
+    insuredStatus: text("insured_status"),
+    /** Befreiungsbescheinigungen der Krankenkasse (Zuzahlung), je Kalenderjahr – src/lib/rules/prescription.ts */
+    copaymentExemptions: jsonb("copayment_exemptions").$type<CopaymentExemptionRow[]>().notNull().default([]),
     gpName: text("gp_name"),
     notes: text("notes"),
     riskFlags: jsonb("risk_flags").$type<RiskFlags>().notNull().default({}),
@@ -586,6 +604,28 @@ export const prescriptions = pgTable("prescriptions", {
   /** Diagnosegruppe nach HeilM-RL, z. B. DF, NF, QF, UI1, UI2 */
   diagnosisGroup: text("diagnosis_group").notNull(),
   icd10: text("icd10"),
+  /** zweiter ICD-10-Schlüssel (Muster 13: bis zu zwei) */
+  icd10Second: text("icd10_second"),
+  /** Diagnose im Klartext (ergänzt/ersetzt den ICD-Klartext, Anlage 3 Buchst. k) */
+  diagnosisText: text("diagnosis_text"),
+  /** Leitsymptomatik: a | b | c | x (patientenindividuell, Freitext in leitsymptomatik_text) */
+  leitsymptomatik: text("leitsymptomatik"),
+  leitsymptomatikText: text("leitsymptomatik_text"),
+  /** Personalienfeld der VO: Kostenträgerkennung, Versicherten-Nr., Status (Anlage 3 Buchst. a) */
+  insurerIk: text("insurer_ik"),
+  insuranceNumber: text("insurance_number"),
+  insuredStatus: text("insured_status"),
+  /** Unfallfolgen / BVG (Anlage 3 Buchst. a2) */
+  accident: boolean("accident").notNull().default(false),
+  bvg: boolean("bvg").notNull().default(false),
+  /** Arztstempel + Unterschrift vorhanden (Anlage 3 Buchst. n); null = nicht erfasst (Altbestand, Import) */
+  doctorSigned: boolean("doctor_signed"),
+  /** warum „Frist überschritten“ (status expired): start_missed | interrupted */
+  expiredReason: text("expired_reason"),
+  /** Heilmittelkosten laut Preis-Snapshot (bei Abrechnungsreife) */
+  remedyCostCents: integer("remedy_cost_cents"),
+  /** Preis-Snapshot je Verordnung bei Abrechnungsreife (Positionen, Preise, Tabellenstand, Zuzahlung je Tag) */
+  priceSnapshot: jsonb("price_snapshot").$type<Record<string, unknown>>(),
   remedy: text("remedy"),
   units: integer("units").notNull(),
   frequencyPerWeek: text("frequency_per_week"),
@@ -628,7 +668,11 @@ export const billingBatches = pgTable("billing_batches", {
   partner: text("partner").notNull().default("manual"),
   status: text("status").notNull().default("draft"),
   prescriptionCount: integer("prescription_count").notNull().default(0),
+  /** Summe der Zuzahlungen (Bestand; = copayment_total_cents) */
   totalCents: integer("total_cents").notNull().default(0),
+  /** Summe der Heilmittelkosten (Preis-Snapshots) */
+  remedyTotalCents: integer("remedy_total_cents"),
+  copaymentTotalCents: integer("copayment_total_cents"),
   exportedAt: timestamp("exported_at", { withTimezone: true }),
   note: text("note"),
 });

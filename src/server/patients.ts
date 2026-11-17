@@ -39,7 +39,11 @@ export const patientInput = z.object({
   preferredChannel: z.enum(["email", "whatsapp", "sms", "phone", "letter", "none"]).default("none"),
   insuranceType: z.enum(["gkv", "pkv", "self", "beihilfe"]).default("self"),
   insurerName: optText,
-  insuranceNumber: optText,
+  insuranceNumber: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "").toUpperCase() || null : v), z.string().max(20).nullable().optional()),
+  /** IK der Krankenkasse (9 Ziffern, Prüfziffer: src/lib/rules/gkv-ids.ts) */
+  insurerIk: z.preprocess((v) => (typeof v === "string" ? v.replace(/\s+/g, "") || null : v), z.string().regex(/^\d{9}$/, "IK der Krankenkasse hat 9 Ziffern.").nullable().optional()),
+  /** Versichertenstatus 1/3/5 (Mitglied/Familie/Rentner) */
+  insuredStatus: z.preprocess(emptyToNull, z.enum(["1", "3", "5"], { message: "Versichertenstatus: 1, 3 oder 5." }).nullable().optional()),
   gpName: optText,
   notes: optText,
   visitIntervalWeeks: z.preprocess(emptyToNull, z.coerce.number().int().min(1).max(52).nullable().optional()),

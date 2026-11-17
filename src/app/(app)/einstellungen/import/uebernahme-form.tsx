@@ -8,6 +8,8 @@ import { money } from "@/lib/format";
 import { CONSENT_HINT, RETENTION_HINT } from "@/lib/import/uebernahme/help";
 import { plural } from "@/lib/import/uebernahme/plural";
 import type { UebernahmePreview, UebernahmeState } from "./uebernahme-actions";
+import { ActionForm } from "@/components/action-form";
+import { applyGkvSuggestionAction } from "../actions";
 
 const STATUS: Record<string, { label: string; tone: "primary" | "info" | "warn" | "neutral" }> = {
   import: { label: "wird übernommen", tone: "primary" },
@@ -110,6 +112,17 @@ function Preview({ p }: { p: UebernahmePreview }) {
               <li key={i}>{h}</li>
             ))}
           </ul>
+          {p.practiceSuggestion ? (
+            <div className="mt-3">
+              <ActionForm action={applyGkvSuggestionAction} submit="Kassenzulassung übernehmen (nur leere Felder)" className="flex flex-col gap-2">
+                <input type="hidden" name="ik" value={p.practiceSuggestion.ik ?? ""} />
+                <input type="hidden" name="gkvAdmissionDate" value={p.practiceSuggestion.admissionDate ?? ""} />
+                <span>
+                  {[p.practiceSuggestion.ik ? `IK ${p.practiceSuggestion.ik}` : null, p.practiceSuggestion.admissionDate ? `Zulassung seit ${p.practiceSuggestion.admissionDate.split("-").reverse().join(".")}` : null].filter(Boolean).join(" · ")}
+                </span>
+              </ActionForm>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

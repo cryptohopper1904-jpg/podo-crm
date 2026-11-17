@@ -1,7 +1,7 @@
 "use client";
 
 import { UserPlus, X } from "lucide-react";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { fieldCls, fieldLabelCls, hintCls, SearchInput } from "@/components/ui";
 import { matchPatients, splitNewName, type PickerPatient } from "@/lib/calendar-patient-search";
 import { NewPatientInline } from "./new-patient-inline";
@@ -24,6 +24,7 @@ export function PatientPicker({
   error,
   hint,
   canCreate = false,
+  onChange,
 }: {
   patients: PickerPatient[];
   defaultId: string;
@@ -31,6 +32,8 @@ export function PatientPicker({
   error?: string | null;
   hint: string;
   canCreate?: boolean;
+  /** gewählte Person geändert (ID oder "") – z. B. für die Verordnungsauswahl im Terminformular */
+  onChange?: (id: string) => void;
 }) {
   const [added, setAdded] = useState<PickerPatient[]>([]);
   const patients = useMemo(() => [...added, ...given], [added, given]);
@@ -40,6 +43,18 @@ export function PatientPicker({
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  // nur bei echter Änderung der Auswahl melden (nicht bei jedem Rendern; onChange darf eine neue Funktion sein)
+  const pickedId = picked?.id ?? "";
+  const notify = useRef(onChange);
+  useEffect(() => {
+    notify.current = onChange;
+  });
+  const reported = useRef(pickedId);
+  useEffect(() => {
+    if (reported.current === pickedId) return;
+    reported.current = pickedId;
+    notify.current?.(pickedId);
+  }, [pickedId]);
   const id = useId();
   const listId = `${id}-liste`;
   const hits = useMemo(() => matchPatients(patients, query), [patients, query]);

@@ -40,7 +40,7 @@ export function DokuForm({
   activeBrace: { id: string; side: string; toe: number; braceType: string | null; stage: string | null } | null;
   voiceEnabled: boolean;
   /** buchbare Verordnungen (open/active mit Resteinheiten) */
-  prescriptions?: { id: string; label: string; remaining: number; warning: string | null }[];
+  prescriptions?: { id: string; label: string; remaining: number; warning: string | null; deviationText?: string | null }[];
   defaultPrescriptionId?: string | null;
 }) {
   const [state, action, pending] = useActionState<DokuFormState, FormData>(saveTreatmentAction, undefined);
@@ -143,6 +143,15 @@ export function DokuForm({
             <p className={cx("mt-3 rounded-xl p-3 text-sm font-medium", selectedVo.warning ? "bg-warn-soft text-warn-soft-text" : "bg-primary-soft text-primary-soft-text")}>
               Nach dieser Behandlung noch {selectedVo.remaining - 1} Einheit(en) offen.{selectedVo.warning ? ` ${selectedVo.warning}` : ""}
             </p>
+          ) : null}
+          {selectedVo?.deviationText ? (
+            <Field
+              label="Begründung der Frequenzabweichung (Pflicht)"
+              hint={`${selectedVo.deviationText} Abweichung nur nach Absprache mit der verordnenden Ärztin/dem Arzt – Absprache hier dokumentieren (Vertrag § 125 Podologie § 7 Abs. 6, HeilM-RL § 16 Abs. 3).`}
+              className="mt-3"
+            >
+              <Textarea name="frequencyDeviationNote" rows={2} minLength={5} maxLength={500} required placeholder="z. B. Absprache mit Dr. … am …: Termin wegen Krankenhausaufenthalt verschoben" />
+            </Field>
           ) : null}
         </Card>
       ) : null}

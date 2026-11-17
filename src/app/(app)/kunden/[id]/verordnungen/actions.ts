@@ -8,6 +8,7 @@ import { PRESCRIPTION_STATUSES } from "@/lib/rules/prescription";
 import type { OcrSuggestion } from "@/integrations/ocr/schema";
 import { extractPrescriptionFromMedia } from "@/server/ocr";
 import { changePrescriptionStatus, prescriptionInput, savePrescription, setCopaymentPaid } from "@/server/prescriptions";
+import { addCopaymentExemption, exemptionInput, removeCopaymentExemption } from "@/server/copayment-exemptions";
 
 export type PrescriptionFormState = { error?: string } | undefined;
 
@@ -59,4 +60,22 @@ export async function readPrescriptionPhotoAction(input: { patientId: string; me
   const res = await extractPrescriptionFromMedia(auth, ids.data);
   if ("error" in res) return { ok: false, error: res.error };
   return { ok: true, suggestion: res.suggestion, mock: res.mock, at: new Date().toISOString() };
+}
+
+export async function addExemptionAction(_: PrescriptionFormState, form: FormData): Promise<PrescriptionFormState & { ok?: string }> {
+  const auth = await requireAuth("medical.write");
+  const parsed = exemptionInput.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const res = await addCopaymentExemption(auth, parsed.data);
+  if ("error" in res) return { error: res.error };
+  revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
+  return { ok: "Befreiung gespeichert." };
+}
+
+export async function removeExemptionAction(form: FormData) {
+  const auth = await requireAuth("medical.write");
+  const patientId = z.string().uuid().parse(form.get("patientId"));
+  const id = z.string().uuid().parse(form.get("id"));
+  await removeCopaymentExemption(auth, { patientId, id });
+  revalidatePath(`/kunden/${patientId}/verordnungen`);
 }

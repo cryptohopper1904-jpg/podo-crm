@@ -14,6 +14,7 @@ const FILTERS = [
   { key: "frist", label: "Frist kritisch" },
   { key: "rest", label: "Letzte Einheiten" },
   { key: "abrechnung", label: "Abrechnungsreif" },
+  { key: "abgelaufen", label: "Frist überschritten" },
 ] as const;
 
 export default async function PrescriptionsOverviewPage(props: PageProps<"/verordnungen">) {
@@ -21,11 +22,12 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
   const sp = await props.searchParams;
   const filter = typeof sp.filter === "string" ? sp.filter : "";
   const medical = auth.can("medical.read");
-  const all = await listRunningPrescriptions(auth);
+  // „Frist überschritten“ (automatisch gekennzeichnet, nicht gelöscht) nur im eigenen Filter
+  const all = await listRunningPrescriptions(auth, filter === "abgelaufen" ? ["expired"] : undefined);
   const critical = all.filter((r) => r.evaluation.startState === "missed" || r.evaluation.startState === "soon");
   const lastUnits = all.filter((r) => (r.vo.status === "active" || r.vo.status === "open") && r.evaluation.unitsRemaining <= 1);
   const ready = all.filter((r) => r.vo.status === "billing_ready");
-  const rows = filter === "frist" ? critical : filter === "rest" ? lastUnits : filter === "abrechnung" ? ready : all;
+  const rows = filter === "abgelaufen" ? all : filter === "frist" ? critical : filter === "rest" ? lastUnits : filter === "abrechnung" ? ready : all;
   const order = { red: 0, yellow: 1, blue: 2, green: 3, gray: 4 } as const;
   rows.sort((a, b) => order[a.evaluation.light] - order[b.evaluation.light] || a.evaluation.startBy.localeCompare(b.evaluation.startBy));
 
@@ -61,7 +63,7 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
             <tr><th>Ampel</th><th>Patient</th><th>VO</th><th>Beginn bis</th><th>Einheiten</th><th>Status</th><th>Hinweis</th></tr>
           </thead>
           <tbody>
-            {rows.map(({ vo, p, evaluation: ev }) => (
+            {rows.map(({ vo, p, evaluation: ev, findings }) => (
               <tr key={vo.id}>
                 <td><TrafficLight light={ev.light} showLabel /></td>
                 <td>{medical ? <Link href={`/kunden/${p.id}/verordnungen`} className="font-semibold hover:text-primary">{fullName(p)}</Link> : <Link href={`/kunden/${p.id}`} className="font-semibold hover:text-primary">{fullName(p)}</Link>}<div className="text-xs text-muted">#{p.number}{p.insurerName ? ` · ${p.insurerName}` : ""}</div></td>
@@ -69,13 +71,16 @@ export default async function PrescriptionsOverviewPage(props: PageProps<"/veror
                 <td className="tabular-nums">{ev.startState === "started" ? <span className="text-muted">begonnen</span> : <>{dateDe(ev.startBy)}<div className="text-xs text-muted">{ev.daysToStartDeadline >= 0 ? `noch ${ev.daysToStartDeadline} Tage` : `${-ev.daysToStartDeadline} Tage drüber`}</div></>}</td>
                 <td className="tabular-nums">{ev.unitsUsed}/{vo.units}<div className="text-xs text-muted">{ev.unitsRemaining} offen</div></td>
                 <td><Badge tone={vo.status === "billing_ready" ? "info" : "neutral"}>{STATUS_LABEL[vo.status as PrescriptionStatus] ?? vo.status}</Badge></td>
-                <td className="max-w-72 text-sm text-muted">{medical ? (ev.messages[0] ?? "–") : ev.startState === "missed" || ev.startState === "soon" ? "Beginn-Frist beachten" : "–"}</td>
+                <td className="max-w-72 text-sm text-muted">
+                  {medical ? (ev.messages[0] ?? "–") : ev.startState === "missed" || ev.startState === "soon" ? "Beginn-Frist beachten" : "–"}
+                  {findings.some((f) => f.level !== "warning") ? <div className="font-medium text-danger">Pflichtangaben fehlen (Anlage 3)</div> : null}
+                </td>
               </tr>
             ))}
           </tbody>
         </Table>
       )}
-      <p className="mt-6 text-xs text-muted">Regelwerk {RULES_VERSION} – vor Echtbetrieb gegen aktuelle HeilM-RL/§125-Vertrag prüfen.</p>
+      <p className="mt-6 text-xs text-muted">Regelwerk {RULES_VERSION} – Quellen, Stand und offene Punkte: docs/GKV.md.</p>
     </div>
   );
 }

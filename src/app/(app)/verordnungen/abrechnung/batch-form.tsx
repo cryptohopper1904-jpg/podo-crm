@@ -6,7 +6,7 @@ import { Download } from "lucide-react";
 import { Button, Field, FormError, FormSuccess, Input, Select, Table } from "@/components/ui";
 import { createBatchAction, type BatchState } from "./actions";
 
-export type ReadyRow = { id: string; patient: string; group: string; issuedAt: string; units: string; copayment: string; warning: string | null };
+export type ReadyRow = { id: string; patient: string; group: string; issuedAt: string; units: string; remedy: string; copayment: string; warning: string | null };
 
 export function BatchForm({ rows }: { rows: ReadyRow[] }) {
   const [state, action, pending] = useActionState<BatchState, FormData>(createBatchAction, undefined);
@@ -23,7 +23,7 @@ export function BatchForm({ rows }: { rows: ReadyRow[] }) {
       ) : null}
       <Table>
         <thead>
-          <tr><th className="w-12"><span className="sr-only">Auswahl</span></th><th>Patient</th><th>VO</th><th>Ausgestellt</th><th>Einheiten</th><th>Zuzahlung</th><th>Hinweis</th></tr>
+          <tr><th className="w-12"><span className="sr-only">Auswahl</span></th><th>Patient</th><th>VO</th><th>Ausgestellt</th><th>Einheiten</th><th>Heilmittelkosten</th><th>Zuzahlung</th><th>Hinweis</th></tr>
         </thead>
         <tbody>
           {rows.map((r) => (
@@ -33,6 +33,7 @@ export function BatchForm({ rows }: { rows: ReadyRow[] }) {
               <td>{r.group}</td>
               <td>{r.issuedAt}</td>
               <td className="tabular-nums">{r.units}</td>
+              <td className="tabular-nums">{r.remedy}</td>
               <td className="tabular-nums">{r.copayment}</td>
               <td className="text-sm text-warn-soft-text">{r.warning ?? "–"}</td>
             </tr>

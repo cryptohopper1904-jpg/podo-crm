@@ -2,14 +2,26 @@ import { checkBatchUsable } from "@/server/hygiene";
 import "server-only";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { appointments, patients, prescriptions, treatmentRecords, type FootPoint } from "@/db/schema";
+import { appointments, organizations, patients, prescriptions, treatmentRecords, type FootPoint } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import type { Role } from "@/lib/auth/permissions";
 import { chainHash, treatmentContent } from "@/lib/records";
 import { assertCan } from "./authz";
 import { gkvGuard } from "@/lib/features";
-import { acceptsUnit, statusAfterUnit, type PrescriptionStatus } from "@/lib/rules/prescription";
+import {
+  FREQUENCY_NOTE_MIN,
+  RULES_VERSION,
+  acceptsUnit,
+  anlage3Findings,
+  evaluatePrescription,
+  frequencyDeviation,
+  frequencyDeviationText,
+  statusAfterUnit,
+  type FrequencyDeviation,
+  type PrescriptionStatus,
+} from "@/lib/rules/prescription";
+import { berlinDateIso } from "@/lib/format";
 
 /**
  * Gemeinsame Logik zum Anlegen eines Behandlungseintrags (Hash-Kette je Patient, append-only).
@@ -32,6 +44,8 @@ export type NewTreatment = {
   structured?: Record<string, unknown>;
   missingPhotoReason?: string | null;
   aiAssisted?: boolean;
+  /** Begründung, wenn die Behandlung von der verordneten Frequenz abweicht (Pflicht, s. prescriptionGate) */
+  frequencyDeviationNote?: string | null;
 };
 
 /** Fachlicher Fehler – wird geworfen, damit die umgebende Transaktion zurückgerollt wird. */
@@ -61,6 +75,40 @@ export async function checkTreatmentRefs(tx: Tx, ctx: RecordCtx, input: Pick<New
     if (!acceptsUnit(vo.status, used, vo.units)) return "Auf diese Verordnung kann keine weitere Einheit gebucht werden (abgeschlossen oder alle Einheiten erbracht).";
   }
   return null;
+}
+
+/**
+ * Prüfungen vor dem Buchen einer Einheit auf eine Verordnung am Tag `date` (Berliner Datum):
+ *  - Frist überschritten (Beginnfrist HeilM-RL § 15 / Vertrag § 6 Abs. 4, Unterbrechung Vertrag § 7 Abs. 7) → Fehler
+ *  - Pflichtangaben, ohne die die Behandlung nicht beginnen darf (Anlage 3 Ziff. 3/Buchst. a, n) → Fehler
+ *    (nur Verordnungen nach aktuellem Regelwerk)
+ *  - Abweichung von der Frequenz über ± 2 Werktage (Vertrag § 7 Abs. 6, HeilM-RL § 16 Abs. 3) → Begründung Pflicht
+ */
+export async function prescriptionGate(
+  tx: Tx,
+  org: string,
+  input: { prescriptionId: string; date: string; frequencyDeviationNote?: string | null },
+): Promise<{ error: string } | { deviation: FrequencyDeviation | null }> {
+  const [vo] = await tx.select().from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.prescriptionId)));
+  if (!vo) return { error: "Verordnung nicht gefunden." };
+  const recs = await tx
+    .select({ treatedAt: treatmentRecords.treatedAt })
+    .from(treatmentRecords)
+    .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, input.prescriptionId)));
+  const dates = recs.map((r) => berlinDateIso(r.treatedAt)).sort();
+  const ev = evaluatePrescription({ issuedAt: vo.issuedAt, urgent: vo.urgent, units: vo.units, status: vo.status, frequency: vo.frequencyPerWeek, treatmentDates: dates, today: input.date, startBy: vo.startBy });
+  if (ev.expiry === "start_missed") return { error: `Frist überschritten: Die Behandlung hätte bis ${ev.startBy.split("-").reverse().join(".")} beginnen müssen – die Verordnung ist ungültig.` };
+  if (ev.expiry === "interrupted") return { error: "Frist überschritten: Seit der letzten Behandlung sind mehr als 12 Wochen vergangen – die Verordnung ist ungültig." };
+  if (vo.rulesVersion === RULES_VERSION) {
+    const [o] = await tx.select({ ik: organizations.ik }).from(organizations).where(eq(organizations.id, org));
+    const start = anlage3Findings({ ...vo, icd10Second: vo.icd10Second, frequency: vo.frequencyPerWeek, practiceIk: o?.ik ?? null }).find((f) => f.level === "start");
+    if (start) return { error: `Behandlung auf diese Verordnung noch nicht möglich: ${start.message}` };
+  }
+  const deviation = frequencyDeviation({ group: vo.diagnosisGroup, frequency: vo.frequencyPerWeek, lastDate: dates.at(-1), date: input.date });
+  if (deviation && (input.frequencyDeviationNote ?? "").trim().length < FREQUENCY_NOTE_MIN) {
+    return { error: `${frequencyDeviationText(deviation)} Bitte die Absprache mit der Ärztin/dem Arzt als Begründung eintragen.` };
+  }
+  return { deviation };
 }
 
 export async function unitsUsed(tx: Tx, org: string, prescriptionId: string): Promise<number> {
@@ -93,13 +141,20 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
     }
   }
 
+  const treatedAt = new Date();
+  let structured = input.structured ?? {};
+  if (input.prescriptionId) {
+    const gate = await prescriptionGate(tx, org, { prescriptionId: input.prescriptionId, date: berlinDateIso(treatedAt), frequencyDeviationNote: input.frequencyDeviationNote });
+    if ("error" in gate) throw new RecordInputError(gate.error);
+    // Abweichung + Begründung gehen in die Hash-Kette ein (structured) – Dokumentation „auf der Verordnung“ (Anlage 3 Buchst. i a)
+    if (gate.deviation) structured = { ...structured, frequencyDeviation: { ...gate.deviation, note: input.frequencyDeviationNote!.trim().slice(0, 500) } };
+  }
   const [prev] = await tx
     .select({ hash: treatmentRecords.hash })
     .from(treatmentRecords)
     .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.patientId, input.patientId)))
     .orderBy(desc(treatmentRecords.createdAt))
     .limit(1);
-  const treatedAt = new Date();
   const values = {
     findings: input.findings,
     servicesText: input.servicesText,
@@ -108,7 +163,7 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
     reaction: input.reaction ?? null,
     recommendation: input.recommendation ?? null,
     footPoints: input.footPoints ?? [],
-    structured: input.structured ?? {},
+    structured,
     appointmentId: input.appointmentId ?? null,
     missingPhotoReason: input.missingPhotoReason ?? null,
     aiAssisted: input.aiAssisted ?? false,
