@@ -66,7 +66,7 @@ export interface FeldSpez {
   art: FeldArt;
   /** feste Länge (z. B. 9 für ein IK) */
   laenge?: number;
-  /** Höchstlänge (z. B. 35 für "..35") */
+  /** Höchstlänge (z. B. 35 für "..35"); bei Beträgen (dezimal gesetzt) die Zahl der Vorkommastellen ("..10,2" → 10) */
   max?: number;
   /** Mindestlänge (z. B. 22 bei EVO "22..256") */
   min?: number;
@@ -127,10 +127,13 @@ function pruefeFeld(spez: FeldSpez, roh: FeldWert, ort: string, fehler: Gkv302Fe
       fehler.push({ art: "format", pfad: ort, meldung: `„${spez.name}“ muss eine Zahl mit ${spez.dezimal} Nachkommastellen sein (z. B. 12,30), erhalten: „${text}“.` });
       return text;
     }
-    const ziffern = text.replace(/[-,]/g, "").replace(/^0+(?=\d)/, "");
-    // Auslegung "..10,2": höchstens 10 Ziffern insgesamt, davon 2 Nachkommastellen (Minus/Komma zählen nicht, TA1 5.1 Abs. 9).
-    if (spez.max !== undefined && ziffern.length > spez.max) {
-      fehler.push({ art: "laenge", pfad: ort, meldung: `„${spez.name}“ hat ${ziffern.length} Stellen, erlaubt sind höchstens ${spez.max} (einschließlich ${spez.dezimal} Nachkommastellen).` });
+    // Lesart „..m,n“ (einheitlich für alle Betragsfelder): höchstens m Vorkommastellen plus genau n Nachkommastellen;
+    // Minus und Komma zählen nicht (TA1 V21 5.1 Abs. 8–10, S. 11–12). Nur diese Lesart ist mit SKO „..2,2“ (S. 35,
+    // z. B. 2,00 %) vereinbar; die strengere Lesart „m Stellen insgesamt“ ließe dort nur 0,xx zu. Im
+    // Erprobungsverfahren zu bestätigen (docs/GKV-302.md, Auslegungen).
+    const vorkomma = text.replace(/^-/, "").split(",")[0].replace(/^0+(?=\d)/, "");
+    if (spez.max !== undefined && vorkomma.length > spez.max) {
+      fehler.push({ art: "laenge", pfad: ort, meldung: `„${spez.name}“ hat ${vorkomma.length} Vorkommastellen, erlaubt sind höchstens ${spez.max} (Format ..${spez.max},${spez.dezimal}).` });
     }
     return text;
   }

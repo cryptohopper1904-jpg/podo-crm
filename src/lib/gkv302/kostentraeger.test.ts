@@ -93,3 +93,30 @@ describe("Kostenträgerdatei – Annahmestellen ermitteln", () => {
     expect(() => verzeichnis.ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2025-12-31", abrechnungscode: "71" })).toThrow("zum 2025-12-31 nicht enthalten");
   });
 });
+
+describe("C4 NAM gefolgt von VDT (Anhang 3 V10 Kap. 7, S. 12)", () => {
+  it("VDT nach NAM wird als Gültigkeit des Namens gelesen und wieder geschrieben", () => {
+    const mitNamVdt = roh
+      .replace("NAM+01+Testkasse Zentrale+Abrechnung'\r\n", "NAM+01+Testkasse Zentrale+Abrechnung'\r\nVDT+20260101+20271231'\r\n")
+      .replace("UNT+000014+00003'", "UNT+000015+00003'");
+    const d = parseKostentraegerdatei(mitNamVdt);
+    expect(d.institutionen[2].name).toEqual(["Testkasse Zentrale", "Abrechnung"]);
+    expect(d.institutionen[2].nameGueltigkeit).toEqual({ ab: "2026-01-01", bis: "2027-12-31" });
+    expect(parseKostentraegerdatei(schreibeKostentraegerdatei(d))).toEqual(d);
+  });
+});
+
+describe("Sollte: Verknüpfung 02/03 nur mit Art der Datenlieferung 07/30 (Anhang 3 V10 Kap. 5.2, S. 9)", () => {
+  it("VKG 03 ohne Art der Datenlieferung zählt nicht", () => {
+    const ohne = parseKostentraegerdatei(roh.replace("VKG+03+990030017+5++07+1+++71'", "VKG+03+990030017+5+++1+++71'"));
+    expect(() => new KostentraegerVerzeichnis([ohne]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-02", abrechnungscode: "71" })).toThrow("keine Datenannahmestelle mit Entschlüsselungsbefugnis");
+  });
+
+  it("mehrere gleichwertige Datenannahmestellen → Hinweis", () => {
+    const zwei = parseKostentraegerdatei(
+      roh.replace("VKG+03+990030017+5++07+1+++71'\r\n", "VKG+03+990030017+5++07+1+++71'\r\nVKG+03+990030039+5++07+1+++71'\r\n").replace("UNT+000014+00003'", "UNT+000015+00003'"),
+    );
+    const e = new KostentraegerVerzeichnis([zwei]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-02", abrechnungscode: "71" });
+    expect(e.hinweise).toContainEqual(expect.stringContaining("mehrere Datenannahmestellen mit Entschlüsselungsbefugnis"));
+  });
+});

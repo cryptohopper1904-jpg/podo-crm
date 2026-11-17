@@ -33,6 +33,12 @@ export interface Praxis {
   abrechnungscode: "71" | "72";
   /** EHE Leistungserbringergruppe: Tarifkennzeichen (Anlage 3 8.1.5.2), 5 Stellen, aus Zulassung/Vertrag */
   tarifkennzeichen: string;
+  /**
+   * MWS nur, wenn der Vertrag Nettopreis + MwSt vorsieht (TA1 V21 5.5.3.3 MWS, S. 56). Podologische Heilbehandlungen
+   * sind in der Regel nach § 4 Nr. 14 Buchst. a UStG umsatzsteuerfrei; deshalb ist das MWS-Segment bei
+   * Abrechnungscode 71/72 nur mit dieser ausdrücklichen Freischaltung erlaubt.
+   */
+  mehrwertsteuerVereinbart?: boolean;
   /** UST (Kann-Segment): Steuernummer bzw. USt-IdNr. */
   umsatzsteuer?: { steuernummer: string; befreit: boolean };
   /** SKO (Kann-Segment, 0–9×) */
@@ -118,8 +124,16 @@ export interface Einzelleistung {
   /** MWS (0–1) nur wenn dem Einzelbetrag MwSt hinzuzurechnen ist; Satz in Prozent, z. B. 19 */
   mehrwertsteuerProzent?: number;
   /**
-   * Nur bei Zuzahlungskennzeichen 2, 4 oder 5: ob für diese Position Zuzahlung anfällt.
-   * Bei "3" immer ja, bei "0"/"1" immer nein.
+   * Eigenschaft der Abrechnungsposition laut Vergütungsliste/Vertrag: ob die Position der gesetzlichen Zuzahlung
+   * unterliegt. Standard ja (undefined = ja); `false` für Positionen ohne Zuzahlung (Vergütungsliste Podologie
+   * Anlage 2: Zuzahlungsspalte „-“ bzw. leer). Positionen mit `false` erhalten nie einen Zuzahlungsbetrag (EHE „sofern dieser vom Versicherten zu entrichten
+   * ist“, TA1 V21 5.5.3.3, S. 67).
+   */
+  zuzahlungsfaehig?: boolean;
+  /**
+   * Zeitbezug je Position: bei Zuzahlungskennzeichen 2, 4 oder 5 (VKZ ≠ 03), ob der Termin in den
+   * zuzahlungspflichtigen Zeitraum fällt (Pflicht). Bei VKZ 03 optional: `false` nimmt die Position von der
+   * Forderung aus. Bei "3" gilt ja, bei "0"/"1" nein.
    */
   zuzahlungspflichtig?: boolean;
 }
@@ -147,8 +161,17 @@ export interface Abrechnungsfall {
   verordnung: Verordnung;
   /** ZHE Zuzahlungskennzeichen (Anlage 3 8.1.3) */
   zuzahlungskennzeichen: Zuzahlungskennzeichen;
-  /** Bei Zuzahlungskennzeichen 2, 4, 5: ob die Pauschale (10,00 €) je Verordnung anfällt */
+  /**
+   * Bei Zuzahlungskennzeichen 2, 4, 5 (VKZ ≠ 03): ob die Pauschale (10,00 €) je Verordnung anfällt (Pflicht).
+   * Bei VKZ 03 optional: Standard ja, `false` nimmt die Pauschale von der Forderung aus.
+   */
   pauschaleZuzahlung?: boolean;
+  /**
+   * Nur VKZ 03 (Zuzahlungsforderung nach § 43c SGB V): Nachweis über den erfolglosen Einzugsversuch, der
+   * parallel zum Datensatz an den Kostenträger geht (TA1 V21 7.4.2.1, S. 167; Vordruck „TP5_KorVer_43cSGBV“).
+   * Die Bibliothek erzeugt den Nachweis nicht; sie verlangt nur die Referenz auf das abgelegte Dokument.
+   */
+  nachweisErfolgloserEinzug?: { referenz: string; datum: IsoDatum };
   /** EHE (1–n) */
   leistungen: Einzelleistung[];
   /** nur bei Verarbeitungskennzeichen ≠ 01 */

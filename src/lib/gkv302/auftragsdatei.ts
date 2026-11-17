@@ -53,6 +53,12 @@ function an(wert: string, laenge: number, feld: string): string {
 function zeitstempel(s: string, feld: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(s);
   if (!m) throw new Error(`Auftragsdatei ${feld}: Zeitpunkt im Format JJJJ-MM-TT HH:MM:SS erwartet.`);
+  // plausibel: echtes Kalenderdatum, Stunde 00–23, Minute/Sekunde 00–59 (GGT Anlage 2 Kap. 2.1, S. 6: Format JHJJMMTThhmmss)
+  const [j, mo, t, h, mi, se] = m.slice(1).map(Number);
+  const d = new Date(Date.UTC(j, mo - 1, t));
+  if (d.getUTCFullYear() !== j || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== t || h > 23 || mi > 59 || se > 59) {
+    throw new Error(`Auftragsdatei ${feld}: „${s}“ ist kein gültiger Zeitpunkt.`);
+  }
   return m.slice(1).join("");
 }
 

@@ -24,10 +24,24 @@ import {
   type Summenstatus,
 } from "./schluessel";
 import * as S from "./segmente";
-import type { Abrechnungsfall, Gesamtrechnung, IsoDatum, Nutzdatendatei, Praxis } from "./typen";
+import type { Abrechnungsfall, Gesamtrechnung, IsoDatum, Nutzdatendatei, Praxis, TaVersion } from "./typen";
 
 /** Pauschaler Zuzahlungsbetrag laut TA1 5.5.3.3 BES: „10,00 Euro, jedoch höchstens …“ */
 export const ZUZAHLUNG_PAUSCHALE_CENT = 1000;
+
+/**
+ * Gültigkeit der Nachrichtenversionen SLGA/SLLA, geprüft gegen das Erstelldatum im UNB:
+ * TA1 V22 Deckblatt („Anzuwenden ab: 01.02.2027 / Version 21 verliert Gültigkeit: 30.04.2027“) und Kap. 5.5.1, S. 29
+ * (Tabelle: SLGA/SLLA 21 01.10.2025–30.04.2027, 22 ab 01.02.2027).
+ */
+export const TA_GUELTIGKEIT: Record<TaVersion, { ab: IsoDatum; bis?: IsoDatum }> = {
+  "21": { ab: "2025-10-01", bis: "2027-04-30" },
+  "22": { ab: "2027-02-01" },
+};
+
+function deDatum(iso: IsoDatum): string {
+  return `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+}
 
 // ───────────────────────── Hilfen ─────────────────────────
 
@@ -125,7 +139,15 @@ function pruefePraxis(p: Praxis, pfad: string, fehler: Gkv302Fehler[]) {
   }
 }
 
-function pruefeFall(fall: Abrechnungsfall, vkz: string, pfad: string, fehler: Gkv302Fehler[]) {
+interface FallKontext {
+  vkz: string;
+  praxis: Praxis;
+  zuzahlungProzent: number;
+  pauschaleCent: number;
+}
+
+function pruefeFall(fall: Abrechnungsfall, k: FallKontext, pfad: string, fehler: Gkv302Fehler[]) {
+  const vkz = k.vkz;
   const v = fall.verordnung;
   const vers = fall.versicherter;
   if (!fall.leistungen?.length) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.leistungen`, meldung: "Mindestens eine Abrechnungsposition (EHE) ist nötig." });
@@ -172,12 +194,40 @@ function pruefeFall(fall: Abrechnungsfall, vkz: string, pfad: string, fehler: Gk
     fehler.push({ art: "kombination", pfad: `${pfad}.pauschalerKorrekturabzugCent`, meldung: "Pauschaler Korrekturabzug nur bei Verarbeitungskennzeichen 04." });
   }
   // Zuzahlung
-  if (["2", "4", "5"].includes(fall.zuzahlungskennzeichen)) {
-    if (fall.pauschaleZuzahlung === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.pauschaleZuzahlung`, meldung: `Bei Zuzahlungskennzeichen ${fall.zuzahlungskennzeichen} muss angegeben werden, ob die Pauschale je Verordnung anfällt.` });
+  const zk = fall.zuzahlungskennzeichen;
+  if (vkz === "03") {
+    // TA1 V21 7.4.2.1–7.4.2.4 (S. 167–168): VKZ 03 nur mit Grund 1 (Befreiung nachträglich), 2 (Zahlung verweigert)
+    // oder 5 (Übergang zuzahlungsfrei → zuzahlungspflichtig)
+    if (!["1", "2", "5"].includes(zk)) {
+      fehler.push({ art: "kombination", pfad: `${pfad}.zuzahlungskennzeichen`, meldung: `Bei Verarbeitungskennzeichen 03 (Zuzahlungsforderung) ist als Zuzahlungskennzeichen nur 1, 2 oder 5 zulässig, erhalten: „${zk}“ (TA1 Kap. 7.4.2).` });
+    }
+    // § 43c SGB V: Nachweis über den erfolglosen Einzugsversuch parallel zum Datensatz (TA1 V21 7.4.2.1, S. 167)
+    if ((zk === "2" || zk === "5") && !fall.nachweisErfolgloserEinzug?.referenz) {
+      fehler.push({ art: "pflichtfeld", pfad: `${pfad}.nachweisErfolgloserEinzug`, meldung: "Zuzahlungsforderung nach § 43c SGB V: Nachweis über den erfolglosen Einzugsversuch (Referenz auf das Dokument) fehlt (TA1 Kap. 7.4.2.1)." });
+    }
+    if (fall.nachweisErfolgloserEinzug) pruefeDatum(fall.nachweisErfolgloserEinzug.datum, `${pfad}.nachweisErfolgloserEinzug.datum`, "Datum des Nachweises", fehler);
+  } else if (fall.nachweisErfolgloserEinzug) {
+    fehler.push({ art: "kombination", pfad: `${pfad}.nachweisErfolgloserEinzug`, meldung: "Nachweis über den erfolglosen Einzug nur bei Verarbeitungskennzeichen 03." });
+  }
+  if (vkz !== "03" && ["2", "4", "5"].includes(zk)) {
+    if (fall.pauschaleZuzahlung === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.pauschaleZuzahlung`, meldung: `Bei Zuzahlungskennzeichen ${zk} muss angegeben werden, ob die Pauschale je Verordnung anfällt.` });
     fall.leistungen?.forEach((l, i) => {
-      if (l.zuzahlungspflichtig === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.leistungen[${i}].zuzahlungspflichtig`, meldung: `Bei Zuzahlungskennzeichen ${fall.zuzahlungskennzeichen} muss je Position angegeben werden, ob Zuzahlung anfällt.` });
+      if (l.zuzahlungspflichtig === undefined) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.leistungen[${i}].zuzahlungspflichtig`, meldung: `Bei Zuzahlungskennzeichen ${zk} muss je Position angegeben werden, ob Zuzahlung anfällt.` });
     });
   }
+  if (vkz === "03" && fall.leistungen?.length) {
+    const b = fallBetraege(fall, k.zuzahlungProzent, k.pauschaleCent, vkz);
+    if (b.gesetzlicheZuzahlungCent <= 0) fehler.push({ art: "kombination", pfad: `${pfad}`, meldung: "Zuzahlungsforderung (VKZ 03): die geforderte Zuzahlung muss größer 0 sein." });
+  }
+  // Mehrwertsteuer (TA1 V21 5.5.3.3 MWS, S. 56): nur bei vertraglich vereinbarter MwSt
+  fall.leistungen?.forEach((l, i) => {
+    if (l.mehrwertsteuerProzent === undefined) return;
+    if (k.praxis.umsatzsteuer?.befreit) {
+      fehler.push({ art: "kombination", pfad: `${pfad}.leistungen[${i}].mehrwertsteuerProzent`, meldung: "Die Praxis ist als umsatzsteuerbefreit gekennzeichnet (UST „J“); ein MWS-Segment ist dann unzulässig." });
+    } else if (!k.praxis.mehrwertsteuerVereinbart) {
+      fehler.push({ art: "kombination", pfad: `${pfad}.leistungen[${i}].mehrwertsteuerProzent`, meldung: "MWS nur, wenn für die Position Mehrwertsteuer vertraglich vereinbart ist; bei Podologie (71/72) dafür „mehrwertsteuerVereinbart“ an der Praxis setzen." });
+    }
+  });
   // Positionen
   const gesehen = new Set<string>();
   fall.leistungen?.forEach((l, i) => {
@@ -202,6 +252,11 @@ export function pruefeNutzdatendatei(d: Nutzdatendatei): Gkv302Fehler[] {
   pruefeIk(d.absender?.ik, "absender.ik", "IK des Absenders", fehler);
   pruefeIk(d.empfaengerIk, "empfaengerIk", "IK der Datenannahmestelle", fehler);
   pruefeDatum(d.erstellt?.datum, "erstellt.datum", "Erstelldatum", fehler);
+  const gueltig = TA_GUELTIGKEIT[d.taVersion];
+  if (gueltig && d.erstellt?.datum && datumGueltig(d.erstellt.datum)) {
+    if (d.erstellt.datum < gueltig.ab) fehler.push({ art: "kombination", pfad: "taVersion", meldung: `TA-Version ${d.taVersion} gilt erst ab ${deDatum(gueltig.ab)}; Erstelldatum ist ${deDatum(d.erstellt.datum)}.` });
+    if (gueltig.bis && d.erstellt.datum > gueltig.bis) fehler.push({ art: "kombination", pfad: "taVersion", meldung: `TA-Version ${d.taVersion} gilt nur bis ${deDatum(gueltig.bis)}; Erstelldatum ist ${deDatum(d.erstellt.datum)}.` });
+  }
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(d.erstellt?.uhrzeit ?? "")) fehler.push({ art: "format", pfad: "erstellt.uhrzeit", meldung: "Uhrzeit im Format HH:MM erwartet." });
   if (!Number.isInteger(d.datenaustauschreferenz) || d.datenaustauschreferenz < 1 || d.datenaustauschreferenz > 99999) fehler.push({ art: "format", pfad: "datenaustauschreferenz", meldung: "Datenaustauschreferenz muss zwischen 1 und 99999 liegen." });
   if (!Number.isInteger(d.abrechnungsmonat) || d.abrechnungsmonat < 1 || d.abrechnungsmonat > 12) fehler.push({ art: "format", pfad: "abrechnungsmonat", meldung: "Abrechnungsmonat muss zwischen 1 und 12 liegen." });
@@ -215,8 +270,19 @@ export function pruefeNutzdatendatei(d: Nutzdatendatei): Gkv302Fehler[] {
     else if (d.leistungserbringer[0].praxis.ik !== d.absender.ik) fehler.push({ art: "kombination", pfad: "absender.ik", meldung: "Rechnungsart 1: IK des Absenders muss das IK des Leistungserbringers sein (sonst Rechnungsart 2)." });
     if (d.absender?.art !== "S") fehler.push({ art: "kombination", pfad: "absender.art", meldung: "Rechnungsart 1: der Leistungserbringer rechnet selbst ab, Dateiidentifizierer „S“." });
   }
+  // Je Verarbeitungskennzeichen eine eigene Datei (TA1 V21 Kap. 7.3, S. 166)
+  const alleRechnungen = d.leistungserbringer?.flatMap((le) => le.kostentraeger?.flatMap((kt) => kt.rechnungen ?? []) ?? []) ?? [];
+  const vkzInDatei = new Set(alleRechnungen.map((r) => r.verarbeitungskennzeichen));
+  if (vkzInDatei.size > 1) fehler.push({ art: "kombination", pfad: "verarbeitungskennzeichen", meldung: `Innerhalb einer Datei ist nur ein Verarbeitungskennzeichen zulässig, enthalten: ${[...vkzInDatei].sort().join(", ")}. Je Verarbeitungskennzeichen ist eine eigene Datei zu übermitteln (TA1 Kap. 7.3).` });
+  // Kein Mischen von Einzel- und Sammelrechnungen in einer Datei (TA1 V21 5.3.2, S. 15; 5.3.3, S. 16)
+  const alleKt = d.leistungserbringer?.flatMap((le) => le.kostentraeger ?? []) ?? [];
+  const mitSammel = alleKt.filter((kt) => kt.sammelrechnung).length;
+  if (mitSammel > 0 && mitSammel < alleKt.length) fehler.push({ art: "kombination", pfad: "leistungserbringer", meldung: "Das Mischen von Einzel- und Sammelrechnungen in einer Datei ist nicht zulässig (TA1 Kap. 5.3.2/5.3.3): entweder alle Kostenträger mit Sammelrechnung oder keiner." });
+  const pauschaleCent = d.zuzahlungPauschaleCent ?? ZUZAHLUNG_PAUSCHALE_CENT;
   d.leistungserbringer?.forEach((le, i) => {
     const lp = `leistungserbringer[${i}]`;
+    // Rechnungsnummern je Leistungserbringer eindeutig (Sammel:Einzel bzw. Rechnungsnummer:0), auch über Kostenträger
+    const nummern = new Map<string, string>();
     pruefePraxis(le.praxis, `${lp}.praxis`, fehler);
     if (!le.kostentraeger?.length) fehler.push({ art: "pflichtfeld", pfad: `${lp}.kostentraeger`, meldung: "Keine Rechnung für diesen Leistungserbringer." });
     le.kostentraeger?.forEach((kt, j) => {
@@ -226,15 +292,12 @@ export function pruefeNutzdatendatei(d: Nutzdatendatei): Gkv302Fehler[] {
         const e = pruefeRechnungsnummer(kt.sammelrechnung.rechnungsnummer);
         if (e) fehler.push({ art: "format", pfad: `${kp}.sammelrechnung.rechnungsnummer`, meldung: e });
         pruefeDatum(kt.sammelrechnung.rechnungsdatum, `${kp}.sammelrechnung.rechnungsdatum`, "Rechnungsdatum der Sammelrechnung", fehler);
-        const vkzs = new Set(kt.rechnungen.map((r) => r.verarbeitungskennzeichen));
-        if (vkzs.size > 1) fehler.push({ art: "kombination", pfad: `${kp}.rechnungen`, meldung: "Alle Gesamtrechnungen einer Sammelrechnung brauchen dasselbe Verarbeitungskennzeichen." });
+        // die Sammelrechnungs-SLGA belegt „Sammelnummer:0“ – damit ist auch Einzelnummer „0“ ausgeschlossen
+        const sammelKey = `${kt.sammelrechnung.rechnungsnummer}:0`;
+        if (nummern.has(sammelKey)) fehler.push({ art: "kombination", pfad: `${kp}.sammelrechnung.rechnungsnummer`, meldung: `Sammel-Rechnungsnummer „${kt.sammelrechnung.rechnungsnummer}“ ist mehrfach vergeben; sie muss je Rechnung eindeutig sein.` });
+        nummern.set(sammelKey, kp);
       }
       if (!kt.rechnungen?.length) fehler.push({ art: "pflichtfeld", pfad: `${kp}.rechnungen`, meldung: "Keine Gesamtrechnung für diesen Kostenträger." });
-      if (!kt.sammelrechnung) {
-        const nummern = kt.rechnungen?.map((r) => r.rechnungsnummer) ?? [];
-        const doppelt = nummern.filter((nr, idx) => nummern.indexOf(nr) !== idx);
-        for (const nr of new Set(doppelt)) fehler.push({ art: "kombination", pfad: `${kp}.rechnungen`, meldung: `Rechnungsnummer „${nr}“ ist mehrfach vergeben; sie muss je Rechnung eindeutig sein.` });
-      }
       const kassen = new Set<string>();
       kt.rechnungen?.forEach((r, k) => {
         const rp = `${kp}.rechnungen[${k}]`;
@@ -243,6 +306,12 @@ export function pruefeNutzdatendatei(d: Nutzdatendatei): Gkv302Fehler[] {
         kassen.add(r.kasseIk);
         const e = pruefeRechnungsnummer(r.rechnungsnummer);
         if (e) fehler.push({ art: "format", pfad: `${rp}.rechnungsnummer`, meldung: e });
+        // B8: doppelte Nummern auch innerhalb einer Sammelrechnung (Einzel-Rechnungsnummern) erkennen
+        const voll = kt.sammelrechnung ? `${kt.sammelrechnung.rechnungsnummer}:${r.rechnungsnummer}` : `${r.rechnungsnummer}:0`;
+        if (nummern.has(voll)) {
+          fehler.push({ art: "kombination", pfad: `${rp}.rechnungsnummer`, meldung: kt.sammelrechnung ? `Einzel-Rechnungsnummer „${r.rechnungsnummer}“ ist in der Sammelrechnung „${kt.sammelrechnung.rechnungsnummer}“ mehrfach vergeben; sie muss je Rechnung eindeutig sein.` : `Rechnungsnummer „${r.rechnungsnummer}“ ist mehrfach vergeben; sie muss je Rechnung eindeutig sein.` });
+        }
+        nummern.set(voll, rp);
         pruefeDatum(r.rechnungsdatum, `${rp}.rechnungsdatum`, "Rechnungsdatum", fehler);
         if (r.verarbeitungskennzeichen === ("10" as string)) fehler.push({ art: "schluessel", pfad: `${rp}.verarbeitungskennzeichen`, meldung: "Verarbeitungskennzeichen 10 ist laut TA1 Kap. 7.1 nur für Physiotherapie zulässig." });
         if (!r.faelle?.length) fehler.push({ art: "pflichtfeld", pfad: `${rp}.faelle`, meldung: "Die Gesamtrechnung enthält keinen Abrechnungsfall." });
@@ -251,7 +320,7 @@ export function pruefeNutzdatendatei(d: Nutzdatendatei): Gkv302Fehler[] {
           const fp = `${rp}.faelle[${l}]`;
           if (belege.has(f.belegnummer)) fehler.push({ art: "kombination", pfad: `${fp}.belegnummer`, meldung: `Belegnummer „${f.belegnummer}“ ist in der Gesamtrechnung nicht eindeutig.` });
           belege.add(f.belegnummer);
-          pruefeFall(f, r.verarbeitungskennzeichen, fp, fehler);
+          pruefeFall(f, { vkz: r.verarbeitungskennzeichen, praxis: le.praxis, zuzahlungProzent: d.zuzahlungProzent, pauschaleCent }, fp, fehler);
         });
       });
     });
@@ -357,7 +426,8 @@ function schreibeFall(w: Schreiber, praxis: Praxis, r: Gesamtrechnung, fall: Abr
     leitsymptomatikWert(fall),
     v.leitsymptomatikText,
     v.dringlicherBehandlungsbedarf ? "1" : "0",
-    v.heilmittelbereich,
+    // Kann-Feld; bei Abrechnungscode 71/72 mit „2“ (Podologische Therapie) vorbelegt (TA1 V21 5.5.3.3 ZHE)
+    v.heilmittelbereich ?? "2",
     String(v.therapiefrequenz),
   ], ort);
   for (const dia of v.diagnosen) w.seg(S.DIA, [dia.icd10, dia.text], ort);
@@ -407,7 +477,7 @@ export function erzeugeNutzdatendatei(d: Nutzdatendatei): NutzdateiErgebnis {
       // Beträge vorab, damit die Sammelrechnung ihre Summen kennt
       const berechnet = kt.rechnungen.map((r) => ({
         r,
-        faelle: r.faelle.map((f) => ({ f, b: fallBetraege(f, d.zuzahlungProzent, pauschale) })),
+        faelle: r.faelle.map((f) => ({ f, b: fallBetraege(f, d.zuzahlungProzent, pauschale, r.verarbeitungskennzeichen) })),
       }));
       const sammel = kt.sammelrechnung;
       if (sammel) {

@@ -98,3 +98,11 @@ describe("Auftragsdatei (GGT Anlage 2, 348 Byte)", () => {
     expect(() => leseAuftragssatz("zu kurz")).toThrow("348");
   });
 });
+
+describe("Auftragsdatei – Zeitpunkte plausibel (GGT Anlage 2 Kap. 2.1, S. 6)", () => {
+  it("ungültige Kalenderdaten und Uhrzeiten werden abgewiesen", () => {
+    expect(() => erzeugeAuftragsdatei({ ...basis, erstellt: "2026-02-30 09:30:00" })).toThrow("kein gültiger Zeitpunkt");
+    expect(() => erzeugeAuftragsdatei({ ...basis, erstellt: "2026-11-02 24:00:00" })).toThrow("kein gültiger Zeitpunkt");
+    expect(() => erzeugeAuftragsdatei({ ...basis, gesendet: "2026-11-02 09:60:00" })).toThrow("kein gültiger Zeitpunkt");
+  });
+});

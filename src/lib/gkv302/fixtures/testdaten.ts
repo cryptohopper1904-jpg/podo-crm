@@ -57,10 +57,10 @@ export function testFall1(): Abrechnungsfall {
     },
     zuzahlungskennzeichen: "3",
     leistungen: [
-      { positionsnummer: "99901", anzahl: 1, einzelpreisCent: 3555, datum: "2026-10-05" },
-      { positionsnummer: "99902", anzahl: 1, einzelpreisCent: 1200, datum: "2026-10-05", text: "Hausbesuch" },
-      { positionsnummer: "99903", anzahl: 1, einzelpreisCent: 450, datum: "2026-10-05", gefahreneKilometer: 12 },
-      { positionsnummer: "99901", anzahl: 1, einzelpreisCent: 3555, datum: "2026-10-19" },
+      { positionsnummer: "99901", anzahl: 1, einzelpreisCent: 3555, datum: "2026-10-05", zuzahlungsfaehig: true },
+      { positionsnummer: "99902", anzahl: 1, einzelpreisCent: 1200, datum: "2026-10-05", text: "Hausbesuch", zuzahlungsfaehig: true },
+      { positionsnummer: "99903", anzahl: 1, einzelpreisCent: 450, datum: "2026-10-05", gefahreneKilometer: 12, zuzahlungsfaehig: true },
+      { positionsnummer: "99901", anzahl: 1, einzelpreisCent: 3555, datum: "2026-10-19", zuzahlungsfaehig: true },
     ],
   };
 }
@@ -91,7 +91,7 @@ export function testFall2(): Abrechnungsfall {
       genehmigung: { kennzeichen: "GEN-TEST-1", datum: "2026-09-30", art: "B2" },
     },
     zuzahlungskennzeichen: "1",
-    leistungen: [{ positionsnummer: "99901", anzahl: 2, einzelpreisCent: 3555, datum: "2026-10-07" }],
+    leistungen: [{ positionsnummer: "99901", anzahl: 2, einzelpreisCent: 3555, datum: "2026-10-07", zuzahlungsfaehig: true }],
   };
 }
 

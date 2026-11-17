@@ -85,6 +85,8 @@ export interface KotrInstitution {
   konto?: { kontonummer?: string; blz?: string; bank: string; inhaber?: string; iban?: string; bic?: string; gueltigkeit?: Gueltigkeit };
   verknuepfungen: KotrVerknuepfung[];
   name: string[];
+  /** VDT nach NAM (Anhang 3 V10 Kap. 7, S. 12: „+ NAM (+ VDT)“) */
+  nameGueltigkeit?: Gueltigkeit;
   anschriften: KotrAnschrift[];
   ansprechpartner: { lfdNr: string; telefon?: string; fax?: string; name?: string; arbeitsgebiet?: string; gueltigkeit?: Gueltigkeit }[];
   uebermittlung: KotrUebermittlung[];
@@ -214,10 +216,17 @@ export function parseKostentraegerdatei(inhalt: string): Kostentraegerdatei {
         vdtZiel = v;
         break;
       }
-      case "NAM":
+      case "NAM": {
         aktuell.name = seg.elemente.slice(1).map((e) => e[0] ?? "").filter((s) => s !== "");
-        vdtZiel = null;
+        // Segmentfolge Anhang 3 V10 Kap. 7, S. 12: „+ NAM (+ VDT)“ – ein folgendes VDT gilt für den Namen
+        const inst = aktuell;
+        vdtZiel = {
+          set gueltigkeit(g: Gueltigkeit | undefined) {
+            inst.nameGueltigkeit = g;
+          },
+        };
         break;
+      }
       case "ANS": {
         const a: KotrAnschrift = { art: wert(seg, 0), plz: wert(seg, 1), ort: wert(seg, 2), strasseOderPostfach: opt(wert(seg, 3)) };
         aktuell.anschriften.push(a);
@@ -359,7 +368,9 @@ export class KostentraegerVerzeichnis {
         (v.leistungserbringergruppe === undefined || v.leistungserbringergruppe === "5") &&
         (v.abrechnungsstelleIk === undefined || v.abrechnungsstelleIk === k.abrechnungsstelleIk) &&
         (v.tarifkennzeichen === undefined || k.tarifkennzeichen === undefined || v.tarifkennzeichen === k.tarifkennzeichen) &&
-        (lieferarten === undefined || v.artDerDatenlieferung === undefined || lieferarten.includes(v.artDerDatenlieferung)) &&
+        // Anhang 3 V10 Kap. 5.2, S. 9: Verweis 02/03 „nur gültig in Verbindung mit dem Schlüssel 07 oder 30 bei Art
+        // der Datenlieferung“ – ohne Angabe also nicht gültig
+        (lieferarten === undefined || (v.artDerDatenlieferung !== undefined && lieferarten.includes(v.artDerDatenlieferung))) &&
         rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode) >= 0,
     );
     if (!kandidaten.length) return [];
@@ -401,6 +412,8 @@ export class KostentraegerVerzeichnis {
       throw new KotrFehler(`Für Kostenträger ${ktIk} gibt es zum ${k.stichtag} keine Datenannahmestelle mit Entschlüsselungsbefugnis für Abrechnungscode ${k.abrechnungscode}.`);
     }
     const davIk = mitEntschl[0].ik;
+    const davIks = [...new Set(mitEntschl.map((v) => v.ik))];
+    if (davIks.length > 1) hinweise.push(`Für Kostenträger ${ktIk} sind mehrere Datenannahmestellen mit Entschlüsselungsbefugnis gleichwertig (${davIks.join(", ")}); verwendet wurde ${davIk}. Bitte Standort (Bundesland) oder Tarifkennzeichen angeben.`);
     const dav = this.institution(davIk, k.stichtag);
     if (!dav) throw new KotrFehler(`Datenannahmestelle ${davIk} ist zum ${k.stichtag} nicht in der Kostenträgerdatei enthalten.`);
     // DAV ohne Entschlüsselungsbefugnis: zuerst am Kostenträger, sonst in der Nachricht der DAV (Kap. 5.2.1)
@@ -455,7 +468,7 @@ export function schreibeKostentraegerdatei(d: Kostentraegerdatei): string {
     for (const v of i.verknuepfungen) {
       s.push(seg("VKG", v.art, v.ik, v.leistungserbringergruppe, v.abrechnungsstelleIk, v.artDerDatenlieferung, v.uebermittlungsmedium, v.bundesland, v.kvBezirk, v.abrechnungscode, v.tarifkennzeichen, v.unterverfahren), ...vdtSeg(v.gueltigkeit));
     }
-    s.push(seg("NAM", "01", ...i.name));
+    s.push(seg("NAM", "01", ...i.name), ...vdtSeg(i.nameGueltigkeit));
     for (const a of i.anschriften) s.push(seg("ANS", a.art, a.plz, a.ort, a.strasseOderPostfach), ...vdtSeg(a.gueltigkeit));
     for (const a of i.ansprechpartner) s.push(seg("ASP", a.lfdNr, a.telefon, a.fax, a.name, a.arbeitsgebiet), ...vdtSeg(a.gueltigkeit));
     for (const u of i.uebermittlung) {

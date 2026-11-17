@@ -36,6 +36,29 @@ describe("Begleitzettel für Urbelege (Anlage 4)", () => {
   });
 });
 
+describe("Begleitzettel – Review-Runde 1", () => {
+  it("Name der Krankenkasse ist Pflicht (Anlage 4 V2.0, S. 2)", () => {
+    const d = testDatei();
+    d.leistungserbringer[0].kostentraeger[0].rechnungen[0].kasseName = undefined;
+    expect(() => erstelleBegleitzettel(d, erzeugeNutzdatendatei(d))).toThrow("Name der Krankenkasse");
+  });
+
+  it("Zuordnung über IK und Rechnungsnummer, nicht über die Reihenfolge (Sammelrechnung)", () => {
+    const d = testDatei();
+    const kt = d.leistungserbringer[0].kostentraeger[0];
+    kt.sammelrechnung = { rechnungsnummer: "S2026-10", rechnungsdatum: "2026-11-02" };
+    kt.rechnungen[0].rechnungsnummer = "1";
+    kt.rechnungen[1].rechnungsnummer = "2";
+    const ergebnis = erzeugeNutzdatendatei(d);
+    ergebnis.gesamtrechnungen.reverse();
+    const z = erstelleBegleitzettel(d, ergebnis);
+    expect(z.map((x) => [x.kasse.ik, x.rechnungsnummer])).toEqual([
+      [TEST_IK.kasse, { sammel: "S2026-10", einzel: "1" }],
+      [TEST_IK.kostentraeger, { sammel: "S2026-10", einzel: "2" }],
+    ]);
+  });
+});
+
 describe("Adapter PodoHero → § 302", () => {
   it("meldet fehlende Pflichtangaben, statt sie zu erfinden", () => {
     const { fall, fehlendeAngaben } = bildeAbrechnungsfall(
@@ -51,6 +74,7 @@ describe("Adapter PodoHero → § 302", () => {
       "Versichertenstatus von der Verordnung",
       "IK der Krankenkasse von der Verordnung",
       "ICD-10-Code oder Diagnosetext",
+      "Zeitraum der Zuzahlungsbefreiung (gültig von–bis laut Befreiungsbescheinigung)",
     ]);
     expect(fall.zuzahlungskennzeichen).toBe("1");
     expect(fall.verordnung.therapiefrequenz).toBe(0);

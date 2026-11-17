@@ -72,5 +72,16 @@ export type Dateiart = keyof typeof TESTINDIKATOR;
 export function istGueltigesTarifkennzeichen(tk: string): boolean {
   if (!/^\d{2}[0-9A-Z]{3}$/.test(tk)) return false;
   const bereich = Number(tk.slice(0, 2));
-  return bereich <= 25 || (bereich >= 50 && bereich <= 75) || bereich >= 90;
+  if (!(bereich <= 25 || (bereich >= 50 && bereich <= 75) || bereich >= 90)) return false;
+  return istZulaessigerSondertarif(tk.slice(2));
+}
+
+/**
+ * 8.1.5.2, 3.–5. Stelle (Anlage 3 V21 S. 19): 000–090/A00–A90 ohne Besonderheiten, 099 Kostenvoranschlag, sonst
+ * Sondertarife der Vertragspartner. Nicht besetzt und damit unzulässig: 091–098, A91–A98 (Bundesebene) und U00–ZZZ.
+ */
+export function istZulaessigerSondertarif(st: string): boolean {
+  if (!/^[0-9A-Z]{3}$/.test(st)) return false;
+  if (/^09[1-8]$/.test(st) || /^A9[1-8]$/.test(st)) return false;
+  return !/^[U-Z]/.test(st);
 }

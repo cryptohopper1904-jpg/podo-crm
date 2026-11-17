@@ -38,9 +38,11 @@ describe("Nutzdatendatei SLGA/SLLA:B – Golden Files", () => {
   });
 
   it("TA1 V22 unterscheidet sich nur in der Nachrichtenversion (UNH SLGA:22 / SLLA:22)", () => {
-    const v22 = erzeugeNutzdatendatei(testDatei({ taVersion: "22" })).text;
+    // V22 gilt ab 01.02.2027, V21 bis 30.04.2027: beide am selben Erstelldatum vergleichen
+    const erstellt = { datum: "2027-02-01", uhrzeit: "09:30" };
+    const v22 = erzeugeNutzdatendatei(testDatei({ taVersion: "22", erstellt })).text;
     expect(v22 + "\n").toBe(fixture("golden-v22.edi"));
-    expect(v22.replace(/:22:0:0/g, ":21:0:0")).toBe(erzeugeNutzdatendatei(testDatei()).text);
+    expect(v22.replace(/:22:0:0/g, ":21:0:0")).toBe(erzeugeNutzdatendatei(testDatei({ erstellt })).text);
   });
 
   it("ohne Zeilenumbruch: Segmente direkt hintereinander, Inhalt identisch", () => {
@@ -140,7 +142,7 @@ describe("Beträge (TA1 Berechnungsregeln EHE/MWS/BES/GES)", () => {
 
   it("Pauschale höchstens Brutto minus prozentuale Zuzahlung", () => {
     const fall = testFall1();
-    fall.leistungen = [{ positionsnummer: "99901", anzahl: 1, einzelpreisCent: 800, datum: "2026-10-05" }];
+    fall.leistungen = [{ positionsnummer: "99901", anzahl: 1, einzelpreisCent: 800, datum: "2026-10-05", zuzahlungsfaehig: true }];
     const b = fallBetraege(fall, 10, 1000);
     expect(b.prozentualeZuzahlungCent).toBe(80);
     expect(b.pauschaleZuzahlungCent).toBe(720);
@@ -154,8 +156,9 @@ describe("Beträge (TA1 Berechnungsregeln EHE/MWS/BES/GES)", () => {
 
   it("MWS: Betrag = netto × Anzahl × Satz; Zuzahlung auf Bruttopreis je Einheit", () => {
     const d = mitFall((f) => {
-      f.leistungen = [{ positionsnummer: "99901", anzahl: 3, einzelpreisCent: 1001, datum: "2026-10-05", mehrwertsteuerProzent: 19 }];
+      f.leistungen = [{ positionsnummer: "99901", anzahl: 3, einzelpreisCent: 1001, datum: "2026-10-05", mehrwertsteuerProzent: 19, zuzahlungsfaehig: true }];
     });
+    d.leistungserbringer[0].praxis.mehrwertsteuerVereinbart = true;
     const r = erzeugeNutzdatendatei(d);
     // 10,01 × 3 × 19 % = 5,7057 → 5,71; Zuzahlung (10,01 + 1,90) × 10 % = 1,191 → 1,19
     expect(r.text).toContain("EHE+71:50000+99901+3,00+10,01+20261005+1,19'\nMWS+19,00+5,71'");
@@ -185,14 +188,17 @@ describe("Korrekturverfahren und Sammelrechnung", () => {
     expect(r.text).toContain("GES+00+63,83+87,60+23,77'");
   });
 
-  it("VKZ 03: GZF statt BES, Bruttobetrag 0,00", () => {
+  it("VKZ 03: GZF statt BES, Bruttobetrag 0,00 (Grund ZK 2, mit Nachweis § 43c)", () => {
     const d = mitFall((f) => {
       f.urspruenglich = { ikLeistungserbringer: TEST_IK.praxis, sammelRechnungsnummer: "2026-09/0007", einzelRechnungsnummer: "0", rechnungsdatum: "2026-10-01", belegnummer: "1" };
+      f.zuzahlungskennzeichen = "2";
+      f.nachweisErfolgloserEinzug = { referenz: "Mahnung-2026-0815.pdf", datum: "2026-11-01" };
     });
     const rechnungen = d.leistungserbringer[0].kostentraeger[0].rechnungen;
     rechnungen[0].verarbeitungskennzeichen = "03";
     rechnungen.splice(1, 1);
     const r = erzeugeNutzdatendatei(d);
+    expect(r.text).toContain("ZHE+999000001+999000101+20261001+2+DF");
     expect(r.text).toContain("GZF+18,77+8,77+10,00'");
     expect(r.text).not.toContain("BES+");
     expect(r.text).toContain("GES+00+18,77+0,00+18,77'");
@@ -358,5 +364,224 @@ describe("Validierung – deutsche Fehlermeldungen je Fehlerart", () => {
       expect((e as Error).message).toContain("Datenaustauschreferenz muss zwischen 1 und 99999 liegen.");
       expect((e as Error).message).toContain("Abrechnungsmonat muss zwischen 1 und 12 liegen.");
     }
+  });
+});
+
+// ───────────── Review-Runde 1: Blocker (zuerst als fehlschlagende Tests geschrieben) ─────────────
+
+/** Datei mit genau einer Gesamtrechnung (Fall 1) im angegebenen Verarbeitungskennzeichen */
+function korrekturDatei(vkz: "02" | "03" | "04", f: (fall: ReturnType<typeof testFall1>) => void = () => {}): Nutzdatendatei {
+  const d = mitFall((fall) => {
+    fall.urspruenglich = { ikLeistungserbringer: TEST_IK.praxis, sammelRechnungsnummer: "2026-09/0007", einzelRechnungsnummer: "0", rechnungsdatum: "2026-10-01", belegnummer: "1" };
+    f(fall);
+  });
+  const rechnungen = d.leistungserbringer[0].kostentraeger[0].rechnungen;
+  rechnungen[0].verarbeitungskennzeichen = vkz;
+  rechnungen.splice(1, 1);
+  return d;
+}
+
+const NACHWEIS = { referenz: "Mahnung-2026-0815.pdf", datum: "2026-11-01" };
+
+describe("B1/C3 VKZ 03: Zuzahlung unabhängig vom Zuzahlungskennzeichen (TA1 V21 7.4.2, S. 167–168)", () => {
+  it("ZK 2 (Zahlung verweigert): prozentuale Zuzahlung je Position + Pauschale", () => {
+    const r = erzeugeNutzdatendatei(korrekturDatei("03", (fall) => {
+      fall.zuzahlungskennzeichen = "2";
+      fall.nachweisErfolgloserEinzug = NACHWEIS;
+    }));
+    expect(r.text).toContain("GZF+18,77+8,77+10,00'");
+    expect(r.text).toContain("EHE+71:50000+99901+1,00+35,55+20261005+3,56'");
+    expect(r.text).toContain("GES+00+18,77+0,00+18,77'");
+  });
+
+  it("ZK 1 (Befreiung nachträglich): nur die übermittelten Teile der Termine zählen", () => {
+    const r = erzeugeNutzdatendatei(korrekturDatei("03", (fall) => {
+      fall.zuzahlungskennzeichen = "1";
+      fall.leistungen = fall.leistungen.filter((l) => l.positionsnummer === "99901");
+    }));
+    // 2 × 3,56 + Pauschale 10,00
+    expect(r.text).toContain("GZF+17,12+7,12+10,00'");
+  });
+
+  it("ZK 5: einzelne Positionen lassen sich mit zuzahlungspflichtig = false ausnehmen", () => {
+    const b = fallBetraege({ ...testFall1(), zuzahlungskennzeichen: "5", leistungen: testFall1().leistungen.map((l, i) => ({ ...l, zuzahlungspflichtig: i !== 0 })) }, 10, 1000, "03");
+    expect(b.prozentualeZuzahlungCent).toBe(877 - 356);
+    expect(b.pauschaleZuzahlungCent).toBe(1000);
+  });
+});
+
+describe("B2 VKZ 03: nur mit ZK 1/2/5, Zuzahlung > 0, Nachweis § 43c (TA1 V21 7.4.2, S. 167–168)", () => {
+  it("ZK 3 und ZK 0 sind bei VKZ 03 unzulässig", () => {
+    for (const zk of ["3", "0"] as const) {
+      const f = fehlerVon(korrekturDatei("03", (fall) => (fall.zuzahlungskennzeichen = zk)));
+      expect(f).toContainEqual(expect.objectContaining({ art: "kombination", pfad: expect.stringContaining("zuzahlungskennzeichen"), meldung: expect.stringContaining("1, 2 oder 5") }));
+    }
+  });
+
+  it("ZK 2/5 ohne Nachweis über den erfolglosen Einzug → Pflichtfeld", () => {
+    const f = fehlerVon(korrekturDatei("03", (fall) => (fall.zuzahlungskennzeichen = "2")));
+    expect(f).toContainEqual(expect.objectContaining({ art: "pflichtfeld", pfad: expect.stringContaining("nachweisErfolgloserEinzug") }));
+  });
+
+  it("Forderung 0,00 ist unzulässig", () => {
+    const f = fehlerVon(korrekturDatei("03", (fall) => {
+      fall.zuzahlungskennzeichen = "2";
+      fall.nachweisErfolgloserEinzug = NACHWEIS;
+      fall.pauschaleZuzahlung = false;
+      fall.leistungen.forEach((l) => (l.zuzahlungspflichtig = false));
+    }));
+    expect(f).toContainEqual(expect.objectContaining({ art: "kombination", meldung: expect.stringContaining("größer 0") }));
+  });
+});
+
+describe("B3/C2 genau ein Verarbeitungskennzeichen je Datei (TA1 V21 7.3, S. 166)", () => {
+  it("VKZ 01 und 02 in derselben Datei → Fehler", () => {
+    const d = testDatei();
+    const r2 = d.leistungserbringer[0].kostentraeger[0].rechnungen[1];
+    r2.verarbeitungskennzeichen = "02";
+    r2.faelle[0].urspruenglich = { ikLeistungserbringer: TEST_IK.praxis, sammelRechnungsnummer: "2026-09/0008", einzelRechnungsnummer: "0", rechnungsdatum: "2026-10-01", belegnummer: "2" };
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "kombination", pfad: "verarbeitungskennzeichen", meldung: expect.stringContaining("eigene Datei") }));
+  });
+});
+
+describe("C1 kein Mischen von Einzel- und Sammelrechnungen in einer Datei (TA1 V21 5.3.2 S. 15, 5.3.3 S. 16)", () => {
+  it("ein Kostenträger mit, einer ohne Sammelrechnung → Fehler", () => {
+    const d = testDatei();
+    const kts = d.leistungserbringer[0].kostentraeger;
+    const [r1, r2] = kts[0].rechnungen;
+    kts[0] = { kostentraegerIk: TEST_IK.kostentraeger, sammelrechnung: { rechnungsnummer: "S2026-10", rechnungsdatum: "2026-11-02" }, rechnungen: [{ ...r1, rechnungsnummer: "1" }] };
+    kts.push({ kostentraegerIk: TEST_IK.kasse, rechnungen: [r2] });
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "kombination", meldung: expect.stringContaining("Mischen von Einzel- und Sammelrechnungen") }));
+  });
+});
+
+describe("C5 TA-Version passend zum Erstelldatum (TA1 V22 Deckblatt und 5.5.1, S. 1/29)", () => {
+  it("V22 erst ab 01.02.2027, V21 nur bis 30.04.2027", () => {
+    expect(fehlerVon(testDatei({ taVersion: "22", erstellt: { datum: "2027-01-31", uhrzeit: "09:30" } }))).toContainEqual(expect.objectContaining({ pfad: "taVersion", meldung: expect.stringContaining("01.02.2027") }));
+    expect(fehlerVon(testDatei({ taVersion: "21", erstellt: { datum: "2027-05-01", uhrzeit: "09:30" } }))).toContainEqual(expect.objectContaining({ pfad: "taVersion", meldung: expect.stringContaining("30.04.2027") }));
+    expect(fehlerVon(testDatei({ taVersion: "21", erstellt: { datum: "2025-09-30", uhrzeit: "09:30" } }))).toContainEqual(expect.objectContaining({ pfad: "taVersion" }));
+    expect(pruefeNutzdatendatei(testDatei({ taVersion: "22", erstellt: { datum: "2027-02-01", uhrzeit: "09:30" } }))).toEqual([]);
+    expect(pruefeNutzdatendatei(testDatei({ taVersion: "21", erstellt: { datum: "2027-04-30", uhrzeit: "09:30" } }))).toEqual([]);
+  });
+});
+
+// ───────────── Review-Runde 1: weitere Befunde ─────────────
+
+describe("Korrekturverfahren VKZ 02 (TA1 V21 7.4.1, S. 166)", () => {
+  it("Nachforderung: URI nach INV, BES wie Regelabrechnung", () => {
+    const r = erzeugeNutzdatendatei(korrekturDatei("02", (fall) => (fall.leistungen = [fall.leistungen[1]])));
+    expect(r.text).toContain("FKT+02++990010013+990020026+990020015'");
+    expect(r.text).toContain("URI+990010013+2026-09/0007:0+20261001+1'");
+    // 12,00 brutto, 1,20 prozentual, Pauschale höchstens 12,00 − 1,20 = 10,80 → 10,00
+    expect(r.text).toContain("BES+12,00+11,20+1,20+10,00'");
+  });
+});
+
+describe("B5 Kilometer mit Nachkommastellen (Rundung je Position)", () => {
+  it("12,5 km × 0,30 €: Brutto 3,75, Zuzahlung je km 0,03, Position 0,375 → 0,38", () => {
+    const d = mitFall((f) => {
+      f.leistungen = [{ positionsnummer: "99904", anzahl: 12.5, einzelpreisCent: 30, datum: "2026-10-05" }];
+      f.pauschaleZuzahlung = undefined;
+    });
+    const r = erzeugeNutzdatendatei(d);
+    expect(r.text).toContain("EHE+71:50000+99904+12,50+0,30+20261005+0,03'");
+    const b = r.gesamtrechnungen[0].faelle[0].betraege;
+    expect(b.bruttoCent).toBe(375);
+    expect(b.prozentualeZuzahlungCent).toBe(38);
+    // Pauschale höchstens Brutto − prozentual
+    expect(b.pauschaleZuzahlungCent).toBe(337);
+  });
+
+  it("Lesart „..4,2“: bis zu 4 Vorkommastellen, z. B. 120,50 km", () => {
+    const d = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 120.5, einzelpreisCent: 30, datum: "2026-10-05" }]));
+    expect(erzeugeNutzdatendatei(d).text).toContain("+120,50+0,30+");
+    const zuViel = mitFall((f) => (f.leistungen = [{ positionsnummer: "99904", anzahl: 12345, einzelpreisCent: 30, datum: "2026-10-05" }]));
+    expect(fehlerVon(zuViel)).toContainEqual(expect.objectContaining({ art: "laenge", meldung: expect.stringContaining("Vorkommastellen") }));
+  });
+});
+
+describe("B6/D1 Zuzahlungspflicht je Position aus der Vergütungsliste", () => {
+  it("ZK 3: Position mit zuzahlungsfaehig = false erhält keinen Zuzahlungsbetrag", () => {
+    const fall = testFall1();
+    fall.leistungen[1].zuzahlungsfaehig = false;
+    const b = fallBetraege(fall, 10, 1000);
+    expect(b.positionen.map((p) => p.zuzahlungJeEinheitCent)).toEqual([356, 0, 45, 356]);
+    expect(b.prozentualeZuzahlungCent).toBe(757);
+  });
+
+  it("ohne Angabe gilt die Position als zuzahlungspflichtig (Standard ja)", () => {
+    const fall = testFall1();
+    fall.leistungen.forEach((l) => delete l.zuzahlungsfaehig);
+    expect(fallBetraege(fall, 10, 1000).prozentualeZuzahlungCent).toBe(877);
+  });
+});
+
+describe("B7 MWS bei Podologie nur mit Freischaltung (TA1 V21 5.5.3.3 MWS, S. 56)", () => {
+  const mitMws = () => mitFall((f) => (f.leistungen[0].mehrwertsteuerProzent = 19));
+  it("ohne mehrwertsteuerVereinbart → Fehler", () => {
+    expect(fehlerVon(mitMws())).toContainEqual(expect.objectContaining({ art: "kombination", meldung: expect.stringContaining("mehrwertsteuerVereinbart") }));
+  });
+  it("UST befreit + MWS → Fehler, auch mit Freischaltung", () => {
+    const d = mitMws();
+    d.leistungserbringer[0].praxis = testPraxis({ mehrwertsteuerVereinbart: true, umsatzsteuer: { steuernummer: "00/000/00000", befreit: true } });
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "kombination", meldung: expect.stringContaining("umsatzsteuerbefreit") }));
+  });
+});
+
+describe("B8 Rechnungsnummern eindeutig, auch innerhalb einer Sammelrechnung", () => {
+  it("doppelte Einzel-Rechnungsnummer in der Sammelrechnung → Fehler", () => {
+    const d = testDatei();
+    const kt = d.leistungserbringer[0].kostentraeger[0];
+    kt.sammelrechnung = { rechnungsnummer: "S2026-10", rechnungsdatum: "2026-11-02" };
+    kt.rechnungen[0].rechnungsnummer = "1";
+    kt.rechnungen[1].rechnungsnummer = "1";
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "kombination", meldung: expect.stringContaining("Einzel-Rechnungsnummer „1“ ist in der Sammelrechnung") }));
+  });
+
+  it("Einzel-Rechnungsnummer „0“ kollidiert mit der Sammelrechnungs-SLGA", () => {
+    const d = testDatei();
+    const kt = d.leistungserbringer[0].kostentraeger[0];
+    kt.sammelrechnung = { rechnungsnummer: "S2026-10", rechnungsdatum: "2026-11-02" };
+    kt.rechnungen[0].rechnungsnummer = "0";
+    kt.rechnungen[1].rechnungsnummer = "2";
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ meldung: expect.stringContaining("mehrfach vergeben") }));
+  });
+
+  it("gleiche Rechnungsnummer bei zwei Kostenträgern desselben Leistungserbringers → Fehler", () => {
+    const d = testDatei();
+    const kts = d.leistungserbringer[0].kostentraeger;
+    const r2 = kts[0].rechnungen.pop()!;
+    kts.push({ kostentraegerIk: TEST_IK.kasse, rechnungen: [{ ...r2, rechnungsnummer: "2026-10/0001" }] });
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ meldung: expect.stringContaining("mehrfach vergeben") }));
+  });
+});
+
+describe("Lesart „..m,n“ einheitlich: SKO „..2,2“", () => {
+  it("Skonto 2,00 % zulässig, 100,00 % zu lang", () => {
+    const d = testDatei();
+    d.leistungserbringer[0].praxis.skonto = [{ prozent: 2, zahlungszielTage: 10 }];
+    expect(erzeugeNutzdatendatei(d).text).toContain("SKO+2,00+10'");
+    d.leistungserbringer[0].praxis.skonto = [{ prozent: 100, zahlungszielTage: 10 }];
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "laenge", pfad: expect.stringContaining("SKO/Skonto in Prozent") }));
+  });
+});
+
+describe("Nice: Sondertarife und Heilmittelbereich", () => {
+  it("Sondertarif 091–098, A91–A98 und U00–ZZZ sind nicht besetzt (Anlage 3 V21 8.1.5.2, S. 19)", () => {
+    for (const tk of ["50091", "50A95", "50U00", "50ZZZ"]) {
+      const d = testDatei();
+      d.leistungserbringer[0].praxis = testPraxis({ tarifkennzeichen: tk });
+      expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "schluessel", pfad: expect.stringContaining("tarifkennzeichen") }));
+    }
+    for (const tk of ["50000", "50A90", "50099", "50T12", "91B01"]) {
+      const d = testDatei();
+      d.leistungserbringer[0].praxis = testPraxis({ tarifkennzeichen: tk });
+      expect(pruefeNutzdatendatei(d)).toEqual([]);
+    }
+  });
+
+  it("Heilmittelbereich wird bei 71/72 mit „2“ vorbelegt", () => {
+    const r = erzeugeNutzdatendatei(testDatei());
+    expect(r.text).toContain("rechts+1+2+0'");
   });
 });

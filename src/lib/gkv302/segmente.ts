@@ -113,7 +113,7 @@ export const UST: SegmentSpez = {
 export const SKO: SegmentSpez = {
   kennung: "SKO",
   elemente: [
-    { name: "Skonto in Prozent", typ: "N", art: "M", max: 4, dezimal: 2 },
+    { name: "Skonto in Prozent", typ: "N", art: "M", max: 2, dezimal: 2 },
     { name: "Zahlungsziel", typ: "N", art: "M", max: 3 },
   ],
 };

@@ -4,7 +4,9 @@
  *
  * Auslegung (in docs/GKV-302.md vermerkt): Die Summenregeln „Summe über alle Abrechnungspositionen von (…)
  * kaufmännisch gerundet“ werden je Position gerundet und dann summiert. Bei ganzzahligen Mengen ist das Ergebnis
- * identisch mit einer Rundung der Summe.
+ * identisch mit einer Rundung der Summe. Bei Mengen mit Nachkommastellen (z. B. 12,5 km) kann die Summe der
+ * gerundeten Positionen geringfügig (höchstens ½ Cent je Position) von der gerundeten Summe abweichen; die Lesart
+ * ist im Erprobungsverfahren mit der Datenannahmestelle zu bestätigen (Anhang 2 Kap. 6).
  */
 import type { Abrechnungsfall, Einzelleistung } from "./typen";
 
@@ -58,8 +60,18 @@ export interface FallBetraege {
   korrekturabzugCent: number;
 }
 
-/** Ob für eine Position Zuzahlung anfällt (Anlage 3 8.1.3): 3 immer, 0/1 nie, 2/4/5 laut Angabe je Position */
-export function positionZuzahlungspflichtig(fall: Abrechnungsfall, l: Einzelleistung): boolean {
+/**
+ * Ob für eine Position Zuzahlung anfällt.
+ * - Grundvoraussetzung: Die Position unterliegt laut Vergütungsliste der Zuzahlung (`zuzahlungsfaehig`, Standard ja;
+ *   `false` z. B. für Positionen ohne Zuzahlungsbetrag in der Vergütungsvereinbarung Podologie, Anlage 2).
+ * - VKZ 03 (Zuzahlungsforderung): unabhängig vom Zuzahlungskennzeichen, das hier nur den Grund nennt (1, 2 oder 5);
+ *   gefordert wird die Zuzahlung aller übermittelten Positionen, „auch nur Teile … z. B. nur ein Teil der Termine“
+ *   (TA1 V21 7.4.2.1–7.4.2.4, S. 167–168). Einzelne Positionen lassen sich mit `zuzahlungspflichtig: false` ausnehmen.
+ * - sonst Anlage 3 V21 8.1.3: 3 immer, 0/1 nie, 2/4/5 laut Angabe je Position.
+ */
+export function positionZuzahlungspflichtig(fall: Abrechnungsfall, l: Einzelleistung, vkz: string = "01"): boolean {
+  if (l.zuzahlungsfaehig === false) return false;
+  if (vkz === "03") return l.zuzahlungspflichtig !== false;
   switch (fall.zuzahlungskennzeichen) {
     case "3":
       return true;
@@ -71,7 +83,9 @@ export function positionZuzahlungspflichtig(fall: Abrechnungsfall, l: Einzelleis
   }
 }
 
-function pauschaleFaellt(fall: Abrechnungsfall): boolean {
+/** Pauschale je Verordnung (TA1 V21 5.5.3.3 BES/GZF, S. 73–74); bei VKZ 03 Standard ja, `false` nimmt sie aus. */
+function pauschaleFaellt(fall: Abrechnungsfall, vkz: string): boolean {
+  if (vkz === "03") return fall.pauschaleZuzahlung !== false;
   switch (fall.zuzahlungskennzeichen) {
     case "3":
       return true;
@@ -83,11 +97,15 @@ function pauschaleFaellt(fall: Abrechnungsfall): boolean {
   }
 }
 
-export function fallBetraege(fall: Abrechnungsfall, zuzahlungProzent: number, pauschaleCent: number): FallBetraege {
-  const positionen = fall.leistungen.map((l) => positionsBetraege(l, positionZuzahlungspflichtig(fall, l), zuzahlungProzent));
+/**
+ * Beträge eines Falls. `vkz` ist das Verarbeitungskennzeichen der Gesamtrechnung (Standard „01“); bei „03“ wird die
+ * Zuzahlung unabhängig vom Zuzahlungskennzeichen gefordert (siehe `positionZuzahlungspflichtig`).
+ */
+export function fallBetraege(fall: Abrechnungsfall, zuzahlungProzent: number, pauschaleCent: number, vkz: string = "01"): FallBetraege {
+  const positionen = fall.leistungen.map((l) => positionsBetraege(l, positionZuzahlungspflichtig(fall, l, vkz), zuzahlungProzent));
   const bruttoCent = positionen.reduce((s, p) => s + p.bruttoCent, 0);
   const prozentualeZuzahlungCent = positionen.reduce((s, p) => s + p.zuzahlungCent, 0);
-  const pauschaleZuzahlungCent = pauschaleFaellt(fall) ? Math.max(0, Math.min(pauschaleCent, bruttoCent - prozentualeZuzahlungCent)) : 0;
+  const pauschaleZuzahlungCent = pauschaleFaellt(fall, vkz) ? Math.max(0, Math.min(pauschaleCent, bruttoCent - prozentualeZuzahlungCent)) : 0;
   return {
     positionen,
     bruttoCent,
