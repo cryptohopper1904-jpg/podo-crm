@@ -75,10 +75,15 @@ export interface PreisSnapshotZeile {
 /** Preis-Snapshot einer Verordnung (Auszug aus #111 `PriceSnapshot`) */
 export interface PreisSnapshot {
   lines: PreisSnapshotZeile[];
-  /** Pauschale je Verordnung in Cent (0 oder 1000); Pflicht, sobald ein Snapshot vorliegt */
+  /**
+   * Pauschale je Verordnung in Cent: 0 bis 1000, höchstens Heilmittelkosten − prozentuale Zuzahlung (#111 deckelt
+   * `min(1000, remedy − percent)`, wie TA1 BES pauschaler Zuzahlungsbetrag); Pflicht, sobald ein Snapshot vorliegt
+   */
   flatFeeCents: number;
   /** `false`, wenn für mindestens eine Zeile kein Preis gefunden wurde */
   complete: boolean;
+  /** Hinweise aus #111 (z. B. Befreiung einer anderen Kasse, Geburtsdatum fehlt); werden als `hinweise` durchgereicht */
+  notes?: string[];
 }
 
 /** Einzelleistung ohne Preis-Snapshot (Übergang/Altdaten): ohne Zuzahlungsangaben, das Kennzeichen bleibt prüfbedürftig */
@@ -95,6 +100,15 @@ export interface PodoHeroBehandlung {
 export interface Befreiungszeitraum {
   von: string;
   bis: string;
+  /** IK der Kasse, die die Befreiung ausgestellt hat; weicht es vom IK der Verordnung ab → Hinweis (keine Sperre) */
+  insurerIk?: string | null;
+}
+
+/** Dieselbe Befreiung in der Form von #111 (`CopaymentExemption`); wird auf `Befreiungszeitraum` normalisiert */
+export interface BefreiungszeitraumSnapshot {
+  validFrom: string;
+  validTo: string;
+  insurerIk?: string | null;
 }
 
 /** Angaben, die PodoHero heute nicht speichert, aber die TA1 verlangt */
@@ -104,18 +118,27 @@ export interface ErgaenzendeVerordnungsdaten {
   leitsymptomatikText?: string;
   /**
    * Nur für Sonderfälle (z. B. „2“ oder „5“ bei VKZ 03); sonst wird das Kennzeichen abgeleitet, nie aus dem Kreuz
-   * „gebührenfrei“. Mit `verarbeitungskennzeichen` und Snapshot setzt der Adapter die Angaben je Position und die
-   * Pauschale aus dem Snapshot und rechnet mit diesem VKZ gegen; ohne VKZ entfällt die Gegenrechnung.
+   * „gebührenfrei“. Mit Snapshot setzt der Adapter die Angaben je Position und die Pauschale aus dem Snapshot und
+   * rechnet mit `verarbeitungskennzeichen` gegen (ohne Angabe „01“).
    */
   zuzahlungskennzeichen?: Zuzahlungskennzeichen;
   /** Verarbeitungskennzeichen der Gesamtrechnung, in die der Fall geht (für die Gegenrechnung; Standard „01“) */
   verarbeitungskennzeichen?: Verarbeitungskennzeichen;
   diagnosetext?: string;
-  /** Zuzahlungsbefreiungen (§ 62 SGB V), auch mehrere (z. B. je Kalenderjahr) */
-  befreiungen?: Befreiungszeitraum[];
+  /** Zuzahlungsbefreiungen (§ 62 SGB V), auch mehrere (z. B. je Kalenderjahr); `{von, bis}` oder `{validFrom, validTo}` */
+  befreiungen?: (Befreiungszeitraum | BefreiungszeitraumSnapshot)[];
+  /**
+   * Kreuz „gebührenfrei“ auf der Verordnung, aber keine Befreiungsbescheinigung: Die Praxis hat geprüft und bestätigt,
+   * dass Zuzahlung anfällt. Dann gilt der Fall als zuzahlungspflichtig (ZK und Zuzahlung wie ohne Kreuz) und es
+   * entsteht ein Hinweis statt einer Abweichung bzw. fehlenden Angabe (siehe docs/GKV-302.md, Abschnitt 2b).
+   */
+  kreuzOhneBescheinigungBestaetigt?: boolean;
   /** Zuzahlungsprozentsatz für die Gegenrechnung (Standard 10, § 61 Satz 3 SGB V) */
   zuzahlungProzent?: number;
-  /** Pauschale je Verordnung für die Gegenrechnung, wie `Nutzdatendatei.zuzahlungPauschaleCent` (Standard 1000) */
+  /**
+   * Pauschale je Verordnung für die Gegenrechnung, wie `Nutzdatendatei.zuzahlungPauschaleCent` (Standard 1000); die
+   * Gegenrechnung deckelt sie auf Brutto − prozentuale Zuzahlung (`fallBetraege`)
+   */
   zuzahlungPauschaleCent?: number;
   /**
    * Umschlüsselung der ZL-Positionsnummer aus dem Snapshot auf den Status der Praxis (Anlage 2 § 1 Abs. 2: ZL 7xxxx,
@@ -144,10 +167,34 @@ type Grund = "alter" | "befreiung";
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-/** gültige Befreiungszeiträume; `null`, wenn mindestens einer unbrauchbar ist */
+/** S6: `{von, bis}` (eigene Form) und `{validFrom, validTo}` (#111 `CopaymentExemption`) auf eine Form bringen */
+function normalisiereBefreiung(b: Befreiungszeitraum | BefreiungszeitraumSnapshot): Befreiungszeitraum {
+  const roh = b as Partial<Befreiungszeitraum & BefreiungszeitraumSnapshot>;
+  const von = roh.von ?? roh.validFrom;
+  const bis = roh.bis ?? roh.validTo;
+  return { von: typeof von === "string" ? von : "", bis: typeof bis === "string" ? bis : "", insurerIk: roh.insurerIk };
+}
+
+/** gültige Befreiungszeiträume (normalisiert); `null`, wenn mindestens einer unbrauchbar ist */
 function befreiungszeitraeume(e: ErgaenzendeVerordnungsdaten): Befreiungszeitraum[] | null {
-  const liste = e.befreiungen ?? [];
+  const liste = (e.befreiungen ?? []).map(normalisiereBefreiung);
   return liste.every((b) => ISO.test(b.von) && ISO.test(b.bis) && b.von <= b.bis) ? liste : null;
+}
+
+/**
+ * V2: ob ein Befreiungszeitraum den Termin enthält – unabhängig vom Alter (#111 setzt `exempt` auch bei
+ * Minderjährigen). `null` = Zeiträume unbrauchbar.
+ */
+function befreitAm(datum: string, e: ErgaenzendeVerordnungsdaten): boolean | null {
+  const zeitraeume = befreiungszeitraeume(e);
+  return zeitraeume === null ? null : zeitraeume.some((b) => b.von <= datum && datum <= b.bis);
+}
+
+const HINWEIS_KREUZ = "Kreuz „gebührenfrei“ auf der Verordnung ohne Befreiungsbescheinigung: laut Bestätigung der Praxis als zuzahlungspflichtig abgerechnet (kreuzOhneBescheinigungBestaetigt).";
+
+/** S4: Kreuz „gebührenfrei“ ohne Zeitraum, von der Praxis als zuzahlungspflichtig bestätigt */
+function kreuzBestaetigt(vo: PodoHeroVerordnung, e: ErgaenzendeVerordnungsdaten): boolean {
+  return vo.copaymentExempt && e.kreuzOhneBescheinigungBestaetigt === true;
 }
 
 /**
@@ -165,7 +212,7 @@ function terminStatus(datum: string, vo: PodoHeroVerordnung, patient: PodoHeroPa
   const zeitraeume = befreiungszeitraeume(e);
   if (zeitraeume === null) return { status: "unklar", grund: "befreiung" };
   if (zeitraeume.length) return zeitraeume.some((b) => b.von <= datum && datum <= b.bis) ? { status: "frei", grund: "befreiung" } : { status: "pflichtig" };
-  if (vo.copaymentExempt) return { status: "unklar", grund: "befreiung" };
+  if (vo.copaymentExempt && !kreuzBestaetigt(vo, e)) return { status: "unklar", grund: "befreiung" };
   return { status: "pflichtig" };
 }
 
@@ -233,14 +280,30 @@ function ohneSnapshot(vo: PodoHeroVerordnung, patient: PodoHeroPatient, sortiert
 function mitSnapshot(vo: PodoHeroVerordnung, patient: PodoHeroPatient, sortiert: Zeile[], flat: number, e: ErgaenzendeVerordnungsdaten, abweichungen: string[]): Zuzahlung {
   const ist = (z: Zeile): "pflichtig" | "frei" => ((z.copayCents ?? 0) > 0 ? "pflichtig" : "frei");
   const erwartet = sortiert.map((z) => terminStatus(z.date, vo, patient, e));
-  const freiGrund = erwartet.find((x) => x.status === "frei")?.grund;
+  // V1: Geburtsdatum mit unbekanntem Tag/Monat → Status „unklar (Alter)“; ist die Zeile im Snapshot als „unter 18“
+  // gekennzeichnet, gilt der Termin als frei wegen Alters (das Datum widerspricht dem nicht).
+  const effektiv = erwartet.map((x, k) => (x.status === "unklar" && x.grund === "alter" && sortiert[k].minor === true ? { status: "frei" as const, grund: "alter" as const } : x));
+  // Grund für ZK 0/1; ersatzweise aus den Kennzeichen des Snapshots (minor → Alter, exempt → Befreiung)
+  const freiGrund: Grund | undefined =
+    effektiv.find((x) => x.status === "frei")?.grund ?? (sortiert.some((z) => z.minor === true) ? "alter" : sortiert.some((z) => z.exempt === true) ? "befreiung" : undefined);
   const relevant = sortiert.filter((z) => z.copayCents !== null);
   const pauschale = flat > 0;
 
   let zk: Zuzahlungskennzeichen | null;
   if (!relevant.length) {
-    // nur zuzahlungsfreie Positionen: Kennzeichen hängt allein an der Pauschale
-    zk = pauschale ? "3" : erwartet.every((x) => x.status === "frei") ? (freiGrund === "alter" ? "0" : "1") : null;
+    // nur zuzahlungsfreie Positionen: mit Pauschale „3“; ohne Pauschale aus der Folge Alter/Befreiung (Hinweis 2:
+    // z. B. 18. Geburtstag im Zeitraum → „5“ mit Zuzahlung 0 je Position und ohne Pauschale)
+    if (pauschale) zk = "3";
+    else if (effektiv.some((x) => x.status === "unklar")) {
+      abweichungen.push("Preis-Snapshot enthält nur Positionen ohne Zuzahlung und keine Pauschale, aber Alter (unter 18) bzw. Befreiungszeitraum ist nicht an jedem Termin belegt: Zuzahlungskennzeichen nicht ableitbar.");
+      return { zk: "3" };
+    } else {
+      zk = kennzeichenAusFolge(effektiv.map((x) => x.status as "pflichtig" | "frei"), freiGrund);
+      if (zk === null) {
+        abweichungen.push("Preis-Snapshot enthält nur Positionen ohne Zuzahlung und keine Pauschale, der Status nach Alter/Befreiung wechselt aber mehrfach im Behandlungszeitraum: Zuzahlungskennzeichen manuell festlegen.");
+        return { zk: "3" };
+      }
+    }
   } else {
     zk = kennzeichenAusFolge(relevant.map(ist), freiGrund);
   }
@@ -252,25 +315,28 @@ function mitSnapshot(vo: PodoHeroVerordnung, patient: PodoHeroPatient, sortiert:
   // Gegenprüfung je Zeile mit Alter/Befreiung und den Kennzeichen minor/exempt des Snapshots (R2-1)
   sortiert.forEach((z, k) => {
     const wo = `Termin ${z.date}, Position ${z.position}`;
-    const soll = erwartet[k];
+    const soll = effektiv[k];
     if ((z.minor === true || z.exempt === true) && (z.copayCents ?? 0) > 0) abweichungen.push(`${wo}: im Preis-Snapshot als ${z.minor ? "„unter 18“" : "befreit"} gekennzeichnet, aber trotzdem Zuzahlung.`);
     if (z.minor === true && !(soll.grund === "alter" && soll.status !== "pflichtig")) abweichungen.push(`${wo}: im Preis-Snapshot als „unter 18“ gekennzeichnet, laut Geburtsdatum aber volljährig.`);
     if (z.minor === false && soll.grund === "alter" && soll.status === "frei") abweichungen.push(`${wo}: laut Geburtsdatum unter 18, im Preis-Snapshot aber nicht als „unter 18“ gekennzeichnet.`);
-    if (z.exempt === true && !(soll.grund === "befreiung" && soll.status === "frei")) abweichungen.push(`${wo}: im Preis-Snapshot als befreit gekennzeichnet, aber kein Befreiungszeitraum enthält den Termin.`);
-    if (z.exempt === false && soll.grund === "befreiung" && soll.status === "frei") abweichungen.push(`${wo}: liegt im Befreiungszeitraum, im Preis-Snapshot aber nicht als befreit gekennzeichnet.`);
+    // V2: `exempt` gegen die Befreiungszeiträume selbst prüfen (nicht gegen den Status), da Minderjährigkeit vorgeht
+    const befreit = befreitAm(z.date, e);
+    if (z.exempt === true && befreit !== true) abweichungen.push(`${wo}: im Preis-Snapshot als befreit gekennzeichnet, aber kein Befreiungszeitraum enthält den Termin.`);
+    if (z.exempt === false && befreit === true) abweichungen.push(`${wo}: liegt im Befreiungszeitraum, im Preis-Snapshot aber nicht als befreit gekennzeichnet.`);
     if (z.copayCents === null) return;
     const i = ist(z);
     if (soll.status !== "unklar" && soll.status !== i) abweichungen.push(`${wo}: Preis-Snapshot ${i === "pflichtig" ? "mit" : "ohne"} Zuzahlung, nach Alter/Befreiung aber zuzahlungs${soll.status === "pflichtig" ? "pflichtig" : "frei"}.`);
-    if (soll.status === "unklar" && i === "frei" && !(soll.grund === "alter" && z.minor === true)) abweichungen.push(`${wo}: Preis-Snapshot ohne Zuzahlung, aber weder „unter 18“ noch ein Befreiungszeitraum ist belegt.`);
+    if (soll.status === "unklar" && i === "frei") abweichungen.push(`${wo}: Preis-Snapshot ohne Zuzahlung, aber weder „unter 18“ noch ein Befreiungszeitraum ist belegt.`);
   });
 
-  // R2-5: Kreuz „gebührenfrei“, aber Zuzahlung im Snapshot und kein Befreiungszeitraum deckt einen Termin
-  if (vo.copaymentExempt && relevant.some((z) => ist(z) === "pflichtig") && !erwartet.some((x) => x.grund === "befreiung" && x.status === "frei")) {
+  // R2-5: Kreuz „gebührenfrei“, aber Zuzahlung im Snapshot und kein Termin ist frei (weder Befreiungszeitraum noch,
+  // V3, Minderjährigkeit – das Kreuz gilt dann dem Kind); S4: von der Praxis bestätigt → Hinweis statt Abweichung
+  if (vo.copaymentExempt && relevant.some((z) => ist(z) === "pflichtig") && !effektiv.some((x) => x.status === "frei") && !kreuzBestaetigt(vo, e)) {
     abweichungen.push("Verordnung ist als „gebührenfrei“ gekennzeichnet, der Preis-Snapshot enthält aber Zuzahlung und kein Befreiungszeitraum enthält einen Termin.");
   }
 
   // R2-6: Pauschale nach dem Status am ersten Behandlungstag (Vertrag Podologie § 8 Abs. 2 Satz 3; #111 flatFeeCents)
-  const ersterTag = erwartet[0];
+  const ersterTag = effektiv[0];
   if (ersterTag && ersterTag.status !== "unklar" && pauschale !== (ersterTag.status === "pflichtig")) {
     abweichungen.push(
       pauschale
@@ -292,11 +358,12 @@ function mitSnapshot(vo: PodoHeroVerordnung, patient: PodoHeroPatient, sortiert:
 function ermittleZuzahlung(vo: PodoHeroVerordnung, patient: PodoHeroPatient, sortiert: Zeile[], snapshot: PreisSnapshot | null, e: ErgaenzendeVerordnungsdaten, fehlend: string[], abweichungen: string[]): Zuzahlung {
   const flat = snapshot && Number.isInteger(snapshot.flatFeeCents) && snapshot.flatFeeCents >= 0 ? snapshot.flatFeeCents : null;
   if (e.zuzahlungskennzeichen) {
-    // R2-4: vorgegebenes Kennzeichen (Sonderfall, z. B. VKZ 03). Nur mit VKZ lassen sich die Angaben je Position aus
-    // dem Snapshot übernehmen und gegenrechnen; ohne VKZ entfällt die Gegenrechnung (Aufrufer setzt die Angaben).
+    // R2-4: vorgegebenes Kennzeichen (Sonderfall, z. B. VKZ 03): Angaben je Position aus dem Snapshot übernehmen und
+    // gegenrechnen. F4: ohne VKZ gilt wie in `mitSnapshot` der Standard „01“, damit ein falsches Kennzeichen nicht
+    // ungeprüft durchgeht.
     const zk = e.zuzahlungskennzeichen;
-    const vkz = e.verarbeitungskennzeichen;
-    if (!snapshot || flat === null || !vkz) return { zk };
+    const vkz = e.verarbeitungskennzeichen ?? "01";
+    if (!snapshot || flat === null) return { zk };
     if (vkz === "03" || zk === "2" || zk === "4" || zk === "5") {
       return { zk, jePosition: sortiert.map((z) => (z.copayCents ?? 0) > 0), pauschale: flat > 0, gegenrechnung: vkz };
     }
@@ -324,6 +391,11 @@ export interface AbbildungsErgebnis {
    * werden.
    */
   abweichungen: string[];
+  /**
+   * Hinweise ohne Sperre: `notes` des Snapshots (#111), Befreiung einer anderen Kasse als auf der Verordnung (S5),
+   * bestätigtes Kreuz „gebührenfrei“ ohne Bescheinigung (S4). Vor dem Versand anzeigen.
+   */
+  hinweise: string[];
 }
 
 /**
@@ -408,6 +480,17 @@ export function bildeAbrechnungsfall(
     zuzahlungsfaehig: z.copayCents === null ? false : undefined,
   }));
   const z = ermittleZuzahlung(vo, patient, sortiert, snapshot, ergaenzung, fehlend, abweichungen);
+
+  // S4/S5: Hinweise (sperren nicht)
+  const hinweise: string[] = Array.isArray(snapshot?.notes) ? snapshot.notes.filter((n) => typeof n === "string") : [];
+  const zeitraeume = befreiungszeitraeume(ergaenzung) ?? [];
+  const enthaelt = (b: Befreiungszeitraum) => sortiert.some((x) => b.von <= x.date && x.date <= b.bis);
+  if (kreuzBestaetigt(vo, ergaenzung) && !zeitraeume.some(enthaelt)) hinweise.push(HINWEIS_KREUZ);
+  for (const b of zeitraeume) {
+    if (enthaelt(b) && b.insurerIk && patient.insurerIk && b.insurerIk !== patient.insurerIk) {
+      hinweise.push(`Befreiung ${b.von} bis ${b.bis} ist von einer anderen Krankenkasse (IK ${b.insurerIk}) als auf der Verordnung (IK ${patient.insurerIk}) – bitte prüfen.`);
+    }
+  }
   if (z.jePosition) leistungen.forEach((l, i) => (l.zuzahlungspflichtig = z.jePosition![i]));
   const fall: Abrechnungsfall = {
     belegnummer,
@@ -430,5 +513,5 @@ export function bildeAbrechnungsfall(
     });
     if (snapshot.flatFeeCents !== b.pauschaleZuzahlungCent) abweichungen.push(`Pauschale im Preis-Snapshot ${snapshot.flatFeeCents} Cent, berechnet ${b.pauschaleZuzahlungCent} Cent.`);
   }
-  return { fall, fehlendeAngaben: fehlend, abweichungen };
+  return { fall, fehlendeAngaben: fehlend, abweichungen, hinweise: [...new Set(hinweise)] };
 }
