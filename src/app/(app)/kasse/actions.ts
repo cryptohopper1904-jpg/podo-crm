@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/lib/auth/session";
 import { parseMoney } from "@/lib/format";
 import { DENOMINATIONS } from "@/lib/kasse/labels";
-import { addCashMovement, closeDay, closingInput, KasseError, movementInput, retryClosingRegistration } from "@/server/kasse";
+import { addCashMovement, closeDay, closingInput, EXTERNAL_REGISTER_SUPPORT_DENIED, externalRegisterReason, KasseError, movementInput, retryClosingRegistration, setExternalRegister } from "@/server/kasse";
 
 export type KasseState = { error?: string; ok?: string } | undefined;
 
@@ -71,4 +71,24 @@ export async function retryRegistrationAction(form: FormData) {
   }
   revalidatePath(`/kasse/abschluss/${id}`);
   redirect(`/kasse/abschluss/${encodeURIComponent(id)}${ok ? "" : "?tse=fehler"}`);
+}
+
+/**
+ * „Eigene Praxiskasse verwenden“ ein-/ausschalten (settings.manage). Pflichtfeld Kassensystem/Grund und Bestätigung;
+ * Fehler (z. B. offene PodoHero-Kassenvorgänge → „Bitte zuerst den Tagesabschluss machen.“) werden angezeigt.
+ */
+export async function setExternalRegisterAction(_: KasseState, form: FormData): Promise<KasseState> {
+  const auth = await requireAuth("settings.manage");
+  if (auth.support) return { error: EXTERNAL_REGISTER_SUPPORT_DENIED };
+  const on = form.get("on") === "1";
+  if (form.get("confirm") !== "on") return { error: "Bitte das Umschalten bestätigen." };
+  const reason = externalRegisterReason.safeParse(form.get("reason") ?? "");
+  if (!reason.success) return { error: reason.error.issues[0]?.message ?? "Bitte Kassensystem bzw. Grund angeben." };
+  try {
+    await setExternalRegister(auth, on, reason.data);
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+  revalidatePath("/kasse");
+  return { ok: on ? "Eigene Praxiskasse ist eingeschaltet." : "PodoHero-Kasse ist wieder eingeschaltet." };
 }

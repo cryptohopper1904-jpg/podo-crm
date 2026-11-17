@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { externalRegisterEnabled } from "@/server/kasse";
 import { Building2, CalendarCheck, Info } from "lucide-react";
 import { Button, Card, Field, Input, PageHeader, Select } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
@@ -44,6 +45,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
   const patient = presetPatient ?? str(sp.patient);
 
   const data = await invoiceFormData(auth, patient, year);
+  const externalRegister = await externalRegisterEnabled(auth);
   // offene Anzahlungen zum Termin (bezahlt, noch nicht angerechnet): werden bei einer Rechnung angerechnet
   const openDeposits = (source?.documents ?? []).filter((d) => d.kind === "deposit" && d.status === "paid" && !d.collectiveInvoiceId);
   const homes = source || yearSug ? [] : await careHomes(auth);
@@ -190,6 +192,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
         preset={preset}
         travel={travel}
         privateOnly={isPrivateOnly(auth.organization)}
+        externalRegister={externalRegister}
         alreadyBilled={(source?.billedBy ?? []).map((d) => ({ id: d.id, label: `${INVOICE_KIND_LABEL[d.kind]} ${d.number} vom ${dateDe(d.issuedAt)}` }))}
       />
     </div>

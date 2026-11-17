@@ -1,6 +1,19 @@
 /** Kasse – Stückelungen und Bewegungsarten (ohne Server-Importe, auch im Browser nutzbar). */
 import type { CashClosingTse } from "@/db/schema";
 
+// ───────────────────────── Zahlarten an der Kasse ─────────────────────────
+export type KasseMethod = "cash" | "card" | "transfer" | "voucher" | "payment_link";
+/** Zahlarten, die an der Kasse (Empfang) entstehen und in die Einzelaufzeichnung (DSFinV-K) gehören */
+export const REGISTER_METHODS: readonly KasseMethod[] = ["cash", "card", "voucher"];
+export const isRegisterMethod = (m: string) => (REGISTER_METHODS as readonly string[]).includes(m);
+
+/**
+ * Bon-Nr. der eigenen Praxiskasse: 1–40 Zeichen, nur Buchstaben, Ziffern, „-“ und „/“, nicht mit „-“ oder „/“ am
+ * Anfang (Formelzeichen in Tabellenkalkulationen). `PRAXISKASSE_BON_PATTERN` ist dieselbe Regel für das HTML-Attribut.
+ */
+export const PRAXISKASSE_BON_RE = /^[A-Za-z0-9][A-Za-z0-9/-]{0,39}$/;
+export const PRAXISKASSE_BON_PATTERN = "[A-Za-z0-9][A-Za-z0-9\\/\\-]{0,39}";
+
 // ───────────────────────── Zählprotokoll ─────────────────────────
 /** Stückelungen in Cent (Euro-Scheine und -Münzen) */
 export const DENOMINATIONS = [50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1] as const;

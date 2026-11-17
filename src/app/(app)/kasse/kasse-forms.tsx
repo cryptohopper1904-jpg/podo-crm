@@ -4,7 +4,7 @@ import { useActionState, useMemo, useState } from "react";
 import { keepValues } from "@/lib/forms";
 import { Button, Card, CardTitle, Checkbox, Field, FormError, FormSuccess, Input, Select, Textarea } from "@/components/ui";
 import { DENOMINATIONS, denominationLabel, isNote, MOVEMENT_KINDS, MOVEMENT_LABEL } from "@/lib/kasse/labels";
-import { addMovementAction, closeDayAction } from "./actions";
+import { addMovementAction, closeDayAction, setExternalRegisterAction } from "./actions";
 
 const eur = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const fmt = (c: number) => eur.format(c / 100);
@@ -122,6 +122,57 @@ export function CloseDayForm({
           <Button type="submit" disabled={pending}>{pending ? "Abschluss läuft …" : "Tagesabschluss erstellen (Z-Bon)"}</Button>
         </div>
       </Card>
+    </form>
+  );
+}
+
+/**
+ * Umschalten „Eigene Praxiskasse verwenden“ (Praxisinhaber:in). Pflichtfeld Kassensystem/Grund (steht im Protokoll),
+ * Bestätigung per Häkchen und Rückfrage; Fehlermeldung statt stiller Aktion.
+ */
+export function ExternalRegisterForm({ active }: { active: boolean }) {
+  const [state, action, pending] = useActionState(setExternalRegisterAction, undefined);
+  const question = active
+    ? "Wieder mit der PodoHero-Kasse arbeiten? Bar-, Karten- und Gutscheinzahlungen werden dann wieder von PodoHero signiert, belegt und im Tagesabschluss erfasst."
+    : "Eigene Praxiskasse verwenden? PodoHero vermerkt Bar-, Karten- und Gutscheinzahlungen dann nur noch an der Rechnung – Beleg, TSE und Tagesabschluss kommen aus Ihrer Praxiskasse.";
+  return (
+    <form
+      onSubmit={(e) => {
+        if (!window.confirm(question)) {
+          e.preventDefault();
+          return;
+        }
+        keepValues(action)(e);
+      }}
+      className="mt-3 flex flex-col gap-3"
+    >
+      <FormError message={state?.error} />
+      <FormSuccess message={state?.ok} />
+      <input type="hidden" name="on" value={active ? "0" : "1"} />
+      <Field
+        label="Kassensystem / Grund *"
+        hint={
+          active
+            ? "z. B. „Praxiskasse außer Betrieb, ab heute wieder PodoHero“ – steht im Protokoll, keine Patientendaten"
+            : "z. B. Hersteller und Modell der Praxiskasse mit TSE-Seriennummer – steht im Protokoll, keine Patientendaten"
+        }
+      >
+        <Input name="reason" minLength={3} maxLength={200} required placeholder={active ? "Grund für das Zurückschalten" : "Hersteller, Modell, TSE-Seriennummer"} />
+      </Field>
+      <Checkbox
+        name="confirm"
+        required
+        label={
+          active
+            ? "Mir ist klar: Ab jetzt signiert und belegt wieder PodoHero; die Praxiskasse erfasst diese Zahlungen nicht mehr."
+            : "Mir ist klar: Jede Bar-, Karten- und Gutscheinzahlung muss zuerst in der Praxiskasse erfasst werden; PodoHero vermerkt sie nur."
+        }
+      />
+      <div>
+        <Button type="submit" variant="secondary" disabled={pending}>
+          {pending ? "…" : active ? "Wieder mit PodoHero-Kasse arbeiten" : "Eigene Praxiskasse verwenden"}
+        </Button>
+      </div>
     </form>
   );
 }

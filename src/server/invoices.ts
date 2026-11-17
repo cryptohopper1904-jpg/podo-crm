@@ -26,6 +26,7 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import { getAdapter } from "@/integrations/registry";
 import { fiscalRef } from "@/integrations/tse";
+import { isRegisterMethod, PRAXISKASSE_REF_PREFIX, PRAXISKASSE_BON_RE, usesExternalRegister } from "@/lib/kasse/model";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { payableVatGroups, STORNO_DEPOSITS_NOTE, STORNO_RECEIPTS_NOTE, stornoReceiptNumbers } from "./partial-vat";
 import { depositAllowed } from "@/lib/deposit-rules";
@@ -128,6 +129,14 @@ export const paymentInput = z.object({
   amountCents: z.number().int(),
   voucherCode: z.preprocess(emptyToNull, z.string().trim().max(40).nullable().optional()),
   externalRef: z.preprocess(emptyToNull, z.string().trim().max(120).nullable().optional()),
+  /**
+   * Bon-Nr. der eigenen Praxiskasse (nur bei aktiver Einstellung und Bar/Karte/Gutschein). Gespeichert als
+   * external_ref „praxiskasse:<Nr>“ – das Präfix setzt der Server, nie der Client.
+   */
+  registerReceiptNo: z.preprocess(
+    emptyToNull,
+    z.string().trim().max(40, "Bon-Nr. der Praxiskasse: höchstens 40 Zeichen.").regex(PRAXISKASSE_BON_RE, "Bon-Nr. der Praxiskasse: nur Buchstaben, Ziffern, „-“ und „/“, am Anfang ein Buchstabe oder eine Ziffer.").nullable().optional(),
+  ),
 });
 export type PaymentInput = z.infer<typeof paymentInput>;
 
@@ -273,7 +282,20 @@ async function applyPayments(
 
   const voucherUse = new Map<string, number>();
   const paymentIds: string[] = [];
+  // Eigene Praxiskasse: Kassenvorgang dort erfasst, hier nur vermerkt (keine PodoHero-TSE-Signatur, kein Beleg, kein
+  // Z-Bon). Einstellung in DIESER Transaktion lesen und gegen gleichzeitiges Umschalten sperren (FOR SHARE – das
+  // Umschalten nimmt FOR UPDATE): so entsteht nie eine PodoHero-Zahlung nach der Umschalt-Prüfung.
+  const [orgRow] = await tx.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org)).for("share");
+  const external = usesExternalRegister(orgRow?.settings);
   for (const p of list) {
+    // Kennzeichnung je Zahlung: nur Kassenvorgänge (Bar/Karte/Gutschein) wandern in die Praxiskasse; vom Client nie setzbar
+    const register = external && isRegisterMethod(p.method) ? ("external" as const) : ("podohero" as const);
+    const receiptParsed = paymentInput.shape.registerReceiptNo.safeParse(p.registerReceiptNo ?? null);
+    if (!receiptParsed.success) throw new InvoiceError(receiptParsed.error.issues[0]?.message ?? "Bon-Nr. der Praxiskasse ungültig.");
+    const receiptNo = receiptParsed.data ?? null;
+    if (receiptNo && register !== "external") {
+      throw new InvoiceError(external ? "Eine Bon-Nr. der Praxiskasse gibt es nur bei Bar-, Karten- und Gutscheinzahlungen." : "Bon-Nr. der Praxiskasse nur bei eingeschalteter eigener Praxiskasse.");
+    }
     let voucherId: string | null = null;
     if (p.method === "voucher") {
       if (!p.voucherCode) throw new InvoiceError("Bitte den Gutscheincode angeben.");
@@ -303,8 +325,14 @@ async function applyPayments(
     if (refLower.startsWith("sumup:")) throw new InvoiceError("Die Referenz darf nicht mit „sumup:“ beginnen.");
     // „excel:“ kennzeichnet übernommene Altzahlungen (Import) – sie kommen nie in die Kasse (Migration 0060, Buchhaltung BB)
     if (refLower.startsWith("excel:")) throw new InvoiceError("Die Referenz darf nicht mit „excel:“ beginnen.");
+    // „praxiskasse:“ (Bon-Nr. der eigenen Praxiskasse) vergibt nur der Server aus dem eigenen Feld
+    if (refLower.startsWith(PRAXISKASSE_REF_PREFIX)) throw new InvoiceError("Die Referenz darf nicht mit „praxiskasse:“ beginnen.");
+    if (receiptNo) {
+      if (externalRef) throw new InvoiceError("Bitte entweder eine Referenz oder die Bon-Nr. der Praxiskasse angeben.");
+      externalRef = `${PRAXISKASSE_REF_PREFIX}${receiptNo}`;
+    }
     let signed: SignedPayment | null = null;
-    if (needsSignature(p.method)) {
+    if (needsSignature(p.method) && register === "podohero") {
       signed = await signPayment(inv, p.method, p.amountCents, vatGroups);
       if (p.method === "cash") externalRef = fiscalRef(signed.signature);
     }
@@ -318,6 +346,7 @@ async function applyPayments(
         amountCents: p.amountCents,
         voucherId,
         externalRef,
+        register,
         createdBy: userId,
       })
       .returning({ id: payments.id });
@@ -1149,6 +1178,8 @@ export const depositInput = z.object({
   vatRate: z.coerce.number().int(),
   method: z.enum(DEPOSIT_METHODS),
   notes: z.preprocess(emptyToNull, z.string().trim().max(1000).nullable().optional()),
+  /** Bon-Nr. der eigenen Praxiskasse (optional, Prüfung in applyPayments) */
+  registerReceiptNo: z.preprocess(emptyToNull, z.string().trim().max(40).nullable().optional()),
 });
 export type DepositInput = z.infer<typeof depositInput>;
 
@@ -1250,7 +1281,7 @@ export async function createDeposit(auth: AuthContext, input: DepositInput) {
       org,
       auth.user.id,
       { id: draft.id, number, totalCents: totals.totalCents, paidCents: 0 },
-      [{ method: input.method, amountCents: totals.totalCents, voucherCode: null, externalRef: null }],
+      [{ method: input.method, amountCents: totals.totalCents, voucherCode: null, externalRef: null, registerReceiptNo: input.registerReceiptNo ?? null }],
       today,
       totals.groups,
     );

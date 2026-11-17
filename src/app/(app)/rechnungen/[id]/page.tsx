@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { externalRegisterNote, isRegisterMethod } from "@/lib/kasse/model";
+import { externalRegisterEnabled } from "@/server/kasse";
 import { notFound } from "next/navigation";
 import { FileDown, Printer } from "lucide-react";
 import QRCode from "qrcode";
@@ -104,6 +106,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const { von, beleg, zahlungsbeleg } = await props.searchParams;
   const auth = await requireAuth("invoices.read");
   const data = await getInvoice(auth, id);
+  const externalRegister = await externalRegisterEnabled(auth);
   if (!data) notFound();
   const { invoice: inv, lines, organization: o, patient: p, billingContact: b } = data;
 
@@ -242,7 +245,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
               <LexofficeButton invoiceId={inv.id} />
             )
           ) : null}
-          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} note={imported ? IMPORTED_PAYMENT_NOTE : undefined} /> : null}
+          {canPay ? <PaymentPanel invoiceId={inv.id} openCents={open} note={imported ? IMPORTED_PAYMENT_NOTE : undefined} externalRegister={externalRegister} /> : null}
           {canCancel && inv.number ? <CancelPanel invoiceId={inv.id} number={inv.number} note={imported ? IMPORTED_CANCEL_NOTE : undefined} productLines={lines.filter((l) => !!l.productId).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity).replace(/\.00$/, "").replace(".", ","), inTreatment: l.inTreatment }))} /> : null}
           {p && auth.can("patients.write") ? <PortalLinkButton patientId={p.id} /> : null}
           {p ? (
@@ -495,12 +498,15 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">Zahlungen</h3>
             <ul className="mt-1">
               {docPayments.map((pay) => (
-                <li key={pay.id} className="flex justify-between gap-4 tabular-nums">
-                  <span>
-                    {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method]}
-                    {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
-                  </span>
-                  <span>{money(pay.amountCents)}</span>
+                <li key={pay.id}>
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>
+                      {dateTimeDe(pay.paidAt)} · {PAYMENT_METHOD_LABEL[pay.method]}
+                      {pay.voucherCode ? ` ${pay.voucherCode}` : ""}
+                    </span>
+                    <span>{money(pay.amountCents)}</span>
+                  </div>
+                  {pay.register === "external" ? <p className="text-[11px] text-muted">{externalRegisterNote(pay.externalRef)}</p> : null}
                 </li>
               ))}
             </ul>
@@ -584,6 +590,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
                     </span>
                     <span>{money(pay.amountCents)}</span>
                   </div>
+                  {pay.register === "external" ? <p className="text-xs text-muted">{externalRegisterNote(pay.externalRef)}</p> : null}
                   {receipt ? (
                     <div className="flex flex-wrap items-start gap-2">
                       <span className="self-center text-xs text-muted">
@@ -630,8 +637,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
             ) : (
               `Zu erstatten: ${money(-open)}.`
             )}{" "}
-            Der Beleg oben bleibt wie ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt. Für Bar-, Karten- und
-            Gutscheinzahlungen gibt es je einen eigenen Beleg über den Zahlungseingang (Kassenbeleg mit TSE-Angaben).
+            Der Beleg oben bleibt wie ausgestellt – spätere Zahlungen werden nicht nachträglich eingedruckt.{" "}
+            {laterRegisterNote(laterPayments, externalRegister)}
           </p>
         </Card>
       ) : null}
@@ -643,4 +650,18 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
       ) : null}
     </div>
   );
+}
+
+/**
+ * Hinweis unter „Zahlungseingang nach Ausstellung“: PodoHero-Kassenzahlungen bekommen einen eigenen Zahlungsbeleg mit
+ * TSE-Angaben; Zahlungen der eigenen Praxiskasse (register external) nicht – den Kassenbeleg gibt die Praxiskasse aus.
+ */
+function laterRegisterNote(pays: { method: string; register?: string | null }[], externalRegister: boolean): string {
+  const podo = pays.some((x) => isRegisterMethod(x.method) && x.register !== "external");
+  const ext = pays.some((x) => x.register === "external");
+  const podoText = "Für Bar-, Karten- und Gutscheinzahlungen der PodoHero-Kasse gibt es je einen eigenen Beleg über den Zahlungseingang (Kassenbeleg mit TSE-Angaben).";
+  const extText = "Bar-, Karten- und Gutscheinzahlungen der Praxiskasse sind dort erfasst – den Kassenbeleg gibt die Praxiskasse aus.";
+  if (podo && ext) return `${podoText} ${extText}`;
+  if (ext || (externalRegister && !podo)) return extText;
+  return podoText.replace(" der PodoHero-Kasse", "");
 }

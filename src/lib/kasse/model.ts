@@ -9,16 +9,13 @@ import { createHash } from "node:crypto";
 import { allocateByVat } from "@/integrations/tse/types";
 import { vatPortion } from "@/lib/invoice-math";
 import { canonical } from "@/lib/records";
-import { countedTotal, MOVEMENT_LABEL, type MovementKind } from "./labels";
+import { countedTotal, isRegisterMethod, type KasseMethod, MOVEMENT_LABEL, type MovementKind, PRAXISKASSE_BON_RE } from "./labels";
 
 export * from "./labels";
 export * from "./chain";
 
 // ───────────────────────── Eingangsdaten ─────────────────────────
-export type KasseMethod = "cash" | "card" | "transfer" | "voucher" | "payment_link";
-/** Zahlarten, die an der Kasse (Empfang) entstehen und in die Einzelaufzeichnung (DSFinV-K) gehören */
-export const REGISTER_METHODS: readonly KasseMethod[] = ["cash", "card", "voucher"];
-export const isRegisterMethod = (m: string) => (REGISTER_METHODS as readonly string[]).includes(m);
+// KasseMethod, REGISTER_METHODS, isRegisterMethod: in ./labels (auch im Browser nutzbar), oben re-exportiert
 
 export type KassePerson = { id: string; name: string } | null;
 
@@ -391,3 +388,33 @@ export function reviveBons(raw: unknown[]): Bon[] {
   }));
 }
 
+
+/**
+ * Praxis-Einstellung „Eigene Praxiskasse verwenden“: Die Praxis erfasst Kassenvorgänge (Bar/Karte/Gutschein) in ihrem
+ * bestehenden, zertifizierten Kassensystem. PodoHero vermerkt diese Zahlungen dann nur an der Rechnung – ohne eigene
+ * TSE-Signatur, ohne Zahlungsbeleg und ohne Tagesabschluss/DSFinV-K/Kassenbuch (das liefert die Praxiskasse).
+ * Die Einstellung entscheidet NUR beim Buchen; danach zählt die Kennzeichnung der Zahlung (payments.register).
+ */
+export const usesExternalRegister = (settings: unknown): boolean =>
+  !!settings && typeof settings === "object" && (settings as Record<string, unknown>).externalCashRegister === true;
+
+/** Kassensystem einer Zahlung (payments.register, Migration 0063) */
+export type PaymentRegister = "podohero" | "external";
+
+/** Präfix der Bon-Nr. der Praxiskasse in payments.external_ref – vergibt nur der Server */
+export const PRAXISKASSE_REF_PREFIX = "praxiskasse:";
+
+/** Bon-Nr. aus payments.external_ref („praxiskasse:<Nr>“), sonst null */
+export function praxiskasseBonNr(externalRef: string | null | undefined): string | null {
+  if (!externalRef?.startsWith(PRAXISKASSE_REF_PREFIX)) return null;
+  const nr = externalRef.slice(PRAXISKASSE_REF_PREFIX.length);
+  return PRAXISKASSE_BON_RE.test(nr) ? nr : null;
+}
+
+/** Vermerk auf Belegen und in der Rechnungsansicht für Zahlungen der eigenen Praxiskasse (register = external) */
+export function externalRegisterNote(externalRef: string | null | undefined): string {
+  // über die PodoHero-SumUp-Anbindung eingegangen: in der Praxiskasse noch zu erfassen (Buchhaltung 7)
+  if (externalRef?.toLowerCase().startsWith("sumup:")) return "Über SumUp eingegangen – in der Praxiskasse zu erfassen.";
+  const nr = praxiskasseBonNr(externalRef);
+  return `Zahlung in der Praxiskasse erfasst${nr ? ` (Bon-Nr. ${nr})` : ""}. Den Kassenbeleg gibt die Praxiskasse aus.`;
+}

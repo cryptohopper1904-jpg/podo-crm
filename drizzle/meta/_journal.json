@@ -442,6 +442,13 @@
       "when": 1794906305286,
       "tag": "0062_gkv_review",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1794938293919,
+      "tag": "0063_eigene_praxiskasse",
+      "breakpoints": true
     }
   ]
 }

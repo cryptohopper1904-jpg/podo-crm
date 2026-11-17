@@ -67,7 +67,19 @@ export function ReceiptLinks({ invoiceId, receipts, recipientEmail }: { invoiceI
 }
 
 /** Zahlung erfassen – `openCents` negativ bei Stornorechnung mit offener Erstattung. */
-export function PaymentPanel({ invoiceId, openCents, note }: { invoiceId: string; openCents: number; /** Hinweis über dem Formular (z. B. übernommene Altrechnung) */ note?: string }) {
+export function PaymentPanel({
+  invoiceId,
+  openCents,
+  note,
+  externalRegister = false,
+}: {
+  invoiceId: string;
+  openCents: number;
+  /** Hinweis über dem Formular (z. B. übernommene Altrechnung) */
+  note?: string;
+  /** Praxis nutzt die eigene Praxiskasse: Feld „Bon-Nr. Praxiskasse“, kein TSE-Hinweis */
+  externalRegister?: boolean;
+}) {
   const refund = openCents < 0;
   const abs = Math.abs(openCents);
   const [open, setOpen] = useState(false);
@@ -98,7 +110,7 @@ export function PaymentPanel({ invoiceId, openCents, note }: { invoiceId: string
         <input type="hidden" name="payments" value={paymentsToJson(rows, refund ? -1 : 1)} />
         {note ? <p className="text-sm text-muted">{note}</p> : null}
         <FormError message={state?.error} />
-        <PaymentsEditor rows={rows} onChange={setRows} openCents={abs} refund={refund} />
+        <PaymentsEditor rows={rows} onChange={setRows} openCents={abs} refund={refund} externalRegister={externalRegister} />
         <div className="flex gap-3">
           <Button type="submit" disabled={pending}>{pending ? "Speichern …" : "Buchen"}</Button>
           <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Abbrechen</Button>

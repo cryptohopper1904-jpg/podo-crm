@@ -396,6 +396,22 @@ const EXEMPT = ["memberships.user_id", "sessions.user_id"];
       notices.length = 0;
       await migrate(drizzle(ns), { migrationsFolder: DRIZZLE });
       expect(notices.join("\n")).toMatch(/1 Zeile\(n\) in tasks\.assignee_id verweisen auf eine Person außerhalb der Praxis/);
+      // Katalogtest auf VOLLSTÄNDIGEM Migrationsstand (alle Migrationen bis zur neuesten), BEVOR irgendetwas den Pfad
+      // nachträglich korrigiert (zweiter Lauf von *_user_praxis_abgleich unten, RESTORE_SEARCH_PATH_SQL der Fixtures):
+      // Jede eigene Funktion in public muss den festen search_path tragen – auch die aus späteren Migrationen
+      // (CREATE OR REPLACE ohne SET search_path setzt ihn zurück, AppSec B1 PR #113).
+      const lastTag = (JSON.parse(readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8")) as { entries: { tag: string }[] }).entries.at(-1)!.tag;
+      const applied = await ns.query("select count(*)::int as n from drizzle.__drizzle_migrations");
+      expect(applied.rows[0].n, `bis ${lastTag} eingespielt`).toBe((JSON.parse(readFileSync(path.join(DRIZZLE, "meta/_journal.json"), "utf8")) as { entries: unknown[] }).entries.length);
+      const fresh = await ns.query(`select p.proname, p.proconfig from pg_proc p
+        where p.pronamespace = 'public'::regnamespace and p.prokind = 'f'
+          and not exists (select 1 from pg_depend d where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
+        order by p.proname`);
+      const withoutPath = (fresh.rows as { proname: string; proconfig: string[] | null }[])
+        .filter((r) => !(r.proconfig ?? []).includes("search_path=pg_catalog, public, pg_temp"))
+        .map((r) => r.proname);
+      expect(withoutPath, "Funktionen ohne festen search_path (frische Migration)").toEqual([]);
+      expect(fresh.rows.map((r: { proname: string }) => r.proname)).toEqual(expect.arrayContaining(["podo_payment_closing_guard", "podo_payment_register_immutable"]));
       // zweiter Lauf derselben Migration (z. B. nach Umnummerierung): idempotent, gleiche Meldung
       const stmts = readFileSync(path.join(DRIZZLE, `${tag}.sql`), "utf8").split("--> statement-breakpoint");
       notices.length = 0;

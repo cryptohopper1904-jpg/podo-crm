@@ -288,6 +288,37 @@ afterEach(() => vi.restoreAllMocks());
     expect(list[0]).toMatchObject({ method: "card", amountCents: 3000, archived: true, tseFailed: false });
   });
 
+  it("eigene Praxiskasse: Bar/Karte nur vermerkt – keine TSE-Signatur, kein Zahlungsbeleg, keine TSE-Angaben auf der Quittung", async () => {
+    const { org, auth, patient } = await setup();
+    await f.asOrg(org, (c) => c.query(`update organizations set settings = settings || '{"externalCashRegister": true}'::jsonb where id = $1`, [org]));
+    const inv = await invoices.createInvoice(auth, base(patient));
+    const res = await invoices.addPayments(auth, inv.id, [pay("cash", 2500)]);
+    expect(res.receipts).toEqual([]);
+    const r1 = await webhooks.recordProviderPayment(org, { invoiceId: inv.id, externalRef: `sumup:t-ext-${inv.id}`, amountCents: 1000, method: "card" });
+    expect(r1.status).toBe("gebucht");
+    const view = await bundle(org, inv.id);
+    expect(view.paymentReceipts).toEqual([]);
+    const sigs = await f.asOrg(org, async (c) => (await c.query("select count(*)::int as n from fiscal_transactions where organization_id = $1", [org])).rows[0].n);
+    expect(sigs).toBe(0);
+    const missing = await withOrg(org, (tx) => receipts.paymentsMissingReceipt(tx, org, inv.id));
+    expect(missing).toEqual([]);
+    drawn = [];
+    // Quittung „bar beim Ausstellen“ mit Bon-Nr. der Praxiskasse: Vermerk statt TSE-Angaben
+    const q = await invoices.createInvoice(auth, base(patient, { kind: "receipt", payments: [{ method: "cash", amountCents: 6500, voucherCode: null, externalRef: null, registerReceiptNo: "Q-17/1" }] }));
+    expect(drawn).not.toContain("TSE-Angaben");
+    const text = drawn.join(" ").replace(/\s+/g, " ");
+    expect(text).not.toContain("TESTMODUS");
+    expect(text).toContain("Zahlung in der Praxiskasse erfasst (Bon-Nr. Q-17/1). Den Kassenbeleg gibt die Praxiskasse aus.");
+    const qb = await bundle(org, q.id);
+    expect(qb.payments.map((p) => p.register)).toEqual(["external"]);
+    // Rechnung, beim Ausstellen per Karte bezahlt (ohne Bon-Nr.): Vermerk im Abschnitt Zahlungen ohne Bon-Nr.
+    drawn = [];
+    await invoices.createInvoice(auth, base(patient, { payments: [pay("card", 6500)] }));
+    const text2 = drawn.join(" ").replace(/\s+/g, " ");
+    expect(text2).toContain("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(text2).not.toContain("Bon-Nr.");
+  });
+
   it("Storno: Neudruck wie ausgestellt mit Anrechnungszeilen und Stornovermerk, ohne GiroCode; Anzahlung wieder anrechenbar", async () => {
     const { org, auth, patient } = await setup();
     const dep = await invoices.createDeposit(auth, { patientId: patient, appointmentId: null, treatmentRecordId: null, description: "Anzahlung: Nagelspange", amountCents: 1500, vatRate: 0, method: "cash", notes: null });

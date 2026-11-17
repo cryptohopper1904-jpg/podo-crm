@@ -42,3 +42,20 @@ describe("Review-Runde 4 PR #111", () => {
     expect(same.notes.join(" ")).not.toMatch(/anderen Krankenkasse/);
   });
 });
+
+/** Nachtrag aus der Prüfung zu #111: Hinweis bei mehr Einträgen als der Tageshöchstmenge – auch bei 78610 (2 je Tag) */
+describe("Tageshöchstmenge: Hinweis bei mehr Einträgen als erlaubt", () => {
+  const old = { birthDate: "1950-01-01", exemptions: [] };
+
+  it("78610 mit drei Einträgen am selben Tag → Hinweis „nur 2 Einheiten“", () => {
+    const snap = priceSnapshot({ positions: [{ position: "78610", label: "Spange", units: 4 }], treatmentDates: ["2026-11-02", "2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
+    expect(snap.lines).toEqual([expect.objectContaining({ date: "2026-11-02", position: "78610", units: 2 })]);
+    expect(snap.notes).toContain("3 Behandlungseinträge am 02.11.2026 – nur 2 Einheiten 78610 abrechenbar, bitte prüfen.");
+  });
+
+  it("78610 mit zwei Einträgen am selben Tag → kein Hinweis (zweimal je Tag erlaubt)", () => {
+    const snap = priceSnapshot({ positions: [{ position: "78610", label: "Spange", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
+    expect(snap.lines).toEqual([expect.objectContaining({ date: "2026-11-02", units: 2 })]);
+    expect(snap.notes.join(" ")).not.toMatch(/Behandlungseinträge am/);
+  });
+});

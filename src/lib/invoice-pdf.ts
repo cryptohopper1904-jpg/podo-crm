@@ -41,6 +41,7 @@ import {
 } from "./invoice-view";
 import { type InvoiceBookingLink } from "./practice-documents";
 import { TSE_TEST_NOTICE, tseLines, type FiscalInfo } from "./tse-receipt";
+import { externalRegisterNote } from "./kasse/model";
 import {
   A4,
   CONT_TOP,
@@ -96,6 +97,8 @@ export type InvoicePdfData = {
     externalRef?: string | null;
     /** TSE-Signatur des Kassenvorgangs (fiscal_transactions) – Pflichtangaben nach § 6 KassenSichV auf dem Beleg */
     fiscal?: FiscalInfo | null;
+    /** Kassensystem (payments.register): „external“ = in der eigenen Praxiskasse erfasst, Beleg kommt von dort */
+    register?: string | null;
   }[];
   /** auf diese Rechnung angerechnete Anzahlungen und Quittungen (Teilrechnungen) */
   credited?: CreditedPartial[];
@@ -415,7 +418,9 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
 
   // ── Zahlungen ──
   if (data.payments.length) {
-    keep(12 + data.payments.length * 12 + 8);
+    // Zahlungen der eigenen Praxiskasse: Vermerk statt PodoHero-Kassenbeleg/TSE-Angaben (Beleg gibt die Praxiskasse aus)
+    const noteLines = (pay: InvoicePdfData["payments"][number]) => (pay.register === "external" ? wrap(externalRegisterNote(pay.externalRef), 300, 7.5) : []);
+    keep(12 + data.payments.reduce((h, pay) => h + 12 + noteLines(pay).length * 9, 0) + 8);
     ensure(24);
     text("Zahlungen", ML, y, { size: 8.5, font: bold });
     y -= 12;
@@ -424,6 +429,11 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
       text(`${dateTimeDe(pay.paidAt)} · ${PAYMENT_METHOD_LABEL[pay.method] ?? pay.method}${pay.voucherCode ? ` ${pay.voucherCode}` : ""}`, ML, y, { size: 8.5 });
       text(money(pay.amountCents), ML + 300, y, { size: 8.5, align: "right" });
       y -= 12;
+      for (const l of noteLines(pay)) {
+        ensure(9);
+        text(l, ML, y, { size: 7.5, color: GRAY });
+        y -= 9;
+      }
     }
     y -= 8;
   }

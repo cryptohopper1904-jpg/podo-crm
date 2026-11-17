@@ -1373,6 +1373,12 @@ export const payments = pgTable("payments", {
    * danach – und für jede Zahlung eines abgeschlossenen Tages – verhindert ein DB-Trigger Änderung/Löschung.
    */
   cashClosingId: uuid("cash_closing_id").references((): AnyPgColumn => cashClosings.id),
+  /**
+   * Kassensystem, in dem der Kassenvorgang erfasst ist (Migration 0063): „podohero“ (PodoHero-Kasse mit TSE, Z-Bon,
+   * Zahlungsbeleg) oder „external“ (eigene zertifizierte Praxiskasse – PodoHero vermerkt die Zahlung nur). Setzt
+   * ausschließlich der Server beim Buchen anhand der Praxis-Einstellung; danach unveränderlich (DB-Trigger).
+   */
+  register: text("register").$type<"podohero" | "external">().notNull().default("podohero"),
 }, (t) => [
   index("payments_org_closing").on(t.organizationId, t.cashClosingId, t.paidAt),
   index("payments_org_paid").on(t.organizationId, t.paidAt),

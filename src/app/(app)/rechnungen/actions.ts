@@ -96,6 +96,7 @@ export async function createDepositAction(_: InvoiceFormState, form: FormData): 
     vatRate: form.get("vatRate") ?? 0,
     method: form.get("method"),
     notes: form.get("notes"),
+    registerReceiptNo: form.get("registerReceiptNo"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   let id: string;

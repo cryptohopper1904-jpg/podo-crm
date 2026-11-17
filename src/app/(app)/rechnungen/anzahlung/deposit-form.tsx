@@ -5,6 +5,7 @@ import { useActionState, useState } from "react";
 import { keepValues } from "@/lib/forms";
 import { Button, Card, Field, FormError, Input, Select, Textarea } from "@/components/ui";
 import { DEPOSIT_METHODS, PAYMENT_METHOD_LABEL, type DepositMethod } from "@/lib/invoice-labels";
+import { PRAXISKASSE_BON_PATTERN } from "@/lib/kasse/labels";
 import { createDepositAction } from "../actions";
 
 export type DepositDefaults = {
@@ -21,11 +22,14 @@ export function DepositForm({
   defaults,
   smallBusiness,
   tseTestMode,
+  externalRegister = false,
   descriptionPlaceholder,
 }: {
   defaults: DepositDefaults;
   smallBusiness: boolean;
   tseTestMode: boolean;
+  /** Praxis nutzt die eigene Praxiskasse: nur Vermerk, Feld „Bon-Nr. Praxiskasse“ */
+  externalRegister?: boolean;
   /** Anzahlung ohne Termin: Leistung selbst beschreiben (Pflichtfeld ohne Vorgabe) */
   descriptionPlaceholder?: string;
 }) {
@@ -64,11 +68,21 @@ export function DepositForm({
               </Select>
             )}
           </Field>
+          {externalRegister && (method === "cash" || method === "card") ? (
+            <Field label="Bon-Nr. Praxiskasse (optional)">
+              <Input name="registerReceiptNo" maxLength={40} pattern={PRAXISKASSE_BON_PATTERN} title="Nur Buchstaben, Ziffern, - und /; am Anfang ein Buchstabe oder eine Ziffer" placeholder="z. B. 4711" autoComplete="off" />
+            </Field>
+          ) : null}
           <Field label="Hinweis auf der Quittung (optional)" className="sm:col-span-2">
             <Textarea name="notes" rows={2} />
           </Field>
         </div>
-        {method === "cash" || method === "card" ? (
+        {externalRegister && (method === "cash" || method === "card") ? (
+          <p className="mt-4 rounded-xl bg-info-soft px-3 py-2 text-xs text-info-soft-text">
+            Eigene Praxiskasse: {method === "cash" ? "Barzahlung" : "Kartenzahlung"} bitte zuerst in der Praxiskasse erfassen – PodoHero vermerkt sie hier nur
+            (ohne TSE-Signatur, ohne Kassenbuch und Tagesabschluss in PodoHero).
+          </p>
+        ) : method === "cash" || method === "card" ? (
           <p className="mt-4 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn-soft-text">
             {method === "cash" ? "Barzahlung" : "Kartenzahlung"} wird wie jede Kassenzahlung über die TSE signiert und erscheint im Kassenbuch und Tagesabschluss.
             {tseTestMode ? " TSE im Testmodus: nur Test-Signatur – für echten Bargeldeinsatz ist ein TSE-Vertrag Pflicht (KassenSichV)." : ""}

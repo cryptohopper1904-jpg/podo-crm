@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chainHash } from "@/lib/records";
-import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment } from "./model";
+import { buildBons, closingHashContent, computeClosing, countedTotal, itemsDigest, normalizeDenominations, parseTseRef, reviveBons, serializeBons, verifyClosingRows, type KassePayment, usesExternalRegister, externalRegisterNote, praxiskasseBonNr } from "./model";
 
 const p = (id: string, method: KassePayment["method"], amountCents: number, minute: number): KassePayment => ({
   id,
@@ -153,5 +153,33 @@ describe("Kasse: Anzahlung (Quittung für die Sammelrechnung)", () => {
     const refund: KassePayment = { ...p("r", "cash", -6500, 6), invoiceNumber: "GS2026-0001", vatGroups: [{ rate: 0, grossCents: -6500 }], deposit: true };
     const [bon] = buildBons({ zNumber: 1, firstBonNr: 1, closedAt: new Date(), openingCents: 0, openingIsNew: false, differenceCents: 0, payments: [refund], movements: [] });
     expect(bon.lines).toEqual([expect.objectContaining({ gvTyp: "AnzahlungEinstellung", grossCents: -6500 })]);
+  });
+});
+
+describe("usesExternalRegister", () => {
+  it("nur bei ausdrücklichem true", () => {
+    expect(usesExternalRegister({ externalCashRegister: true })).toBe(true);
+    expect(usesExternalRegister({ externalCashRegister: "true" })).toBe(false);
+    expect(usesExternalRegister({})).toBe(false);
+    expect(usesExternalRegister(null)).toBe(false);
+  });
+});
+
+describe("Vermerk eigene Praxiskasse", () => {
+  it("mit und ohne Bon-Nr.; fremde Präfixe werden nicht als Bon-Nr. gelesen", () => {
+    expect(externalRegisterNote("praxiskasse:Z-17/0815")).toBe("Zahlung in der Praxiskasse erfasst (Bon-Nr. Z-17/0815). Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(externalRegisterNote(null)).toBe("Zahlung in der Praxiskasse erfasst. Den Kassenbeleg gibt die Praxiskasse aus.");
+    expect(praxiskasseBonNr("praxiskasse:a b")).toBeNull();
+  });
+});
+
+describe("Vermerk eigene Praxiskasse: SumUp und Bon-Nr.", () => {
+  it("SumUp-Eingang: eigener Text", () => {
+    expect(externalRegisterNote("sumup:t-1")).toBe("Über SumUp eingegangen – in der Praxiskasse zu erfassen.");
+    expect(externalRegisterNote("SUMUP:t-1")).toBe("Über SumUp eingegangen – in der Praxiskasse zu erfassen.");
+  });
+  it("Bon-Nr. darf nicht mit „-“ beginnen", () => {
+    expect(praxiskasseBonNr("praxiskasse:-12")).toBeNull();
+    expect(praxiskasseBonNr("praxiskasse:12-3/4")).toBe("12-3/4");
   });
 });

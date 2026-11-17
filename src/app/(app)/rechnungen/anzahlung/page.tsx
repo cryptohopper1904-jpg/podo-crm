@@ -8,6 +8,7 @@ import { depositAllowed } from "@/lib/deposit-rules";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { DEPOSIT_PAST_ERROR, DEPOSIT_PURPOSE_HINT, INVOICE_KIND_LABEL } from "@/lib/invoice-labels";
 import { billingFromSource, depositPatient } from "@/server/appointment-billing";
+import { externalRegisterEnabled } from "@/server/kasse";
 import { DepositForm } from "./deposit-form";
 
 export const metadata = { title: "Anzahlung (Vorauszahlung)" };
@@ -22,6 +23,7 @@ const euro = (cents: number) => (cents / 100).toFixed(2).replace(".", ",");
  */
 export default async function DepositPage(props: PageProps<"/rechnungen/anzahlung">) {
   const auth = await requireAuth("invoices.write");
+  const externalRegister = await externalRegisterEnabled(auth);
   const sp = await props.searchParams;
   const termin = str(sp.termin);
   const behandlung = str(sp.behandlung);
@@ -102,6 +104,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
               <DepositForm
                 smallBusiness={smallBusiness}
                 tseTestMode={fiscalIsTestMode()}
+                externalRegister={externalRegister}
                 defaults={{
                   patientId: src.patient.id,
                   appointmentId: src.appointmentId,
@@ -130,6 +133,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
           <DepositForm
             smallBusiness={smallBusiness}
             tseTestMode={fiscalIsTestMode()}
+            externalRegister={externalRegister}
             descriptionPlaceholder="z. B. Nagelspange"
             defaults={{ patientId: chosen.id, appointmentId: null, treatmentRecordId: null, description: "", amount: "", vatRate: 0 }}
           />

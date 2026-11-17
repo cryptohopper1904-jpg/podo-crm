@@ -6,6 +6,7 @@ import { invoices, messages, organizations, payments, webhookEvents } from "@/db
 import { handleLexofficeWebhook, handleSmsWebhook, handleSumupWebhook, handleWhatsAppWebhook } from "@/integrations/webhooks";
 import type { InboundMessage, NormalizedWebhookEvent, PaymentPort } from "@/integrations/types";
 import { statusFromPayments } from "@/lib/invoice-math";
+import { isRegisterMethod, usesExternalRegister } from "@/lib/kasse/model";
 import { FiscalSignError, needsSignature, signRegisterPayment, storeSignature, type SignedPayment } from "./fiscal";
 import { archivePaymentReceipts, recordPaymentReceipts, reportReceiptRecordFailure } from "./payment-receipts";
 import { adapterFor, logSync } from "./integrations";
@@ -304,7 +305,12 @@ export async function recordProviderPayment(organizationId: string, input: Provi
     // trotzdem gebucht (das Geld ist eingegangen) und der Ausfall im Posteingang gemeldet (TSE-Ausfall dokumentieren).
     let signed: SignedPayment | null = null;
     let signFailed = false;
-    if (needsSignature(input.method)) {
+    // Eigene Praxiskasse: Einstellung in DIESER Transaktion lesen, gegen gleichzeitiges Umschalten gesperrt (FOR SHARE).
+    // Kartenzahlung wird dann nur vermerkt (register 'external'): keine PodoHero-TSE, kein Zahlungsbeleg, kein Z-Bon –
+    // sie muss zusätzlich in der Praxiskasse erfasst werden (Posteingang-Meldung unten).
+    const [orgRow] = await t.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, organizationId)).for("share");
+    const register = usesExternalRegister(orgRow?.settings) && isRegisterMethod(input.method) ? ("external" as const) : ("podohero" as const);
+    if (needsSignature(input.method) && register === "podohero") {
       // bei angerechneten Quittungen/Anzahlungen nur der Rest je Steuersatz (siehe payableVatGroups)
       const vatGroups = (await payableVatGroups(t, organizationId, [inv.id])).get(inv.id) ?? [];
       try {
@@ -324,9 +330,21 @@ export async function recordProviderPayment(organizationId: string, input: Provi
         amountCents: input.amountCents,
         paidAt: input.paidAt ?? new Date(),
         externalRef: input.externalRef,
+        register,
       })
       .returning({ id: payments.id });
     if (signed) await storeSignature(t, organizationId, signed);
+    if (register === "external")
+      await t.insert(messages).values({
+        organizationId,
+        patientId: null,
+        channel: "none",
+        direction: "inbound",
+        subject: `Kartenzahlung ${inv.number ?? ""} über SumUp: bitte in der Praxiskasse erfassen`.replace(/\s+/g, " "),
+        body: `Über die PodoHero-SumUp-Anbindung ist eine Kartenzahlung zu Rechnung ${inv.number ?? "?"} über ${(input.amountCents / 100).toFixed(2).replace(".", ",")} € eingegangen. PodoHero hat sie nur an der Rechnung vermerkt (eigene Praxiskasse). Bitte die Zahlung zusätzlich in der Praxiskasse als Kartenzahlung erfassen – dort entstehen Kassenbeleg, TSE-Signatur und Tagesabschluss.`,
+        status: "new",
+        threadKey: `praxiskasse:${input.externalRef}`.slice(0, 300),
+      });
     if (signFailed)
       await t.insert(messages).values({
         organizationId,
