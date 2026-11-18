@@ -468,7 +468,8 @@ Stornos und Korrekturen wirken rückwirkend auf frühere Zeiträume (Hinweis auf
   „offen“/„Widerspruch“ und „erledigt – Widerspruch erfolgreich“ getrennt (keine Minderung). Eine Absetzung, die über
   `deduction_id` an einem neu abgerechneten Korrekturvermerk hängt, ist **„durch Neuabrechnung ersetzt“** (getrennt
   ausgewiesen, keine Minderung, unabhängig vom Status) – die Erstabrechnung ist schon als „ersetzt durch Neuabrechnung“
-  abgezogen, sonst zählte sie doppelt. Die Minderung wird nicht automatisch vom Kassenanteil abgezogen (Fachfrage 39).
+  abgezogen, sonst zählte sie doppelt. Es gilt dieselbe Bedingung wie beim Abzug (alter Lauf mit Heilmittelkosten); sonst
+  bleibt sie Minderung. Die Minderung wird nicht automatisch vom Kassenanteil abgezogen (Fachfrage 39).
 
 **Auswertung → „Belegliste“** (`/auswertung/belegliste`, Rechte `finance.read` + `invoices.read`; CSV
 `/api/export/belegliste?von=&bis=`, im Support-Modus gesperrt, Formel-Injection neutralisiert – reine negative Beträge
@@ -476,7 +477,9 @@ wie „-12,50“ bleiben Zahlen –, `no-store`): **interne Hilfsliste, keine Bu
 und die Sammelbelege des Abrechnungszentrums). Inhalt: Zuzahlungsquittungen (ZZ) mit Stornobelegen (Bezug in beide
 Richtungen, Zahlungsart, Person mit Nummer – **kein Datum der Verordnung, keine Diagnosen**: Datenminimierung,
 Art. 9 DSGVO) und die Abrechnungsläufe (lesbar „Lauf <Nr.> vom <Datum>“, laufende Nummer der Praxis statt UUID – stabil,
-weil Läufe nie löschbar sind und ihr Anlagezeitpunkt vom Server kommt und unveränderlich ist, `podo_billing_batch_guard`;
+weil Läufe nie löschbar sind und ihr Anlagezeitpunkt vom Server kommt und unveränderlich ist, `podo_billing_batch_guard`.
+Einschränkung: created_at ist der Beginn der Transaktion – überschneiden sich zwei Abrechnungsläufe zeitlich, kann ein
+später sichtbar werdender Lauf vor einen schon gezeigten rücken und dessen Nummer verschieben (sehr selten);
 Partner, Verordnungen, Heilmittelkosten, Zuzahlungen, Kassenanteil, Export). Die Spalte „Bezug“ kennzeichnet bei Läufen
 nur den Korrekturbezug („N Verordnung(en) später neu abgerechnet (Kassenanteil … ersetzt)“ bzw. „enthält N
 Neuabrechnung(en) nach Korrektur“, solange dieser Lauf nicht exportiert ist mit „– noch nicht übergeben“) – keine Notiz

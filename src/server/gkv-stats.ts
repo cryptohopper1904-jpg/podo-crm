@@ -30,7 +30,8 @@ import { periodBounds } from "./stats";
  *    Belegdatum, brutto, ohne Entwürfe/Stornos/Gutschriften/Anzahlungen und ohne angerechnete Quittungen.
  *  - Absetzungen nach Datum der Absetzung: Minderung = akzeptiert + erledigt/„Absetzung bleibt“; offen/Widerspruch und
  *    erledigt/„Widerspruch erfolgreich“ getrennt (keine Minderung). Hängt die Absetzung (deduction_id) an einem Vermerk,
- *    der neu abgerechnet wurde, ist sie „durch Neuabrechnung ersetzt“ (die Erstabrechnung zieht schon „ersetzt durch
+ *    der neu abgerechnet wurde (Bedingung REPLACED_SQL, d. h. die Erstabrechnung wird auch abgezogen), ist sie „durch
+ *    Neuabrechnung ersetzt“ (die Erstabrechnung zieht schon „ersetzt durch
  *    Neuabrechnung“ ab) – getrennt, keine Minderung. Nicht automatisch vom Kassenanteil abgezogen.
  *  - Stand Abruf: Stornos/Korrekturen wirken rückwirkend auf frühere Zeiträume.
  */
@@ -123,8 +124,10 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     const dedRows = (
       await tx.execute<{ ym: string; status: string; outcome: string | null; replaced: boolean; n: number; v: number }>(sql`
         select to_char(d.deducted_on, 'YYYY-MM') as ym, d.status, d.outcome,
+               -- gleiche Bedingung wie „ersetzt durch Neuabrechnung“ (REPLACED_SQL): nur wenn die Erstabrechnung auch abgezogen wird
                exists (select 1 from prescription_corrections c
-                        where c.organization_id = ${org} and c.deduction_id = d.id and c.resolution = 'rebilled') as replaced,
+                         join billing_batches ob on ob.id = c.original_batch_id and ob.organization_id = ${org}
+                        where c.organization_id = ${org} and c.deduction_id = d.id and ${REPLACED_SQL}) as replaced,
                count(*)::int as n, coalesce(sum(d.amount_cents), 0)::bigint as v
         from gkv_deductions d
         where d.organization_id = ${org} and d.deducted_on >= ${period.from} and d.deducted_on <= ${period.until}
@@ -286,7 +289,8 @@ export async function belegliste(auth: AuthContext, period: Pick<Period, "from" 
                  where c.organization_id = ${org} and c.original_batch_id = b.id and ${REPLACED_SQL}) as replaced_insurer,
                (select count(*)::int from prescription_corrections c where c.organization_id = ${org} and c.resolved_batch_id = b.id and c.resolution = 'rebilled') as rebills
         -- laufende Nummer der Praxis: stabil, weil Läufe nie löschbar sind und created_at vom Server kommt und unveränderlich
-        -- ist (Trigger billing_batches_guard, Migration 0066); nur die endgültige Löschung der ganzen Praxis entfernt Läufe
+        -- ist (Trigger billing_batches_guard, Migration 0066); nur die endgültige Löschung der ganzen Praxis entfernt Läufe.
+        -- created_at = Transaktionsbeginn: zeitlich überlappende Läufe können sehr selten eine gezeigte Nummer verschieben
         from (select bb.*, row_number() over (order by bb.created_at, bb.id)::int as seq from billing_batches bb where bb.organization_id = ${org}) b
         where b.created_at >= ${fromTs} and b.created_at < ${toTs}
         order by b.created_at`)

@@ -281,6 +281,13 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"], [third, "Lauf 3"]]);
     });
 
+    it("Runde 4: Absetzung an Neuabrechnung eines Altlaufs ohne Heilmittelkosten bleibt Minderung (gleiche Bedingung wie „ersetzt“)", async (ctx) => {
+      const w = await rebilledWorld(ctx, { oldRemedy: null, deduction: { cents: 3555, status: "accepted", outcome: null } });
+      const s = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "monat" }, today));
+      expect(s.batches.replaced.count).toBe(0);
+      expect(s.deductionSummary).toMatchObject({ reductionCents: 3555, reductionCount: 1, replacedCents: 0, replacedCount: 0 });
+    });
+
     it("Runde 3: Belegliste – Hinweis „Neuabrechnung noch nicht übergeben“, solange der Lauf der Neuabrechnung nicht exportiert ist", async (ctx) => {
       const w = await rebilledWorld(ctx);
       const note = async () => stats.batchCorrectionNote((await stats.belegliste(w.auth, wide())).batches.find((x) => x.id === w.neu)!);
