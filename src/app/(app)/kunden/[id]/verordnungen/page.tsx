@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
-import { FileImage, FileSignature, Plus } from "lucide-react";
+import { FileImage, FileSignature, FileText, Plus } from "lucide-react";
 import { withOrg } from "@/db";
 import { services } from "@/db/schema";
 import { Badge, Card, CardTitle, Empty, FormSuccess, LinkButton, pageTitleBox, pageTitleCls, BackLink } from "@/components/ui";
@@ -19,6 +19,9 @@ import { ExemptionsCard } from "./exemptions-card";
 import { CopaymentLegacyReset, CopaymentReceiptForm, CopaymentRefundForm } from "./copayment-form";
 import { PrescriptionForm, type PrescriptionInitial } from "./prescription-form";
 import { StatusControls } from "./status-controls";
+import { FollowUpRequestForm } from "./follow-up-form";
+import { followUpExpectedAction } from "./actions";
+import { downloadAllowed } from "@/lib/auth/access";
 
 export const metadata = { title: "Verordnungen" };
 
@@ -34,6 +37,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
   const canCash = auth.can("invoices.write");
   const canSeeInvoices = auth.can("invoices.read");
   const external = canCash ? await externalRegisterEnabled(auth) : false;
+  const pdfAllowed = downloadAllowed(auth, "gkv_document");
   const editId = typeof sp.bearbeiten === "string" ? sp.bearbeiten : null;
   const showForm = canWrite && (sp.neu === "1" || !!editId);
   const catalog = showForm
@@ -111,6 +115,14 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
             {data.patient.insuranceType === "gkv" ? `GKV${data.patient.insurerName ? ` · ${data.patient.insurerName}` : ""}${data.patient.insurerIk ? ` · IK ${data.patient.insurerIk}` : ""}${data.patient.insuranceNumber ? ` · Vers.-Nr. ${data.patient.insuranceNumber}` : " · Versichertennummer fehlt"}${data.patient.insuredStatus ? ` · Status ${data.patient.insuredStatus} (${INSURED_STATUS[data.patient.insuredStatus as keyof typeof INSURED_STATUS] ?? "?"})` : ""}` : "Hinweis: Patient ist nicht als GKV-versichert hinterlegt."}
           </p>
           {data.patient.insuranceType === "gkv" && kvnrProblem(data.patient.insuranceNumber) ? <p className="text-sm font-medium text-warn-soft-text">{kvnrProblem(data.patient.insuranceNumber)}</p> : null}
+          {canWrite ? (
+            <form action={followUpExpectedAction} className="mt-1 text-sm">
+              <input type="hidden" name="patientId" value={id} />
+              <input type="hidden" name="on" value={data.patient.followUpExpected ? "0" : "1"} />
+              <span className="text-muted">{data.patient.followUpExpected ? "Dauerpatient:in – Folgeverordnung wird erwartet. " : ""}</span>
+              <button type="submit" className="font-semibold text-primary">{data.patient.followUpExpected ? "Markierung „Dauerpatient:in“ entfernen" : "als Dauerpatient:in markieren (Folgeverordnung erwarten)"}</button>
+            </form>
+          ) : data.patient.followUpExpected ? <p className="text-sm text-muted">Dauerpatient:in – Folgeverordnung wird erwartet.</p> : null}
         </div>
         {canWrite && !showForm ? <LinkButton href={`/kunden/${id}/verordnungen?neu=1`}><Plus size={18} aria-hidden /> Neue Verordnung</LinkButton> : null}
       </header>
@@ -226,6 +238,14 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   {vo.signatures.total ? (
                     <Link href={`/kunden/${id}/verordnungen/${vo.id}/nachweis`} className="inline-flex items-center gap-1 font-semibold text-primary"><FileSignature size={16} aria-hidden /> Leistungsnachweis</Link>
                   ) : null}
+                  {vo.therapyReport ? (
+                    <Link href={`/kunden/${id}/verordnungen/${vo.id}/therapiebericht`} className="inline-flex items-center gap-1 font-semibold text-primary"><FileText size={16} aria-hidden /> Therapiebericht vom {dateDe(vo.therapyReport.reportDate)}</Link>
+                  ) : vo.therapyReportOrdered || vo.therapyReportRequested ? (
+                    <>
+                      <Badge tone="warn">Therapiebericht fehlt</Badge>
+                      {canWrite ? <Link href={`/kunden/${id}/verordnungen/${vo.id}/therapiebericht`} className="font-semibold text-primary">Therapiebericht erstellen</Link> : null}
+                    </>
+                  ) : null}
                   {vo.scanMediaId && auth.can("medical.read") ? (
                     <a href={`/api/media/${vo.scanMediaId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-primary"><FileImage size={16} aria-hidden /> Foto der Verordnung</a>
                   ) : null}
@@ -245,6 +265,19 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm font-medium text-danger-soft-text">
                     Frist überschritten{vo.expiredReason === "start_missed" ? " – Behandlungsbeginn verpasst" : vo.expiredReason === "interrupted" ? " – mehr als 12 Wochen Unterbrechung" : ""}. Die Verordnung bleibt zur Nachvollziehbarkeit gespeichert.
                   </p>
+                ) : null}
+                {vo.followUp ? (
+                  <div className="mt-3 flex flex-col gap-2 rounded-lg bg-info-soft px-3 py-2 text-sm text-info-soft-text">
+                    <p className="font-medium">
+                      {vo.followUp.hint}
+                      {vo.followUp.requestedOn ? ` · angefordert am ${dateDe(vo.followUp.requestedOn)}` : ""}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {pdfAllowed ? <a href={`/api/verordnungen/${vo.id}/folgeverordnung`} target="_blank" rel="noreferrer" className="font-semibold text-primary">Vorlage „Anforderung Folgeverordnung“ (PDF)</a> : null}
+                      {pdfAllowed ? <a href={`/api/verordnungen/${vo.id}/folgeverordnung?format=text`} className="font-semibold text-primary">als Text</a> : null}
+                      {canWrite ? <FollowUpRequestForm prescriptionId={vo.id} patientId={id} /> : null}
+                    </div>
+                  </div>
                 ) : null}
                 {vo.priceSnapshot ? <PriceSnapshotLine snap={vo.priceSnapshot as unknown as PriceSnapshot} /> : null}
                 {ev.messages.length ? (

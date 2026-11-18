@@ -25,6 +25,7 @@ export function StatusControls({ id, patientId, status, unitsUsed, units }: { id
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="patientId" value={patientId} />
       <FormError message={state?.error} />
+      {state?.warning ? <p role="status" className="rounded-lg bg-warn-soft px-3 py-2 text-xs font-medium text-warn-soft-text">{state.warning}</p> : null}
       {reopen ? (
         <div className="flex flex-wrap items-end gap-2">
           <Input name="interruptionNote" placeholder="Begründung (z. B. Behandlung hat am … begonnen, Doku nachgetragen)" className="min-w-64 flex-1" required minLength={5} maxLength={500} aria-label="Begründung der Wiederaufnahme" />

@@ -147,6 +147,27 @@ const CASES: Case[] = [
     target: "prescriptions",
     insert: (w, ref) => ["insert into invoices (organization_id, patient_id, kind, prescription_id, status) values ($1,$2,'copayment',$3,'draft')", [w.org, w.patient, ref]],
   },
+  // Therapiebericht und Vermerk „Folgeverordnung angefordert“ (GKV Paket B Teil 2)
+  ...(["prescription_id", "patient_id"] as const).flatMap((col) => [
+    {
+      table: "therapy_reports",
+      col,
+      target: col === "prescription_id" ? "prescriptions" : "patients",
+      insert: (w: World, ref: string): [string, unknown[]] => [
+        "insert into therapy_reports (organization_id, prescription_id, patient_id, report_date, findings, created_by) values ($1,$2,$3,'2026-01-20','Befund',$4)",
+        [w.org, col === "prescription_id" ? ref : w.prescription, col === "patient_id" ? ref : w.patient, w.user],
+      ],
+    },
+    {
+      table: "follow_up_requests",
+      col,
+      target: col === "prescription_id" ? "prescriptions" : "patients",
+      insert: (w: World, ref: string): [string, unknown[]] => [
+        "insert into follow_up_requests (organization_id, prescription_id, patient_id, requested_on, created_by) values ($1,$2,$3,'2026-01-20',$4)",
+        [w.org, col === "prescription_id" ? ref : w.prescription, col === "patient_id" ? ref : w.patient, w.user],
+      ],
+    },
+  ]),
   // Unterschrift je Behandlung (GKV Paket B)
   ...(["record_id", "patient_id", "prescription_id"] as const).map((col) => ({
     table: "treatment_signatures",

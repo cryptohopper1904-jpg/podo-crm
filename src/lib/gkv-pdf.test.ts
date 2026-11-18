@@ -20,3 +20,23 @@ describe("Leistungsnachweis-PDF", () => {
     expect(doc.getTitle()).toBe("Leistungsnachweis Verordnung vom 02.11.2026");
   });
 });
+
+describe("Therapiebericht- und Anforderungs-PDF", () => {
+  it("Therapiebericht mit langen Abschnitten → gültiges PDF, ggf. mehrseitig", async () => {
+    const { renderTherapyReportPdf } = await import("./gkv-pdf");
+    const bytes = await renderTherapyReportPdf({
+      organization: org,
+      patient,
+      prescription: vo,
+      report: { reportDate: "2026-11-15", findings: "Unguis incarnatus D1 re. ".repeat(80), course: "gut", result: null, recommendation: "Fortsetzung", notes: null, author: "Anna Test" },
+      treatmentDates: ["2026-11-02", "2026-11-09"],
+    });
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getTitle()).toBe("Therapiebericht Erika Musterfrau – Verordnung vom 02.11.2026");
+  });
+  it("Anforderung Folgeverordnung", async () => {
+    const { renderFollowUpPdf } = await import("./gkv-pdf");
+    const bytes = await renderFollowUpPdf({ organization: org, prescription: vo, letter: { subject: "Anforderung einer Folgeverordnung (Podologie) – Erika Musterfrau", paragraphs: ["Sehr geehrte/r Dr. Beispiel,", "Text"] }, date: "2026-11-18" });
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBe(1);
+  });
+});

@@ -40,6 +40,8 @@ import {
 import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
 import { collectedCents, copaymentDue, copaymentReceiptsFor, legacyCopayment, type CopaymentReceiptRow } from "./copayments";
 import { missingSignatureCounts, signatureRequired } from "./signatures";
+import { reportOrdered, reportsFor, therapyReportDate } from "./therapy-reports";
+import { followUpForPatient } from "./follow-ups";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
@@ -238,6 +240,8 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
     const ids = rows.map((r) => r.id);
     const signatures = await missingSignatureCounts(tx, org, ids);
     const receipts = await copaymentReceiptsFor(tx, org, ids);
+    const reports = await reportsFor(tx, org, ids);
+    const followUps = await followUpForPatient(tx, org, patientId);
     return {
       patient: p,
       expired,
@@ -256,6 +260,11 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (legacyCopayment(r)?.cents ?? 0),
         /** erwartete und offene Zuzahlung – dieselbe Berechnung wie beim Quittieren (Review R3-2) */
         copaymentDue: copaymentDue(r, p, usage.get(r.id) ?? [], receipts.get(r.id)),
+        /** Therapiebericht (Paket B Teil 2): vorhanden bzw. per 78530 verordnet/angefordert */
+        therapyReport: reports.get(r.id) ? { id: reports.get(r.id)!.id, reportDate: reports.get(r.id)!.reportDate } : null,
+        therapyReportOrdered: reportOrdered(r.positions),
+        /** Hinweis „Folgeverordnung anfordern“ (nur neueste Verordnung) */
+        followUp: followUps.get(r.id) ?? null,
       })),
     };
   });
@@ -491,7 +500,7 @@ export async function savePrescription(
 export async function changePrescriptionStatus(
   auth: AuthContext,
   input: { id: string; patientId: string; to: PrescriptionStatus; interruptionNote?: string | null },
-): Promise<{ ok: true } | { error: string }> {
+): Promise<{ ok: true; warning?: string } | { error: string }> {
   assertCan(auth, "medical.write");
   const blocked = gkvGuard(auth.organization, "verordnungen");
   if (blocked) return blocked;
@@ -510,6 +519,7 @@ export async function changePrescriptionStatus(
     if (!t.ok) return { error: t.reason };
     const extra: Partial<typeof prescriptions.$inferInsert> = reopen ? {} : { interruptionNote: note ?? null };
     let auditMeta: Record<string, unknown> = {};
+    let warning: string | null = null;
     if (input.to === "billing_ready") {
       // Pflichtangaben (Anlage 3): Korrekturen müssen vor Einreichung zur Abrechnung erfolgt sein
       const findings = findingsFor(vo, await practiceIk(tx, org));
@@ -527,22 +537,26 @@ export async function changePrescriptionStatus(
       // vorzeitig beendet = Abbruchvermerk UND weniger Einheiten erbracht als verordnet → 78610 nur einmal je Tag
       // (Runde 2; Runde 3 H-4: ein alter Vermerk nach Wiederaufnahme und vollständiger Behandlung zählt nicht)
       const endedEarly = !!note && used < vo.units;
-      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly });
+      // Therapiebericht (78530) zählt mit dem Berichtsdatum (Paket B Teil 2)
+      const reportDate = await therapyReportDate(tx, org, vo.id);
+      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly, therapyReportDate: reportDate });
       // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
       if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
       // bisherigen Snapshot nachvollziehbar halten, wenn neu berechnet wird (billing_ready → completed → billing_ready, S1)
       auditMeta = { snapshot: { remedyCents: snap.remedyCents, copaymentCents: snap.copaymentCents, computedOn: snap.computedOn }, ...(vo.priceSnapshot ? { previousSnapshot: vo.priceSnapshot } : {}) };
+      // 78530 verordnet, aber kein Bericht → wird nicht abgerechnet; Hinweis statt Sperre (Review R2-23)
+      if (!reportDate && reportOrdered(vo.positions)) warning = "Therapiebericht fehlt – Position 78530 wird nicht abgerechnet. Bericht erstellen und „abrechnungsreif“ erneut setzen, falls er angefordert war.";
     }
     if (vo.status === "billing_ready" && input.to === "completed" && vo.priceSnapshot) auditMeta = { previousSnapshot: vo.priceSnapshot };
     if (input.to === "expired") extra.expiredReason = vo.expiredReason ?? "manual";
     if (reopen) Object.assign(extra, { expiredReason: null, reopenedAt: today, reopenNote: note });
     await tx.update(prescriptions).set({ status: input.to, ...extra }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, vo.id)));
-    return { ok: true as const, from: vo.status, meta: reopen ? { reopen: true, note, expiredReason: vo.expiredReason } : auditMeta };
+    return { ok: true as const, from: vo.status, warning, meta: reopen ? { reopen: true, note, expiredReason: vo.expiredReason } : auditMeta };
   });
   if ("error" in result) return { error: result.error ?? "Fehler" };
   await audit({ organizationId: org, userId: auth.user.id, action: "prescription.status", entity: "prescription", entityId: input.id, meta: { from: result.from, to: input.to, ...result.meta } });
-  return { ok: true };
+  return result.warning ? { ok: true, warning: result.warning } : { ok: true };
 }
 
 export const COPAYMENT_METHODS = { cash: "bar", card: "Karte", transfer: "Überweisung", other: "sonstig" } as const;

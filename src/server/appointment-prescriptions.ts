@@ -1,11 +1,12 @@
 import "server-only";
-import { and, eq, inArray, isNull, notExists } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, max, ne, notExists } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { appointments, prescriptions, treatmentRecords } from "@/db/schema";
+import { appointments, patients, prescriptions, treatmentRecords } from "@/db/schema";
 import type { AuthContext } from "@/lib/auth/session";
 import { feature } from "@/lib/features";
 import { berlinDateIso } from "@/lib/format";
 import { planningWarnings } from "@/lib/rules/prescription";
+import { afterPrescriptionWarning } from "@/lib/rules/follow-up";
 import { assertCan } from "./authz";
 import { bookablePrescriptions, type BookablePrescription } from "./prescriptions";
 
@@ -70,13 +71,43 @@ export async function planningForPatient(
     const options = vos.map((v) => ({ id: v.id, label: v.label, remaining: v.remaining, units: v.units }));
     // Vorschlag: ausdrücklich gewählte, sonst die älteste laufende Verordnung (Vertrag § 7 Abs. 5: erst die frühere zu Ende).
     // Ausdrücklich gewählte, die nicht (mehr) buchbar ist → keine stille Ersatzauswahl, sondern Hinweis (PR #111 Nice).
+    // Reihenfolge (Review R2-19): erst die ausdrücklich gewählte, nicht mehr buchbare Verordnung melden …
     if (input.prescriptionId && !vos.some((v) => v.id === input.prescriptionId)) {
       return { options, selectedId: null, warnings: ["Die gewählte Verordnung ist nicht mehr buchbar (abgeschlossen, Frist überschritten oder keine Einheit frei) – bitte eine andere wählen oder ohne Verordnung planen."] };
     }
+    // … dann: keine laufende Verordnung, Termin nach dem Ende der letzten (GKV-)Verordnung → Hinweis Folgeverordnung
+    if (!vos.length) {
+      const w = await afterEndWarning(tx, org, input.patientId, input.dates, medical);
+      return { options, selectedId: null, warnings: w ? [w] : [] };
+    }
     const selectedId = input.prescriptionId === "" ? null : (input.prescriptionId ?? vos[0]?.id ?? null);
     const vo = vos.find((v) => v.id === selectedId);
-    return { options, selectedId, warnings: vo ? warningsFor(vo, planned.get(vo.id) ?? [], input.dates) : [] };
+    const warnings = vo ? warningsFor(vo, planned.get(vo.id) ?? [], input.dates) : [];
+    // Einheiten reichen nicht für alle Termine → an die Folgeverordnung erinnern
+    if (vo && input.dates.length > vo.remaining - (planned.get(vo.id)?.length ?? 0)) warnings.push("Für Termine über die Restmenge hinaus bitte rechtzeitig eine Folgeverordnung anfordern.");
+    return { options, selectedId, warnings };
   });
+}
+
+/** Letzte Verordnung der Person beendet und neue Termine danach → Hinweis (nur GKV-Versicherte) */
+async function afterEndWarning(tx: Tx, org: string, patientId: string, dates: string[], medical: boolean): Promise<string | null> {
+  if (!dates.length) return null;
+  const [p] = await tx.select({ type: patients.insuranceType }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
+  if (p?.type !== "gkv") return null;
+  const [last] = await tx
+    .select({ id: prescriptions.id, issuedAt: prescriptions.issuedAt, status: prescriptions.status })
+    .from(prescriptions)
+    .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.patientId, patientId), ne(prescriptions.status, "cancelled")))
+    .orderBy(desc(prescriptions.issuedAt), desc(prescriptions.createdAt))
+    .limit(1);
+  if (!last) return null;
+  const [rec] = await tx
+    .select({ at: max(treatmentRecords.treatedAt) })
+    .from(treatmentRecords)
+    .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, last.id)));
+  const w = afterPrescriptionWarning({ lastPrescription: { issuedAt: last.issuedAt, status: last.status, lastDate: rec?.at ? berlinDateIso(rec.at) : null }, newDates: dates });
+  // ohne medizinisches Leserecht (Empfang) keine Verordnungs-/Behandlungsdaten im Hinweis (Review R2-22)
+  return w && !medical ? "Keine laufende Verordnung – Termin nach dem Ende der letzten Verordnung. Bitte Folgeverordnung anfordern (sonst Behandlung als Selbstzahler)." : w;
 }
 
 /**

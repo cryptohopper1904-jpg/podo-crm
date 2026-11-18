@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { withOrg, type Tx } from "@/db";
-import { organizations, patients, prescriptions } from "@/db/schema";
+import { organizations, patients, prescriptions, therapyReports } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { gkvGuard } from "@/lib/features";
@@ -77,11 +77,16 @@ export async function loadPrescriptionWithPatient(tx: Tx, org: string, prescript
  * Positionen je Behandlungstag: aus dem Preis-Snapshot (Abrechnungsreife), sonst nach derselben Zuordnung berechnet
  * (priceSnapshot, zeitliche Reihenfolge) – so passt der Leistungsnachweis zur Abrechnung.
  */
-export function positionsByDay(vo: Pick<typeof prescriptions.$inferSelect, "positions" | "priceSnapshot" | "insurerIk" | "interruptionNote" | "units">, dates: string[], birthDate: string | null): Map<string, { text: string; units: number }> {
+export function positionsByDay(
+  vo: Pick<typeof prescriptions.$inferSelect, "positions" | "priceSnapshot" | "insurerIk" | "interruptionNote" | "units">,
+  dates: string[],
+  birthDate: string | null,
+  therapyReportDate: string | null = null,
+): Map<string, { text: string; units: number }> {
   const stored = vo.priceSnapshot as PriceSnapshot | null;
   const snap = stored?.lines?.length
     ? stored
-    : priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate, exemptions: [], computedOn: berlinDateIso(), insurerIk: vo.insurerIk, endedEarly: !!vo.interruptionNote && dates.length < vo.units });
+    : priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate, exemptions: [], computedOn: berlinDateIso(), insurerIk: vo.insurerIk, endedEarly: !!vo.interruptionNote && dates.length < vo.units, therapyReportDate });
   const out = new Map<string, { text: string; units: number }>();
   for (const l of snap.lines) {
     const cur = out.get(l.date) ?? { text: "", units: 0 };
@@ -104,10 +109,11 @@ export async function proofPdf(auth: AuthContext, prescriptionId: string): Promi
     if (!o) return null;
     const rows = (await proofRows(tx, org, [prescriptionId])).get(prescriptionId) ?? [];
     const images = await signatureImages(tx, org, rows.flatMap((r) => (r.signature?.kind === "device" ? [r.signature.id] : [])));
-    return { ...row, o, rows, images };
+    const [report] = await tx.select({ reportDate: therapyReports.reportDate }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.prescriptionId, prescriptionId)));
+    return { ...row, o, rows, images, reportDate: report?.reportDate ?? null };
   });
   if (!data) return null;
-  const byDay = positionsByDay(data.vo, [...new Set(data.rows.map((r) => r.date))], data.p.birthDate);
+  const byDay = positionsByDay(data.vo, [...new Set(data.rows.map((r) => r.date))], data.p.birthDate, data.reportDate);
   // mehrere Einträge am selben Tag: Positionen des Tages nur in der ersten Zeile (Snapshot je Tag eindeutig)
   const seen = new Set<string>();
   const pdfRows: ProofPdfRow[] = data.rows.map((r) => {
