@@ -87,8 +87,11 @@ export async function insertSignature(
     .where(and(eq(treatmentRecords.organizationId, ctx.org), eq(treatmentRecords.id, ref.recordId)));
   if (!rec || rec.patientId !== ref.patientId) throw new SignatureError("Behandlungseintrag nicht gefunden.");
   if (!rec.prescriptionId) throw new SignatureError("Eine Unterschrift für den Leistungsnachweis gibt es nur bei Behandlungen auf Verordnung.");
+  // Sperrreihenfolge wie markPaperSignatures (erst Verordnung, dann Unterschrift): sonst Deadlock zwischen dem
+  // Fremdschlüssel-Check (FOR KEY SHARE) und dem eindeutigen Index (Review R3-6)
+  await tx.select({ id: prescriptions.id }).from(prescriptions).where(and(eq(prescriptions.organizationId, ctx.org), eq(prescriptions.id, rec.prescriptionId))).for("key share");
   const [dup] = await tx.select({ id: treatmentSignatures.id }).from(treatmentSignatures).where(and(eq(treatmentSignatures.organizationId, ctx.org), eq(treatmentSignatures.recordId, ref.recordId)));
-  if (dup) throw new SignatureError("Für diese Behandlung ist bereits eine Unterschrift erfasst – sie ist unveränderbar.");
+  if (dup) throw new SignatureError(DUPLICATE);
   let file: { storageKey: string; sha256: string; sizeBytes: number } | null = null;
   if (sig.kind === "device") {
     file = await storeEncrypted(ctx.org, sig.bytes);
@@ -136,22 +139,26 @@ export async function addSignature(auth: AuthContext, input: { recordId: string;
   if ("error" in prepared) return prepared;
   const org = auth.organization.id;
   const pending: PendingSignatureFiles = [];
+  let sig: { id: string; prescriptionId: string };
   try {
-    const sig = await withOrg(org, async (tx) => {
+    sig = await withOrg(org, async (tx) => {
       // gleichzeitige Nachträge zur selben Behandlung serialisieren (eindeutiger Index bleibt die letzte Sperre)
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"sig:" + input.recordId}))`);
       return insertSignature(tx, { org, userId: auth.user.id }, input, prepared, pending);
     });
-    await auditSignature(org, auth.user.id, sig, input.recordId, prepared.kind, prepared.signerRole, true);
-    return { ok: true };
   } catch (e) {
+    // nur nach einem Rollback aufräumen – nach dem Commit gehört die Datei zur (append-only) Zeile (Review R3-1)
     await cleanupSignatureFiles(pending);
     if (e instanceof SignatureError) return { error: e.message };
-    const code = (e as { code?: string; cause?: { code?: string } })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
-    if (code === "23505") return { error: "Für diese Behandlung ist bereits eine Unterschrift erfasst – sie ist unveränderbar." };
+    if (pgCode(e) === "23505") return { error: DUPLICATE };
     throw e;
   }
+  await auditSignature(org, auth.user.id, sig, input.recordId, prepared.kind, prepared.signerRole, true);
+  return { ok: true };
 }
+
+const DUPLICATE = "Für diese Behandlung ist bereits eine Unterschrift erfasst – sie ist unveränderbar.";
+const pgCode = (e: unknown) => (e as { code?: string })?.code ?? (e as { cause?: { code?: string } })?.cause?.code;
 
 export type SignatureRow = {
   id: string;
@@ -172,10 +179,15 @@ export const paperBulkInput = z.object({
   until: z.iso.date({ message: "Bitte ein gültiges Datum angeben." }),
 });
 
+/** Sammel-Vermerk ist nur für Verordnungen ohne Pflicht zur Unterschrift je Behandlung möglich (Review R3-6) */
+export const PAPER_BULK_NOT_ALLOWED =
+  "Der Sammel-Vermerk „Unterschriften liegen auf Papier vor“ ist nur für Verordnungen aus der Zeit vor der Unterschrift auf dem Gerät (Übernahmen/Altbestand) möglich. Bei dieser Verordnung bitte je Behandlung auf dem Gerät unterschreiben lassen oder einzeln „Unterschrift auf der Papier-Verordnung“ vermerken.";
+
 /**
  * Sammel-Vermerk „Unterschriften liegen auf der Papier-Verordnung vor“ für alle noch offenen Behandlungen einer
  * Verordnung bis einschließlich `until` – für Bestands-Verordnungen, deren Behandlungen vor Einführung der
- * Unterschrift auf dem Gerät erfasst wurden (Review R2-13). Bewusster Schritt, protokolliert.
+ * Unterschrift auf dem Gerät erfasst wurden (Review R2-13). Nur, wenn für die Verordnung keine Unterschrift je
+ * Behandlung Pflicht ist (!signatureRequired, Review R3-6). Bewusster Schritt, protokolliert.
  */
 export async function markPaperSignatures(auth: AuthContext, raw: z.input<typeof paperBulkInput>): Promise<{ count: number } | { error: string }> {
   assertCan(auth, "medical.write");
@@ -187,15 +199,26 @@ export async function markPaperSignatures(auth: AuthContext, raw: z.input<typeof
   if (d.until > berlinDateIso()) return { error: "Das Datum darf nicht in der Zukunft liegen." };
   const org = auth.organization.id;
   const res = await withOrg(org, async (tx) => {
-    const [vo] = await tx.select({ id: prescriptions.id }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.prescriptionId), eq(prescriptions.patientId, d.patientId))).for("update");
+    const [vo] = await tx
+      .select({ id: prescriptions.id, rulesVersion: prescriptions.rulesVersion })
+      .from(prescriptions)
+      .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.prescriptionId), eq(prescriptions.patientId, d.patientId)))
+      .for("update");
     if (!vo) return null;
+    if (signatureRequired(vo.rulesVersion)) return "required" as const;
     const rows = (await proofRows(tx, org, [vo.id])).get(vo.id) ?? [];
     const open = rows.filter((r) => !r.signature && r.date <= d.until);
     if (!open.length) return [];
-    await tx.insert(treatmentSignatures).values(open.map((r) => ({ organizationId: org, recordId: r.recordId, patientId: d.patientId, prescriptionId: vo.id, kind: "paper" as const, createdBy: auth.user.id })));
-    return open.map((r) => r.recordId);
+    // gleichzeitig erfasste Unterschrift zur selben Behandlung gewinnt (kein 23505 → 500)
+    const inserted = await tx
+      .insert(treatmentSignatures)
+      .values(open.map((r) => ({ organizationId: org, recordId: r.recordId, patientId: d.patientId, prescriptionId: vo.id, kind: "paper" as const, createdBy: auth.user.id })))
+      .onConflictDoNothing({ target: treatmentSignatures.recordId })
+      .returning({ recordId: treatmentSignatures.recordId });
+    return inserted.map((r) => r.recordId);
   });
   if (!res) return { error: "Verordnung nicht gefunden." };
+  if (res === "required") return { error: PAPER_BULK_NOT_ALLOWED };
   if (res.length) await audit({ organizationId: org, userId: auth.user.id, action: "record.signature_paper_bulk", entity: "prescription", entityId: d.prescriptionId, meta: { until: d.until, count: res.length, recordIds: res } });
   return { count: res.length };
 }
@@ -249,9 +272,10 @@ export function signatureRequired(rulesVersion: string | null | undefined): bool
   return hasAnlage3Fields(rulesVersion);
 }
 
-/** Bild einer Unterschrift (PNG) für Ansicht/PDF – nur für Rollen mit medical.read */
+/** Bild einer Unterschrift (PNG) für Ansicht/PDF – nur für Rollen mit medical.read, nicht bei „nur Privat“ (R3-10) */
 export async function signatureImage(auth: AuthContext, signatureId: string): Promise<Buffer | null> {
   assertCan(auth, "medical.read");
+  if (gkvGuard(auth.organization, "verordnungen")) return null;
   const org = auth.organization.id;
   const [row] = await withOrg(org, (tx) =>
     tx

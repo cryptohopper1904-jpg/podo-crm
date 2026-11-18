@@ -9,6 +9,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 const session = vi.hoisted(() => ({ auth: null as unknown }));
 vi.mock("@/lib/auth/session", () => ({ requireAuth: async () => session.auth }));
+/** Audit gezielt scheitern lassen (Review R3-1: Datei darf nach Commit nicht weggeräumt werden) */
+const auditCtl = vi.hoisted(() => ({ fail: false }));
+vi.mock("@/lib/audit", async (orig) => {
+  const m = await orig<typeof import("@/lib/audit")>();
+  return { ...m, audit: (...a: Parameters<typeof m.audit>) => (auditCtl.fail ? Promise.reject(new Error("Audit nicht erreichbar (Test)")) : m.audit(...a)) };
+});
 import { berlinToUtc } from "@/lib/format";
 import { addDaysIso } from "@/lib/calendar-grid";
 import { RULES_VERSION } from "@/lib/rules/prescription";
@@ -260,7 +266,9 @@ const png = () => testPngDataUrl();
   it("B2: Altvermerk nur Anzeige – sperrt neue Quittung (bis „Vermerk war falsch“); Erstattung als negative Zahlung; Export-Datum", async () => {
     const w = await world();
     const id = await w.vo(1);
-    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1347, copayment_paid_method = 'cash' where id = $1", [id]);
+    // Altvermerk über die volle Zuzahlung (Teilbetrag: Rest quittierbar, siehe R3-3)
+    const legacyCents = (await import("@/lib/rules/podologie-verguetung")).priceFor("78020", today)!.copayCents! + 1000;
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = $2, copayment_paid_method = 'cash' where id = $1", [id, legacyCents]);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
     // Altvermerk ist keine Kassenbuchung
     expect((await w.q("select id from payments")).length).toBe(0);
@@ -334,10 +342,12 @@ const png = () => testPngDataUrl();
   it("R2-5/11: Altvermerk zählt als erhalten und blockiert; Zurücksetzen nur „Vermerk war falsch“ mit Begründung", async () => {
     const w = await world();
     const id = await w.vo(1);
-    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1347, copayment_paid_method = 'cash' where id = $1", [id]);
+    // Altvermerk über die volle Zuzahlung (Teilbetrag: Rest quittierbar, siehe R3-3)
+    const legacyCents = (await import("@/lib/rules/podologie-verguetung")).priceFor("78020", today)!.copayCents! + 1000;
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = $2, copayment_paid_method = 'cash' where id = $1", [id, legacyCents]);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
     const list = await presc.listPatientPrescriptions(w.auth, w.patient);
-    expect(list!.prescriptions.find((x) => x.id === id)!.copaymentCollectedCents).toBe(1347);
+    expect(list!.prescriptions.find((x) => x.id === id)!.copaymentCollectedCents).toBe(legacyCents);
     expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "" })).toEqual({ error: expect.stringMatching(/Begründung/) });
     expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk versehentlich gesetzt, nichts erhalten" })).toEqual({});
   });
@@ -353,6 +363,8 @@ const png = () => testPngDataUrl();
   it("R2-13/17: Sammel-Vermerk „Unterschriften liegen auf Papier vor“ bis Datum; Nachtrag nicht am Behandlungstag wird markiert", async () => {
     const w = await world();
     const id = await w.vo(3);
+    // Sammel-Vermerk nur für Altbestand/Übernahmen (Review R3-6)
+    await w.q("update prescriptions set rules_version = 'import-tinana' where id = $1", [id]);
     const day = (d: string) => w.q<{ id: string }>("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash, prev_hash) values ($1,$2,$3,$4,$5,$6,$7) returning id", [w.org, w.patient, w.user, berlinToUtc(d, "10:00"), id, `h-${Math.random()}`, `p-${Math.random()}`]);
     const r1 = (await day(addDaysIso(today, -20)))[0].id;
     await day(addDaysIso(today, -10));
@@ -375,5 +387,146 @@ const png = () => testPngDataUrl();
     const inv = await import("./invoices");
     await inv.cancelInvoice(w.auth, res.id, "Test ohne Erstattung").catch(() => undefined);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Erstattung/) });
+  });
+
+  // ───────────── Review-Runde 3 ─────────────
+
+  const due78020 = async () => (await import("@/lib/rules/podologie-verguetung")).priceFor("78020", today)!.copayCents! + 1000;
+
+  it("R3-1: Audit scheitert nach dem Commit → Unterschrift-Datei bleibt (DB-Zeile ist append-only)", async () => {
+    const { existsSync } = await import("node:fs");
+    const w = await world();
+    const id = await w.vo(2);
+    const rec = await w.treat(id);
+    auditCtl.fail = true;
+    try {
+      await expect(sigs.addSignature(w.auth, { recordId: rec.id, patientId: w.patient, signatureData: png(), signerName: "Erika Musterfrau", signerRole: "insured" })).rejects.toThrow(/Audit/);
+    } finally {
+      auditCtl.fail = false;
+    }
+    const [a] = await w.q<{ storage_key: string }>("select storage_key from treatment_signatures where record_id = $1", [rec.id]);
+    expect(existsSync(`${process.env.STORAGE_DIR}/${a.storage_key}`)).toBe(true);
+    // Behandlungseintrag mit Unterschrift (Besuchstag/createTreatmentRecord)
+    const prepared = sigs.prepareSignature({ signatureData: png(), signerName: "Erika Musterfrau", signerRole: "insured" });
+    auditCtl.fail = true;
+    try {
+      await expect(records.createTreatmentRecord(w.auth, { patientId: w.patient, prescriptionId: id, findings: "o. B.", servicesText: "Behandlung" }, {}, prepared as never)).rejects.toThrow(/Audit/);
+    } finally {
+      auditCtl.fail = false;
+    }
+    const rows = await w.q<{ storage_key: string }>("select s.storage_key from treatment_signatures s where s.prescription_id = $1 and s.record_id <> $2", [id, rec.id]);
+    expect(rows).toHaveLength(1);
+    expect(existsSync(`${process.env.STORAGE_DIR}/${rows[0].storage_key}`)).toBe(true);
+  });
+
+  it("R3-2: Akte liefert die offene Zuzahlung (Server-Berechnung); ohne Preis → manuelle Eingabe", async () => {
+    const w = await world();
+    const priced = await w.vo(1);
+    const manual = await w.vo(1, [{ label: "Behandlung ohne Positionsnummer", units: 1 } as never]);
+    const due = await due78020();
+    let list = await presc.listPatientPrescriptions(w.auth, w.patient);
+    expect(list!.prescriptions.find((x) => x.id === priced)!.copaymentDue).toMatchObject({ manual: false, expectedCents: due, openCents: due });
+    expect(list!.prescriptions.find((x) => x.id === manual)!.copaymentDue).toMatchObject({ manual: true, expectedCents: null, openCents: null });
+    await copay.createCopaymentReceipt(w.auth, { prescriptionId: priced, patientId: w.patient, amountCents: 500, method: "cash" });
+    list = await presc.listPatientPrescriptions(w.auth, w.patient);
+    expect(list!.prescriptions.find((x) => x.id === priced)!.copaymentDue).toMatchObject({ openCents: due - 500 });
+  });
+
+  it("R3-3: Altvermerk mit Teilbetrag wird angerechnet – Restquittung möglich; voller Altvermerk sperrt", async () => {
+    const w = await world();
+    const due = await due78020();
+    const id = await w.vo(1);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 500, copayment_paid_method = 'cash' where id = $1", [id]);
+    const rest = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { amountCents: number };
+    expect(rest.amountCents).toBe(due - 500);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/bereits/) });
+    const list = await presc.listPatientPrescriptions(w.auth, w.patient);
+    expect(list!.prescriptions.find((x) => x.id === id)!.copaymentDue).toMatchObject({ openCents: 0 });
+    // Altvermerk über den vollen Betrag → gesperrt
+    const full = await w.vo(1);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = $2, copayment_paid_method = 'cash' where id = $1", [full, due]);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: full, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
+  });
+
+  it("R3-4: manueller Betrag – Befreiung/unter 18 wie berechnet; über 200 € nur mit Bestätigung", async () => {
+    const w = await world();
+    const noPrice = [{ label: "Behandlung ohne Positionsnummer", units: 1 } as never];
+    const id = await w.vo(1, noPrice);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 20001, method: "cash" })).toEqual({ error: expect.stringMatching(/200,00 €/) });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 15000, method: "cash" })).toHaveProperty("number");
+    // Summe mit bisherigen Quittungen zählt
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 6000, method: "cash" })).toEqual({ error: expect.stringMatching(/200,00 €/) });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 6000, method: "cash", confirmOverpay: true })).toHaveProperty("number");
+    // befreit (Bescheinigung gilt heute)
+    await w.q("update patients set copayment_exemptions = $2 where id = $1", [w.patient, JSON.stringify([{ id: "00000000-0000-4000-8000-000000000002", validFrom: addDaysIso(today, -30), validTo: addDaysIso(today, 300), insurerIk: "109911114" }])]);
+    const id2 = await w.vo(1, noPrice);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: 1000, method: "cash" })).toEqual({ error: expect.stringMatching(/befreit/) });
+    // unter 18
+    await w.q("update patients set copayment_exemptions = '[]', birth_date = $2 where id = $1", [w.patient, addDaysIso(today, -365 * 10)]);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: 1000, method: "cash" })).toEqual({ error: expect.stringMatching(/unter 18/) });
+  });
+
+  it("R3-6: Sammel-Vermerk Papier nur für Verordnungen ohne Pflicht zur Gerätunterschrift", async () => {
+    const w = await world();
+    const id = await w.vo(2);
+    await w.treat(id);
+    expect(await sigs.markPaperSignatures(w.auth, { prescriptionId: id, patientId: w.patient, until: today })).toEqual({ error: expect.stringMatching(/nur für Verordnungen/) });
+    expect((await w.q("select id from treatment_signatures where prescription_id = $1", [id])).length).toBe(0);
+  });
+
+  it("R3-6: Wettlauf Sammel-Vermerk ↔ Unterschrift derselben Behandlung → kein 500 (23505 abgefangen)", async () => {
+    const { Pool } = await import("pg");
+    const w = await world();
+    const id = await w.vo(2);
+    await w.q("update prescriptions set rules_version = 'import-tinana' where id = $1", [id]);
+    const rec = await w.treat(id);
+    const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@"), max: 1 });
+    try {
+      if (!(await owner.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) return;
+      const c = await owner.connect();
+      try {
+        // fremde Transaktion: Unterschrift zur selben Behandlung, noch nicht festgeschrieben (ohne Fremdschlüssel-Sperre)
+        await c.query("begin");
+        await c.query("set local session_replication_role = replica");
+        await c.query("insert into treatment_signatures (organization_id, record_id, patient_id, prescription_id, kind, created_by) values ($1,$2,$3,$4,'paper',$5)", [w.org, rec.id, w.patient, id, w.user]);
+        const bulk = sigs.markPaperSignatures(w.auth, { prescriptionId: id, patientId: w.patient, until: today });
+        await new Promise((r) => setTimeout(r, 400));
+        await c.query("commit");
+        expect(await bulk).toEqual({ count: 0 });
+      } finally {
+        await c.query("rollback").catch(() => undefined);
+        c.release();
+      }
+    } finally {
+      await owner.end();
+    }
+  });
+
+  it("R3-6: Unterschrift wartet auf die Sperre der Verordnung (Sammel-Vermerk) – kein Deadlock, verständliche Meldung", async () => {
+    const w = await world();
+    const id = await w.vo(2);
+    const rec = await w.treat(id);
+    const c = await fx.pool.connect();
+    try {
+      // wie markPaperSignatures: Verordnung gesperrt, danach Vermerk zur selben Behandlung
+      await c.query("begin");
+      await c.query("select set_config('app.org_id', $1, true)", [w.org]);
+      await c.query("select id from prescriptions where id = $1 for update", [id]);
+      const add = sigs.addSignature(w.auth, { recordId: rec.id, patientId: w.patient, signatureData: png(), signerName: "Erika Musterfrau", signerRole: "insured" });
+      await new Promise((r) => setTimeout(r, 400));
+      await c.query("insert into treatment_signatures (organization_id, record_id, patient_id, prescription_id, kind, created_by) values ($1,$2,$3,$4,'paper',$5)", [w.org, rec.id, w.patient, id, w.user]);
+      await c.query("commit");
+      expect(await add).toEqual({ error: expect.stringMatching(/bereits eine Unterschrift/) });
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      c.release();
+    }
+  });
+
+  it("R3-7: „Vermerk war falsch“ ohne Altvermerk → Meldung, kein Audit", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk war falsch, nichts erhalten" })).toEqual({ error: expect.stringMatching(/kein Vermerk vorhanden/) });
+    expect((await w.q("select id from audit_log where organization_id = $1 and action = 'prescription.copayment' and entity_id = $2", [w.org, id])).length).toBe(0);
   });
 });

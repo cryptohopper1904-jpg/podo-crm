@@ -38,7 +38,7 @@ import {
   type PriceSnapshot,
 } from "@/lib/rules/prescription";
 import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
-import { collectedCents, copaymentReceiptsFor, type CopaymentReceiptRow } from "./copayments";
+import { collectedCents, copaymentDue, copaymentReceiptsFor, legacyCopayment, type CopaymentReceiptRow } from "./copayments";
 import { missingSignatureCounts, signatureRequired } from "./signatures";
 import { reportOrdered, reportsFor, therapyReportDate } from "./therapy-reports";
 import { followUpForPatient } from "./follow-ups";
@@ -257,7 +257,9 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         /** Zuzahlungsquittungen (Paket B) und quittierte Summe */
         copaymentReceipts: receipts.get(r.id) ?? [],
         // Altvermerk (vor Paket B) zählt als erhalten (Review R2-5)
-        copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (r.copaymentPaidAt ? (r.copaymentPaidCents ?? r.copaymentCents ?? 0) : 0),
+        copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (legacyCopayment(r)?.cents ?? 0),
+        /** erwartete und offene Zuzahlung – dieselbe Berechnung wie beim Quittieren (Review R3-2) */
+        copaymentDue: copaymentDue(r, p, usage.get(r.id) ?? [], receipts.get(r.id)),
         /** Therapiebericht (Paket B Teil 2): vorhanden bzw. per 78530 verordnet/angefordert */
         therapyReport: reports.get(r.id) ? { id: reports.get(r.id)!.id, reportDate: reports.get(r.id)!.reportDate } : null,
         therapyReportOrdered: reportOrdered(r.positions),
@@ -586,6 +588,8 @@ export async function setCopaymentPaid(
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId)))
       .for("update");
     if (!vo) return null;
+    // kein Altvermerk → nichts zu entfernen, kein Audit (Review R3-7)
+    if (!vo.paidAt) return "none" as const;
     await tx
       .update(prescriptions)
       .set({ copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null })
@@ -593,8 +597,9 @@ export async function setCopaymentPaid(
     return vo;
   });
   if (!done) return { error: "Verordnung nicht gefunden." };
+  if (done === "none") return { error: "Für diese Verordnung ist kein Vermerk vorhanden – nichts zu entfernen." };
   // bisherigen Altvermerk nachvollziehbar halten (Betrag/Zahlungsart/Datum stehen danach nur noch im Protokoll)
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: false, wrongEntry: true, reason, legacy: done.paidAt ? { at: done.paidAt.toISOString(), cents: done.cents, method: done.method } : null } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: false, wrongEntry: true, reason, legacy: { at: done.paidAt!.toISOString(), cents: done.cents, method: done.method } } });
   return {};
 }
 
