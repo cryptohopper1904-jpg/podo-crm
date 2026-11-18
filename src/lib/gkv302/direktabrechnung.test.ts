@@ -316,3 +316,30 @@ describe("Review-Runde 2 Paket D", () => {
     expect(f.hinweise).toContain("TA1-Einzelprüfung nicht ausgeführt, weil die Praxisdaten unvollständig sind.");
   });
 });
+
+describe("GKV Paket C: Verordnungsart, Verordnungsbesonderheit und Genehmigung aus der Verordnung", () => {
+  it("bestätigte Angaben gehen in ZHE und SKZ (Art B2); ohne Genehmigung kein SKZ", () => {
+    const p = erzeugeTestpaket(
+      praxis(),
+      [vo({ verordnungsart: "04", verordnungsbesonderheit: "4", genehmigung: { kennzeichen: "G-2026/17", datum: "2026-09-01" } }), vo({}, { lastName: "Beispiel", firstName: "Max" })],
+      KOTR,
+      JETZT,
+      new Nummernkreis(leererZaehlerstand(), "T"),
+    );
+    const nutz = p.dateien.find((d) => d.name.endsWith("/TSOL0000"))!;
+    const segmente = zerlegeEdifact(ausLatin1(nutz.bytes));
+    const skz = segmente.filter((s) => s.kennung === "SKZ");
+    expect(skz).toHaveLength(1);
+    expect(skz[0].elemente.map((e) => e[0])).toEqual(["G-2026/17", "20260901", "B2"]);
+    const zhe = segmente.filter((s) => s.kennung === "ZHE").map((s) => s.elemente.map((e) => e[0]));
+    // Kennzeichen Verordnungsart und Verordnungsbesonderheit stehen hintereinander im ZHE (TA1 5.5.3.3)
+    const mitArt = zhe.find((z) => z.join("|").includes("04|4"));
+    expect(mitArt).toBeTruthy();
+    expect(zhe.some((z) => z.join("|").includes("03|"))).toBe(true);
+  });
+
+  it("unbekannte Verordnungsbesonderheit wird nicht übernommen (kein ungültiger Schlüssel in der Datei)", () => {
+    const f = pruefeFaelle(praxis(), [vo({ verordnungsbesonderheit: "3" })], KOTR, JETZT.datum).faelle[0];
+    expect(f.status).toBe("ok");
+  });
+});

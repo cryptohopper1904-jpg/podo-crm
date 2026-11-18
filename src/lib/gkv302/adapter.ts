@@ -114,6 +114,10 @@ export interface BefreiungszeitraumSnapshot {
 /** Angaben, die PodoHero heute nicht speichert, aber die TA1 verlangt */
 export interface ErgaenzendeVerordnungsdaten {
   verordnungsart?: Verordnungsart;
+  /** ZHE Kennzeichen Verordnungsbesonderheiten (Anlage 3 8.1.11) – an der Verordnung erfasst (GKV Paket C) */
+  verordnungsbesonderheit?: Verordnung["verordnungsbesonderheit"];
+  /** SKZ Genehmigung eines langfristigen Heilmittelbedarfs (Art B2, Anlage 3 8.1.17) – an der Verordnung erfasst */
+  genehmigung?: Verordnung["genehmigung"];
   leitsymptomatik?: Leitsymptomatik;
   leitsymptomatikText?: string;
   /**
@@ -511,6 +515,8 @@ export function bildeAbrechnungsfall(
     diagnosegruppe: vo.diagnosisGroup,
     // nie still „03“ (Review-Runde 2, Buchhaltung): ohne Angabe bleibt das Feld leer und ist fehlende Angabe
     verordnungsart: ergaenzung.verordnungsart,
+    ...(ergaenzung.verordnungsbesonderheit ? { verordnungsbesonderheit: ergaenzung.verordnungsbesonderheit } : {}),
+    ...(ergaenzung.genehmigung ? { genehmigung: ergaenzung.genehmigung } : {}),
     therapieberichtAngefordert: vo.therapyReportRequested,
     hausbesuch: vo.homeVisit,
     leitsymptomatik: ergaenzung.leitsymptomatik ?? { art: "heilmittelrichtlinie", a: false, b: false, c: false, patientenindividuell: false },

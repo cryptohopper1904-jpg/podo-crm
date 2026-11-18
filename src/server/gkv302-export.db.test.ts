@@ -3,8 +3,9 @@
  * Kostenträgerdatei hochladen/ersetzen/prüfen, Prüflauf, Testpaket mit Nummernkreis unter Zeilensperre, Mandantentrennung
  * und Rechte.
  *
- * PodoHero speichert das Kennzeichen Verordnungsart noch nicht (der Server liefert `null` → fehlende Angabe). Für den
- * Erfolgsweg ergänzt der Test es ausdrücklich über eine Hülle um `erzeugeTestpaket`/`pruefeFaelle` – nur hier im Test.
+ * Das Kennzeichen Verordnungsart steht seit GKV Paket C bestätigt an der Verordnung (`prescription_kind`); die meisten
+ * Fälle hier legen es nicht an (Bestand) und schalten es für den Erfolgsweg über eine Hülle um
+ * `erzeugeTestpaket`/`pruefeFaelle` ein – nur hier im Test. Der Paket-C-Fall prüft den Weg aus der Datenbank ohne Hülle.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -53,16 +54,30 @@ const PRAXIS_IK = "990010013";
       { date: "2026-10-19", position: "78020", units: 1, priceCents: 3555, copayCents: 356, minor: false, exempt: false, tableVersion: "test" },
     ],
   };
-  const verordnung = async (o: string, opts: { status?: string; batch?: string | null; lastName?: string } = {}) => {
+  const verordnung = async (o: string, opts: { status?: string; batch?: string | null; lastName?: string; kind?: string; approval?: boolean } = {}) => {
     const p = await f.patient(o, { lastName: opts.lastName ?? "Testfall", firstName: "Erika" });
     await f.asOrg(o, (c) => c.query("update patients set birth_date = '1950-04-12', street = 'Musterweg 2', zip = '10115', city = 'Berlin' where id = $1", [p]));
     return f.asOrg(o, async (c) =>
       (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, positions, icd10, insurer_ik, insurance_number, insured_status,
-             doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, price_snapshot, remedy_cost_cents, copayment_cents, billing_batch_id)
-           values ($1,$2,'2026-10-01','DF',2,$3,$4,'E11.74',$5,'X000000001','1','999000101','999000001',true,'a',$6,7110,1712,$7) returning id`,
-          [o, p, opts.status ?? "billing_ready", JSON.stringify([{ position: "78020", label: "groß", units: 2 }]), KASSE, JSON.stringify(snapshot), opts.batch ?? null],
+             doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, price_snapshot, remedy_cost_cents, copayment_cents, billing_batch_id,
+             prescription_kind, prescription_kind_confirmed_at, prescription_special, approval_ref, approval_date)
+           values ($1,$2,'2026-10-01','DF',2,$3,$4,'E11.74',$5,'X000000001','1','999000101','999000001',true,'a',$6,7110,1712,$7,
+             $8, case when $8::text is null then null else now() end, $9, $10, $11) returning id`,
+          [
+            o,
+            p,
+            opts.status ?? "billing_ready",
+            JSON.stringify([{ position: "78020", label: "groß", units: 2 }]),
+            KASSE,
+            JSON.stringify(snapshot),
+            opts.batch ?? null,
+            opts.kind ?? null,
+            opts.approval ? "4" : null,
+            opts.approval ? "G-2026/17" : null,
+            opts.approval ? "2026-09-01" : null,
+          ],
         )
       ).rows[0].id as string,
     );
@@ -238,5 +253,30 @@ const PRAXIS_IK = "990010013";
       expect(transfer.sort()).toEqual(Array.from({ length: 8 }, (_, i) => `00${i}`));
       expect(await zaehler(o)).toEqual({ test: { rechnung: { "2026": 8 }, transfer: 7, dar: { "990030017": 8 } } });
     });
+  });
+
+  it("Paket C: bestätigtes Kennzeichen, Besonderheit und Genehmigung kommen aus der Verordnung (ohne Hülle); ohne Kennzeichen fehlend", async () => {
+    const o = await f.org();
+    await f.pool.query("update organizations set ik = $2, legs_code = '7100501', street = 'Teststraße 1', zip = '10115', city = 'Berlin', email = 'abrechnung@example.org' where id = $1", [o, PRAXIS_IK]);
+    schalter.verordnungsart = null;
+    await x.saveTarifkennzeichen(authFor(o), "50000");
+    await x.kotrHochladen(authFor(o), "GK05Q426.KE0", KOTR);
+    await verordnung(o, { lastName: "Ohne" });
+    await verordnung(o, { lastName: "Mit", kind: "04", approval: true });
+    const e = await x.pruefe302(authFor(o), { art: "bereit" }, JETZT);
+    if ("error" in e) throw new Error(e.error);
+    const ohne = e.faelle.find((c) => c.anzeige.includes("Ohne"))!;
+    const mit = e.faelle.find((c) => c.anzeige.includes("Mit"))!;
+    expect(ohne.fehlendeAngaben.join(" ")).toContain("Verordnungsart");
+    expect(mit.status).toBe("ok");
+    const r = await x.testpaket302(authFor(o), { art: "bereit" }, JETZT);
+    if ("error" in r) throw new Error(r.error);
+    const zip = await JSZip.loadAsync(r.zip);
+    const nutz = Object.keys(zip.files).find((n) => /\/TSOL0\d{3}$/.test(n))!;
+    const text = Buffer.from(await zip.file(nutz)!.async("uint8array")).toString("latin1");
+    expect(text).toContain("SKZ+G-2026/17+20260901+B2'");
+    expect(text).toMatch(/ZHE\+[^']*\+04\+4\+/);
+    // nie still „03“: der Fall ohne Kennzeichen ist nicht in der Datei
+    expect(text).not.toContain("Ohne");
   });
 });

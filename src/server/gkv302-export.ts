@@ -327,8 +327,10 @@ async function ladeVerordnungen(tx: Tx, org: string, quelle: Gkv302Quelle): Prom
     insuranceNumber: vo.insuranceNumber,
     insuredStatus: vo.insuredStatus,
     priceSnapshot: vo.priceSnapshot,
-    // Kennzeichen Verordnungsart speichert PodoHero noch nicht (Schemafeld folgt) → fehlende Angabe, nie raten
-    verordnungsart: null,
+    // Kennzeichen Verordnungsart nur, wenn an der Verordnung bestätigt (GKV Paket C) – sonst fehlende Angabe, nie „03“ raten
+    verordnungsart: vo.prescriptionKind === "03" || vo.prescriptionKind === "04" ? vo.prescriptionKind : null,
+    verordnungsbesonderheit: vo.prescriptionSpecial,
+    genehmigung: vo.approvalRef && vo.approvalDate ? { kennzeichen: vo.approvalRef, datum: vo.approvalDate } : null,
     patient: {
       lastName: p.lastName,
       firstName: p.firstName,

@@ -62,8 +62,8 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, frequency_per_week, rules_version,
-             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik)
-           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c') returning id`,
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, prescription_kind, prescription_kind_confirmed_at)
+           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c','03',now()) returning id`,
           [org, patient, v.issuedAt, v.group ?? "DF", v.units ?? 2, v.status ?? "open", JSON.stringify([{ position: "78020", label: "groß", units: v.units ?? 2 }]), v.frequency ?? "1x alle 4-6 Wochen", v.rules === undefined ? RULES_VERSION : v.rules],
         )
       ).rows[0].id as string,
@@ -89,8 +89,13 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
     const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
     const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+    // 0062 ersetzt podo_prescription_billed_lock und podo_delete_patient – danach die neueste Fassung (GKV Paket C, 0066,
+    // idempotent) wieder einspielen, damit parallel laufende Testdateien in der gemeinsamen DB den aktuellen Stand sehen
+    const latest = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith("_gkv_paket_c.sql"))!;
+    const restore = readFileSync(path.join(__dirname, "../../drizzle", latest), "utf8").split("--> statement-breakpoint");
     try {
       for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
+      for (const stmt of restore) if (stmt.trim()) await owner.query(stmt);
     } finally {
       await owner.end();
     }
@@ -430,9 +435,10 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version,
-             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, interruption_note, expired_reason)
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, interruption_note, expired_reason,
+             prescription_kind, prescription_kind_confirmed_at)
            values ($1,$2,$3,'UI1',2,'expired',($3::date + 28),'[{"position":"78610","label":"Spange","units":4}]',$4,
-             'L60.0','109911114','A000500015','1','123456601','123456789',true,'a','Pause wegen Urlaub der Patientin','start_missed') returning id`,
+             'L60.0','109911114','A000500015','1','123456601','123456789',true,'a','Pause wegen Urlaub der Patientin','start_missed','03',now()) returning id`,
           [org, p, addDaysIso(today, -60), RULES_VERSION],
         )
       ).rows[0].id as string,

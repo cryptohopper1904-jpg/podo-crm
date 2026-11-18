@@ -309,3 +309,68 @@ Erinnerung an die Folgeverordnung.
     keine Behandlung war. Ob Abrechnungszentren das so erwarten (oder am letzten Behandlungstag), klären.
 28. **Folgeverordnung**: Der Hinweis ist eine Praxis-Erinnerung ohne vertragliche Frist; Kriterien (≤ 1 Einheit, Termine,
     Dauerpatient:in) sind eine Produktentscheidung.
+
+## Paket C: Verordnungsart, Absetzungen und Korrektur (PR „GKV Paket C“)
+
+Quelle für die Schlüssel: GKV-Spitzenverband, Richtlinien nach § 302 SGB V, **Anlage 3 „Schlüsselverzeichnisse“ Version
+21** (Stand 19.09.2025, anzuwenden ab 01.10.2025), 8.1.11 (S. 27), 8.1.12 (S. 28), 8.1.17 (S. 35) –
+https://www.gkv-datenaustausch.de/media/dokumente/leistungserbringer_1/sonstige_leistungserbringer/technische_anlagen_aktuell_4/Anlage_3_TP5_V21_20250919.pdf
+(gelesen am 18.11.2026, Text extrahiert). Code: `src/lib/rules/gkv-billing.ts`, `src/server/gkv-billing.ts`, Migration
+`0066_gkv_paket_c.sql`.
+
+| Regel | Wert | Quelle | Code |
+|---|---|---|---|
+| Kennzeichen Verordnungsart | „03“ Verordnung nach § 7 Abs. 1–5 HeilM-RL (orientierende Behandlungsmenge), „04“ nach § 7 Abs. 6 HeilM-RL (besonderer Verordnungsbedarf oder langfristiger Heilmittelbedarf); „05“ (Blankoverordnung, § 13a HeilM-RL) **nicht für Podologie** – nicht wählbar, DB-CHECK nur 03/04 | Anlage 3 V21 8.1.12 | `PRESCRIPTION_KINDS`, `prescriptions_prescription_kind_check` |
+| Bestätigung | nie vorbelegt, nie geraten: die bewusste Auswahl an der Verordnung („Abrechnungsangaben“) ist die Bestätigung; gespeichert mit Person und Zeitpunkt (`prescription_kind_confirmed_by/_at`); Bestand = NULL = nicht bestätigt | Aufgabe Paket C; GKV-302.md B2 | `saveBillingDetails` |
+| Vorschlag | nur aus belegten Daten: erfasste Genehmigung (B2) → Hinweis „Vorschlag 04“. Die Diagnoselisten für besonderen Verordnungsbedarf (BVB) bzw. langfristigen Heilmittelbedarf (Anlage 2 HeilM-RL) sind in PodoHero **nicht** hinterlegt → sonst „bitte wählen“ | Anlage 3 V21 8.1.17 (B2 = § 8 Abs. 3 HeilM-RL) | `suggestPrescriptionKind` |
+| Sperre | ohne bestätigtes Kennzeichen: kein „abrechnungsreif“, kein Abrechnungslauf (auch Bestand „abrechnungsreif“), kein Fall „ok“ im § 302-Prüflauf (fehlende Angabe; der Server liefert nur das bestätigte Feld – nie „03“) | Aufgabe Paket C; TA1 ZHE Muss-Feld | `changePrescriptionStatus`, `createBillingBatch`, `gkv302-export.ts` |
+| Verordnungsbesonderheit | 1 Zahnarzt/Kieferorthopäde, 2 Schwangerschaft/Entbindung, 4 Entlassmanagement, 7 Terminservicestelle, 9 Modellvorhaben § 64d SGB V („3“ nicht belegt, „8“ nur Hilfsmittel) | Anlage 3 V21 8.1.11 | `PRESCRIPTION_SPECIALS`, ZHE |
+| Genehmigung | Genehmigungskennzeichen (höchstens 20 Zeichen, Buchstaben/Ziffern/. - /) und Datum, Art „B2“ (Genehmigung eines langfristigen Heilmittelbedarfs); beides oder nichts | Anlage 3 V21 8.1.17; TA1 SKZ | `approval_ref/_date`, SKZ |
+| Abrechnungslauf-CSV | neue Spalten am Ende: Verordnungsart, Verordnungsbesonderheit, Genehmigung Kennzeichen/Datum, Korrektur | – | `GKV_BATCH_HEADER` |
+
+**Absetzungen/Retaxen** (`gkv_deductions`): an der abgerechneten Verordnung in der Akte erfassen (Betrag, Datum, Code
+optional, Grund – ohne Gesundheitsangaben formulieren), Recht **Rechnungen schreiben + medizinisch lesen** (wie
+Abrechnungslauf), `gkvGuard("gkvBilling")`. Der Abrechnungslauf wird aus der Verordnung übernommen. Status offen →
+Widerspruch/akzeptiert → erledigt (abschließend; Widerspruch kann wieder „offen“ werden). Betrag/Grund/Datum nur bei
+„offen“ änderbar (Fehleingabe), Bezug unveränderlich, **nie löschbar** (App-Rolle ohne DELETE, Trigger; Löschen nur mit der
+Person über `podo_owner_delete_allowed` – `podo_delete_patient` verweigert aber, solange eine Absetzung existiert).
+Auswertung offener Absetzungen: **Verordnungen → GKV-Abrechnung → Absetzungen** (`/verordnungen/absetzungen`: offen,
+Widerspruch, akzeptiert, Summe des Jahres; Filter; Status/Notiz pflegen). Audit ohne Grund/Notiz.
+
+**Korrektur abgerechneter Verordnungen** (`prescription_corrections`, Status `correction_needed` „Korrektur nötig“):
+Eine abgerechnete Verordnung bleibt unveränderbar (`prescriptions_billed_lock`). Einziger Weg: „Korrektur nötig …“ mit
+Begründung (optional Bezug auf eine Absetzung). Dabei entsteht ein **Korrekturvermerk mit dem Stand der Erstabrechnung**
+(Lauf, Zeitpunkt, Heilmittelkosten, Zuzahlung, Preis-Snapshot); der Trigger erlaubt aus „abgerechnet“ nur diesen
+Statuswechsel und nur mit offenem Vermerk. Danach ist die Verordnung bearbeitbar (Formular „Bearbeiten“, Abrechnungsangaben,
+Therapiebericht; Regelwerk und Zuzahlung der Erstabrechnung bleiben bis zum neuen Snapshot; Audit `prescription.update` mit
+`correction: true`), wird erneut „abrechnungsreif“ (neuer Preis-Snapshot, alle Prüfungen) und geht in den **nächsten
+Abrechnungslauf**; dort wird der Vermerk als „erneut abgerechnet“ (mit neuem Lauf) abgeschlossen. Alternativ „ohne
+Neuabrechnung abschließen“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im ursprünglichen Lauf.
+Abgeschlossene Vermerke sind unveränderlich, nie löschbar. Der CSV-Export des ursprünglichen Laufs führt die Verordnung
+weiter (Spalte „Korrektur“: offen / in späterem Lauf neu abgerechnet / ohne Neuabrechnung), der neue Lauf mit
+„Neuabrechnung nach Korrektur vom …“. **Achtung:** Der Export liest – wie bisher – die aktuellen Werte der Verordnung; die
+Werte der Erstabrechnung stehen im Korrekturvermerk. Absetzungen und Korrekturvermerke sind Aufbewahrungsgründe
+(`retentionFacts`, `podo_delete_patient`), gehen in den Praxis-Export (`tables/gkv_deductions.json`,
+`tables/prescription_corrections.json`) und haben keine Dateien (archive-orphans unverändert).
+
+Damit ist Offener Punkt 15 (Storno/Korrektur eines Abrechnungslaufs) für den Weg über das Abrechnungszentrum abgedeckt;
+das Korrekturverfahren § 302 (VKZ 02–04 mit URI-Daten) folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
+
+### Offene Fachfragen Paket C (Abrechnungszentrum/Steuerberatung)
+
+29. **Kennzeichen 03/04 bei Altbestand**: Für Verordnungen vor Paket C muss die Praxis das Kennzeichen nachträglich vom
+    Papier ablesen. Ist das für schon an das Abrechnungszentrum übergebene Verordnungen nötig, oder ergänzt das
+    Abrechnungszentrum es selbst? (Abrechnungszentrum)
+30. **BVB-/LHB-Diagnoselisten**: Sollen die Listen (Anlage 2 HeilM-RL, KBV/GKV-Liste besonderer Verordnungsbedarf) für
+    Podologie hinterlegt werden, um „04“ vorzuschlagen? Quelle und Pflege (jährliche Änderung) klären.
+31. **Verordnungsbesonderheit 1/9**: Zahnärztliche Verordnungen und Modellvorhaben § 64d gibt es für Podologie
+    vermutlich nicht – trotzdem angeboten, weil Anlage 3 sie nicht einschränkt. Ausblenden? (Verband)
+32. **Absetzung buchen**: Wie wird eine akzeptierte Absetzung gebucht (Forderungsausfall gegen Kassenforderung, Konto,
+    Zeitpunkt)? PodoHero erfasst sie nur intern, keine Buchung/lexoffice. (Steuerberatung)
+33. **Neuabrechnung nach Korrektur**: Rechnet das Abrechnungszentrum eine korrigierte Verordnung als neue Verordnung im
+    nächsten Lauf ab (heute PodoHero-Weg), oder braucht es eine Kennzeichnung als Nachberechnung/Korrektur? Wie wird eine
+    bereits gezahlte Teilsumme verrechnet? (Abrechnungszentrum)
+34. **Aufbewahrung der Absetzungsschreiben**: Die Mitteilung der Kasse (Papier/PDF) ist Buchungsbeleg – soll sie als
+    Datei an der Absetzung abgelegt werden? (Steuerberatung)
+35. **Verordnungsart vor Behandlungsbeginn**: Soll das Kennzeichen schon beim Anlegen Pflicht sein (heute erst vor der
+    Abrechnungsreife, damit Übernahmen/Bestand nicht blockieren)? (Produktentscheidung)

@@ -50,8 +50,8 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       return (
         await q<{ id: string }>(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version,
-             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, doctor_name, frequency_per_week)
-           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'109911114','A000500015','1','123456601','123456789',true,'a','Dr. Beispiel','1x wöchentlich') returning id`,
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, doctor_name, frequency_per_week, prescription_kind, prescription_kind_confirmed_at)
+           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'109911114','A000500015','1','123456601','123456789',true,'a','Dr. Beispiel','1x wöchentlich','03',now()) returning id`,
           [org, patient, o.issuedAt ?? addDaysIso(today, -20), ui ? "UI2" : "DF", units, o.status ?? "open", JSON.stringify(positions), RULES_VERSION, ui ? "L60.0" : "E11.74"],
         )
       )[0].id;

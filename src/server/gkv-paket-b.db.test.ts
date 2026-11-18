@@ -65,8 +65,8 @@ const png = () => testPngDataUrl();
         (
           await c.query(
             `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, frequency_per_week, rules_version,
-               icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, doctor_name)
-             values ($1,$2,$3,'DF',$4,'open',($3::date + 28),$5,'1x alle 4-6 Wochen',$6,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c','Dr. Beispiel') returning id`,
+               icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, doctor_name, prescription_kind, prescription_kind_confirmed_at)
+             values ($1,$2,$3,'DF',$4,'open',($3::date + 28),$5,'1x alle 4-6 Wochen',$6,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c','Dr. Beispiel','03',now()) returning id`,
             [org, patient, addDaysIso(today, -3), units, JSON.stringify(positions), RULES_VERSION],
           )
         ).rows[0].id as string,
@@ -163,7 +163,7 @@ const png = () => testPngDataUrl();
     expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
     // Übernahme (Altbestand): nur Hinweis, keine Sperre
     const legacy = await w.q<{ id: string }>(
-      "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version) values ($1,$2,$3,'DF',1,'active',($3::date + 28),'[{\"position\":\"78020\",\"label\":\"groß\",\"units\":1}]','import-tinana') returning id",
+      "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version, prescription_kind, prescription_kind_confirmed_at) values ($1,$2,$3,'DF',1,'active',($3::date + 28),'[{\"position\":\"78020\",\"label\":\"groß\",\"units\":1}]','import-tinana','03',now()) returning id",
       [w.org, w.patient, addDaysIso(today, -3)],
     );
     await w.q("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash, prev_hash) values ($1,$2,$3,$4,$5,'h-legacy','p-legacy')", [w.org, w.patient, w.user, berlinToUtc(addDaysIso(today, -1), "10:00"), legacy[0].id]);

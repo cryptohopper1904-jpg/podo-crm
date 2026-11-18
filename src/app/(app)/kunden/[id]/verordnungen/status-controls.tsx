@@ -12,7 +12,8 @@ export function StatusControls({ id, patientId, status, unitsUsed, units }: { id
   const [early, setEarly] = useState(false);
   const [reopen, setReopen] = useState(false);
   const options: [PrescriptionStatus, string, "primary" | "secondary" | "danger"][] = [];
-  if (status === "completed") options.push(["billing_ready", "Abrechnungsreif", "primary"]);
+  // nach „Korrektur nötig“ (GKV Paket C) erneut abrechnen: neuer Preis-Snapshot, nächster Abrechnungslauf
+  if (status === "completed" || status === "correction_needed") options.push(["billing_ready", status === "correction_needed" ? "Korrigiert – erneut abrechnungsreif" : "Abrechnungsreif", "primary"]);
   if (status === "billing_ready") options.push(["completed", "Abrechnungsreif zurücknehmen", "secondary"]);
   if (status === "open") options.push(["expired", "Als verfallen markieren", "secondary"]);
   if (status === "open" || status === "active") options.push(["cancelled", "Stornieren", "danger"]);

@@ -463,6 +463,13 @@
       "when": 1795007094340,
       "tag": "0065_gkv_paket_b_teil2",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1795013407615,
+      "tag": "0066_gkv_paket_c",
+      "breakpoints": true
     }
   ]
 }
