@@ -65,7 +65,25 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
      * Owner mit abgeschalteten Triggern (insertLegacy); ohne Superuser `false` (Test überspringen)
      */
     const backdate = (id: string, ago: string) => insertLegacy("update billing_batches set created_at = now() - $2::interval where id = $1", [id, ago]);
-    return { org, user, patient, auth, authWith, q, vo, backdate };
+    /**
+     * Alter Lauf mit einer darin abgerechneten Verordnung (Heilmittelkosten 71,10 €, Zuzahlung 17,12 €): Lauf und
+     * Verordnung in EINER Transaktion (INSERT mit Lauf nur in einen eben angelegten Lauf, 0066), danach rückdatiert
+     */
+    const oldRun = async (remedy: number | null, note: string | null = null) => {
+      const r = await fx.asOrg(org, async (c) => {
+        const old = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, 1712, 1712, $2, $3) returning id", [org, remedy, note])).rows[0].id as string;
+        const id = (
+          await c.query(
+            `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
+             values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
+            [org, patient, addDaysIso(today, -450), old],
+          )
+        ).rows[0].id as string;
+        return { old, id };
+      });
+      return (await backdate(r.old, "400 days")) ? r : null;
+    };
+    return { org, user, patient, auth, authWith, q, vo, backdate, oldRun };
   };
 
   it("Kasse vs. privat: Kassenanteil laut Lauf, ZZ getrennt (ohne Storno), Privat ohne Entwürfe/ZZ, Absetzungen; Zeitraum; fremde Praxis leer", async (ctx) => {
@@ -141,15 +159,9 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
   });
   it("Review R1-11/R1-14: Neuabrechnung nicht doppelt gezählt („ersetzt durch Neuabrechnung“, Monat des neuen Laufs); Belegliste gekennzeichnet", async (ctx) => {
     const w = await world();
-    const run = async (remedy: number, copayment: number) =>
-      (await w.q<{ id: string }>(`insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, $2, $2, $3, 'interne Notiz') returning id`, [w.org, copayment, remedy]))[0].id;
-    const old = await run(7110, 1712);
-    if (!(await w.backdate(old, "400 days"))) ctx.skip();
-    const id = (await w.q<{ id: string }>(
-      `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
-       values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
-      [w.org, w.patient, addDaysIso(today, -450), old],
-    ))[0].id;
+    const r = await w.oldRun(7110, "interne Notiz");
+    if (!r) ctx.skip();
+    const { old, id } = r!;
     // Korrektur → Neuabrechnung im heutigen Lauf (Weg wie createBillingBatch, Trigger aktiv)
     const c = (await w.q<{ id: string }>(
       "insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, original_batch_id, original_remedy_cost_cents, original_copayment_cents, created_by) values ($1,$2,$3,'ICD falsch',$4,7110,1712,$5) returning id",
@@ -213,13 +225,9 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
     const rebilledWorld = async (ctx: { skip: () => void }, o: { oldRemedy?: number | null; deduction?: { cents: number; status: string; outcome: string | null } } = {}) => {
       const w = await world();
       const oldRemedy = o.oldRemedy === undefined ? 7110 : o.oldRemedy;
-      const old = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, $2) returning id", [w.org, oldRemedy]))[0].id;
-      if (!(await w.backdate(old, "400 days"))) ctx.skip();
-      const id = (await w.q<{ id: string }>(
-        `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
-         values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
-        [w.org, w.patient, addDaysIso(today, -450), old],
-      ))[0].id;
+      const r = await w.oldRun(oldRemedy);
+      if (!r) ctx.skip();
+      const { old, id } = r!;
       let deductionId: string | null = null;
       if (o.deduction) {
         deductionId = (await w.q<{ id: string }>(
