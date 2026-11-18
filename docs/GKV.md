@@ -374,3 +374,32 @@ das Korrekturverfahren § 302 (VKZ 02–04 mit URI-Daten) folgt mit dem Echtbetr
     Datei an der Absetzung abgelegt werden? (Steuerberatung)
 35. **Verordnungsart vor Behandlungsbeginn**: Soll das Kennzeichen schon beim Anlegen Pflicht sein (heute erst vor der
     Abrechnungsreife, damit Übernahmen/Bestand nicht blockieren)? (Produktentscheidung)
+
+### Paket C Teil 2: Auswertung Kasse vs. privat und Belegliste
+
+**Auswertung → „Kasse vs. privat“** (`/auswertung/kasse`, Recht `finance.read` wie die übrige Auswertung, nur Summen,
+Zeitraumfilter wie „Termine“/„Leistungen“, CSV je Monat außer im Support-Modus; `src/server/gkv-stats.ts`):
+
+- **GKV-Kassenanteil** = Heilmittelkosten − Zuzahlungen laut Abrechnungsläufen (gespeicherte Summen in
+  `billing_batches`) nach dem Erstellungstag des Laufs – die Forderung an die Kassen, nicht der Zahlungseingang. Läufe ohne
+  gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) werden gezählt, aber nicht summiert (Hinweis).
+- **Zuzahlungen (ZZ)** getrennt: Zuzahlungsquittungen nach Belegdatum, ohne stornierte.
+- **Privat**: alle übrigen Belege brutto nach Belegdatum mit derselben Auswahl wie „Leistungen & Produkte“
+  (`countedInvoiceSql`: ohne Entwürfe, Stornos, Gutschriften, Anzahlungen, angerechnete Quittungen).
+- **Absetzungen** nach Datum der Absetzung je Status (sie mindern den Kassenanteil der Läufe nicht automatisch).
+
+**Auswertung → „Belegliste“** (`/auswertung/belegliste`, Rechte `finance.read` + `invoices.read`; CSV
+`/api/export/belegliste?von=&bis=`, im Support-Modus gesperrt, Formel-Injection neutralisiert, `no-store`): interne Liste
+der Zuzahlungsquittungen (ZZ) mit Stornobelegen (Bezug in beide Richtungen, Zahlungsart, Person mit Nummer, Datum der
+Verordnung – keine Diagnosen) und der Abrechnungsläufe (Partner, Verordnungen, Heilmittelkosten, Zuzahlungen,
+Kassenanteil, Export) im Zeitraum. Audit `stats.gkv_private` bzw. `belegliste.read` nur mit Zeitraum und Anzahlen.
+
+Offene Fachfragen (Steuerberatung):
+
+36. **Abgrenzung Kassenanteil**: Erstellungstag des Laufs (Forderung) oder Zahlungseingang des Abrechnungszentrums
+    (Zuflussprinzip wie „Finanzen“)? Die Auszahlung des Abrechnungszentrums wird heute nicht erfasst.
+37. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
+    welchem Monat (Absetzungsdatum oder Lauf)?
+38. **Belegliste als Buchungsgrundlage**: Reicht die interne Liste (ZZ + Läufe) der Steuerberatung, oder werden die
+    Sammelbelege des Abrechnungszentrums zusätzlich benötigt? Doppelte Erfassung der ZZ (Kassenexport/lexoffice) vermeiden
+    (siehe Paket B „Buchhaltung“).

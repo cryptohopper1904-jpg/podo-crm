@@ -70,6 +70,8 @@ export const DOWNLOAD_KINDS = [
   "trip_log_export",
   /** GKV-Dokumente mit Gesundheitsdaten (Leistungsnachweis mit Unterschriften, Therapiebericht, Anforderung Folgeverordnung) */
   "gkv_document",
+  /** Belegliste (Zuzahlungsquittungen und Abrechnungsläufe, GKV Paket C) */
+  "belegliste_export",
 ] as const;
 export type DownloadKind = (typeof DOWNLOAD_KINDS)[number];
 
