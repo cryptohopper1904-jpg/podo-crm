@@ -47,6 +47,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
               approvalRef={vo.approvalRef}
               approvalDate={vo.approvalDate}
               suggestion={vo.kindSuggestion}
+              status={vo.status}
             />
           </div>
         </details>
@@ -55,7 +56,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
       {vo.status === "correction_needed" ? (
         <div className="rounded-lg bg-danger-soft px-3 py-2 text-danger-soft-text">
           <p className="font-medium">Korrektur nötig{openCorrection ? ` seit ${dateDe(openCorrection.createdAt)}: ${openCorrection.reason}` : ""}</p>
-          <p className="text-xs">Verordnung korrigieren (Bearbeiten bzw. Abrechnungsangaben), dann „abrechnungsreif“ setzen – sie geht in den nächsten Abrechnungslauf. „Ohne Neuabrechnung abschließen“ geht nur, solange die Verordnung inhaltlich unverändert ist (Stand der Erstabrechnung); jede Änderung im Korrekturstatus wird protokolliert.</p>
+          <p className="text-xs">Verordnung korrigieren (Bearbeiten bzw. Abrechnungsangaben), dann „abrechnungsreif“ setzen – sie geht in den nächsten Abrechnungslauf. „Ohne Neuabrechnung abschließen“ geht nur, solange die Verordnung inhaltlich unverändert ist (Stand der Erstabrechnung) – auch ein erneutes Speichern der Abrechnungsangaben zählt als Änderung; jede Änderung im Korrekturstatus wird protokolliert.</p>
           {canBilling ? <div className="mt-1"><ResolveCorrectionForm prescriptionId={vo.id} patientId={patientId} /></div> : null}
         </div>
       ) : null}

@@ -16,8 +16,13 @@
 --    vom Trigger gesetzt) und ist Voraussetzung für den einzigen erlaubten Wechsel aus „abgerechnet“: → „Korrektur
 --    nötig“ (correction_needed). Erledigt durch erneute Abrechnung (rebilled, nur mit dem Lauf, der die Verordnung
 --    enthält) oder ohne Neuabrechnung (no_rebill, nur wenn die Verordnung inhaltlich original_row entspricht); danach
---    unveränderlich.
+--    unveränderlich. Stand der Erstabrechnung (original_*, original_row) und created_at setzt immer der Trigger, nie die
+--    Anwendung. Neuabrechnung nur in einem neuen Lauf (jünger als der jüngste Vermerk, nie der Lauf einer
+--    Erstabrechnung); „ohne Neuabrechnung“ nur zusammen mit der Rückkehr auf „abgerechnet“ im alten Lauf (Prüfung beim
+--    Commit, CONSTRAINT TRIGGER).
 -- 4. billing_batches_org_id: eindeutiger Index (organization_id, id) für den Lookup in podo_fk_same_org.
+-- 5. billing_batches: Abrechnungsläufe nie löschbar (Abrechnungsunterlage, Laufnummer in der Auswertung), created_at vom
+--    Server und unveränderlich (Grundlage für „neuer Lauf“ in 3.). Endgültige Löschung der Praxis schaltet Trigger ab.
 -- Verweise nur innerhalb der Praxis (podo_fk_same_org, podo_user_in_org), RLS + FORCE, alle Funktionen mit festem
 -- search_path. Idempotent: IF NOT EXISTS, Constraints nur wenn fehlend, CREATE OR REPLACE, DROP TRIGGER/POLICY IF EXISTS.
 CREATE TABLE IF NOT EXISTS "gkv_deductions" (
@@ -248,6 +253,11 @@ DECLARE
   vo_patient uuid;
   vo_status text;
   vo_row jsonb;
+  vo_batch uuid;
+  vo_billed timestamptz;
+  vo_remedy int;
+  vo_copay int;
+  vo_snapshot jsonb;
   ded_vo uuid;
   resolve_cols text[] := ARRAY['resolution', 'resolved_at', 'resolved_by', 'resolved_batch_id', 'resolution_note'];
 BEGIN
@@ -270,12 +280,19 @@ BEGIN
             AND p.billing_batch_id = NEW.resolved_batch_id AND p.status = 'billed') THEN
       RAISE EXCEPTION 'Der Lauf der Neuabrechnung enthält die Verordnung nicht.' USING ERRCODE = 'P0001';
     END IF;
+    -- … und nie mit dem Lauf der Erstabrechnung (AppSec Runde 2, S1)
+    IF NEW.resolution = 'rebilled' AND (NEW.resolved_batch_id IS NOT DISTINCT FROM (OLD.original_row->>'billing_batch_id')::uuid
+                                        OR NEW.resolved_batch_id IS NOT DISTINCT FROM OLD.original_batch_id) THEN
+      RAISE EXCEPTION 'Neuabrechnung nur in einem neuen Abrechnungslauf, nicht im Lauf der Erstabrechnung.' USING ERRCODE = 'P0001';
+    END IF;
     IF NEW.resolution = 'no_rebill' AND NEW.resolved_batch_id IS NOT NULL THEN
       RAISE EXCEPTION 'Ohne Neuabrechnung gibt es keinen neuen Lauf.' USING ERRCODE = 'P0001';
     END IF;
     RETURN NEW;
   END IF;
-  SELECT p.patient_id, p.status, to_jsonb(p) INTO vo_patient, vo_status, vo_row FROM prescriptions p
+  SELECT p.patient_id, p.status, to_jsonb(p), p.billing_batch_id, p.billed_at, p.remedy_cost_cents, p.copayment_cents, p.price_snapshot
+    INTO vo_patient, vo_status, vo_row, vo_batch, vo_billed, vo_remedy, vo_copay, vo_snapshot
+    FROM prescriptions p
    WHERE p.id = NEW.prescription_id AND p.organization_id = NEW.organization_id;
   IF vo_patient IS NULL OR vo_patient IS DISTINCT FROM NEW.patient_id THEN
     RAISE EXCEPTION 'Korrekturvermerk passt nicht zur Verordnung.' USING ERRCODE = 'P0001';
@@ -286,8 +303,18 @@ BEGIN
   IF NEW.resolved_at IS NOT NULL THEN
     RAISE EXCEPTION 'Ein neuer Korrekturvermerk ist noch offen.' USING ERRCODE = 'P0001';
   END IF;
-  -- Stand der Erstabrechnung: immer die aktuelle (abgerechnete, gesperrte) Zeile – nie ein Wert der Anwendung
+  -- Stand der Erstabrechnung: immer die aktuelle (abgerechnete, gesperrte) Zeile – nie ein Wert der Anwendung (auch
+  -- Lauf, Zeitpunkt, Beträge und Snapshot; AppSec Runde 2, S2), Anlagezeitpunkt vom Server (S4)
   NEW.original_row := vo_row;
+  NEW.original_batch_id := vo_batch;
+  NEW.original_billed_at := vo_billed;
+  NEW.original_remedy_cost_cents := vo_remedy;
+  NEW.original_copayment_cents := vo_copay;
+  NEW.original_price_snapshot := vo_snapshot;
+  NEW.created_at := now();
+  NEW.resolved_by := NULL;
+  NEW.resolved_batch_id := NULL;
+  NEW.resolution_note := NULL;
   IF NEW.deduction_id IS NOT NULL THEN
     SELECT d.prescription_id INTO ded_vo FROM gkv_deductions d WHERE d.id = NEW.deduction_id AND d.organization_id = NEW.organization_id;
     IF ded_vo IS DISTINCT FROM NEW.prescription_id THEN
@@ -304,10 +331,30 @@ DROP TRIGGER IF EXISTS prescription_corrections_guard ON prescription_correction
 CREATE TRIGGER prescription_corrections_guard BEFORE INSERT OR UPDATE OR DELETE ON prescription_corrections
   FOR EACH ROW EXECUTE FUNCTION podo_prescription_correction_guard();
 --> statement-breakpoint
+-- „Ohne Neuabrechnung“ abgeschlossen ⇒ beim Commit ist die Verordnung wieder „abgerechnet“ im Lauf der Erstabrechnung
+-- (Code-Review H-1: sonst bliebe sie mit abgeschlossenem Vermerk in „Korrektur nötig“ bzw. „abrechnungsreif“ stehen)
+CREATE OR REPLACE FUNCTION podo_prescription_correction_no_rebill_check() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NEW.resolution = 'no_rebill' AND NOT EXISTS (
+       SELECT 1 FROM prescriptions p WHERE p.id = NEW.prescription_id AND p.organization_id = NEW.organization_id
+          AND p.status = 'billed' AND p.billing_batch_id IS NOT DISTINCT FROM NEW.original_batch_id) THEN
+    RAISE EXCEPTION '„Ohne Neuabrechnung“ nur zusammen mit der Rückkehr auf „abgerechnet“ im Lauf der Erstabrechnung.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NULL;
+END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION podo_prescription_correction_no_rebill_check() FROM PUBLIC;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS prescription_corrections_no_rebill_check ON prescription_corrections;
+--> statement-breakpoint
+CREATE CONSTRAINT TRIGGER prescription_corrections_no_rebill_check AFTER UPDATE OF resolution ON prescription_corrections
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION podo_prescription_correction_no_rebill_check();
+--> statement-breakpoint
 CREATE OR REPLACE FUNCTION podo_no_truncate_gkv_billing() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  RAISE EXCEPTION 'Absetzungen und Korrekturvermerke können nicht geleert werden.' USING ERRCODE = 'P0001';
+  RAISE EXCEPTION 'Abrechnungsläufe, Absetzungen und Korrekturvermerke können nicht geleert werden.' USING ERRCODE = 'P0001';
 END $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION podo_no_truncate_gkv_billing() FROM PUBLIC;
@@ -354,8 +401,11 @@ CREATE TRIGGER prescriptions_user_in_org BEFORE INSERT OR UPDATE OF created_by, 
 --    offen ist).
 -- 3. „Korrektur nötig“ → „abgerechnet“ (ohne Neuabrechnung) nur, wenn der jüngste Vermerk im selben Vorgang
 --    (resolved_at = now()) als no_rebill abgeschlossen wurde, kein Vermerk mehr offen ist und die Zeile inhaltlich dem
---    Stand der Erstabrechnung (original_row) entspricht – ohne Status, Altvermerk Zuzahlung und Bestätigungszeitpunkt/-person
---    des Kennzeichens; Preis-Snapshot, Heilmittelkosten und Zuzahlung müssen wieder der Erstabrechnung entsprechen.
+--    Stand der Erstabrechnung (original_row) entspricht – ohne Status und Altvermerk Zuzahlung (eine Neubestätigung des
+--    Kennzeichens zählt als Änderung, AppSec Runde 2, S3); Preis-Snapshot, Heilmittelkosten und Zuzahlung müssen wieder der Erstabrechnung entsprechen.
+-- 4. Hat die Verordnung Korrekturvermerke, geht es aus anderen Status (abrechnungsreif) nur in einem NEUEN Lauf auf
+--    „abgerechnet“: Lauf vorhanden, nicht der Lauf einer Erstabrechnung (original_row) und nicht älter als der jüngste
+--    Vermerk (AppSec Runde 2, S1 – sonst „rebilled“ mit dem alten Lauf, dessen Summe die Änderung nicht enthält).
 -- Damit gibt es keine stille Änderung einer abgerechneten Verordnung: Der Stand der Erstabrechnung steht im
 -- Korrekturvermerk, jede Änderung im Korrekturstatus im Audit-Protokoll (Feldnamen), und zurück auf „abgerechnet“ im
 -- alten Lauf geht es nur unverändert – sonst Neuabrechnung.
@@ -363,8 +413,7 @@ CREATE OR REPLACE FUNCTION podo_prescription_billed_lock() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   allowed text[] := ARRAY['copayment_paid_at', 'copayment_paid_cents', 'copayment_paid_method'];
-  volatile text[] := ARRAY['status', 'copayment_paid_at', 'copayment_paid_cents', 'copayment_paid_method',
-                           'prescription_kind_confirmed_at', 'prescription_kind_confirmed_by'];
+  volatile text[] := ARRAY['status', 'copayment_paid_at', 'copayment_paid_cents', 'copayment_paid_method'];
   c record;
 BEGIN
   IF NEW.status = 'correction_needed' AND OLD.status IS DISTINCT FROM 'correction_needed'
@@ -379,6 +428,18 @@ BEGIN
   IF OLD.status = 'billed' AND (to_jsonb(NEW) - allowed) IS DISTINCT FROM (to_jsonb(OLD) - allowed) THEN
     RAISE EXCEPTION 'Abgerechnete Verordnung ist unveränderbar (Korrektur nur über „Korrektur nötig“ mit Begründung).'
       USING ERRCODE = 'check_violation';
+  END IF;
+  IF NEW.status = 'billed' AND OLD.status NOT IN ('billed', 'correction_needed')
+     AND EXISTS (SELECT 1 FROM prescription_corrections pc WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id)
+     AND (NEW.billing_batch_id IS NULL
+          OR EXISTS (SELECT 1 FROM prescription_corrections pc
+                      WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id
+                        AND (NEW.billing_batch_id = (pc.original_row->>'billing_batch_id')::uuid OR NEW.billing_batch_id = pc.original_batch_id))
+          OR NOT EXISTS (SELECT 1 FROM billing_batches b
+                          WHERE b.id = NEW.billing_batch_id AND b.organization_id = NEW.organization_id
+                            AND b.created_at >= (SELECT max(pc.created_at) FROM prescription_corrections pc
+                                                  WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id))) THEN
+    RAISE EXCEPTION 'Nach einer Korrektur nur in einem neuen Abrechnungslauf abrechnen.' USING ERRCODE = 'check_violation';
   END IF;
   IF OLD.status = 'correction_needed' AND NEW.status = 'billed' THEN
     SELECT pc.resolution, pc.resolved_at, pc.original_row INTO c FROM prescription_corrections pc
@@ -397,6 +458,37 @@ BEGIN
 END $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION podo_prescription_billed_lock() FROM PUBLIC;
+--> statement-breakpoint
+-- Abrechnungslauf (seit 0006): nie löschbar, Anlagezeitpunkt vom Server und unveränderlich. Endgültige Löschung der Praxis
+-- (purge-organization) schaltet die Trigger ab.
+CREATE OR REPLACE FUNCTION podo_billing_batch_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'Ein Abrechnungslauf kann nicht gelöscht werden (Abrechnungsunterlage).' USING ERRCODE = 'P0001';
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    NEW.created_at := now();
+    RETURN NEW;
+  END IF;
+  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.created_by IS DISTINCT FROM OLD.created_by THEN
+    RAISE EXCEPTION 'Bezug und Anlagezeitpunkt des Abrechnungslaufs sind unveränderlich.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION podo_billing_batch_guard() FROM PUBLIC;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS billing_batches_guard ON billing_batches;
+--> statement-breakpoint
+CREATE TRIGGER billing_batches_guard BEFORE INSERT OR UPDATE OR DELETE ON billing_batches
+  FOR EACH ROW EXECUTE FUNCTION podo_billing_batch_guard();
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS billing_batches_no_truncate ON billing_batches;
+--> statement-breakpoint
+CREATE TRIGGER billing_batches_no_truncate BEFORE TRUNCATE ON billing_batches
+  FOR EACH STATEMENT EXECUTE FUNCTION podo_no_truncate_gkv_billing();
 --> statement-breakpoint
 COMMENT ON TABLE gkv_deductions IS
   'Absetzung/Retaxe der Krankenkasse zu einer abgerechneten Verordnung (Betrag, Grund/Code, Datum, Status) – GKV Paket C, Migration 0066.';

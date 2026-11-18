@@ -32,6 +32,7 @@ export function DeductionStatusForm({ id, status, note, amount, letterRef, lette
         <input name="note" defaultValue={note ?? ""} maxLength={1000} placeholder="Notiz (z. B. Widerspruch am …)" aria-label="Notiz" className={`${inputCls} min-w-48 flex-1`} />
         <button type="submit" disabled={pending} className="text-xs font-semibold text-primary">{pending ? "…" : "Speichern"}</button>
       </div>
+      <p className="text-xs text-muted">Aktenzeichen bzw. Datum des Schreibens leeren und speichern entfernt die Angabe.</p>
       <FormError message={state?.error} revealKey={state} />
       {state?.ok ? <p role="status" className="text-xs font-medium text-primary">{state.ok}</p> : null}
     </form>

@@ -30,6 +30,7 @@ export function BillingDetailsForm({
   approvalRef,
   approvalDate,
   suggestion,
+  status,
 }: {
   prescriptionId: string;
   patientId: string;
@@ -38,6 +39,7 @@ export function BillingDetailsForm({
   approvalRef: string | null;
   approvalDate: string | null;
   suggestion: KindSuggestion;
+  status: string;
 }) {
   const [state, action, pending] = useActionState<GkvActionState, FormData>(billingDetailsAction, undefined);
   return (
@@ -58,6 +60,13 @@ export function BillingDetailsForm({
           </label>
         ))}
         <p className="text-xs text-muted">„05“ (Blankoverordnung) gibt es für Podologie nicht.</p>
+        {status === "correction_needed" ? (
+          <p className="text-xs font-medium text-warn-soft-text">
+            {kind
+              ? "Korrekturstatus: Speichern bestätigt das Kennzeichen neu und gilt als Änderung der Verordnung – danach ist nur noch die Neuabrechnung möglich, nicht mehr „ohne Neuabrechnung abschließen“."
+              : "Korrekturstatus: Diese Verordnung wurde ohne bestätigtes Kennzeichen abgerechnet (Altbestand). Mit der Bestätigung ist nur noch die Neuabrechnung möglich. Soll die Korrektur ohne Neuabrechnung abgeschlossen werden, hier nichts speichern."}
+          </p>
+        ) : null}
       </fieldset>
       <label className="flex flex-col gap-1">
         <span className="font-medium">Verordnungsbesonderheit</span>

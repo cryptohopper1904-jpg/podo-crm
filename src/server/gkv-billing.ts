@@ -168,9 +168,12 @@ export const deductionUpdateInput = z.object({
   amountCents: z.preprocess(emptyToUndef, euroCents.optional()),
   /** Pflicht beim Wechsel auf „erledigt“: upheld = Absetzung bleibt | reversed = Widerspruch erfolgreich */
   outcome: z.preprocess(emptyToUndef, z.enum(DEDUCTION_OUTCOMES, { message: "Ausgang ungültig." }).optional()),
-  /** Aktenzeichen/Datum des Kassenschreibens nachtragen (solange nicht erledigt); leer = unverändert */
-  letterRef: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 80) || undefined : v), z.string().max(60, "Aktenzeichen: höchstens 60 Zeichen.").optional()),
-  letterDate: z.preprocess(emptyToUndef, z.string().refine(realDate, "Datum des Kassenschreibens ungültig.").optional()),
+  /**
+   * Aktenzeichen/Datum des Kassenschreibens nachtragen, ändern oder leeren (solange nicht erledigt): Feld fehlt =
+   * unverändert, leer = leeren (Formular sendet immer den aktuellen Stand mit)
+   */
+  letterRef: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 80) : v), z.string().max(60, "Aktenzeichen: höchstens 60 Zeichen.").optional()),
+  letterDate: z.preprocess((v) => (typeof v === "string" ? v.trim() : v), z.union([z.literal(""), z.string().refine(realDate, "Datum des Kassenschreibens ungültig.")]).optional()),
 });
 export type DeductionUpdateInput = z.infer<typeof deductionUpdateInput>;
 
@@ -190,8 +193,8 @@ export async function updateDeduction(auth: AuthContext, d: DeductionUpdateInput
     // „erledigt“ nur mit Ausgang (DB-CHECK gkv_deductions_outcome_check); sonst kein Ausgang
     if (d.status === "done" && !d.outcome) return { error: "Bitte den Ausgang angeben: Absetzung bleibt oder Widerspruch erfolgreich." };
     const note = d.note === undefined ? old.note : d.note || null;
-    const letterRef = d.letterRef ?? old.letterRef;
-    const letterDate = d.letterDate ?? old.letterDate;
+    const letterRef = d.letterRef === undefined ? old.letterRef : d.letterRef || null;
+    const letterDate = d.letterDate === undefined ? old.letterDate : d.letterDate || null;
     if (d.letterDate && d.letterDate > berlinDateIso()) return { error: "Das Datum des Kassenschreibens liegt in der Zukunft." };
     await tx
       .update(gkvDeductions)
@@ -360,6 +363,7 @@ export async function markCorrectionNeeded(auth: AuthContext, d: CorrectionInput
       const [ded] = await tx.select({ id: gkvDeductions.id }).from(gkvDeductions).where(and(eq(gkvDeductions.organizationId, org), eq(gkvDeductions.id, d.deductionId), eq(gkvDeductions.prescriptionId, vo.id)));
       if (!ded) return { error: "Die Absetzung gehört nicht zu dieser Verordnung." };
     }
+    // Stand der Erstabrechnung (original_*, original_row) und created_at setzt der DB-Trigger aus der Verordnungszeile
     const [c] = await tx
       .insert(prescriptionCorrections)
       .values({
@@ -368,11 +372,6 @@ export async function markCorrectionNeeded(auth: AuthContext, d: CorrectionInput
         patientId: vo.patientId,
         deductionId: d.deductionId ?? null,
         reason: d.reason,
-        originalBatchId: vo.billingBatchId,
-        originalBilledAt: vo.billedAt,
-        originalRemedyCostCents: vo.remedyCostCents,
-        originalCopaymentCents: vo.copaymentCents,
-        originalPriceSnapshot: vo.priceSnapshot,
         createdBy: auth.user.id,
       })
       .returning({ id: prescriptionCorrections.id });
@@ -426,7 +425,8 @@ export async function resolveCorrectionWithoutRebill(auth: AuthContext, d: z.inf
     await tx.execute(sql`
       update prescriptions p
          set status = 'billed',
-             price_snapshot = c.original_row->'price_snapshot',
+             -- JSON null (Altbestand ohne Snapshot) → SQL NULL, nicht jsonb 'null' (Code-Review H-2)
+             price_snapshot = nullif(c.original_row->'price_snapshot', 'null'::jsonb),
              remedy_cost_cents = (c.original_row->>'remedy_cost_cents')::int,
              copayment_cents = (c.original_row->>'copayment_cents')::int
         from prescription_corrections c
