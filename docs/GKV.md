@@ -383,10 +383,17 @@ eines Vermerks „erneut abgerechnet“ im selben Vorgang angelegt sein. Der Lau
 ändert sich nur bei diesem Wechsel; eine neue Verordnung (INSERT) bekommt nur NULL oder einen eben angelegten, nicht
 übergebenen Lauf. Ein neuer Lauf ist immer Entwurf ohne Übergabe; die Übergabe setzt Status und Zeitpunkt (vom Server)
 gemeinsam. CSV- und § 302-Export eines Laufs nehmen nur abgerechnete Verordnungen des Laufs (plus Korrekturen mit dem
-Stand der Erstabrechnung) – AppSec Runde 4. Eine Prüfung „Laufsummen = Summe der Verordnungen“ beim Commit gibt es
-bewusst nicht: Die Summen stammen aus denselben, von der Anwendung geschriebenen Verordnungsbeträgen. Beim Setzen von „Korrektur nötig“ schlägt das
-Formular eine noch nicht verknüpfte Absetzung als Bezug vor (dann gilt sie bei Neuabrechnung als „ersetzt“). Solange der Vermerk offen ist, geht es aus
-„abrechnungsreif“ auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
+Stand der Erstabrechnung) – AppSec Runde 4. **Laufsummen = Summe der Verordnungen** (Migration 0067, Restrisiko R2 aus
+dem AppSec-Review Paket C – **behoben**): Beim Commit prüft ein aufgeschobener CONSTRAINT TRIGGER
+(`billing_batches_sum_check`) jeden neu angelegten Lauf gegen die Verordnungen mit diesem Lauf im Status „abgerechnet“ –
+Anzahl (mindestens eine), `total_cents` = `copayment_total_cents` = Summe der Zuzahlungen, `remedy_total_cents` = Summe der
+Heilmittelkosten (fehlende Beträge zählen 0, wie `createBillingBatch`). Geprüft wird nur das Anlegen: Altläufe vor 0067
+und die Übergabe bleiben unberührt. Abgerechnete Verordnungen (`billed_at` oder Lauf gesetzt) sind nicht löschbar
+(`prescriptions_delete_guard`, 0067) – außer im Löschlauf der Person, den `podo_delete_patient` bei abgerechneten
+Verordnungen ohnehin verweigert. Ein zweiter gleichzeitiger Export eines Laufs ändert nichts mehr (erster
+Übergabezeitpunkt bleibt). Beim Setzen von „Korrektur nötig“ schlägt das Formular eine noch nicht verknüpfte Absetzung als
+Bezug vor (dann gilt sie bei Neuabrechnung als „ersetzt“). Solange der Vermerk offen ist, geht es aus „abrechnungsreif“
+auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
 
 „**Ohne Neuabrechnung abschließen**“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im
 ursprünglichen Lauf – **nur, wenn die Verordnung inhaltlich unverändert ist** (Vergleich mit `original_row` ohne Status,
