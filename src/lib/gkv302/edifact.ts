@@ -359,7 +359,8 @@ export function zerlegeEdifact(inhalt: string): RohSegment[] {
     }
   }
   const restFeld = feld(text.length);
-  if ((restFeld.trim() !== "" || elemente.length > 0) && text.trim() !== "") {
+  // auch „UNB:“ (offenes Gruppendatenelement ohne Segmentende) ist unvollständig (Review-Runde 4)
+  if ((restFeld.trim() !== "" || elemente.length > 0 || element.length > 0) && text.trim() !== "") {
     throw new Error("Die Datei endet nicht mit einem Segmentendezeichen.");
   }
   return segmente;

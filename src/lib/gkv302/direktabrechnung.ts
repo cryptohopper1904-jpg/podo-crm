@@ -20,6 +20,7 @@ import { erstelleBegleitzettel, type Begleitzettel } from "./begleitzettel";
 import { physikalischerDateiname } from "./dateiname";
 import { Gkv302ValidierungsFehler } from "./fehler";
 import { istGueltigesIk } from "./ik";
+import type { DeepReadonly } from "./kotr-cache";
 import { KostentraegerVerzeichnis, KotrFehler, pruefeKotrDateiname, type Kostentraegerdatei } from "./kostentraeger";
 import { erzeugeNutzdatendatei, pruefeNutzdatendatei, ZUZAHLUNG_PAUSCHALE_CENT, type NutzdateiErgebnis } from "./nutzdatei";
 import { istGueltigesTarifkennzeichen, type Verordnungsart } from "./schluessel";
@@ -97,7 +98,8 @@ export interface DaVerordnung {
 
 /** Kostenträgerdatei mit Kassenart (aus dem Dateinamen, Anhang 3 Kap. 6) */
 export interface DaKotrDatei {
-  datei: Kostentraegerdatei;
+  /** auch die eingefrorene Fassung aus dem Cache (wird nur gelesen) */
+  datei: Kostentraegerdatei | DeepReadonly<Kostentraegerdatei>;
   kassenart: string;
 }
 

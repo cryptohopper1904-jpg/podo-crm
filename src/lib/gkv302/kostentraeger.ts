@@ -10,6 +10,7 @@
  *   (deren Nachricht ggf. --VKG 02--> Datenannahmestelle ohne Entschlüsselungsbefugnis = physikalischer Empfänger)
  *   Kostenträger --VKG 09--> Papierannahmestelle (Art der Datenlieferung 21/24/26/27 bzw. Gruppen 28/29).
  */
+import type { DeepReadonly } from "./kotr-cache";
 import { type EdifactGrenzen, maskiere, type RohSegment, vorpruefeEdifact, wert, zerlegeEdifact } from "./edifact";
 
 export interface Gueltigkeit {
@@ -137,11 +138,12 @@ export const KOTR_MAX_BYTES = 2 * 1024 * 1024;
 /**
  * Obergrenzen vor dem Zerlegen (Review-Runden 2 und 3, AppSec H1). Ausgerichtet an sechs echten öffentlichen
  * Kostenträgerdateien (Stand Q4/2026, Messung docs/GKV-302.md 7.1): höchstens 6 471 Segmente, 12 Datenelemente und
- * 4 Gruppendatenelemente je Segment, 116 Zeichen je Segment, rund 63 000 Datenelemente gesamt. Die Grenzen lassen das
- * Zehnfache Spielraum und halten das Zerlegen auch im ungünstigsten Fall unter 100 MB Heap (Test „schlimmste noch
- * zulässige Eingabe“).
+ * 4 Gruppendatenelemente je Segment, 116 Zeichen je Segment, rund 63 000 Datenelemente gesamt. Die Grenzen lassen
+ * reichlich Spielraum (Felder gut das Doppelte, Segmente gut das Zwölffache) und halten das Zerlegen auch im
+ * ungünstigsten Fall (Elementtrenner „+“, Review-Runde 4) deutlich unter 100 MB Heap (Test „schlimmste noch zulässige
+ * Eingabe“).
  */
-export const KOTR_GRENZEN: EdifactGrenzen = { maxZeichen: KOTR_MAX_BYTES, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 300_000 };
+export const KOTR_GRENZEN: EdifactGrenzen = { maxZeichen: KOTR_MAX_BYTES, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 150_000 };
 
 export interface KotrUmfang {
   maxInstitutionen: number;
@@ -388,8 +390,12 @@ export interface Suchkriterien {
 export class KostentraegerVerzeichnis {
   private readonly nachIk = new Map<string, KotrInstitution[]>();
 
-  constructor(dateien: Kostentraegerdatei[]) {
-    for (const d of dateien) {
+  /**
+   * Nimmt auch schreibgeschützte (eingefrorene) Dateien aus dem Cache (src/lib/gkv302/kotr-cache.ts). Das Verzeichnis
+   * liest nur und verändert nichts; die Typumwandlung unten ist deshalb unbedenklich.
+   */
+  constructor(dateien: readonly (Kostentraegerdatei | DeepReadonly<Kostentraegerdatei>)[]) {
+    for (const d of dateien as readonly Kostentraegerdatei[]) {
       for (const inst of d.institutionen) {
         const liste = this.nachIk.get(inst.ik) ?? [];
         liste.push(inst);

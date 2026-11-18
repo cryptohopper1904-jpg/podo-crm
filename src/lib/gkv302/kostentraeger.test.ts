@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { ausLatin1 } from "./edifact";
 import { KOTR_GRENZEN, KOTR_MAX_BYTES, KostentraegerVerzeichnis, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang, schreibeKostentraegerdatei } from "./kostentraeger";
@@ -181,7 +183,7 @@ describe("Kostenträgerdatei – Speicherschutz Review-Runde 3", () => {
 
   it("Grenzen an echten Dateien ausgerichtet (größte gemessene: 214 KB, 6 471 Segmente, 12 Elemente/Segment, 116 Zeichen/Segment)", () => {
     expect(KOTR_MAX_BYTES).toBe(2 * 1024 * 1024);
-    expect(KOTR_GRENZEN).toEqual({ maxZeichen: 2 * 1024 * 1024, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 300_000 });
+    expect(KOTR_GRENZEN).toEqual({ maxZeichen: 2 * 1024 * 1024, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 150_000 });
     expect(() => parseKostentraegerdatei("UNB+" + "A".repeat(KOTR_MAX_BYTES))).toThrow(/zu groß/);
   });
 
@@ -217,15 +219,21 @@ describe("Kostenträgerdatei – Speicherschutz Review-Runde 3", () => {
     expect(() => pruefeKotrUmfang(ohneVkg, g)).toThrow(/zu viele Übermittlungsangaben insgesamt/);
   });
 
+  it("Datei endet mitten in einem Segment mit Gruppentrenner („UNB:“) → Fehler", () => {
+    expect(() => zerlegeEdifact("UNB:")).toThrow(/endet nicht mit einem Segmentendezeichen/);
+    expect(() => zerlegeEdifact("UNB+A'UNZ:")).toThrow(/endet nicht mit einem Segmentendezeichen/);
+    expect(zerlegeEdifact("UNB+A'\r\n")).toHaveLength(1);
+  });
+
   it("schlimmste noch zulässige Eingabe: Zerlegen braucht < 100 MB Heap und < 1 s", () => {
-    const gc = (globalThis as { gc?: () => void }).gc;
+    // GC zur Laufzeit freischalten (Vitest-Worker laufen ohne --expose-gc)
+    setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as (() => void) | undefined;
     const G = KOTR_GRENZEN;
-    // alle Grenzen gleichzeitig ausgereizt: Segmente knapp unter 1 000 Zeichen mit 36 Elementen à 8 Gruppen aus je zwei
-    // Zeichen (zweistellige Felder kosten mehr als einstellige), bis zur Gesamtgrenze der Felder; Rest kleine Segmente
-    const segment = ("AB" + ":AB".repeat(7) + "+").repeat(36) + "AB'";
-    const n = Math.floor((G.maxDatenelementeGesamt - 1000) / 289);
-    let text = "UNB+UNOC'" + segment.repeat(n);
-    text += "AB'".repeat(Math.min(G.maxSegmente - 2 - n, Math.floor((G.maxZeichen - text.length) / 3)));
+    // ungünstigster Fall (Review-Runde 4): Elementtrenner „+“ (je Feld ein eigenes Array), kurze Segmente aus fünf
+    // zweistelligen Feldern bis zur Gesamtgrenze der Felder bzw. der Segmente
+    const n = Math.min(G.maxSegmente - 2, Math.floor((G.maxDatenelementeGesamt - 10) / 4));
+    const text = "UNB+UNOC'" + "AB+AB+AB+AB+AB'".repeat(n);
     expect(text.length).toBeLessThanOrEqual(G.maxZeichen);
     expect(() => vorpruefeEdifact(text, G)).not.toThrow();
     gc?.();
@@ -235,7 +243,7 @@ describe("Kostenträgerdatei – Speicherschutz Review-Runde 3", () => {
     const dauer = performance.now() - t;
     gc?.();
     const zuwachs = process.memoryUsage().heapUsed - vor;
-    expect(seg.length).toBeGreaterThan(70_000);
+    expect(seg.length).toBeGreaterThan(37_000);
     // ohne --expose-gc enthält die Messung auch Müll → gleiche Schwelle, ist dann großzügig
     expect(zuwachs).toBeLessThan(100 * 1024 * 1024);
     expect(dauer).toBeLessThan(1000);

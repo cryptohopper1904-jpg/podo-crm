@@ -250,7 +250,13 @@ async function ladeKotr(org: string, eintraege: KotrEintrag[]): Promise<{ dateie
       const buf = await readDecrypted(e.storageKey);
       // Prüfsumme des entschlüsselten Inhalts als Cache-Schlüssel (nicht der gespeicherte Wert aus settings)
       const sha = createHash("sha256").update(buf).digest("hex");
-      dateien.push({ datei: kotrCache.hole(sha, buf.length, () => parseKostentraegerdatei(ausLatin1(new Uint8Array(buf)))), kassenart: e.kassenart });
+      const datei = kotrCache.hole(sha, buf.length, () => {
+        const d = parseKostentraegerdatei(ausLatin1(new Uint8Array(buf)));
+        // Verteidigung in der Tiefe: inhaltliche Grenzen auch beim Laden (nicht nur beim Upload), Review-Runde 4 H3
+        pruefeKotrUmfang(d);
+        return d;
+      });
+      dateien.push({ datei, kassenart: e.kassenart });
     } catch {
       hinweise.push(`Kostenträgerdatei ${e.dateiname} ist nicht lesbar – bitte erneut hochladen.`);
     }
