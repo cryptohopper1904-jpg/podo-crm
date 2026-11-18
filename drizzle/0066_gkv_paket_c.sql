@@ -63,11 +63,24 @@ CREATE TABLE IF NOT EXISTS "prescription_corrections" (
 	"resolution_note" text
 );
 --> statement-breakpoint
--- Spalten aus Review-Runde 1 (Paket C noch nicht ausgeliefert): für Datenbanken, in denen die Tabellen schon bestehen
-ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "letter_ref" text;--> statement-breakpoint
-ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "letter_date" date;--> statement-breakpoint
-ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "outcome" text;--> statement-breakpoint
-ALTER TABLE "prescription_corrections" ADD COLUMN IF NOT EXISTS "original_row" jsonb;--> statement-breakpoint
+-- Spalten aus Review-Runde 1 (Paket C noch nicht ausgeliefert): für Datenbanken, in denen die Tabellen schon bestehen.
+-- Erst nachsehen, dann ALTER – ADD COLUMN IF NOT EXISTS nimmt sonst auch bei vorhandener Spalte die exklusive Tabellensperre
+-- (Wiederholung der Migration neben laufenden Abfragen, Deadlock-Gefahr).
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'gkv_deductions' AND column_name = 'letter_ref') THEN
+    ALTER TABLE "gkv_deductions" ADD COLUMN "letter_ref" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'gkv_deductions' AND column_name = 'letter_date') THEN
+    ALTER TABLE "gkv_deductions" ADD COLUMN "letter_date" date;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'gkv_deductions' AND column_name = 'outcome') THEN
+    ALTER TABLE "gkv_deductions" ADD COLUMN "outcome" text;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'prescription_corrections' AND column_name = 'original_row') THEN
+    ALTER TABLE "prescription_corrections" ADD COLUMN "original_row" jsonb;
+  END IF;
+END $$;
+--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind" text;--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind_confirmed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind_confirmed_by" uuid;--> statement-breakpoint
