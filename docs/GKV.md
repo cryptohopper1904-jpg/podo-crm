@@ -384,13 +384,21 @@ eines Vermerks „erneut abgerechnet“ im selben Vorgang angelegt sein. Der Lau
 übergebenen Lauf. Ein neuer Lauf ist immer Entwurf ohne Übergabe; die Übergabe setzt Status und Zeitpunkt (vom Server)
 gemeinsam. CSV- und § 302-Export eines Laufs nehmen nur abgerechnete Verordnungen des Laufs (plus Korrekturen mit dem
 Stand der Erstabrechnung) – AppSec Runde 4. **Laufsummen = Summe der Verordnungen** (Migration 0067, Restrisiko R2 aus
-dem AppSec-Review Paket C – **behoben**): Beim Commit prüft ein aufgeschobener CONSTRAINT TRIGGER
-(`billing_batches_sum_check`) jeden neu angelegten Lauf gegen die Verordnungen mit diesem Lauf im Status „abgerechnet“ –
-Anzahl (mindestens eine), `total_cents` = `copayment_total_cents` = Summe der Zuzahlungen, `remedy_total_cents` = Summe der
-Heilmittelkosten (fehlende Beträge zählen 0, wie `createBillingBatch`). Geprüft wird nur das Anlegen: Altläufe vor 0067
-und die Übergabe bleiben unberührt. Abgerechnete Verordnungen (`billed_at` oder Lauf gesetzt) sind nicht löschbar
+dem AppSec-Review Paket C – **behoben**): Verordnungen kommen nur im Vorgang in einen Lauf, in dem er angelegt wird
+(0066), und ihre Beträge sind danach eingefroren – deshalb prüfen aufgeschobene CONSTRAINT TRIGGER genau dort beim Commit:
+beim Anlegen des Laufs (`billing_batches_sum_check`) **und** bei jeder Verordnung, die in diesem Vorgang in den Lauf kommt
+oder darin Status/Beträge ändert (`prescriptions_batch_sum_check_insert`/`_update`). Ein vorgezogenes `SET CONSTRAINTS
+… IMMEDIATE` umgeht das nicht mehr (AppSec K1, PR #122). Regeln: mindestens eine Verordnung, alle Verordnungen mit dem Lauf
+„abgerechnet“ oder „Korrektur nötig“ (bleibt Teil des Laufs, zählt mit), Anzahl, `total_cents` = `copayment_total_cents` =
+Summe der Zuzahlungen, `remedy_total_cents` = Summe der Heilmittelkosten (fehlende Beträge zählen 0, wie
+`createBillingBatch`). Läufe aus früheren Vorgängen (Altläufe vor 0067, Übergabe, spätere Korrektur und Neuabrechnung in
+einem neuen Lauf) prüft der Trigger nicht. Abgerechnete Verordnungen (`billed_at` oder Lauf gesetzt) sind nicht löschbar
 (`prescriptions_delete_guard`, 0067) – außer im Löschlauf der Person, den `podo_delete_patient` bei abgerechneten
-Verordnungen ohnehin verweigert. Ein zweiter gleichzeitiger Export eines Laufs ändert nichts mehr (erster
+Verordnungen ohnehin verweigert; vor der Prüfung sperrt sie die Verordnungen der Person (gleichzeitige Abrechnung wird
+abgewartet). **Löschfreigabe** (AppSec K2): `podo_owner_delete_allowed` verlangt seit 0067 zusätzlich einen Eintrag von
+`podo_delete_patient` in `podo_private.delete_grants` für die laufende Transaktion – das Kennzeichen
+`podo.patient_delete` allein (setzbar von jeder Sitzung) reicht nicht mehr; die App-Rolle hat kein DELETE auf `patients`
+und `organizations` (scripts/migrate.ts). Ein zweiter gleichzeitiger Export eines Laufs ändert nichts mehr (erster
 Übergabezeitpunkt bleibt). Beim Setzen von „Korrektur nötig“ schlägt das Formular eine noch nicht verknüpfte Absetzung als
 Bezug vor (dann gilt sie bei Neuabrechnung als „ersetzt“). Solange der Vermerk offen ist, geht es aus „abrechnungsreif“
 auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
