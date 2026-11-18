@@ -26,6 +26,8 @@ export function testPng(
     filter?: number;
     /** IDAT auf zwei Chunks verteilen */
     splitIdat?: boolean;
+    /** Zusatz-Chunks zwischen IDAT und IEND */
+    chunksAfterIdat?: [string, Buffer][];
   } = {},
 ): Buffer {
   const width = o.width ?? 900;
@@ -50,6 +52,7 @@ export function testPng(
     chunk("IHDR", ihdr, o.badCrc === "IHDR"),
     ...(o.extraChunks ?? []).map(([t, d]) => chunk(t, d)),
     ...idat,
+    ...(o.chunksAfterIdat ?? []).map(([t, d]) => chunk(t, d)),
     chunk("IEND", Buffer.alloc(0), o.badCrc === "IEND"),
   ]);
 }

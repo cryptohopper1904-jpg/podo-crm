@@ -41,4 +41,22 @@ describe("Unterschrift (PNG) prüfen – nur das Format der Zeichenfläche", () 
     expect(checkSignaturePng(testPng({ filter: 5 }))).toMatchObject({ ok: false });
     expect(checkSignaturePng(testPng({ filter: 255 }))).toMatchObject({ ok: false });
   });
+  it("Paket-B-Nachzug: Zusatz-Chunks nur mit fester Länge, je Typ höchstens einmal, nur vor dem ersten IDAT", () => {
+    const srgb = (): [string, Buffer] => ["sRGB", Buffer.from([0])];
+    const gama = (): [string, Buffer] => ["gAMA", Buffer.from([0, 0, 0xb1, 0x8f])];
+    const phys = (): [string, Buffer] => ["pHYs", Buffer.from([0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1])];
+    const chrm = (): [string, Buffer] => ["cHRM", Buffer.alloc(32)];
+    // gültige Browser-PNG (Chrome/Safari schreiben sRGB, gAMA, pHYs) → weiter angenommen
+    expect(checkSignaturePng(testPng({ extraChunks: [srgb(), gama(), phys()] }))).toEqual({ ok: true, width: 900, height: 300 });
+    expect(checkSignaturePng(testPng({ extraChunks: [srgb(), gama(), chrm(), phys()] }))).toEqual({ ok: true, width: 900, height: 300 });
+    // 500 sRGB-Chunks (Aufblähen/Parser-Last) → abgelehnt
+    expect(checkSignaturePng(testPng({ extraChunks: Array.from({ length: 500 }, srgb) }))).toMatchObject({ ok: false });
+    // doppelter gAMA → abgelehnt
+    expect(checkSignaturePng(testPng({ extraChunks: [gama(), gama()] }))).toMatchObject({ ok: false });
+    // falsche Länge (sRGB mit 2 Bytes, gAMA mit 32 Bytes) → abgelehnt
+    expect(checkSignaturePng(testPng({ extraChunks: [["sRGB", Buffer.from([0, 0])]] }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ extraChunks: [["gAMA", Buffer.alloc(32)]] }))).toMatchObject({ ok: false });
+    // Zusatz-Chunk nach dem ersten IDAT → abgelehnt
+    expect(checkSignaturePng(testPng({ chunksAfterIdat: [srgb()] }))).toMatchObject({ ok: false });
+  });
 });
