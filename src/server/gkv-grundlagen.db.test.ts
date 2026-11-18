@@ -6,6 +6,8 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
@@ -86,40 +88,48 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash) values ($1,$2,$3,$4,$5,$6)", [org, p, user, berlinToUtc(day, "10:00"), prescriptionId, `h-${Math.random()}`]),
     );
   /**
-   * Migration (z. B. 0062) zweimal einspielen – in EINER Transaktion, die immer zurückgerollt wird (Review Runde 4):
-   * parallel laufende Testdateien in der gemeinsamen DB sehen so nie die alte Fassung ersetzter Funktionen oder fehlende
-   * Trigger späterer Migrationen (früher: einspielen und danach die neuesten Fassungen wiederherstellen – mit Lücke).
-   * `before` stellt Altbestand in derselben Transaktion nach, `after` prüft das Ergebnis dort. Deadlock (40P01) neben
-   * parallel laufenden Tests → ganze Transaktion wiederholen.
+   * Migration (z. B. 0062) zweimal einspielen – in einer EIGENEN, frisch migrierten Datenbank (Review Runde 4): parallel
+   * laufende Testdateien in der gemeinsamen DB sehen so nie die alte Fassung ersetzter Funktionen oder fehlende Trigger
+   * späterer Migrationen und laufen nicht in Sperren/Deadlocks der DDL. `before` stellt Altbestand dort nach (Owner),
+   * `after` prüft das Ergebnis dort. Ohne Recht CREATE DATABASE `false` (Test überspringen). Danach wird die DB gelöscht.
    */
-  const runMigration = async (suffix: string, hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void> } = {}) => {
-    const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
-    const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
-    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+  const runMigration = async (suffix: string, hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void> } = {}): Promise<boolean> => {
+    const dir = path.join(__dirname, "../../drizzle");
+    const file = readdirSync(dir).find((f) => f.endsWith(suffix))!;
+    const sql = readFileSync(path.join(dir, file), "utf8").split("--> statement-breakpoint");
+    const name = `podo_mig_${Math.random().toString(36).slice(2, 10)}`;
+    const admin = new Pool({ connectionString: ownerUrl(), max: 1 });
     try {
-      for (let i = 1; ; i++) {
-        const c = await owner.connect();
+      const can = await admin.query("select rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
+      if (!can.rows[0]?.ok) return false;
+      await admin.query(`create database ${name}`);
+      const url = new URL(ownerUrl());
+      url.pathname = `/${name}`;
+      const pool = new Pool({ connectionString: url.toString(), max: 1 });
+      try {
+        await pool.query("create extension if not exists pgcrypto");
+        await pool.query("create extension if not exists pg_trgm");
+        await migrate(drizzle(pool), { migrationsFolder: dir });
+        const c = await pool.connect();
         try {
-          await c.query("begin");
           await hooks.before?.(c);
           for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await c.query(stmt);
           await hooks.after?.(c);
-          break;
-        } catch (e) {
-          if ((e as { code?: string }).code !== "40P01" || i >= 5) throw e;
-          await new Promise((r) => setTimeout(r, 50 * i));
         } finally {
-          await c.query("rollback").catch(() => undefined);
           c.release();
         }
+      } finally {
+        await pool.end();
       }
+      return true;
     } finally {
-      await owner.end();
+      await admin.query(`drop database if exists ${name} with (force)`).catch(() => undefined);
+      await admin.end();
     }
   };
 
-  it("Migration 0062 ist wiederholbar (idempotent)", async () => {
-    await runMigration("_gkv_review.sql");
+  it("Migration 0062 ist wiederholbar (idempotent)", { timeout: 120_000 }, async (ctx) => {
+    if (!(await runMigration("_gkv_review.sql"))) ctx.skip();
   });
 
   it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", async () => {
@@ -381,40 +391,47 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect(r.ok).toBe(true);
   });
 
-  it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", async (ctx) => {
+  it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", { timeout: 120_000 }, async (ctx) => {
     const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
     try {
       const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
       if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
-      const org2 = await fx.org();
-      const p2 = await fx.patient(org2, { lastName: "Fremdpraxis" });
-      const foreign = await fx.asOrg(org2, async (c) => (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id", [org2, p2, today])).rows[0].id as string);
-      const own = await vo({ issuedAt: today, units: 1 });
-      let legacy = "";
-      let ok = "";
-      await runMigration("_gkv_review.sql", {
-        before: async (c) => {
-          await c.query("set local session_replication_role = replica");
-          const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
-          legacy = (await c.query(ins, [org, patient, foreign])).rows[0].id;
-          ok = (await c.query(ins, [org, patient, own])).rows[0].id;
-          await c.query("set local session_replication_role = origin");
-        },
-        after: async (c) => {
-          const rows = (await c.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows;
-          expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
-          expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
-          const force = await c.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
-          expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
-          const idx = await c.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
-          expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
-          const fn = await c.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
-          expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
-        },
-      });
     } finally {
       await owner.end();
     }
+    let legacy = "";
+    let ok = "";
+    let own = "";
+    // Altbestand in der eigenen DB (Owner, Trigger aus): zwei Praxen, Termin mit Verordnung der fremden Praxis
+    const ran = await runMigration("_gkv_review.sql", {
+      before: async (c) => {
+        await c.query("set session_replication_role = replica");
+        const id = async (q: string, p: unknown[]) => (await c.query(q, p)).rows[0].id as string;
+        const o1 = await id("insert into organizations (name, slug) values ('Praxis A', $1) returning id", [`a-${Math.random().toString(36).slice(2, 8)}`]);
+        const o2 = await id("insert into organizations (name, slug) values ('Praxis B', $1) returning id", [`b-${Math.random().toString(36).slice(2, 8)}`]);
+        const p1 = await id("insert into patients (organization_id, number, last_name) values ($1, 1, 'Kasse') returning id", [o1]);
+        const p2 = await id("insert into patients (organization_id, number, last_name) values ($1, 1, 'Fremdpraxis') returning id", [o2]);
+        const vo = "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id";
+        const foreign = await id(vo, [o2, p2, today]);
+        own = await id(vo, [o1, p1, today]);
+        const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
+        legacy = await id(ins, [o1, p1, foreign]);
+        ok = await id(ins, [o1, p1, own]);
+        await c.query("set session_replication_role = origin");
+      },
+      after: async (c) => {
+        const rows = (await c.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows;
+        expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
+        expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
+        const force = await c.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
+        expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
+        const idx = await c.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
+        expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
+        const fn = await c.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
+        expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+      },
+    });
+    if (!ran) ctx.skip();
   });
 
   it("Paket B: neuer Altvermerk „Zuzahlung erhalten“ nicht mehr möglich; Server-Action ohne 500 bei Unsinn", async () => {
