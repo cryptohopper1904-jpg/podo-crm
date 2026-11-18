@@ -28,12 +28,17 @@ describe("Cache zerlegter Kostenträgerdateien (Review-Runde 3)", () => {
 
   it("begrenzt nach geschätztem Heap (Eingabe-Bytes × 10, LRU), nicht nach Anzahl", () => {
     expect(KOTR_CACHE_GEWICHT_JE_BYTE).toBe(10);
-    const c = new KotrCache(3 * roh.length * KOTR_CACHE_GEWICHT_JE_BYTE);
+    // Gewicht eines Eintrags (Struktur-Gewicht, mindestens Eingabe × 10)
+    const probe = new KotrCache(Number.MAX_SAFE_INTEGER);
+    probe.hole("p", roh.length, () => parseKostentraegerdatei(roh));
+    const eins = probe.bytes();
+    expect(eins).toBeGreaterThanOrEqual(roh.length * KOTR_CACHE_GEWICHT_JE_BYTE);
+    const c = new KotrCache(3 * eins);
     for (const k of ["a", "b", "c"]) c.hole(k, roh.length, () => parseKostentraegerdatei(roh));
     c.hole("a", roh.length, () => parseKostentraegerdatei(roh)); // a zuletzt benutzt
     c.hole("d", roh.length, () => parseKostentraegerdatei(roh));
     expect(c.schluessel()).toEqual(["c", "a", "d"]);
-    expect(c.bytes()).toBe(3 * roh.length * KOTR_CACHE_GEWICHT_JE_BYTE);
+    expect(c.bytes()).toBe(3 * eins);
     // zu groß für den Cache: wird geliefert, aber nicht gespeichert
     c.hole("riesig", 4 * roh.length, () => parseKostentraegerdatei(roh));
     expect(c.schluessel()).not.toContain("riesig");
@@ -68,7 +73,7 @@ describe("Cache zerlegter Kostenträgerdateien (Review-Runde 3)", () => {
     expect(laenge).toBeGreaterThan(800_000);
     expect(c.bytes()).toBeLessThanOrEqual(KOTR_CACHE_MAX_BYTES);
     expect(c.schluessel().length).toBe(Math.floor(KOTR_CACHE_MAX_BYTES / (laenge * KOTR_CACHE_GEWICHT_JE_BYTE)));
-    // gehalten: Cache-Einträge (≈ 5–9 × Eingabe) – mit GC gemessen; ohne GC großzügige Schwelle
+    // gehalten: Cache-Einträge (je nach Muster ≈ 4–32 × Eingabe, hier gültige VKG-Segmente) – mit GC gemessen; ohne GC großzügige Schwelle
     expect(gehalten).toBeLessThan((gc ? 48 : 250) * 1024 * 1024);
   });
 
@@ -131,5 +136,22 @@ describe("Cache zerlegter Kostenträgerdateien (Review-Runde 3)", () => {
     expect(gehalten).toBeLessThan((gc ? 1 : 3) * KOTR_CACHE_MAX_BYTES);
     if (gc) expect(gehalten).toBeLessThanOrEqual(c.bytes());
     expect(einzeln.schluessel()).toEqual(["e"]);
+  });
+
+  // Review-Runde 6 (AppSec/Code-Review H1): gültige Segmente mit vielen kurzen Werten – jede Zeichenkette hat in V8 einen
+  // festen Kopf; ohne Pauschale je Zeichenkette lag die Schätzung nur 1,0- bis 1,07-mal über dem gemessenen Heap.
+  it("Gewicht deckt kurze Zeichenketten mit Spielraum ab (gültiges „ASP+ab+cd+ef+gh+ij'“)", () => {
+    // Gemessen (Node 22, `heapUsed` nach GC, voller Cache mit 14 verschiedenen Dateien dieses Musters): ≈ 215 Byte Heap
+    // je ASP-Segment mit fünf 2-Zeichen-Werten. Das Gewicht muss mindestens 1,5-mal darüber liegen (Spielraum für andere
+    // V8-Versionen). Feste Untergrenze statt Heap-Messung im Test, weil diese im Test-Worker nicht verlässlich ist.
+    const z = (n: number): string => n.toString(36).padStart(2, "0").slice(-2);
+    const anzahl = 29_000;
+    const asp = Array.from({ length: anzahl }, (_, i) => `ASP+${z(i)}+${z(i + 1)}+${z(i + 2)}+${z(i + 3)}+${z(i + 4)}'`).join("");
+    const text = `UNB+UNOC:3+990020026+999999999+261001:1200+00001++GK05Q426KE0'UNH++KOTR'IDK+990000001'VDT+20260101'${asp}UNT+${anzahl + 4}'UNZ+1+00001'`;
+    const c = new KotrCache();
+    c.hole("asp", text.length, () => parseKostentraegerdatei(text));
+    expect(c.schluessel()).toEqual(["asp"]);
+    expect(c.bytes()).toBeGreaterThan(text.length * KOTR_CACHE_GEWICHT_JE_BYTE);
+    expect(c.bytes()).toBeGreaterThanOrEqual(anzahl * 215 * 1.5);
   });
 });

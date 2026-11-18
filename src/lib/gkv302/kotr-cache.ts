@@ -14,24 +14,31 @@ export const KOTR_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 /** Untergrenze des Gewichts je Byte Eingabe (Zeichenketten, Ausschnitte beim Zerlegen) */
 export const KOTR_CACHE_GEWICHT_JE_BYTE = 10;
 /**
- * Struktur-Gewichte (Review-Runde 5, gemessen mit V8/Node 22, `heapUsed` nach GC): ein eingefrorenes Objekt/Array
- * belegt 75–215 Byte samt Eigenschaften (ohne lange Zeichenketten); die Schätzung liegt bei allen gemessenen Mustern
- * 1,5- bis 2,7-mal über dem gemessenen Heap (Spielraum für andere V8-Versionen und Dictionary-Modus).
+ * Struktur-Gewichte (Review-Runden 5/6, gemessen mit V8/Node 22, `heapUsed` nach GC): ein eingefrorenes Objekt/Array
+ * belegt 75–215 Byte samt Eigenschaften; jede Zeichenkette mit mehr als einem Zeichen hat zusätzlich einen festen Kopf
+ * (≈ 24 Byte, Einzelzeichen legt V8 nur einmal an). Ohne die Pauschale je Zeichenkette lag die Schätzung bei vielen
+ * kurzen Werten (z. B. „ASP+ab+cd+ef+gh+ij'“) nur 1,0- bis 1,07-mal über dem Heap; mit ihr bleibt Spielraum für andere
+ * V8-Versionen und den Dictionary-Modus.
  */
 export const KOTR_GEWICHT_JE_KNOTEN = 160;
 export const KOTR_GEWICHT_JE_FELD = 8;
 export const KOTR_GEWICHT_JE_ZEICHEN = 2;
+export const KOTR_GEWICHT_JE_ZEICHENKETTE = 24;
 
-/** beim Einfrieren gezählte Struktur: Objekte/Arrays, Eigenschaften/Elemente, Zeichen aller Zeichenketten */
+/** beim Einfrieren gezählte Struktur: Objekte/Arrays, Eigenschaften/Elemente, Zeichen aller Zeichenketten, Zeichenketten mit mehr als einem Zeichen */
 export interface KotrStruktur {
   knoten: number;
   felder: number;
   zeichen: number;
+  zeichenketten: number;
 }
 
-/** geschätzter Heap einer eingefrorenen Datei: max(Eingabe × 10, Knoten × 160 + Felder × 8 + Zeichen × 2) */
+/** geschätzter Heap einer eingefrorenen Datei: max(Eingabe × 10, Knoten × 160 + Felder × 8 + Zeichen × 2 + Zeichenketten × 24) */
 export function kotrGewicht(bytes: number, s: KotrStruktur): number {
-  return Math.max(bytes * KOTR_CACHE_GEWICHT_JE_BYTE, s.knoten * KOTR_GEWICHT_JE_KNOTEN + s.felder * KOTR_GEWICHT_JE_FELD + s.zeichen * KOTR_GEWICHT_JE_ZEICHEN);
+  return Math.max(
+    bytes * KOTR_CACHE_GEWICHT_JE_BYTE,
+    s.knoten * KOTR_GEWICHT_JE_KNOTEN + s.felder * KOTR_GEWICHT_JE_FELD + s.zeichen * KOTR_GEWICHT_JE_ZEICHEN + s.zeichenketten * KOTR_GEWICHT_JE_ZEICHENKETTE,
+  );
 }
 
 /** rekursiv schreibgeschützt (Typ zum eingefrorenen Cache-Objekt) */
@@ -53,8 +60,10 @@ export function tiefEinfrieren<T>(o: T, gesehen = new WeakSet<object>(), zaehler
       zaehler.felder += werte.length;
     }
     for (const v of werte) {
-      if (zaehler && typeof v === "string") zaehler.zeichen += v.length;
-      else tiefEinfrieren(v, gesehen, zaehler);
+      if (zaehler && typeof v === "string") {
+        zaehler.zeichen += v.length;
+        if (v.length > 1) zaehler.zeichenketten++;
+      } else tiefEinfrieren(v, gesehen, zaehler);
     }
   }
   return o as DeepReadonly<T>;
@@ -74,7 +83,7 @@ export class KotrCache {
       return treffer.datei;
     }
     // flache Kopie aller Zeichenketten: Ausschnitte (slice) des Zerlegers würden sonst die ganze Eingabe festhalten
-    const struktur: KotrStruktur = { knoten: 0, felder: 0, zeichen: 0 };
+    const struktur: KotrStruktur = { knoten: 0, felder: 0, zeichen: 0, zeichenketten: 0 };
     const datei = tiefEinfrieren(structuredClone(laden()), new WeakSet<object>(), struktur);
     const gewicht = kotrGewicht(bytes, struktur);
     if (gewicht > this.maxGewicht) return datei;
