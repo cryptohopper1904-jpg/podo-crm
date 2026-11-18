@@ -117,11 +117,11 @@ export function cleanText(v: string | null | undefined, max: number): string {
 
 /**
  * Spalten der Verordnung, die beim Vergleich mit dem Stand der Erstabrechnung (prescription_corrections.original_row)
- * nicht als inhaltliche Änderung zählen: Status, Altvermerk Zuzahlung (auch an abgerechneten Verordnungen änderbar) und
- * Bestätigungszeitpunkt/-person des Kennzeichens (jede Speicherung bestätigt neu). Gleiche Liste im Trigger
- * podo_prescription_billed_lock (Migration 0066).
+ * nicht als inhaltliche Änderung zählen: Status und Altvermerk Zuzahlung (auch an abgerechneten Verordnungen änderbar).
+ * Bestätigungszeitpunkt/-person des Kennzeichens zählen mit: Eine Neubestätigung im Korrekturstatus erzwingt die
+ * Neuabrechnung (AppSec Runde 2, S3). Gleiche Liste im Trigger podo_prescription_billed_lock (Migration 0066).
  */
-export const CORRECTION_VOLATILE_KEYS = ["status", "copayment_paid_at", "copayment_paid_cents", "copayment_paid_method", "prescription_kind_confirmed_at", "prescription_kind_confirmed_by"] as const;
+export const CORRECTION_VOLATILE_KEYS = ["status", "copayment_paid_at", "copayment_paid_cents", "copayment_paid_method"] as const;
 /** abgeleitete Beträge (bei „abrechnungsreif“ neu berechnet) – bei „ohne Neuabrechnung“ aus der Erstabrechnung wiederhergestellt */
 export const CORRECTION_DERIVED_KEYS = ["price_snapshot", "remedy_cost_cents", "copayment_cents"] as const;
 

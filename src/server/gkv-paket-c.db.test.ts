@@ -454,4 +454,144 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       await expect(w.q("update prescription_corrections set resolution = 'no_rebill', resolved_at = now(), resolved_batch_id = $2 where id = $1", [res.id, batchId])).rejects.toThrow(/keinen neuen Lauf/);
     });
   });
+
+  describe("Review-Runde 2", () => {
+    it("S1: Neuabrechnung nach Korrektur nie im alten Lauf – abrechnungsreif → abgerechnet mit altem Lauf scheitert (App-Rolle, RLS)", async () => {
+      const w = await world();
+      const older = await w.billed(); // Lauf, der vor dem Korrekturvermerk entstand
+      const { id, batchId } = await w.billed();
+      const [orig] = await w.q<{ billed_at: Date }>("select billed_at from prescriptions where id = $1", [id]);
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "ICD laut Kasse falsch" });
+      if ("error" in res) throw new Error(res.error);
+      // Inhalt ändern → abrechnungsreif
+      expect(await presc.savePrescription(w.auth, w.formInput(id, "E11.40"))).toMatchObject({ id });
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      // exakt die Umgehung: billed mit ALTEM Lauf (und altem Zeitpunkt), dann Vermerk „rebilled“ mit altem Lauf
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          await cl.query("update prescriptions set status = 'billed', billed_at = $2, billing_batch_id = $3 where id = $1", [id, orig.billed_at, batchId]);
+          await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [res.id, w.user, batchId]);
+        }),
+      ).rejects.toThrow(/neuen Abrechnungslauf/);
+      // auch ein anderer, schon vor dem Vermerk bestehender Lauf ist kein „neuer“ Lauf
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, older.batchId])).rejects.toThrow(/neuen Abrechnungslauf/);
+      // ohne Lauf ebenso nicht
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = null where id = $1", [id])).rejects.toThrow(/neuen Abrechnungslauf/);
+      const [st] = await w.q<{ status: string; open: number }>("select p.status, (select count(*)::int from prescription_corrections c where c.prescription_id = p.id and c.resolved_at is null) as open from prescriptions p where p.id = $1", [id]);
+      expect(st).toEqual({ status: "billing_ready", open: 1 });
+      // regulär über einen neuen Lauf → erlaubt, Vermerk „erneut abgerechnet“ mit dem neuen Lauf
+      const batch2 = await presc.createBillingBatch(w.auth, [id], { partner: "manual" });
+      if ("error" in batch2) throw new Error(batch2.error);
+      const [c] = await w.q<{ resolution: string; resolved_batch_id: string }>("select resolution, resolved_batch_id from prescription_corrections where id = $1", [res.id]);
+      expect(c).toEqual({ resolution: "rebilled", resolved_batch_id: batch2.id });
+    });
+
+    it("S2/S4: original_* und created_at setzt der Trigger aus der Verordnungszeile – Werte der Anwendung werden überschrieben", async () => {
+      const w = await world();
+      const other = await w.billed();
+      const { id, batchId } = await w.billed();
+      const [vo] = await w.q<{ billed_at: Date; remedy_cost_cents: number; copayment_cents: number; price_snapshot: unknown }>("select billed_at, remedy_cost_cents, copayment_cents, price_snapshot from prescriptions where id = $1", [id]);
+      await w.q(
+        `insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, created_by, original_batch_id, original_billed_at, original_remedy_cost_cents,
+           original_copayment_cents, original_price_snapshot, created_at)
+         values ($1,$2,$3,'Testvermerk',$4,$5,'2000-01-01',1,2,'{"x":1}','2000-01-01')`,
+        [w.org, id, w.patient, w.user, other.batchId],
+      );
+      const [c] = await w.q<{ original_batch_id: string; original_billed_at: Date; original_remedy_cost_cents: number; original_copayment_cents: number; original_price_snapshot: unknown; recent: boolean }>(
+        "select original_batch_id, original_billed_at, original_remedy_cost_cents, original_copayment_cents, original_price_snapshot, created_at > now() - interval '5 minutes' as recent from prescription_corrections where prescription_id = $1",
+        [id],
+      );
+      expect(c).toEqual({
+        original_batch_id: batchId,
+        original_billed_at: vo.billed_at,
+        original_remedy_cost_cents: vo.remedy_cost_cents,
+        original_copayment_cents: vo.copayment_cents,
+        original_price_snapshot: vo.price_snapshot,
+        recent: true,
+      });
+    });
+
+    it("S3: Neubestätigung des Kennzeichens im Korrekturstatus erzwingt Neuabrechnung (App und DB)", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Kennzeichen prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      // gleiche Werte erneut bestätigt → Bestätigungszeitpunkt/-person ändern sich → keine Rückkehr in den alten Lauf
+      expect(await gb.saveBillingDetails(w.auth, gb.billingDetailsInput.parse({ id, patientId: w.patient, prescriptionKind: "03" }))).toEqual({ ok: true });
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ error: "Geänderte Verordnung muss neu abgerechnet werden." });
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          await cl.query("update prescription_corrections set resolution = 'no_rebill', resolved_at = now(), resolved_by = $2 where id = $1", [res.id, w.user]);
+          await cl.query("update prescriptions set status = 'billed' where id = $1", [id]);
+        }),
+      ).rejects.toThrow(/Geänderte Verordnung muss neu abgerechnet werden/);
+      const { CORRECTION_VOLATILE_KEYS } = await import("@/lib/rules/gkv-billing");
+      expect(CORRECTION_VOLATILE_KEYS).not.toContain("prescription_kind_confirmed_at");
+      expect(CORRECTION_VOLATILE_KEYS).not.toContain("prescription_kind_confirmed_by");
+    });
+
+    it("H-1: „ohne Neuabrechnung“ nur zusammen mit der Rückkehr auf „abgerechnet“ im alten Lauf (Prüfung beim Commit)", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Absetzung prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      await expect(w.q("update prescription_corrections set resolution = 'no_rebill', resolved_at = now(), resolved_by = $2 where id = $1", [res.id, w.user])).rejects.toThrow(/ohne Neuabrechnung.*abgerechnet/i);
+      const [st] = await w.q<{ status: string; resolution: string | null }>("select p.status, c.resolution from prescriptions p join prescription_corrections c on c.prescription_id = p.id where p.id = $1", [id]);
+      expect(st).toEqual({ status: "correction_needed", resolution: null });
+      // regulär (App) weiterhin möglich
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ ok: true });
+    });
+
+    it("H-2: Altbestand ohne Preis-Snapshot – „ohne Neuabrechnung“ schreibt SQL-NULL zurück, nicht JSON null", async () => {
+      const w = await world();
+      const [b] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
+      const [p] = await w.q<{ id: string }>(
+        "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,$3,'DF',2,'billed',now(),$4) returning id",
+        [w.org, w.patient, addDaysIso(today, -60), b.id],
+      );
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: p.id, patientId: w.patient, reason: "Altbestand prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: p.id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ ok: true });
+      const [r] = await w.q<{ status: string; snap_null: boolean }>("select status, price_snapshot is null as snap_null from prescriptions where id = $1", [p.id]);
+      expect(r).toEqual({ status: "billed", snap_null: true });
+    });
+
+    it("N2: CSV des alten Laufs – Versichertennummer aus der Verordnung, nicht aus der (inzwischen geänderten) Person", async () => {
+      const w = await world();
+      const { id, batchId } = await w.billed();
+      await w.q("update patients set insurance_number = 'Z999999999' where id = $1", [w.patient]);
+      const col = async () => {
+        const exp = await presc.billingBatchExport(w.auth, batchId);
+        const header = exp!.lines[0] as string[];
+        return (exp!.lines[1] as string[])[header.indexOf("Versichertennummer")];
+      };
+      expect(await col()).toBe("A000500015");
+      // auch mit Stand der Erstabrechnung (original_row), während die Verordnung korrigiert wird
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Versichertennummer prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      expect(await presc.savePrescription(w.auth, { ...w.formInput(id), insuranceNumber: "B111111111" })).toMatchObject({ id });
+      expect(await col()).toBe("A000500015");
+    });
+
+    it("N5: Aktenzeichen/Datum des Kassenschreibens explizit leeren (solange nicht erledigt); fehlendes Feld = unverändert", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const created = await gb.createDeduction(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 900, reason: "Frist", deductedOn: today, letterRef: "AZ 1", letterDate: addDaysIso(today, -2) });
+      if ("error" in created) throw new Error(created.error);
+      const row = async () => (await w.q<{ letter_ref: string | null; letter_date: string | null }>("select letter_ref, letter_date::text from gkv_deductions where id = $1", [created.id]))[0];
+      expect(await gb.updateDeduction(w.auth, gb.deductionUpdateInput.parse({ id: created.id, status: "open" }))).toEqual({ ok: true });
+      expect(await row()).toEqual({ letter_ref: "AZ 1", letter_date: addDaysIso(today, -2) });
+      expect(await gb.updateDeduction(w.auth, gb.deductionUpdateInput.parse({ id: created.id, status: "open", letterRef: "", letterDate: "" }))).toEqual({ ok: true });
+      expect(await row()).toEqual({ letter_ref: null, letter_date: null });
+    });
+
+    it("Abrechnungsläufe sind nie löschbar; Anlagezeitpunkt vom Server und unveränderlich", async () => {
+      const w = await world();
+      const { batchId } = await w.billed();
+      await expect(w.q("delete from billing_batches where id = $1", [batchId])).rejects.toThrow(/Abrechnungslauf kann nicht gelöscht werden/);
+      await expect(w.q("update billing_batches set created_at = created_at - interval '1 day' where id = $1", [batchId])).rejects.toThrow(/unveränderlich/);
+      const [b] = await w.q<{ recent: boolean }>("insert into billing_batches (organization_id, prescription_count, created_at) values ($1, 0, '2000-01-01') returning created_at > now() - interval '5 minutes' as recent", [w.org]);
+      expect(b.recent).toBe(true);
+    });
+  });
 });

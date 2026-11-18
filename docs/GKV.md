@@ -370,24 +370,33 @@ Snapshot; Audit `prescription.update` bzw. `prescription.billing_details` mit `c
 Liste der geänderten Spaltennamen, keine Werte), wird erneut „abrechnungsreif“ (neuer Preis-Snapshot, alle Prüfungen;
 **Hinweis**, wenn sich das Zuzahlungs-Soll gegenüber der Erstabrechnung oder den schon quittierten Beträgen ändert – keine
 Sperre) und geht in den **nächsten Abrechnungslauf**; dort wird der Vermerk als „erneut abgerechnet“ (mit neuem Lauf)
-abgeschlossen – der Trigger prüft, dass dieser Lauf die Verordnung enthält. Solange der Vermerk offen ist, geht es aus
+abgeschlossen – der Trigger prüft, dass dieser Lauf die Verordnung enthält und **nicht** der Lauf der Erstabrechnung ist.
+Hat eine Verordnung Korrekturvermerke, lässt `podo_prescription_billed_lock` „abrechnungsreif“ → „abgerechnet“ nur mit
+einem **neuen Lauf** zu (vorhanden, nicht der Lauf einer Erstabrechnung, angelegt nicht vor dem jüngsten Vermerk – AppSec
+Runde 2). Den Stand der Erstabrechnung im Vermerk (Lauf, Zeitpunkt, Beträge, Preis-Snapshot, `original_row`) und dessen
+Anlagezeitpunkt setzt immer der Trigger, nie die Anwendung. Abrechnungsläufe sind nie löschbar, ihr Anlagezeitpunkt kommt
+vom Server und ist unveränderlich (`podo_billing_batch_guard`). Solange der Vermerk offen ist, geht es aus
 „abrechnungsreif“ auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
 
 „**Ohne Neuabrechnung abschließen**“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im
 ursprünglichen Lauf – **nur, wenn die Verordnung inhaltlich unverändert ist** (Vergleich mit `original_row` ohne Status,
-Altvermerk Zuzahlung, Bestätigungszeitpunkt/-person des Kennzeichens und ohne die abgeleiteten Beträge Preis-Snapshot,
-Heilmittelkosten, Zuzahlung – diese werden aus der Erstabrechnung wiederhergestellt). Sonst Fehler „Geänderte Verordnung
+Altvermerk Zuzahlung und ohne die abgeleiteten Beträge Preis-Snapshot, Heilmittelkosten, Zuzahlung – diese werden aus der
+Erstabrechnung wiederhergestellt). Eine Neubestätigung des Kennzeichens im Korrekturstatus (auch mit gleichem Wert) zählt
+als Änderung und erzwingt die Neuabrechnung; das Formular weist darauf hin – bei Altbestand ohne bestätigtes Kennzeichen
+heißt das: entweder ohne Neuabrechnung abschließen (nichts speichern) oder bestätigen und neu abrechnen. Sonst Fehler „Geänderte Verordnung
 muss neu abgerechnet werden“. Der Trigger `podo_prescription_billed_lock` erzwingt dasselbe: „Korrektur nötig“ →
 „abgerechnet“ nur, wenn der jüngste Vermerk im selben Vorgang als `no_rebill` abgeschlossen wurde, keiner mehr offen ist und
 die Zeile (ohne die genannten Felder außer den abgeleiteten Beträgen) `original_row` entspricht. Damit gibt es keine stille
-Änderung im alten Lauf.
+Änderung im alten Lauf. Umgekehrt prüft ein Constraint-Trigger beim Commit, dass ein als `no_rebill` abgeschlossener Vermerk
+nur zusammen mit der Rückkehr auf „abgerechnet“ im Lauf der Erstabrechnung gespeichert wird.
 
 Abgeschlossene Vermerke sind unveränderlich, nie löschbar. Der **CSV-Export des ursprünglichen Laufs** führt die
 Verordnung weiter (Spalte „Korrektur“: offen / in späterem Lauf neu abgerechnet / ohne Neuabrechnung) – **mit dem Stand
 der Erstabrechnung** aus `original_row` (reproduzierbar, Zeilensumme = Laufsumme); der neue Lauf mit den korrigierten
 Werten und „Neuabrechnung nach Korrektur vom …“. Ebenso der **§ 302-Prüflauf/Testpaket „Abrechnungslauf“**: der alte Lauf
 mit dem Originalstand (je Verordnung einmal), die korrigierte Fassung nur unter „bereit“ bzw. im Lauf der Neuabrechnung.
-Personenangaben (Name, Anschrift, Versichertennummer der Person) kommen weiter aus der aktuellen Akte. Absetzungen und Korrekturvermerke sind Aufbewahrungsgründe
+Die Versichertennummer kommt aus der Verordnung (Stand der Abrechnung bzw. `original_row`), nur bei Altbestand ohne Angabe
+an der Verordnung aus der Person; Name, Anschrift und Krankenkassenname kommen weiter aus der aktuellen Akte. Absetzungen und Korrekturvermerke sind Aufbewahrungsgründe
 (`retentionFacts`, `podo_delete_patient`), gehen in den Praxis-Export (`tables/gkv_deductions.json`,
 `tables/prescription_corrections.json`) und haben keine Dateien (archive-orphans unverändert).
 
@@ -417,6 +426,12 @@ folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
 36. **Ausgang einer erledigten Absetzung**: Reichen „Absetzung bleibt“/„Widerspruch erfolgreich“, oder braucht es einen
     Teilerfolg (Teilbetrag erstattet)? Heute: Teilerfolg = Betrag vor „erledigt“ korrigieren geht nur bei „offen“ –
     sonst Notiz. (Abrechnungszentrum/Steuerberatung)
-37. **Sicherung der Erstabrechnung**: `original_row` hält die Verordnungszeile beim Öffnen der Korrektur fest; Personenangaben
-    (Name, Anschrift, Versichertennummer an der Person) sind nicht mitgesichert. Reicht das für die Nachvollziehbarkeit
-    des alten Laufs, oder soll auch der Personenstand gesichert werden? (Datenschutz/Steuerberatung)
+37. **Sicherung der Erstabrechnung**: `original_row` hält die Verordnungszeile beim Öffnen der Korrektur fest (die
+    Versichertennummer der Verordnung ist darin enthalten und wird im CSV des alten Laufs verwendet); Personenangaben
+    (Name, Anschrift, Krankenkassenname) sind nicht mitgesichert. Ebenfalls **nicht** eingefroren sind die
+    **Behandlungstage** (Spalten „Erbrachte Einheiten“/„Behandlungstage“, aus den Behandlungen gelesen) und „**Zuzahlung
+    erhalten am**“ (letzte gültige Zuzahlungsquittung, Storno/neue Quittung wirkt auch im alten Lauf). Ein erneuter Export
+    des alten Laufs kann daher in diesen Spalten vom damals übergebenen abweichen. Reicht das für die Nachvollziehbarkeit,
+    oder soll mehr gesichert werden? (Datenschutz/Steuerberatung)
+    **Folgeaufgabe (Vorschlag)**: die erzeugte Exportdatei (CSV bzw. § 302-Paket) beim ersten Export mit SHA-256-Prüfsumme
+    archivieren (wie das Beleg-Archiv), damit genau die übergebene Fassung belegbar bleibt.
