@@ -3,7 +3,7 @@ import { dateDe } from "@/lib/format";
 import { PERIOD_LABELS, PERIOD_PRESETS, type Period } from "@/lib/stats";
 import { PeriodSelect } from "./period-select";
 
-export type StatsTab = "finanzen" | "termine" | "leistungen";
+export type StatsTab = "finanzen" | "termine" | "leistungen" | "kasse" | "belegliste";
 
 /**
  * Reiter der Auswertung. Der gewählte Zeitraum wandert mit: Finanzen arbeitet mit Kalenderjahren (?year=),
@@ -14,6 +14,9 @@ export function StatsTabs({ active, statsQuery, year }: { active: StatsTab; stat
     ["finanzen", "Finanzen", { pathname: "/auswertung", query: { year } }],
     ["termine", "Termine", { pathname: "/auswertung/termine", query: statsQuery }],
     ["leistungen", "Leistungen & Produkte", { pathname: "/auswertung/leistungen", query: statsQuery }],
+    // GKV Paket C: Kasse vs. privat und Belegliste (ZZ, Abrechnungsläufe)
+    ["kasse", "Kasse vs. privat", { pathname: "/auswertung/kasse", query: statsQuery }],
+    ["belegliste", "Belegliste", { pathname: "/auswertung/belegliste", query: statsQuery }],
   ];
   return (
     <nav aria-label="Bereiche der Auswertung" className="no-print mb-6 flex gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-1">

@@ -445,3 +445,64 @@ folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
     oder soll mehr gesichert werden? (Datenschutz/Steuerberatung)
     **Folgeaufgabe (Vorschlag)**: die erzeugte Exportdatei (CSV bzw. § 302-Paket) beim ersten Export mit SHA-256-Prüfsumme
     archivieren (wie das Beleg-Archiv), damit genau die übergebene Fassung belegbar bleibt.
+
+### Paket C Teil 2: Auswertung Kasse vs. privat und Belegliste
+
+**Auswertung → „Kasse vs. privat“** (`/auswertung/kasse`, Recht `finance.read` wie die übrige Auswertung, nur Summen,
+Zeitraumfilter wie „Termine“/„Leistungen“, CSV je Monat außer im Support-Modus; `src/server/gkv-stats.ts`). Gezeigt wird
+das **Abrechnungsvolumen** Kasse vs. privat – **kein Umsatz/Erlös** im Sinne der Buchhaltung: Läufe zählen nach
+Erstellungstag (Soll), Quittungen und Privatbelege nach Belegdatum (Ist); Soll und Ist sind gemischt. **Stand Abruf**:
+Stornos und Korrekturen wirken rückwirkend auf frühere Zeiträume (Hinweis auf der Seite).
+
+- **GKV-Kassenanteil** = Heilmittelkosten − Zuzahlungen laut Abrechnungsläufen (gespeicherte Summen in
+  `billing_batches`) nach dem Erstellungstag des Laufs – die Forderung an die Kassen, nicht der Zahlungseingang. Läufe ohne
+  gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) werden gezählt, aber nicht summiert (Hinweis).
+- **Keine Doppelzählung bei Neuabrechnung**: Eine nach Korrektur neu abgerechnete Verordnung steht im alten und im neuen
+  Lauf (die Laufsummen bleiben unverändert). Abgezogen wird die Zeile **„− ersetzt durch Neuabrechnung“** =
+  Heilmittelkosten − Zuzahlung der Erstabrechnung (`original_remedy_cost_cents`/`original_copayment_cents` der
+  Korrekturvermerke mit `resolution = 'rebilled'`), im **Monat des neuen Laufs** (`resolved_batch_id`). Über beide Läufe
+  zählt die Verordnung damit genau einmal (mit dem neuen Stand); in einem Zeitraum nur mit dem neuen Lauf erscheint die
+  Differenz. Nur, wenn der alte Lauf Heilmittelkosten gespeichert hat – dieselbe Bedingung gilt in der Belegliste.
+  `original_*` setzt der Trigger aus derselben Verordnungszeile wie `original_row` (Export des alten Laufs): Auswertung,
+  Belegliste und Export rechnen mit demselben Stand der Erstabrechnung. **Ein Monat kann negativ werden**, wenn der Abzug
+  im Monat des neuen Laufs größer ist als dessen Läufe (Hinweis auf der Seite).
+- **Zuzahlungen (ZZ)** getrennt: Zuzahlungsquittungen nach Belegdatum, ohne stornierte.
+- **Privat (Belege brutto)**: alle übrigen Belege nach Belegdatum mit derselben Auswahl wie „Leistungen & Produkte“
+  (`countedInvoiceSql`: ohne Entwürfe, Stornos, Gutschriften, Anzahlungen, angerechnete Quittungen).
+- **Absetzungen** nach Datum der Absetzung: als **Minderung** nur „akzeptiert“ und „erledigt – Absetzung bleibt“;
+  „offen“/„Widerspruch“ und „erledigt – Widerspruch erfolgreich“ getrennt (keine Minderung). Eine Absetzung, die über
+  `deduction_id` an einem neu abgerechneten Korrekturvermerk hängt, ist **„durch Neuabrechnung ersetzt“** (getrennt
+  ausgewiesen, keine Minderung, unabhängig vom Status) – die Erstabrechnung ist schon als „ersetzt durch Neuabrechnung“
+  abgezogen, sonst zählte sie doppelt. Es gilt dieselbe Bedingung wie beim Abzug (alter Lauf mit Heilmittelkosten); sonst
+  bleibt sie Minderung. Die Minderung wird nicht automatisch vom Kassenanteil abgezogen (Fachfrage 39).
+
+**Auswertung → „Belegliste“** (`/auswertung/belegliste`, Rechte `finance.read` + `invoices.read`; CSV
+`/api/export/belegliste?von=&bis=`, im Support-Modus gesperrt, Formel-Injection neutralisiert – reine negative Beträge
+wie „-12,50“ bleiben Zahlen –, `no-store`): **interne Hilfsliste, keine Buchungsgrundlage** (maßgeblich sind die Belege
+und die Sammelbelege des Abrechnungszentrums). Inhalt: Zuzahlungsquittungen (ZZ) mit Stornobelegen (Bezug in beide
+Richtungen, Zahlungsart, Person mit Nummer – **kein Datum der Verordnung, keine Diagnosen**: Datenminimierung,
+Art. 9 DSGVO) und die Abrechnungsläufe (lesbar „Lauf <Nr.> vom <Datum>“, laufende Nummer der Praxis statt UUID – stabil,
+weil Läufe nie löschbar sind und ihr Anlagezeitpunkt vom Server kommt und unveränderlich ist, `podo_billing_batch_guard`.
+Einschränkung: created_at ist der Beginn der Transaktion – überschneiden sich zwei Abrechnungsläufe zeitlich, kann ein
+später sichtbar werdender Lauf vor einen schon gezeigten rücken und dessen Nummer verschieben (sehr selten);
+Partner, Verordnungen, Heilmittelkosten, Zuzahlungen, Kassenanteil, Export). Die Spalte „Bezug“ kennzeichnet bei Läufen
+nur den Korrekturbezug („N Verordnung(en) später neu abgerechnet (Kassenanteil … ersetzt)“ bzw. „enthält N
+Neuabrechnung(en) nach Korrektur“, solange dieser Lauf nicht exportiert ist mit „– noch nicht übergeben“) – keine Notiz
+(Freitext). Audit `stats.gkv_private` bzw. `belegliste.read` nur mit
+Zeitraum und Anzahlen.
+
+Offene Fachfragen (Steuerberatung):
+
+38. **Abgrenzung Kassenanteil**: Erstellungstag des Laufs (Forderung) oder Zahlungseingang des Abrechnungszentrums
+    (Zuflussprinzip wie „Finanzen“)? Die Auszahlung des Abrechnungszentrums wird heute nicht erfasst.
+39. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
+    welchem Monat (Absetzungsdatum oder Lauf)? Heute zählen Absetzungen, deren Verordnung nach Korrektur neu abgerechnet
+    wurde (Bezug über den Korrekturvermerk), nicht als Minderung, sondern als „durch Neuabrechnung ersetzt“ – stimmt das
+    mit der Verrechnung durch Abrechnungszentrum/Kasse überein (Gutschrift der Absetzung vs. Neuabrechnung in voller
+    Höhe)? Und ist ein negativer Monatswert (Abzug der Erstabrechnung im Monat des neuen Laufs) so akzeptabel?
+40. **Belegliste als Buchungsgrundlage**: Die Belegliste ist eine Hilfsliste, keine Buchungsgrundlage. Reicht sie der
+    Steuerberatung als Übersicht, oder werden die Sammelbelege des Abrechnungszentrums zusätzlich benötigt? Doppelte
+    Erfassung der ZZ (Kassenexport/lexoffice) vermeiden (siehe Paket B „Buchhaltung“).
+41. **Doppelzählung bei Neuabrechnung**: Heute wird die Erstabrechnung im Monat des neuen Laufs abgezogen (Laufsummen
+    bleiben unverändert, reproduzierbar). Alternative: alten Monat rückwirkend mindern. Welche Abgrenzung erwartet die
+    Steuerberatung, und wie bucht das Abrechnungszentrum Gutschrift/Nachberechnung? (Steuerberatung/Abrechnungszentrum)
