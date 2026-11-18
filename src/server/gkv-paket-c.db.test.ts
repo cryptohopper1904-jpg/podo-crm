@@ -594,4 +594,74 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(b.recent).toBe(true);
     });
   });
+
+  describe("Review-Runde 3", () => {
+    it("N1: Neuabrechnung nur in einem in derselben Transaktion angelegten, nicht übergebenen Lauf – späterer exportierter Lauf abgelehnt", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "ICD laut Kasse falsch" });
+      if ("error" in res) throw new Error(res.error);
+      expect(await presc.savePrescription(w.auth, w.formInput(id, "E11.40"))).toMatchObject({ id });
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      // späterer, fremder Lauf (nach dem Vermerk angelegt) – exportiert bzw. nicht exportiert, aber in einem früheren Vorgang
+      const later = await w.billed();
+      expect(await presc.billingBatchExport(w.auth, later.batchId)).not.toBeNull();
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, later.batchId]);
+          await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [res.id, w.user, later.batchId]);
+        }),
+      ).rejects.toThrow(/neuen Abrechnungslauf/);
+      const [draft] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, draft.id])).rejects.toThrow(/neuen Abrechnungslauf/);
+      // normaler Ablauf + anschließender Export
+      const batch2 = await presc.createBillingBatch(w.auth, [id], { partner: "manual" });
+      if ("error" in batch2) throw new Error(batch2.error);
+      expect(await presc.billingBatchExport(w.auth, batch2.id)).not.toBeNull();
+      const [c] = await w.q<{ resolution: string; resolved_batch_id: string }>("select resolution, resolved_batch_id from prescription_corrections where id = $1", [res.id]);
+      expect(c).toEqual({ resolution: "rebilled", resolved_batch_id: batch2.id });
+      // zweite Korrektur: weder der (exportierte) Lauf der Neuabrechnung noch ein früherer Lauf
+      const res2 = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "noch einmal korrigieren" });
+      if ("error" in res2) throw new Error(res2.error);
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, batch2.id])).rejects.toThrow(/neuen Abrechnungslauf/);
+      const batch3 = await presc.createBillingBatch(w.auth, [id], { partner: "manual" });
+      expect(batch3).toMatchObject({ count: 1 });
+    });
+
+    it("N3: abrechnungsreif → abgerechnet generell nur in einen Lauf derselben Transaktion, nicht übergeben (ohne Korrektur)", async () => {
+      const w = await world();
+      const id = await w.ready();
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      const other = await w.billed();
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, other.batchId])).rejects.toThrow(/neuen Abrechnungslauf/);
+      await expect(w.q("update prescriptions set status = 'billed', billed_at = now() where id = $1", [id])).rejects.toThrow(/neuen Abrechnungslauf/);
+      // in derselben Transaktion angelegt, aber schon übergeben → abgelehnt
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          const b = (await cl.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org])).rows[0].id as string;
+          await cl.query("update billing_batches set exported_at = now(), status = 'exported' where id = $1", [b]);
+          await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, b]);
+        }),
+      ).rejects.toThrow(/neuen Abrechnungslauf/);
+      // regulär (createBillingBatch, eine Transaktion) → ok
+      expect(await presc.createBillingBatch(w.auth, [id], { partner: "manual" })).toMatchObject({ count: 1 });
+    });
+
+    it("N2: Abrechnungslauf nach dem Anlegen unveränderlich – nur Übergabe (exported_at einmalig, Status draft → exported)", async () => {
+      const w = await world();
+      const { batchId } = await w.billed();
+      for (const set of ["remedy_total_cents = 1", "total_cents = 1", "copayment_total_cents = 1", "prescription_count = 99", "partner = 'anders'", "note = 'x'"]) {
+        await expect(w.q(`update billing_batches set ${set} where id = $1`, [batchId])).rejects.toThrow(/unveränderlich/);
+      }
+      await expect(w.q("update billing_batches set status = 'paid' where id = $1", [batchId])).rejects.toThrow(/unveränderlich|Status/);
+      expect(await presc.billingBatchExport(w.auth, batchId)).not.toBeNull();
+      const [b] = await w.q<{ status: string; exported: boolean }>("select status, exported_at is not null as exported from billing_batches where id = $1", [batchId]);
+      expect(b).toEqual({ status: "exported", exported: true });
+      expect(await presc.billingBatchExport(w.auth, batchId)).not.toBeNull(); // erneuter Export ändert nichts
+      await expect(w.q("update billing_batches set exported_at = null where id = $1", [batchId])).rejects.toThrow(/unveränderlich|übergeben/);
+      await expect(w.q("update billing_batches set exported_at = exported_at + interval '1 day' where id = $1", [batchId])).rejects.toThrow(/unveränderlich|übergeben/);
+      await expect(w.q("update billing_batches set status = 'draft' where id = $1", [batchId])).rejects.toThrow(/unveränderlich|Status/);
+    });
+  });
 });

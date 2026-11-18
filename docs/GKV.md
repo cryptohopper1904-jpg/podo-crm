@@ -375,7 +375,12 @@ Hat eine Verordnung Korrekturvermerke, lässt `podo_prescription_billed_lock` �
 einem **neuen Lauf** zu (vorhanden, nicht der Lauf einer Erstabrechnung, angelegt nicht vor dem jüngsten Vermerk – AppSec
 Runde 2). Den Stand der Erstabrechnung im Vermerk (Lauf, Zeitpunkt, Beträge, Preis-Snapshot, `original_row`) und dessen
 Anlagezeitpunkt setzt immer der Trigger, nie die Anwendung. Abrechnungsläufe sind nie löschbar, ihr Anlagezeitpunkt kommt
-vom Server und ist unveränderlich (`podo_billing_batch_guard`). Solange der Vermerk offen ist, geht es aus
+vom Server und ist unveränderlich (`podo_billing_batch_guard`); nach dem Anlegen bleibt ein Lauf unverändert (Summen,
+Anzahl, Partner, Notiz), nur die Übergabe wird einmalig vermerkt (`exported_at` NULL → Zeitpunkt, Status „draft“ →
+„exported“). „Abgerechnet“ (aus „abrechnungsreif“, mit oder ohne Korrektur) setzt der Trigger nur in einen Lauf, der im
+selben Vorgang angelegt und noch nicht übergeben ist – wie im Abrechnungslauf (AppSec Runde 3); ebenso muss der Lauf
+eines Vermerks „erneut abgerechnet“ im selben Vorgang angelegt sein. Beim Setzen von „Korrektur nötig“ schlägt das
+Formular eine noch nicht verknüpfte Absetzung als Bezug vor (dann gilt sie bei Neuabrechnung als „ersetzt“). Solange der Vermerk offen ist, geht es aus
 „abrechnungsreif“ auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
 
 „**Ohne Neuabrechnung abschließen**“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im
