@@ -26,6 +26,12 @@ export function testPng(
     filter?: number;
     /** IDAT auf zwei Chunks verteilen */
     splitIdat?: boolean;
+    /** Zusatz-Chunks zwischen IDAT und IEND */
+    chunksAfterIdat?: [string, Buffer][];
+    /** Daten im IEND-Chunk (gültig: leer) */
+    iendData?: Buffer;
+    /** zusätzliche leere IDAT-Chunks nach dem IDAT */
+    emptyIdats?: number;
   } = {},
 ): Buffer {
   const width = o.width ?? 900;
@@ -50,7 +56,9 @@ export function testPng(
     chunk("IHDR", ihdr, o.badCrc === "IHDR"),
     ...(o.extraChunks ?? []).map(([t, d]) => chunk(t, d)),
     ...idat,
-    chunk("IEND", Buffer.alloc(0), o.badCrc === "IEND"),
+    ...Array.from({ length: o.emptyIdats ?? 0 }, () => chunk("IDAT", Buffer.alloc(0))),
+    ...(o.chunksAfterIdat ?? []).map(([t, d]) => chunk(t, d)),
+    chunk("IEND", o.iendData ?? Buffer.alloc(0), o.badCrc === "IEND"),
   ]);
 }
 

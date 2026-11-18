@@ -267,8 +267,10 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         signatureRequired: signatureRequired(r.rulesVersion),
         /** Zuzahlungsquittungen (Paket B) und quittierte Summe */
         copaymentReceipts: receipts.get(r.id) ?? [],
-        // Altvermerk (vor Paket B) zählt als erhalten (Review R2-5)
-        copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (legacyCopayment(r)?.cents ?? 0),
+        /** Summe der gültigen Zuzahlungsquittungen (ZZ-Belege) – ohne Altvermerk (Paket-B-Nachzug) */
+        copaymentCollectedCents: collectedCents(receipts.get(r.id)),
+        /** Altvermerk (vor Paket B, ohne Beleg) – zählt als erhalten (Review R2-5), wird aber getrennt ausgewiesen */
+        copaymentLegacyCents: legacyCopayment(r)?.cents ?? 0,
         /** erwartete und offene Zuzahlung – dieselbe Berechnung wie beim Quittieren (Review R3-2) */
         copaymentDue: copaymentDue(r, p, usage.get(r.id) ?? [], receipts.get(r.id)),
         /** Therapiebericht (Paket B Teil 2): vorhanden bzw. per 78530 verordnet/angefordert */

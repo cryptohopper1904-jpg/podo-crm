@@ -15,6 +15,7 @@ import { PAYMENT_METHOD_LABEL } from "@/lib/invoice-labels";
 import { COPAYMENT_METHODS, listPatientPrescriptions } from "@/server/prescriptions";
 import { INSURED_STATUS, kvnrProblem } from "@/lib/rules/gkv-ids";
 import type { PriceSnapshot } from "@/lib/rules/prescription";
+import { copaymentCollectedLabel, copaymentFormVisible } from "@/lib/rules/copayment";
 import { ExemptionsCard } from "./exemptions-card";
 import { CopaymentLegacyReset, CopaymentReceiptForm, CopaymentRefundForm } from "./copayment-form";
 import { PrescriptionForm, type PrescriptionInitial } from "./prescription-form";
@@ -160,6 +161,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
           {data.prescriptions.map((vo) => {
             const ev = vo.evaluation;
             const current = hasAnlage3Fields(vo.rulesVersion);
+            const collected = copaymentCollectedLabel(vo.copaymentCollectedCents, vo.copaymentLegacyCents);
             const group = DIAGNOSIS_GROUPS[vo.diagnosisGroup as DiagnosisGroup];
             return (
               <Card key={vo.id}>
@@ -197,13 +199,14 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                           {vo.copaymentPaidMethod ? ` · ${COPAYMENT_METHODS[vo.copaymentPaidMethod as keyof typeof COPAYMENT_METHODS] ?? vo.copaymentPaidMethod}` : ""}
                         </Badge>
                       ) : null}
+                      {/* quittiert (ZZ-Beleg) und Altvermerk getrennt (Paket-B-Nachzug); voller Altvermerk ohne Preis: nichts offen */}
                       {(current || !vo.copaymentExempt) && vo.copaymentDue.manual ? (
-                        vo.copaymentCollectedCents > 0 ? <Badge tone="primary">quittiert {money(vo.copaymentCollectedCents)} (Betrag manuell)</Badge> : <Badge tone="warn">offen – Betrag manuell eingeben</Badge>
+                        vo.copaymentDue.openCents === 0 ? null : collected ? <Badge tone="primary">{collected} (Betrag manuell)</Badge> : <Badge tone="warn">offen – Betrag manuell eingeben</Badge>
                       ) : (current || !vo.copaymentExempt) && (vo.copaymentDue.expectedCents ?? 0) > 0 ? (
                         vo.copaymentDue.openCents === 0 ? (
-                          <Badge tone="primary">quittiert {money(vo.copaymentCollectedCents)}</Badge>
-                        ) : vo.copaymentCollectedCents > 0 ? (
-                          <Badge tone="warn">teilweise quittiert · offen {money(vo.copaymentDue.openCents)}</Badge>
+                          <Badge tone="primary">{collected ?? "nichts offen"}</Badge>
+                        ) : collected ? (
+                          <Badge tone="warn">{collected} · offen {money(vo.copaymentDue.openCents)}</Badge>
                         ) : <Badge tone="warn">offen</Badge>
                       ) : null}
                       {legacy(vo) ? <span className="text-xs text-muted">Vermerk aus der Zeit vor der Zuzahlungsquittung – gilt als erhalten, wurde nie in der Kasse gebucht (Nacherfassung mit der Steuerberatung klären).</span> : null}
@@ -222,7 +225,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                       ) : null}
                       {canCash && legacy(vo) ? <CopaymentLegacyReset id={vo.id} patientId={id} /> : null}
                       {/* offen laut Berechnung (Altvermerk angerechnet, Review R3-3) oder ohne Preis: Betrag frei eingeben (R3-2) */}
-                      {canCash && (current || !vo.copaymentExempt) && vo.status !== "cancelled" && (vo.copaymentDue.manual || (vo.copaymentDue.openCents ?? 0) > 0) ? (
+                      {canCash && (current || !vo.copaymentExempt) && vo.status !== "cancelled" && copaymentFormVisible(vo.copaymentDue) ? (
                         <CopaymentReceiptForm prescriptionId={vo.id} patientId={id} openCents={vo.copaymentDue.openCents} manual={vo.copaymentDue.manual} external={external} />
                       ) : null}
                     </dd>
@@ -306,7 +309,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
   );
 }
 
-/** Altvermerk „Zuzahlung erhalten“ (vor Paket B, ohne Kassenbuchung) – Anzeige; der Betrag gilt als erhalten */
+/** Altvermerk „Zuzahlung erhalten“ (vor Paket B, ohne Beleg in PodoHero) – Anzeige; der Betrag gilt als erhalten */
 function legacy(vo: { copaymentPaidAt: Date | null }) {
   return !!vo.copaymentPaidAt;
 }
