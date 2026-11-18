@@ -786,7 +786,12 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
     const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
     if (!batch.exportedAt) {
-      await tx.update(billingBatches).set({ exportedAt: new Date(), status: "exported" }).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
+      // nur, solange nicht übergeben: ein gleichzeitiger zweiter Export wartet auf die Zeilensperre und ändert danach nichts
+      // (statt am Guard „Übergabezeitpunkt unveränderlich“ zu scheitern) – der erste Übergabezeitpunkt bleibt
+      await tx
+        .update(billingBatches)
+        .set({ exportedAt: new Date(), status: "exported" })
+        .where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId), isNull(billingBatches.exportedAt)));
     }
     return { batch, rows, usage, receipts, org: o, corrections };
   });

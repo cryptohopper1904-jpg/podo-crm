@@ -66,12 +66,35 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
      */
     const backdate = (id: string, ago: string) => insertLegacy("update billing_batches set created_at = now() - $2::interval where id = $1", [id, ago]);
     /**
+     * Neuer Lauf mit seinen abgerechneten Verordnungen in EINER Transaktion: Anzahl/Summen werden beim Commit gegen die
+     * Verordnungen geprüft (Migration 0067); fehlende Beträge zählen 0
+     */
+    const run = (vos: { remedy: number | null; copay: number | null }[], o: { created?: string } = {}) =>
+      fx.asOrg(org, async (c) => {
+        const copay = vos.reduce((s, v) => s + (v.copay ?? 0), 0);
+        const remedy = vos.reduce((s, v) => s + (v.remedy ?? 0), 0);
+        const b = (
+          await c.query(
+            "insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, created_at) values ($1,$2,$3,$3,$4,coalesce($5::timestamptz, now())) returning id",
+            [org, vos.length, copay, remedy, o.created ?? null],
+          )
+        ).rows[0].id as string;
+        for (const v of vos)
+          await c.query(
+            "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents) values ($1,$2,$3,'DF',1,'billed',now(),$4,$5,$6)",
+            [org, patient, addDaysIso(today, -40), b, v.remedy, v.copay],
+          );
+        return b;
+      });
+    /**
      * Alter Lauf mit einer darin abgerechneten Verordnung (Heilmittelkosten 71,10 €, Zuzahlung 17,12 €): Lauf und
      * Verordnung in EINER Transaktion (INSERT mit Lauf nur in einen eben angelegten Lauf, 0066), danach rückdatiert
      */
     const oldRun = async (remedy: number | null, note: string | null = null) => {
       const r = await fx.asOrg(org, async (c) => {
-        const old = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, 1712, 1712, $2, $3) returning id", [org, remedy, note])).rows[0].id as string;
+        // Summen passend zur Verordnung (Prüfung beim Commit, 0067); Altlauf ohne Heilmittelkosten: remedy_total_cents
+        // danach als Altbestand geleert (mit dem Rückdatieren)
+        const old = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, 1712, 1712, 7110, $2) returning id", [org, note])).rows[0].id as string;
         const id = (
           await c.query(
             `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
@@ -81,18 +104,23 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
         ).rows[0].id as string;
         return { old, id };
       });
-      return (await backdate(r.old, "400 days")) ? r : null;
+      const ok = await insertLegacy("update billing_batches set created_at = now() - interval '400 days', remedy_total_cents = $2 where id = $1", [r.old, remedy]);
+      return ok ? r : null;
     };
-    return { org, user, patient, auth, authWith, q, vo, backdate, oldRun };
+    return { org, user, patient, auth, authWith, q, vo, backdate, run, oldRun };
   };
 
   it("Kasse vs. privat: Kassenanteil laut Lauf, ZZ getrennt (ohne Storno), Privat ohne Entwürfe/ZZ, Absetzungen; Zeitraum; fremde Praxis leer", async (ctx) => {
     const w = await world();
     // Abrechnungslauf heute: Heilmittelkosten 71,10 €, Zuzahlungen 17,12 € → Kassenanteil 53,98 €; alter Lauf ohne Heilmittelkosten
-    await w.q("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 2, 1712, 1712, 7110)", [w.org]);
-    await w.q("insert into billing_batches (organization_id, prescription_count, total_cents) values ($1, 1, 500)", [w.org]);
-    const [lastYear] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 100, 100, 1000) returning id", [w.org]);
-    if (!(await w.backdate(lastYear.id, "400 days"))) ctx.skip();
+    await w.run([
+      { remedy: 7110, copay: 1712 },
+      { remedy: null, copay: null },
+    ]);
+    // Altlauf vor Paket A (nur total_cents, keine Heilmittelkosten/Zuzahlungssumme) – heute nicht mehr anlegbar (0067)
+    if (!(await insertLegacy("insert into billing_batches (organization_id, prescription_count, total_cents) values ($1, 1, 500)", [w.org]))) ctx.skip();
+    const lastYear = await w.run([{ remedy: 1000, copay: 100 }]);
+    if (!(await w.backdate(lastYear, "400 days"))) ctx.skip();
     // Zuzahlungsquittungen: eine gültige, eine stornierte (mit Stornobeleg)
     const a = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: await w.vo(), patientId: w.patient, amountCents: 1500, method: "transfer", confirmOverpay: true })) as { id: string; number: string };
     const b = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: await w.vo(), patientId: w.patient, amountCents: 900, method: "transfer", confirmOverpay: true })) as { id: string; number: string };
@@ -278,14 +306,14 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
 
     it("H-5: Laufnummer stabil – Läufe nicht löschbar, Anlagezeitpunkt vom Server (kein Einschieben vor bestehende Läufe)", async () => {
       const w = await world();
-      const mk = async () => (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 0) returning id", [w.org]))[0].id;
+      const mk = () => w.run([{ remedy: null, copay: null }]);
       const first = await mk();
       const second = await mk();
       const labels = async () => new Map((await stats.belegliste(w.auth, resolvePeriod({ zeitraum: "monat" }, today))).batches.map((b) => [b.id, b.label.split(" vom ")[0]]));
       expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"]]);
       await expect(w.q("delete from billing_batches where id = $1", [first])).rejects.toThrow(/nicht gelöscht/);
       // rückdatiertes Anlegen durch die Anwendung wirkt nicht: der neue Lauf bekommt die nächste Nummer
-      const third = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, created_at) values ($1, 0, now() - interval '1 day') returning id", [w.org]))[0].id;
+      const third = await w.run([{ remedy: null, copay: null }], { created: new Date(Date.now() - 86_400_000).toISOString() });
       expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"], [third, "Lauf 3"]]);
     });
 

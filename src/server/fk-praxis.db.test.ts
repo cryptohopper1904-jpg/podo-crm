@@ -338,8 +338,9 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
         "insert into calendar_feeds (organization_id, label, url_enc, url_hint, therapist_id, source) values ($1,'Doctolib','x','calendar.example.org/…',$2,'doctolib') returning id",
         [org, user],
       );
-      // GKV Paket C: Abrechnungslauf, abgerechnete Verordnung, Absetzung
-      const batch = await id("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [org]);
+      // GKV Paket C: Abrechnungslauf, abgerechnete Verordnung, Absetzung (Lauf = Summe seiner Verordnungen, Prüfung beim
+      // Commit seit 0067: eine Verordnung ohne Beträge → Summen 0)
+      const batch = await id("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 0, 0, 0) returning id", [org]);
       const billed = await id(
         "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,'2026-01-05','DF',6,'billed',now(),$3) returning id",
         [org, patient, batch],
