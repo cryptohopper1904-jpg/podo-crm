@@ -424,21 +424,37 @@ folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
 ### Paket C Teil 2: Auswertung Kasse vs. privat und Belegliste
 
 **Auswertung → „Kasse vs. privat“** (`/auswertung/kasse`, Recht `finance.read` wie die übrige Auswertung, nur Summen,
-Zeitraumfilter wie „Termine“/„Leistungen“, CSV je Monat außer im Support-Modus; `src/server/gkv-stats.ts`):
+Zeitraumfilter wie „Termine“/„Leistungen“, CSV je Monat außer im Support-Modus; `src/server/gkv-stats.ts`). Gezeigt wird
+das **Abrechnungsvolumen** Kasse vs. privat – **kein Umsatz/Erlös** im Sinne der Buchhaltung: Läufe zählen nach
+Erstellungstag (Soll), Quittungen und Privatbelege nach Belegdatum (Ist); Soll und Ist sind gemischt. **Stand Abruf**:
+Stornos und Korrekturen wirken rückwirkend auf frühere Zeiträume (Hinweis auf der Seite).
 
 - **GKV-Kassenanteil** = Heilmittelkosten − Zuzahlungen laut Abrechnungsläufen (gespeicherte Summen in
   `billing_batches`) nach dem Erstellungstag des Laufs – die Forderung an die Kassen, nicht der Zahlungseingang. Läufe ohne
   gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) werden gezählt, aber nicht summiert (Hinweis).
+- **Keine Doppelzählung bei Neuabrechnung**: Eine nach Korrektur neu abgerechnete Verordnung steht im alten und im neuen
+  Lauf (die Laufsummen bleiben unverändert). Abgezogen wird die Zeile **„− ersetzt durch Neuabrechnung“** =
+  Heilmittelkosten − Zuzahlung der Erstabrechnung (`original_remedy_cost_cents`/`original_copayment_cents` der
+  Korrekturvermerke mit `resolution = 'rebilled'`), im **Monat des neuen Laufs** (`resolved_batch_id`). Über beide Läufe
+  zählt die Verordnung damit genau einmal (mit dem neuen Stand); in einem Zeitraum nur mit dem neuen Lauf erscheint die
+  Differenz. Nur, wenn der alte Lauf Heilmittelkosten gespeichert hat.
 - **Zuzahlungen (ZZ)** getrennt: Zuzahlungsquittungen nach Belegdatum, ohne stornierte.
-- **Privat**: alle übrigen Belege brutto nach Belegdatum mit derselben Auswahl wie „Leistungen & Produkte“
+- **Privat (Belege brutto)**: alle übrigen Belege nach Belegdatum mit derselben Auswahl wie „Leistungen & Produkte“
   (`countedInvoiceSql`: ohne Entwürfe, Stornos, Gutschriften, Anzahlungen, angerechnete Quittungen).
-- **Absetzungen** nach Datum der Absetzung je Status (sie mindern den Kassenanteil der Läufe nicht automatisch).
+- **Absetzungen** nach Datum der Absetzung: als **Minderung** nur „akzeptiert“ und „erledigt – Absetzung bleibt“;
+  „offen“/„Widerspruch“ und „erledigt – Widerspruch erfolgreich“ getrennt (keine Minderung). Die Minderung wird nicht
+  automatisch vom Kassenanteil abgezogen (Fachfrage 39).
 
 **Auswertung → „Belegliste“** (`/auswertung/belegliste`, Rechte `finance.read` + `invoices.read`; CSV
-`/api/export/belegliste?von=&bis=`, im Support-Modus gesperrt, Formel-Injection neutralisiert, `no-store`): interne Liste
-der Zuzahlungsquittungen (ZZ) mit Stornobelegen (Bezug in beide Richtungen, Zahlungsart, Person mit Nummer, Datum der
-Verordnung – keine Diagnosen) und der Abrechnungsläufe (Partner, Verordnungen, Heilmittelkosten, Zuzahlungen,
-Kassenanteil, Export) im Zeitraum. Audit `stats.gkv_private` bzw. `belegliste.read` nur mit Zeitraum und Anzahlen.
+`/api/export/belegliste?von=&bis=`, im Support-Modus gesperrt, Formel-Injection neutralisiert – reine negative Beträge
+wie „-12,50“ bleiben Zahlen –, `no-store`): **interne Hilfsliste, keine Buchungsgrundlage** (maßgeblich sind die Belege
+und die Sammelbelege des Abrechnungszentrums). Inhalt: Zuzahlungsquittungen (ZZ) mit Stornobelegen (Bezug in beide
+Richtungen, Zahlungsart, Person mit Nummer – **kein Datum der Verordnung, keine Diagnosen**: Datenminimierung,
+Art. 9 DSGVO) und die Abrechnungsläufe (lesbar „Lauf <Nr.> vom <Datum>“, laufende Nummer der Praxis statt UUID;
+Partner, Verordnungen, Heilmittelkosten, Zuzahlungen, Kassenanteil, Export). Die Spalte „Bezug“ kennzeichnet bei Läufen
+nur den Korrekturbezug („N Verordnung(en) später neu abgerechnet (Kassenanteil … ersetzt)“ bzw. „enthält N
+Neuabrechnung(en) nach Korrektur“) – keine Notiz (Freitext). Audit `stats.gkv_private` bzw. `belegliste.read` nur mit
+Zeitraum und Anzahlen.
 
 Offene Fachfragen (Steuerberatung):
 
@@ -446,6 +462,9 @@ Offene Fachfragen (Steuerberatung):
     (Zuflussprinzip wie „Finanzen“)? Die Auszahlung des Abrechnungszentrums wird heute nicht erfasst.
 39. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
     welchem Monat (Absetzungsdatum oder Lauf)?
-40. **Belegliste als Buchungsgrundlage**: Reicht die interne Liste (ZZ + Läufe) der Steuerberatung, oder werden die
-    Sammelbelege des Abrechnungszentrums zusätzlich benötigt? Doppelte Erfassung der ZZ (Kassenexport/lexoffice) vermeiden
-    (siehe Paket B „Buchhaltung“).
+40. **Belegliste als Buchungsgrundlage**: Die Belegliste ist eine Hilfsliste, keine Buchungsgrundlage. Reicht sie der
+    Steuerberatung als Übersicht, oder werden die Sammelbelege des Abrechnungszentrums zusätzlich benötigt? Doppelte
+    Erfassung der ZZ (Kassenexport/lexoffice) vermeiden (siehe Paket B „Buchhaltung“).
+41. **Doppelzählung bei Neuabrechnung**: Heute wird die Erstabrechnung im Monat des neuen Laufs abgezogen (Laufsummen
+    bleiben unverändert, reproduzierbar). Alternative: alten Monat rückwirkend mindern. Welche Abgrenzung erwartet die
+    Steuerberatung, und wie bucht das Abrechnungszentrum Gutschrift/Nachberechnung? (Steuerberatung/Abrechnungszentrum)

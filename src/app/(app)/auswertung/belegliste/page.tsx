@@ -6,7 +6,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { PAYMENT_METHOD_LABEL } from "@/lib/invoice-labels";
 import { periodQuery, resolvePeriod } from "@/lib/stats";
-import { belegliste } from "@/server/gkv-stats";
+import { batchCorrectionNote, belegliste } from "@/server/gkv-stats";
 import { StatsFilter, StatsTabs, yearOfPeriod } from "../stats-nav";
 
 export const metadata = { title: "Auswertung – Belegliste" };
@@ -37,6 +37,10 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
           </a>
         </p>
       ) : null}
+      <p className="mb-4 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
+        Hilfsliste, keine Buchungsgrundlage: maßgeblich sind die Belege selbst und die Sammelbelege des Abrechnungszentrums. Stand Abruf –
+        Stornos wirken rückwirkend.
+      </p>
       <Card className="mb-6">
         <CardTitle>Zuzahlungsquittungen ({b.receipts.length}) · gültig {money(zzSum)}</CardTitle>
         {b.receipts.length === 0 ? (
@@ -68,11 +72,14 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
           <Empty title="Keine Abrechnungsläufe im Zeitraum" />
         ) : (
           <Table>
-            <thead><tr><th>Erstellt</th><th>Partner</th><th>Verordnungen</th><th>Heilmittelkosten</th><th>Zuzahlungen</th><th>Kassenanteil</th><th>Export</th></tr></thead>
+            <thead><tr><th>Lauf</th><th>Partner</th><th>Verordnungen</th><th>Heilmittelkosten</th><th>Zuzahlungen</th><th>Kassenanteil</th><th>Export</th></tr></thead>
             <tbody>
               {b.batches.map((x) => (
                 <tr key={x.id}>
-                  <td>{dateDe(x.createdOn)}{x.note ? <div className="text-xs text-muted">{x.note}</div> : null}</td>
+                  <td>
+                    {x.label}
+                    {batchCorrectionNote(x) ? <div className="text-xs text-muted">{batchCorrectionNote(x)}</div> : null}
+                  </td>
                   <td>{PARTNER[x.partner] ?? x.partner}</td>
                   <td className="tabular-nums">{x.prescriptionCount}</td>
                   <td className="tabular-nums">{x.remedyCents === null ? "–" : money(x.remedyCents)}</td>

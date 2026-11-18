@@ -85,12 +85,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const period = resolvePeriod({ zeitraum: "monat" }, today);
     const s = await stats.gkvPrivateStats(w.auth, period);
     expect(s.gkvEnabled).toBe(true);
-    expect(s.batches).toEqual({ count: 2, prescriptions: 3, remedyCents: 7110, copaymentCents: 1712, insurerCents: 5398, withoutRemedy: 1 });
+    expect(s.batches).toEqual({ count: 2, prescriptions: 3, remedyCents: 7110, copaymentCents: 1712, insurerCents: 5398, withoutRemedy: 1, replaced: { count: 0, remedyCents: 0, copaymentCents: 0, insurerCents: 0 }, insurerNetCents: 5398 });
     expect(s.copayments).toEqual({ count: 1, cents: 1500 });
     expect(s.private).toEqual({ count: 1, cents: 6500 });
     expect(s.deductions.open).toEqual({ count: 1, cents: 700 });
     const month = s.months.find((m) => m.month === today.slice(0, 7))!;
-    expect(month).toEqual({ month: today.slice(0, 7), insurerCents: 5398, copaymentCents: 1500, privateCents: 6500, deductionCents: 700 });
+    // Monatsspalte „Absetzungen“ nur Minderung (akzeptiert/erledigt-bleibt) – die offene Absetzung zählt dort nicht (R1-13)
+    expect(month).toEqual({ month: today.slice(0, 7), insurerCents: 5398, copaymentCents: 1500, privateCents: 6500, deductionCents: 0 });
+    expect(s.deductionSummary).toMatchObject({ pendingCents: 700, reductionCents: 0 });
     // Rechte und Mandanten
     await expect(stats.gkvPrivateStats(w.authWith(["invoices.read"]), period)).rejects.toThrow(/finance.read/);
     const other = await world();
@@ -117,11 +119,83 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(rows[0]).toEqual(stats.BELEGLISTE_HEADER);
     expect(rows.filter((r) => r[0] === "Abrechnungslauf")).toHaveLength(2);
     expect(rows.find((r) => r[2] === a.number)![4]).toBe("15,00");
+    // Datenminimierung: kein Datum der Verordnung; Lauf lesbar statt UUID; Bezug nicht mit der Notiz gefüllt
+    expect(stats.BELEGLISTE_HEADER).not.toContain("Verordnung vom");
+    const runs = rows.filter((r) => r[0] === "Abrechnungslauf");
+    for (const r of runs) {
+      expect(String(r[2])).toMatch(/^Lauf \d+ vom \d{2}\.\d{2}\.\d{4}$/);
+      expect(String(r[2])).not.toMatch(/[0-9a-f]{8}-/);
+    }
     await expect(stats.belegliste(w.authWith(["finance.read"]), period)).rejects.toThrow(/invoices.read/);
     expect(await stats.belegliste(other.auth, period)).toEqual({ receipts: [], batches: [] });
     // Zeitraum: Vorjahr enthält den alten Lauf, nicht die heutigen
     const prev = await stats.belegliste(w.auth, resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -420), bis: addDaysIso(today, -380) }, today));
     expect(prev.batches).toHaveLength(1);
     expect(prev.receipts).toEqual([]);
+  });
+  it("Review R1-11/R1-14: Neuabrechnung nicht doppelt gezählt („ersetzt durch Neuabrechnung“, Monat des neuen Laufs); Belegliste gekennzeichnet", async () => {
+    const w = await world();
+    const run = async (remedy: number, copayment: number, ago: string) =>
+      (await w.q<{ id: string }>(`insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, created_at, note) values ($1, 1, $2, $2, $3, now() - $4::interval, 'interne Notiz') returning id`, [w.org, copayment, remedy, ago]))[0].id;
+    const old = await run(7110, 1712, "400 days");
+    const id = (await w.q<{ id: string }>(
+      `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
+       values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
+      [w.org, w.patient, addDaysIso(today, -450), old],
+    ))[0].id;
+    // Korrektur → Neuabrechnung im heutigen Lauf (Weg wie createBillingBatch, Trigger aktiv)
+    const c = (await w.q<{ id: string }>(
+      "insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, original_batch_id, original_remedy_cost_cents, original_copayment_cents, created_by) values ($1,$2,$3,'ICD falsch',$4,7110,1712,$5) returning id",
+      [w.org, id, w.patient, old, w.user],
+    ))[0].id;
+    await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
+    await w.q("update prescriptions set status = 'billing_ready', remedy_cost_cents = 7500, copayment_cents = 1000 where id = $1", [id]);
+    const neu = await run(7500, 1000, "0 days");
+    await fx.asOrg(w.org, async (cl) => {
+      await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, neu]);
+      await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [c, w.user, neu]);
+    });
+
+    // Zeitraum mit beiden Läufen: Kassenanteil nur einmal (neuer Lauf)
+    const all = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -420), bis: today }, today));
+    expect(all.batches).toMatchObject({ count: 2, remedyCents: 14610, copaymentCents: 2712, insurerCents: 11898, replaced: { count: 1, remedyCents: 7110, copaymentCents: 1712, insurerCents: 5398 }, insurerNetCents: 6500 });
+    expect(all.months.reduce((s, m) => s + m.insurerCents, 0)).toBe(6500);
+    // nur der Monat des neuen Laufs: Abzug dort (Monatsbezug = Datum des neuen Laufs)
+    const month = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "monat" }, today));
+    expect(month.batches).toMatchObject({ count: 1, insurerCents: 6500, replaced: { count: 1, insurerCents: 5398 }, insurerNetCents: 1102 });
+    expect(month.months.find((m) => m.month === today.slice(0, 7))!.insurerCents).toBe(1102);
+    // Vorjahreszeitraum (nur alter Lauf): unverändert, kein Abzug
+    const prev = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -420), bis: addDaysIso(today, -380) }, today));
+    expect(prev.batches).toMatchObject({ count: 1, insurerCents: 5398, replaced: { count: 0 }, insurerNetCents: 5398 });
+
+    // Belegliste: alter Lauf „später neu abgerechnet“, neuer Lauf „Neuabrechnung“; Bezug ohne Notiz
+    const list = await stats.belegliste(w.auth, resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -420), bis: today }, today));
+    const bOld = list.batches.find((x) => x.id === old)!;
+    const bNew = list.batches.find((x) => x.id === neu)!;
+    expect(bOld).toMatchObject({ replacedCount: 1, replacedInsurerCents: 5398, rebillCount: 0 });
+    expect(bNew).toMatchObject({ replacedCount: 0, rebillCount: 1 });
+    expect(bNew.label).toMatch(/^Lauf \d+ vom /);
+    const rows = stats.beleglisteRows(list);
+    const bezug = stats.BELEGLISTE_HEADER.indexOf("Bezug");
+    const rOld = rows.find((r) => r[2] === bOld.label)!;
+    const rNew = rows.find((r) => r[2] === bNew.label)!;
+    expect(rOld[bezug]).toMatch(/1 Verordnung später neu abgerechnet/);
+    expect(rNew[bezug]).toMatch(/enthält 1 Neuabrechnung/);
+    expect(rows.flat().join(" ")).not.toMatch(/interne Notiz/);
+  });
+
+  it("Review R1-13: Absetzungen – Minderung nur akzeptiert + erledigt/Absetzung bleibt; offen/Widerspruch und Widerspruch erfolgreich getrennt", async () => {
+    const w = await world();
+    const billed = (await w.q<{ id: string }>("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at) values ($1,$2,$3,'DF',1,'billed',now()) returning id", [w.org, w.patient, addDaysIso(today, -30)]))[0].id;
+    const ded = (cents: number, status: string, outcome: string | null) =>
+      w.q("insert into gkv_deductions (organization_id, prescription_id, patient_id, amount_cents, reason, deducted_on, created_by, status, outcome) values ($1,$2,$3,$4,'Frist',$5,$6,$7,$8)", [w.org, billed, w.patient, cents, today, w.user, status, outcome]);
+    await ded(700, "accepted", null);
+    await ded(300, "done", "upheld");
+    await ded(200, "done", "reversed");
+    await ded(100, "objected", null);
+    await ded(50, "open", null);
+    const s = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "monat" }, today));
+    expect(s.deductionSummary).toEqual({ reductionCents: 1000, reductionCount: 2, pendingCents: 150, pendingCount: 2, reversedCents: 200, reversedCount: 1 });
+    expect(s.months.find((m) => m.month === today.slice(0, 7))!.deductionCents).toBe(1000);
   });
 });
