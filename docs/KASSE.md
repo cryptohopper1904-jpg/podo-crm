@@ -116,8 +116,9 @@ gesperrt (`FOR SHARE`), sodass nie eine PodoHero-Zahlung „zwischen“ Prüfung
 Verordnung als **Zuzahlungsquittung** (Beleg ZZ) erfasst – mit derselben Zahlungslogik wie jede Quittung: bei aktiver
 eigener Praxiskasse als Vermerk mit Bon-Nr. (erst in der Praxiskasse als Zahlung auf Beleg buchen, dann hier vermerken),
 sonst als PodoHero-Kassenvorgang mit TSE im nächsten Z-Bon. Kein USt-Ausweis (gesetzliche Zuzahlung, § 32 Abs. 2 /
-§ 61 SGB V). Erstattung über „stornieren/erstatten“ (Stornobeleg mit negativer Zahlung). Frühere Vermerke „Zuzahlung
-erhalten“ (vor Paket B) waren nie in der Kasse und werden nicht nachgebucht.
+§ 61 SGB V; Hinweis „Umsatzsteuerfrei nach § 4 Nr. 14 Buchst. a UStG“). Erstattung über „stornieren/erstatten“
+(Stornobeleg mit negativer Zahlung). Frühere Vermerke „Zuzahlung erhalten“ (vor Paket B) waren nie in der Kasse und werden
+nicht nachgebucht – Nacherfassung bitte mit der Steuerberatung klären.
 
 **Gutscheine:** Den Verkauf (Geldeingang) erfasst nur die Praxiskasse. PodoHero vergibt Code und Wert. Die Einlösung
 bucht die Praxiskasse als Zahlart Gutschein auf die PodoHero-Rechnung, PodoHero vermerkt sie (Restguthaben führt
@@ -197,5 +198,6 @@ Im Code als `// TODO DSFinV-K prüfen` markiert:
 13. **Belegausgabe**: TSE-Pflichtangaben (u. a. QR-Code nach DSFinV-K Anhang) auf Quittung/Rechnung ergänzen.
 14. **Kassen-Stammdaten**: Kassen-ID/Seriennummer aus `organizations.settings.kasse` (`kasseId`, `serial`), sonst
     automatisch `PODOCRM-<praxis>`. Muss zur Meldung über ELSTER passen.
-15. **Zuzahlungsquittung (GKV)**: wird als Bon „Umsatz“ mit 0 % (USt-Schlüssel 6) gemeldet. Ob die gesetzliche
-    Zuzahlung als eigener Geschäftsvorfall bzw. als „nicht steuerbar“ zu melden ist, mit Steuerberatung/TSE-Anbieter klären.
+15. **Zuzahlungsquittung (GKV)**: Annahme – die Zuzahlung ist Teil des Entgelts für die steuerfreie Heilbehandlung
+    (§ 4 Nr. 14 Buchst. a UStG) und wird daher als Bon „Umsatz“ mit USt-Schlüssel 6 („steuerfrei“) gemeldet. Ob ein
+    eigener Geschäftsvorfall nötig ist, mit Steuerberatung/TSE-Anbieter bestätigen.

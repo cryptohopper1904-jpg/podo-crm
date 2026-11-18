@@ -17,12 +17,12 @@ import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS_LEGACY, PAYMENT_METHOD_LABEL, vatExemptNote } from "./invoice-labels";
+import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS_LEGACY, PAYMENT_METHOD_LABEL } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
   serviceYear,
-  hasExemptNote,
+  taxNotes,
   invoiceAsIssued,
   invoiceHeading,
   invoiceService,
@@ -42,7 +42,6 @@ import {
 import { type InvoiceBookingLink } from "./practice-documents";
 import { TSE_TEST_NOTICE, tseLines, type FiscalInfo } from "./tse-receipt";
 import { externalRegisterNote } from "./kasse/model";
-import { COPAYMENT_LEGAL_NOTE } from "./rules/copayment";
 import {
   A4,
   CONT_TOP,
@@ -473,10 +472,8 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   // ── Hinweise ──
   const giro = !data.cancellation && isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
-  // Zuzahlungsquittung: gesetzliche Zuzahlung ohne Umsatzsteuerausweis (§ 32 Abs. 2 / § 61 SGB V)
-  if (inv.kind === "copayment") notes.push({ t: COPAYMENT_LEGAL_NOTE });
-  else if (o.smallBusiness) notes.push({ t: data.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY });
-  if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
+  // Steuer-/Rechtshinweise einheitlich mit der Browser-Ansicht (Zuzahlungsquittung und ihr Storno: § 32/§ 61 SGB V)
+  for (const t of taxNotes(o, inv, lines, { cancelsKind: data.cancels?.kind ?? null, smallBusinessNote: data.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY })) notes.push({ t });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });
   if (rb.rows.length) notes.push({ t: creditedReceiptsNote(serviceYear(data.serviceDates ?? [], inv.issuedAt)) });

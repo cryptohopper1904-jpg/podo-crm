@@ -13,6 +13,7 @@ import { berlinDateIso, dateDe } from "@/lib/format";
 import {
   DIAGNOSIS_GROUP_CODES,
   DIAGNOSIS_GROUPS,
+  NOTE_MIN,
   RULES_VERSION,
   addDaysIso,
   anlage3Findings,
@@ -251,7 +252,8 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         signatureRequired: signatureRequired(r.rulesVersion),
         /** Zuzahlungsquittungen (Paket B) und quittierte Summe */
         copaymentReceipts: receipts.get(r.id) ?? [],
-        copaymentCollectedCents: collectedCents(receipts.get(r.id)),
+        // Altvermerk (vor Paket B) zählt als erhalten (Review R2-5)
+        copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (r.copaymentPaidAt ? (r.copaymentPaidCents ?? r.copaymentCents ?? 0) : 0),
       })),
     };
   });
@@ -548,17 +550,20 @@ export type CopaymentMethod = keyof typeof COPAYMENT_METHODS;
 /**
  * Altvermerk „Zuzahlung erhalten“ (vor Paket B: nur Datum/Betrag/Zahlungsart an der Verordnung, nie in der Kasse
  * gebucht). Seit Paket B wird die Zuzahlung als Zuzahlungsquittung erfasst (src/server/copayments.ts) – neue
- * Altvermerke sind nicht mehr möglich (`paid: true` → Fehler), ein bestehender Altvermerk kann nur zurückgesetzt werden
- * (z. B. um die Zuzahlung danach richtig zu quittieren). Keine nachträgliche Kassenbuchung der Altwerte.
+ * Altvermerke sind nicht mehr möglich (`paid: true` → Fehler). Ein Altvermerk gilt als erhalten; entfernt werden darf er
+ * nur als „Vermerk war falsch – nichts erhalten“ mit Pflichtbegründung (Review R2-5) – nie, um früher erhaltene Beträge
+ * nachträglich zu quittieren (keine nachträgliche Kassenbuchung). Recht: Rechnungen schreiben + medizinisch lesen (R2-11).
  */
 export async function setCopaymentPaid(
   auth: AuthContext,
-  input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null },
+  input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null; reason?: string | null },
 ): Promise<{ error: string } | { warning?: string }> {
-  assertCan(auth, "medical.write");
+  assertCan(auth, "invoices.write", "medical.read");
   const blocked = gkvGuard(auth.organization, "copayment");
   if (blocked) return blocked;
   if (input.paid) return { error: COPAYMENT_LEGACY_BLOCKED };
+  const reason = (input.reason ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
+  if (reason.length < NOTE_MIN) return { error: "Begründung fehlt: bitte angeben, warum der Vermerk falsch war (mind. 5 Zeichen)." };
   const org = auth.organization.id;
   const done = await withOrg(org, async (tx) => {
     const [vo] = await tx
@@ -575,7 +580,7 @@ export async function setCopaymentPaid(
   });
   if (!done) return { error: "Verordnung nicht gefunden." };
   // bisherigen Altvermerk nachvollziehbar halten (Betrag/Zahlungsart/Datum stehen danach nur noch im Protokoll)
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: false, legacy: done.paidAt ? { at: done.paidAt.toISOString(), cents: done.cents, method: done.method } : null } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: false, wrongEntry: true, reason, legacy: done.paidAt ? { at: done.paidAt.toISOString(), cents: done.cents, method: done.method } : null } });
   return {};
 }
 

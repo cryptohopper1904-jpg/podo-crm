@@ -153,6 +153,33 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(JSON.parse(await zip.file("tables/vouchers.json")!.async("string"))).toEqual([]);
   });
 
+  it("Unterschriften (Leistungsnachweis) werden entschlüsselt mitexportiert (GKV Paket B R2-12)", async () => {
+    const org = await f.org();
+    const owner = await f.user();
+    await f.pool.query("insert into memberships (organization_id, user_id, role) values ($1,$2,'owner')", [org, owner]);
+    const patient = await f.patient(org, { lastName: "Unterschrift" });
+    const png = Buffer.from("PNG-Testinhalt");
+    const stored = await storage.storeEncrypted(org, png);
+    const sigId = await f.asOrg(org, async (c) => {
+      const vo = (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,'2026-11-02','DF',6) returning id", [org, patient])).rows[0].id;
+      const rec = (await c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash) values ($1,$2,$3,now(),$4,'h') returning id", [org, patient, owner, vo])).rows[0].id;
+      return (
+        await c.query(
+          "insert into treatment_signatures (organization_id, record_id, patient_id, prescription_id, kind, signer_name, signer_role, storage_key, mime, size_bytes, sha256, created_by) values ($1,$2,$3,$4,'device','Erika Muster','insured',$5,'image/png',$6,$7,$8) returning id",
+          [org, rec, patient, vo, stored.storageKey, stored.sizeBytes, stored.sha256, owner],
+        )
+      ).rows[0].id as string;
+    });
+    const result = await exp.buildPracticeExport({ organizationId: org, exportedBy: { name: "Inhaberin", email: "i@example.org" } });
+    const zip = await JSZip.loadAsync(await drain(result.stream));
+    await result.done;
+    const rows = JSON.parse(await zip.file("tables/treatment_signatures.json")!.async("string")) as Record<string, unknown>[];
+    const row = rows.find((r) => r.id === sigId)!;
+    expect(row).not.toHaveProperty("storageKey");
+    expect(row.exportFile).toMatch(/^unterschriften\/\d+\/.+\.png$/);
+    expect((await zip.file(row.exportFile as string)!.async("nodebuffer")).equals(png)).toBe(true);
+  });
+
   it("Abbruch des Downloads beendet die Erzeugung (done wird abgelehnt)", async () => {
     const org = await f.org();
     const owner = await f.user();

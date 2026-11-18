@@ -1965,7 +1965,7 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
       totalGrossCents: groups.reduce((s, g) => s + g.grossCents, 0),
       totalTaxCents: groups.reduce((s, g) => s + vatPortion(g.grossCents, g.rate), 0),
       lines: groups.map((g) => ({ grossCents: g.grossCents, vatRate: g.rate })),
-      remark: `${inv.kind === "credit_note" ? "Stornorechnung" : "Rechnung"} ${number}${receiptLines.length ? " (abzgl. angerechneter Quittungen)" : ""}`,
+      remark: `${inv.kind === "credit_note" ? "Stornorechnung" : inv.kind === "copayment" ? "Zuzahlungsquittung" : "Rechnung"} ${number}${receiptLines.length ? " (abzgl. angerechneter Quittungen)" : ""}`,
       // TODO: Kontakt (upsertContact) und PDF-Belegbild übergeben, sobald PDF-Erzeugung vorhanden ist
     });
     externalId = res.externalId;

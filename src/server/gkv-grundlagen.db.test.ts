@@ -402,7 +402,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     const { copaymentReceiptAction } = await import("@/app/(app)/kunden/[id]/verordnungen/actions");
     const form = (amount: string) => {
       const f = new FormData();
-      for (const [k, v] of Object.entries({ prescriptionId: id, patientId: patient, amount, method: "cash" })) f.set(k, v);
+      for (const [k, v] of Object.entries({ prescriptionId: id, patientId: patient, amount, method: "cash", confirmOverpay: "on" })) f.set(k, v);
       return f;
     };
     expect(await copaymentReceiptAction(undefined, form("21474836,48"))).toEqual({ error: "Betrag ist zu groß." });
@@ -490,7 +490,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set status = 'completed' where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
     // Altvermerk (vor Paket B) darf auch nach „abgerechnet“ zurückgesetzt werden (Trigger erlaubt copayment_paid_*)
     await fx.asOrg(org, (c) => c.query("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1506, copayment_paid_method = 'card' where id = $1", [id]));
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: false })).toEqual({});
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: false, reason: "Vermerk war falsch, nichts erhalten" })).toEqual({});
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_cents, copayment_paid_method, copayment_paid_at from prescriptions where id = $1", [id])).rows);
     expect(row).toMatchObject({ copayment_paid_cents: null, copayment_paid_method: null, copayment_paid_at: null });
     // Export: Befreiung laut Snapshot (Person ist volljährig, keine Bescheinigung) + Kreuz der VO in eigener Spalte

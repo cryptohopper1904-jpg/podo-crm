@@ -4,7 +4,6 @@
  * Leistungsnachweis-PDF) und Zuzahlungsquittung (Beleg ZZ, Kasse/TSE bzw. Praxiskasse, Tagesabschluss, Erstattung,
  * Altvermerk, Export).
  */
-import { deflateSync, crc32 } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -14,28 +13,10 @@ import { berlinToUtc } from "@/lib/format";
 import { addDaysIso } from "@/lib/calendar-grid";
 import { RULES_VERSION } from "@/lib/rules/prescription";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { testPngDataUrl } from "@/lib/__tests__/png-fixture";
 
-/** gültiges PNG (Graustufen) als data:-URL */
-function png(width = 300, height = 100): string {
-  const chunk = (type: string, data: Buffer) => {
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(data.length);
-    const td = Buffer.concat([Buffer.from(type, "latin1"), data]);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(td) >>> 0);
-    return Buffer.concat([len, td, crc]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // Bit-Tiefe
-  ihdr[9] = 0; // Graustufen
-  const raw = Buffer.alloc((width + 1) * height, 255);
-  for (let y = 0; y < height; y++) raw[y * (width + 1)] = 0;
-  for (let x = 10; x < width - 10; x++) raw[50 * (width + 1) + 1 + x] = 0; // Strich
-  const bytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
-  return `data:image/png;base64,${bytes.toString("base64")}`;
-}
+/** gültige Unterschrift (900×300 RGBA) als data:-URL */
+const png = () => testPngDataUrl();
 
 (TEST_DB ? describe : describe.skip)("GKV Paket B – Unterschrift und Zuzahlungsquittung (DB)", () => {
   const fx = fixtures(TEST_DB ?? "");
@@ -90,6 +71,22 @@ function png(width = 300, height = 100): string {
     return { org, user, patient, auth, vo, treat, q };
   };
 
+  /** als Eigentümer (Trigger statt Rechteentzug prüfen), im Praxis-Kontext, immer zurückgerollt */
+  const asOwner = async (org: string, text: string, params: unknown[]) => {
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@"), max: 1 });
+    const c = await pool.connect();
+    try {
+      await c.query("begin");
+      await c.query("select set_config('app.org_id', $1, true)", [org]);
+      return await c.query(text, params);
+    } finally {
+      await c.query("rollback").catch(() => undefined);
+      c.release();
+      await pool.end();
+    }
+  };
+
   // ───────────── B1 Unterschrift ─────────────
 
   it("B1: Unterschrift auf dem Gerät – verschlüsselt abgelegt, je Behandlung einmal, unveränderbar; Papier-Vermerk", async () => {
@@ -109,8 +106,11 @@ function png(width = 300, height = 100): string {
     // zweites Mal → abgelehnt
     expect(await sigs.addSignature(w.auth, { recordId: rec.id, patientId: w.patient, paperSigned: true })).toEqual({ error: expect.stringMatching(/bereits eine Unterschrift/) });
     // unveränderbar (Trigger)
-    await expect(w.q("update treatment_signatures set signer_name = 'X' where id = $1", [row.id])).rejects.toThrow(/unveränderbar/);
-    await expect(w.q("delete from treatment_signatures where id = $1", [row.id])).rejects.toThrow(/unveränderbar/);
+    // App-Rolle: kein UPDATE/DELETE-Recht (migrate.ts); Eigentümer: Trigger
+    await expect(w.q("update treatment_signatures set signer_name = 'X' where id = $1", [row.id])).rejects.toThrow(/permission denied/);
+    await expect(w.q("delete from treatment_signatures where id = $1", [row.id])).rejects.toThrow(/permission denied/);
+    await expect(asOwner(w.org, "update treatment_signatures set signer_name = 'X' where id = $1", [row.id])).rejects.toThrow(/unveränderbar/);
+    await expect(asOwner(w.org, "delete from treatment_signatures where id = $1", [row.id])).rejects.toThrow(/unveränderbar/);
     // ungültiges Bild, fehlender Name
     const rec2 = await w.treat(id);
     expect(await sigs.addSignature(w.auth, { recordId: rec2.id, patientId: w.patient, signatureData: "data:image/png;base64,AAAA", signerName: "Erika Musterfrau", signerRole: "insured" })).toEqual({ error: expect.stringMatching(/kein gültiges Bild/) });
@@ -151,7 +151,7 @@ function png(width = 300, height = 100): string {
     const list = await presc.listPatientPrescriptions(w.auth, w.patient);
     expect(list!.prescriptions.find((x) => x.id === id)!.signatures).toEqual({ total: 2, missing: 2 });
     expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ error: expect.stringMatching(/2 Behandlungen haben keine Unterschrift/) });
-    await sigs.addSignature(w.auth, { recordId: r1.id, patientId: w.patient, signatureData: png(), signerName: "Paul Pflege", signerRole: "caregiver" });
+    await sigs.addSignature(w.auth, { recordId: r1.id, patientId: w.patient, signatureData: png(), signerName: "Paul Pflege", signerRole: "guardian" });
     expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ error: expect.stringMatching(/Eine Behandlung hat keine Unterschrift/) });
     await sigs.addSignature(w.auth, { recordId: r2.id, patientId: w.patient, paperSigned: true });
     expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
@@ -177,11 +177,11 @@ function png(width = 300, height = 100): string {
       return f;
     };
     // ungültige Unterschrift → kein Eintrag
-    expect(await quickRecordAction(undefined, form({ signatureData: "data:image/png;base64,AAAA", signerName: "Paul Pflege", signerRole: "caregiver" }))).toEqual({ error: expect.stringMatching(/kein gültiges Bild/) });
+    expect(await quickRecordAction(undefined, form({ signatureData: "data:image/png;base64,AAAA", signerName: "Paul Pflege", signerRole: "guardian" }))).toEqual({ error: expect.stringMatching(/kein gültiges Bild/) });
     expect((await w.q("select id from treatment_records where prescription_id = $1", [id])).length).toBe(0);
-    expect(await quickRecordAction(undefined, form({ signatureData: png(), signerName: "Paul Pflege", signerRole: "caregiver" }))).toEqual({ ok: "Gespeichert" });
+    expect(await quickRecordAction(undefined, form({ signatureData: png(), signerName: "Paul Pflege", signerRole: "guardian" }))).toEqual({ ok: "Gespeichert" });
     const rows = await w.q<{ kind: string; signer_role: string; signer_name: string }>("select s.kind, s.signer_role, s.signer_name from treatment_signatures s join treatment_records t on t.id = s.record_id where t.prescription_id = $1", [id]);
-    expect(rows).toEqual([{ kind: "device", signer_role: "caregiver", signer_name: "Paul Pflege" }]);
+    expect(rows).toEqual([{ kind: "device", signer_role: "guardian", signer_name: "Paul Pflege" }]);
   });
 
   it("B1: Leistungsnachweis-PDF mit Unterschriftsbild, Papier-Vermerk und „Unterschrift fehlt“", async () => {
@@ -234,11 +234,11 @@ function png(width = 300, height = 100): string {
     expect(list!.prescriptions.find((x) => x.id === id)!.copaymentCollectedCents).toBe(i.total_cents);
     // Teilbetrag + Obergrenze Heilmittelkosten
     const id2 = await w.vo(1);
-    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: 6000, method: "card" })).toEqual({ error: expect.stringMatching(/höher als die Heilmittelkosten/) });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: 6000, method: "card", confirmOverpay: true })).toEqual({ error: expect.stringMatching(/höher als die Heilmittelkosten/) });
     const part = await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: 500, method: "card" });
     expect(part).toMatchObject({ warning: expect.stringMatching(/Restbetrag/) });
     const [partLine] = await w.q<{ description: string }>("select description from invoice_lines where invoice_id = $1", [(part as { id: string }).id]);
-    expect(partLine.description).toMatch(/Zuzahlung zur Heilmittelverordnung vom/);
+    expect(partLine.description).toMatch(/Zuzahlung zur Verordnung vom/);
   });
 
   it("B2: eigene Praxiskasse → Vermerk mit Bon-Nr., keine PodoHero-TSE; Quittungs-PDF mit § 61-Hinweis ohne USt", async () => {
@@ -257,14 +257,14 @@ function png(width = 300, height = 100): string {
     expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
   });
 
-  it("B2: Altvermerk nur Anzeige – sperrt neue Quittung bis zum Zurücksetzen; Erstattung als negative Zahlung; Export-Datum", async () => {
+  it("B2: Altvermerk nur Anzeige – sperrt neue Quittung (bis „Vermerk war falsch“); Erstattung als negative Zahlung; Export-Datum", async () => {
     const w = await world();
     const id = await w.vo(1);
     await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1347, copayment_paid_method = 'cash' where id = $1", [id]);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
     // Altvermerk ist keine Kassenbuchung
     expect((await w.q("select id from payments")).length).toBe(0);
-    expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false })).toEqual({});
+    expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk war falsch, nichts erhalten" })).toEqual({});
     const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string; amountCents: number };
     expect(res.amountCents).toBeGreaterThan(0);
     // Erstattung: Storno + negative Zahlung (Kassenvorgang)
@@ -292,5 +292,88 @@ function png(width = 300, height = 100): string {
     const id = await w.vo(1);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/keine Zuzahlung fällig/) });
     await expect(w.q("insert into invoices (organization_id, patient_id, prescription_id, status) values ($1,$2,$3,'draft')", [w.org, w.patient, id])).rejects.toThrow(/invoices_prescription_kind_check/);
+  });
+
+  // ───────────── Review-Runde 2 ─────────────
+
+  it("R2-1: Zuzahlungsquittung am selben Tag blendet private Leistungen nicht aus der Sammelrechnung aus", async () => {
+    const w = await world();
+    const ab = await import("./appointment-billing");
+    await dbm.withOrg(w.org, (tx) => records.insertTreatmentRecord(tx, { org: w.org, userId: w.user, role: "owner" }, { patientId: w.patient, findings: "privat", servicesText: "Fußpflege" }));
+    const year = Number(today.slice(0, 4));
+    const before = await ab.patientYearSuggestion(w.auth, w.patient, year);
+    expect(before!.items).toBe(1);
+    const id = await w.vo(1);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toHaveProperty("number");
+    expect((await ab.patientYearSuggestion(w.auth, w.patient, year))!.items).toBe(1);
+    expect((await ab.collectiveOverview(w.auth, year)).find((r) => r.patientId === w.patient)?.items).toBe(1);
+  });
+
+  it("R2-3: prescription_id einer Quittung nach dem Ausstellen unveränderlich; Verordnung muss zur Person passen", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    const other = await w.vo(1);
+    const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string };
+    await expect(w.q("update invoices set prescription_id = $2 where id = $1", [res.id, other])).rejects.toThrow(/unveränderbar/);
+    const stranger = await fx.patient(w.org, { lastName: "Fremd" });
+    await expect(w.q("insert into invoices (organization_id, patient_id, kind, prescription_id, status) values ($1,$2,'copayment',$3,'draft')", [w.org, stranger, id])).rejects.toThrow(/passt nicht zur Person/);
+  });
+
+  it("R2-4: ohne bekannten Preis → frei eingegebener Betrag (eine Zeile, Hinweis „Betrag manuell“), ohne Betrag Fehler", async () => {
+    const w = await world();
+    const id = await w.vo(1, [{ label: "Behandlung ohne Positionsnummer", units: 1 } as never]);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Betrag angeben/) });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 1_000_001, method: "cash" })).toHaveProperty("error");
+    const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 1250, method: "cash" })) as { id: string };
+    const lines = await w.q<{ description: string; total_cents: number }>("select description, total_cents from invoice_lines where invoice_id = $1", [res.id]);
+    expect(lines).toEqual([{ description: "Zuzahlung laut Verordnung", total_cents: 1250 }]);
+    const [inv] = await w.q<{ notes: string }>("select notes from invoices where id = $1", [res.id]);
+    expect(inv.notes).toMatch(/Betrag manuell, Berechnung nicht möglich/);
+  });
+
+  it("R2-5/11: Altvermerk zählt als erhalten und blockiert; Zurücksetzen nur „Vermerk war falsch“ mit Begründung", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1347, copayment_paid_method = 'cash' where id = $1", [id]);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
+    const list = await presc.listPatientPrescriptions(w.auth, w.patient);
+    expect(list!.prescriptions.find((x) => x.id === id)!.copaymentCollectedCents).toBe(1347);
+    expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "" })).toEqual({ error: expect.stringMatching(/Begründung/) });
+    expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk versehentlich gesetzt, nichts erhalten" })).toEqual({});
+  });
+
+  it("R2-10: Name ohne Steuerzeichen; Rollen Versicherte:r/rechtliche Betreuung/Angehörige:r/Pflegekraft", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    const rec = await w.treat(id);
+    expect(await sigs.addSignature(w.auth, { recordId: rec.id, patientId: w.patient, signatureData: png(), signerName: "Erika\u202eMuster", signerRole: "insured" })).toHaveProperty("error");
+    expect(await sigs.addSignature(w.auth, { recordId: rec.id, patientId: w.patient, signatureData: png(), signerName: "Schwester Anna", signerRole: "care_staff" })).toEqual({ ok: true });
+  });
+
+  it("R2-13/17: Sammel-Vermerk „Unterschriften liegen auf Papier vor“ bis Datum; Nachtrag nicht am Behandlungstag wird markiert", async () => {
+    const w = await world();
+    const id = await w.vo(3);
+    const day = (d: string) => w.q<{ id: string }>("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash, prev_hash) values ($1,$2,$3,$4,$5,$6,$7) returning id", [w.org, w.patient, w.user, berlinToUtc(d, "10:00"), id, `h-${Math.random()}`, `p-${Math.random()}`]);
+    const r1 = (await day(addDaysIso(today, -20)))[0].id;
+    await day(addDaysIso(today, -10));
+    await day(addDaysIso(today, -1));
+    await sigs.addSignature(w.auth, { recordId: r1, patientId: w.patient, signatureData: png(), signerName: "Erika Musterfrau", signerRole: "insured" });
+    expect(await sigs.markPaperSignatures(w.auth, { prescriptionId: id, patientId: w.patient, until: addDaysIso(today, -5) })).toEqual({ count: 1 });
+    const rows = (await dbm.withOrg(w.org, (tx) => sigs.proofRows(tx, w.org, [id]))).get(id)!;
+    expect(rows.map((r) => r.signature?.kind ?? null)).toEqual(["device", "paper", null]);
+    expect(rows[0].signature!.late).toBe(true);
+  });
+
+  it("R2-14: Überzahlung nur mit Bestätigung; neue Quittung erst nach gebuchter Erstattung", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    const { priceFor } = await import("@/lib/rules/podologie-verguetung");
+    const due = priceFor("78020", today)!.copayCents! + 1000;
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: due + 100, method: "cash" })).toEqual({ error: expect.stringMatching(/über der offenen Zuzahlung/) });
+    const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: due + 100, method: "cash", confirmOverpay: true })) as { id: string };
+    // Storno ohne gebuchte Erstattung (Erstattung scheitert) → keine neue Quittung
+    const inv = await import("./invoices");
+    await inv.cancelInvoice(w.auth, res.id, "Test ohne Erstattung").catch(() => undefined);
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Erstattung/) });
   });
 });

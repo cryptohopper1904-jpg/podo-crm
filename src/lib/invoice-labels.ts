@@ -52,6 +52,13 @@ export const PAYMENT_METHOD_LABEL: Record<string, string> = {
 export const PAYMENT_METHODS = ["cash", "card", "transfer", "voucher", "payment_link"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/**
+ * Belegarten, die KEINE Abrechnung von Leistungen sind – für die Heuristik „eigener Beleg der Person am Behandlungstag
+ * = abgerechnet“ (Sammelrechnungs-Vorschlag, Jahresend-Erinnerung): Storno, Sammelrechnung (exakt über Positionen),
+ * Anzahlung und Zuzahlungsquittung (GKV-Zuzahlung, keine Privatleistung – Review Paket B R2-1).
+ */
+export const NOT_BILLING_KINDS = ["credit_note", "collective", "deposit", "copayment"] as const;
+
 export const CREATABLE_KINDS = ["invoice", "receipt", "collective", "no_show_fee"] as const;
 /** Zahlarten für eine Anzahlung (Vorauszahlung, sofort erhalten – kein Zahlungslink) */
 export const DEPOSIT_METHODS = ["cash", "card", "transfer"] as const;

@@ -8,7 +8,8 @@ import type { AuthContext } from "@/lib/auth/session";
 import { gkvGuard } from "@/lib/features";
 import { berlinDateIso } from "@/lib/format";
 import { hasAnlage3Fields } from "@/lib/rules/prescription";
-import { MAX_SIGNATURE_DATAURL_CHARS, SIGNER_ROLES, checkSignaturePng, type SignerRole } from "@/lib/signature";
+import { MAX_SIGNATURE_DATAURL_CHARS, SIGNER_ROLES, type SignerRole } from "@/lib/signature";
+import { checkSignaturePng } from "@/lib/signature-png";
 import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
 import { assertCan } from "./authz";
 
@@ -25,7 +26,11 @@ const emptyToUndef = (v: unknown) => (typeof v === "string" && v.trim() === "" ?
 /** Formularfelder (Doku, Besuchstag, Nachtrag) – alle optional; ohne Angabe bleibt die Unterschrift offen */
 export const signatureFields = z.object({
   signatureData: z.preprocess(emptyToUndef, z.string().max(MAX_SIGNATURE_DATAURL_CHARS, "Die Unterschrift ist zu groß – bitte löschen und erneut unterschreiben.").optional()),
-  signerName: z.preprocess(emptyToUndef, z.string().trim().min(2, "Bitte den Namen der unterschreibenden Person angeben.").max(120).optional()),
+  // keine Steuer-/Formatzeichen (z. B. Richtungswechsel U+202E, die den Namen im PDF verfälschen) – Review R2-10
+  signerName: z.preprocess(
+    emptyToUndef,
+    z.string().trim().min(2, "Bitte den Namen der unterschreibenden Person angeben.").max(120).regex(/^[^\p{Cc}\p{Cf}]+$/u, "Der Name enthält unzulässige Zeichen.").optional(),
+  ),
   signerRole: z.preprocess(emptyToUndef, z.enum(SIGNER_ROLES, { message: "Bitte angeben, wer unterschreibt." }).optional()),
   paperSigned: checkbox.optional(),
 });
@@ -53,7 +58,7 @@ export function prepareSignature(f: SignatureFields): PreparedSignature | null |
   const ok = checkSignaturePng(bytes);
   if (!ok.ok) return { error: ok.error };
   if (!f.signerName) return { error: "Bitte den Namen der unterschreibenden Person angeben." };
-  if (!f.signerRole) return { error: "Bitte angeben, wer unterschreibt (Versicherte:r, Betreuungsperson, Angehörige:r)." };
+  if (!f.signerRole) return { error: "Bitte angeben, wer unterschreibt (Versicherte:r, rechtliche Betreuung, Angehörige:r, Pflegekraft)." };
   return { kind: "device", signerName: f.signerName, signerRole: f.signerRole, bytes };
 }
 
@@ -123,7 +128,10 @@ export async function addSignature(auth: AuthContext, input: { recordId: string;
   if (!ids.success) return { error: "Ungültige Anfrage." };
   const blocked = gkvGuard(auth.organization, "verordnungen");
   if (blocked) return blocked;
-  const prepared = prepareSignature(input);
+  // Felder hier erneut prüfen (Aufruf auch ohne Server-Action möglich)
+  const fields = signatureFields.safeParse({ signatureData: input.signatureData, signerName: input.signerName, signerRole: input.signerRole, paperSigned: input.paperSigned });
+  if (!fields.success) return { error: fields.error.issues[0]?.message ?? "Unterschrift prüfen." };
+  const prepared = prepareSignature(fields.data);
   if (!prepared) return { error: "Bitte unterschreiben lassen oder „Unterschrift auf der Papier-Verordnung“ ankreuzen." };
   if ("error" in prepared) return prepared;
   const org = auth.organization.id;
@@ -152,9 +160,45 @@ export type SignatureRow = {
   signerRole: SignerRole | null;
   signedAt: Date;
   createdByName: string | null;
+  /** auf dem Gerät nicht am Behandlungstag unterschrieben (nachgetragen) – Hinweis im Leistungsnachweis (R2-17) */
+  late: boolean;
 };
 
 export type ProofRow = { recordId: string; date: string; treatedAt: Date; signature: SignatureRow | null };
+
+export const paperBulkInput = z.object({
+  prescriptionId: z.string().uuid(),
+  patientId: z.string().uuid(),
+  until: z.iso.date({ message: "Bitte ein gültiges Datum angeben." }),
+});
+
+/**
+ * Sammel-Vermerk „Unterschriften liegen auf der Papier-Verordnung vor“ für alle noch offenen Behandlungen einer
+ * Verordnung bis einschließlich `until` – für Bestands-Verordnungen, deren Behandlungen vor Einführung der
+ * Unterschrift auf dem Gerät erfasst wurden (Review R2-13). Bewusster Schritt, protokolliert.
+ */
+export async function markPaperSignatures(auth: AuthContext, raw: z.input<typeof paperBulkInput>): Promise<{ count: number } | { error: string }> {
+  assertCan(auth, "medical.write");
+  const blocked = gkvGuard(auth.organization, "verordnungen");
+  if (blocked) return blocked;
+  const parsed = paperBulkInput.safeParse(raw);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const d = parsed.data;
+  if (d.until > berlinDateIso()) return { error: "Das Datum darf nicht in der Zukunft liegen." };
+  const org = auth.organization.id;
+  const res = await withOrg(org, async (tx) => {
+    const [vo] = await tx.select({ id: prescriptions.id }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.prescriptionId), eq(prescriptions.patientId, d.patientId))).for("update");
+    if (!vo) return null;
+    const rows = (await proofRows(tx, org, [vo.id])).get(vo.id) ?? [];
+    const open = rows.filter((r) => !r.signature && r.date <= d.until);
+    if (!open.length) return [];
+    await tx.insert(treatmentSignatures).values(open.map((r) => ({ organizationId: org, recordId: r.recordId, patientId: d.patientId, prescriptionId: vo.id, kind: "paper" as const, createdBy: auth.user.id })));
+    return open.map((r) => r.recordId);
+  });
+  if (!res) return { error: "Verordnung nicht gefunden." };
+  if (res.length) await audit({ organizationId: org, userId: auth.user.id, action: "record.signature_paper_bulk", entity: "prescription", entityId: d.prescriptionId, meta: { until: d.until, count: res.length, recordIds: res } });
+  return { count: res.length };
+}
 
 /** Behandlungen je Verordnung mit Unterschrift (aufsteigend) */
 export async function proofRows(tx: Tx, org: string, prescriptionIds: string[]): Promise<Map<string, ProofRow[]>> {
@@ -180,7 +224,9 @@ export async function proofRows(tx: Tx, org: string, prescriptionIds: string[]):
       recordId: r.id,
       date: berlinDateIso(r.treatedAt),
       treatedAt: r.treatedAt,
-      signature: x ? { id: x.s.id, kind: x.s.kind, signerName: x.s.signerName, signerRole: x.s.signerRole, signedAt: x.s.signedAt, createdByName: x.by ?? null } : null,
+      signature: x
+        ? { id: x.s.id, kind: x.s.kind, signerName: x.s.signerName, signerRole: x.s.signerRole, signedAt: x.s.signedAt, createdByName: x.by ?? null, late: x.s.kind === "device" && berlinDateIso(x.s.signedAt) !== berlinDateIso(r.treatedAt) }
+        : null,
     });
     out.set(r.prescriptionId!, list);
   }

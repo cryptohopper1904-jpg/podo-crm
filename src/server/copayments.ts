@@ -26,6 +26,7 @@ import { InvoiceError, addPayments, applyPayments, archiveIssued, cancelInvoice,
  * Die bisherigen Felder prescriptions.copayment_paid_* sind Altvermerke (nur Anzeige, keine nachträgliche Kassenbuchung).
  */
 
+const euro = (c: number) => `${(c / 100).toFixed(2).replace(".", ",")} €`;
 const emptyToNull = (v: unknown) => (typeof v === "string" && v.trim() === "" ? null : v);
 
 export const copaymentReceiptInput = z.object({
@@ -34,6 +35,8 @@ export const copaymentReceiptInput = z.object({
   /** null = offene Zuzahlung laut Berechnung */
   amountCents: z.number().int().min(1, "Betrag ungültig.").max(EURO_INPUT_MAX_CENTS, "Betrag ist zu groß.").nullable(),
   method: z.enum(COPAYMENT_RECEIPT_METHODS, { message: "Bitte die Zahlungsart wählen." }),
+  /** Betrag über der offenen Zuzahlung ausdrücklich bestätigt (Review R2-14) */
+  confirmOverpay: z.boolean().optional(),
   registerReceiptNo: z.preprocess(
     emptyToNull,
     z.string().trim().max(40, "Bon-Nr. der Praxiskasse: höchstens 40 Zeichen.").regex(PRAXISKASSE_BON_RE, "Bon-Nr. der Praxiskasse: nur Buchstaben, Ziffern, „-“ und „/“.").nullable().optional(),
@@ -160,26 +163,46 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
         if (!p) throw new InvoiceError("Patient nicht gefunden.");
         if (p.archivedAt || p.contactErasedAt) throw new InvoiceError("Für archivierte Patient:innen ist keine Quittung möglich.");
         const existing = (await copaymentReceiptsFor(tx, org, [vo.id])).get(vo.id) ?? [];
-        // keine doppelte Erfassung: ein Altvermerk („Zuzahlung erhalten“ ohne Quittung) bleibt reine Anzeige
-        if (vo.copaymentPaidAt && !existing.length) {
-          throw new InvoiceError("Für diese Verordnung gibt es einen Altvermerk „Zuzahlung erhalten“ ohne Quittung. Bitte erst den Altvermerk zurücksetzen (er wurde nie in der Kasse gebucht), dann die Zuzahlung quittieren.");
+        // keine doppelte Erfassung: ein Altvermerk („Zuzahlung erhalten“ vor Paket B) gilt als erhalten (Review R2-5) –
+        // eine Quittung dafür gäbe es nur als nachträgliche Kassenbuchung, und die ist ausgeschlossen
+        if (vo.copaymentPaidAt) {
+          const eur = vo.copaymentPaidCents !== null ? ` (${euro(vo.copaymentPaidCents)})` : "";
+          throw new InvoiceError(`Die Zuzahlung ist bereits als Altvermerk „erhalten“ erfasst${eur} – keine zweite Quittung. War der Vermerk falsch (nichts erhalten), zuerst „Vermerk war falsch – nichts erhalten“ mit Begründung setzen.`);
         }
+        // Storno ohne gebuchte Erstattung: erst erstatten (am Stornobeleg), dann neu quittieren (Review R2-14)
+        const unrefunded = existing.find((r) => r.status === "cancelled" && r.refund && !r.refund.refunded);
+        if (unrefunded) throw new InvoiceError(`Die Erstattung zur stornierten Quittung ${unrefunded.number} ist noch nicht gebucht – bitte zuerst am Stornobeleg ${unrefunded.refund!.number} die Erstattung erfassen.`);
         const already = collectedCents(existing);
         const dates = await treatmentDates(tx, org, vo.id);
         const exp = expectedCopayment(vo, p, dates, today);
-        if (exp.breakdown.totalCents <= 0) throw new InvoiceError("Laut Berechnung ist keine Zuzahlung fällig (befreit, unter 18 oder ohne zuzahlungspflichtige Position).");
-        const open = exp.breakdown.totalCents - already;
-        const amount = input.amountCents ?? open;
-        if (amount <= 0) throw new InvoiceError("Die Zuzahlung ist bereits vollständig quittiert.");
-        // Obergrenze: Heilmittelkosten der Verordnung (Snapshot bzw. Schätzung), ohne bekannte Kosten 10.000 €
-        const limit = exp.snapshot.remedyCents > 0 ? exp.snapshot.remedyCents : EURO_INPUT_MAX_CENTS;
-        if (already + amount > limit) throw new InvoiceError(`Betrag ist höher als die Heilmittelkosten der Verordnung (${(limit / 100).toFixed(2).replace(".", ",")} €) – bitte prüfen.`);
+        // ohne Preis/Positionsnummer lässt sich die Zuzahlung nicht berechnen → frei eingegebener Betrag (Review R2-4)
+        const manual = !exp.snapshot.complete;
+        let amount: number;
+        let open = 0;
+        if (manual) {
+          if (input.amountCents === null) throw new InvoiceError("Die Zuzahlung lässt sich nicht berechnen (Preis bzw. Positionsnummer fehlt) – bitte den erhaltenen Betrag angeben.");
+          amount = input.amountCents;
+          if (already + amount > EURO_INPUT_MAX_CENTS) throw new InvoiceError("Betrag ist zu groß.");
+        } else {
+          if (exp.breakdown.totalCents <= 0) throw new InvoiceError("Laut Berechnung ist keine Zuzahlung fällig (befreit, unter 18 oder ohne zuzahlungspflichtige Position).");
+          open = exp.breakdown.totalCents - already;
+          amount = input.amountCents ?? open;
+          if (amount <= 0 || (open <= 0 && input.amountCents === null)) throw new InvoiceError("Die Zuzahlung ist bereits vollständig quittiert.");
+          if (amount > Math.max(0, open) && !input.confirmOverpay) {
+            throw new InvoiceError(`Der Betrag liegt über der offenen Zuzahlung (${euro(Math.max(0, open))}) – Überzahlung bitte ausdrücklich bestätigen (Häkchen) oder den Betrag korrigieren.`);
+          }
+          // Obergrenze: Heilmittelkosten der Verordnung (Snapshot bzw. Schätzung)
+          const limit = exp.snapshot.remedyCents > 0 ? exp.snapshot.remedyCents : EURO_INPUT_MAX_CENTS;
+          if (already + amount > limit) throw new InvoiceError(`Betrag ist höher als die Heilmittelkosten der Verordnung (${euro(limit)}) – bitte prüfen.`);
+        }
 
         const o = await loadOrg(tx, org);
-        const label = `Heilmittelverordnung vom ${dateDe(vo.issuedAt)}${vo.doctorName ? ` (${vo.doctorName})` : ""}`;
-        const lines = copaymentReceiptLines(already ? null : exp.breakdown, amount, { prescriptionLabel: label, positionLabel: (code) => positionInfo(code)?.label ?? null });
+        const label = `Zuzahlung zur Verordnung vom ${dateDe(vo.issuedAt)}${vo.doctorName ? ` (${vo.doctorName})` : ""}`;
+        const lines = manual
+          ? [{ description: "Zuzahlung laut Verordnung", cents: amount }]
+          : copaymentReceiptLines(already ? null : exp.breakdown, amount, { prescriptionLabel: `Verordnung vom ${dateDe(vo.issuedAt)}`, positionLabel: (code) => positionInfo(code)?.label ?? null });
         const totals = computeTotals(lines.map((l) => ({ totalCents: l.cents, vatRate: 0 })));
-        const expectedNote = copaymentExpectedNote(exp.breakdown, amount, already);
+        const expectedNote = manual ? "Betrag manuell, Berechnung nicht möglich (Preis bzw. Positionsnummer fehlt)." : copaymentExpectedNote(exp.breakdown, amount, already);
         const [draft] = await tx
           .insert(invoices)
           .values({
@@ -213,7 +236,7 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
           totals.groups,
         );
         const archived = await archiveIssued(tx, org, draft.id, auth.user.id, pending);
-        return { id: draft.id, number, amountCents: totals.totalCents, archived, expected: exp.breakdown.totalCents, already, estimated: exp.estimated };
+        return { id: draft.id, number, amountCents: totals.totalCents, archived, expected: manual ? null : exp.breakdown.totalCents, already, estimated: exp.estimated, manual };
       }),
     );
     await reportInvoiceArchivePending(org, result);
@@ -223,7 +246,7 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
       action: "prescription.copayment_receipt",
       entity: "prescription",
       entityId: input.prescriptionId,
-      meta: { invoiceId: result.id, number: result.number, cents: result.amountCents, method: input.method, expectedCents: result.expected, estimated: result.estimated },
+      meta: { invoiceId: result.id, number: result.number, cents: result.amountCents, method: input.method, expectedCents: result.expected, estimated: result.estimated, manual: result.manual, overpayConfirmed: !!input.confirmOverpay },
     });
     return { id: result.id, number: result.number, amountCents: result.amountCents, warning: copaymentPaidHint(result.already + result.amountCents, result.expected) };
   } catch (e) {

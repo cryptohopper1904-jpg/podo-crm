@@ -939,8 +939,8 @@ export const treatmentSignatures = pgTable(
     /** device = auf dem Gerät unterschrieben, paper = Unterschrift auf der Papier-Verordnung (Rückseite) */
     kind: text("kind").$type<"device" | "paper">().notNull(),
     signerName: text("signer_name"),
-    /** insured = Versicherte:r, caregiver = Betreuungsperson, relative = Angehörige:r */
-    signerRole: text("signer_role").$type<"insured" | "caregiver" | "relative">(),
+    /** insured = Versicherte:r, guardian = rechtliche Betreuung/Bevollmächtigte:r, relative = Angehörige:r, care_staff = Pflegekraft */
+    signerRole: text("signer_role").$type<"insured" | "guardian" | "relative" | "care_staff">(),
     storageKey: text("storage_key"),
     mime: text("mime"),
     sizeBytes: integer("size_bytes"),

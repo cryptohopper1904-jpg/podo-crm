@@ -10,7 +10,7 @@ import type { OcrSuggestion } from "@/integrations/ocr/schema";
 import { extractPrescriptionFromMedia } from "@/server/ocr";
 import { changePrescriptionStatus, prescriptionInput, savePrescription, setCopaymentPaid } from "@/server/prescriptions";
 import { createCopaymentReceipt, refundCopaymentReceipt, type CopaymentReceiptInput, type CopaymentRefundInput } from "@/server/copayments";
-import { addSignature, signatureFields } from "@/server/signatures";
+import { addSignature, markPaperSignatures, signatureFields } from "@/server/signatures";
 import { addCopaymentExemption, exemptionInput, removeCopaymentExemption } from "@/server/copayment-exemptions";
 
 export type PrescriptionFormState = { error?: string } | undefined;
@@ -45,19 +45,19 @@ export async function prescriptionStatusAction(_: PrescriptionFormState, form: F
   return undefined;
 }
 
-const legacyResetSchema = z.object({ id: z.string().uuid(), patientId: z.string().uuid() });
+const legacyResetSchema = z.object({ id: z.string().uuid(), patientId: z.string().uuid(), reason: z.string().max(300).optional() });
 
 export type CopaymentPaidState = { error?: string; warning?: string; ok?: string } | undefined;
 
-/** Altvermerk „Zuzahlung erhalten“ (vor Paket B, ohne Kassenbuchung) zurücksetzen – neue Vermerke gibt es nicht mehr */
+/** Altvermerk „Zuzahlung erhalten“ (vor Paket B) entfernen – nur „Vermerk war falsch, nichts erhalten“ mit Begründung */
 export async function copaymentLegacyResetAction(_: CopaymentPaidState, form: FormData): Promise<CopaymentPaidState> {
-  const auth = await requireAuth("medical.write");
+  const auth = await requireAuth("invoices.write");
   const parsed = legacyResetSchema.safeParse(Object.fromEntries(form));
   if (!parsed.success) return { error: "Ungültige Anfrage – bitte Seite neu laden." };
   const res = await setCopaymentPaid(auth, { ...parsed.data, paid: false });
   if ("error" in res) return { error: res.error };
   revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
-  return { ok: "Altvermerk zurückgesetzt." };
+  return { ok: "Vermerk entfernt (war falsch – nichts erhalten)." };
 }
 
 const copaymentReceiptSchema = z.object({
@@ -67,6 +67,7 @@ const copaymentReceiptSchema = z.object({
   amount: z.string().max(EURO_INPUT_MAX_LENGTH, "Betrag ungültig – bitte z. B. 12,50 eingeben.").optional(),
   method: z.string().max(20),
   registerReceiptNo: z.string().max(60).optional(),
+  confirmOverpay: z.string().optional(),
 });
 
 /** „Zuzahlung erhalten“ → Zuzahlungsquittung mit Kassenbuchung (PodoHero-Kasse mit TSE bzw. Vermerk der Praxiskasse) */
@@ -77,7 +78,7 @@ export async function copaymentReceiptAction(_: CopaymentPaidState, form: FormDa
   const d = parsed.data;
   const amount = parseEuroInputCents(d.amount);
   if (amount !== null && typeof amount === "object") return { error: amount.error };
-  const res = await createCopaymentReceipt(auth, { prescriptionId: d.prescriptionId, patientId: d.patientId, amountCents: amount, method: d.method as CopaymentReceiptInput["method"], registerReceiptNo: d.registerReceiptNo ?? null });
+  const res = await createCopaymentReceipt(auth, { prescriptionId: d.prescriptionId, patientId: d.patientId, amountCents: amount, method: d.method as CopaymentReceiptInput["method"], registerReceiptNo: d.registerReceiptNo ?? null, confirmOverpay: d.confirmOverpay === "on" });
   if ("error" in res) return { error: res.error };
   revalidatePath(`/kunden/${d.patientId}/verordnungen`);
   revalidatePath("/kasse");
@@ -151,4 +152,16 @@ export async function removeExemptionAction(form: FormData) {
   if (!parsed.success) return;
   await removeCopaymentExemption(auth, parsed.data);
   revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
+}
+
+/** Sammel-Vermerk „Unterschriften liegen auf der Papier-Verordnung vor“ bis Datum (Bestand, Review R2-13) */
+export async function paperBulkAction(_: SignatureState, form: FormData): Promise<SignatureState> {
+  const auth = await requireAuth("medical.write");
+  const d = { prescriptionId: String(form.get("prescriptionId") ?? ""), patientId: String(form.get("patientId") ?? ""), until: String(form.get("until") ?? "") };
+  if (form.get("confirm") !== "on") return { error: "Bitte bestätigen, dass die Unterschriften auf der Papier-Verordnung vorliegen." };
+  const res = await markPaperSignatures(auth, d);
+  if ("error" in res) return { error: res.error };
+  revalidatePath(`/kunden/${d.patientId}/verordnungen/${d.prescriptionId}/nachweis`);
+  revalidatePath(`/kunden/${d.patientId}/verordnungen`);
+  return { ok: res.count ? `${res.count} ${res.count === 1 ? "Behandlung" : "Behandlungen"} als „auf Papier unterschrieben“ vermerkt.` : "Keine offene Behandlung bis zu diesem Datum." };
 }

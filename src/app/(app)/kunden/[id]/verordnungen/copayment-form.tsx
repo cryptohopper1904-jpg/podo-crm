@@ -29,12 +29,15 @@ export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, ext
         {external && register ? <input name="registerReceiptNo" maxLength={40} placeholder="Bon-Nr. Praxiskasse" aria-label="Bon-Nr. der Praxiskasse" className={`${inputCls} w-36`} /> : null}
         <button type="submit" disabled={pending} className="text-xs font-semibold text-primary">{pending ? "…" : "Zuzahlung quittieren"}</button>
       </div>
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <input type="checkbox" name="confirmOverpay" className="size-4 accent-[var(--primary)]" /> Betrag über der offenen Zuzahlung ausdrücklich bestätigen (Überzahlung)
+      </label>
       <p className="text-xs text-muted">
         {external && register
           ? "Erst in der Praxiskasse buchen (Zahlung auf Beleg), dann hier mit Bon-Nr. vermerken – die Quittung trägt den Praxiskassen-Vermerk."
           : register
             ? "Kassenvorgang in der PodoHero-Kasse (TSE-Signatur, Tagesabschluss) – Quittung ohne Umsatzsteuer (§ 32/§ 61 SGB V)."
-            : "Überweisung: Quittung über den Eingang, kein Kassenvorgang."}
+            : "Überweisung: nur nach Zahlungseingang auf dem Konto quittieren – Quittung über den Eingang, kein Kassenvorgang."}
       </p>
       {state?.ok ? <p role="status" className="text-xs font-medium text-primary">{state.ok}</p> : null}
       {state?.warning ? <p role="status" className="rounded-lg bg-warn-soft px-3 py-2 text-xs font-medium text-warn-soft-text">{state.warning}</p> : null}
@@ -69,15 +72,23 @@ export function CopaymentRefundForm({ invoiceId, patientId, external }: { invoic
   );
 }
 
-/** Altvermerk „Zuzahlung erhalten“ (ohne Kassenbuchung, vor Paket B) zurücksetzen */
+/**
+ * Altvermerk „Zuzahlung erhalten“ (vor Paket B) entfernen – nur, wenn der Vermerk falsch war und nichts erhalten wurde
+ * (Pflichtbegründung, Audit). Früher erhaltene Beträge werden nie nachträglich quittiert/gebucht.
+ */
 export function CopaymentLegacyReset({ id, patientId }: { id: string; patientId: string }) {
   const [state, action, pending] = useActionState<CopaymentPaidState, FormData>(copaymentLegacyResetAction, undefined);
+  if (state?.ok) return <p role="status" className="text-xs font-medium text-primary">{state.ok}</p>;
   return (
-    <form action={action} className="flex flex-col gap-1">
-      <input type="hidden" name="id" value={id} />
-      <input type="hidden" name="patientId" value={patientId} />
-      <FormError message={state?.error} revealKey={state} />
-      <button type="submit" disabled={pending} className="text-left text-xs font-semibold text-primary">Altvermerk zurücksetzen (um die Zuzahlung zu quittieren)</button>
-    </form>
+    <details className="text-xs">
+      <summary className="cursor-pointer font-semibold text-primary">Vermerk war falsch – nichts erhalten</summary>
+      <form action={action} className="mt-2 flex flex-wrap items-center gap-2">
+        <input type="hidden" name="id" value={id} />
+        <input type="hidden" name="patientId" value={patientId} />
+        <FormError message={state?.error} revealKey={state} />
+        <input name="reason" required minLength={5} maxLength={300} placeholder="Begründung (Pflicht)" aria-label="Begründung" className={`${inputCls} min-w-48 flex-1`} />
+        <button type="submit" disabled={pending} className="font-semibold text-danger">{pending ? "…" : "Vermerk entfernen"}</button>
+      </form>
+    </details>
   );
 }
