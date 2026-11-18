@@ -5,15 +5,17 @@ import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
 import { listBillingBatches, listRunningPrescriptions } from "@/server/prescriptions";
 import { BatchForm, type ReadyRow } from "./batch-form";
+import { Direktabrechnung, quelleAus } from "./direktabrechnung";
 
 export const metadata = { title: "GKV-Abrechnung" };
 
 const PARTNER: Record<string, string> = { manual: "manuell", "opta-data": "opta data", optica: "Optica", azh: "azh / noventi", rzh: "RZH", other: "anderes" };
 
-export default async function BillingPage() {
+export default async function BillingPage({ searchParams }: PageProps<"/verordnungen/abrechnung">) {
   const auth = await requireAuth("invoices.write");
   // Abrechnungsdaten enthalten Diagnosen (ICD-10)
   if (!auth.can("medical.read")) redirect("/kein-zugriff");
+  const quelle = quelleAus((await searchParams).p302);
   const [ready, batches] = [await listRunningPrescriptions(auth, ["billing_ready"]), await listBillingBatches(auth)];
   const rows: ReadyRow[] = ready.map(({ vo, p, evaluation: ev }) => {
     const missing = [!vo.icd10 && "ICD-10", !vo.doctorLanr && "LANR", !vo.doctorBsnr && "BSNR"].filter(Boolean);
@@ -64,6 +66,7 @@ export default async function BillingPage() {
           </Table>
         )}
       </Card>
+      <Direktabrechnung auth={auth} quelle={quelle} batches={batches} />
     </div>
   );
 }

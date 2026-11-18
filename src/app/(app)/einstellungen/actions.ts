@@ -19,6 +19,7 @@ import { isValidBic, isValidIban, normalizeBic, normalizeIban } from "@/lib/epc-
 import { BOOKING_CHANNELS, LIMITS as DOC_LIMITS, MAX_DUE_DAYS } from "@/lib/practice-documents";
 import { LOGO_KINDS, LogoError, removeLogo, uploadLogo } from "@/server/practice-logos";
 import { setBillingMode } from "@/server/features";
+import { Gkv302Fehler, KOTR_MAX_BYTES, kotrEntfernen, kotrHochladen, saveTarifkennzeichen } from "@/server/gkv302-export";
 import { ikProblem, isLegsCode } from "@/lib/rules/gkv-ids";
 import { isValidIsoDate } from "@/lib/iso-date";
 import {
@@ -646,5 +647,42 @@ export async function removeLogoAction(form: FormData) {
   const auth = await requireAuth("settings.manage");
   const kind = z.enum(LOGO_KINDS).parse(form.get("kind"));
   await removeLogo(auth, kind);
+  revalidatePath("/einstellungen/praxis");
+}
+
+// ───────────────────────── Direktabrechnung § 302 (Erprobung, docs/GKV-302.md) ─────────────────────────
+
+export async function saveGkv302TarifAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  try {
+    await saveTarifkennzeichen(auth, String(form.get("tarifkennzeichen") ?? "").slice(0, 20));
+  } catch (e) {
+    if (e instanceof Gkv302Fehler) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/einstellungen/praxis");
+  return { ok: "Gespeichert." };
+}
+
+export async function uploadKotrAction(_: SettingsState, form: FormData): Promise<SettingsState> {
+  const auth = await requireAuth("settings.manage");
+  const file = form.get("file");
+  if (!(file instanceof File) || !file.size) return { error: "Bitte eine Kostenträgerdatei auswählen." };
+  // Größe vor dem Einlesen prüfen (Server-Action-Grenze 25 MB, KOTR höchstens 8 MB)
+  if (file.size > KOTR_MAX_BYTES) return { error: `Die Datei ist zu groß (höchstens ${KOTR_MAX_BYTES / 1024 / 1024} MB).` };
+  try {
+    const e = await kotrHochladen(auth, file.name.slice(0, 100), Buffer.from(await file.arrayBuffer()));
+    revalidatePath("/einstellungen/praxis");
+    return { ok: `Kostenträgerdatei ${e.dateiname} (Kassenart ${e.kassenart}, gültig ab ${e.gueltigAb}, ${e.institutionen} Einträge) gespeichert.` };
+  } catch (e) {
+    if (e instanceof Gkv302Fehler) return { error: e.message };
+    throw e;
+  }
+}
+
+export async function removeKotrAction(form: FormData) {
+  const auth = await requireAuth("settings.manage");
+  const kassenart = z.string().regex(/^[A-Z]{2}$/).parse(form.get("kassenart"));
+  await kotrEntfernen(auth, kassenart);
   revalidatePath("/einstellungen/praxis");
 }
