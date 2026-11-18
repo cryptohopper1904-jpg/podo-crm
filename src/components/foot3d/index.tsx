@@ -91,7 +91,7 @@ export function Foot3D({
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Segmented label="Fußseite" value={side} onChange={(s) => { setSide(s); setSelected(null); }} options={[["right", "Rechts"], ["left", "Links"]]} />
+        <Segmented label="Fußseite" value={side} onChange={(s) => { setSide(s); setSelected(null); }} options={[["left", "Links"], ["right", "Rechts"]]} />
         <div role="group" aria-label="Ansicht" className="inline-flex flex-wrap gap-1">
           {VIEWS.map(([k, l]) => (
             <button key={k} type="button" onClick={() => setView((v) => ({ preset: k, n: v.n + 1 }))} className="h-9 rounded-lg border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2">
