@@ -92,3 +92,57 @@ describe("PDF im Stand der Ausstellung", () => {
     expect(strip(await renderInvoicePdf(paidLater))).toBe(strip(await renderInvoicePdf(issued)));
   });
 });
+
+describe("Zuzahlungsquittung (GKV Paket B)", () => {
+  it("Titel „Zuzahlungsquittung“, ohne USt-Spalte, mit § 61-Hinweis statt § 4 Nr. 14", async () => {
+    const { PDFPage } = await import("pdf-lib");
+    const texts: string[] = [];
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: unknown, t: string) {
+      texts.push(t);
+    });
+    try {
+      const bytes = await renderInvoicePdf(
+        data({
+          invoice: { ...data().invoice, number: "ZZ2026-0001", kind: "copayment", status: "paid", totalCents: 2347, paidCents: 2347, notes: "Heilmittelverordnung vom 01.08.2026 (Dr. Beispiel)." },
+          lines: [
+            { description: "Zuzahlung 10 % – Pos. 78020 Podologische Behandlung (groß) (2 Einheiten)", quantity: "1", factor: "1", unitPriceCents: 1347, vatRate: 0, totalCents: 1347 },
+            { description: "Zuzahlung je Verordnung (Verordnungsblattgebühr)", quantity: "1", factor: "1", unitPriceCents: 1000, vatRate: 0, totalCents: 1000 },
+          ],
+          payments: [{ paidAt: "2026-11-03T10:00:00Z", method: "cash", amountCents: 2347 }],
+        }),
+      );
+      expect(Buffer.from(bytes.slice(0, 5)).toString("latin1")).toBe("%PDF-");
+    } finally {
+      spy.mockRestore();
+    }
+    const all = texts.join(" ");
+    expect(all).toMatch(/Zuzahlung nach § 32 Abs\. 2 i\. V\. m\. § 61 SGB V/);
+    expect(all).toMatch(/§ 61 Satz 4 SGB V/);
+    expect(all).toMatch(/Umsatzsteuerfrei nach § 4 Nr\. 14 Buchst\. a UStG/);
+    expect(all).not.toMatch(/Heilbehandlung im Bereich der Humanmedizin/);
+    expect(all).not.toMatch(/USt 0 %/);
+    expect(all).toMatch(/Quittungsnummer/);
+    expect(all).toMatch(/Zuzahlungsquittung/);
+  });
+
+  it("Storno einer Zuzahlungsquittung und Kleinunternehmer: derselbe Zuzahlungshinweis, kein § 19-Hinweis", async () => {
+    const { taxNotes } = await import("./invoice-view");
+    const org = { smallBusiness: true };
+    const lines = [{ vatRate: 0 }];
+    const copay = taxNotes(org, { kind: "copayment" }, lines, { cancelsKind: null, smallBusinessNote: "Steuerbefreiung für Kleinunternehmer (§ 19 UStG)." });
+    const storno = taxNotes({ smallBusiness: false }, { kind: "credit_note" }, lines, { cancelsKind: "copayment", smallBusinessNote: "x" });
+    expect(copay).toEqual(storno);
+    expect(copay.join(" ")).toMatch(/§ 4 Nr\. 14 Buchst\. a UStG/);
+    expect(copay.join(" ")).not.toMatch(/§ 19/);
+    expect(taxNotes({ smallBusiness: false }, { kind: "receipt" }, lines, { cancelsKind: null, smallBusinessNote: "x" }).join(" ")).toMatch(/Heilbehandlung im Bereich der Humanmedizin/);
+  });
+
+  it("Überschrift: Vorab-Quittung ohne Behandlungstag nennt die Zuzahlung, nicht das Rechnungsdatum als Leistungsdatum", async () => {
+    const { invoiceHeading } = await import("./invoice-view");
+    const de = (d: string | null) => (d ? d.split("-").reverse().join(".") : "");
+    const r = invoiceHeading({ kind: "copayment", number: "ZZ2026-0001", issuedAt: "2026-11-18" }, { dates: [], linked: false, fixed: true, cancels: null }, de);
+    expect(r.heading).toBe("Zuzahlungsquittung");
+    expect(r.serviceDateNote).toMatch(/vorab .*erhalten am 18\.11\.2026/);
+    expect(r.serviceDateNote).not.toMatch(/Leistungsdatum entspricht dem Rechnungsdatum/);
+  });
+});

@@ -140,6 +140,23 @@ const CASES: Case[] = [
       [w.org, col === "patient_id" ? ref : w.patient, col === "billing_contact_id" ? ref : w.contact],
     ],
   })),
+  // Zuzahlungsquittung (GKV Paket B): Verordnung nur aus derselben Praxis
+  {
+    table: "invoices",
+    col: "prescription_id",
+    target: "prescriptions",
+    insert: (w, ref) => ["insert into invoices (organization_id, patient_id, kind, prescription_id, status) values ($1,$2,'copayment',$3,'draft')", [w.org, w.patient, ref]],
+  },
+  // Unterschrift je Behandlung (GKV Paket B)
+  ...(["record_id", "patient_id", "prescription_id"] as const).map((col) => ({
+    table: "treatment_signatures",
+    col,
+    target: { record_id: "treatment_records", patient_id: "patients", prescription_id: "prescriptions" }[col],
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into treatment_signatures (organization_id, record_id, patient_id, prescription_id, kind, created_by) values ($1,$2,$3,$4,'paper',$5)",
+      [w.org, col === "record_id" ? ref : w.record, col === "patient_id" ? ref : w.patient, col === "prescription_id" ? ref : w.prescription, w.user],
+    ],
+  })),
   ...(["invoice_id", "service_id", "treatment_record_id"] as const).map((col) => ({
     table: "invoice_lines",
     col,
@@ -254,9 +271,10 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
         "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,'2026-01-05','DF',6) returning id",
         [org, patient],
       );
+      // Behandlung auf Verordnung (Unterschrift je Behandlung, Migration *_gkv_paket_b: Eintrag und Verordnung passen zusammen)
       const record = await id(
-        "insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash) values ($1,$2,$3, now(), md5(random()::text)) returning id",
-        [org, patient, user],
+        "insert into treatment_records (organization_id, patient_id, author_id, treated_at, hash, prescription_id) values ($1,$2,$3, now(), md5(random()::text), $4) returning id",
+        [org, patient, user, prescription],
       );
       const brace = await id("insert into brace_episodes (organization_id, patient_id, side, toe, started_at) values ($1,$2,'left',1,'2026-01-05') returning id", [org, patient]);
       const voucher = await id(

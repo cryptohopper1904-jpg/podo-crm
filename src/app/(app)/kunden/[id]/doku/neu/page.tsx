@@ -46,6 +46,7 @@ export default async function NewRecordPage(props: PageProps<"/kunden/[id]/doku/
         voiceEnabled={data.voiceEnabled}
         prescriptions={data.vos}
         defaultPrescriptionId={data.defaultVo}
+        patientName={[data.p.firstName, data.p.lastName].filter(Boolean).join(" ")}
       />
     </div>
   );

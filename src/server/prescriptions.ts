@@ -13,13 +13,13 @@ import { berlinDateIso, dateDe } from "@/lib/format";
 import {
   DIAGNOSIS_GROUP_CODES,
   DIAGNOSIS_GROUPS,
+  NOTE_MIN,
   RULES_VERSION,
   addDaysIso,
   anlage3Findings,
   autoExpiryApplies,
   blocksBilling,
   canTransition,
-  copaymentPaidHint,
   evaluatePrescription,
   exemptOn,
   exemptionSummary,
@@ -38,8 +38,9 @@ import {
   type PriceSnapshot,
 } from "@/lib/rules/prescription";
 import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
+import { collectedCents, copaymentDue, copaymentReceiptsFor, legacyCopayment, type CopaymentReceiptRow } from "./copayments";
+import { missingSignatureCounts, signatureRequired } from "./signatures";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
-import { EURO_INPUT_MAX_CENTS } from "@/lib/euro-input";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
 
@@ -234,11 +235,28 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
     const usage = await usageFor(tx, org, rows.map((r) => r.id));
     const expired = canAutoExpire(auth) ? await expireOverdue(tx, org, rows, usage) : [];
     const ik = await practiceIk(tx, org);
+    const ids = rows.map((r) => r.id);
+    const signatures = await missingSignatureCounts(tx, org, ids);
+    const receipts = await copaymentReceiptsFor(tx, org, ids);
     return {
       patient: p,
       expired,
       practiceIk: ik,
-      prescriptions: rows.map((r) => ({ ...r, dates: usage.get(r.id) ?? [], evaluation: evaluate(r, usage.get(r.id) ?? []), findings: findingsFor(r, ik) })),
+      prescriptions: rows.map((r) => ({
+        ...r,
+        dates: usage.get(r.id) ?? [],
+        evaluation: evaluate(r, usage.get(r.id) ?? []),
+        findings: findingsFor(r, ik),
+        /** Behandlungen ohne Unterschrift/Papier-Vermerk (Leistungsnachweis) */
+        signatures: signatures.get(r.id) ?? { total: 0, missing: 0 },
+        signatureRequired: signatureRequired(r.rulesVersion),
+        /** Zuzahlungsquittungen (Paket B) und quittierte Summe */
+        copaymentReceipts: receipts.get(r.id) ?? [],
+        // Altvermerk (vor Paket B) zählt als erhalten (Review R2-5)
+        copaymentCollectedCents: collectedCents(receipts.get(r.id)) + (legacyCopayment(r)?.cents ?? 0),
+        /** erwartete und offene Zuzahlung – dieselbe Berechnung wie beim Quittieren (Review R3-2) */
+        copaymentDue: copaymentDue(r, p, usage.get(r.id) ?? [], receipts.get(r.id)),
+      })),
     };
   });
   if (result) {
@@ -497,6 +515,12 @@ export async function changePrescriptionStatus(
       const findings = findingsFor(vo, await practiceIk(tx, org));
       const block = findings.find((f) => f.level !== "warning");
       if (blocksBilling(findings) && block) return { error: `Noch nicht abrechnungsreif: ${block.message}` };
+      // Leistungsnachweis: jede Behandlung mit Unterschrift der versicherten Person bzw. bewusstem Papier-Vermerk
+      // (Anlage 3 Buchst. o, GKV Paket B) – für Verordnungen nach aktuellem Regelwerk
+      if (signatureRequired(vo.rulesVersion)) {
+        const sig = (await missingSignatureCounts(tx, org, [vo.id])).get(vo.id);
+        if (sig?.missing) return { error: `Noch nicht abrechnungsreif: ${sig.missing === 1 ? "Eine Behandlung hat" : `${sig.missing} Behandlungen haben`} keine Unterschrift der versicherten Person – bitte im Leistungsnachweis nachtragen oder „Unterschrift auf der Papier-Verordnung“ vermerken.` };
+      }
       // Preis-Snapshot mit den echten Behandlungstagen (Preis nach Behandlungsdatum, Zuzahlung je Tag)
       const [pt] = await tx.select({ birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions, insurerIk: patients.insurerIk }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, vo.patientId)));
       const dates = (await usageFor(tx, org, [vo.id])).get(vo.id) ?? [];
@@ -522,59 +546,47 @@ export async function changePrescriptionStatus(
 }
 
 export const COPAYMENT_METHODS = { cash: "bar", card: "Karte", transfer: "Überweisung", other: "sonstig" } as const;
+export const COPAYMENT_LEGACY_BLOCKED = "„Zuzahlung erhalten“ wird jetzt als Zuzahlungsquittung erfasst (mit Kassenbuchung) – bitte „Zuzahlung quittieren“ verwenden.";
 export type CopaymentMethod = keyof typeof COPAYMENT_METHODS;
 
 /**
- * Zuzahlung als erhalten markieren (Datum, Betrag, Zahlungsart) bzw. zurücksetzen. Betrag ohne Angabe = berechnete
- * Zuzahlung. Vorbereitung für die Zuzahlungsquittung (Paket B). Auch nach „abgerechnet“ erlaubt (Trigger 0062).
- * Nur Vermerk – eine Barzahlung wird zusätzlich in der Kasse erfasst. Liegt der Betrag über der berechneten
- * Zuzahlung, wird gespeichert, aber gewarnt (`warning`).
+ * Altvermerk „Zuzahlung erhalten“ (vor Paket B: nur Datum/Betrag/Zahlungsart an der Verordnung, nie in der Kasse
+ * gebucht). Seit Paket B wird die Zuzahlung als Zuzahlungsquittung erfasst (src/server/copayments.ts) – neue
+ * Altvermerke sind nicht mehr möglich (`paid: true` → Fehler). Ein Altvermerk gilt als erhalten; entfernt werden darf er
+ * nur als „Vermerk war falsch – nichts erhalten“ mit Pflichtbegründung (Review R2-5) – nie, um früher erhaltene Beträge
+ * nachträglich zu quittieren (keine nachträgliche Kassenbuchung). Recht: Rechnungen schreiben + medizinisch lesen (R2-11).
  */
 export async function setCopaymentPaid(
   auth: AuthContext,
-  input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null },
+  input: { id: string; patientId: string; paid: boolean; amountCents?: number | null; method?: CopaymentMethod | null; reason?: string | null },
 ): Promise<{ error: string } | { warning?: string }> {
-  assertCan(auth, "medical.write");
+  assertCan(auth, "invoices.write", "medical.read");
   const blocked = gkvGuard(auth.organization, "copayment");
   if (blocked) return blocked;
+  if (input.paid) return { error: COPAYMENT_LEGACY_BLOCKED };
+  const reason = (input.reason ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
+  if (reason.length < NOTE_MIN) return { error: "Begründung fehlt: bitte angeben, warum der Vermerk falsch war (mind. 5 Zeichen)." };
   const org = auth.organization.id;
-  if (input.amountCents !== undefined && input.amountCents !== null) {
-    if (!Number.isInteger(input.amountCents) || input.amountCents < 0) return { error: "Betrag ungültig." };
-    if (input.amountCents > EURO_INPUT_MAX_CENTS) return { error: "Betrag ist zu groß." };
-  }
-  const done = await withOrg(org, async (tx): Promise<{ error: string } | { values: { copaymentPaidCents: number | null; copaymentPaidMethod: string | null }; expected: number | null } | null> => {
+  const done = await withOrg(org, async (tx) => {
     const [vo] = await tx
-      .select({ copaymentCents: prescriptions.copaymentCents, remedyCostCents: prescriptions.remedyCostCents, positions: prescriptions.positions })
+      .select({ paidAt: prescriptions.copaymentPaidAt, cents: prescriptions.copaymentPaidCents, method: prescriptions.copaymentPaidMethod })
       .from(prescriptions)
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id), eq(prescriptions.patientId, input.patientId)))
       .for("update");
     if (!vo) return null;
-    // Obergrenze: Heilmittelkosten der VO (Snapshot, sonst Schätzung nach Anlage 2), ohne bekannte Kosten 10.000 € (Runde 3, V-1/B2)
-    if (input.paid && input.amountCents !== undefined && input.amountCents !== null) {
-      const limit = copaymentLimitCents(vo.remedyCostCents, vo.positions);
-      if (limit !== null && input.amountCents > limit) return { error: `Betrag ist höher als die Heilmittelkosten der Verordnung (${(limit / 100).toFixed(2).replace(".", ",")} €) – bitte prüfen.` };
-    }
-    const values = input.paid
-      ? { copaymentPaidAt: new Date(), copaymentPaidCents: input.amountCents ?? vo.copaymentCents ?? null, copaymentPaidMethod: input.method ?? null }
-      : { copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null };
-    await tx.update(prescriptions).set(values).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id)));
-    return { values, expected: vo.copaymentCents };
+    // kein Altvermerk → nichts zu entfernen, kein Audit (Review R3-7)
+    if (!vo.paidAt) return "none" as const;
+    await tx
+      .update(prescriptions)
+      .set({ copaymentPaidAt: null, copaymentPaidCents: null, copaymentPaidMethod: null })
+      .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, input.id)));
+    return vo;
   });
   if (!done) return { error: "Verordnung nicht gefunden." };
-  if ("error" in done) return { error: done.error };
-  const { values } = done;
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: input.paid, cents: values.copaymentPaidCents, method: values.copaymentPaidMethod } });
-  // Über- oder Unterzahlung (Restbetrag) nur als Hinweis (Runde 3, S4)
-  const warning = input.paid ? copaymentPaidHint(values.copaymentPaidCents, done.expected) : null;
-  return warning ? { warning } : {};
-}
-
-/** Höchstbetrag „Zuzahlung erhalten“: Heilmittelkosten laut Snapshot bzw. Schätzung (heutige Preise); null = unbekannt. */
-function copaymentLimitCents(snapshotRemedyCents: number | null, positions: PrescriptionRow["positions"]): number | null {
-  if (snapshotRemedyCents !== null && snapshotRemedyCents > 0) return snapshotRemedyCents;
-  const today = berlinDateIso();
-  const est = remedyCostCents(positions.map((p) => ({ units: p.units, priceCents: p.position ? priceFor(p.position, today)?.cents : null })));
-  return est.complete && est.cents > 0 ? est.cents : null;
+  if (done === "none") return { error: "Für diese Verordnung ist kein Vermerk vorhanden – nichts zu entfernen." };
+  // bisherigen Altvermerk nachvollziehbar halten (Betrag/Zahlungsart/Datum stehen danach nur noch im Protokoll)
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.copayment", entity: "prescription", entityId: input.id, meta: { paid: false, wrongEntry: true, reason, legacy: { at: done.paidAt!.toISOString(), cents: done.cents, method: done.method } } });
+  return {};
 }
 
 // ───────────────────────── Abrechnungslauf ─────────────────────────
@@ -617,6 +629,13 @@ export async function createBillingBatch(auth: AuthContext, ids: string[], opts:
   if ("error" in result) return result;
   await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.create", entity: "billing_batch", entityId: result.id, meta: { count: result.count, partner: opts.partner } });
   return result;
+}
+
+/** Tag der Zuzahlung für den Export: letzte gültige Zuzahlungsquittung, sonst Altvermerk (copayment_paid_at) */
+export function copaymentPaidOn(receipts: CopaymentReceiptRow[] | undefined, legacy: Date | null): string {
+  const valid = (receipts ?? []).filter((r) => r.status !== "cancelled" && r.issuedAt).map((r) => r.issuedAt!);
+  if (valid.length) return valid.sort().at(-1)!;
+  return legacy ? berlinDateIso(legacy) : "";
 }
 
 export const GKV_BATCH_HEADER = [
@@ -676,10 +695,11 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.billingBatchId, batchId)))
       .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt));
     const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
+    const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
     if (!batch.exportedAt) {
       await tx.update(billingBatches).set({ exportedAt: new Date(), status: "exported" }).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
     }
-    return { batch, rows, usage, org: o };
+    return { batch, rows, usage, receipts, org: o };
   });
   if (!data) return null;
   const euro = (c: number | null) => ((c ?? 0) / 100).toFixed(2).replace(".", ",");
@@ -711,7 +731,8 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       // tatsächliche Befreiung je Behandlungstag aus dem Preis-Snapshot (Bescheinigung/minderjährig, PR #111 B1);
       // das Kreuz auf der VO steht in der Spalte „Zuzahlungsfrei angekreuzt (VO)“
       exemptionSummary(vo.priceSnapshot as PriceSnapshot | null),
-      vo.copaymentPaidAt ? berlinDateIso(vo.copaymentPaidAt) : "",
+      // Zuzahlungsquittung(en) seit Paket B (letzte gültige), sonst Altvermerk
+      copaymentPaidOn(data.receipts.get(vo.id), vo.copaymentPaidAt),
       vo.therapyReportRequested ? "ja" : "nein",
       vo.interruptionNote ?? "",
       vo.rulesVersion ?? "",

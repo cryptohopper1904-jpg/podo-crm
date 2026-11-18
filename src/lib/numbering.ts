@@ -9,6 +9,8 @@ const PREFIX: Record<string, string> = {
   credit_note: "GS",
   /** Quittung über eine Anzahlung (wird auf die Sammelrechnung angerechnet) */
   deposit: "AZ",
+  /** Zuzahlungsquittung zu einer GKV-Verordnung (§ 32 Abs. 2 / § 61 SGB V) */
+  copayment: "ZZ",
   no_show_fee: "R",
   voucher: "G",
   /** Beleg über einen Zahlungseingang nach Ausstellung (Kassenbeleg, § 146a Abs. 2 AO) */

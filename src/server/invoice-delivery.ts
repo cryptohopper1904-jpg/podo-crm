@@ -9,7 +9,7 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
-import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
+import { INVOICE_DOC_LABEL, NOT_BILLING_KINDS } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
 import { ArchivePendingError, archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
@@ -306,7 +306,7 @@ export async function collectiveSuggestion(auth: AuthContext, billingContactId: 
     const own = await tx
       .select({ patientId: invoices.patientId, issuedAt: invoices.issuedAt })
       .from(invoices)
-      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), notInArray(invoices.status, ["cancelled", "draft"]), notInArray(invoices.kind, ["credit_note", "collective", "deposit"])));
+      .where(and(eq(invoices.organizationId, org), inArray(invoices.patientId, [...byId.keys()]), notInArray(invoices.status, ["cancelled", "draft"]), notInArray(invoices.kind, [...NOT_BILLING_KINDS])));
     const ownKeys = new Set(own.filter((o) => o.issuedAt).map((o) => `${o.patientId}|${isoDay(o.issuedAt!)}`));
 
     const lines: CollectiveSuggestionLine[] = [];

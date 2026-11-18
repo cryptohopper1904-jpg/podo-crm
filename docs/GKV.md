@@ -57,10 +57,11 @@ und die KBV-Richtlinie zur Vergabe der Betriebsstättennummer.
 | Abrechnungsreif | nur mit vollständigem Preis-Snapshot (jede Position mit Positionsnummer und Preis am Behandlungstag) | Vertrag § 8 Abs. 1 (Zuzahlung aus den Kosten); Review PR #111 S2 | `changePrescriptionStatus` |
 | Snapshot-Zeilen | je (Behandlungstag, ZL-Positionsnummer) genau eine Zeile: Behandlungseinträge werden je Kalendertag zusammengefasst, BEVOR verteilt wird – je Tag höchstens die Tageshöchstmenge (78610: 2, sonst 1, vorzeitig beendet 1); mehr Einträge am selben Tag als die Tageshöchstmenge → Hinweis „n Behandlungseinträge am … – nur 1 Einheit (78610: 2 Einheiten) abrechenbar“, Rest „nicht verteilbar“; doppelte Positionen auf der VO vorher zusammengefasst (Hinweis „mehrfach auf der Verordnung“); gedeckelte Pauschale und Befreiung einer anderen Kasse (einmal je Befreiung, IK normalisiert) stehen als Hinweis | Export #110 (Position je Tag eindeutig); Anlage 2 § 2 Abs. 2 Buchst. c; Review PR #111 Runden 3 und 4 | `priceSnapshot`, `mergePositions` |
 | 78610 je Tag | bis zu zweimal je Tag; im Snapshot so verteilt, dass die verordneten Einheiten auf die Behandlungstage passen; vorzeitig beendete VO (Abbruchvermerk) nur einmal je Tag; jede Annahme „2 × am Tag“, nicht verteilbare Einheiten und mehr Einträge am selben Tag als erlaubt (bei 78610 ab drei Einträgen; zwei Einträge → kein Hinweis) stehen als Hinweis im Snapshot | Anlage 2 § 2 Abs. 2 Buchst. c | `GkvPosition.maxPerDay`, `priceSnapshot` |
-| Abgerechnet | unveränderbar (DB-Trigger `prescriptions_billed_lock`), nur „Zuzahlung erhalten“ (Datum, Betrag, Zahlungsart) darf nachgetragen werden; Neuberechnung des Snapshots (abrechnungsreif → abgeschlossen → abrechnungsreif) protokolliert den alten Snapshot | GoBD-Nachvollziehbarkeit; Review PR #111 S1 | Migration 0062 |
+| Abgerechnet | unveränderbar (DB-Trigger `prescriptions_billed_lock`); die Zuzahlung wird seit Paket B als Zuzahlungsquittung (Beleg ZZ) erfasst – auch nach der Abrechnung, ohne die Verordnung zu ändern; ein Altvermerk „Zuzahlung erhalten“ kann nicht mehr neu gesetzt, nur als „Vermerk war falsch“ entfernt werden; Neuberechnung des Snapshots (abrechnungsreif → abgeschlossen → abrechnungsreif) protokolliert den alten Snapshot | GoBD-Nachvollziehbarkeit; Review PR #111 S1 | Migration 0062 |
 | Abrechnungslauf | nur Verordnungen mit vollständigem Preis-Snapshot | Review PR #111 Runde 2 | `createBillingBatch` |
-| „Zuzahlung erhalten“ | nur Vermerk (Barzahlung zusätzlich in der Kasse erfassen); Betrag streng geprüft (Punkt bzw. Leerzeichen nur als Tausendertrenner im Muster 1.234,56 / 1 234,56, sonst Punkt = Dezimaltrenner; höchstens 20 Zeichen); höchstens die Heilmittelkosten der VO (Snapshot bzw. Schätzung), ohne bekannte Kosten 10.000 €; über bzw. unter der berechneten Zuzahlung → Hinweis (Restbetrag offen) | Review PR #111 Runden 2 und 3 | `parseEuroInputCents`, `copaymentPaidHint` |
-| Löschung der Person | abgerechnete Verordnung (`billed_at`) oder erhaltene Zuzahlung (`copayment_paid_at`) = aufbewahrungspflichtig, keine vollständige Löschung | § 147 AO; AppSec PR #111 N1 | `retentionFacts`, `podo_delete_patient` (0062) |
+| „Zuzahlung erhalten“ (Paket B) | **Zuzahlungsquittung** (Beleg ZZ, siehe Abschnitt „Paket B“) mit Kassenbuchung; Betrag streng geprüft (Punkt bzw. Leerzeichen nur als Tausendertrenner im Muster 1.234,56 / 1 234,56, sonst Punkt = Dezimaltrenner; höchstens 20 Zeichen); Summe aller Quittungen höchstens die Heilmittelkosten der VO (Snapshot bzw. Schätzung), ohne bekannte Kosten 10.000 € und über 200 € nur mit ausdrücklicher Bestätigung; über bzw. unter der berechneten Zuzahlung → Hinweis (Restbetrag offen). Der frühere Vermerk `copayment_paid_*` ist nur noch **Altvermerk** (Anzeige, zurücksetzbar, keine nachträgliche Kassenbuchung) | SGB V § 61 Satz 3, § 32 Abs. 2; Vertrag § 8; Review PR #111 Runden 2 und 3 | `createCopaymentReceipt`, `parseEuroInputCents`, `copaymentPaidHint` |
+| Unterschrift je Behandlung (Paket B) | Bestätigung der versicherten Person (bzw. Betreuungsperson/Angehörige:r) je Behandlung auf dem Gerät oder bewusster Vermerk „Unterschrift auf der Papier-Verordnung (Rückseite)“; unveränderbar; ohne Bestätigung „Unterschrift fehlt“, **„abrechnungsreif“ gesperrt** (Verordnungen ab `podo-2026-11`; Übernahmen/Altbestand nur Hinweis) | Vertrag § 125 SGB V Podologie, Anlage 3 Buchst. o | `treatment_signatures`, `changePrescriptionStatus` |
+| Löschung der Person | abgerechnete Verordnung (`billed_at`), Altvermerk „Zuzahlung erhalten“ (`copayment_paid_at`) oder Zuzahlungsquittung (Beleg ZZ inkl. Storno, wie jeder Beleg) = aufbewahrungspflichtig, keine vollständige Löschung | § 147 AO; AppSec PR #111 N1 | `retentionFacts`, `podo_delete_patient` (0062) |
 | Zuzahlungsbefreiung | nur mit gültiger Bescheinigung der Kasse (Kreuz auf der VO genügt nicht); über den Jahreswechsel neu prüfen; Bescheinigung einer anderen Kasse als auf der VO → Hinweis „bitte prüfen“; höchstens 50 Einträge je Person | Vertrag § 8 Abs. 3; Anlage 3 Buchst. a1; SGB V § 62 Abs. 1 | `exemptOn`, Befreiungskarte, CHECK `patients_copayment_exemptions_max` |
 | Pflichtangaben VO | siehe nächster Abschnitt | Anlage 3 Ziff. 3 und 5 | `anlage3Findings` |
 | IK-Prüfziffer | Stellen 3–8 × 2,1,2,1,2,1, Quersummen addieren, mod 10 | KVNR-RL Anlage 1 (Beispiel IK 109911114) | `isValidIk` |
@@ -152,6 +153,66 @@ SELECT p.organization_id, (coalesce(p.rules_version, '') LIKE 'import-%') AS ueb
  ORDER BY gesperrt DESC;
 ```
 
+## Paket B: Unterschrift, Leistungsnachweis, Zuzahlungsquittung (PR „GKV Paket B“)
+
+**Unterschrift je Behandlung.** Beim Behandlungseintrag auf eine Verordnung (Doku-Formular, Besuchstag-Zeile im
+Pflegeheim) unterschreibt die versicherte Person – bzw. rechtliche Betreuung/Bevollmächtigte:r, Angehörige:r oder
+Pflegekraft der Einrichtung – auf dem Gerät (Finger/Stift, Feld `SignatureField`), mit Name (ohne Steuerzeichen) und
+Rolle; Zeitstempel = Speicherzeitpunkt. Das Bild (PNG genau 900×300, 8 Bit RGBA, nur IHDR/IDAT/IEND plus kleine
+Farbraum-Chunks, keine APNG, höchstens 200 KB, IDAT probeweise mit Obergrenze entpackt – `src/lib/signature-png.ts`) liegt verschlüsselt in der Dateiablage (`src/lib/storage.ts`, Schlüssel
+`<praxis>/…/<uuid>.bin`), nie als Blob in der Datenbank. Alternativ das bewusst gesetzte Häkchen „Unterschrift auf der
+Papier-Verordnung (Rückseite) erfasst“. Tabelle `treatment_signatures` (Migration 0064): je Behandlung höchstens eine
+Zeile, append-only (Trigger), Eintrag/Person/Verordnung müssen zusammenpassen, Verweise nur innerhalb der Praxis, RLS +
+FORCE. Audit `record.signature` bzw. `record.signature_paper` (ohne Namen/Bilddaten), Ansicht `record.signature_view`.
+Fehlt die Unterschrift, steht an der Verordnung „Unterschrift fehlt (n von m)“; nachtragen im **Leistungsnachweis**
+(`/kunden/<id>/verordnungen/<vo>/nachweis`, Recht `medical.write`). „Abrechnungsreif“ ist gesperrt, solange eine
+Behandlung ohne Unterschrift/Papier-Vermerk ist. Für Bestands-Verordnungen (Behandlungen vor dem Deploy) gibt es im
+Leistungsnachweis den **Sammel-Vermerk „Unterschriften liegen auf Papier vor“** für alle offenen Behandlungen bis zu einem
+Datum (bewusst bestätigt, Audit `record.signature_paper_bulk`) – **nur für Verordnungen ohne Pflicht zur Unterschrift je
+Behandlung** (Übernahmen/Altbestand, `!signatureRequired`); bei Verordnungen nach aktuellem Regelwerk wird er abgelehnt und
+nicht angeboten (dort je Behandlung unterschreiben bzw. einzeln den Papier-Vermerk setzen). Wird gleichzeitig eine
+Unterschrift zur selben Behandlung erfasst, gewinnt diese (`ON CONFLICT DO NOTHING`, gleiche Sperrreihenfolge: erst
+Verordnung, dann Unterschrift). Eine Unterschrift, die nicht am Behandlungstag erfolgte,
+ist im Leistungsnachweis (Seite und PDF) als „nachgetragen“ markiert. App-Rolle ohne UPDATE/DELETE auf
+`treatment_signatures` (scripts/migrate.ts); Unterschriften gehen in den Praxis-Export (`unterschriften/…`) und sind in
+`scripts/archive-orphans.ts` bekannt.
+
+**Leistungsnachweis-PDF** (`/api/verordnungen/<id>/leistungsnachweis`, Recht `medical.read`, im Support-Modus gesperrt,
+`Cache-Control: private, no-store`, `nosniff`): Praxiskopf mit IK, Person, Kasse, Verordnung; Tabelle aller
+Behandlungen mit Datum, Position(en) je Tag (Preis-Snapshot bzw. dieselbe Zuordnung wie im Snapshot), Einheiten und
+Unterschrift als Bild bzw. Papier-Vermerk/„Unterschrift fehlt“. Zum Ausdruck und Beilegen.
+
+**Zuzahlungsquittung.** „Zuzahlung quittieren“ an der Verordnung (Recht `invoices.write` – Kassenvorgang am Tresen)
+erzeugt einen Beleg der neuen Art `copayment` (Nummernkreis **ZZ**, `invoices.prescription_id`), sofort ausgestellt und
+bezahlt, im Beleg-Archiv. Positionen: 10-%-Anteil je Heilmittelposition + Verordnungsblattgebühr (aus dem Preis-Snapshot
+bzw. der Schätzung mit erbrachten und noch offenen Einheiten), bei abweichendem Betrag eine Zeile mit Hinweis auf die
+berechnete Zuzahlung. Kein USt-Ausweis; Hinweis „Gesetzliche Zuzahlung nach § 32 Abs. 2 i. V. m. § 61 SGB V …; Quittung
+nach § 61 Satz 4 SGB V. Umsatzsteuerfrei nach § 4 Nr. 14 Buchst. a UStG.“ – gleich auf PDF und Browser-Ansicht, auch
+für den Stornobeleg und bei Kleinunternehmer:innen. Ohne bekannten Preis/Positionsnummer: frei eingegebener Betrag (eine
+Zeile „Zuzahlung laut Verordnung“, höchstens 10.000 €, Vermerk „Betrag manuell, Berechnung nicht möglich“) – das
+Formular an der Verordnung erscheint dann mit Pflicht-Betragsfeld; Befreiung (Bescheinigung gilt heute) und Alter unter
+18 (heute) werden wie im berechneten Fall geprüft; liegt die Summe der Quittungen über 200 € (Plausibilitätsgrenze), nur
+mit ausdrücklicher Bestätigung. Die offene Zuzahlung zeigt die Akte mit derselben Berechnung wie beim Quittieren
+(`copaymentDue`). Ein Betrag über der offenen Zuzahlung nur mit ausdrücklicher Bestätigung; Überweisung nur nach Zahlungseingang quittieren. Die Zahlung läuft über `applyPayments`: PodoHero-Kasse → TSE-Signatur, Tagesabschluss/Z-Bon,
+DSFinV-K; eigene Praxiskasse → Vermerk mit Bon-Nr. (`register = 'external'`, Kassenvermerke). **Keine zweite Kasse.**
+Erstattung (z. B. Überzahlung): „stornieren/erstatten“ → Stornobeleg mit negativer Zahlung über denselben Weg, danach den
+richtigen Betrag neu quittieren – erst, wenn die Erstattung gebucht ist. Zuzahlungsquittungen zählen nicht als
+„Leistung am Tag abgerechnet“ (`NOT_BILLING_KINDS`: Sammelrechnungs-Vorschlag, Jahresend-Erinnerung). Der CSV-Export „Zuzahlung erhalten am“ nimmt die letzte gültige Quittung, sonst den
+Altvermerk. Der Stornobeleg einer Zuzahlungsquittung heißt „Storno zur Zuzahlungsquittung ZZ…“.
+
+**Buchhaltung:** Zuzahlungsquittungen **entweder** über lexoffice **oder** über den Kassenexport (DSFinV-K/Z-Bon) an
+die Buchhaltung geben, nicht beides – sonst ist die Zuzahlung doppelt erfasst. Die Auszahlung des Abrechnungszentrums
+enthält die Zuzahlung nicht (die Kasse zahlt Heilmittelkosten abzüglich Zuzahlung); sie wird netto als Kassenanteil
+gebucht. Beides mit der Steuerberatung klären (siehe docs/KASSE.md, offener Punkt 15).
+
+**Altvermerke** (`copayment_paid_at/_cents/_method` aus der Zeit vor Paket B) bleiben unverändert und **gelten als
+erhalten**: Ihr Betrag (`copayment_paid_cents`, sonst die damals berechnete Zuzahlung; ohne jeden Betrag gilt die
+Zuzahlung als vollständig erhalten) zählt in der quittierten Summe und wird beim Quittieren angerechnet – gesperrt ist
+nur, wenn danach nichts mehr offen ist; ein Restbetrag kann quittiert werden (Hinweis auf der Quittung). Neue Altvermerke
+sind nicht möglich. Entfernen nur als „Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write`
++ `medical.read`, Audit mit altem Wert; ohne Vermerk: Meldung „kein Vermerk vorhanden“, kein Audit). Eine nachträgliche Quittung/Kassenbuchung für früher erhaltene Beträge gibt es bewusst nicht –
+ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
+
 ## Offene Punkte (fachlich prüfen)
 
 1. **Werktage** in Vertrag § 7 Abs. 6: PodoHero zählt Montag–Samstag ohne Feiertage (eher streng). Ob Samstage und
@@ -170,8 +231,8 @@ SELECT p.organization_id, (coalesce(p.rules_version, '') LIKE 'import-%') AS ueb
 8. **Preise vor dem 01.07.2025** sind nicht hinterlegt (Snapshot meldet „kein Preis“).
 9. **Entlassmanagement** (Beginn innerhalb 7 Tagen nach Entlassung, Vertrag § 6 Abs. 3 / § 7 Abs. 4) ist noch nicht
    abgebildet (kein Feld auf der Verordnung).
-10. **UI-Begründungsfeld** (Lokalisation des Zehs, Anlage 3 Buchst. o2) und das Bestätigungsfeld (Unterschrift je
-    Behandlung, Buchst. o) sind noch nicht abgebildet.
+10. **UI-Begründungsfeld** (Lokalisation des Zehs, Anlage 3 Buchst. o2) ist noch nicht abgebildet. Das Bestätigungsfeld
+    (Unterschrift je Behandlung, Buchst. o) ist seit Paket B umgesetzt.
 11. Kalender-Badge „VO“ am Termin: noch nicht umgesetzt (optional).
 12. **Pauschale bei 18. Geburtstag im Behandlungszeitraum**: Ist die 10-€-Verordnungsblattgebühr fällig, wenn die Person
     erst nach dem ersten Termin 18 wird? Aktuell ist der erste Behandlungstag maßgeblich (Vertrag § 8 Abs. 2 Satz 3).
@@ -192,7 +253,18 @@ SELECT p.organization_id, (coalesce(p.rules_version, '') LIKE 'import-%') AS ueb
     angesetzt und nur als Hinweis markiert – ist das abrechenbar?
 19. **78610 zweimal täglich ohne Einzelnachweis**: Der Snapshot nimmt „2 × am Tag“ an, wenn die verordneten Einheiten
     sonst nicht auf die Behandlungstage passen. Akzeptieren Kassen das ohne Einzelnachweis in der Doku?
-20. **Azubis mit `medical.write`** dürfen „Wiederaufnahme“ und „Zuzahlung erhalten“ setzen – Produktentscheidung offen
-    (ggf. eigene Berechtigung).
+20. **Azubis mit `medical.write`** dürfen „Wiederaufnahme“ setzen – Produktentscheidung offen (ggf. eigene Berechtigung).
+    „Zuzahlung quittieren“ verlangt seit Paket B `invoices.write` (Kassenvorgang); der Empfang (ohne `medical.read`)
+    erreicht die Verordnungsseite aber nicht – Zuzahlung am Tresen durch den Empfang bitte als Produktfrage klären.
 21. **CSV-Werte „minderjährig“/„gemischt (…)“** in der Spalte „Zuzahlungsbefreit“ vor der ersten Übergabe mit dem
     Abrechnungszentrum abstimmen.
+22. **Unterschrift elektronisch statt auf dem Papier-Formular**: Ob Kassen/Abrechnungszentren die auf dem Gerät erfasste
+    Unterschrift mit dem ausgedruckten Leistungsnachweis als Bestätigung nach Anlage 3 Buchst. o akzeptieren, ist nicht
+    belegt (Anlage 3 nennt das Feld auf der Verordnung). Bitte mit dem Abrechnungszentrum klären.
+23. **Mehrere Behandlungseinträge am selben Tag**: Unterschrift wird je Eintrag verlangt; ob eine Unterschrift je Tag genügt,
+    ist nicht belegt.
+24. **Zuzahlungsquittung im DSFinV-K**: als „Umsatz“ mit USt-Schlüssel „umsatzsteuerfrei“ gemeldet (wie andere Heilbehandlungen);
+    ob Zuzahlungen eine andere Geschäftsvorfall-Art brauchen, mit Steuerberatung/TSE-Anbieter klären (docs/KASSE.md).
+25. **Zuzahlung vorab für die ganze Verordnung**: Die Schätzung nimmt für noch offene Einheiten gedachte Folgetage ab heute
+    an (Preisstand heute, Alter am gedachten Tag). Ändert sich der Preisstand (z. B. 01.07.) vor der nächsten Behandlung,
+    weicht der Snapshot bei Abrechnungsreife ab → Hinweis „Restbetrag offen“ bzw. Überzahlung (Erstattung).

@@ -8,7 +8,7 @@ import type { AuthContext } from "@/lib/auth/session";
 import { isPrivateOnly } from "@/lib/features";
 import { berlinDateIso, berlinToUtc, dateDe, fullName } from "@/lib/format";
 import { estimateCents, type UnbilledLine } from "@/lib/year-end";
-import { IMPORTED_APPOINTMENT_NOT_BILLABLE } from "@/lib/invoice-labels";
+import { IMPORTED_APPOINTMENT_NOT_BILLABLE, NOT_BILLING_KINDS } from "@/lib/invoice-labels";
 import { openDepositsFor, openReceiptsFor } from "./invoices";
 
 /**
@@ -121,7 +121,7 @@ async function unbilledItems(tx: Tx, org: string, opts: { from: Date; to: Date; 
             eq(invoices.organizationId, org),
             inArray(invoices.patientId, pids),
             notInArray(invoices.status, [...BILLED_STATUS_EXCLUDED]),
-            notInArray(invoices.kind, ["credit_note", "collective", "deposit"]),
+            notInArray(invoices.kind, [...NOT_BILLING_KINDS]),
           ),
         )
     : [];

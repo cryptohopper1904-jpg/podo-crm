@@ -23,6 +23,7 @@ import {
   type PrescriptionStatus,
 } from "@/lib/rules/prescription";
 import { berlinDateIso } from "@/lib/format";
+import { SignatureError, auditSignature, cleanupSignatureFiles, insertSignature, type PendingSignatureFiles, type PreparedSignature } from "./signatures";
 
 /**
  * Gemeinsame Logik zum Anlegen eines Behandlungseintrags (Hash-Kette je Patient, append-only).
@@ -241,19 +242,37 @@ export async function insertTreatmentRecord(tx: Tx, ctx: RecordCtx, input: NewTr
 }
 
 /** Komfortfunktion: eigener Mandanten-Kontext + Audit. Gibt Fehlertext statt Exception zurück. */
-export async function createTreatmentRecord(auth: AuthContext, input: NewTreatment, auditMeta: Record<string, unknown> = {}): Promise<{ id: string } | { error: string; deviationText?: string | null }> {
+export async function createTreatmentRecord(
+  auth: AuthContext,
+  input: NewTreatment,
+  auditMeta: Record<string, unknown> = {},
+  /** Unterschrift der versicherten Person (Leistungsnachweis) – nur bei Behandlung auf Verordnung gespeichert */
+  signature: PreparedSignature | null = null,
+): Promise<{ id: string } | { error: string; deviationText?: string | null }> {
   assertCan(auth, "medical.write");
   if (input.prescriptionId) {
     const blocked = gkvGuard(auth.organization, "verordnungen");
     if (blocked) return blocked;
   }
   const org = auth.organization.id;
+  const pending: PendingSignatureFiles = [];
+  const ctx = { org, userId: auth.user.id, role: auth.role };
+  let saved: { rec: { id: string }; sig: { id: string; prescriptionId: string } | null };
   try {
-    const rec = await withOrg(org, (tx) => insertTreatmentRecord(tx, { org, userId: auth.user.id, role: auth.role }, input));
-    await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: rec.id, meta: { patientId: input.patientId, prescriptionId: input.prescriptionId ?? null, ...auditMeta } });
-    return rec;
+    saved = await withOrg(org, async (tx) => {
+      const rec = await insertTreatmentRecord(tx, ctx, input);
+      const sig = signature && input.prescriptionId ? await insertSignature(tx, ctx, { recordId: rec.id, patientId: input.patientId }, signature, pending) : null;
+      return { rec, sig };
+    });
   } catch (e) {
+    // nur nach einem Rollback aufräumen – nach dem Commit gehört die Datei zur (append-only) Zeile (Review R3-1)
+    await cleanupSignatureFiles(pending);
     if (e instanceof RecordInputError) return { error: e.message, deviationText: e.deviationText };
+    if (e instanceof SignatureError) return { error: e.message };
     throw e;
   }
+  const { rec, sig } = saved;
+  await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: rec.id, meta: { patientId: input.patientId, prescriptionId: input.prescriptionId ?? null, ...auditMeta } });
+  if (sig && signature) await auditSignature(org, auth.user.id, sig, rec.id, signature.kind, signature.signerRole, false);
+  return rec;
 }

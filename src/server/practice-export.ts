@@ -4,9 +4,10 @@ import archiver from "archiver";
 import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { withOrg } from "@/db";
-import { documentArchive, media, memberships, organizations, patients, users } from "@/db/schema";
+import { documentArchive, media, memberships, organizations, patients, treatmentSignatures, users } from "@/db/schema";
 import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
+import { berlinDateIso } from "@/lib/format";
 import { readArchivedPdf } from "./document-archive";
 import { catchUpArchives, missingArchives } from "./archive-catchup";
 import { log } from "@/lib/log";
@@ -99,6 +100,9 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
   let mediaFiles = 0;
   const archiveErrors = new Set<string>();
   let archiveFiles = 0;
+  // Unterschriften je Behandlung (GKV-Leistungsnachweis, Review R2-12): Pfad je Zeile (id → Datei)
+  const signatureFiles = new Map<string, string>();
+  const signatureErrors = new Set<string>();
   /** Pfad im ZIP für ein archiviertes Beleg-PDF (Dateiname = Belegnummer, je Praxis eindeutig) */
   const archivePath = (r: Row) => `belege/${r.kind === "payment_receipt" ? "zahlungsbelege" : "rechnungen"}/${String(r.filename).replace(/[^A-Za-z0-9._-]/g, "_")}`;
 
@@ -242,15 +246,51 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       }
     }
 
+    // 1c) Unterschriften (Leistungsnachweis) entschlüsselt – Zuordnung über tables/treatment_signatures.json (exportFile)
+    const sigPages = pages(
+      (after, limit) =>
+        withOrg(org, (tx) =>
+          tx
+            .select({ id: treatmentSignatures.id, storageKey: treatmentSignatures.storageKey, patientId: treatmentSignatures.patientId, signedAt: treatmentSignatures.signedAt })
+            .from(treatmentSignatures)
+            .where(and(eq(treatmentSignatures.organizationId, org), after === undefined ? undefined : gt(treatmentSignatures.id, after as string)))
+            .orderBy(asc(treatmentSignatures.id))
+            .limit(limit),
+        ),
+      mediaPageSize,
+    );
+    for await (const page of sigPages) {
+      const numbers = await numbersFor(page.map((r) => r.patientId));
+      for (const r of page) {
+        if (!r.storageKey) continue;
+        const file = `unterschriften/${numbers.get(r.patientId) ?? "ohne-zuordnung"}/${berlinDateIso(r.signedAt)}_${r.id.slice(0, 8)}.png`;
+        try {
+          await verifyStored(r.storageKey);
+        } catch {
+          signatureErrors.add(r.id);
+          continue;
+        }
+        await add(readDecryptedStream(r.storageKey), { name: file, store: true, date: new Date(r.signedAt) });
+        signatureFiles.set(r.id, file);
+      }
+    }
+
     // 2) Tabellen (seitenweise)
     for (const t of tables) {
       const isMedia = t.name === "media";
       const isArchive = t.name === "document_archive";
+      const isSignature = t.name === "treatment_signatures";
       const source = jsonTable(t.name, pages(tableReader(t.table), pageSize), async (rows) => {
         const numbers = isMedia ? await numbersFor(rows.map((r) => r.patientId as string)) : null;
         return rows.map((r) => {
           const hadFile = isMedia && !!r.storageKey;
           const clean = stripRow(r, t.strippedKeys) as Row;
+          if (isSignature && r.storageKey) {
+            if (signatureErrors.has(r.id as string)) {
+              clean.exportFile = null;
+              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
+            } else clean.exportFile = signatureFiles.get(r.id as string) ?? null;
+          }
           if (isArchive) {
             if (archiveErrors.has(r.id as string)) {
               clean.exportFile = null;
@@ -330,6 +370,8 @@ function readme(p: {
     "                       Geldbeträge in Cent. Verknüpfungen über die Spalten *_id.",
     "tables/users.json      Mitglieder der Praxis (ohne Passwort und 2FA-Geheimnis).",
     "media/<Patientennummer>/  Fotos, Audio und Dokumente – entschlüsselt. Zuordnung über tables/media.json (Feld exportFile).",
+    "unterschriften/<Nr.>/     Unterschriften je Behandlung (GKV-Leistungsnachweis, PNG) – entschlüsselt. Zuordnung über",
+    "                       tables/treatment_signatures.json (Feld exportFile).",
     "                       Die Prüfsumme (sha256) in tables/media.json belegt die Unversehrtheit der Datei.",
     "belege/rechnungen/     Beleg-Archiv: die beim Ausstellen gespeicherten Original-PDFs (Rechnungen, Quittungen,",
     "                       Anzahlungen, Stornorechnungen, Sammelrechnungen) – byte-gleich, Prüfsumme (sha256) und",

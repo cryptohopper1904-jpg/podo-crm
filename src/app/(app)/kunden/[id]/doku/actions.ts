@@ -13,6 +13,7 @@ import { parseFootPoints } from "@/lib/foot3d-schema";
 import { chainHash } from "@/lib/records";
 import { BRACE_RULES_VERSION, checkBracePhotos, type BraceAction } from "@/lib/rules/brace";
 import { RecordInputError, checkTreatmentRefs, insertTreatmentRecord, lockPatientChain } from "@/server/records";
+import { SignatureError, auditSignature, cleanupSignatureFiles, insertSignature, prepareSignature, signatureFields, type PendingSignatureFiles } from "@/server/signatures";
 import { berlinDateIso } from "@/lib/format";
 
 /** `deviationText`: Frequenzabweichung ohne Begründung → Formular zeigt das Begründungsfeld (PR #111 C5) */
@@ -64,6 +65,13 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
   if (!d.findings && !d.servicesText && footPoints.length === 0) {
     return { error: "Bitte mindestens Befund oder durchgeführte Behandlung eintragen." };
   }
+  // Unterschrift der versicherten Person (Leistungsnachweis, nur bei Behandlung auf Verordnung) – optional
+  const sigFields = signatureFields.safeParse(Object.fromEntries([...form.entries()].filter(([k, v]) => v !== "" && ["signatureData", "signerName", "signerRole", "paperSigned"].includes(k))));
+  if (!sigFields.success) return { error: sigFields.error.issues[0]?.message ?? "Unterschrift prüfen." };
+  const signature = d.prescriptionId ? prepareSignature(sigFields.data) : null;
+  if (signature && "error" in signature) return { error: signature.error };
+  const pendingFiles: PendingSignatureFiles = [];
+  let savedSignature: { id: string; prescriptionId: string } | null = null;
 
   const ctx = { org, userId: auth.user.id, role: auth.role };
   let recordId: { id: string } | { error: string };
@@ -125,15 +133,22 @@ export async function saveTreatmentAction(_: DokuFormState, form: FormData): Pro
       if (photos.length) {
         await tx.update(media).set({ recordId: rec.id, braceEpisodeId }).where(and(eq(media.organizationId, org), inArray(media.id, photos.map((x) => x.id))));
       }
+      if (signature) savedSignature = await insertSignature(tx, ctx, { recordId: rec.id, patientId: d.patientId }, signature, pendingFiles);
       return rec;
     });
   } catch (e) {
+    await cleanupSignatureFiles(pendingFiles);
     // fachlicher Fehler → Transaktion (inkl. Spangen-Episode) wurde zurückgerollt
     if (e instanceof RecordInputError) return { error: e.message, deviationText: e.deviationText };
+    if (e instanceof SignatureError) return { error: e.message };
     throw e;
   }
-  if ("error" in recordId) return { error: recordId.error };
+  if ("error" in recordId) {
+    await cleanupSignatureFiles(pendingFiles);
+    return { error: recordId.error };
+  }
   await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: recordId.id, meta: { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null } });
+  if (savedSignature && signature) await auditSignature(org, auth.user.id, savedSignature, recordId.id, signature.kind, signature.signerRole, false);
   if (d.prescriptionId) revalidatePath(`/kunden/${d.patientId}/verordnungen`);
   revalidatePath(`/kunden/${d.patientId}`);
   redirect(`/kunden/${d.patientId}/doku/${recordId.id}?gespeichert=1`);
