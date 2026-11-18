@@ -772,12 +772,14 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     // – mit dem Stand der Erstabrechnung (original_row), nicht mit den korrigierten Werten (reproduzierbar, Zeilensumme = Laufsumme)
     const corrected = await correctedFromBatch(tx, org, batchId);
     const ids = [...corrected.keys()];
+    const inBatch = and(eq(prescriptions.billingBatchId, batchId), eq(prescriptions.status, "billed"));
     const rows = (
       await tx
         .select({ vo: prescriptions, p: patients })
         .from(prescriptions)
         .innerJoin(patients, eq(patients.id, prescriptions.patientId))
-        .where(and(eq(prescriptions.organizationId, org), ids.length ? or(eq(prescriptions.billingBatchId, batchId), inArray(prescriptions.id, ids)) : eq(prescriptions.billingBatchId, batchId)))
+        // nur abgerechnete Verordnungen des Laufs (+ Korrekturen mit Stand der Erstabrechnung) – AppSec Runde 4, R1
+        .where(and(eq(prescriptions.organizationId, org), ids.length ? or(inBatch, inArray(prescriptions.id, ids)) : inBatch))
         .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt))
     ).map((r) => ({ ...r, vo: corrected.get(r.vo.id) ?? r.vo }));
     const corrections = await correctionsFor(tx, org, rows.map((r) => r.vo.id));

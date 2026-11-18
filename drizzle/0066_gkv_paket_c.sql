@@ -418,6 +418,8 @@ CREATE TRIGGER prescriptions_user_in_org BEFORE INSERT OR UPDATE OF created_by, 
 --    angelegt (created_at = now(), vom Server gesetzt) und noch nicht übergeben ist (exported_at IS NULL) – so wie
 --    createBillingBatch es tut (AppSec Runde 3, N1/N3: sonst stünde die Verordnung in einem fremden, schon übergebenen
 --    Lauf, dessen Summe sie nicht enthält). Übernahmen legen abgerechnete Verordnungen per INSERT an (nicht betroffen).
+-- 6. billing_batch_id ändert sich nur zusammen mit dem Wechsel nach 5.; beim INSERT nur NULL oder ein Lauf, der im selben
+--    Vorgang angelegt und nicht übergeben ist (podo_prescription_batch_insert_guard, AppSec Runde 4, R1).
 -- Damit gibt es keine stille Änderung einer abgerechneten Verordnung: Der Stand der Erstabrechnung steht im
 -- Korrekturvermerk, jede Änderung im Korrekturstatus im Audit-Protokoll (Feldnamen), und zurück auf „abgerechnet“ im
 -- alten Lauf geht es nur unverändert – sonst Neuabrechnung.
@@ -432,6 +434,12 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM prescription_corrections pc
                       WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id AND pc.resolved_at IS NULL) THEN
     RAISE EXCEPTION '„Korrektur nötig“ nur mit offenem Korrekturvermerk.' USING ERRCODE = 'check_violation';
+  END IF;
+  -- Lauf einer Verordnung ändert sich nur beim geprüften Abrechnen (unten, Regel 5) – sonst stünde sie in einem fremden
+  -- (übergebenen) Lauf, dessen Summe sie nicht enthält (AppSec Runde 4, R1)
+  IF NEW.billing_batch_id IS DISTINCT FROM OLD.billing_batch_id
+     AND NOT (NEW.status = 'billed' AND OLD.status NOT IN ('billed', 'correction_needed')) THEN
+    RAISE EXCEPTION 'Der Abrechnungslauf einer Verordnung wird nur beim Abrechnen in einem neuen Abrechnungslauf gesetzt.' USING ERRCODE = 'check_violation';
   END IF;
   IF OLD.status = 'billed' AND NEW.status = 'correction_needed'
      AND (to_jsonb(NEW) - allowed - 'status') = (to_jsonb(OLD) - allowed - 'status') THEN
@@ -477,10 +485,34 @@ END $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION podo_prescription_billed_lock() FROM PUBLIC;
 --> statement-breakpoint
+-- Neue Verordnung mit Lauf (AppSec Runde 4, R1): nur ein Lauf derselben Praxis, der im selben Vorgang angelegt und noch
+-- nicht übergeben ist (wie createBillingBatch); Übernahmen schreiben keinen Lauf (NULL)
+CREATE OR REPLACE FUNCTION podo_prescription_batch_insert_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NEW.billing_batch_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM billing_batches b WHERE b.id = NEW.billing_batch_id AND b.organization_id = NEW.organization_id
+          AND b.created_at = now() AND b.exported_at IS NULL) THEN
+    RAISE EXCEPTION 'Eine neue Verordnung kann nur einem eben angelegten, nicht übergebenen Abrechnungslauf zugeordnet werden.' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION podo_prescription_batch_insert_guard() FROM PUBLIC;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS prescriptions_batch_insert_guard ON prescriptions;
+--> statement-breakpoint
+CREATE TRIGGER prescriptions_batch_insert_guard BEFORE INSERT ON prescriptions
+  FOR EACH ROW EXECUTE FUNCTION podo_prescription_batch_insert_guard();
+--> statement-breakpoint
 -- Abrechnungslauf (seit 0006): nie löschbar, Anlagezeitpunkt vom Server. Nach dem Anlegen unveränderlich bis auf die
 -- Übergabe (AppSec Runde 3, N2): exported_at nur einmal NULL → Zeitpunkt, Status nur gleich oder draft → exported. Summen,
--- Anzahl, Partner und Notiz bleiben der Stand des Laufs. Endgültige Löschung der Praxis (purge-organization) schaltet die
--- Trigger ab.
+-- Anzahl, Partner und Notiz bleiben der Stand des Laufs. Beim Anlegen immer Entwurf ohne Übergabe; die Übergabe nur
+-- zusammen mit dem Status „exported“, Zeitpunkt vom Server (AppSec Runde 4, R3). Endgültige Löschung der Praxis
+-- (purge-organization) schaltet die Trigger ab.
+-- HINWEIS für künftige Daten-Migrationen auf billing_batches (z. B. Summen nachtragen): der Guard lehnt jede solche
+-- Änderung ab – in der Migration vorher `ALTER TABLE billing_batches DISABLE TRIGGER billing_batches_guard` und danach
+-- wieder `ENABLE` (Eigentümer, in derselben Transaktion), sonst bricht der Deploy ab.
 CREATE OR REPLACE FUNCTION podo_billing_batch_guard() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
@@ -489,6 +521,8 @@ BEGIN
   END IF;
   IF TG_OP = 'INSERT' THEN
     NEW.created_at := now();
+    NEW.exported_at := NULL;
+    NEW.status := 'draft';
     RETURN NEW;
   END IF;
   IF (to_jsonb(NEW) - 'exported_at' - 'status') IS DISTINCT FROM (to_jsonb(OLD) - 'exported_at' - 'status') THEN
@@ -497,8 +531,15 @@ BEGIN
   IF OLD.exported_at IS NOT NULL AND NEW.exported_at IS DISTINCT FROM OLD.exported_at THEN
     RAISE EXCEPTION 'Der Übergabezeitpunkt eines übergebenen Abrechnungslaufs ist unveränderlich.' USING ERRCODE = 'P0001';
   END IF;
-  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (OLD.status = 'draft' AND NEW.status = 'exported' AND NEW.exported_at IS NOT NULL) THEN
-    RAISE EXCEPTION 'Status des Abrechnungslaufs unveränderlich (nur „Entwurf“ → „übergeben“).' USING ERRCODE = 'P0001';
+  IF NEW.exported_at IS DISTINCT FROM OLD.exported_at THEN
+    IF NEW.status IS DISTINCT FROM 'exported' THEN
+      RAISE EXCEPTION 'Übergabe eines Abrechnungslaufs nur zusammen mit dem Status „übergeben“.' USING ERRCODE = 'P0001';
+    END IF;
+    NEW.exported_at := now();
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND NOT (OLD.status = 'draft' AND NEW.status = 'exported' AND OLD.exported_at IS NULL AND NEW.exported_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'Status des Abrechnungslaufs unveränderlich (nur „Entwurf“ → „übergeben“ mit der Übergabe).' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
 END $$;

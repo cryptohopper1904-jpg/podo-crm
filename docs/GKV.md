@@ -379,7 +379,12 @@ vom Server und ist unveränderlich (`podo_billing_batch_guard`); nach dem Anlege
 Anzahl, Partner, Notiz), nur die Übergabe wird einmalig vermerkt (`exported_at` NULL → Zeitpunkt, Status „draft“ →
 „exported“). „Abgerechnet“ (aus „abrechnungsreif“, mit oder ohne Korrektur) setzt der Trigger nur in einen Lauf, der im
 selben Vorgang angelegt und noch nicht übergeben ist – wie im Abrechnungslauf (AppSec Runde 3); ebenso muss der Lauf
-eines Vermerks „erneut abgerechnet“ im selben Vorgang angelegt sein. Beim Setzen von „Korrektur nötig“ schlägt das
+eines Vermerks „erneut abgerechnet“ im selben Vorgang angelegt sein. Der Lauf an einer Verordnung (`billing_batch_id`)
+ändert sich nur bei diesem Wechsel; eine neue Verordnung (INSERT) bekommt nur NULL oder einen eben angelegten, nicht
+übergebenen Lauf. Ein neuer Lauf ist immer Entwurf ohne Übergabe; die Übergabe setzt Status und Zeitpunkt (vom Server)
+gemeinsam. CSV- und § 302-Export eines Laufs nehmen nur abgerechnete Verordnungen des Laufs (plus Korrekturen mit dem
+Stand der Erstabrechnung) – AppSec Runde 4. Eine Prüfung „Laufsummen = Summe der Verordnungen“ beim Commit gibt es
+bewusst nicht: Die Summen stammen aus denselben, von der Anwendung geschriebenen Verordnungsbeträgen. Beim Setzen von „Korrektur nötig“ schlägt das
 Formular eine noch nicht verknüpfte Absetzung als Bezug vor (dann gilt sie bei Neuabrechnung als „ersetzt“). Solange der Vermerk offen ist, geht es aus
 „abrechnungsreif“ auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
 

@@ -315,10 +315,11 @@ export async function ladeVerordnungen(tx: Tx, org: string, quelle: Gkv302Quelle
     .where(
       and(
         eq(prescriptions.organizationId, org),
+        // Lauf: nur abgerechnete Verordnungen des Laufs (+ Korrekturen mit Stand der Erstabrechnung) – AppSec Runde 4, R1
         quelle.art === "lauf"
           ? korrigiert.length
-            ? or(eq(prescriptions.billingBatchId, quelle.batchId), inArray(prescriptions.id, korrigiert))
-            : eq(prescriptions.billingBatchId, quelle.batchId)
+            ? or(and(eq(prescriptions.billingBatchId, quelle.batchId), eq(prescriptions.status, "billed")), inArray(prescriptions.id, korrigiert))
+            : and(eq(prescriptions.billingBatchId, quelle.batchId), eq(prescriptions.status, "billed"))
           : inArray(prescriptions.status, ["billing_ready"]),
       ),
     )

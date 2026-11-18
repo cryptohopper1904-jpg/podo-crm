@@ -54,11 +54,13 @@ const PRAXIS_IK = "990010013";
       { date: "2026-10-19", position: "78020", units: 1, priceCents: 3555, copayCents: 356, minor: false, exempt: false, tableVersion: "test" },
     ],
   };
-  const verordnung = async (o: string, opts: { status?: string; batch?: string | null; lastName?: string; kind?: string; approval?: boolean } = {}) => {
+  /** batch: "neu" legt den Lauf in derselben Transaktion an (INSERT mit Lauf nur in einen eben angelegten Lauf, 0066) */
+  const verordnung = async (o: string, opts: { status?: string; batch?: "neu" | null; lastName?: string; kind?: string; approval?: boolean } = {}) => {
     const p = await f.patient(o, { lastName: opts.lastName ?? "Testfall", firstName: "Erika" });
     await f.asOrg(o, (c) => c.query("update patients set birth_date = '1950-04-12', street = 'Musterweg 2', zip = '10115', city = 'Berlin' where id = $1", [p]));
-    return f.asOrg(o, async (c) =>
-      (
+    return f.asOrg(o, async (c) => {
+      const batch = opts.batch === "neu" ? ((await c.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [o])).rows[0].id as string) : null;
+      return (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, positions, icd10, insurer_ik, insurance_number, insured_status,
              doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, price_snapshot, remedy_cost_cents, copayment_cents, billing_batch_id,
@@ -72,15 +74,15 @@ const PRAXIS_IK = "990010013";
             JSON.stringify([{ position: "78020", label: "groß", units: 2 }]),
             KASSE,
             JSON.stringify(snapshot),
-            opts.batch ?? null,
+            batch,
             opts.kind ?? null,
             opts.approval ? "4" : null,
             opts.approval ? "G-2026/17" : null,
             opts.approval ? "2026-09-01" : null,
           ],
         )
-      ).rows[0].id as string,
-    );
+      ).rows[0].id as string;
+    });
   };
   const zaehler = async (o: string) => (await f.pool.query("select settings->'gkv302Zaehler' as z from organizations where id = $1", [o])).rows[0].z;
 
@@ -170,8 +172,8 @@ const PRAXIS_IK = "990010013";
   });
 
   it("Abrechnungslauf: nur eigener Lauf; fremde Praxis sieht nichts (RLS + Filter)", async () => {
-    const batch = (await f.asOrg(org, (c) => c.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [org]))).rows[0].id as string;
-    await verordnung(org, { status: "billed", batch });
+    const vo = await verordnung(org, { status: "billed", batch: "neu" });
+    const batch = (await f.asOrg(org, (c) => c.query("select billing_batch_id from prescriptions where id = $1", [vo]))).rows[0].billing_batch_id as string;
     const e = await x.pruefe302(authFor(org), { art: "lauf", batchId: batch }, JETZT);
     if ("error" in e) throw new Error(e.error);
     expect(e.faelle).toHaveLength(1);

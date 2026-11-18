@@ -10,7 +10,7 @@ vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 import { berlinToUtc } from "@/lib/format";
 import { addDaysIso } from "@/lib/calendar-grid";
 import { RULES_VERSION } from "@/lib/rules/prescription";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("GKV Paket C – Verordnungsart, Absetzungen, Korrektur (DB)", () => {
   const fx = fixtures(TEST_DB ?? "");
@@ -544,11 +544,16 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
     it("H-2: Altbestand ohne Preis-Snapshot – „ohne Neuabrechnung“ schreibt SQL-NULL zurück, nicht JSON null", async () => {
       const w = await world();
-      const [b] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
-      const [p] = await w.q<{ id: string }>(
-        "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,$3,'DF',2,'billed',now(),$4) returning id",
-        [w.org, w.patient, addDaysIso(today, -60), b.id],
-      );
+      // Lauf und Verordnung in EINER Transaktion (INSERT mit Lauf nur in einen eben angelegten Lauf, AppSec Runde 4)
+      const p = await fx.asOrg(w.org, async (cl) => {
+        const b = (await cl.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org])).rows[0].id as string;
+        return (
+          await cl.query(
+            "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,$3,'DF',2,'billed',now(),$4) returning id",
+            [w.org, w.patient, addDaysIso(today, -60), b],
+          )
+        ).rows[0] as { id: string };
+      });
       const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: p.id, patientId: w.patient, reason: "Altbestand prüfen" });
       if ("error" in res) throw new Error(res.error);
       expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: p.id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ ok: true });
@@ -651,11 +656,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     it("Runde 4: CSV – leere Versichertennummer an der Verordnung (Altbestand) fällt auf die Person zurück", async () => {
       const w = await world();
       await w.q("update patients set insurance_number = 'P123456789' where id = $1", [w.patient]);
-      const [b] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
-      await w.q(
-        "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, insurance_number) values ($1,$2,$3,'DF',2,'billed',now(),$4,'')",
-        [w.org, w.patient, addDaysIso(today, -60), b.id],
-      );
+      const b = await fx.asOrg(w.org, async (cl) => {
+        const id = (await cl.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org])).rows[0].id as string;
+        await cl.query(
+          "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, insurance_number) values ($1,$2,$3,'DF',2,'billed',now(),$4,'')",
+          [w.org, w.patient, addDaysIso(today, -60), id],
+        );
+        return { id };
+      });
       const exp = await presc.billingBatchExport(w.auth, b.id);
       const header = exp!.lines[0] as string[];
       expect((exp!.lines[1] as string[])[header.indexOf("Versichertennummer")]).toBe("P123456789");
@@ -675,6 +683,80 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       await expect(w.q("update billing_batches set exported_at = null where id = $1", [batchId])).rejects.toThrow(/unveränderlich|übergeben/);
       await expect(w.q("update billing_batches set exported_at = exported_at + interval '1 day' where id = $1", [batchId])).rejects.toThrow(/unveränderlich|übergeben/);
       await expect(w.q("update billing_batches set status = 'draft' where id = $1", [batchId])).rejects.toThrow(/unveränderlich|Status/);
+    });
+  });
+
+  describe("Review-Runde 4 (AppSec Runde 4)", () => {
+    /** Spalten „Verordnung-ID“ des CSV-Exports eines Laufs */
+    const exportIds = async (w: Awaited<ReturnType<typeof world>>, batchId: string) => {
+      const exp = await presc.billingBatchExport(w.auth, batchId);
+      const header = exp!.lines[0] as string[];
+      return (exp!.lines.slice(1) as string[][]).map((l) => l[header.indexOf("Verordnung-ID")]);
+    };
+
+    it("S7: Lauf an einer nicht abgerechneten Verordnung nicht setzbar (UPDATE billing_batch_id bei abrechnungsreif)", async () => {
+      const w = await world();
+      const done = await w.billed();
+      expect(await presc.billingBatchExport(w.auth, done.batchId)).not.toBeNull();
+      const id = await w.ready();
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      await expect(w.q("update prescriptions set billing_batch_id = $2 where id = $1", [id, done.batchId])).rejects.toThrow(/Abrechnungslauf/);
+      expect(await exportIds(w, done.batchId)).toEqual([done.id]);
+    });
+
+    it("S6/S6b: INSERT mit altem (übergebenem) Lauf abgelehnt – abgerechnet und abrechnungsreif", async () => {
+      const w = await world();
+      const done = await w.billed();
+      expect(await presc.billingBatchExport(w.auth, done.batchId)).not.toBeNull();
+      for (const status of ["billed", "billing_ready"]) {
+        await expect(
+          w.q("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,$3,'DF',2,$4,now(),$5)", [w.org, w.patient, addDaysIso(today, -60), status, done.batchId]),
+        ).rejects.toThrow(/Abrechnungslauf/);
+      }
+      // auch ein noch nicht übergebener, aber früher angelegter Lauf
+      const [draft] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
+      await expect(
+        w.q("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,$3,'DF',2,'billed',now(),$4)", [w.org, w.patient, addDaysIso(today, -60), draft.id]),
+      ).rejects.toThrow(/Abrechnungslauf/);
+      expect(await exportIds(w, done.batchId)).toEqual([done.id]);
+    });
+
+    it("S8: korrigierte Verordnung nicht in einen fremden übergebenen Lauf umhängbar", async () => {
+      const w = await world();
+      const { id, batchId } = await w.billed();
+      const other = await w.billed();
+      expect(await presc.billingBatchExport(w.auth, other.batchId)).not.toBeNull();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "ICD laut Kasse falsch" });
+      if ("error" in res) throw new Error(res.error);
+      await expect(w.q("update prescriptions set billing_batch_id = $2 where id = $1", [id, other.batchId])).rejects.toThrow(/Abrechnungslauf/);
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      await expect(w.q("update prescriptions set billing_batch_id = $2 where id = $1", [id, other.batchId])).rejects.toThrow(/Abrechnungslauf/);
+      expect(await exportIds(w, other.batchId)).toEqual([other.id]);
+      // Export des alten Laufs führt die Verordnung weiter (Stand der Erstabrechnung)
+      expect(await exportIds(w, batchId)).toEqual([id]);
+    });
+
+    it("Export: nur abgerechnete Verordnungen eines Laufs (Altbestand mit Lauf, aber nicht abgerechnet, fehlt) – CSV und § 302", async (ctx) => {
+      const w = await world();
+      const done = await w.billed();
+      const legacy = await w.ready();
+      if (!(await insertLegacy("update prescriptions set status = 'billing_ready', billing_batch_id = $2 where id = $1", [legacy, done.batchId]))) ctx.skip();
+      expect(await exportIds(w, done.batchId)).toEqual([done.id]);
+      const lauf = await dbm.withOrg(w.org, (tx) => g302.ladeVerordnungen(tx, w.org, { art: "lauf", batchId: done.batchId }));
+      expect(lauf!.map((v) => v.id)).toEqual([done.id]);
+    });
+
+    it("R3: Lauf – beim Anlegen Entwurf ohne Übergabe; Übergabe nur mit Status, Zeitpunkt vom Server", async () => {
+      const w = await world();
+      const [b] = await w.q<{ id: string; status: string; exported_at: Date | null }>(
+        "insert into billing_batches (organization_id, prescription_count, status, exported_at) values ($1, 0, 'exported', '2000-01-01') returning id, status, exported_at",
+        [w.org],
+      );
+      expect(b).toMatchObject({ status: "draft", exported_at: null });
+      await expect(w.q("update billing_batches set status = 'exported' where id = $1", [b.id])).rejects.toThrow(/Übergabe|Status/);
+      await expect(w.q("update billing_batches set exported_at = now() where id = $1", [b.id])).rejects.toThrow(/Übergabe|Status/);
+      const [u] = await w.q<{ recent: boolean; status: string }>("update billing_batches set exported_at = '2000-01-01', status = 'exported' where id = $1 returning exported_at > now() - interval '5 minutes' as recent, status", [b.id]);
+      expect(u).toEqual({ recent: true, status: "exported" });
     });
   });
 });
