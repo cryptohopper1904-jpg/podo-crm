@@ -388,7 +388,8 @@ dem AppSec-Review Paket C – **behoben**): Verordnungen kommen nur im Vorgang i
 (0066), und ihre Beträge sind danach eingefroren – deshalb prüfen aufgeschobene CONSTRAINT TRIGGER genau dort beim Commit:
 beim Anlegen des Laufs (`billing_batches_sum_check`) **und** bei jeder Verordnung, die in diesem Vorgang in den Lauf kommt
 oder darin Status/Beträge ändert (`prescriptions_batch_sum_check_insert`/`_update`). Ein vorgezogenes `SET CONSTRAINTS
-… IMMEDIATE` umgeht das nicht mehr (AppSec K1, PR #122). Regeln: mindestens eine Verordnung, alle Verordnungen mit dem Lauf
+… IMMEDIATE` umgeht das nicht mehr (AppSec K1, PR #122); ein vor dem Commit geleerter oder auf eine fremde Praxis
+gesetzter Praxis-Kontext (`app.org_id`) führt zur Ablehnung statt zu einer leeren Prüfung (K1-R2). Regeln: mindestens eine Verordnung, alle Verordnungen mit dem Lauf
 „abgerechnet“ oder „Korrektur nötig“ (bleibt Teil des Laufs, zählt mit), Anzahl, `total_cents` = `copayment_total_cents` =
 Summe der Zuzahlungen, `remedy_total_cents` = Summe der Heilmittelkosten (fehlende Beträge zählen 0, wie
 `createBillingBatch`). Läufe aus früheren Vorgängen (Altläufe vor 0067, Übergabe, spätere Korrektur und Neuabrechnung in

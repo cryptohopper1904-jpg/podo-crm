@@ -146,6 +146,37 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       expect(await w.q("select id from prescriptions where billing_batch_id is not null")).toEqual([]);
     });
 
+    it.each([
+      ["leer", "batch"],
+      ["fremde Praxis", "batch"],
+      ["leer", "kein Lauf-Inhalt"],
+      ["fremde Praxis", "K1-Abfolge"],
+      ["leer", "K1-Abfolge"],
+    ])("K1-R2: Praxis-Kontext vor dem COMMIT %s (%s) → Prüfung läuft nicht leer, Commit abgelehnt", async (ctxKind, variant) => {
+      const w = await world();
+      const other = await fx.org();
+      await expect(
+        fx.asOrg(w.org, async (c) => {
+          const wrong = variant === "batch" ? [5, 999, 999, 1] : variant === "kein Lauf-Inhalt" ? [1, 0, 0, 0] : [1, 1712, 1712, 7110];
+          const b = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1,$2,$3,$4,$5) returning id", [w.org, ...wrong])).rows[0].id as string;
+          if (variant !== "kein Lauf-Inhalt") await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION]);
+          if (variant === "K1-Abfolge") {
+            await c.query("set constraints all immediate");
+            await c.query("set constraints all deferred");
+            await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION]);
+          }
+          await c.query("select set_config('app.org_id', $1, true)", [ctxKind === "leer" ? "" : other]);
+        }),
+      ).rejects.toThrow(/Praxis-Kontext|passt nicht/);
+      expect(await w.q("select id from billing_batches")).toEqual([]);
+    });
+
+    it("K1-R2: normaler Ablauf (Kontext bleibt) weiter möglich", async () => {
+      const w = await world();
+      const id = await ready(w);
+      expect(await presc.createBillingBatch(w.auth, [id], { partner: "manual" })).toMatchObject({ count: 1 });
+    });
+
     it("K1: Verordnung mit Lauf, aber anderem Status (INSERT abrechnungsreif) im Anlagevorgang → abgelehnt", async () => {
       const w = await world();
       await expect(
@@ -360,6 +391,27 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       bill.release();
     }
     expect(await w.q("select status from prescriptions where id = $1", [id])).toEqual([{ status: "billed" }]);
+  });
+
+  it("R-INSERT: podo_delete_patient wartet auf ein gleichzeitiges INSERT einer abgerechneten Verordnung und verweigert dann", async () => {
+    const w = await world();
+    const ins = await fx.pool.connect();
+    try {
+      await ins.query("begin");
+      await ins.query("select set_config('app.org_id', $1, true)", [w.org]);
+      const b = (await ins.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [w.org])).rows[0].id;
+      await ins.query(VO_BILLED, [w.org, w.patient, today, b, 7110, 1712, RULES_VERSION]);
+      const del = w.q("select podo_delete_patient($1::uuid) as ok", [w.patient]).then(
+        (r) => ({ ok: r, error: null as string | null }),
+        (e: Error) => ({ ok: null, error: e.message }),
+      );
+      await new Promise((r) => setTimeout(r, 500));
+      await ins.query("commit");
+      expect((await del).error).toMatch(/Aufbewahrungspflichtige Daten/);
+    } finally {
+      ins.release();
+    }
+    expect(await w.q("select count(*)::int as n from prescriptions where patient_id = $1 and status = 'billed'", [w.patient])).toEqual([{ n: 1 }]);
   });
 
   it("4: App-Rolle darf keine Praxis löschen (organizations ohne RLS)", async () => {

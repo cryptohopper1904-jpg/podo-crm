@@ -7,6 +7,11 @@
 --    `SET CONSTRAINTS … IMMEDIATE` hilft so nicht: jede weitere Verordnung im Lauf löst die Prüfung erneut aus (AppSec K1).
 --    Geprüft wird nur ein Lauf mit created_at = now() (im laufenden Vorgang angelegt): Altläufe vor 0067 und spätere
 --    Korrekturwege (abgerechnet → Korrektur nötig → abrechnungsreif, Neuabrechnung in einem NEUEN Lauf) bleiben unberührt.
+--    Praxis-Kontext (AppSec Runde 2 zu PR #122, K1-R2): Die Prüfung liest Lauf und Verordnungen unter RLS (FORCE RLS gilt
+--    auch für den Eigentümer, SECURITY DEFINER hülfe daher nicht). Ein vor dem COMMIT geleertes oder auf eine fremde
+--    Praxis gesetztes app.org_id ließe sie sonst leer laufen – deshalb lehnt sie ab, wenn app.org_id nicht die Praxis der
+--    auslösenden Zeile ist. Wege ohne Kontext (Löschlauf der Praxis, Altbestand mit session_replication_role = replica)
+--    schalten die Trigger ab bzw. lösen sie nicht aus.
 --    Regeln (wie createBillingBatch, src/server/prescriptions.ts): mindestens eine Verordnung; alle Verordnungen mit dem
 --    Lauf stehen auf „abgerechnet“ oder „Korrektur nötig“ (letztere bleibt Teil des Laufs – Stand der Erstabrechnung,
 --    Export führt sie –, daher zählt sie mit); prescription_count = Anzahl, total_cents = copayment_total_cents =
@@ -34,6 +39,12 @@ DECLARE
   copay bigint;
   remedy bigint;
 BEGIN
+  -- Prüfung nur im Kontext der eigenen Praxis – sonst sähe sie unter RLS nichts und liefe leer (K1-R2)
+  IF current_setting('app.org_id', true) IS DISTINCT FROM NEW.organization_id::text
+     OR (TG_OP = 'UPDATE' AND current_setting('app.org_id', true) IS DISTINCT FROM OLD.organization_id::text) THEN
+    RAISE EXCEPTION 'Abrechnungslauf kann nur im Praxis-Kontext der eigenen Praxis geprüft werden (app.org_id beim Abschluss geändert).'
+      USING ERRCODE = 'check_violation';
+  END IF;
   IF TG_TABLE_NAME = 'billing_batches' THEN
     ids := ARRAY[NEW.id];
   ELSIF TG_OP = 'UPDATE' THEN
@@ -137,7 +148,13 @@ DROP TRIGGER IF EXISTS prescriptions_delete_guard ON prescriptions;
 CREATE TRIGGER prescriptions_delete_guard BEFORE DELETE ON prescriptions
   FOR EACH ROW EXECUTE FUNCTION podo_prescription_delete_guard();
 --> statement-breakpoint
--- podo_delete_patient (zuletzt 0066): Verordnungen der Person zuerst sperren (gleichzeitige Abrechnung abwarten), Lauf auch
+-- podo_delete_patient (zuletzt 0066): Person und ihre Verordnungen zuerst sperren – die Person FOR UPDATE kollidiert mit dem
+-- KEY SHARE eines gleichzeitigen FK-INSERT (neue, ggf. abgerechnete Verordnung), die Verordnungen FOR UPDATE mit einer
+-- gleichzeitigen Abrechnung (AppSec R-INSERT/Punkt 3). Beide werden abgewartet und danach als Aufbewahrungsgrund gesehen.
+-- Deadlock möglich, wenn ein Vorgang erst Verordnungen der Person sperrt (createBillingBatch: SELECT … FOR UPDATE) und
+-- danach die Person (z. B. FK-Prüfung einer neuen Verordnung derselben Person im selben Vorgang), während
+-- podo_delete_patient in umgekehrter Reihenfolge sperrt: PostgreSQL bricht dann eine der beiden Transaktionen ab
+-- (40P01) – kein Datenschaden, die Aktion wird wiederholt. Lauf auch
 -- ohne billed_at als Aufbewahrungsgrund, Löschfreigabe in podo_private.delete_grants (am Ende wieder entfernt). Sonst
 -- unverändert; fester search_path, Rechte wie 0062.
 CREATE OR REPLACE FUNCTION podo_delete_patient(p_patient uuid) RETURNS boolean
@@ -149,6 +166,7 @@ BEGIN
   IF org IS NULL THEN
     RAISE EXCEPTION 'Kein Praxis-Kontext.' USING ERRCODE = 'P0001';
   END IF;
+  PERFORM 1 FROM patients WHERE id = p_patient AND organization_id = org FOR UPDATE;
   PERFORM 1 FROM prescriptions WHERE organization_id = org AND patient_id = p_patient FOR UPDATE;
   IF EXISTS (SELECT 1 FROM treatment_records WHERE organization_id = org AND patient_id = p_patient)
      OR EXISTS (SELECT 1 FROM therapy_reports WHERE organization_id = org AND patient_id = p_patient)
