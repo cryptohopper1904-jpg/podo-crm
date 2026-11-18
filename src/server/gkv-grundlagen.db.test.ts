@@ -98,6 +98,16 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     }
     return [...out].sort();
   };
+  const retryDeadlock = async <T,>(fn: () => Promise<T>, tries = 5): Promise<T> => {
+    for (let i = 1; ; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        if ((e as { code?: string }).code !== "40P01" || i >= tries) throw e;
+        await new Promise((r) => setTimeout(r, 50 * i));
+      }
+    }
+  };
   const runMigration = async (suffix: string) => {
     const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
     const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
@@ -109,8 +119,9 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     // eine der Funktionen ersetzt, wird automatisch berücksichtigt (Review Paket C R1-7).
     const restore = latestMigrationsDefining(sql.join("\n"), file).flatMap((f) => readFileSync(path.join(dir, f), "utf8").split("--> statement-breakpoint"));
     try {
-      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
-      for (const stmt of restore) if (stmt.trim()) await owner.query(stmt);
+      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await retryDeadlock(() => owner.query(stmt));
+      // DDL neben parallel laufenden Testdateien (gemeinsame DB) kann in einen Deadlock (40P01) laufen – dann wiederholen
+      for (const stmt of restore) if (stmt.trim()) await retryDeadlock(() => owner.query(stmt));
     } finally {
       await owner.end();
     }
