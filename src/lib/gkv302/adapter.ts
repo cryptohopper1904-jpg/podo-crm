@@ -509,7 +509,8 @@ export function bildeAbrechnungsfall(
     lanr: vo.doctorLanr ?? undefined,
     verordnungsdatum: vo.issuedAt,
     diagnosegruppe: vo.diagnosisGroup,
-    verordnungsart: ergaenzung.verordnungsart ?? "03",
+    // nie still „03“ (Review-Runde 2, Buchhaltung): ohne Angabe bleibt das Feld leer und ist fehlende Angabe
+    verordnungsart: ergaenzung.verordnungsart,
     therapieberichtAngefordert: vo.therapyReportRequested,
     hausbesuch: vo.homeVisit,
     leitsymptomatik: ergaenzung.leitsymptomatik ?? { art: "heilmittelrichtlinie", a: false, b: false, c: false, patientenindividuell: false },

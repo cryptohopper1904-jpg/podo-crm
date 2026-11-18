@@ -23,6 +23,7 @@ import { ImprintForm } from "./imprint-form";
 import { ImprintWarning } from "./imprint-warning";
 import { OnlineRequestRetentionNote } from "@/components/online-request-retention-note";
 import { LogoUpload } from "./logo-upload";
+import { Gkv302Card } from "./gkv302-card";
 import { AiRepliesForm } from "./ai-replies-form";
 import { aiReplySettings } from "@/lib/ai-replies";
 import { avvAcceptedAtLeast, RETENTION_MIN_AVV } from "@/lib/legal";
@@ -76,6 +77,7 @@ export default async function PracticeSettings() {
         </ActionForm>
       </Card>
     )}
+    {isPrivateOnly(o) ? null : <Gkv302Card org={o.id} readOnly={auth.readOnly} support={!!auth.support} />}
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>

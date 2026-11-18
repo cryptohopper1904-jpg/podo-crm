@@ -23,6 +23,9 @@ export function createRateLimiter(opts: { windowMs: number; max: number; maxKeys
     limited(key: string, now = Date.now()): boolean {
       const list = recent(key, now);
       list.push(now);
+      // höchstens max + 1 Zeitstempel behalten: für „gesperrt“ genügt das, abgelehnte Versuche wachsen sonst unbegrenzt
+      const grenze = limitFor(key) + 1;
+      if (list.length > grenze) list.splice(0, list.length - grenze);
       // ans Ende verschieben (LRU-Reihenfolge = Einfügereihenfolge der Map)
       hits.delete(key);
       hits.set(key, list);
@@ -38,6 +41,8 @@ export function createRateLimiter(opts: { windowMs: number; max: number; maxKeys
       return recent(key, now).length >= limitFor(key);
     },
     size: () => hits.size,
+    /** Anzahl gespeicherter Zeitstempel eines Schlüssels (für Tests) */
+    stored: (key: string) => hits.get(key)?.length ?? 0,
     reset() {
       hits.clear();
     },

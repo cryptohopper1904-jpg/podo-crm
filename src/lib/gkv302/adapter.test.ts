@@ -597,3 +597,11 @@ describe("Hinweis 6: Absicherungstests", () => {
     expect(r.hinweise).toEqual(["x"]);
   });
 });
+
+describe("Review-Runde 2 Paket D: kein stilles Kennzeichen Verordnungsart", () => {
+  it("ohne Angabe bleibt die Verordnungsart leer (nie still „03“) und ist fehlende Angabe", () => {
+    const r = bildeAbrechnungsfall("1", vo, patient("1960-01-01"), snapshot([P78020("2026-10-05")]), { ...ergaenzung, verordnungsart: undefined });
+    expect(r.fehlendeAngaben).toContain("Kennzeichen Verordnungsart (Anlage 3, 8.1.12)");
+    expect(r.fall.verordnung.verordnungsart).toBeUndefined();
+  });
+});

@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { ausLatin1 } from "./edifact";
-import { KostentraegerVerzeichnis, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, schreibeKostentraegerdatei } from "./kostentraeger";
+import { KOTR_GRENZEN, KOTR_MAX_BYTES, KostentraegerVerzeichnis, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang, schreibeKostentraegerdatei } from "./kostentraeger";
+import { ausLatin1 as ausLatin1Neu, vorpruefeEdifact, zerlegeEdifact } from "./edifact";
+import type { KotrInstitution } from "./kostentraeger";
 import { TEST_IK } from "./fixtures/testdaten";
 
 const roh = ausLatin1(new Uint8Array(readFileSync(path.join(__dirname, "fixtures", "kotr-test.ke0"))));
@@ -51,6 +55,15 @@ describe("Kostenträgerdatei – Parser (Anhang 3 V09/V10)", () => {
     expect(() => parseKostentraegerdatei(ohneVdt)).toThrow("IDK ohne VDT");
     expect(() => parseKostentraegerdatei(roh.replace("UNZ+000008", "UNZ+000009"))).toThrow("UNZ nennt 9 Nachrichten");
     expect(() => parseKostentraegerdatei(roh.slice(0, -3))).toThrow("Segmentendezeichen");
+  });
+
+  it("Segmente ohne Pflichtangaben (UEM, DFU, ASP) werden abgewiesen (Review-Runde 5, AppSec)", () => {
+    // leere Segmente kosten 4 Byte Eingabe, aber je ein Objekt – echte Dateien belegen diese Angaben immer
+    expect(() => parseKostentraegerdatei(roh.replace("UEM+1+00+I8'", "UEM'"))).toThrow("Übermittlungsweg ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("UEM+1+00+I8'", "UEM+1++I8'"))).toThrow("Übermittlungsweg ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("DFU+01+070+++++annahme@example.org'", "DFU'"))).toThrow("DFÜ-Angabe ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("DFU+01+070+++++annahme@example.org'", "DFU+01+070'"))).toThrow("Kommunikationskanal");
+    expect(() => parseKostentraegerdatei(roh.replace("ASP+01+030/0000001++Testperson+Datenaustausch'", "ASP'"))).toThrow("Ansprechpartner ohne laufende Nummer");
   });
 });
 
@@ -118,5 +131,130 @@ describe("Sollte: Verknüpfung 02/03 nur mit Art der Datenlieferung 07/30 (Anhan
     );
     const e = new KostentraegerVerzeichnis([zwei]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-02", abrechnungscode: "71" });
     expect(e.hinweise).toContainEqual(expect.stringContaining("mehrere Datenannahmestellen mit Entschlüsselungsbefugnis"));
+  });
+});
+
+describe("Kostenträgerdatei – Grenzen gegen Speicher-DoS (Review-Runde 2, AppSec H1/H2)", () => {
+  const MB = 1024 * 1024;
+  it("bricht vor dem Zerlegen ab: nur Segmentende-Zeichen bzw. nur Elementtrenner", () => {
+    // ohne UNA/UNB am Anfang: sofort abgelehnt
+    expect(() => parseKostentraegerdatei("'".repeat(MB))).toThrow(/beginnt nicht mit UNA oder UNB/);
+    // mit UNB, aber 1 Mio. Segmente
+    expect(() => parseKostentraegerdatei("UNB+" + "'".repeat(MB))).toThrow(/zu viele Segmente/);
+    // ein Segment mit 1 Mio. Datenelementen
+    expect(() => parseKostentraegerdatei("UNB+" + "+".repeat(MB) + "'")).toThrow(/zu viele Datenelemente/);
+    expect(() => parseKostentraegerdatei("UNB+" + ":".repeat(MB) + "'")).toThrow(/zu viele Gruppendatenelemente/);
+    // zu langes Segment
+    expect(() => parseKostentraegerdatei("UNB+" + "A".repeat(MB) + "'")).toThrow(/Segment zu lang/);
+  });
+
+  it("Vorprüfung zählt aufgehobene Trennzeichen nicht und beachtet UNA", () => {
+    const g = { maxZeichen: 1000, maxSegmente: 3, maxElemente: 3, maxGruppen: 3, maxSegmentLaenge: 100, maxDatenelementeGesamt: 100 };
+    expect(() => vorpruefeEdifact("UNB+a?'b?+c'UNZ+1'", g)).not.toThrow();
+    expect(() => vorpruefeEdifact("UNA:+.? 'UNB+a'UNH+b'UNT+c'UNZ+1'", g)).toThrow(/zu viele Segmente/);
+    expect(() => vorpruefeEdifact("UNA:*.? !UNB*a*b!UNZ*1!", g)).not.toThrow();
+    expect(() => vorpruefeEdifact("UNA:*.? !UNB*a*b*c*d!", g)).toThrow(/zu viele Datenelemente/);
+    expect(() => vorpruefeEdifact("\ufeffUNB+a'", g)).not.toThrow();
+  });
+
+  it("echte Datei liegt weit unter den Grenzen", () => {
+    expect(() => vorpruefeEdifact(roh, KOTR_GRENZEN)).not.toThrow();
+    expect(() => pruefeKotrUmfang(datei)).not.toThrow();
+  });
+
+  it("inhaltliche Grenzen: Institutionen gesamt, Verknüpfungen und Anschriften je Institution", () => {
+    expect(() => pruefeKotrUmfang(datei, { maxInstitutionen: 7, maxVerknuepfungen: 100, maxAnschriften: 100, maxGesamt: 1000 })).toThrow(/zu viele Institutionen/);
+    expect(() => pruefeKotrUmfang(datei, { maxInstitutionen: 100, maxVerknuepfungen: 3, maxAnschriften: 100, maxGesamt: 1000 })).toThrow(/zu viele Verknüpfungen/);
+    const mitAns = structuredClone(datei);
+    mitAns.institutionen[0].anschriften = Array.from({ length: 3 }, () => ({ art: "1", plz: "10115", ort: "Berlin" }));
+    expect(() => pruefeKotrUmfang(mitAns, { maxInstitutionen: 100, maxVerknuepfungen: 100, maxAnschriften: 2, maxGesamt: 1000 })).toThrow(/zu viele Anschriften/);
+  });
+
+  it("viele gleichrangige Verknüpfungen sprengen nicht den Aufrufstapel (reduce statt Math.max(...))", () => {
+    const viel = structuredClone(datei);
+    const kt = viel.institutionen.find((i) => i.ik === TEST_IK.kostentraeger)!;
+    const vkg = kt.verknuepfungen.find((v) => v.art === "03" && v.ik === TEST_IK.davMitEntschluesselung)!;
+    kt.verknuepfungen = Array.from({ length: 300_000 }, () => vkg);
+    const e = new KostentraegerVerzeichnis([viel]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-18", abrechnungscode: "71" });
+    expect(e.datenannahmestelle.ik).toBe(TEST_IK.davMitEntschluesselung);
+  });
+});
+
+describe("Kostenträgerdatei – Speicherschutz Review-Runde 3", () => {
+  it("ausLatin1 entspricht Byte für Byte ISO 8859-1 (alle 256 Werte)", () => {
+    const alle = new Uint8Array(256).map((_, i) => i);
+    const text = ausLatin1Neu(alle);
+    expect(text.length).toBe(256);
+    for (let i = 0; i < 256; i++) expect(text.charCodeAt(i)).toBe(i);
+    // Teilansicht eines größeren Puffers (byteOffset)
+    expect(ausLatin1Neu(alle.subarray(65, 68))).toBe("ABC");
+  });
+
+  it("Grenzen an echten Dateien ausgerichtet (größte gemessene: 214 KB, 6 471 Segmente, 12 Elemente/Segment, 116 Zeichen/Segment)", () => {
+    expect(KOTR_MAX_BYTES).toBe(2 * 1024 * 1024);
+    expect(KOTR_GRENZEN).toEqual({ maxZeichen: 2 * 1024 * 1024, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 150_000 });
+    expect(() => parseKostentraegerdatei("UNB+" + "A".repeat(KOTR_MAX_BYTES))).toThrow(/zu groß/);
+  });
+
+  it("synthetische Datei mit den gemessenen Höchstwerten echter Dateien wird angenommen", () => {
+    const inst = (n: number, vkg: number): KotrInstitution => ({
+      ik: String(990000000 + n), artDerInstitution: "99", kurzbezeichnung: `KASSE ${n}`, gueltigkeit: { ab: "2026-01-01" }, verarbeitungskennzeichen: "01",
+      verknuepfungen: Array.from({ length: vkg }, (_, k) => ({ art: "03", ik: "990030017", leistungserbringergruppe: "5", abrechnungsstelleIk: "990050012", artDerDatenlieferung: "07", uebermittlungsmedium: "1", bundesland: String(k % 16).padStart(2, "0"), kvBezirk: "72", abrechnungscode: "71", tarifkennzeichen: "50000", unterverfahren: "1" })),
+      name: [`Testkasse ${n}`], anschriften: [{ art: "1", plz: "10115", ort: "Berlin", strasseOderPostfach: "S".repeat(90) }], ansprechpartner: [], uebermittlung: [],
+    });
+    const institutionen = Array.from({ length: 365 }, (_, n) => inst(n, n === 0 ? 229 : 15));
+    const text = schreibeKostentraegerdatei({ absenderIk: "990020026", empfaengerIk: "999999999", erstellt: "261001:1200", dateinummer: "00001", dateiname: "BN050526KE0", institutionen });
+    const seg = zerlegeEdifact(text);
+    expect(seg.length).toBeGreaterThan(6_471);
+    expect(Math.max(...seg.slice(0, 50).map((x) => x.elemente.length + 1))).toBe(12);
+    const d = parseKostentraegerdatei(text);
+    expect(d.institutionen).toHaveLength(365);
+    expect(() => pruefeKotrUmfang(d)).not.toThrow();
+    // Fixture weiter angenommen
+    expect(() => parseKostentraegerdatei(roh)).not.toThrow();
+  });
+
+  it("Gesamtgrenzen nach dem Zerlegen: Verknüpfungen, Ansprechpartner, Übermittlungen, DFÜ", () => {
+    const g = { maxInstitutionen: 100, maxVerknuepfungen: 100, maxAnschriften: 100, maxGesamt: 5 };
+    expect(() => pruefeKotrUmfang(datei, g)).toThrow(/zu viele Verknüpfungen insgesamt/);
+    const ohneVkg = structuredClone(datei);
+    for (const i of ohneVkg.institutionen) i.verknuepfungen = [];
+    ohneVkg.institutionen[0].ansprechpartner = Array.from({ length: 6 }, (_, k) => ({ lfdNr: String(k) }));
+    expect(() => pruefeKotrUmfang(ohneVkg, g)).toThrow(/zu viele Ansprechpartner insgesamt/);
+    ohneVkg.institutionen[0].ansprechpartner = [];
+    ohneVkg.institutionen[0].uebermittlung = [{ medium: "1", parameter: "00", zeichensatz: "I8", dfu: Array.from({ length: 6 }, (_, k) => ({ lfdNr: String(k), protokoll: "070", kommunikationskanal: "x@example.org" })) }];
+    expect(() => pruefeKotrUmfang(ohneVkg, g)).toThrow(/zu viele DFÜ-Angaben insgesamt/);
+    ohneVkg.institutionen[0].uebermittlung = Array.from({ length: 6 }, () => ({ medium: "1", parameter: "00", zeichensatz: "I8", dfu: [] }));
+    expect(() => pruefeKotrUmfang(ohneVkg, g)).toThrow(/zu viele Übermittlungsangaben insgesamt/);
+  });
+
+  it("Datei endet mitten in einem Segment mit Gruppentrenner („UNB:“) → Fehler", () => {
+    expect(() => zerlegeEdifact("UNB:")).toThrow(/endet nicht mit einem Segmentendezeichen/);
+    expect(() => zerlegeEdifact("UNB+A'UNZ:")).toThrow(/endet nicht mit einem Segmentendezeichen/);
+    expect(zerlegeEdifact("UNB+A'\r\n")).toHaveLength(1);
+  });
+
+  it("schlimmste noch zulässige Eingabe: Zerlegen braucht < 100 MB Heap und < 1 s", () => {
+    // GC zur Laufzeit freischalten (Vitest-Worker laufen ohne --expose-gc)
+    setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as (() => void) | undefined;
+    const G = KOTR_GRENZEN;
+    // ungünstigster Fall (Review-Runde 4): Elementtrenner „+“ (je Feld ein eigenes Array), kurze Segmente aus fünf
+    // zweistelligen Feldern bis zur Gesamtgrenze der Felder bzw. der Segmente
+    const n = Math.min(G.maxSegmente - 2, Math.floor((G.maxDatenelementeGesamt - 10) / 4));
+    const text = "UNB+UNOC'" + "AB+AB+AB+AB+AB'".repeat(n);
+    expect(text.length).toBeLessThanOrEqual(G.maxZeichen);
+    expect(() => vorpruefeEdifact(text, G)).not.toThrow();
+    gc?.();
+    const vor = process.memoryUsage().heapUsed;
+    const t = performance.now();
+    const seg = zerlegeEdifact(text);
+    const dauer = performance.now() - t;
+    gc?.();
+    const zuwachs = process.memoryUsage().heapUsed - vor;
+    expect(seg.length).toBeGreaterThan(37_000);
+    // ohne --expose-gc enthält die Messung auch Müll → gleiche Schwelle, ist dann großzügig
+    expect(zuwachs).toBeLessThan(100 * 1024 * 1024);
+    expect(dauer).toBeLessThan(1000);
   });
 });

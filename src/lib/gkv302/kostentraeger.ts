@@ -10,7 +10,8 @@
  *   (deren Nachricht ggf. --VKG 02--> Datenannahmestelle ohne Entschlüsselungsbefugnis = physikalischer Empfänger)
  *   Kostenträger --VKG 09--> Papierannahmestelle (Art der Datenlieferung 21/24/26/27 bzw. Gruppen 28/29).
  */
-import { maskiere, type RohSegment, wert, zerlegeEdifact } from "./edifact";
+import type { DeepReadonly } from "./kotr-cache";
+import { type EdifactGrenzen, maskiere, type RohSegment, vorpruefeEdifact, wert, zerlegeEdifact } from "./edifact";
 
 export interface Gueltigkeit {
   /** "JJJJ-MM-TT" */
@@ -131,8 +132,58 @@ export function pruefeKotrDateiname(name: string): { kassenart: string; gueltigA
   return { kassenart: m[1].toUpperCase(), gueltigAb: m[2].toUpperCase(), jahr: m[3], nachtrag: Number(m[5]) };
 }
 
-/** Parst eine Kostenträgerdatei (Text, bereits aus ISO 8859-1 dekodiert). */
-export function parseKostentraegerdatei(inhalt: string): Kostentraegerdatei {
+/** Größte zulässige Kostenträgerdatei (Upload) in Byte; größte gemessene echte Datei: 214 KB (BN050526.KE0) */
+export const KOTR_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Obergrenzen vor dem Zerlegen (Review-Runden 2 und 3, AppSec H1). Ausgerichtet an sechs echten öffentlichen
+ * Kostenträgerdateien (Stand Q4/2026, Messung docs/GKV-302.md 7.1): höchstens 6 471 Segmente, 12 Datenelemente und
+ * 4 Gruppendatenelemente je Segment, 116 Zeichen je Segment, rund 63 000 Datenelemente gesamt. Die Grenzen lassen
+ * reichlich Spielraum (Felder gut das Doppelte, Segmente gut das Zwölffache) und halten das Zerlegen auch im
+ * ungünstigsten Fall (Elementtrenner „+“, Review-Runde 4) deutlich unter 100 MB Heap (Test „schlimmste noch zulässige
+ * Eingabe“).
+ */
+export const KOTR_GRENZEN: EdifactGrenzen = { maxZeichen: KOTR_MAX_BYTES, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 150_000 };
+
+export interface KotrUmfang {
+  maxInstitutionen: number;
+  /** je Institution */
+  maxVerknuepfungen: number;
+  maxAnschriften: number;
+  /** je Segmentart (VKG, ASP, UEM, DFU) über die ganze Datei */
+  maxGesamt: number;
+}
+/** echte Höchstwerte: 365 Institutionen, 229 VKG je Institution, 6 183 VKG gesamt, 3 Anschriften je Institution */
+export const KOTR_UMFANG: KotrUmfang = { maxInstitutionen: 10_000, maxVerknuepfungen: 2_000, maxAnschriften: 50, maxGesamt: 50_000 };
+
+/** Inhaltliche Grenzen nach dem Zerlegen (Institutionen, Verknüpfungen/Anschriften je Institution, Gesamtzahlen) */
+export function pruefeKotrUmfang(d: Kostentraegerdatei, g: KotrUmfang = KOTR_UMFANG): void {
+  if (d.institutionen.length > g.maxInstitutionen) throw new KotrFehler(`Die Kostenträgerdatei hat zu viele Institutionen (${d.institutionen.length}, höchstens ${g.maxInstitutionen}).`);
+  const gesamt = { vkg: 0, asp: 0, uem: 0, dfu: 0 };
+  for (const i of d.institutionen) {
+    if (i.verknuepfungen.length > g.maxVerknuepfungen) throw new KotrFehler(`IK ${i.ik}: zu viele Verknüpfungen (${i.verknuepfungen.length}, höchstens ${g.maxVerknuepfungen}).`);
+    if (i.anschriften.length > g.maxAnschriften) throw new KotrFehler(`IK ${i.ik}: zu viele Anschriften (${i.anschriften.length}, höchstens ${g.maxAnschriften}).`);
+    gesamt.vkg += i.verknuepfungen.length;
+    gesamt.asp += i.ansprechpartner.length;
+    gesamt.uem += i.uebermittlung.length;
+    for (const u of i.uebermittlung) gesamt.dfu += u.dfu.length;
+  }
+  const namen: Record<keyof typeof gesamt, string> = { vkg: "Verknüpfungen", asp: "Ansprechpartner", uem: "Übermittlungsangaben", dfu: "DFÜ-Angaben" };
+  for (const k of Object.keys(gesamt) as (keyof typeof gesamt)[]) {
+    if (gesamt[k] > g.maxGesamt) throw new KotrFehler(`Die Kostenträgerdatei hat zu viele ${namen[k]} insgesamt (${gesamt[k]}, höchstens ${g.maxGesamt}).`);
+  }
+}
+
+/**
+ * Parst eine Kostenträgerdatei (Text, bereits aus ISO 8859-1 dekodiert). Vorher Vorprüfung gegen `grenzen`, damit
+ * präparierte Dateien nicht beim Zerlegen den Speicher füllen.
+ */
+export function parseKostentraegerdatei(inhalt: string, grenzen: EdifactGrenzen = KOTR_GRENZEN): Kostentraegerdatei {
+  try {
+    vorpruefeEdifact(inhalt, grenzen);
+  } catch (e) {
+    throw new KotrFehler((e as Error).message);
+  }
   const segmente = zerlegeEdifact(inhalt);
   if (segmente[0]?.kennung !== "UNB") throw new KotrFehler("Kostenträgerdatei beginnt nicht mit UNB.");
   const unb = segmente[0];
@@ -235,12 +286,15 @@ export function parseKostentraegerdatei(inhalt: string): Kostentraegerdatei {
       }
       case "ASP": {
         const a = { lfdNr: wert(seg, 0), telefon: opt(wert(seg, 1)), fax: opt(wert(seg, 2)), name: opt(wert(seg, 3)), arbeitsgebiet: opt(wert(seg, 4)) } as KotrInstitution["ansprechpartner"][number];
+        // Pflichtangaben (Anhang 3; in allen echten Dateien belegt) – ein leeres „ASP'“ ist keine Angabe, nur Speicherlast
+        if (!a.lfdNr) throw new KotrFehler(`${ort}: Ansprechpartner ohne laufende Nummer.`);
         aktuell.ansprechpartner.push(a);
         vdtZiel = a;
         break;
       }
       case "UEM": {
         const u: KotrUebermittlung = { medium: wert(seg, 0), parameter: wert(seg, 1), zeichensatz: wert(seg, 2), komprimierung: opt(wert(seg, 3)), dfu: [] };
+        if (!u.medium || !u.parameter || !u.zeichensatz) throw new KotrFehler(`${ort}: Übermittlungsweg ohne Pflichtangaben (Medium, Parameter, Zeichensatz).`);
         aktuell.uebermittlung.push(u);
         vdtZiel = u;
         break;
@@ -249,6 +303,7 @@ export function parseKostentraegerdatei(inhalt: string): Kostentraegerdatei {
         const u = aktuell.uebermittlung[aktuell.uebermittlung.length - 1];
         if (!u) throw new KotrFehler(`${ort}: DFU ohne vorheriges UEM.`);
         const d: KotrDfu = { lfdNr: wert(seg, 0), protokoll: wert(seg, 1), benutzerkennung: opt(wert(seg, 2)), von: opt(wert(seg, 3)), bis: opt(wert(seg, 4)), uebertragungstage: opt(wert(seg, 5)), kommunikationskanal: wert(seg, 6) };
+        if (!d.lfdNr || !d.protokoll || !d.kommunikationskanal) throw new KotrFehler(`${ort}: DFÜ-Angabe ohne Pflichtangaben (laufende Nummer, Protokoll, Kommunikationskanal).`);
         u.dfu.push(d);
         vdtZiel = d;
         break;
@@ -339,8 +394,12 @@ export interface Suchkriterien {
 export class KostentraegerVerzeichnis {
   private readonly nachIk = new Map<string, KotrInstitution[]>();
 
-  constructor(dateien: Kostentraegerdatei[]) {
-    for (const d of dateien) {
+  /**
+   * Nimmt auch schreibgeschützte (eingefrorene) Dateien aus dem Cache (src/lib/gkv302/kotr-cache.ts). Das Verzeichnis
+   * liest nur und verändert nichts; die Typumwandlung unten ist deshalb unbedenklich.
+   */
+  constructor(dateien: readonly (Kostentraegerdatei | DeepReadonly<Kostentraegerdatei>)[]) {
+    for (const d of dateien as readonly Kostentraegerdatei[]) {
       for (const inst of d.institutionen) {
         const liste = this.nachIk.get(inst.ik) ?? [];
         liste.push(inst);
@@ -374,7 +433,8 @@ export class KostentraegerVerzeichnis {
         rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode) >= 0,
     );
     if (!kandidaten.length) return [];
-    const besterRang = Math.max(...kandidaten.map((v) => rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode)));
+    // reduce statt Math.max(...): kein Argument je Verknüpfung auf dem Aufrufstapel (Review-Runde 2, AppSec H2)
+    const besterRang = kandidaten.reduce((m, v) => Math.max(m, rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode)), -1);
     let beste = kandidaten.filter((v) => rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode) === besterRang);
     // regionale Zuordnung (Kap. 5.2.2)
     const regional = beste.filter((v) => v.bundesland !== undefined && v.bundesland !== "99");

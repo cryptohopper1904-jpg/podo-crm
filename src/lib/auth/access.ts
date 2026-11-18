@@ -62,6 +62,8 @@ export const DOWNLOAD_KINDS = [
   "patient_list_export",
   "media",
   "billing_batch_export",
+  /** § 302-Testpaket (Nutzdatei, Auftragsdatei, Begleitzettel) */
+  "gkv302_test",
   "cash_export",
   "invoice_pdf",
   "z_bon_pdf",

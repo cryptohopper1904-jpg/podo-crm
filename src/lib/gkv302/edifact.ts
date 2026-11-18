@@ -47,11 +47,13 @@ export function alsLatin1(text: string): Uint8Array {
   return bytes;
 }
 
-/** Dekodiert ISO 8859-1. */
+/**
+ * Dekodiert ISO 8859-1 (Byte n → Zeichen U+00nn). Über Buffer statt Zeichen für Zeichen: 8 MB brauchten vorher rund
+ * 268 MB Heap und 600 ms, jetzt eine flache Zeichenkette in wenigen Millisekunden (Review-Runde 3). Nicht TextDecoder
+ * („latin1“ ist dort windows-1252 und weicht bei 0x80–0x9F ab).
+ */
 export function ausLatin1(bytes: Uint8Array): string {
-  let s = "";
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-  return s;
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length).toString("latin1");
 }
 
 // ───────────────────────── Feldbeschreibung ─────────────────────────
@@ -225,57 +227,140 @@ export interface RohSegment {
   nr: number;
 }
 
+/** Obergrenzen für die Vorprüfung vor dem Zerlegen (Speicher-DoS, Review-Runde 2 AppSec H1) */
+export interface EdifactGrenzen {
+  /** Zeichen der ganzen Datei */
+  maxZeichen: number;
+  maxSegmente: number;
+  /** Datenelemente je Segment (inkl. Kennung) */
+  maxElemente: number;
+  /** Gruppendatenelemente (Komponenten) je Datenelement */
+  maxGruppen: number;
+  /** Zeichen je Segment */
+  maxSegmentLaenge: number;
+  /** Daten- und Gruppendatenelemente (Felder) in der ganzen Datei – begrenzt die Zahl der Objekte beim Zerlegen */
+  maxDatenelementeGesamt: number;
+}
+
+/**
+ * Vorprüfung in einem Durchlauf ohne Objekte je Trennzeichen: Die Datei muss mit UNA oder UNB beginnen, und Segmente,
+ * Datenelemente und Komponenten müssen unter den Grenzen bleiben – sonst `Error` mit deutscher Meldung, bevor
+ * `zerlegeEdifact` Speicher anlegt (8 MB nur aus „'“ hätten sonst rund 820 MB Heap gekostet, nur aus „+“ rund 1,8 GB).
+ * Aufgehobene Zeichen (Aufhebungszeichen davor) zählen nicht.
+ */
+export function vorpruefeEdifact(inhalt: string, g: EdifactGrenzen): void {
+  if (inhalt.length > g.maxZeichen) throw new Error(`Die Datei ist zu groß (mehr als ${g.maxZeichen} Zeichen).`);
+  let text = inhalt.startsWith("\ufeff") ? inhalt.slice(1) : inhalt;
+  let t: Trennzeichen = { ...TRENNER };
+  if (text.startsWith("UNA")) {
+    if (text.length < 9) throw new Error("UNA-Segment unvollständig.");
+    t = { gruppe: text[3], element: text[4], dezimal: text[5], aufhebung: text[6], segmentende: text[8] };
+    text = text.slice(9);
+  }
+  if (!/^\s*UNB/.test(text.slice(0, 16))) throw new Error("Die Datei beginnt nicht mit UNA oder UNB.");
+  let segmente = 0;
+  let elemente = 1;
+  let gruppen = 1;
+  let laenge = 0;
+  let gesamt = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    laenge++;
+    if (laenge > g.maxSegmentLaenge) throw new Error(`Segment zu lang (mehr als ${g.maxSegmentLaenge} Zeichen).`);
+    if (c === t.aufhebung) {
+      i++;
+      laenge++;
+      continue;
+    }
+    if (c === t.segmentende) {
+      if (++segmente > g.maxSegmente) throw new Error(`Die Datei hat zu viele Segmente (mehr als ${g.maxSegmente}).`);
+      elemente = 1;
+      gruppen = 1;
+      laenge = 0;
+      continue;
+    }
+    if (c === t.element) {
+      if (++elemente > g.maxElemente) throw new Error(`Segment ${segmente + 1} hat zu viele Datenelemente (mehr als ${g.maxElemente}).`);
+      if (++gesamt > g.maxDatenelementeGesamt) throw new Error(`Die Datei hat zu viele Datenelemente (mehr als ${g.maxDatenelementeGesamt}).`);
+      gruppen = 1;
+      continue;
+    }
+    if (c === t.gruppe) {
+      if (++gruppen > g.maxGruppen) throw new Error(`Segment ${segmente + 1} hat zu viele Gruppendatenelemente (mehr als ${g.maxGruppen}).`);
+      if (++gesamt > g.maxDatenelementeGesamt) throw new Error(`Die Datei hat zu viele Datenelemente (mehr als ${g.maxDatenelementeGesamt}).`);
+    }
+  }
+}
+
 /**
  * Zerlegt eine EDIFACT-Datei in Segmente. Unterstützt ein optionales UNA-Festlegungssegment
  * (Kostenträgerdatei, Anhang 3 Kap. 7.1) und Zeilenumbrüche zwischen Segmenten.
  */
 export function zerlegeEdifact(inhalt: string): RohSegment[] {
   let t: Trennzeichen = { ...TRENNER };
-  let text = inhalt.replace(/^﻿/, "");
+  let text = inhalt.replace(/^\ufeff/, "");
   if (text.startsWith("UNA")) {
     // UNA + 6 Zeichen: Gruppe, Element, Dezimal, Aufhebung, reserviert, Segmentende
     t = { gruppe: text[3], element: text[4], dezimal: text[5], aufhebung: text[6], segmentende: text[8] };
     text = text.slice(9);
   }
+  // Felder als Ausschnitte (slice) statt Zeichen für Zeichen (`+=` erzeugte je Zeichen einen Knoten im Heap);
+  // nur bei Aufhebungszeichen werden Teile gesammelt und mit join zu einer flachen Zeichenkette verbunden
   const segmente: RohSegment[] = [];
   let element: string[] = [];
   let elemente: string[][] = [];
-  let feld = "";
+  let teile: string[] | null = null;
+  let start = 0;
   let nr = 0;
-  const abschliessenElement = () => {
-    element.push(feld);
-    elemente.push(element);
-    element = [];
-    feld = "";
+  const feld = (ende: number): string => {
+    const rest = text.slice(start, ende);
+    if (!teile) return rest;
+    teile.push(rest);
+    const f = teile.join("");
+    teile = null;
+    return f;
   };
+  const leer = (i: number) => teile === null && start === i;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (c === t.aufhebung) {
-      i++;
-      if (i < text.length) feld += text[i];
+      (teile ??= []).push(text.slice(start, i));
+      start = i + 1;
+      i++; // das aufgehobene Zeichen bleibt Teil des Feldes
       continue;
     }
     if (c === t.segmentende) {
-      abschliessenElement();
+      element.push(feld(i));
+      elemente.push(element);
+      element = [];
       const kennung = (elemente[0]?.[0] ?? "").trim();
       nr++;
-      segmente.push({ kennung, elemente: elemente.slice(1), nr });
+      elemente.shift();
+      segmente.push({ kennung, elemente, nr });
       elemente = [];
+      start = i + 1;
       continue;
     }
     if (c === t.element) {
-      abschliessenElement();
+      element.push(feld(i));
+      elemente.push(element);
+      element = [];
+      start = i + 1;
       continue;
     }
     if (c === t.gruppe) {
-      element.push(feld);
-      feld = "";
+      element.push(feld(i));
+      start = i + 1;
       continue;
     }
-    if ((c === "\r" || c === "\n") && feld === "" && element.length === 0 && elemente.length === 0) continue;
-    feld += c;
+    if ((c === "\r" || c === "\n") && leer(i) && element.length === 0 && elemente.length === 0) {
+      start = i + 1;
+      continue;
+    }
   }
-  if ((feld.trim() !== "" || elemente.length > 0) && text.trim() !== "") {
+  const restFeld = feld(text.length);
+  // auch „UNB:“ (offenes Gruppendatenelement ohne Segmentende) ist unvollständig (Review-Runde 4)
+  if ((restFeld.trim() !== "" || elemente.length > 0 || element.length > 0) && text.trim() !== "") {
     throw new Error("Die Datei endet nicht mit einem Segmentendezeichen.");
   }
   return segmente;

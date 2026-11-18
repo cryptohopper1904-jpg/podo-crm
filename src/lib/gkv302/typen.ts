@@ -83,8 +83,8 @@ export interface Verordnung {
   verordnungsdatum: IsoDatum;
   /** ZHE Diagnosegruppe (z. B. "DF", "NF", "QF"); fehlt sie: "9999" */
   diagnosegruppe?: string;
-  /** ZHE Kennzeichen Verordnungsart (Anlage 3 8.1.12) */
-  verordnungsart: Verordnungsart;
+  /** ZHE Kennzeichen Verordnungsart (Anlage 3 8.1.12); Muss-Feld – fehlt es, meldet die Prüfung einen Pflichtfeldfehler */
+  verordnungsart?: Verordnungsart;
   /** ZHE Kennzeichen Verordnungsbesonderheiten (Anlage 3 8.1.11) */
   verordnungsbesonderheit?: "1" | "2" | "4" | "7" | "9";
   /** ZHE Unfallkennzeichen (Anlage 3 8.1.2) */
