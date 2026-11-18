@@ -14,7 +14,7 @@ type Vo = {
   approvalDate: string | null;
   kindSuggestion: KindSuggestion;
   deductions: { id: string; amountCents: number; reasonCode: string | null; reason: string; deductedOn: string; status: string; note: string | null; letterRef: string | null; letterDate: string | null; outcome: string | null }[];
-  corrections: { id: string; reason: string; createdAt: Date; originalBilledAt: Date | null; resolution: string | null; resolvedAt: Date | null; resolutionNote: string | null }[];
+  corrections: { id: string; deductionId: string | null; reason: string; createdAt: Date; originalBilledAt: Date | null; resolution: string | null; resolvedAt: Date | null; resolutionNote: string | null }[];
 };
 
 /**
@@ -93,7 +93,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
             <CorrectionForm
               prescriptionId={vo.id}
               patientId={patientId}
-              deductions={vo.deductions.map((d) => ({ id: d.id, label: `${money(d.amountCents)} vom ${dateDe(d.deductedOn)}` }))}
+              deductions={vo.deductions.map((d) => ({ id: d.id, label: `${money(d.amountCents)} vom ${dateDe(d.deductedOn)}`, linked: vo.corrections.some((c) => c.deductionId === d.id) }))}
             />
           ) : null}
           <Link href="/verordnungen/absetzungen" className="text-xs font-semibold text-primary">Alle Absetzungen</Link>

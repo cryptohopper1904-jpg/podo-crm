@@ -22,7 +22,9 @@
 --    Commit, CONSTRAINT TRIGGER).
 -- 4. billing_batches_org_id: eindeutiger Index (organization_id, id) für den Lookup in podo_fk_same_org.
 -- 5. billing_batches: Abrechnungsläufe nie löschbar (Abrechnungsunterlage, Laufnummer in der Auswertung), created_at vom
---    Server und unveränderlich (Grundlage für „neuer Lauf“ in 3.). Endgültige Löschung der Praxis schaltet Trigger ab.
+--    Server; nach dem Anlegen unveränderlich bis auf die Übergabe (exported_at einmalig, Status draft → exported).
+--    „Abgerechnet“ (aus abrechnungsreif) nur in einen Lauf, der im selben Vorgang angelegt und nicht übergeben ist.
+--    Endgültige Löschung der Praxis schaltet Trigger ab.
 -- Verweise nur innerhalb der Praxis (podo_fk_same_org, podo_user_in_org), RLS + FORCE, alle Funktionen mit festem
 -- search_path. Idempotent: IF NOT EXISTS, Constraints nur wenn fehlend, CREATE OR REPLACE, DROP TRIGGER/POLICY IF EXISTS.
 CREATE TABLE IF NOT EXISTS "gkv_deductions" (
@@ -285,6 +287,12 @@ BEGIN
                                         OR NEW.resolved_batch_id IS NOT DISTINCT FROM OLD.original_batch_id) THEN
       RAISE EXCEPTION 'Neuabrechnung nur in einem neuen Abrechnungslauf, nicht im Lauf der Erstabrechnung.' USING ERRCODE = 'P0001';
     END IF;
+    -- … und nur mit einem Lauf, der in diesem Vorgang angelegt und noch nicht übergeben ist (AppSec Runde 3, N1)
+    IF NEW.resolution = 'rebilled' AND NOT EXISTS (
+         SELECT 1 FROM billing_batches b WHERE b.id = NEW.resolved_batch_id AND b.organization_id = NEW.organization_id
+            AND b.created_at = now() AND b.exported_at IS NULL) THEN
+      RAISE EXCEPTION 'Neuabrechnung nur in einem neuen Abrechnungslauf, der im selben Vorgang angelegt und noch nicht übergeben ist.' USING ERRCODE = 'P0001';
+    END IF;
     IF NEW.resolution = 'no_rebill' AND NEW.resolved_batch_id IS NOT NULL THEN
       RAISE EXCEPTION 'Ohne Neuabrechnung gibt es keinen neuen Lauf.' USING ERRCODE = 'P0001';
     END IF;
@@ -406,6 +414,10 @@ CREATE TRIGGER prescriptions_user_in_org BEFORE INSERT OR UPDATE OF created_by, 
 -- 4. Hat die Verordnung Korrekturvermerke, geht es aus anderen Status (abrechnungsreif) nur in einem NEUEN Lauf auf
 --    „abgerechnet“: Lauf vorhanden, nicht der Lauf einer Erstabrechnung (original_row) und nicht älter als der jüngste
 --    Vermerk (AppSec Runde 2, S1 – sonst „rebilled“ mit dem alten Lauf, dessen Summe die Änderung nicht enthält).
+-- 5. Jeder Wechsel aus einem anderen Status (abrechnungsreif) nach „abgerechnet“ nur in einen Lauf, der im selben Vorgang
+--    angelegt (created_at = now(), vom Server gesetzt) und noch nicht übergeben ist (exported_at IS NULL) – so wie
+--    createBillingBatch es tut (AppSec Runde 3, N1/N3: sonst stünde die Verordnung in einem fremden, schon übergebenen
+--    Lauf, dessen Summe sie nicht enthält). Übernahmen legen abgerechnete Verordnungen per INSERT an (nicht betroffen).
 -- Damit gibt es keine stille Änderung einer abgerechneten Verordnung: Der Stand der Erstabrechnung steht im
 -- Korrekturvermerk, jede Änderung im Korrekturstatus im Audit-Protokoll (Feldnamen), und zurück auf „abgerechnet“ im
 -- alten Lauf geht es nur unverändert – sonst Neuabrechnung.
@@ -441,6 +453,12 @@ BEGIN
                                                   WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id))) THEN
     RAISE EXCEPTION 'Nach einer Korrektur nur in einem neuen Abrechnungslauf abrechnen.' USING ERRCODE = 'check_violation';
   END IF;
+  IF NEW.status = 'billed' AND OLD.status NOT IN ('billed', 'correction_needed')
+     AND NOT EXISTS (SELECT 1 FROM billing_batches b
+                      WHERE b.id = NEW.billing_batch_id AND b.organization_id = NEW.organization_id
+                        AND b.created_at = now() AND b.exported_at IS NULL) THEN
+    RAISE EXCEPTION '„Abgerechnet“ nur über einen neuen Abrechnungslauf (im selben Vorgang angelegt, noch nicht übergeben).' USING ERRCODE = 'check_violation';
+  END IF;
   IF OLD.status = 'correction_needed' AND NEW.status = 'billed' THEN
     SELECT pc.resolution, pc.resolved_at, pc.original_row INTO c FROM prescription_corrections pc
      WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id
@@ -459,8 +477,10 @@ END $$;
 --> statement-breakpoint
 REVOKE ALL ON FUNCTION podo_prescription_billed_lock() FROM PUBLIC;
 --> statement-breakpoint
--- Abrechnungslauf (seit 0006): nie löschbar, Anlagezeitpunkt vom Server und unveränderlich. Endgültige Löschung der Praxis
--- (purge-organization) schaltet die Trigger ab.
+-- Abrechnungslauf (seit 0006): nie löschbar, Anlagezeitpunkt vom Server. Nach dem Anlegen unveränderlich bis auf die
+-- Übergabe (AppSec Runde 3, N2): exported_at nur einmal NULL → Zeitpunkt, Status nur gleich oder draft → exported. Summen,
+-- Anzahl, Partner und Notiz bleiben der Stand des Laufs. Endgültige Löschung der Praxis (purge-organization) schaltet die
+-- Trigger ab.
 CREATE OR REPLACE FUNCTION podo_billing_batch_guard() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
@@ -471,9 +491,14 @@ BEGIN
     NEW.created_at := now();
     RETURN NEW;
   END IF;
-  IF NEW.id IS DISTINCT FROM OLD.id OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
-     OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NEW.created_by IS DISTINCT FROM OLD.created_by THEN
-    RAISE EXCEPTION 'Bezug und Anlagezeitpunkt des Abrechnungslaufs sind unveränderlich.' USING ERRCODE = 'P0001';
+  IF (to_jsonb(NEW) - 'exported_at' - 'status') IS DISTINCT FROM (to_jsonb(OLD) - 'exported_at' - 'status') THEN
+    RAISE EXCEPTION 'Ein Abrechnungslauf ist unveränderlich (nur die Übergabe wird vermerkt).' USING ERRCODE = 'P0001';
+  END IF;
+  IF OLD.exported_at IS NOT NULL AND NEW.exported_at IS DISTINCT FROM OLD.exported_at THEN
+    RAISE EXCEPTION 'Der Übergabezeitpunkt eines übergebenen Abrechnungslaufs ist unveränderlich.' USING ERRCODE = 'P0001';
+  END IF;
+  IF NEW.status IS DISTINCT FROM OLD.status AND NOT (OLD.status = 'draft' AND NEW.status = 'exported' AND NEW.exported_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'Status des Abrechnungslaufs unveränderlich (nur „Entwurf“ → „übergeben“).' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
 END $$;

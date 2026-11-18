@@ -125,7 +125,9 @@ export function DeductionForm({ prescriptionId, patientId, today }: { prescripti
 }
 
 /** „Korrektur nötig“ (abgerechnet) – mit Begründung, optional Bezug auf eine Absetzung */
-export function CorrectionForm({ prescriptionId, patientId, deductions }: { prescriptionId: string; patientId: string; deductions: { id: string; label: string }[] }) {
+export function CorrectionForm({ prescriptionId, patientId, deductions }: { prescriptionId: string; patientId: string; deductions: { id: string; label: string; linked: boolean }[] }) {
+  // Absetzungen ohne Korrekturvermerk: verknüpfen, damit sie bei Neuabrechnung als „ersetzt“ gelten (nicht als Minderung)
+  const unlinked = deductions.filter((d) => !d.linked);
   const [state, action, pending] = useActionState<GkvActionState, FormData>(correctionAction, undefined);
   const [open, setOpen] = useState(false);
   if (!open) return <button type="button" className={btnCls} onClick={() => setOpen(true)}>Korrektur nötig …</button>;
@@ -136,7 +138,7 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
       <div className="flex flex-wrap items-center gap-2">
         <input name="reason" required minLength={5} maxLength={500} placeholder="Was muss korrigiert werden?" aria-label="Begründung der Korrektur" className={`${inputCls} min-w-64 flex-1`} />
         {deductions.length ? (
-          <select name="deductionId" defaultValue="" aria-label="zugehörige Absetzung" className={inputCls}>
+          <select name="deductionId" defaultValue={unlinked.length === 1 ? unlinked[0].id : ""} aria-label="zugehörige Absetzung" className={inputCls}>
             <option value="">ohne Bezug auf eine Absetzung</option>
             {deductions.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
           </select>
@@ -144,6 +146,11 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
         <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Korrektur nötig setzen"}</button>
         <button type="button" className="text-xs text-muted" onClick={() => setOpen(false)}>Abbrechen</button>
       </div>
+      {unlinked.length ? (
+        <p className="text-xs font-medium text-warn-soft-text">
+          {unlinked.length === 1 ? "Zu dieser Verordnung gibt es eine Absetzung ohne Korrekturbezug – sie ist vorausgewählt." : `Zu dieser Verordnung gibt es ${unlinked.length} Absetzungen ohne Korrekturbezug.`} Mit Bezug gilt die Absetzung bei einer Neuabrechnung als „durch Neuabrechnung ersetzt“ und nicht als Minderung.
+        </p>
+      ) : null}
       <p className="text-xs text-muted">Der Stand der Erstabrechnung (Lauf, Beträge, Preis-Snapshot) wird festgehalten. Danach korrigieren, „abrechnungsreif“ setzen und im nächsten Lauf erneut abrechnen.</p>
       <Result state={state} />
     </form>
