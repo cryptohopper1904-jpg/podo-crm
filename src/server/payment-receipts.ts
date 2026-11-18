@@ -8,8 +8,7 @@ import { describeError } from "@/integrations/test-connection";
 import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
-import { berlinDateIso, dateDe, money } from "@/lib/format";
-import { INVOICE_DOC_LABEL } from "@/lib/invoice-labels";
+import { berlinDateIso, money } from "@/lib/format";
 import { buildInvoiceSnapshot, readInvoiceSnapshot } from "@/lib/invoice-snapshot";
 import { invoiceRecipient, paidAtIssue } from "@/lib/invoice-view";
 import { isRegisterMethod, REGISTER_METHODS } from "@/lib/kasse/model";
@@ -17,6 +16,7 @@ import { nextNumber } from "@/lib/numbering";
 import {
   PAYMENT_RECEIPT_VERSION,
   PAYMENT_RECEIPTS_SINCE,
+  paymentReceiptEmail,
   paymentReceiptFilename,
   paymentReceiptTitle,
   readPaymentReceiptSnapshot,
@@ -38,6 +38,13 @@ import { loadLogos } from "./practice-logos";
  * archiviert (document_archive). Zahlungen beim Ausstellen stehen dagegen auf dem Beleg selbst (mit TSE-Angaben).
  */
 export class PaymentReceiptError extends Error {}
+
+/** Belegart des durch einen Storno stornierten Belegs (mandantengefiltert); sonst null */
+async function cancelledKind(tx: Tx, org: string, inv: { kind: string; cancelsInvoiceId: string | null }): Promise<string | null> {
+  if (inv.kind !== "credit_note" || !inv.cancelsInvoiceId) return null;
+  const [o] = await tx.select({ kind: invoices.kind }).from(invoices).where(and(eq(invoices.organizationId, org), eq(invoices.id, inv.cancelsInvoiceId)));
+  return o?.kind ?? null;
+}
 
 /**
  * Legt für die angegebenen (eben gebuchten) Zahlungen einer ausgestellten Rechnung die Zahlungsbelege an – IN der
@@ -98,6 +105,8 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
     const p = all.find((x) => x.id === id);
     return p ? allLaterSum(p) : 0;
   };
+  // Storno: Belegart des stornierten Belegs festschreiben („Storno Zuzahlungsquittung“ statt „Stornorechnung“)
+  const cancelsKind = await cancelledKind(tx, org, inv);
   const out: { id: string; number: string }[] = [];
   for (const p of register) {
     const issuedAt = new Date();
@@ -107,7 +116,7 @@ export async function recordPaymentReceipts(tx: Tx, org: string, invoiceId: stri
       v: PAYMENT_RECEIPT_VERSION,
       organization: receiptOrg,
       recipient,
-      invoice: { id: inv.id, number: inv.number, kind: inv.kind, issuedAt: inv.issuedAt, totalCents: inv.totalCents },
+      invoice: { id: inv.id, number: inv.number, kind: inv.kind, issuedAt: inv.issuedAt, totalCents: inv.totalCents, ...(cancelsKind ? { cancelsKind } : {}) },
       payment: { id: p.payment.id, paidAt: new Date(p.payment.paidAt).toISOString(), method: p.payment.method, amountCents: p.payment.amountCents, voucherCode: p.voucherCode ?? null },
       openAfterCents: inv.totalCents - (inv.paidCents - laterSum(p.payment.id)),
       fiscal: f
@@ -393,23 +402,14 @@ export async function sendPaymentReceiptEmail(auth: AuthContext, invoiceId: stri
     if (!inv) return null;
     const p = inv.patientId ? (await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, inv.patientId))))[0] : null;
     const b = inv.billingContactId ? (await tx.select().from(billingContacts).where(and(eq(billingContacts.organizationId, org), eq(billingContacts.id, inv.billingContactId))))[0] : null;
-    return { to: (b?.email || p?.email || "").trim(), patientId: inv.patientId };
+    return { to: (b?.email || p?.email || "").trim(), patientId: inv.patientId, cancelsKind: await cancelledKind(tx, org, inv) };
   });
   if (!contact) throw new PaymentReceiptError("Rechnung nicht gefunden.");
   const to = contact.to;
   if (!to) throw new PaymentReceiptError("Keine E-Mail-Adresse beim Rechnungsempfänger bzw. in der Patientenakte hinterlegt.");
   if (!EMAIL_RE.test(to)) throw new PaymentReceiptError("Die hinterlegte E-Mail-Adresse ist ungültig.");
-  const d = pdf.data;
-  const doc = INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung";
-  const subject = `Zahlungsbeleg ${pdf.receipt.number} zu ${doc} ${d.invoice.number} – ${d.organization.name}`;
-  const body = [
-    "Guten Tag,",
-    "",
-    `anbei erhalten Sie den Beleg ${pdf.receipt.number} über Ihre ${d.payment.amountCents < 0 ? "Erstattung" : "Zahlung"} von ${money(Math.abs(d.payment.amountCents))} zu ${doc} ${d.invoice.number} vom ${dateDe(d.invoice.issuedAt)} als PDF.`,
-    "",
-    "Mit freundlichen Grüßen",
-    d.organization.legalName ?? d.organization.name,
-  ].join("\n");
+  // ältere Zahlungsbelege ohne festgeschriebene Originalart: aus dem Storno nachgeladen
+  const { subject, body } = paymentReceiptEmail(pdf.data, pdf.receipt.number, contact.cancelsKind);
   let externalId: string;
   let mock = false;
   try {

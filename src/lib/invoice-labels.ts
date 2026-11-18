@@ -27,6 +27,15 @@ export function invoiceDocLabel(kind: string, cancelsKind?: string | null): stri
   return INVOICE_DOC_LABEL[kind] ?? "Rechnung";
 }
 
+/**
+ * Bemerkung zum Beleg in der Buchhaltung (lexoffice): bisheriger Wortlaut, nur das Storno einer Zuzahlungsquittung heißt
+ * „Storno Zuzahlungsquittung …“ statt „Stornorechnung …“. `cancelsKind` = Belegart des stornierten Belegs.
+ */
+export function accountingRemark(kind: string, number: string, cancelsKind?: string | null, withReceipts = false): string {
+  const label = kind === "credit_note" ? invoiceDocLabel(kind, cancelsKind) : kind === "copayment" ? "Zuzahlungsquittung" : "Rechnung";
+  return `${label} ${number}${withReceipts ? " (abzgl. angerechneter Quittungen)" : ""}`;
+}
+
 /** Hinweis bei Quittungen: sie können später in die Sammelrechnung übernommen werden. */
 export const RECEIPT_COLLECTIVE_HINT = "Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.";
 /** Wofür eine Anzahlung (Vorauszahlung) gedacht ist. */

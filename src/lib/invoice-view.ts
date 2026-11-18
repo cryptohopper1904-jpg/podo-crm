@@ -4,7 +4,7 @@
  * Keine Server-Importe.
  */
 import { fullName } from "./format";
-import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL, vatExemptNote } from "./invoice-labels";
+import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL, invoiceDocLabel, vatExemptNote } from "./invoice-labels";
 import { COPAYMENT_LEGAL_NOTE } from "./rules/copayment";
 import { statusFromPayments } from "./invoice-math";
 
@@ -38,8 +38,9 @@ export function invoiceRecipient(patient: Person | null, billing: Contact | null
 
 export const senderLine = (o: Org) => [o.legalName ?? o.name, o.street, [o.zip, o.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
 
-export function invoiceTitle(inv: { kind: string; number: string | null }) {
-  return inv.kind === "credit_note" ? `Stornorechnung ${inv.number}` : `${INVOICE_DOC_LABEL[inv.kind]} ${inv.number}`;
+/** Belegtitel (PDF-Metadaten); `cancelsKind` = Belegart des stornierten Belegs (Storno Zuzahlungsquittung) */
+export function invoiceTitle(inv: { kind: string; number: string | null }, cancelsKind?: string | null) {
+  return inv.kind === "credit_note" ? `${invoiceDocLabel(inv.kind, cancelsKind)} ${inv.number}` : `${INVOICE_DOC_LABEL[inv.kind]} ${inv.number}`;
 }
 
 /** Hinweiszeilen, die auf den Beleg gedruckt werden (interne Zeilen mit Präfix werden ausgelassen). */
