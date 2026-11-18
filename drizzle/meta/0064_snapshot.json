@@ -4161,6 +4161,7 @@
             }
           ],
           "isUnique": false,
+          "where": "\"invoices\".\"prescription_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}

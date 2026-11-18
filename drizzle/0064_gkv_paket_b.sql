@@ -78,7 +78,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS "treatment_signatures_record" ON "treatment_si
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "treatment_signatures_org_prescription" ON "treatment_signatures" USING btree ("organization_id","prescription_id");
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "invoices_org_prescription" ON "invoices" USING btree ("organization_id","prescription_id");
+-- teilweise (nur Zuzahlungsquittungen): ein voller Index (organization_id, prescription_id) würde vom Planer für die
+-- Lookups (organization_id, id) der Fremdschlüssel-Trigger gewählt statt invoices_org_id (Excel-Import)
+DROP INDEX IF EXISTS "invoices_org_prescription";
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "invoices_org_prescription" ON "invoices" USING btree ("organization_id","prescription_id") WHERE "invoices"."prescription_id" is not null;
 --> statement-breakpoint
 ALTER TABLE "treatment_signatures" ENABLE ROW LEVEL SECURITY;
 --> statement-breakpoint

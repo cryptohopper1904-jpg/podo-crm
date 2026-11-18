@@ -1092,7 +1092,9 @@ export const invoices = pgTable(
     index("invoices_org_collective").on(t.organizationId, t.collectiveInvoiceId),
     /** Auswertung nach Rechnungsdatum */
     index("invoices_org_issued").on(t.organizationId, t.issuedAt),
-    index("invoices_org_prescription").on(t.organizationId, t.prescriptionId),
+    // nur Zuzahlungsquittungen (teilweise Index): sonst wählt der Planer ihn für die (organization_id, id)-Lookups der
+    // Fremdschlüssel-Trigger statt invoices_org_id (Excel-Import, fk-praxis-Test)
+    index("invoices_org_prescription").on(t.organizationId, t.prescriptionId).where(sql`${t.prescriptionId} is not null`),
   ],
 );
 
