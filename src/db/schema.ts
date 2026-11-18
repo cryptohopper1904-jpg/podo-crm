@@ -682,7 +682,11 @@ export const prescriptions = pgTable("prescriptions", {
   approvalDate: date("approval_date"),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
-}, (t) => [uniqueIndex("prescriptions_org_id").on(t.organizationId, t.id)]);
+}, (t) => [
+  uniqueIndex("prescriptions_org_id").on(t.organizationId, t.id),
+  // Summenprüfung des Abrechnungslaufs beim Commit und Export eines Laufs (Migration 0067)
+  index("prescriptions_billing_batch_id").on(t.billingBatchId).where(sql`${t.billingBatchId} is not null`),
+]);
 
 /**
  * Therapiebericht je Verordnung (Position 78530, auf Anforderung der Ärztin/des Arztes; GKV Paket B Teil 2). Zählt mit

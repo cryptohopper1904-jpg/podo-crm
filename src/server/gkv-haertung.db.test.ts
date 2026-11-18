@@ -93,19 +93,82 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       expect(await w.q("select id from prescriptions where status = 'billed'")).toEqual([]);
     });
 
-    it("Lauf ohne Verordnungen abgelehnt (auch mit Anzahl 0); Verordnung, die den Lauf im selben Vorgang verlässt, zählt nicht", async () => {
+    it("Lauf ohne Verordnungen abgelehnt (auch mit Anzahl 0); Korrektur im selben Vorgang zählt mit, Rückkehr nach „abrechnungsreif“ nicht", async () => {
       const w = await world();
       await expect(run(w, { count: 0, total: 0, copay: 0, remedy: 0 }, [])).rejects.toThrow(/passt nicht/);
       await expect(run(w, { count: 1, total: 0, copay: 0, remedy: 0 }, [])).rejects.toThrow(/passt nicht/);
-      // nur Verordnungen im Status „abgerechnet“ zählen: Korrektur im selben Vorgang → Lauf passt nicht mehr
-      await expect(
+      // „Korrektur nötig“ gehört weiter zum Lauf (Stand der Erstabrechnung, Export führt sie) → zählt mit; zurück nach
+      // „abrechnungsreif“ (Lauf bleibt an der Verordnung) im selben Vorgang → Lauf passt nicht mehr
+      const corrected = (back: boolean) =>
         fx.asOrg(w.org, async (c) => {
           const b = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [w.org])).rows[0].id as string;
           const id = (await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION])).rows[0].id as string;
           await c.query("insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, created_by) values ($1,$2,$3,'ICD falsch',$4)", [w.org, id, w.patient, w.user]);
           await c.query("update prescriptions set status = 'correction_needed' where id = $1", [id]);
+          if (back) await c.query("update prescriptions set status = 'billing_ready' where id = $1", [id]);
+          return b;
+        });
+      expect(await corrected(false)).toBeTruthy();
+      await expect(corrected(true)).rejects.toThrow(/passt nicht/);
+    });
+
+    /** abrechnungsreife Verordnung (außerhalb eines Laufs) */
+    const ready = async (w: Awaited<ReturnType<typeof world>>) =>
+      (
+        await w.q<{ id: string }>(
+          `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, remedy_cost_cents, copayment_cents, price_snapshot, prescription_kind, prescription_kind_confirmed_at, rules_version)
+           values ($1,$2,$3,'DF',1,'billing_ready',7110,1712,'{"complete": true, "lines": [], "notes": []}','03',now(),$4) returning id`,
+          [w.org, w.patient, addDaysIso(today, -20), RULES_VERSION],
+        )
+      )[0].id;
+
+    it.each([
+      ["UPDATE abrechnungsreif → abgerechnet", "update", "billing_batches_sum_check"],
+      ["INSERT status abgerechnet", "insert", "billing_batches_sum_check"],
+      ["UPDATE, SET CONSTRAINTS ALL", "update", "all"],
+      ["INSERT, SET CONSTRAINTS ALL", "insert", "all"],
+    ])("K1: Prüfung per SET CONSTRAINTS … IMMEDIATE vorgezogen, danach weitere Verordnung in den Lauf (%s) → abgelehnt", async (_, variant, constraint) => {
+      const w = await world();
+      const extra = variant === "update" ? [await ready(w), await ready(w)] : [];
+      await expect(
+        fx.asOrg(w.org, async (c) => {
+          const b = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [w.org])).rows[0].id as string;
+          await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION]);
+          await c.query(`set constraints ${constraint} immediate`);
+          if (variant === "update") {
+            for (const id of extra) await c.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, b]);
+          } else {
+            for (let i = 0; i < 2; i++) await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION]);
+          }
         }),
       ).rejects.toThrow(/passt nicht/);
+      expect(await w.q("select id from billing_batches")).toEqual([]);
+      expect(await w.q("select id from prescriptions where billing_batch_id is not null")).toEqual([]);
+    });
+
+    it("K1: Verordnung mit Lauf, aber anderem Status (INSERT abrechnungsreif) im Anlagevorgang → abgelehnt", async () => {
+      const w = await world();
+      await expect(
+        fx.asOrg(w.org, async (c) => {
+          const b = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [w.org])).rows[0].id as string;
+          await c.query(VO_BILLED, [w.org, w.patient, addDaysIso(today, -20), b, 7110, 1712, RULES_VERSION]);
+          await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billing_batch_id) values ($1,$2,$3,'DF',1,'billing_ready',$4)", [w.org, w.patient, today, b]);
+        }),
+      ).rejects.toThrow(/passt nicht/);
+    });
+
+    it("K1: Korrekturweg nach dem Anlegen bleibt möglich (abgerechnet → Korrektur nötig → abrechnungsreif → neuer Lauf)", async () => {
+      const w = await world();
+      const id = await ready(w);
+      const first = await presc.createBillingBatch(w.auth, [id], { partner: "manual" });
+      if ("error" in first) throw new Error(first.error);
+      await w.q("insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, created_by) values ($1,$2,$3,'ICD falsch',$4)", [w.org, id, w.patient, w.user]);
+      await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
+      await w.q("update prescriptions set status = 'billing_ready', copayment_cents = 1000 where id = $1", [id]);
+      // Anlagezeitpunkt des neuen Laufs muss nach dem Vermerk liegen (0066) – eigener Vorgang, also jünger
+      const second = await presc.createBillingBatch(w.auth, [id], { partner: "manual" });
+      expect(second).toMatchObject({ count: 1 });
+      expect(await w.q("select copayment_total_cents from billing_batches order by created_at")).toEqual([{ copayment_total_cents: 1712 }, { copayment_total_cents: 1000 }]);
     });
 
     it("Altlauf (vor 0067, ohne Prüfung angelegt) bleibt unberührt: Übergabe weiter möglich", async (ctx) => {
@@ -191,6 +254,119 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
         await owner.end();
       }
     });
+  });
+
+  const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
+  /** abgerechnete Verordnung (billed_at) und Einwilligung an der Person – beides nur mit der Person löschbar */
+  const protectedRows = async (w: Awaited<ReturnType<typeof world>>) => {
+    await w.q("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at) values ($1,$2,$3,'DF',1,'cancelled',now())", [w.org, w.patient, today]);
+    await w.q("insert into consents (organization_id, patient_id, type, granted) values ($1, $2, 'privacy_notice', true)", [w.org, w.patient]);
+  };
+  const counts = async (w: Awaited<ReturnType<typeof world>>) =>
+    (await w.q<{ p: number; v: number; c: number }>(
+      "select (select count(*)::int from patients where id = $1) as p, (select count(*)::int from prescriptions where patient_id = $1) as v, (select count(*)::int from consents where patient_id = $1) as c",
+      [w.patient],
+    ))[0];
+
+  describe("K2: Löschfreigabe nur über podo_delete_patient", () => {
+    it("App-Rolle mit selbst gesetztem podo.patient_delete löscht weder Person noch abgerechnete Verordnung/Einwilligung", async () => {
+      const w = await world();
+      await protectedRows(w);
+      await expect(
+        fx.asOrg(w.org, async (c) => {
+          await c.query("select set_config('podo.patient_delete', $1, true)", [w.patient]);
+          await c.query("delete from patients where id = $1", [w.patient]);
+        }),
+      ).rejects.toThrow(/permission denied|Berechtigung|nicht gelöscht/);
+      expect(await counts(w)).toEqual({ p: 1, v: 1, c: 1 });
+    });
+
+    it("App-Rolle mit gesetztem GUC: Kaskade über eine (nicht abgerechnete) Verordnung auf „Folgeverordnung angefordert“ abgewiesen", async () => {
+      const w = await world();
+      const vo = (await w.q<{ id: string }>("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id", [w.org, w.patient, today]))[0].id;
+      await w.q("insert into follow_up_requests (organization_id, prescription_id, patient_id, requested_on, created_by) values ($1,$2,$3,$4,$5)", [w.org, vo, w.patient, today, w.user]);
+      await expect(
+        fx.asOrg(w.org, async (c) => {
+          await c.query("select set_config('podo.patient_delete', $1, true)", [w.patient]);
+          await c.query("delete from prescriptions where id = $1", [vo]);
+        }),
+      ).rejects.toThrow(/unveränderbar/);
+      expect(await w.q("select count(*)::int as n from follow_up_requests where prescription_id = $1", [vo])).toEqual([{ n: 1 }]);
+    });
+
+    it("Eigentümer mit gesetztem GUC, aber ohne Freigabe aus podo_delete_patient: Kaskade auf geschützte Zeilen abgewiesen", async () => {
+      const w = await world();
+      await protectedRows(w);
+      const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+      try {
+        const c = await owner.connect();
+        try {
+          await c.query("begin");
+          await c.query("select set_config('app.org_id', $1, true)", [w.org]);
+          await c.query("select set_config('podo.patient_delete', $1, true)", [w.patient]);
+          await expect(c.query("delete from patients where id = $1", [w.patient])).rejects.toThrow(/nicht gelöscht|unveränderbar/);
+          await c.query("rollback");
+        } finally {
+          c.release();
+        }
+      } finally {
+        await owner.end();
+      }
+      expect(await counts(w)).toEqual({ p: 1, v: 1, c: 1 });
+    });
+
+    it("podo_delete_patient löscht weiter (Einwilligung, offene Verordnung), Freigabe danach weg; Freigabetabelle für die App unzugänglich", async () => {
+      const w = await world();
+      await w.q("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1)", [w.org, w.patient, today]);
+      await w.q("insert into consents (organization_id, patient_id, type, granted) values ($1, $2, 'privacy_notice', true)", [w.org, w.patient]);
+      expect(await w.q("select podo_delete_patient($1::uuid) as ok", [w.patient])).toEqual([{ ok: true }]);
+      expect(await counts(w)).toEqual({ p: 0, v: 0, c: 0 });
+      await expect(w.q("select * from podo_private.delete_grants")).rejects.toThrow(/permission denied|Berechtigung/);
+      await expect(w.q("insert into podo_private.delete_grants values (txid_current(), $1)", [w.patient])).rejects.toThrow(/permission denied|Berechtigung/);
+      const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+      try {
+        expect((await owner.query("select count(*)::int as n from podo_private.delete_grants")).rows).toEqual([{ n: 0 }]);
+        const fn = await owner.query("select prosecdef, proconfig from pg_proc where proname = 'podo_delete_patient'");
+        expect(fn.rows).toEqual([{ prosecdef: true, proconfig: ["search_path=pg_catalog, public, pg_temp"] }]);
+      } finally {
+        await owner.end();
+      }
+    });
+  });
+
+  it("3: podo_delete_patient wartet auf eine gleichzeitige Abrechnung und verweigert dann", async () => {
+    const w = await world();
+    const id = (
+      await w.q<{ id: string }>(
+        `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, remedy_cost_cents, copayment_cents, prescription_kind, prescription_kind_confirmed_at)
+         values ($1,$2,$3,'DF',1,'billing_ready',7110,1712,'03',now()) returning id`,
+        [w.org, w.patient, today],
+      )
+    )[0].id;
+    const bill = await fx.pool.connect();
+    try {
+      await bill.query("begin");
+      await bill.query("select set_config('app.org_id', $1, true)", [w.org]);
+      const b = (await bill.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [w.org])).rows[0].id;
+      await bill.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, b]);
+      const del = w.q("select podo_delete_patient($1::uuid) as ok", [w.patient]).then(
+        (r) => ({ ok: r, error: null as string | null }),
+        (e: Error) => ({ ok: null, error: e.message }),
+      );
+      await new Promise((r) => setTimeout(r, 500));
+      await bill.query("commit");
+      expect((await del).error).toMatch(/Aufbewahrungspflichtige Daten/);
+    } finally {
+      bill.release();
+    }
+    expect(await w.q("select status from prescriptions where id = $1", [id])).toEqual([{ status: "billed" }]);
+  });
+
+  it("4: App-Rolle darf keine Praxis löschen (organizations ohne RLS)", async () => {
+    const w = await world();
+    const other = await fx.org();
+    await expect(fx.asOrg(w.org, (c) => c.query("delete from organizations where id = $1", [other]))).rejects.toThrow(/permission denied|Berechtigung/);
+    expect((await fx.pool.query("select count(*)::int as n from organizations where id = $1", [other])).rows).toEqual([{ n: 1 }]);
   });
 
   describe("3. Export", () => {

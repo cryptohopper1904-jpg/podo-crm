@@ -159,16 +159,21 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     const ran = await runMigration("_gkv_haertung.sql", {
       after: async (c) => {
         const fns = await c.query(
-          "select proname, proconfig, has_function_privilege('public', oid, 'execute') as pub from pg_proc where proname in ('podo_billing_batch_sum_check', 'podo_prescription_delete_guard', 'podo_delete_patient') order by proname",
+          "select proname, proconfig, has_function_privilege('public', oid, 'execute') as pub from pg_proc where proname in ('podo_billing_batch_sum_check', 'podo_prescription_delete_guard', 'podo_delete_patient', 'podo_owner_delete_allowed') order by proname",
         );
         expect(fns.rows).toEqual(
-          ["podo_billing_batch_sum_check", "podo_delete_patient", "podo_prescription_delete_guard"].map((proname) => ({ proname, proconfig: ["search_path=pg_catalog, public, pg_temp"], pub: false })),
+          ["podo_billing_batch_sum_check", "podo_delete_patient", "podo_owner_delete_allowed", "podo_prescription_delete_guard"].map((proname) => ({ proname, proconfig: ["search_path=pg_catalog, public, pg_temp"], pub: false })),
         );
-        const trg = await c.query("select tgname, tgdeferrable, tginitdeferred from pg_trigger where tgname in ('billing_batches_sum_check', 'prescriptions_delete_guard') order by tgname");
+        const trg = await c.query("select tgname, tgdeferrable, tginitdeferred from pg_trigger where tgname in ('billing_batches_sum_check', 'prescriptions_batch_sum_check_insert', 'prescriptions_batch_sum_check_update', 'prescriptions_delete_guard') order by tgname");
         expect(trg.rows).toEqual([
           { tgname: "billing_batches_sum_check", tgdeferrable: true, tginitdeferred: true },
+          { tgname: "prescriptions_batch_sum_check_insert", tgdeferrable: true, tginitdeferred: true },
+          { tgname: "prescriptions_batch_sum_check_update", tgdeferrable: true, tginitdeferred: true },
           { tgname: "prescriptions_delete_guard", tgdeferrable: false, tginitdeferred: false },
         ]);
+        // Löschfreigabe: Schema ohne PUBLIC-Rechte
+        const priv = await c.query("select has_schema_privilege('public', 'podo_private', 'usage') as usage");
+        expect(priv.rows).toEqual([{ usage: false }]);
       },
     });
     if (!ran) ctx.skip();

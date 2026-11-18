@@ -7588,6 +7588,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "prescriptions_billing_batch_id": {
+          "name": "prescriptions_billing_batch_id",
+          "columns": [
+            {
+              "expression": "billing_batch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"prescriptions\".\"billing_batch_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
