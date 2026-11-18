@@ -79,8 +79,9 @@ export function FootMap({ value, onChange, readOnly = false }: { value: FootPoin
   return (
     <div>
       <div className="flex flex-wrap justify-center gap-8">
-        <Foot side="right" selected={selected} onToggle={readOnly ? undefined : toggle} />
+        {/* Links links, rechts rechts (Aufsicht von oben, Großzehen innen) */}
         <Foot side="left" selected={selected} onToggle={readOnly ? undefined : toggle} />
+        <Foot side="right" selected={selected} onToggle={readOnly ? undefined : toggle} />
       </div>
       {readOnly ? null : value.length ? (
         <FootPointList value={value} onChange={onChange} />

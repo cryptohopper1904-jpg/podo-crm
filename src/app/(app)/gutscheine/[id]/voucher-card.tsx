@@ -75,7 +75,8 @@ function OrgLogo({ org, h, w, box }: { org: VoucherOrg; h: number; w: number; bo
   );
 }
 
-const placeLine = (o: VoucherOrg) => [[o?.zip, o?.city].filter(Boolean).join(" "), o?.phone].filter(Boolean).join(" · ");
+/** Straße, PLZ Ort und Telefon in einer Zeile – auf jedem Motiv die vollständige Anschrift */
+const placeLine = (o: VoucherOrg) => [o?.street, [o?.zip, o?.city].filter(Boolean).join(" "), o?.phone].filter(Boolean).join(" · ");
 const singleNote = (v: VoucherCardData) => (v.single ? " Einlösbar laut Vermerk." : "");
 
 export function VoucherCard({ motif, v, org }: { motif: VoucherMotif; v: VoucherCardData; org: VoucherOrg }) {
