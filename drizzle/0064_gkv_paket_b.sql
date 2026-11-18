@@ -197,6 +197,11 @@ CREATE OR REPLACE FUNCTION podo_invoice_prescription_patient() RETURNS trigger L
   SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE vo_patient uuid;
 BEGIN
+  -- zusätzlich zu podo_invoice_guard (eigener Trigger, damit die Sperre auch bei erneutem Einspielen älterer Fassungen
+  -- von podo_invoice_guard bestehen bleibt): ausgestellter Beleg → Verordnung unveränderlich
+  IF TG_OP = 'UPDATE' AND (OLD.status <> 'draft' OR OLD.number IS NOT NULL) AND NEW.prescription_id IS DISTINCT FROM OLD.prescription_id THEN
+    RAISE EXCEPTION 'Ausgestellte Rechnungen sind unveränderbar (Storno/Gutschrift verwenden).' USING ERRCODE = 'P0001';
+  END IF;
   IF NEW.prescription_id IS NULL THEN
     RETURN NEW;
   END IF;
