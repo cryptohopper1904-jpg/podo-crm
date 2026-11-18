@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import { downloadAllowed } from "@/lib/auth/access";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, fullName } from "@/lib/format";
+import { requireFeature } from "@/server/features";
 import { getTherapyReport, reportOrdered } from "@/server/therapy-reports";
 import { TherapyReportForm } from "./report-form";
 
@@ -15,6 +16,7 @@ export default async function TherapyReportPage(props: PageProps<"/kunden/[id]/v
   const { id, voId } = await props.params;
   const sp = await props.searchParams;
   const auth = await requireAuth("medical.read");
+  requireFeature(auth, "verordnungen");
   if (!/^[0-9a-f-]{36}$/.test(voId)) notFound();
   const data = await getTherapyReport(auth, voId, id);
   if (!data) notFound();

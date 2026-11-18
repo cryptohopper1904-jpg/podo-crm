@@ -114,9 +114,10 @@ export async function saveTherapyReport(auth: AuthContext, raw: TherapyReportInp
   }
 }
 
-/** Bericht + Verordnung + Person zum Ansehen (medical.read) */
+/** Bericht + Verordnung + Person zum Ansehen (medical.read; nicht bei „nur Privat“, Review R3-10) */
 export async function getTherapyReport(auth: AuthContext, prescriptionId: string, patientId: string) {
   assertCan(auth, "medical.read");
+  if (gkvGuard(auth.organization, "verordnungen")) return null;
   const org = auth.organization.id;
   return withOrg(org, async (tx) => {
     const row = await loadPrescriptionWithPatient(tx, org, prescriptionId, patientId);

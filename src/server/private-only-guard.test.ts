@@ -16,6 +16,7 @@ import * as ocr from "./ocr";
 import * as prescriptions from "./prescriptions";
 import * as records from "./records";
 import * as signatures from "./signatures";
+import * as therapyReports from "./therapy-reports";
 
 const owner = {
   sessionId: "s",
@@ -45,5 +46,8 @@ describe("private_only: Verordnungs-Aktionen gesperrt", () => {
   });
   it("Unterschrift-Bild (/api/signaturen/[id]) – ohne DB-Zugriff nicht gefunden (Review R3-10)", async () => {
     expect(await signatures.signatureImage(owner, id)).toBeNull();
+  });
+  it("Therapiebericht ansehen – ohne DB-Zugriff nicht gefunden (Review R3-10)", async () => {
+    expect(await therapyReports.getTherapyReport(owner, id, id)).toBeNull();
   });
 });

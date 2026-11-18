@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS "follow_up_requests" (
 --> statement-breakpoint
 ALTER TABLE "patients" ADD COLUMN IF NOT EXISTS "follow_up_expected" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
+-- Hinweis zu ON DELETE cascade (Praxis, Verordnung, Person): Die Kaskade ist nur formal – die Trigger unten verbieten
+-- das Löschen faktisch. therapy_reports_guard lehnt jedes DELETE ab (Aufbewahrungspflicht), follow_up_requests_guard
+-- jedes außer beim Löschen der Person durch podo_delete_patient (podo_owner_delete_allowed). Ein DELETE auf Verordnung,
+-- Person oder Praxis mit Bericht scheitert also am Trigger; entfernt werden die Zeilen nur im Löschlauf der ganzen
+-- Praxis (als Eigentümer, Trigger abgeschaltet).
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'therapy_reports_organization_id_organizations_id_fk') THEN
     ALTER TABLE "therapy_reports" ADD CONSTRAINT "therapy_reports_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;
