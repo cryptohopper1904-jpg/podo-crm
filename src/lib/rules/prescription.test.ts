@@ -324,11 +324,12 @@ describe("Review-Runde 1 PR #111", () => {
     expect(planningWarnings({ ...base, reopenedOn: "2026-11-17", started: true, newDates: ["2027-03-01"] }).join(" ")).toMatch(/Wiederaufnahme/);
   });
   it("Zuzahlung je Zeile: null bei Position ohne Zuzahlung laut Anlage 2 (78530), 0 bei unter 18/befreit", () => {
-    const snap = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 1 }, { position: "78610", label: "Spange", units: 1 }], treatmentDates: ["2026-11-02"], birthDate: "1950-01-01", exemptions: [], computedOn: "2026-11-03" });
-    expect(snap.lines.map((l) => [l.position, l.copayCents])).toEqual([["78530", null], ["78610", 572]]);
+    // Paket B: 78530 mit dem Berichtsdatum (am selben Tag nach den Behandlungspositionen)
+    const snap = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 1 }, { position: "78610", label: "Spange", units: 1 }], treatmentDates: ["2026-11-02"], birthDate: "1950-01-01", exemptions: [], computedOn: "2026-11-03", therapyReportDate: "2026-11-02" });
+    expect(snap.lines.map((l) => [l.position, l.copayCents])).toEqual([["78610", 572], ["78530", null]]);
     expect(snap.copaymentPercentCents).toBe(572);
-    const minor = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 1 }, { position: "78610", label: "Spange", units: 1 }], treatmentDates: ["2026-11-02"], birthDate: "2015-01-01", exemptions: [], computedOn: "2026-11-03" });
-    expect(minor.lines.map((l) => l.copayCents)).toEqual([null, 0]);
+    const minor = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 1 }, { position: "78610", label: "Spange", units: 1 }], treatmentDates: ["2026-11-02"], birthDate: "2015-01-01", exemptions: [], computedOn: "2026-11-03", therapyReportDate: "2026-11-02" });
+    expect(minor.lines.map((l) => l.copayCents)).toEqual([0, null]);
     expect(minor.copaymentCents).toBe(0);
   });
 });

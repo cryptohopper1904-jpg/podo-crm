@@ -11,6 +11,8 @@ import { extractPrescriptionFromMedia } from "@/server/ocr";
 import { changePrescriptionStatus, prescriptionInput, savePrescription, setCopaymentPaid } from "@/server/prescriptions";
 import { createCopaymentReceipt, refundCopaymentReceipt, type CopaymentReceiptInput, type CopaymentRefundInput } from "@/server/copayments";
 import { addSignature, signatureFields } from "@/server/signatures";
+import { saveTherapyReport, therapyReportInput } from "@/server/therapy-reports";
+import { markFollowUpRequested, setFollowUpExpected } from "@/server/follow-ups";
 import { addCopaymentExemption, exemptionInput, removeCopaymentExemption } from "@/server/copayment-exemptions";
 
 export type PrescriptionFormState = { error?: string } | undefined;
@@ -152,3 +154,39 @@ export async function removeExemptionAction(form: FormData) {
   await removeCopaymentExemption(auth, parsed.data);
   revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
 }
+
+export type ReportState = { error?: string } | undefined;
+
+/** Therapiebericht anlegen/ändern (Position 78530) */
+export async function saveTherapyReportAction(_: ReportState, form: FormData): Promise<ReportState> {
+  const auth = await requireAuth("medical.write");
+  const parsed = therapyReportInput.safeParse(Object.fromEntries(form));
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
+  const res = await saveTherapyReport(auth, parsed.data);
+  if ("error" in res) return { error: res.error };
+  revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
+  redirect(`/kunden/${parsed.data.patientId}/verordnungen/${parsed.data.prescriptionId}/therapiebericht?gespeichert=1`);
+}
+
+export type FollowUpActionState = { error?: string; ok?: string } | undefined;
+
+/** Vermerk „Folgeverordnung angefordert am heute“ */
+export async function followUpRequestedAction(_: FollowUpActionState, form: FormData): Promise<FollowUpActionState> {
+  const auth = await requireAuth("medical.write");
+  const res = await markFollowUpRequested(auth, { prescriptionId: String(form.get("prescriptionId") ?? ""), patientId: String(form.get("patientId") ?? ""), note: form.get("note") ? String(form.get("note")) : null });
+  if ("error" in res) return { error: res.error };
+  revalidatePath(`/kunden/${String(form.get("patientId"))}/verordnungen`);
+  revalidatePath("/heute");
+  return { ok: "Als angefordert vermerkt." };
+}
+
+/** Dauerpatient:in (Folgeverordnung erwarten) an/aus */
+export async function followUpExpectedAction(form: FormData) {
+  const auth = await requireAuth("medical.write");
+  const patientId = String(form.get("patientId") ?? "");
+  const res = await setFollowUpExpected(auth, { patientId, on: form.get("on") === "1" });
+  if ("error" in res) return;
+  revalidatePath(`/kunden/${patientId}/verordnungen`);
+  revalidatePath("/heute");
+}
+

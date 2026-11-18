@@ -59,3 +59,26 @@ describe("Tageshöchstmenge: Hinweis bei mehr Einträgen als erlaubt", () => {
     expect(snap.notes.join(" ")).not.toMatch(/Behandlungseinträge am/);
   });
 });
+
+describe("Paket B: Therapiebericht 78530 im Preis-Snapshot", () => {
+  const base = { birthDate: "1950-01-01", exemptions: [], computedOn: "2026-11-20" };
+  it("eine Einheit mit dem Berichtsdatum, nicht je Behandlungstag; (Tag, Position) eindeutig; ohne Zuzahlung", () => {
+    const snap = priceSnapshot({ ...base, positions: [{ position: "78610", label: "Spange", units: 2 }, { position: "78530", label: "Bericht", units: 1 }], treatmentDates: ["2026-11-02", "2026-11-09"], therapyReportDate: "2026-11-15" });
+    expect(snap.lines.map((l) => [l.date, l.position, l.units])).toEqual([
+      ["2026-11-02", "78610", 1],
+      ["2026-11-09", "78610", 1],
+      ["2026-11-15", "78530", 1],
+    ]);
+    expect(snap.lines.at(-1)!.copayCents).toBeNull();
+    expect(snap.complete).toBe(true);
+    const keys = snap.lines.map((l) => `${l.date}|${l.position}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(snap.notes.join(" ")).not.toMatch(/nicht verteilbar/);
+  });
+  it("ohne Bericht: 78530 nicht angesetzt (Hinweis), Snapshot bleibt vollständig", () => {
+    const snap = priceSnapshot({ ...base, positions: [{ position: "78610", label: "Spange", units: 1 }, { position: "78530", label: "Bericht", units: 1 }], treatmentDates: ["2026-11-02"] });
+    expect(snap.lines.map((l) => l.position)).toEqual(["78610"]);
+    expect(snap.notes.join(" ")).toMatch(/Therapiebericht \(78530\) noch nicht erstellt/);
+    expect(snap.complete).toBe(true);
+  });
+});

@@ -187,6 +187,34 @@ Altvermerk.
 („Altvermerk … nicht in der Kasse gebucht“); neue Altvermerke sind nicht mehr möglich. Solange ein Altvermerk besteht, ist
 keine Quittung möglich (keine Doppelerfassung); „Altvermerk zurücksetzen“ protokolliert den alten Wert im Audit.
 
+## Paket B Teil 2: Therapiebericht und Folgeverordnung
+
+**Therapiebericht (Position 78530).** Je Verordnung ein Bericht (Befund, Verlauf, Ergebnis, Empfehlung, Freitext) unter
+`/kunden/<id>/verordnungen/<vo>/therapiebericht`; anlegen/ändern mit `medical.write`, ansehen und PDF
+(`/api/verordnungen/<id>/therapiebericht`: Praxiskopf mit Logo, Ärztin/Arzt mit LANR/BSNR, Person, Verordnung, Datum)
+mit `medical.read`, im Support-Modus gesperrt. Steht 78530 auf der Verordnung (oder ist „Therapiebericht angefordert“
+angekreuzt) und fehlt der Bericht → Hinweis „Therapiebericht fehlt“. Tabelle `therapy_reports` (Migration 0065):
+höchstens ein Bericht je Verordnung, ab „abrechnungsreif“/„abgerechnet“ nicht mehr änder- oder neu anlegbar (Trigger),
+nie löschbar (außer mit der Person über `podo_delete_patient`). Audit ohne Inhalte. Versand bleibt manuell
+(Download/Druck) – für die Ärztin/den Arzt ist keine E-Mail-Adresse gespeichert, daher kein E-Mail-Versand.
+
+**78530 im Preis-Snapshot.** Der Bericht zählt als erbrachte Einheit 78530 mit dem **Berichtsdatum** (nicht mehr
+verteilt auf die Behandlungstage): eine Zeile (Berichtsdatum, 78530, 1 Einheit), Preis an diesem Tag, `copayCents`
+`null` (Anlage 2: keine Zuzahlung). Damit bleibt der Integrationsvertrag mit `src/lib/gkv302/adapter.ts` erhalten (je
+(Tag, ZL-Nummer) genau eine Zeile). Ohne Bericht wird 78530 nicht angesetzt (Hinweis im Snapshot), mehr als eine
+verordnete Einheit 78530 → Hinweis, angesetzt wird eine (`priceSnapshot`, `therapyReportDate`).
+
+**Folgeverordnung.** Hinweis „Folgeverordnung anfordern“ an der neuesten Verordnung einer Person, wenn sie
+abgeschlossen/abrechnungsreif/abgerechnet ist oder nach mindestens einer Behandlung nur noch ≤ 1 Einheit offen ist, UND
+die Person weitere geplante Termine hat oder als **Dauerpatient:in** markiert ist (`patients.follow_up_expected`,
+Schalter auf der Verordnungsseite), UND es keine neuere Verordnung gibt (`followUpReason`). Sichtbar in der Akte
+(Patientenseite, Verordnungen) und auf „Heute“ (Karte „Folgeverordnung anfordern“, nur noch nicht angeforderte).
+Vorlage „Anforderung Folgeverordnung“ als PDF bzw. Text (`/api/verordnungen/<id>/folgeverordnung[?format=text]`) mit
+Diagnose/ICD, Heilmitteln, Behandlungszeitraum und – falls vorhanden – Verlauf/Ergebnis/Empfehlung aus dem
+Therapiebericht. Vermerk „angefordert am“ (`follow_up_requests`, append-only, Audit `prescription.follow_up_requested`).
+Beim Planen: Termin nach dem Ende der letzten Verordnung ohne neue Verordnung (GKV-Versicherte) → Hinweis; Termine über
+die Restmenge hinaus → Erinnerung an die Folgeverordnung.
+
 ## Offene Punkte (fachlich prüfen)
 
 1. **Werktage** in Vertrag § 7 Abs. 6: PodoHero zählt Montag–Samstag ohne Feiertage (eher streng). Ob Samstage und
@@ -242,3 +270,10 @@ keine Quittung möglich (keine Doppelerfassung); „Altvermerk zurücksetzen“ 
 25. **Zuzahlung vorab für die ganze Verordnung**: Die Schätzung nimmt für noch offene Einheiten gedachte Folgetage ab heute
     an (Preisstand heute, Alter am gedachten Tag). Ändert sich der Preisstand (z. B. 01.07.) vor der nächsten Behandlung,
     weicht der Snapshot bei Abrechnungsreife ab → Hinweis „Restbetrag offen“ bzw. Überzahlung (Erstattung).
+26. **Therapiebericht bei anderen Diagnosegruppen**: 78530 ist laut Anlage 2 der „Therapiebericht UI 2“. Für DF/NF/QF
+    erstellt PodoHero den Bericht auf Anforderung (Kreuz „Therapiebericht“), setzt aber nur 78530 an, wenn die Position auf
+    der Verordnung steht – ob dafür eine andere Vergütung gilt, bitte prüfen.
+27. **Berichtsdatum außerhalb der Behandlungstage**: 78530 wird mit dem Berichtsdatum abgerechnet, auch wenn an diesem Tag
+    keine Behandlung war. Ob Abrechnungszentren das so erwarten (oder am letzten Behandlungstag), klären.
+28. **Folgeverordnung**: Der Hinweis ist eine Praxis-Erinnerung ohne vertragliche Frist; Kriterien (≤ 1 Einheit, Termine,
+    Dauerpatient:in) sind eine Produktentscheidung.

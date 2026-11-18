@@ -178,3 +178,83 @@ export async function renderProofPdf(input: { organization: GkvPdfOrg; logos?: {
   drawFooters(doc, fonts, safe, input.organization, title);
   return doc.save();
 }
+
+/** Fließtext-Absätze mit Seitenumbruch */
+function paragraphs(w: Writer, cur: Page, ensure: (h: number) => boolean, items: string[], size = 10) {
+  for (const p of items) {
+    for (const l of w.wrap(p, CONTENT_WIDTH, size)) {
+      ensure(size + 4);
+      w.text(l, ML, cur.y, { size });
+      cur.y -= size + 4;
+    }
+    cur.y -= 6;
+  }
+}
+
+/** Empfänger (Ärztin/Arzt) links, Datum rechts */
+function letterHead(w: Writer, fonts: Awaited<ReturnType<typeof embedFonts>>, cur: Page, org: GkvPdfOrg, vo: GkvPdfPrescription, date: string) {
+  const sender = [org.legalName || org.name, org.street, [org.zip, org.city].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+  w.text(w.clip(sender, CONTENT_WIDTH * 0.6, 6.5), ML, cur.y, { size: 6.5, color: GRAY });
+  cur.y -= 16;
+  const to = [vo.doctorName || "An die verordnende Ärztin / den verordnenden Arzt", vo.doctorLanr ? `LANR ${vo.doctorLanr}` : null, vo.doctorBsnr ? `BSNR ${vo.doctorBsnr}` : null].filter((x): x is string => !!x);
+  to.forEach((l, i) => w.text(l, ML, cur.y - i * 13, { size: 10.5, font: i === 0 ? fonts.bold : fonts.regular }));
+  w.text(`Datum: ${dateDe(date)}`, RIGHT, cur.y, { size: 10, align: "right" });
+  cur.y -= to.length * 13 + 22;
+}
+
+export type TherapyReportPdfInput = {
+  organization: GkvPdfOrg;
+  logos?: { full?: PdfImage | null; compact?: PdfImage | null } | null;
+  patient: GkvPdfPatient;
+  prescription: GkvPdfPrescription;
+  report: { reportDate: string; findings: string | null; course: string | null; result: string | null; recommendation: string | null; notes: string | null; author: string | null };
+  treatmentDates: string[];
+};
+
+/** Therapiebericht (Position 78530) für die verordnende Ärztin/den Arzt: Praxiskopf mit Logo, Person, Verordnung, Datum */
+export async function renderTherapyReportPdf(input: TherapyReportPdfInput): Promise<Uint8Array> {
+  const title = `Therapiebericht ${input.patient.name} – Verordnung vom ${dateDe(input.prescription.issuedAt)}`;
+  const { doc, fonts, safe, w, cur, ensure } = await setup(title, input.organization, input.logos);
+  letterHead(w, fonts, cur, input.organization, input.prescription, input.report.reportDate);
+  w.text("Therapiebericht Podologie", ML, cur.y, { size: 14, font: fonts.bold });
+  cur.y -= 20;
+  infoBlock(w, fonts, cur, ensure, prescriptionRows(input.organization, input.patient, input.prescription).slice(1));
+  const dates = [...input.treatmentDates].sort();
+  infoBlock(w, fonts, cur, ensure, [["Behandlungen:", dates.length ? `${dates.length} (${dateDe(dates[0])}${dates.length > 1 ? ` bis ${dateDe(dates.at(-1)!)}` : ""})` : "–"]]);
+  cur.y -= 8;
+  const sections: [string, string | null][] = [
+    ["Befund", input.report.findings],
+    ["Verlauf", input.report.course],
+    ["Ergebnis", input.report.result],
+    ["Empfehlung", input.report.recommendation],
+    ["Weitere Angaben", input.report.notes],
+  ];
+  for (const [label, text] of sections) {
+    if (!text?.trim()) continue;
+    ensure(30);
+    w.text(label, ML, cur.y, { size: 11, font: fonts.bold });
+    cur.y -= 15;
+    paragraphs(w, cur, ensure, [text.trim()]);
+  }
+  ensure(60);
+  cur.y -= 24;
+  w.line(ML, cur.y, ML + 200, cur.y, 0.5);
+  cur.y -= 11;
+  w.text([input.report.author, input.organization.qualification].filter(Boolean).join(", ") || input.organization.name, ML, cur.y, { size: 8.5, color: GRAY });
+  drawFooters(doc, fonts, safe, input.organization, title);
+  return doc.save();
+}
+
+/** Anforderung einer Folgeverordnung (Brief an die Ärztin/den Arzt) */
+export async function renderFollowUpPdf(input: { organization: GkvPdfOrg; logos?: { full?: PdfImage | null; compact?: PdfImage | null } | null; prescription: GkvPdfPrescription; letter: { subject: string; paragraphs: string[] }; date: string }): Promise<Uint8Array> {
+  const { doc, fonts, safe, w, cur, ensure } = await setup(input.letter.subject, input.organization, input.logos);
+  letterHead(w, fonts, cur, input.organization, input.prescription, input.date);
+  for (const l of w.wrap(input.letter.subject, CONTENT_WIDTH, 12, fonts.bold)) {
+    w.text(l, ML, cur.y, { size: 12, font: fonts.bold });
+    cur.y -= 16;
+  }
+  cur.y -= 8;
+  paragraphs(w, cur, ensure, input.letter.paragraphs);
+  drawFooters(doc, fonts, safe, input.organization, "Anforderung Folgeverordnung");
+  return doc.save();
+}

@@ -62,6 +62,8 @@ export const FREQUENCY_TOLERANCE_WORKDAYS = 2;
 export const INTERRUPTION_WEEKS = 12;
 /** Zuzahlung: 10 % der Kosten + 10 € je Verordnung – [SGB V] § 61 Satz 3 i. V. m. § 32 Abs. 2 */
 export const COPAYMENT_FLAT_CENTS = 1000;
+/** Therapiebericht (Anlage 2 § 2 Abs. 2 Buchst. d: „Therapiebericht UI 2“) – Einheit mit dem Berichtsdatum (Paket B) */
+export const THERAPY_REPORT_HPNR = "78530";
 export const COPAYMENT_PERCENT = 10;
 /** Zuzahlungspflicht ab Vollendung des 18. Lebensjahres – [SGB V] § 32 Abs. 2 Satz 1, [Vertrag] § 8 Abs. 2 */
 export const COPAYMENT_FREE_UNDER_AGE = 18;
@@ -503,6 +505,12 @@ export function priceSnapshot(input: {
   insurerIk?: string | null;
   /** Verordnung vorzeitig beendet (Abbruch-/Unterbrechungsvermerk) → Positionen mit Tageshöchstmenge nur einmal je Tag */
   endedEarly?: boolean;
+  /**
+   * Datum des Therapieberichts (Paket B): Position 78530 wird nicht auf die Behandlungstage verteilt, sondern einmal mit
+   * dem Berichtsdatum angesetzt (Preis an diesem Tag, Zuzahlung laut Anlage 2: keine → copayCents null). Ohne Bericht
+   * wird 78530 nicht angesetzt (Hinweis).
+   */
+  therapyReportDate?: string | null;
 }): PriceSnapshot {
   const dates = [...input.treatmentDates].sort();
   const lines: SnapshotLine[] = [];
@@ -524,7 +532,9 @@ export function priceSnapshot(input: {
   let remedy = 0;
   let percent = 0;
   const de = (iso: string) => iso.split("-").reverse().join(".");
-  const left = new Map(positions.map((p, i) => [i, p.units]));
+  // Therapiebericht (78530): eigener Tag = Berichtsdatum, nicht über die Behandlungstage verteilen
+  const isReport = (p: PrescriptionPosition) => positionKey(p.position) === THERAPY_REPORT_HPNR;
+  const left = new Map(positions.map((p, i) => [i, isReport(p) ? 0 : p.units]));
   let firstDayPriced = false;
   // Befreiung einer anderen Kasse: ein Hinweis je Befreiung (nicht je Tag); IK normalisiert vergleichen (Runde 4)
   const foreignExemptions = new Set<CopaymentExemption>();
@@ -557,6 +567,28 @@ export function priceSnapshot(input: {
       lines.push({ date, position: code, units, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
     });
   });
+  for (const p of positions.filter(isReport)) {
+    const date = input.therapyReportDate;
+    if (!date) {
+      notes.push(`Therapiebericht (${THERAPY_REPORT_HPNR}) noch nicht erstellt – nicht angesetzt.`);
+      continue;
+    }
+    if (p.units > 1) notes.push(`${p.units} × ${THERAPY_REPORT_HPNR} verordnet – ein Therapiebericht je Verordnung angesetzt.`);
+    const pr = priceFor(THERAPY_REPORT_HPNR, date);
+    if (!pr) {
+      complete = false;
+      notes.push(`Kein Preis für Position ${THERAPY_REPORT_HPNR} am ${de(date)} hinterlegt.`);
+    }
+    const age = ageOn(input.birthDate, date);
+    const minor = age !== null && age < COPAYMENT_FREE_UNDER_AGE;
+    const exempt = !!exemptOn(input.exemptions, date);
+    const copay = pr && pr.copayCents === null ? null : pr && !minor && !exempt ? pr.copayCents! : 0;
+    remedy += pr?.cents ?? 0;
+    percent += copay ?? 0;
+    lines.push({ date, position: THERAPY_REPORT_HPNR, units: 1, priceCents: pr?.cents ?? null, copayCents: copay, exempt, minor, tableVersion: pr?.version ?? null });
+  }
+  // zeitliche Reihenfolge (Berichtsdatum zwischen den Behandlungstagen); stabil – je Tag bleibt die Positionsfolge
+  lines.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   for (const e of foreignExemptions) {
     notes.push(`Befreiung (gültig ${de(e.validFrom)}–${de(e.validTo)}) ist von einer anderen Krankenkasse (IK ${e.insurerIk}) als auf der Verordnung (IK ${input.insurerIk}) – bitte prüfen.`);
   }

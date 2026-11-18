@@ -443,6 +443,8 @@ export const patients = pgTable(
     /** Wunsch-Intervall in Wochen (für „überfällig“-Status und Rückholung) */
     visitIntervalWeeks: integer("visit_interval_weeks"),
     homeVisit: boolean("home_visit").notNull().default(false),
+    /** Dauerpatient:in (GKV): nach Ende einer Verordnung Hinweis „Folgeverordnung anfordern“ (Migration 0065) */
+    followUpExpected: boolean("follow_up_expected").notNull().default(false),
     careHomeId: uuid("care_home_id").references(() => billingContacts.id),
     billingContactId: uuid("billing_contact_id").references(() => billingContacts.id),
     householdKey: text("household_key"),
@@ -668,6 +670,60 @@ export const prescriptions = pgTable("prescriptions", {
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex("prescriptions_org_id").on(t.organizationId, t.id)]);
+
+/**
+ * Therapiebericht je Verordnung (Position 78530, auf Anforderung der Ärztin/des Arztes; GKV Paket B Teil 2). Zählt mit
+ * dem Berichtsdatum als erbrachte Einheit 78530 im Preis-Snapshot. Änderbar bis „abrechnungsreif“, nie löschbar (außer
+ * mit der Person, podo_delete_patient); Trigger in Migration 0065.
+ */
+export const therapyReports = pgTable(
+  "therapy_reports",
+  {
+    id: id(),
+    organizationId: orgId(),
+    prescriptionId: uuid("prescription_id")
+      .notNull()
+      .references(() => prescriptions.id, { onDelete: "cascade" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    reportDate: date("report_date").notNull(),
+    findings: text("findings"),
+    course: text("course"),
+    result: text("result"),
+    recommendation: text("recommendation"),
+    notes: text("notes"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    updatedBy: uuid("updated_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("therapy_reports_prescription").on(t.prescriptionId), index("therapy_reports_org_patient").on(t.organizationId, t.patientId)],
+);
+
+/** Vermerk „Folgeverordnung angefordert am“ (GKV Paket B Teil 2) – append-only, Migration 0065 */
+export const followUpRequests = pgTable(
+  "follow_up_requests",
+  {
+    id: id(),
+    organizationId: orgId(),
+    prescriptionId: uuid("prescription_id")
+      .notNull()
+      .references(() => prescriptions.id, { onDelete: "cascade" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    requestedOn: date("requested_on").notNull(),
+    note: text("note"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("follow_up_requests_org_prescription").on(t.organizationId, t.prescriptionId)],
+);
 
 /** Abrechnungslauf für GKV-Verordnungen (Übergabe an ein Abrechnungszentrum, § 302 SGB V) */
 export const billingBatches = pgTable("billing_batches", {

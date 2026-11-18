@@ -39,6 +39,8 @@ import {
 import { INSURED_STATUS, normalizeId } from "@/lib/rules/gkv-ids";
 import { collectedCents, copaymentReceiptsFor, type CopaymentReceiptRow } from "./copayments";
 import { missingSignatureCounts, signatureRequired } from "./signatures";
+import { reportOrdered, reportsFor, therapyReportDate } from "./therapy-reports";
+import { followUpForPatient } from "./follow-ups";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
@@ -237,6 +239,8 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
     const ids = rows.map((r) => r.id);
     const signatures = await missingSignatureCounts(tx, org, ids);
     const receipts = await copaymentReceiptsFor(tx, org, ids);
+    const reports = await reportsFor(tx, org, ids);
+    const followUps = await followUpForPatient(tx, org, patientId);
     return {
       patient: p,
       expired,
@@ -252,6 +256,11 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         /** Zuzahlungsquittungen (Paket B) und quittierte Summe */
         copaymentReceipts: receipts.get(r.id) ?? [],
         copaymentCollectedCents: collectedCents(receipts.get(r.id)),
+        /** Therapiebericht (Paket B Teil 2): vorhanden bzw. per 78530 verordnet/angefordert */
+        therapyReport: reports.get(r.id) ? { id: reports.get(r.id)!.id, reportDate: reports.get(r.id)!.reportDate } : null,
+        therapyReportOrdered: reportOrdered(r.positions),
+        /** Hinweis „Folgeverordnung anfordern“ (nur neueste Verordnung) */
+        followUp: followUps.get(r.id) ?? null,
       })),
     };
   });
@@ -523,7 +532,9 @@ export async function changePrescriptionStatus(
       // vorzeitig beendet = Abbruchvermerk UND weniger Einheiten erbracht als verordnet → 78610 nur einmal je Tag
       // (Runde 2; Runde 3 H-4: ein alter Vermerk nach Wiederaufnahme und vollständiger Behandlung zählt nicht)
       const endedEarly = !!note && used < vo.units;
-      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly });
+      // Therapiebericht (78530) zählt mit dem Berichtsdatum (Paket B Teil 2)
+      const reportDate = await therapyReportDate(tx, org, vo.id);
+      const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly, therapyReportDate: reportDate });
       // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
       if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });

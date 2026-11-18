@@ -6,6 +6,7 @@ import type { TherapistColor } from "@/lib/therapist-colors";
 import { teamColors } from "@/server/therapist-colors";
 import { feedOverlapIds } from "@/lib/appointment-overlap";
 import { OnboardingCard } from "@/components/onboarding-card";
+import { followUpsDue } from "@/server/follow-ups";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
@@ -97,9 +98,11 @@ export default async function TodayPage(props: PageProps<"/heute">) {
     auth.can("invoices.write") ? { href: "/rechnungen/neu", label: "Rechnung schreiben" } : null,
     auth.can("cash.read") ? { href: "/kasse", label: "Kasse" } : null,
   ].filter((a) => a !== null);
+  // GKV Paket B: Folgeverordnung anfordern (Verordnung beendet/letzte Einheit + weitere Termine oder Dauerpatient:in)
+  const followUps = auth.can("patients.read") && auth.can("medical.read") ? await followUpsDue(auth) : { total: 0, items: [] };
   const hasTasks = stats.openTasks.length > 0 || stats.countersign > 0;
   const showTasks = show.tasks === "always" || hasTasks;
-  const sideColumn = (show.inbox && stats.recent.length > 0) || (show.collective && !!reminderYear && openCollective.length > 0) || showTasks || show.integrations;
+  const sideColumn = (show.inbox && stats.recent.length > 0) || (show.collective && !!reminderYear && openCollective.length > 0) || followUps.total > 0 || showTasks || show.integrations;
 
   // Handy (< md): erst die heutigen Termine, dann Kennzahlen (2×2), Nebenkarten und zuletzt „Praxis einrichten“ –
   // ab md die gewohnte Reihenfolge (order-Klassen wirken nur unter md; der Termin-Block nutzt dort `contents`).
@@ -208,6 +211,22 @@ export default async function TodayPage(props: PageProps<"/heute">) {
                   </li>
                 ))}
               </ul>
+            </Card>
+          ) : null}
+
+          {followUps.total ? (
+            <Card>
+              <CardTitle>Folgeverordnung anfordern</CardTitle>
+              <ul className="flex flex-col gap-2 text-sm">
+                {followUps.items.map((f) => (
+                  <li key={f.prescriptionId} className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                    <span className="text-xs text-muted">{f.hint.replace(" – Folgeverordnung anfordern", "")}</span>
+                    <Link href={`/kunden/${f.patientId}/verordnungen`} className="font-semibold text-primary">Öffnen</Link>
+                  </li>
+                ))}
+              </ul>
+              {followUps.total > followUps.items.length ? <p className="mt-2 text-xs text-muted">und {followUps.total - followUps.items.length} weitere</p> : null}
             </Card>
           ) : null}
 

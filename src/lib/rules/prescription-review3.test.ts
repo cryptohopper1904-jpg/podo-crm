@@ -30,7 +30,8 @@ describe("Review-Runde 3 PR #111", () => {
   });
 
   it("B1: Zuzahlung je Zeile bleibt null (Position ohne Zuzahlung) auch bei zwei Einträgen am selben Tag (Runde 4: 1 Einheit je Tag)", () => {
-    const snap = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03" });
+    // Paket B: 78530 = Therapiebericht, eine Einheit mit dem Berichtsdatum (nicht je Behandlungstag)
+    const snap = priceSnapshot({ positions: [{ position: "78530", label: "Therapiebericht", units: 2 }], treatmentDates: ["2026-11-02", "2026-11-02"], ...old, computedOn: "2026-11-03", therapyReportDate: "2026-11-02" });
     expect(snap.lines).toEqual([expect.objectContaining({ units: 1, copayCents: null })]);
   });
 

@@ -1,3 +1,4 @@
+import { patientFollowUpHint } from "@/server/follow-ups";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CalendarPlus, ChevronDown, ClipboardCheck, ClipboardList, Download, FileText, MapPin, MessageCircle, Pencil, Phone, Receipt, Stethoscope } from "lucide-react";
@@ -62,6 +63,8 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
   const data = await getPatient(auth, id);
   if (!data) notFound();
   const { patient: p } = data;
+  // GKV Paket B: Hinweis „Folgeverordnung anfordern“ (Verordnung beendet/letzte Einheit + Termine oder Dauerpatient:in)
+  const followUp = await patientFollowUpHint(auth, id);
   const age = ageYears(p.birthDate);
   const consents = currentConsents(data.consents);
   const address = [p.street, [p.zip, p.city].filter(Boolean).join(" ")].filter(Boolean).join(", ");
@@ -149,6 +152,12 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
           </details>
         </div>
       </header>
+      {followUp ? (
+        <p className="mb-4 rounded-xl bg-info-soft px-4 py-3 text-sm font-medium text-info-soft-text">
+          {followUp.hint}{followUp.requestedOn ? ` · angefordert am ${dateDe(followUp.requestedOn)}` : ""} –{" "}
+          <Link href={`/kunden/${p.id}/verordnungen`} className="font-semibold underline">zu den Verordnungen</Link>
+        </p>
+      ) : null}
 
       <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Stat label="Behandlungen" value={data.records.length} sub={`${data.appointments.length} Termine gesamt`} tone="primary" />
