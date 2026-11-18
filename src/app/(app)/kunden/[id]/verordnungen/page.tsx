@@ -171,19 +171,26 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                     <dt className="text-muted">Zuzahlung</dt>
                     <dd className="flex flex-wrap items-center gap-2">
                       {/* neues Regelwerk: Befreiung nur per Bescheinigung je Behandlungstag – das Kreuz auf der VO ist nur Info */}
-                      <span className="font-semibold">{vo.copaymentExempt && !current ? "befreit" : money(vo.copaymentCents)}</span>
+                      {/* Betrag wie beim Quittieren berechnet (Server, Review R3-2): Preis-Snapshot bzw. Schätzung */}
+                      <span className="font-semibold">
+                        {vo.copaymentExempt && !current ? "befreit" : vo.copaymentDue.manual ? "nicht berechenbar (Preis fehlt)" : money(vo.copaymentDue.expectedCents)}
+                      </span>
+                      {!vo.copaymentDue.manual && vo.copaymentDue.estimated && (vo.copaymentDue.expectedCents ?? 0) > 0 ? <span className="text-xs text-muted">(Schätzung)</span> : null}
                       {vo.copaymentExempt && current ? <Badge>„zuzahlungsfrei“ angekreuzt</Badge> : null}
-                      {(current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > 0 ? (
-                        legacy(vo) ? (
-                          <Badge tone="neutral">
-                            Altvermerk: erhalten {dateDe(vo.copaymentPaidAt!)}
-                            {vo.copaymentPaidCents !== null ? ` · ${money(vo.copaymentPaidCents)}` : ""}
-                            {vo.copaymentPaidMethod ? ` · ${COPAYMENT_METHODS[vo.copaymentPaidMethod as keyof typeof COPAYMENT_METHODS] ?? vo.copaymentPaidMethod}` : ""}
-                          </Badge>
-                        ) : vo.copaymentCollectedCents >= (vo.copaymentCents ?? 0) ? (
+                      {legacy(vo) ? (
+                        <Badge tone="neutral">
+                          Altvermerk: erhalten {dateDe(vo.copaymentPaidAt!)}
+                          {vo.copaymentPaidCents !== null ? ` · ${money(vo.copaymentPaidCents)}` : ""}
+                          {vo.copaymentPaidMethod ? ` · ${COPAYMENT_METHODS[vo.copaymentPaidMethod as keyof typeof COPAYMENT_METHODS] ?? vo.copaymentPaidMethod}` : ""}
+                        </Badge>
+                      ) : null}
+                      {(current || !vo.copaymentExempt) && vo.copaymentDue.manual ? (
+                        vo.copaymentCollectedCents > 0 ? <Badge tone="primary">quittiert {money(vo.copaymentCollectedCents)} (Betrag manuell)</Badge> : <Badge tone="warn">offen – Betrag manuell eingeben</Badge>
+                      ) : (current || !vo.copaymentExempt) && (vo.copaymentDue.expectedCents ?? 0) > 0 ? (
+                        vo.copaymentDue.openCents === 0 ? (
                           <Badge tone="primary">quittiert {money(vo.copaymentCollectedCents)}</Badge>
                         ) : vo.copaymentCollectedCents > 0 ? (
-                          <Badge tone="warn">teilweise quittiert · offen {money((vo.copaymentCents ?? 0) - vo.copaymentCollectedCents)}</Badge>
+                          <Badge tone="warn">teilweise quittiert · offen {money(vo.copaymentDue.openCents)}</Badge>
                         ) : <Badge tone="warn">offen</Badge>
                       ) : null}
                       {legacy(vo) ? <span className="text-xs text-muted">Vermerk aus der Zeit vor der Zuzahlungsquittung – gilt als erhalten, wurde nie in der Kasse gebucht (Nacherfassung mit der Steuerberatung klären).</span> : null}
@@ -201,8 +208,9 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                         </ul>
                       ) : null}
                       {canCash && legacy(vo) ? <CopaymentLegacyReset id={vo.id} patientId={id} /> : null}
-                      {canCash && !legacy(vo) && (current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > vo.copaymentCollectedCents && vo.status !== "cancelled" ? (
-                        <CopaymentReceiptForm prescriptionId={vo.id} patientId={id} openCents={(vo.copaymentCents ?? 0) - vo.copaymentCollectedCents} external={external} />
+                      {/* offen laut Berechnung (Altvermerk angerechnet, Review R3-3) oder ohne Preis: Betrag frei eingeben (R3-2) */}
+                      {canCash && (current || !vo.copaymentExempt) && vo.status !== "cancelled" && (vo.copaymentDue.manual || (vo.copaymentDue.openCents ?? 0) > 0) ? (
+                        <CopaymentReceiptForm prescriptionId={vo.id} patientId={id} openCents={vo.copaymentDue.openCents} manual={vo.copaymentDue.manual} external={external} />
                       ) : null}
                     </dd>
                   </div>
@@ -263,9 +271,9 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
   );
 }
 
-/** Altvermerk „Zuzahlung erhalten“ ohne Zuzahlungsquittung (vor Paket B) – nur Anzeige */
-function legacy(vo: { copaymentPaidAt: Date | null; copaymentReceipts: unknown[] }) {
-  return !!vo.copaymentPaidAt && vo.copaymentReceipts.length === 0;
+/** Altvermerk „Zuzahlung erhalten“ (vor Paket B, ohne Kassenbuchung) – Anzeige; der Betrag gilt als erhalten */
+function legacy(vo: { copaymentPaidAt: Date | null }) {
+  return !!vo.copaymentPaidAt;
 }
 
 /** Preis-Snapshot (bei Abrechnungsreife): Heilmittelkosten, Zuzahlung, Tabellenstand */

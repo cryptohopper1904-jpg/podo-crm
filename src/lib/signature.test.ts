@@ -26,4 +26,19 @@ describe("Unterschrift (PNG) prüfen – nur das Format der Zeichenfläche", () 
     expect(checkSignaturePng(testPng({ rawBytes: (900 * 4 + 1) * 300 * 20 }))).toMatchObject({ ok: false });
     expect(checkSignaturePng(testPng({ rawBytes: 100 }))).toMatchObject({ ok: false });
   });
+  it("Review R3-5: Daten nach dem Ende des zlib-Stroms → abgelehnt", () => {
+    expect(checkSignaturePng(testPng({ trailing: Buffer.from("versteckte Nutzlast") }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ trailing: Buffer.alloc(1) }))).toMatchObject({ ok: false });
+  });
+  it("Review R3-5: falsche CRC in IHDR, IDAT oder IEND → abgelehnt; auf mehrere IDAT verteilt → gültig", () => {
+    expect(checkSignaturePng(testPng({ badCrc: "IHDR" }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ badCrc: "IDAT" }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ badCrc: "IEND" }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ splitIdat: true }))).toEqual({ ok: true, width: 900, height: 300 });
+  });
+  it("Review R3-5: Filter-Byte je Zeile nur 0–4", () => {
+    for (const f of [0, 1, 2, 3, 4]) expect(checkSignaturePng(testPng({ filter: f }))).toMatchObject({ ok: true });
+    expect(checkSignaturePng(testPng({ filter: 5 }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ filter: 255 }))).toMatchObject({ ok: false });
+  });
 });

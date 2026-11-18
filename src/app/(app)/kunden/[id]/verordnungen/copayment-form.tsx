@@ -10,9 +10,10 @@ const inputCls = "h-9 rounded-lg border border-border bg-surface px-2 text-sm";
 
 /**
  * „Zuzahlung quittieren“: erzeugt die Zuzahlungsquittung (Beleg ZZ…) mit Kassenbuchung – PodoHero-Kasse mit TSE bzw.
- * bei eigener Praxiskasse ein Vermerk mit Bon-Nr. Betrag leer = offene Zuzahlung laut Berechnung.
+ * bei eigener Praxiskasse ein Vermerk mit Bon-Nr. Betrag leer = offene Zuzahlung laut Berechnung. Ohne Preis bzw.
+ * Positionsnummer (`manual`) lässt sich nichts berechnen – dann ist der erhaltene Betrag Pflicht.
  */
-export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, external }: { prescriptionId: string; patientId: string; openCents: number; external: boolean }) {
+export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, manual, external }: { prescriptionId: string; patientId: string; openCents: number | null; manual: boolean; external: boolean }) {
   const [state, action, pending] = useActionState<CopaymentPaidState, FormData>(copaymentReceiptAction, undefined);
   const [method, setMethod] = useState("cash");
   const register = method === "cash" || method === "card";
@@ -22,7 +23,15 @@ export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, ext
       <input type="hidden" name="patientId" value={patientId} />
       <FormError message={state?.error} revealKey={state} />
       <div className="flex flex-wrap items-center gap-2">
-        <input name="amount" inputMode="decimal" placeholder={(openCents / 100).toFixed(2).replace(".", ",")} aria-label="erhaltener Betrag in Euro" maxLength={EURO_INPUT_MAX_LENGTH} className={`${inputCls} w-24`} />
+        <input
+          name="amount"
+          inputMode="decimal"
+          required={manual}
+          placeholder={manual || openCents === null ? "Betrag €" : (openCents / 100).toFixed(2).replace(".", ",")}
+          aria-label="erhaltener Betrag in Euro"
+          maxLength={EURO_INPUT_MAX_LENGTH}
+          className={`${inputCls} w-24`}
+        />
         <select name="method" aria-label="Zahlungsart" value={method} onChange={(e) => setMethod(e.target.value)} className={inputCls}>
           {Object.entries(METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
         </select>
@@ -30,8 +39,10 @@ export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, ext
         <button type="submit" disabled={pending} className="text-xs font-semibold text-primary">{pending ? "…" : "Zuzahlung quittieren"}</button>
       </div>
       <label className="flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" name="confirmOverpay" className="size-4 accent-[var(--primary)]" /> Betrag über der offenen Zuzahlung ausdrücklich bestätigen (Überzahlung)
+        <input type="checkbox" name="confirmOverpay" className="size-4 accent-[var(--primary)]" />{" "}
+        {manual ? "Ungewöhnlich hohen Betrag (insgesamt über 200 €) geprüft und bestätigt" : "Betrag über der offenen Zuzahlung ausdrücklich bestätigen (Überzahlung)"}
       </label>
+      {manual ? <p className="text-xs font-medium text-warn-soft-text">Preis bzw. Positionsnummer fehlt – die Zuzahlung lässt sich nicht berechnen. Bitte den erhaltenen Betrag eingeben.</p> : null}
       <p className="text-xs text-muted">
         {external && register
           ? "Erst in der Praxiskasse buchen (Zahlung auf Beleg), dann hier mit Bon-Nr. vermerken – die Quittung trägt den Praxiskassen-Vermerk."

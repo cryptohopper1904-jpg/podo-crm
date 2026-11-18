@@ -201,3 +201,6 @@ Im Code als `// TODO DSFinV-K prüfen` markiert:
 15. **Zuzahlungsquittung (GKV)**: Annahme – die Zuzahlung ist Teil des Entgelts für die steuerfreie Heilbehandlung
     (§ 4 Nr. 14 Buchst. a UStG) und wird daher als Bon „Umsatz“ mit USt-Schlüssel 6 („steuerfrei“) gemeldet. Ob ein
     eigener Geschäftsvorfall nötig ist, mit Steuerberatung/TSE-Anbieter bestätigen.
+    Zuzahlungsquittungen (Belege ZZ) gehen **entweder** über lexoffice **oder** über den Kassenexport (DSFinV-K/Z-Bon) an
+    die Buchhaltung, nicht beides (sonst doppelt erfasst). Die Auszahlung des Abrechnungszentrums enthält die Zuzahlung
+    nicht und wird netto als Kassenanteil gebucht. Beides mit der Steuerberatung klären.

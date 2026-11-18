@@ -41,6 +41,9 @@ describe("Überschrift mit Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG) – festgesc
     expect(h({ kind: "credit_note" }, ["2026-11-20"], false, az)).toEqual({ heading: "Stornorechnung zur Anzahlung AZ2026-0003", serviceDateNote: "Storno der Anzahlung vom 05.11.2026." });
     const af = { number: "A2026-0001", kind: "no_show_fee", issuedAt: "2026-11-12" };
     expect(h({ kind: "credit_note" }, ["2026-11-10"], false, af).serviceDateNote).toBe("Ausfallhonorar für den Termin am 10.11.2026.");
+    // Review R3-8: Storno einer Zuzahlungsquittung ist keine „Stornorechnung zur Rechnung“
+    const zz = { number: "ZZ2026-0007", kind: "copayment", issuedAt: "2026-11-12" };
+    expect(h({ kind: "credit_note" }, ["2026-11-10"], false, zz).heading).toBe("Storno zur Zuzahlungsquittung ZZ2026-0007");
   });
 });
 

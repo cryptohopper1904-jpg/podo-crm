@@ -323,7 +323,8 @@ export function invoiceHeading(
       return { heading: days.length && !range ? `Ausfallhonorar für den Termin am ${dateDe(days[0])}` : "Ausfallhonorar", serviceDateNote: null };
     case "credit_note": {
       const c = service.cancels;
-      const heading = c?.number ? `Stornorechnung zur ${c.kind === "deposit" ? "Anzahlung" : "Rechnung"} ${c.number}` : "Stornorechnung";
+      // Storno einer Zuzahlungsquittung: eigene Überschrift (Review R3-8) – es war nie eine Rechnung
+      const heading = !c?.number ? "Stornorechnung" : c.kind === "copayment" ? `Storno zur Zuzahlungsquittung ${c.number}` : `Stornorechnung zur ${c.kind === "deposit" ? "Anzahlung" : "Rechnung"} ${c.number}`;
       if (c?.kind === "deposit") return { heading, serviceDateNote: c.issuedAt ? `Storno der Anzahlung vom ${dateDe(c.issuedAt)}.` : null };
       if (c?.kind === "no_show_fee") return { heading, serviceDateNote: days.length ? `Ausfallhonorar für den Termin ${when}.` : null };
       return { heading, serviceDateNote: days.length ? `${range ? "Leistungszeitraum" : "Leistungsdatum"} der stornierten Rechnung: ${plain}` : null };

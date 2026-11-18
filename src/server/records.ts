@@ -256,20 +256,23 @@ export async function createTreatmentRecord(
   }
   const org = auth.organization.id;
   const pending: PendingSignatureFiles = [];
+  const ctx = { org, userId: auth.user.id, role: auth.role };
+  let saved: { rec: { id: string }; sig: { id: string; prescriptionId: string } | null };
   try {
-    const ctx = { org, userId: auth.user.id, role: auth.role };
-    const { rec, sig } = await withOrg(org, async (tx) => {
+    saved = await withOrg(org, async (tx) => {
       const rec = await insertTreatmentRecord(tx, ctx, input);
       const sig = signature && input.prescriptionId ? await insertSignature(tx, ctx, { recordId: rec.id, patientId: input.patientId }, signature, pending) : null;
       return { rec, sig };
     });
-    await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: rec.id, meta: { patientId: input.patientId, prescriptionId: input.prescriptionId ?? null, ...auditMeta } });
-    if (sig && signature) await auditSignature(org, auth.user.id, sig, rec.id, signature.kind, signature.signerRole, false);
-    return rec;
   } catch (e) {
+    // nur nach einem Rollback aufräumen – nach dem Commit gehört die Datei zur (append-only) Zeile (Review R3-1)
     await cleanupSignatureFiles(pending);
     if (e instanceof RecordInputError) return { error: e.message, deviationText: e.deviationText };
     if (e instanceof SignatureError) return { error: e.message };
     throw e;
   }
+  const { rec, sig } = saved;
+  await audit({ organizationId: org, userId: auth.user.id, action: "record.create", entity: "treatment_record", entityId: rec.id, meta: { patientId: input.patientId, prescriptionId: input.prescriptionId ?? null, ...auditMeta } });
+  if (sig && signature) await auditSignature(org, auth.user.id, sig, rec.id, signature.kind, signature.signerRole, false);
+  return rec;
 }

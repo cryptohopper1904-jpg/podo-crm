@@ -58,7 +58,8 @@ export default async function ProofPage(props: PageProps<"/kunden/[id]/verordnun
           {signatureRequired(data.vo.rulesVersion) ? " „Abrechnungsreif“ ist erst möglich, wenn jede Behandlung unterschrieben bzw. „Unterschrift auf der Papier-Verordnung“ vermerkt ist." : " (Übernommene Verordnung: nur Hinweis.)"}
         </p>
       ) : null}
-      {canWrite && missing ? <PaperBulkForm prescriptionId={voId} patientId={id} maxDate={berlinDateIso()} defaultDate={data.rows.filter((r) => !r.signature).at(-1)!.date} /> : null}
+      {/* Sammel-Vermerk nur für Verordnungen ohne Pflicht zur Unterschrift je Behandlung (Review R3-6) */}
+      {canWrite && missing && !signatureRequired(data.vo.rulesVersion) ? <PaperBulkForm prescriptionId={voId} patientId={id} maxDate={berlinDateIso()} defaultDate={data.rows.filter((r) => !r.signature).at(-1)!.date} /> : null}
       {data.rows.length === 0 ? (
         <Empty title="Noch keine Behandlung">Behandlungen auf diese Verordnung werden in der Doku erfasst (Feld „Verordnung“).</Empty>
       ) : (
