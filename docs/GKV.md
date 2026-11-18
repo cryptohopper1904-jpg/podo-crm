@@ -479,7 +479,8 @@ Art. 9 DSGVO) und die Abrechnungsläufe (lesbar „Lauf <Nr.> vom <Datum>“, la
 weil Läufe nie löschbar sind und ihr Anlagezeitpunkt vom Server kommt und unveränderlich ist, `podo_billing_batch_guard`;
 Partner, Verordnungen, Heilmittelkosten, Zuzahlungen, Kassenanteil, Export). Die Spalte „Bezug“ kennzeichnet bei Läufen
 nur den Korrekturbezug („N Verordnung(en) später neu abgerechnet (Kassenanteil … ersetzt)“ bzw. „enthält N
-Neuabrechnung(en) nach Korrektur“) – keine Notiz (Freitext). Audit `stats.gkv_private` bzw. `belegliste.read` nur mit
+Neuabrechnung(en) nach Korrektur“, solange dieser Lauf nicht exportiert ist mit „– noch nicht übergeben“) – keine Notiz
+(Freitext). Audit `stats.gkv_private` bzw. `belegliste.read` nur mit
 Zeitraum und Anzahlen.
 
 Offene Fachfragen (Steuerberatung):

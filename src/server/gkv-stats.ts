@@ -332,10 +332,11 @@ export async function belegliste(auth: AuthContext, period: Pick<Period, "from" 
 export const BELEGLISTE_HEADER = ["Art", "Datum", "Beleg-/Lauf-Nr.", "Status", "Betrag EUR", "Person", "Personennummer", "Zahlungsart", "Bezug", "Heilmittelkosten EUR", "Zuzahlungen EUR", "Kassenanteil EUR", "Verordnungen", "Partner", "exportiert am"];
 
 /** Kennzeichnung eines Laufs mit Korrekturbezug (Spalte „Bezug“, Seite) – keine Notiz, keine Personendaten */
-export function batchCorrectionNote(b: Pick<BelegBatch, "replacedCount" | "replacedInsurerCents" | "rebillCount">): string {
+export function batchCorrectionNote(b: Pick<BelegBatch, "replacedCount" | "replacedInsurerCents" | "rebillCount" | "exportedOn">): string {
   const parts: string[] = [];
   if (b.replacedCount) parts.push(`${b.replacedCount} Verordnung${b.replacedCount === 1 ? "" : "en"} später neu abgerechnet (Kassenanteil ${euro(b.replacedInsurerCents)} EUR ersetzt)`);
-  if (b.rebillCount) parts.push(`enthält ${b.rebillCount} Neuabrechnung${b.rebillCount === 1 ? "" : "en"} nach Korrektur`);
+  // Lauf der Neuabrechnung noch nicht exportiert → die Kasse hat die korrigierte Fassung noch nicht (AppSec Runde 3)
+  if (b.rebillCount) parts.push(`enthält ${b.rebillCount} Neuabrechnung${b.rebillCount === 1 ? "" : "en"} nach Korrektur${b.exportedOn ? "" : " – noch nicht übergeben"}`);
   return parts.join(" | ");
 }
 

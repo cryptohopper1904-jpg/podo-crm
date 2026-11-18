@@ -157,10 +157,12 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
     ))[0].id;
     await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
     await w.q("update prescriptions set status = 'billing_ready', remedy_cost_cents = 7500, copayment_cents = 1000 where id = $1", [id]);
-    const neu = await run(7500, 1000);
-    await fx.asOrg(w.org, async (cl) => {
+    // Weg wie createBillingBatch: Lauf anlegen, abrechnen und Vermerk abschließen in EINER Transaktion (Trigger, AppSec Runde 3)
+    const neu = await fx.asOrg(w.org, async (cl) => {
+      const neu = (await cl.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, 1000, 1000, 7500, 'interne Notiz') returning id", [w.org])).rows[0].id as string;
       await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, neu]);
       await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [c, w.user, neu]);
+      return neu;
     });
 
     // Zeitraum mit beiden Läufen: Kassenanteil nur einmal (neuer Lauf)
@@ -228,10 +230,11 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       const c = (await w.q<{ id: string }>("insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, deduction_id, created_by) values ($1,$2,$3,'ICD falsch',$4,$5) returning id", [w.org, id, w.patient, deductionId, w.user]))[0].id;
       await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
       await w.q("update prescriptions set status = 'billing_ready', remedy_cost_cents = 7500, copayment_cents = 1000 where id = $1", [id]);
-      const neu = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1000, 1000, 7500) returning id", [w.org]))[0].id;
-      await fx.asOrg(w.org, async (cl) => {
+      const neu = await fx.asOrg(w.org, async (cl) => {
+        const neu = (await cl.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1000, 1000, 7500) returning id", [w.org])).rows[0].id as string;
         await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, neu]);
         await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [c, w.user, neu]);
+        return neu;
       });
       return { ...w, id, old, neu, correction: c };
     };
@@ -276,6 +279,14 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
       // rückdatiertes Anlegen durch die Anwendung wirkt nicht: der neue Lauf bekommt die nächste Nummer
       const third = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, created_at) values ($1, 0, now() - interval '1 day') returning id", [w.org]))[0].id;
       expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"], [third, "Lauf 3"]]);
+    });
+
+    it("Runde 3: Belegliste – Hinweis „Neuabrechnung noch nicht übergeben“, solange der Lauf der Neuabrechnung nicht exportiert ist", async (ctx) => {
+      const w = await rebilledWorld(ctx);
+      const note = async () => stats.batchCorrectionNote((await stats.belegliste(w.auth, wide())).batches.find((x) => x.id === w.neu)!);
+      expect(await note()).toMatch(/enthält 1 Neuabrechnung nach Korrektur – noch nicht übergeben/);
+      await w.q("update billing_batches set exported_at = now(), status = 'exported' where id = $1", [w.neu]);
+      expect(await note()).toBe("enthält 1 Neuabrechnung nach Korrektur");
     });
   });
 });
