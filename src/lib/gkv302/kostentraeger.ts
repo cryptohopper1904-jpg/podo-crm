@@ -286,12 +286,15 @@ export function parseKostentraegerdatei(inhalt: string, grenzen: EdifactGrenzen 
       }
       case "ASP": {
         const a = { lfdNr: wert(seg, 0), telefon: opt(wert(seg, 1)), fax: opt(wert(seg, 2)), name: opt(wert(seg, 3)), arbeitsgebiet: opt(wert(seg, 4)) } as KotrInstitution["ansprechpartner"][number];
+        // Pflichtangaben (Anhang 3; in allen echten Dateien belegt) – ein leeres „ASP'“ ist keine Angabe, nur Speicherlast
+        if (!a.lfdNr) throw new KotrFehler(`${ort}: Ansprechpartner ohne laufende Nummer.`);
         aktuell.ansprechpartner.push(a);
         vdtZiel = a;
         break;
       }
       case "UEM": {
         const u: KotrUebermittlung = { medium: wert(seg, 0), parameter: wert(seg, 1), zeichensatz: wert(seg, 2), komprimierung: opt(wert(seg, 3)), dfu: [] };
+        if (!u.medium || !u.parameter || !u.zeichensatz) throw new KotrFehler(`${ort}: Übermittlungsweg ohne Pflichtangaben (Medium, Parameter, Zeichensatz).`);
         aktuell.uebermittlung.push(u);
         vdtZiel = u;
         break;
@@ -300,6 +303,7 @@ export function parseKostentraegerdatei(inhalt: string, grenzen: EdifactGrenzen 
         const u = aktuell.uebermittlung[aktuell.uebermittlung.length - 1];
         if (!u) throw new KotrFehler(`${ort}: DFU ohne vorheriges UEM.`);
         const d: KotrDfu = { lfdNr: wert(seg, 0), protokoll: wert(seg, 1), benutzerkennung: opt(wert(seg, 2)), von: opt(wert(seg, 3)), bis: opt(wert(seg, 4)), uebertragungstage: opt(wert(seg, 5)), kommunikationskanal: wert(seg, 6) };
+        if (!d.lfdNr || !d.protokoll || !d.kommunikationskanal) throw new KotrFehler(`${ort}: DFÜ-Angabe ohne Pflichtangaben (laufende Nummer, Protokoll, Kommunikationskanal).`);
         u.dfu.push(d);
         vdtZiel = d;
         break;

@@ -56,6 +56,15 @@ describe("Kostenträgerdatei – Parser (Anhang 3 V09/V10)", () => {
     expect(() => parseKostentraegerdatei(roh.replace("UNZ+000008", "UNZ+000009"))).toThrow("UNZ nennt 9 Nachrichten");
     expect(() => parseKostentraegerdatei(roh.slice(0, -3))).toThrow("Segmentendezeichen");
   });
+
+  it("Segmente ohne Pflichtangaben (UEM, DFU, ASP) werden abgewiesen (Review-Runde 5, AppSec)", () => {
+    // leere Segmente kosten 4 Byte Eingabe, aber je ein Objekt – echte Dateien belegen diese Angaben immer
+    expect(() => parseKostentraegerdatei(roh.replace("UEM+1+00+I8'", "UEM'"))).toThrow("Übermittlungsweg ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("UEM+1+00+I8'", "UEM+1++I8'"))).toThrow("Übermittlungsweg ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("DFU+01+070+++++annahme@example.org'", "DFU'"))).toThrow("DFÜ-Angabe ohne Pflichtangaben");
+    expect(() => parseKostentraegerdatei(roh.replace("DFU+01+070+++++annahme@example.org'", "DFU+01+070'"))).toThrow("Kommunikationskanal");
+    expect(() => parseKostentraegerdatei(roh.replace("ASP+01+030/0000001++Testperson+Datenaustausch'", "ASP'"))).toThrow("Ansprechpartner ohne laufende Nummer");
+  });
 });
 
 describe("Kostenträgerdatei – Annahmestellen ermitteln", () => {

@@ -4,7 +4,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { ausLatin1 } from "./edifact";
-import { parseKostentraegerdatei, schreibeKostentraegerdatei, type KotrInstitution } from "./kostentraeger";
+import { parseKostentraegerdatei, schreibeKostentraegerdatei, type Kostentraegerdatei, type KotrInstitution } from "./kostentraeger";
 import { KOTR_CACHE_GEWICHT_JE_BYTE, KOTR_CACHE_MAX_BYTES, KotrCache } from "./kotr-cache";
 
 const roh = ausLatin1(new Uint8Array(readFileSync(path.join(__dirname, "fixtures", "kotr-test.ke0"))));
@@ -70,5 +70,66 @@ describe("Cache zerlegter Kostenträgerdateien (Review-Runde 3)", () => {
     expect(c.schluessel().length).toBe(Math.floor(KOTR_CACHE_MAX_BYTES / (laenge * KOTR_CACHE_GEWICHT_JE_BYTE)));
     // gehalten: Cache-Einträge (≈ 5–9 × Eingabe) – mit GC gemessen; ohne GC großzügige Schwelle
     expect(gehalten).toBeLessThan((gc ? 48 : 250) * 1024 * 1024);
+  });
+
+  // Review-Runde 5 (AppSec B1''): Segmente ohne Datenelemente („UEM'“, „DFU'“, „ASP'“) kosten 4 Byte Eingabe, erzeugen aber
+  // je ein Objekt mit 5–7 Eigenschaften. Nach reinem Eingabe-Gewicht (× 10) hielt ein voller Cache ~100 MB statt 32 MB.
+  // Die Struktur wird hier so gebaut, wie der Zerleger sie bis Runde 4 aus diesen Mustern erzeugte (er lehnt sie seit
+  // Runde 5 ab – das Gewicht muss aber unabhängig davon stimmen).
+  const leereDatei = (v: number, uem: number, dfuJeUem: number, asp: number): { text: string; laden: () => Kostentraegerdatei } => {
+    const segmente = ["UEM'", ...Array<string>(dfuJeUem).fill("DFU'")].join("");
+    const text = `UNB+UNOC:3+990020026+999999999+261001:1200+${String(v).padStart(5, "0")}++GK05Q426KE0'UNH++KOTR'IDK+990000001'VDT+20260101'${"ASP'".repeat(asp)}${segmente.repeat(uem)}UNT+1'UNZ+1+${v}'`;
+    const laden = (): Kostentraegerdatei => ({
+      absenderIk: "990020026", empfaengerIk: "999999999", erstellt: "261001:1200", dateinummer: String(v).padStart(5, "0"), dateiname: "GK05Q426KE0",
+      institutionen: [{
+        ik: "990000001", artDerInstitution: "", kurzbezeichnung: "", vknr: undefined, gueltigkeit: { ab: "2026-01-01", bis: undefined }, verarbeitungskennzeichen: "",
+        verknuepfungen: [], name: [], anschriften: [],
+        ansprechpartner: Array.from({ length: asp }, () => ({ lfdNr: "", telefon: undefined, fax: undefined, name: undefined, arbeitsgebiet: undefined })),
+        uebermittlung: Array.from({ length: uem }, () => ({
+          medium: "", parameter: "", zeichensatz: "", komprimierung: undefined,
+          dfu: Array.from({ length: dfuJeUem }, () => ({ lfdNr: "", protokoll: "", benutzerkennung: undefined, von: undefined, bis: undefined, uebertragungstage: undefined, kommunikationskanal: "" })),
+        })),
+      }],
+    });
+    return { text, laden };
+  };
+
+  it.each([
+    // Muster „uem_dfu“: 1 Institution, 39 990 × „UEM'DFU'“ (≈ 320 KB); Knoten: UEM + dfu-Array + DFU je Paar
+    { muster: "uem_dfu", uem: 39_990, dfuJeUem: 1, asp: 0, knoten: 3 * 39_990 },
+    // Muster „asp_uem“: 49 999 × „ASP'“ + 29 990 × „UEM'“ (≈ 320 KB); Knoten: ASP, UEM + dfu-Array
+    { muster: "asp_uem", uem: 29_990, dfuJeUem: 0, asp: 49_999, knoten: 49_999 + 2 * 29_990 },
+  ])("Gewicht aus der Struktur, nicht nur aus der Eingabe: $muster", ({ uem, dfuJeUem, asp, knoten }) => {
+    setFlagsFromString("--expose-gc");
+    const gc = runInNewContext("gc") as (() => void) | undefined;
+    // einzelner Eintrag: Gewicht ≥ konservative Untergrenze (≥ 64 Byte je Objekt/Array in V8) und ≥ gemessenem Heap
+    const einzeln = new KotrCache();
+    const eins = leereDatei(1, uem, dfuJeUem, asp);
+    expect(eins.text.length).toBeLessThan(330_000);
+    gc?.();
+    const vor1 = process.memoryUsage().heapUsed;
+    einzeln.hole("e", eins.text.length, eins.laden);
+    gc?.();
+    const heap1 = process.memoryUsage().heapUsed - vor1;
+    const gewicht = einzeln.bytes();
+    expect(gewicht).toBeGreaterThanOrEqual(knoten * 64);
+    expect(gewicht).toBeGreaterThan(eins.text.length * KOTR_CACHE_GEWICHT_JE_BYTE);
+    if (gc) expect(gewicht).toBeGreaterThanOrEqual(heap1);
+
+    // voller Cache (Budget 32 MB): Summe der Gewichte ≤ Budget, gehaltener Heap ≤ Summe der Gewichte
+    const c = new KotrCache();
+    gc?.();
+    const vor = process.memoryUsage().heapUsed;
+    for (let v = 1; v <= 12; v++) {
+      const d = leereDatei(v, uem, dfuJeUem, asp);
+      c.hole(`k${v}`, d.text.length, d.laden);
+    }
+    gc?.();
+    const gehalten = process.memoryUsage().heapUsed - vor;
+    expect(c.bytes()).toBeLessThanOrEqual(KOTR_CACHE_MAX_BYTES);
+    expect(c.bytes()).toBeGreaterThanOrEqual(c.schluessel().length * knoten * 64);
+    expect(gehalten).toBeLessThan((gc ? 1 : 3) * KOTR_CACHE_MAX_BYTES);
+    if (gc) expect(gehalten).toBeLessThanOrEqual(c.bytes());
+    expect(einzeln.schluessel()).toEqual(["e"]);
   });
 });
