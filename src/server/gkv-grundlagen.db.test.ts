@@ -91,19 +91,26 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
    * Migration (z. B. 0062) zweimal einspielen – in einer EIGENEN, frisch migrierten Datenbank (Review Runde 4): parallel
    * laufende Testdateien in der gemeinsamen DB sehen so nie die alte Fassung ersetzter Funktionen oder fehlende Trigger
    * späterer Migrationen und laufen nicht in Sperren/Deadlocks der DDL. `before` stellt Altbestand dort nach (Owner),
-   * `after` prüft das Ergebnis dort. Ohne Recht CREATE DATABASE `false` (Test überspringen). Danach wird die DB gelöscht.
+   * `after` prüft das Ergebnis dort. Ohne Recht CREATE DATABASE `false` (Test überspringen); mit `superuser` (Altbestand per
+   * session_replication_role = replica) auch ohne Superuser `false`. Danach wird die DB gelöscht – gelingt das endgültig
+   * nicht, Warnung mit dem DB-Namen (von Hand aufräumen).
    */
-  const runMigration = async (suffix: string, hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void> } = {}): Promise<boolean> => {
+  const runMigration = async (
+    suffix: string,
+    hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void>; superuser?: boolean } = {},
+  ): Promise<boolean> => {
     const dir = path.join(__dirname, "../../drizzle");
     const file = readdirSync(dir).find((f) => f.endsWith(suffix))!;
     const sql = readFileSync(path.join(dir, file), "utf8").split("--> statement-breakpoint");
     const name = `podo_mig_${Math.random().toString(36).slice(2, 10)}`;
     const admin = new Pool({ connectionString: ownerUrl(), max: 1 });
     admin.on("error", () => undefined);
+    let created = false;
     try {
-      const can = await admin.query("select rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
-      if (!can.rows[0]?.ok) return false;
+      const can = await admin.query("select rolsuper, rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
+      if (!can.rows[0]?.ok || (hooks.superuser && !can.rows[0]?.rolsuper)) return false;
       await admin.query(`create database ${name}`);
+      created = true;
       const url = new URL(ownerUrl());
       url.pathname = `/${name}`;
       const pool = new Pool({ connectionString: url.toString(), max: 1 });
@@ -127,15 +134,19 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       return true;
     } finally {
       // ohne FORCE (das beendete in der CI eine noch schließende Sitzung → „uncaught“ 57P01); kurz warten, bis sie weg ist
-      for (let i = 0; i < 20; i++) {
+      let dropError: unknown = null;
+      for (let i = 0; created && i < 20; i++) {
         try {
           await admin.query(`drop database if exists ${name}`);
+          dropError = null;
           break;
         } catch (e) {
+          dropError = e;
           if ((e as { code?: string }).code !== "55006") break;
           await new Promise((r) => setTimeout(r, 100));
         }
       }
+      if (dropError) console.warn(`Test-Datenbank ${name} konnte nicht gelöscht werden (bitte von Hand: DROP DATABASE ${name}):`, (dropError as Error).message);
       await admin.end();
     }
   };
@@ -144,11 +155,37 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     if (!(await runMigration("_gkv_review.sql"))) ctx.skip();
   });
 
+  it("Migration 0067 ist wiederholbar (idempotent); Funktionen mit festem search_path, ohne PUBLIC-Recht", { timeout: 120_000 }, async (ctx) => {
+    const ran = await runMigration("_gkv_haertung.sql", {
+      after: async (c) => {
+        const fns = await c.query(
+          "select proname, proconfig, has_function_privilege('public', oid, 'execute') as pub from pg_proc where proname in ('podo_billing_batch_sum_check', 'podo_prescription_delete_guard', 'podo_delete_patient', 'podo_owner_delete_allowed') order by proname",
+        );
+        expect(fns.rows).toEqual(
+          ["podo_billing_batch_sum_check", "podo_delete_patient", "podo_owner_delete_allowed", "podo_prescription_delete_guard"].map((proname) => ({ proname, proconfig: ["search_path=pg_catalog, public, pg_temp"], pub: false })),
+        );
+        const trg = await c.query("select tgname, tgdeferrable, tginitdeferred from pg_trigger where tgname in ('billing_batches_sum_check', 'prescriptions_batch_sum_check_insert', 'prescriptions_batch_sum_check_update', 'prescriptions_delete_guard') order by tgname");
+        expect(trg.rows).toEqual([
+          { tgname: "billing_batches_sum_check", tgdeferrable: true, tginitdeferred: true },
+          { tgname: "prescriptions_batch_sum_check_insert", tgdeferrable: true, tginitdeferred: true },
+          { tgname: "prescriptions_batch_sum_check_update", tgdeferrable: true, tginitdeferred: true },
+          { tgname: "prescriptions_delete_guard", tgdeferrable: false, tginitdeferred: false },
+        ]);
+        // Löschfreigabe: Schema ohne PUBLIC-Rechte
+        const priv = await c.query("select has_schema_privilege('public', 'podo_private', 'usage') as usage");
+        expect(priv.rows).toEqual([{ usage: false }]);
+      },
+    });
+    if (!ran) ctx.skip();
+  });
+
   it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", { timeout: 120_000 }, async (ctx) => {
     // in eigener, frisch migrierter DB (runMigration) – keine DDL/Datenmigration auf der gemeinsamen Test-DB
     let p1 = "";
     let p2 = "";
     const ran = await runMigration(MIGRATION, {
+      // Altbestand per session_replication_role = replica – braucht einen Superuser (nicht nur CREATE DATABASE)
+      superuser: true,
       before: async (c) => {
         await c.query("set session_replication_role = replica");
         const o = (await c.query("insert into organizations (name, slug) values ('Praxis', $1) returning id", [`m-${Math.random().toString(36).slice(2, 8)}`])).rows[0].id;
@@ -408,18 +445,13 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
   });
 
   it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", { timeout: 120_000 }, async (ctx) => {
-    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
-    try {
-      const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
-      if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
-    } finally {
-      await owner.end();
-    }
     let legacy = "";
     let ok = "";
     let own = "";
     // Altbestand in der eigenen DB (Owner, Trigger aus): zwei Praxen, Termin mit Verordnung der fremden Praxis
     const ran = await runMigration("_gkv_review.sql", {
+      // Altbestand nachstellen braucht session_replication_role (Superuser)
+      superuser: true,
       before: async (c) => {
         await c.query("set session_replication_role = replica");
         const id = async (q: string, p: unknown[]) => (await c.query(q, p)).rows[0].id as string;

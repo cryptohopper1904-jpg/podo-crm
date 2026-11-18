@@ -99,7 +99,8 @@ async function createOffer(label: string) {
           await q("delete from appointments where organization_id = $1 and (patient_id = $2 or (starts_at = $3 and title in ('E2E Angebot', 'E2E belegt')))", [org, ids.patient, startsAt.toISOString()]);
           await q("delete from messages where organization_id = $1 and patient_id = $2", [org, ids.patient]);
           await q("delete from patient_links where organization_id = $1 and patient_id = $2", [org, ids.patient]);
-          await q("delete from patients where organization_id = $1 and id = $2", [org, ids.patient]);
+          // Personen nur über podo_delete_patient (App-Rolle ohne DELETE auf patients, Migration 0067)
+          await q("select podo_delete_patient($1::uuid)", [ids.patient]);
         });
       } finally {
         await pool.end();

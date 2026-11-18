@@ -24,7 +24,7 @@ const d = ownerUrl ? describe : describe.skip;
 /** Löschlauf sperrt Tabellen mit NOWAIT und wiederholt bei belegten Tabellen (parallele DB-Tests) */
 const PURGE_TIMEOUT = { timeout: 30_000 };
 
-type Seed = { org: string; user: string; patient: string; record: string; invoice: string };
+type Seed = { org: string; user: string; patient: string; record: string; invoice: string; billedVo: string };
 
 d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
   let pool: Pool;
@@ -71,7 +71,15 @@ d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
       await c.query("update invoices set status='issued', number=$2, total_cents=6500 where id=$1", [invoice, `R2099-${label}`]);
       await c.query("insert into payments (organization_id, invoice_id, method, amount_cents) values ($1,$2,'cash',6500)", [org, invoice]);
       await c.query("insert into integration_connections (organization_id, provider, secret_enc) values ($1,'lexoffice','geheim')", [org]);
-      return { patient, record, invoice };
+      // GKV: Abrechnungslauf mit abgerechneter Verordnung (Lauf nie löschbar, Verordnung nicht löschbar – 0066/0067)
+      const batch = (await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [org])).rows[0].id;
+      const billedVo = (
+        await c.query(
+          "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents) values ($1,$2,'2026-01-05','DF',1,'billed',now(),$3,7110,1712) returning id",
+          [org, patient, batch],
+        )
+      ).rows[0].id;
+      return { patient, record, invoice, billedVo };
     });
     await pool.query("insert into audit_log (organization_id, user_id, action) values ($1, $2, 'test.purge')", [org, user]);
     await mkdir(path.join(storageRoot, org, "2026", "01"), { recursive: true });
@@ -146,6 +154,8 @@ d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
       payments: await count(b.org, "payments"),
       consents: await count(b.org, "consents"),
       audit: await count(b.org, "audit_log"),
+      prescriptions: await count(b.org, "prescriptions"),
+      batches: await count(b.org, "billing_batches"),
     };
     const lines: string[] = [];
     const c = await pool.connect();
@@ -160,7 +170,7 @@ d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
 
     // A ist weg – inklusive unveränderbarer Tabellen, Benutzer, Sitzungen und Dateien
     expect((await pool.query("select 1 from organizations where id = $1", [a.org])).rowCount).toBe(0);
-    for (const t of ["patients", "treatment_records", "record_addenda", "media", "invoices", "invoice_lines", "payments", "consents", "anamneses", "integration_connections"])
+    for (const t of ["patients", "treatment_records", "record_addenda", "media", "invoices", "invoice_lines", "payments", "consents", "anamneses", "integration_connections", "prescriptions", "billing_batches"])
       expect(await count(a.org, t)).toBe(0);
     expect((await pool.query("select 1 from memberships where organization_id = $1", [a.org])).rowCount).toBe(0);
     expect((await pool.query("select 1 from sessions where organization_id = $1", [a.org])).rowCount).toBe(0);
@@ -179,6 +189,8 @@ d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
       payments: await count(b.org, "payments"),
       consents: await count(b.org, "consents"),
       audit: await count(b.org, "audit_log"),
+      prescriptions: await count(b.org, "prescriptions"),
+      batches: await count(b.org, "billing_batches"),
     }).toEqual(before);
     expect((await pool.query("select 1 from users where id = $1", [b.user])).rowCount).toBe(1);
     expect((await pool.query("select 1 from memberships where organization_id = $1", [b.org])).rowCount).toBe(2);
@@ -197,6 +209,8 @@ d("Löschlauf gekündigter Praxen", PURGE_TIMEOUT, () => {
   it("Unveränderbarkeit und RLS sind danach wieder aktiv", async () => {
     await expect(asOrg(b.org, (c) => c.query("delete from treatment_records where id = $1", [b.record]))).rejects.toThrow(/unveränderbar/);
     await expect(asOrg(b.org, (c) => c.query("update invoices set notes = 'x' where id = $1", [b.invoice]))).rejects.toThrow();
+    await expect(asOrg(b.org, (c) => c.query("delete from prescriptions where id = $1", [b.billedVo]))).rejects.toThrow(/abgerechnete Verordnung kann nicht gelöscht werden/);
+    await expect(asOrg(b.org, (c) => c.query("delete from billing_batches where organization_id = $1", [b.org]))).rejects.toThrow(/Abrechnungslauf kann nicht gelöscht werden/);
     // Nicht-Superuser-Eigentümer: FORCE RLS blendet die Zeilen aus (0 Zeilen). Superuser (z. B. CI-Container)
     // umgeht RLS – dann muss der Append-only-Trigger greifen. In keinem Fall darf etwas gelöscht werden.
     const del = await pool.query("delete from audit_log where organization_id = $1", [b.org]).then(

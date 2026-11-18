@@ -183,6 +183,14 @@ bash /opt/podo-crm/deploy/restore.sh --db /root/restore/db-….dump.gpg         
 ```
 Ablauf: Rückfrage (`WIEDERHERSTELLEN` eintippen; `--yes` ohne Rückfrage, `--dry-run` nur anzeigen) → aktuellen Stand zusätzlich sichern (`db-preupdate-…`) → Backup in eine Hilfsdatenbank einspielen → **nur wenn das fehlerfrei war**: App und Cron stoppen, Datenbank `podo` ersetzen → Dateien (optional): Archiv prüfen (keine absoluten Pfade, kein `..`, keine Links), in ein leeres Verzeichnis entpacken, dann umschalten – der bisherige Bestand wandert vollständig nach `storage/.pre-restore-<zeit>` (Quarantäne, nicht in neuen Backups) → alles starten und auf `/api/health` warten. Ist das Backup älter als der Code, spielt `migrate` die fehlenden Migrationen automatisch nach.
 
+**Nur Daten einspielen (`pg_restore --data-only`) – nicht mit aktiven Triggern.** Der normale Weg (`restore.sh`, voller
+`pg_restore` in eine leere Datenbank) ist unkritisch: Die Daten werden geladen, bevor Trigger angelegt werden. Ein
+Daten-only-Restore in eine bestehende, migrierte Datenbank dagegen löst die Trigger aus: Bei `billing_batches` setzt
+`billing_batches_guard` beim INSERT `created_at` auf den Restore-Zeitpunkt und `exported_at` auf leer (Status „Entwurf“) –
+Übergabezeitpunkte und die Laufnummern-Reihenfolge der Abrechnungsläufe gingen verloren; zusätzlich lehnt die
+Summenprüfung (`billing_batches_sum_check`, Migration 0067) jeden Lauf ab, dessen Verordnungen nicht in derselben
+Transaktion folgen. Muss es doch ein Daten-only-Restore sein: als Superuser mit `--disable-triggers --single-transaction`.
+
 Datenbank und Dateien möglichst vom **selben Zeitpunkt** einspielen. Nach dem Datei-Restore liegen neuere Fotos (ohne Datenbank-Bezug) nur noch in der Quarantäne; nach erfolgreicher Prüfung löschen (Befehl gibt das Skript aus). Wird nur die Datenbank zurückgespielt, bleiben neuere Dateien im Volume, sind aber nicht mehr verknüpft – dann `--files` vom selben Zeitpunkt mit einspielen.
 
 ---

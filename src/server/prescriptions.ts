@@ -662,6 +662,10 @@ export async function createBillingBatch(auth: AuthContext, ids: string[], opts:
   const org = auth.organization.id;
   if (!ids.length) return { error: "Bitte mindestens eine Verordnung auswählen." };
   const result = await withOrg(org, async (tx) => {
+    // Sperrt die Verordnungen; podo_delete_patient sperrt Person, dann Verordnungen (Migration 0067). Läuft beides
+    // gleichzeitig für dieselbe Person, wartet eines auf das andere; ein seltener Deadlock (40P01) bricht eine der beiden
+    // Transaktionen ab – kein Datenschaden, Aktion wiederholen. Lauf und Verordnungen werden beim Commit gegen die Summen
+    // geprüft (CONSTRAINT TRIGGER, 0067) – app.org_id muss dabei die eigene Praxis bleiben (withOrg).
     const rows = await tx
       .select()
       .from(prescriptions)
@@ -786,7 +790,12 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
     const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
     if (!batch.exportedAt) {
-      await tx.update(billingBatches).set({ exportedAt: new Date(), status: "exported" }).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
+      // nur, solange nicht übergeben: ein gleichzeitiger zweiter Export wartet auf die Zeilensperre und ändert danach nichts
+      // (statt am Guard „Übergabezeitpunkt unveränderlich“ zu scheitern) – der erste Übergabezeitpunkt bleibt
+      await tx
+        .update(billingBatches)
+        .set({ exportedAt: new Date(), status: "exported" })
+        .where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId), isNull(billingBatches.exportedAt)));
     }
     return { batch, rows, usage, receipts, org: o, corrections };
   });

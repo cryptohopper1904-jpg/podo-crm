@@ -45,7 +45,8 @@ async function demoSql<T = Record<string, unknown>>(sql: string, params: unknown
 /** Termine und Patient:innen früherer Läufe entfernen (sonst sind die Zeiten belegt) – nur die erfundenen Test-Personen */
 async function cleanup() {
   await demoSql("delete from appointments where organization_id = $org and patient_id in (select id from patients where organization_id = $org and last_name like 'Dialogtest%')");
-  await demoSql("delete from patients where organization_id = $org and last_name like 'Dialogtest%'");
+  // Personen nur über podo_delete_patient (App-Rolle ohne DELETE auf patients, Migration 0067)
+  await demoSql("select podo_delete_patient(id) from patients where organization_id = $org and last_name like 'Dialogtest%'");
 }
 const countPatients = async (lastName: string) => (await demoSql<{ n: number }>("select count(*)::int n from patients where organization_id = $org and last_name = $2", [lastName]))[0].n;
 const sfx = () => Date.now().toString(36);

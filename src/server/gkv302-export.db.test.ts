@@ -54,12 +54,15 @@ const PRAXIS_IK = "990010013";
       { date: "2026-10-19", position: "78020", units: 1, priceCents: 3555, copayCents: 356, minor: false, exempt: false, tableVersion: "test" },
     ],
   };
-  /** batch: "neu" legt den Lauf in derselben Transaktion an (INSERT mit Lauf nur in einen eben angelegten Lauf, 0066) */
+  /**
+   * batch: "neu" legt den Lauf in derselben Transaktion an (INSERT mit Lauf nur in einen eben angelegten Lauf, 0066), mit
+   * Anzahl/Summen dieser Verordnung (Prüfung beim Commit, 0067; status muss dann „billed“ sein)
+   */
   const verordnung = async (o: string, opts: { status?: string; batch?: "neu" | null; lastName?: string; kind?: string; approval?: boolean } = {}) => {
     const p = await f.patient(o, { lastName: opts.lastName ?? "Testfall", firstName: "Erika" });
     await f.asOrg(o, (c) => c.query("update patients set birth_date = '1950-04-12', street = 'Musterweg 2', zip = '10115', city = 'Berlin' where id = $1", [p]));
     return f.asOrg(o, async (c) => {
-      const batch = opts.batch === "neu" ? ((await c.query("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [o])).rows[0].id as string) : null;
+      const batch = opts.batch === "neu" ? ((await c.query("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, 7110) returning id", [o])).rows[0].id as string) : null;
       return (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, positions, icd10, insurer_ik, insurance_number, insured_status,

@@ -86,6 +86,12 @@ async function main() {
     // Absetzungen und Korrekturvermerke (Migration 0066, GKV Paket C) sind Abrechnungsunterlagen: nie löschen (Status
     // ändern bzw. Korrektur abschließen, beides per Trigger begrenzt) – gelöscht wird nur mit der Praxis
     await pool.query(`revoke delete on gkv_deductions, prescription_corrections from ${appRole}`);
+    // Personen nur über podo_delete_patient löschen (SECURITY DEFINER, Prüfung der Aufbewahrungsgründe, Löschfreigabe in
+    // podo_private.delete_grants – Migration 0067, AppSec K2); Praxen nur im Löschlauf als Eigentümer
+    // (src/server/purge-organization.ts) – organizations hat keine RLS
+    await pool.query(`revoke delete on patients, organizations from ${appRole}`);
+    // Lösch-Guards rufen podo_owner_delete_allowed auch als App-Rolle auf (Ergebnis dann immer false, 0067)
+    await pool.query(`grant execute on function podo_owner_delete_allowed(oid, uuid) to ${appRole}`);
     // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);

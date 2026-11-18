@@ -36,7 +36,8 @@ let patientId: string;
 test.beforeAll(async ({ browser }) => {
   await demoSql("delete from appointments where organization_id = $org and patient_id in (select id from patients where organization_id = $org and last_name like 'VOtest%')");
   await demoSql("delete from prescriptions where organization_id = $org and patient_id in (select id from patients where organization_id = $org and last_name like 'VOtest%')");
-  await demoSql("delete from patients where organization_id = $org and last_name like 'VOtest%'");
+  // Personen nur über podo_delete_patient (App-Rolle ohne DELETE auf patients, Migration 0067)
+  await demoSql("select podo_delete_patient(id) from patients where organization_id = $org and last_name like 'VOtest%'");
   const [p] = await demoSql<{ id: string }>(
     `insert into patients (organization_id, number, last_name, first_name, birth_date, insurance_type, insurer_name, insurer_ik, insurance_number, insured_status)
      values ($org, (select coalesce(max(number), 0) + 1 from patients where organization_id = $org), $2, 'Erika', '1950-03-01', 'gkv', 'Beispiel-BKK', '109911114', 'A000500015', '1') returning id`,

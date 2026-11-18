@@ -470,6 +470,13 @@
       "when": 1795013407615,
       "tag": "0066_gkv_paket_c",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1795014007615,
+      "tag": "0067_gkv_haertung",
+      "breakpoints": true
     }
   ]
 }
