@@ -64,12 +64,60 @@ export function copaymentReceiptLines(
   return [{ description: `Zuzahlung zur ${opts.prescriptionLabel}`, cents: amountCents }];
 }
 
-/** Text der berechneten Zuzahlung für die Quittung, wenn der Betrag davon abweicht (Teil-/Restbetrag) */
-export function copaymentExpectedNote(breakdown: CopaymentBreakdown | null, amountCents: number, alreadyCents: number): string | null {
+const eur = (c: number) => `${(c / 100).toFixed(2).replace(".", ",")} €`;
+
+/**
+ * Text der berechneten Zuzahlung für die Quittung, wenn der Betrag davon abweicht (Teil-/Restbetrag). „bereits quittiert“
+ * nennt nur Beträge mit Zuzahlungsquittung (ZZ-Beleg); ein Altvermerk (vor Paket B, ohne Beleg) steht gesondert
+ * (Paket-B-Nachzug, Buchhaltung).
+ */
+export function copaymentExpectedNote(breakdown: CopaymentBreakdown | null, amountCents: number, receiptsCents: number, legacyCents = 0): string | null {
   if (!breakdown || breakdown.totalCents === amountCents) return null;
-  const eur = (c: number) => `${(c / 100).toFixed(2).replace(".", ",")} €`;
   const parts = breakdown.positions.map((p) => `Pos. ${p.position}: ${eur(p.cents)}`);
   if (breakdown.flatCents) parts.push(`je Verordnung: ${eur(breakdown.flatCents)}`);
-  const rest = breakdown.totalCents - alreadyCents - amountCents;
-  return `Berechnete Zuzahlung ${eur(breakdown.totalCents)}${parts.length ? ` (${parts.join(", ")})` : ""}${alreadyCents ? `, bereits quittiert ${eur(alreadyCents)}` : ""}${rest > 0 ? `, offen nach dieser Zahlung ${eur(rest)}` : ""}.`;
+  const rest = breakdown.totalCents - receiptsCents - legacyCents - amountCents;
+  return `Berechnete Zuzahlung ${eur(breakdown.totalCents)}${parts.length ? ` (${parts.join(", ")})` : ""}${receiptsCents ? `, bereits quittiert ${eur(receiptsCents)}` : ""}${legacyCents ? `, Altvermerk ${eur(legacyCents)}` : ""}${rest > 0 ? `, offen nach dieser Zahlung ${eur(rest)}` : ""}.`;
+}
+
+/** Akte: bereits erhaltene Zuzahlung, getrennt nach Quittung (ZZ-Beleg) und Altvermerk; null, wenn beides 0 */
+export function copaymentCollectedLabel(receiptsCents: number, legacyCents: number): string | null {
+  const parts = [receiptsCents > 0 ? `quittiert ${eur(receiptsCents)}` : null, legacyCents > 0 ? `Altvermerk ${eur(legacyCents)}` : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+export type LegacyCopayment = {
+  /** angerechneter Betrag */
+  cents: number;
+  /** gilt als vollständig erhalten (Betrag unbekannt) – keine Quittung mehr */
+  full: boolean;
+  /** Betrag stand im Vermerk (copayment_paid_cents); sonst zuletzt gespeicherter Rechenwert der Verordnung */
+  amountKnown: boolean;
+};
+
+/**
+ * Altvermerk „Zuzahlung erhalten“ (vor Paket B) als bereits erhaltener Betrag: copayment_paid_cents, sonst der zuletzt
+ * gespeicherte Rechenwert der Verordnung (copayment_cents – nicht zwingend der Stand beim Vermerk). Ohne Betrag und ohne
+ * Rechenwert > 0 gilt der Vermerk als vollständig erhalten (`full`): so entsteht keine Quittung über bereits Erhaltenes
+ * (Paket-B-Nachzug: copayment_cents = 0 bewusst wie „unbekannt“).
+ */
+export function legacyCopayment(vo: { copaymentPaidAt: Date | string | null; copaymentPaidCents: number | null; copaymentCents: number | null }): LegacyCopayment | null {
+  if (!vo.copaymentPaidAt) return null;
+  if (vo.copaymentPaidCents !== null) return { cents: vo.copaymentPaidCents, full: false, amountKnown: true };
+  if (vo.copaymentCents === null || vo.copaymentCents <= 0) return { cents: 0, full: true, amountKnown: false };
+  return { cents: vo.copaymentCents, full: false, amountKnown: false };
+}
+
+/** Hinweis auf der Zuzahlungsquittung zum angerechneten Altvermerk */
+export function legacyCopaymentNote(legacy: LegacyCopayment): string {
+  return legacy.amountKnown
+    ? `Früher als „Zuzahlung erhalten“ vermerkt: ${eur(legacy.cents)} – angerechnet (ohne Beleg in PodoHero).`
+    : `Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung ${eur(legacy.cents)} (ohne Beleg in PodoHero).`;
+}
+
+/**
+ * Formular „Zuzahlung erhalten“ in der Akte: ohne Preis (manuell), solange nichts als erledigt gilt (ein voller Altvermerk
+ * setzt openCents auf 0); mit Berechnung nur bei offenem Betrag.
+ */
+export function copaymentFormVisible(due: { manual: boolean; openCents: number | null }): boolean {
+  return due.manual ? due.openCents !== 0 : (due.openCents ?? 0) > 0;
 }

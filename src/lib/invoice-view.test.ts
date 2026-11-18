@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dateDe, money } from "./format";
+import { invoiceDocLabel } from "./invoice-labels";
 import { accountingServiceDate, invoiceAsIssued, openSumRow, paidAtIssue, monthSpanTaxHint, serviceDateDefaults, dueImmediately, dueLabel, invoiceHeading, legacyHeading, paymentNoteLines, serviceDays, serviceRange, type InvoiceService } from "./invoice-view";
 
 const inv = { kind: "invoice", status: "issued", number: "R2026-0042", issuedAt: "2026-11-13", dueAt: "2026-11-27", totalCents: 9500, paidCents: 0, paymentLinkUrl: null };
@@ -44,6 +45,9 @@ describe("Überschrift mit Leistungsdatum (§ 14 Abs. 4 Nr. 6 UStG) – festgesc
     // Review R3-8: Storno einer Zuzahlungsquittung ist keine „Stornorechnung zur Rechnung“
     const zz = { number: "ZZ2026-0007", kind: "copayment", issuedAt: "2026-11-12" };
     expect(h({ kind: "credit_note" }, ["2026-11-10"], false, zz).heading).toBe("Storno zur Zuzahlungsquittung ZZ2026-0007");
+    // Paket-B-Nachzug: auch der Datumshinweis nennt die Zuzahlungsquittung, nicht „Rechnung“
+    expect(h({ kind: "credit_note" }, ["2026-11-10"], false, zz).serviceDateNote).toBe("Leistungsdatum der stornierten Zuzahlungsquittung: 10.11.2026");
+    expect(h({ kind: "credit_note" }, ["2026-11-03", "2026-11-10"], false, zz).serviceDateNote).toBe("Leistungszeitraum der stornierten Zuzahlungsquittung: 03.11.2026 bis 10.11.2026");
   });
 });
 
@@ -206,5 +210,16 @@ describe("Summenzeile „offen“ (Druckansicht und PDF)", () => {
     expect(openSumRow({ status: "paid", totalCents: 9500, paidCents: 9500 })).toBeNull();
     expect(openSumRow({ status: "issued", totalCents: -9500, paidCents: 0 })).toEqual({ label: "zu erstatten", cents: 9500 });
     expect(openSumRow({ status: "cancelled", totalCents: 9500, paidCents: 2000 })).toBeNull();
+  });
+});
+
+describe("Paket-B-Nachzug: Belegbezeichnung beim Versand", () => {
+  it("Storno einer Zuzahlungsquittung heißt „Storno Zuzahlungsquittung“, sonst wie bisher", () => {
+    expect(invoiceDocLabel("credit_note", "copayment")).toBe("Storno Zuzahlungsquittung");
+    expect(invoiceDocLabel("credit_note", "invoice")).toBe("Stornorechnung");
+    expect(invoiceDocLabel("credit_note")).toBe("Stornorechnung");
+    expect(invoiceDocLabel("copayment")).toBe("Zuzahlungsquittung");
+    expect(invoiceDocLabel("deposit")).toBe("Quittung (Anzahlung)");
+    expect(invoiceDocLabel("unbekannt")).toBe("Rechnung");
   });
 });

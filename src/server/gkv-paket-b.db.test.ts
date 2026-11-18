@@ -347,7 +347,8 @@ const png = () => testPngDataUrl();
     await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = $2, copayment_paid_method = 'cash' where id = $1", [id, legacyCents]);
     expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
     const list = await presc.listPatientPrescriptions(w.auth, w.patient);
-    expect(list!.prescriptions.find((x) => x.id === id)!.copaymentCollectedCents).toBe(legacyCents);
+    // Paket-B-Nachzug: quittiert (ZZ-Belege) und Altvermerk getrennt
+    expect(list!.prescriptions.find((x) => x.id === id)!).toMatchObject({ copaymentCollectedCents: 0, copaymentLegacyCents: legacyCents });
     expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "" })).toEqual({ error: expect.stringMatching(/Begründung/) });
     expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk versehentlich gesetzt, nichts erhalten" })).toEqual({});
   });
@@ -391,6 +392,7 @@ const png = () => testPngDataUrl();
 
   // ───────────── Review-Runde 3 ─────────────
 
+  const eur = (c: number) => `${(c / 100).toFixed(2).replace(".", ",")} €`;
   const due78020 = async () => (await import("@/lib/rules/podologie-verguetung")).priceFor("78020", today)!.copayCents! + 1000;
 
   it("R3-1: Audit scheitert nach dem Commit → Unterschrift-Datei bleibt (DB-Zeile ist append-only)", async () => {
@@ -439,9 +441,13 @@ const png = () => testPngDataUrl();
     await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 500, copayment_paid_method = 'cash' where id = $1", [id]);
     const rest = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { amountCents: number };
     expect(rest.amountCents).toBe(due - 500);
-    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/bereits/) });
+    // Paket-B-Nachzug: Rest schon per ZZ quittiert → nicht „bereits als Altvermerk erfasst“, sondern beide Beträge nennen
+    const again = await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" });
+    expect(again).toEqual({ error: expect.stringContaining(`nichts mehr offen (quittiert ${eur(due - 500)}, Altvermerk 5,00 €)`) });
+    expect((again as { error: string }).error).not.toMatch(/als Altvermerk .*erfasst/);
     const list = await presc.listPatientPrescriptions(w.auth, w.patient);
     expect(list!.prescriptions.find((x) => x.id === id)!.copaymentDue).toMatchObject({ openCents: 0 });
+    expect(list!.prescriptions.find((x) => x.id === id)!).toMatchObject({ copaymentCollectedCents: due - 500, copaymentLegacyCents: 500 });
     // Altvermerk über den vollen Betrag → gesperrt
     const full = await w.vo(1);
     await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = $2, copayment_paid_method = 'cash' where id = $1", [full, due]);
@@ -528,5 +534,55 @@ const png = () => testPngDataUrl();
     const id = await w.vo(1);
     expect(await presc.setCopaymentPaid(w.auth, { id, patientId: w.patient, paid: false, reason: "Vermerk war falsch, nichts erhalten" })).toEqual({ error: expect.stringMatching(/kein Vermerk vorhanden/) });
     expect((await w.q("select id from audit_log where organization_id = $1 and action = 'prescription.copayment' and entity_id = $2", [w.org, id])).length).toBe(0);
+  });
+
+  // ───────────── Paket-B-Nachzug (Runde 3: Code, Sicherheit, Buchhaltung) ─────────────
+
+  it("Nachzug: Altvermerk ohne Betrag – Belegtext mit berechneter Zuzahlung, „Altvermerk“ statt „bereits quittiert“", async () => {
+    const w = await world();
+    const due = await due78020();
+    const id = await w.vo(1);
+    // Altvermerk ohne copayment_paid_cents; zuletzt gespeicherter Rechenwert 5,00 €
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = null, copayment_cents = 500 where id = $1", [id]);
+    const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string; amountCents: number };
+    expect(res.amountCents).toBe(due - 500);
+    const [inv] = await w.q<{ notes: string }>("select notes from invoices where id = $1", [res.id]);
+    expect(inv.notes).toContain("ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung 5,00 €");
+    expect(inv.notes).toContain("ohne Beleg in PodoHero");
+    expect(inv.notes).not.toMatch(/Kassenbuchung|bereits quittiert/);
+    expect(inv.notes).toContain("Altvermerk 5,00 €");
+    // mit Betrag: „vermerkt: X € – angerechnet“
+    const id2 = await w.vo(1);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 700 where id = $1", [id2]);
+    const res2 = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id2, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string };
+    const [inv2] = await w.q<{ notes: string }>("select notes from invoices where id = $1", [res2.id]);
+    expect(inv2.notes).toContain("vermerkt: 7,00 € – angerechnet");
+  });
+
+  it("Nachzug: voller Altvermerk ohne Preis → nichts offen, kein Formular; Altvermerk ohne Betrag mit copayment_cents 0 gilt als voll", async () => {
+    const w = await world();
+    const manual = await w.vo(1, [{ label: "Behandlung ohne Positionsnummer", units: 1 } as never]);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = null, copayment_cents = null where id = $1", [manual]);
+    const zero = await w.vo(1);
+    await w.q("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = null, copayment_cents = 0 where id = $1", [zero]);
+    const list = await presc.listPatientPrescriptions(w.auth, w.patient);
+    expect(list!.prescriptions.find((x) => x.id === manual)!.copaymentDue).toMatchObject({ manual: true, openCents: 0 });
+    expect(list!.prescriptions.find((x) => x.id === zero)!.copaymentDue).toMatchObject({ manual: false, openCents: 0 });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: manual, patientId: w.patient, amountCents: 1000, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
+    expect(await copay.createCopaymentReceipt(w.auth, { prescriptionId: zero, patientId: w.patient, amountCents: null, method: "cash" })).toEqual({ error: expect.stringMatching(/Altvermerk/) });
+  });
+
+  it("Nachzug: Storno einer Zuzahlungsquittung – Begleit-E-Mail nennt „Storno Zuzahlungsquittung“", async () => {
+    const w = await world();
+    const id = await w.vo(1);
+    const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string };
+    const ref = (await copay.refundCopaymentReceipt(w.auth, { invoiceId: res.id, patientId: w.patient, method: "cash", reason: "Überzahlung, Tippfehler" })) as { creditNoteId: string };
+    const invoices = await import("./invoices");
+    const delivery = await import("./invoice-delivery");
+    const b = await dbm.withOrg(w.org, (tx) => invoices.loadInvoiceBundle(tx, w.org, ref.creditNoteId));
+    const mail = delivery.invoiceEmailText(b!);
+    expect(mail.subject).toMatch(/^Storno Zuzahlungsquittung /);
+    expect(mail.body).toContain("Ihre Storno Zuzahlungsquittung");
+    expect(mail.body).not.toContain("Stornorechnung");
   });
 });
