@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ausLatin1 } from "./edifact";
-import { KostentraegerVerzeichnis, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, schreibeKostentraegerdatei } from "./kostentraeger";
+import { KOTR_GRENZEN, KostentraegerVerzeichnis, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang, schreibeKostentraegerdatei } from "./kostentraeger";
+import { vorpruefeEdifact } from "./edifact";
 import { TEST_IK } from "./fixtures/testdaten";
 
 const roh = ausLatin1(new Uint8Array(readFileSync(path.join(__dirname, "fixtures", "kotr-test.ke0"))));
@@ -118,5 +119,51 @@ describe("Sollte: Verknüpfung 02/03 nur mit Art der Datenlieferung 07/30 (Anhan
     );
     const e = new KostentraegerVerzeichnis([zwei]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-02", abrechnungscode: "71" });
     expect(e.hinweise).toContainEqual(expect.stringContaining("mehrere Datenannahmestellen mit Entschlüsselungsbefugnis"));
+  });
+});
+
+describe("Kostenträgerdatei – Grenzen gegen Speicher-DoS (Review-Runde 2, AppSec H1/H2)", () => {
+  const MB = 1024 * 1024;
+  it("bricht vor dem Zerlegen ab: nur Segmentende-Zeichen bzw. nur Elementtrenner", () => {
+    // ohne UNA/UNB am Anfang: sofort abgelehnt
+    expect(() => parseKostentraegerdatei("'".repeat(MB))).toThrow(/beginnt nicht mit UNA oder UNB/);
+    // mit UNB, aber 1 Mio. Segmente
+    expect(() => parseKostentraegerdatei("UNB+" + "'".repeat(MB))).toThrow(/zu viele Segmente/);
+    // ein Segment mit 1 Mio. Datenelementen
+    expect(() => parseKostentraegerdatei("UNB+" + "+".repeat(MB) + "'")).toThrow(/zu viele Datenelemente/);
+    expect(() => parseKostentraegerdatei("UNB+" + ":".repeat(MB) + "'")).toThrow(/zu viele Gruppendatenelemente/);
+    // zu langes Segment
+    expect(() => parseKostentraegerdatei("UNB+" + "A".repeat(MB) + "'")).toThrow(/Segment zu lang/);
+  });
+
+  it("Vorprüfung zählt aufgehobene Trennzeichen nicht und beachtet UNA", () => {
+    const g = { maxSegmente: 3, maxElemente: 3, maxGruppen: 3, maxSegmentLaenge: 100, maxDatenelementeGesamt: 100 };
+    expect(() => vorpruefeEdifact("UNB+a?'b?+c'UNZ+1'", g)).not.toThrow();
+    expect(() => vorpruefeEdifact("UNA:+.? 'UNB+a'UNH+b'UNT+c'UNZ+1'", g)).toThrow(/zu viele Segmente/);
+    expect(() => vorpruefeEdifact("UNA:*.? !UNB*a*b!UNZ*1!", g)).not.toThrow();
+    expect(() => vorpruefeEdifact("UNA:*.? !UNB*a*b*c*d!", g)).toThrow(/zu viele Datenelemente/);
+    expect(() => vorpruefeEdifact("\ufeffUNB+a'", g)).not.toThrow();
+  });
+
+  it("echte Datei liegt weit unter den Grenzen", () => {
+    expect(() => vorpruefeEdifact(roh, KOTR_GRENZEN)).not.toThrow();
+    expect(() => pruefeKotrUmfang(datei)).not.toThrow();
+  });
+
+  it("inhaltliche Grenzen: Institutionen gesamt, Verknüpfungen und Anschriften je Institution", () => {
+    expect(() => pruefeKotrUmfang(datei, { maxInstitutionen: 7, maxVerknuepfungen: 100, maxAnschriften: 100 })).toThrow(/zu viele Institutionen/);
+    expect(() => pruefeKotrUmfang(datei, { maxInstitutionen: 100, maxVerknuepfungen: 3, maxAnschriften: 100 })).toThrow(/zu viele Verknüpfungen/);
+    const mitAns = structuredClone(datei);
+    mitAns.institutionen[0].anschriften = Array.from({ length: 3 }, () => ({ art: "1", plz: "10115", ort: "Berlin" }));
+    expect(() => pruefeKotrUmfang(mitAns, { maxInstitutionen: 100, maxVerknuepfungen: 100, maxAnschriften: 2 })).toThrow(/zu viele Anschriften/);
+  });
+
+  it("viele gleichrangige Verknüpfungen sprengen nicht den Aufrufstapel (reduce statt Math.max(...))", () => {
+    const viel = structuredClone(datei);
+    const kt = viel.institutionen.find((i) => i.ik === TEST_IK.kostentraeger)!;
+    const vkg = kt.verknuepfungen.find((v) => v.art === "03" && v.ik === TEST_IK.davMitEntschluesselung)!;
+    kt.verknuepfungen = Array.from({ length: 300_000 }, () => vkg);
+    const e = new KostentraegerVerzeichnis([viel]).ermittle({ kasseIk: TEST_IK.kasse, stichtag: "2026-11-18", abrechnungscode: "71" });
+    expect(e.datenannahmestelle.ik).toBe(TEST_IK.davMitEntschluesselung);
   });
 });

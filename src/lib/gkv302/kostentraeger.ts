@@ -10,7 +10,7 @@
  *   (deren Nachricht ggf. --VKG 02--> Datenannahmestelle ohne Entschlüsselungsbefugnis = physikalischer Empfänger)
  *   Kostenträger --VKG 09--> Papierannahmestelle (Art der Datenlieferung 21/24/26/27 bzw. Gruppen 28/29).
  */
-import { maskiere, type RohSegment, wert, zerlegeEdifact } from "./edifact";
+import { type EdifactGrenzen, maskiere, type RohSegment, vorpruefeEdifact, wert, zerlegeEdifact } from "./edifact";
 
 export interface Gueltigkeit {
   /** "JJJJ-MM-TT" */
@@ -131,8 +131,38 @@ export function pruefeKotrDateiname(name: string): { kassenart: string; gueltigA
   return { kassenart: m[1].toUpperCase(), gueltigAb: m[2].toUpperCase(), jahr: m[3], nachtrag: Number(m[5]) };
 }
 
-/** Parst eine Kostenträgerdatei (Text, bereits aus ISO 8859-1 dekodiert). */
-export function parseKostentraegerdatei(inhalt: string): Kostentraegerdatei {
+/**
+ * Obergrenzen für Kostenträgerdateien (Review-Runde 2, AppSec H1/H2). Echte Dateien liegen weit darunter (bundesweite
+ * Dateien: wenige MB, einige zehntausend Segmente; Segmente haben höchstens ~15 Datenelemente).
+ */
+export const KOTR_GRENZEN: EdifactGrenzen = { maxSegmente: 200_000, maxElemente: 100, maxGruppen: 20, maxSegmentLaenge: 4_000, maxDatenelementeGesamt: 1_500_000 };
+
+export interface KotrUmfang {
+  maxInstitutionen: number;
+  maxVerknuepfungen: number;
+  maxAnschriften: number;
+}
+export const KOTR_UMFANG: KotrUmfang = { maxInstitutionen: 30_000, maxVerknuepfungen: 2_000, maxAnschriften: 50 };
+
+/** Inhaltliche Grenzen nach dem Zerlegen (Institutionen gesamt, Verknüpfungen/Anschriften je Institution) */
+export function pruefeKotrUmfang(d: Kostentraegerdatei, g: KotrUmfang = KOTR_UMFANG): void {
+  if (d.institutionen.length > g.maxInstitutionen) throw new KotrFehler(`Die Kostenträgerdatei hat zu viele Institutionen (${d.institutionen.length}, höchstens ${g.maxInstitutionen}).`);
+  for (const i of d.institutionen) {
+    if (i.verknuepfungen.length > g.maxVerknuepfungen) throw new KotrFehler(`IK ${i.ik}: zu viele Verknüpfungen (${i.verknuepfungen.length}, höchstens ${g.maxVerknuepfungen}).`);
+    if (i.anschriften.length > g.maxAnschriften) throw new KotrFehler(`IK ${i.ik}: zu viele Anschriften (${i.anschriften.length}, höchstens ${g.maxAnschriften}).`);
+  }
+}
+
+/**
+ * Parst eine Kostenträgerdatei (Text, bereits aus ISO 8859-1 dekodiert). Vorher Vorprüfung gegen `grenzen`, damit
+ * präparierte Dateien nicht beim Zerlegen den Speicher füllen.
+ */
+export function parseKostentraegerdatei(inhalt: string, grenzen: EdifactGrenzen = KOTR_GRENZEN): Kostentraegerdatei {
+  try {
+    vorpruefeEdifact(inhalt, grenzen);
+  } catch (e) {
+    throw new KotrFehler((e as Error).message);
+  }
   const segmente = zerlegeEdifact(inhalt);
   if (segmente[0]?.kennung !== "UNB") throw new KotrFehler("Kostenträgerdatei beginnt nicht mit UNB.");
   const unb = segmente[0];
@@ -374,7 +404,8 @@ export class KostentraegerVerzeichnis {
         rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode) >= 0,
     );
     if (!kandidaten.length) return [];
-    const besterRang = Math.max(...kandidaten.map((v) => rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode)));
+    // reduce statt Math.max(...): kein Argument je Verknüpfung auf dem Aufrufstapel (Review-Runde 2, AppSec H2)
+    const besterRang = kandidaten.reduce((m, v) => Math.max(m, rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode)), -1);
     let beste = kandidaten.filter((v) => rangAbrechnungscode(v.abrechnungscode, k.abrechnungscode) === besterRang);
     // regionale Zuordnung (Kap. 5.2.2)
     const regional = beste.filter((v) => v.bundesland !== undefined && v.bundesland !== "99");

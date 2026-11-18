@@ -156,6 +156,7 @@ function pruefeFall(fall: Abrechnungsfall, k: FallKontext, pfad: string, fehler:
   v.diagnosen?.forEach((d, i) => {
     if (!d.icd10 && !d.text) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.verordnung.diagnosen[${i}]`, meldung: "Diagnose braucht einen ICD-10-Code oder, wenn keiner auf der Verordnung steht, den Diagnosetext." });
   });
+  if (!v.verordnungsart) fehler.push({ art: "pflichtfeld", pfad: `${pfad}.verordnung.verordnungsart`, meldung: "Kennzeichen Verordnungsart (ZHE, Anlage 3 8.1.12) fehlt." });
   pruefeDatum(v.verordnungsdatum, `${pfad}.verordnung.verordnungsdatum`, "Verordnungsdatum", fehler);
   pruefeDatum(vers.geburtsdatum, `${pfad}.versicherter.geburtsdatum`, "Geburtsdatum", fehler, true);
   // Anschrift zwingend, wenn Versichertennummer/-status unbekannt (TA1 S. 47/48)

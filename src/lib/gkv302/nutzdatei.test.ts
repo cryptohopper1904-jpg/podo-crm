@@ -627,3 +627,12 @@ describe("Nice: Sondertarife und Heilmittelbereich", () => {
     expect(r.text).toContain("rechts+1+2+0'");
   });
 });
+
+describe("Review-Runde 2 Paket D: Verordnungsart Pflicht", () => {
+  it("fehlendes Kennzeichen Verordnungsart → Pflichtfeldfehler, keine Datei", () => {
+    const d = mitFall((fall) => {
+      fall.verordnung.verordnungsart = undefined;
+    });
+    expect(fehlerVon(d)).toContainEqual(expect.objectContaining({ art: "pflichtfeld", pfad: expect.stringContaining("verordnung.verordnungsart") }));
+  });
+});

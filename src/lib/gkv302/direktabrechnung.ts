@@ -141,6 +141,8 @@ export interface Pruefergebnis {
   stichtag: string;
   /** Mängel der Praxis-Stammdaten – solange nicht leer, entsteht keine Datei */
   praxisFehler: string[];
+  /** Mängel des Laufs selbst (z. B. zu viele Verordnungen) – solange nicht leer, entsteht keine Datei */
+  laufFehler: string[];
   kotrVorhanden: boolean;
   /** Hinweise zur Kostenträgerdatei (fehlt, mehrdeutig …) */
   kotrHinweise: string[];
@@ -237,7 +239,8 @@ interface Aufloesung {
   kostentraegerName: string;
   davIk: string;
   physIk: string;
-  kassenart: string;
+  /** null = Kostenträger steht in keiner Datei mit gültigem Dateinamen (dann keine Gruppierung möglich) */
+  kassenart: string | null;
   kasseName: string;
   belegannahmestelle: Begleitzettel["belegannahmestelle"];
   hinweise: string[];
@@ -248,7 +251,8 @@ class KotrAufloeser {
   private readonly kassenart = new Map<string, string>();
   constructor(dateien: DaKotrDatei[]) {
     this.verzeichnis = new KostentraegerVerzeichnis(dateien.map((d) => d.datei));
-    for (const d of dateien) for (const i of d.datei.institutionen) if (!this.kassenart.has(i.ik)) this.kassenart.set(i.ik, d.kassenart);
+    // nur echte Kassenarten (2 Großbuchstaben aus dem Dateinamen, Anhang 3 Kap. 6) – nie ein Platzhalter
+    for (const d of dateien) if (/^[A-Z]{2}$/.test(d.kassenart)) for (const i of d.datei.institutionen) if (!this.kassenart.has(i.ik)) this.kassenart.set(i.ik, d.kassenart);
   }
   loese(kasseIk: string, stichtag: string, praxis: Praxis | null, bundesland?: string | null): Aufloesung {
     const e = this.verzeichnis.ermittle({ kasseIk, stichtag, abrechnungscode: praxis?.abrechnungscode ?? "71", tarifkennzeichen: praxis?.tarifkennzeichen, bundesland: bundesland ?? undefined });
@@ -261,7 +265,7 @@ class KotrAufloeser {
       davIk: e.datenannahmestelle.ik,
       physIk: e.physikalischerEmpfaenger.ik,
       // Kassenart der Datei, in der der Kostenträger steht (eine Nutzdatei je DAV und Kassenart, TA1 Kap. 3 Abs. 1)
-      kassenart: this.kassenart.get(e.kostentraeger.ik) ?? this.kassenart.get(kasseIk) ?? "??",
+      kassenart: this.kassenart.get(e.kostentraeger.ik) ?? this.kassenart.get(kasseIk) ?? null,
       kasseName: karte ? karte.name.join(" ") || karte.kurzbezeichnung : e.kostentraeger.name,
       belegannahmestelle: beleg ? { ik: beleg.ik, name: beleg.name, anschrift: ans ? { strasse: ans.strasseOderPostfach ?? "", plz: ans.plz, ort: ans.ort } : undefined } : undefined,
       hinweise: e.hinweise,
@@ -291,7 +295,9 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
   const kotrHinweise: string[] = [];
   const aufloeser = kotr.length ? new KotrAufloeser(kotr) : null;
   if (!aufloeser) kotrHinweise.push("Keine Kostenträgerdatei hinterlegt: Kostenträger und Datenannahmestelle lassen sich nicht ermitteln. Bitte unter Einstellungen → Praxis → Direktabrechnung § 302 die aktuelle Kostenträgerdatei (gkv-datenaustausch.de) hochladen.");
-  if (verordnungen.length > MAX_FAELLE_JE_LAUF) praxisFehler.push(`Zu viele Verordnungen in einem Lauf (${verordnungen.length}, höchstens ${MAX_FAELLE_JE_LAUF}).`);
+  // der Server lädt höchstens MAX + 1 Zeilen – die genaue Anzahl ist dann unbekannt
+  const laufFehler: string[] = [];
+  if (verordnungen.length > MAX_FAELLE_JE_LAUF) laufFehler.push(`Mehr als ${MAX_FAELLE_JE_LAUF} Verordnungen in einem Lauf – bitte in kleineren Abrechnungsläufen prüfen (höchstens ${MAX_FAELLE_JE_LAUF}).`);
 
   const intern: FallIntern[] = verordnungen.slice(0, MAX_FAELLE_JE_LAUF).map((v) => {
     const fehlend: string[] = [];
@@ -325,7 +331,6 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
       insuranceStatus: v.insuredStatus ?? v.patient.insuredStatus,
       insurerIk: kasseIk,
     };
-    const status = praxisDaten.legsCode === "2700541" ? "KH" : praxisDaten.legsCode === "2800541" ? "KB" : "ZL";
     const ergaenzung: ErgaenzendeVerordnungsdaten = {
       // Kennzeichen Verordnungsart (Anlage 3 8.1.12): ohne Angabe meldet der Adapter eine fehlende Angabe
       verordnungsart: v.verordnungsart ?? undefined,
@@ -335,8 +340,7 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
       verarbeitungskennzeichen: "01",
       zuzahlungProzent: ZUZAHLUNG_PROZENT,
       zuzahlungPauschaleCent: ZUZAHLUNG_PAUSCHALE_CENT,
-      // ZL → KH/KB wie hpnrFor (src/lib/rules/podologie-verguetung.ts, Anlage 2 § 1 Abs. 2)
-      positionsnummer: (zl) => (status === "KH" ? `6${zl.slice(1)}` : status === "KB" ? `8${zl.slice(1)}` : zl),
+      // keine Umschlüsselung ZL → KH/KB: in der Erprobung nur Podolog:innen/Med. Fußpfleger:innen (ZL, 71/72, praxisModell)
     };
     const abb = bildeAbrechnungsfall("1", vo, pat, snapshot ?? [], ergaenzung);
     fehlend.push(...abb.fehlendeAngaben);
@@ -350,6 +354,7 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
         try {
           auf = aufloeser.loese(kasseIk, stichtag, praxis, praxisDaten.kotrBundesland);
           hinweise.push(...auf.hinweise);
+          if (!auf.kassenart) fehlend.push("Kassenart nicht ermittelbar (Kostenträger in keiner hinterlegten Kostenträgerdatei mit gültigem Dateinamen).");
         } catch (e) {
           if (!(e instanceof KotrFehler)) throw e;
           fehlend.push(`Kostenträger/Datenannahmestelle nicht ermittelbar: ${e.message}`);
@@ -358,6 +363,7 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
     }
 
     // TA1-Prüfung als Einzelfall (Feldlängen, Formate, Kombinationen), nur wenn sonst alles stimmt
+    if (!praxis && !fehlend.length && !abweichungen.length) hinweise.push("TA1-Einzelprüfung nicht ausgeführt, weil die Praxisdaten unvollständig sind.");
     if (praxis && !fehlend.length && !abweichungen.length) {
       try {
         erzeugeNutzdatendatei(einzelDatei(praxis, abb.fall, kasseIk!, auf?.kostentraegerIk ?? kasseIk!, auf?.davIk ?? kasseIk!, stichtag));
@@ -420,12 +426,13 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
     ergebnis: {
       stichtag,
       praxisFehler,
+      laufFehler,
       kotrVorhanden: !!aufloeser,
       kotrHinweise,
       faelle: intern.map((f) => f.pruefung),
       summen: [...summen.values()].sort((a, b) => a.ik.localeCompare(b.ik)),
       anzahlOk,
-      testpaketMoeglich: !praxisFehler.length && !!aufloeser && anzahlOk > 0,
+      testpaketMoeglich: !praxisFehler.length && !laufFehler.length && !!aufloeser && anzahlOk > 0,
     },
   };
 }
@@ -548,7 +555,7 @@ export function erzeugeTestpaket(
   nummern: Nummernkreis,
 ): Testpaket {
   const { ergebnis, intern, praxis } = bildeIntern(praxisDaten, verordnungen, kotr, jetzt.datum);
-  const meldungen = [...ergebnis.praxisFehler];
+  const meldungen = [...ergebnis.laufFehler, ...ergebnis.praxisFehler];
   if (!ergebnis.kotrVorhanden) meldungen.push(...ergebnis.kotrHinweise);
   const ok = intern.filter((f) => f.pruefung.status === "ok" && f.fall);
   if (!ok.length) meldungen.push("Kein Fall ist vollständig und ohne Abweichung – es gibt nichts zu erzeugen. Bitte zuerst „Fälle prüfen“ und die gemeldeten Angaben ergänzen.");
@@ -568,7 +575,8 @@ export function erzeugeTestpaket(
   for (const [, faelle] of [...gruppen.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const davIk = faelle[0].pruefung.davIk!;
     const physIk = faelle[0].pruefung.physikalischerEmpfaengerIk ?? davIk;
-    const kassenart = faelle[0].pruefung.kassenart ?? "??";
+    // „ok“ setzt eine ermittelte Kassenart voraus (sonst fehlende Angabe, Review-Runde 2 B1)
+    const kassenart = faelle[0].pruefung.kassenart!;
     // Kostenträger → Gesamtrechnung je Kassen-IK, Belegnummern je Gesamtrechnung fortlaufend ab 1
     const kts = new Map<string, Map<string, FallIntern[]>>();
     for (const f of faelle) {

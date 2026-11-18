@@ -28,6 +28,8 @@ import { ausLatin1, zerlegeEdifact } from "./edifact";
 import { leseAuftragssatz } from "./auftragsdatei";
 import { parseKostentraegerdatei } from "./kostentraeger";
 import { TEST_IK } from "./fixtures/testdaten";
+import { ikMitPruefziffer } from "./ik";
+import type { Kostentraegerdatei } from "./kostentraeger";
 
 const kotrDatei = parseKostentraegerdatei(ausLatin1(new Uint8Array(readFileSync(path.join(__dirname, "fixtures", "kotr-test.ke0")))));
 const KOTR: DaKotrDatei[] = [{ datei: kotrDatei, kassenart: kassenartAus(kotrDatei.dateiname)! }];
@@ -251,5 +253,66 @@ describe("Nummernkreis", () => {
   it("liest gespeicherte Stände robust", () => {
     expect(zaehlerstandAus(null)).toEqual(leererZaehlerstand());
     expect(zaehlerstandAus({ rechnung: { "2026": 3, x: "a", y: -1 }, transfer: "5", dar: [] })).toEqual({ rechnung: { "2026": 3 }, transfer: -1, dar: {} });
+  });
+});
+
+describe("Review-Runde 2 Paket D", () => {
+  /** zweite Kassenart: alle IKs der Testdatei an Stelle 3 auf „8“ umgeschlüsselt (gültige Prüfziffer) */
+  const umschluesseln = (ik: string) => ikMitPruefziffer(`998${ik.slice(3, 8)}`);
+  const iks = [...new Set(JSON.stringify(kotrDatei).match(/99\d{7}/g))];
+  let json = JSON.stringify(kotrDatei);
+  for (const ik of iks) json = json.split(`"${ik}"`).join(`"${umschluesseln(ik)}"`);
+  const zweite: Kostentraegerdatei = JSON.parse(json);
+  /** in der ersten Datei: zweite Kasse, die auf denselben Kostenträger verweist */
+  const KASSE2 = ikMitPruefziffer("99002009");
+  const erste: Kostentraegerdatei = structuredClone(kotrDatei);
+  const vorlage = erste.institutionen.find((i) => i.ik === TEST_IK.kasse && i.verarbeitungskennzeichen === "01")!;
+  erste.institutionen.push({ ...structuredClone(vorlage), ik: KASSE2, name: ["Testkasse Süd"] });
+  const ZWEI: DaKotrDatei[] = [{ datei: erste, kassenart: "GK" }, { datei: zweite, kassenart: "AO" }];
+
+  it("mehrere Datenannahmestellen/Kassenarten → mehrere TSOL-Dateien mit eigenen Transfernummern", () => {
+    const nummern = new Nummernkreis(leererZaehlerstand(), "T");
+    const p = erzeugeTestpaket(praxis(), [vo(), vo({ insurerIk: umschluesseln(TEST_IK.kasse) })], ZWEI, JETZT, nummern);
+    expect(p.uebersicht.map((u) => [u.nutzdatei, u.kassenart, u.davIk])).toEqual([
+      ["TSOL0000", "GK", TEST_IK.davMitEntschluesselung],
+      ["TSOL0001", "AO", umschluesseln(TEST_IK.davMitEntschluesselung)],
+    ]);
+    expect(p.uebersicht.flatMap((u) => u.rechnungsnummern)).toEqual(["T2026-00001", "T2026-00002"]);
+    expect(nummern.stand.dar).toEqual({ [TEST_IK.davMitEntschluesselung]: 1, [umschluesseln(TEST_IK.davMitEntschluesselung)]: 1 });
+  });
+
+  it("ein Kostenträger, mehrere Kassen-IKs → je eine Gesamtrechnung, Belegnummern je ab 1", () => {
+    const p = erzeugeTestpaket(praxis(), [vo(), vo({ insurerIk: KASSE2 }), vo({ insurerIk: KASSE2 })], ZWEI, JETZT, new Nummernkreis(leererZaehlerstand(), "T"));
+    expect(p.uebersicht).toHaveLength(1);
+    expect(p.uebersicht[0].rechnungsnummern).toEqual(["T2026-00001", "T2026-00002"]);
+    const segmente = zerlegeEdifact(ausLatin1(p.dateien.find((d) => d.name.endsWith("/TSOL0000"))!.bytes));
+    // je SLLA (Gesamtrechnung) Belegnummern ab 1
+    const belege: string[][] = [];
+    for (const s of segmente) {
+      if (s.kennung === "UNH" && s.elemente[1][0] === "SLLA") belege.push([]);
+      if (s.kennung === "INV") belege[belege.length - 1].push(s.elemente[3][0]);
+    }
+    expect(belege).toEqual([["1"], ["1", "2"]]);
+    expect(p.begleitzettel.map((z) => [z.kasse.ik, z.anzahlUrbelege])).toEqual([[TEST_IK.kasse, 1], [KASSE2, 2]]);
+  });
+
+  it("Kassenart nicht ermittelbar → fehlende Angabe statt Gruppe „??“", () => {
+    const e = pruefeFaelle(praxis(), [vo()], [{ datei: kotrDatei, kassenart: "" }], JETZT.datum);
+    expect(e.faelle[0].status).toBe("fehlend");
+    expect(e.faelle[0].fehlendeAngaben).toContain("Kassenart nicht ermittelbar (Kostenträger in keiner hinterlegten Kostenträgerdatei mit gültigem Dateinamen).");
+    expect(e.testpaketMoeglich).toBe(false);
+  });
+
+  it("mehr als 1000 Verordnungen: eigene Meldung, nicht unter Praxisdaten", () => {
+    const viele = Array.from({ length: 1001 }, () => vo({ priceSnapshot: null }));
+    const e = pruefeFaelle(praxis(), viele, KOTR, JETZT.datum);
+    expect(e.praxisFehler).toEqual([]);
+    expect(e.laufFehler).toEqual(["Mehr als 1000 Verordnungen in einem Lauf – bitte in kleineren Abrechnungsläufen prüfen (höchstens 1000)."]);
+    expect(e.testpaketMoeglich).toBe(false);
+  });
+
+  it("TA1-Einzelprüfung entfällt bei Praxisfehlern → Hinweis am Fall", () => {
+    const f = pruefeFaelle(praxis({ tarifkennzeichen: null }), [vo()], KOTR, JETZT.datum).faelle[0];
+    expect(f.hinweise).toContain("TA1-Einzelprüfung nicht ausgeführt, weil die Praxisdaten unvollständig sind.");
   });
 });

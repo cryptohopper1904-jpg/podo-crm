@@ -225,6 +225,65 @@ export interface RohSegment {
   nr: number;
 }
 
+/** Obergrenzen für die Vorprüfung vor dem Zerlegen (Speicher-DoS, Review-Runde 2 AppSec H1) */
+export interface EdifactGrenzen {
+  maxSegmente: number;
+  /** Datenelemente je Segment (inkl. Kennung) */
+  maxElemente: number;
+  /** Gruppendatenelemente (Komponenten) je Datenelement */
+  maxGruppen: number;
+  /** Zeichen je Segment */
+  maxSegmentLaenge: number;
+  /** Datenelemente in der ganzen Datei */
+  maxDatenelementeGesamt: number;
+}
+
+/**
+ * Vorprüfung in einem Durchlauf ohne Objekte je Trennzeichen: Die Datei muss mit UNA oder UNB beginnen, und Segmente,
+ * Datenelemente und Komponenten müssen unter den Grenzen bleiben – sonst `Error` mit deutscher Meldung, bevor
+ * `zerlegeEdifact` Speicher anlegt (8 MB nur aus „'“ hätten sonst rund 820 MB Heap gekostet, nur aus „+“ rund 1,8 GB).
+ * Aufgehobene Zeichen (Aufhebungszeichen davor) zählen nicht.
+ */
+export function vorpruefeEdifact(inhalt: string, g: EdifactGrenzen): void {
+  let text = inhalt.startsWith("\ufeff") ? inhalt.slice(1) : inhalt;
+  let t: Trennzeichen = { ...TRENNER };
+  if (text.startsWith("UNA")) {
+    if (text.length < 9) throw new Error("UNA-Segment unvollständig.");
+    t = { gruppe: text[3], element: text[4], dezimal: text[5], aufhebung: text[6], segmentende: text[8] };
+    text = text.slice(9);
+  }
+  if (!/^\s*UNB/.test(text.slice(0, 16))) throw new Error("Die Datei beginnt nicht mit UNA oder UNB.");
+  let segmente = 0;
+  let elemente = 1;
+  let gruppen = 1;
+  let laenge = 0;
+  let gesamt = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    laenge++;
+    if (laenge > g.maxSegmentLaenge) throw new Error(`Segment zu lang (mehr als ${g.maxSegmentLaenge} Zeichen).`);
+    if (c === t.aufhebung) {
+      i++;
+      laenge++;
+      continue;
+    }
+    if (c === t.segmentende) {
+      if (++segmente > g.maxSegmente) throw new Error(`Die Datei hat zu viele Segmente (mehr als ${g.maxSegmente}).`);
+      elemente = 1;
+      gruppen = 1;
+      laenge = 0;
+      continue;
+    }
+    if (c === t.element) {
+      if (++elemente > g.maxElemente) throw new Error(`Segment ${segmente + 1} hat zu viele Datenelemente (mehr als ${g.maxElemente}).`);
+      if (++gesamt > g.maxDatenelementeGesamt) throw new Error(`Die Datei hat zu viele Datenelemente (mehr als ${g.maxDatenelementeGesamt}).`);
+      gruppen = 1;
+      continue;
+    }
+    if (c === t.gruppe && ++gruppen > g.maxGruppen) throw new Error(`Segment ${segmente + 1} hat zu viele Gruppendatenelemente (mehr als ${g.maxGruppen}).`);
+  }
+}
+
 /**
  * Zerlegt eine EDIFACT-Datei in Segmente. Unterstützt ein optionales UNA-Festlegungssegment
  * (Kostenträgerdatei, Anhang 3 Kap. 7.1) und Zeilenumbrüche zwischen Segmenten.
