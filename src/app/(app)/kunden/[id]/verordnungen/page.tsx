@@ -23,6 +23,7 @@ import { StatusControls } from "./status-controls";
 import { FollowUpRequestForm } from "./follow-up-form";
 import { followUpExpectedAction } from "./actions";
 import { downloadAllowed } from "@/lib/auth/access";
+import { GkvBillingSection } from "./gkv-billing-section";
 
 export const metadata = { title: "Verordnungen" };
 
@@ -47,7 +48,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
       )
     : [];
   const ocrInfo = showForm ? await ocrStatus(auth) : null;
-  const editing = editId ? data.prescriptions.find((p) => p.id === editId && p.status === "open" && p.dates.length === 0) : undefined;
+  const editing = editId ? data.prescriptions.find((p) => p.id === editId && ((p.status === "open" && p.dates.length === 0) || p.status === "correction_needed")) : undefined;
   const initial: PrescriptionInitial = editing
     ? {
         id: editing.id,
@@ -283,6 +284,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                   </div>
                 ) : null}
                 {vo.priceSnapshot ? <PriceSnapshotLine snap={vo.priceSnapshot as unknown as PriceSnapshot} /> : null}
+                <GkvBillingSection vo={vo} patientId={id} canWrite={canWrite} canBilling={canCash && auth.can("medical.read")} today={berlinDateIso()} />
                 {ev.messages.length ? (
                   <ul className="mt-3 flex flex-col gap-1">
                     {ev.messages.map((m) => <li key={m} className="rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-soft-text">{m}</li>)}
@@ -293,8 +295,8 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                 {vo.dates.length ? <p className="mt-3 text-xs text-muted">Behandlungstage: {vo.dates.map((d) => dateDe(d)).join(", ")}</p> : null}
                 {canWrite ? (
                   <div className="mt-4 flex flex-wrap items-start gap-3 border-t border-border pt-4">
-                    <StatusControls id={vo.id} patientId={id} status={vo.status as PrescriptionStatus} unitsUsed={ev.unitsUsed} units={vo.units} />
-                    {vo.status === "open" && vo.dates.length === 0 ? <LinkButton href={`/kunden/${id}/verordnungen?bearbeiten=${vo.id}`} variant="ghost" className="h-10 text-sm">Bearbeiten</LinkButton> : null}
+                    <StatusControls id={vo.id} patientId={id} status={vo.status as PrescriptionStatus} unitsUsed={ev.unitsUsed} units={vo.units} openCorrection={vo.corrections.some((c) => !c.resolvedAt)} />
+                    {(vo.status === "open" && vo.dates.length === 0) || vo.status === "correction_needed" ? <LinkButton href={`/kunden/${id}/verordnungen?bearbeiten=${vo.id}`} variant="ghost" className="h-10 text-sm">Bearbeiten</LinkButton> : null}
                   </div>
                 ) : null}
               </Card>

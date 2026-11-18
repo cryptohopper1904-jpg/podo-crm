@@ -146,7 +146,7 @@ export const LEITSYMPTOMATIK_FREE = "x";
 
 // ───────────────────────── Status ─────────────────────────
 
-export const PRESCRIPTION_STATUSES = ["open", "active", "completed", "billing_ready", "billed", "expired", "cancelled"] as const;
+export const PRESCRIPTION_STATUSES = ["open", "active", "completed", "billing_ready", "billed", "correction_needed", "expired", "cancelled"] as const;
 export type PrescriptionStatus = (typeof PRESCRIPTION_STATUSES)[number];
 
 export const STATUS_LABEL: Record<PrescriptionStatus, string> = {
@@ -155,6 +155,8 @@ export const STATUS_LABEL: Record<PrescriptionStatus, string> = {
   completed: "abgeschlossen",
   billing_ready: "abrechnungsreif",
   billed: "abgerechnet",
+  /** abgerechnet, aber zu korrigieren (Absetzung/Rückläufer der Kasse) – GKV Paket C, nur über einen Korrekturvermerk */
+  correction_needed: "Korrektur nötig",
   /** abgelaufen (Beginnfrist verpasst oder Unterbrechung zu lang) – bleibt erhalten, wird nicht gelöscht */
   expired: "Frist überschritten",
   cancelled: "storniert",
@@ -165,8 +167,12 @@ const TRANSITIONS: Record<PrescriptionStatus, readonly PrescriptionStatus[]> = {
   // vorzeitig „abrechnungsreif“ nur mit Abbruch-Begründung (siehe canTransition)
   active: ["completed", "billing_ready", "expired", "cancelled"],
   completed: ["billing_ready"],
-  billing_ready: ["billed", "completed"],
+  // zurück nach „Korrektur nötig“ nur, solange der Korrekturvermerk offen ist (ctx.openCorrection, Trigger prüft dasselbe)
+  billing_ready: ["billed", "completed", "correction_needed"],
+  // „abgerechnet“ → „Korrektur nötig“ nur über markCorrectionNeeded (Korrekturvermerk mit Begründung, src/server/gkv-billing.ts)
   billed: [],
+  // nach der Korrektur erneut abrechnen (Preis-Snapshot neu, nächster Abrechnungslauf); ohne Neuabrechnung → resolveCorrection
+  correction_needed: ["billing_ready"],
   // Rückweg nur mit Begründung (z. B. Beginn war rechtzeitig, aber nicht erfasst) – PR #111 C1, siehe canTransition
   expired: ["open", "active"],
   cancelled: [],
@@ -178,9 +184,10 @@ export const NOTE_MIN = 5;
 export function canTransition(
   from: PrescriptionStatus,
   to: PrescriptionStatus,
-  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null; rulesVersion?: string | null } = {},
+  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null; rulesVersion?: string | null; openCorrection?: boolean } = {},
 ): { ok: true } | { ok: false; reason: string } {
   if (!TRANSITIONS[from]?.includes(to)) return { ok: false, reason: `Statuswechsel ${STATUS_LABEL[from]} → ${STATUS_LABEL[to]} ist nicht erlaubt.` };
+  if (to === "correction_needed" && !ctx.openCorrection) return { ok: false, reason: "„Korrektur nötig“ gibt es nur mit offenem Korrekturvermerk (an der abgerechneten Verordnung)." };
   // „in Behandlung“ ohne erfasste Einheit gibt es nur bei Übernahmen/Altbestand (Beginn im Fremdsystem). Bei mit
   // PodoHero erfassten Verordnungen setzt erst die dokumentierte Einheit den Status (statusAfterUnit) – sonst ließe sich
   // die Beginnfrist per Statuswechsel umgehen (PR #111 Review-Runde 2, S-1).
@@ -872,8 +879,10 @@ export function evaluatePrescription(p: {
   for (const w of freq) messages.push(`Abstand ${w.gapDays} Tage (${de(w.from)} → ${de(w.to)}) überschreitet die Frequenz (max. ${w.allowedDays} Tage + 2 Werktage).`);
   if (running && unitsRemaining > 0 && unitsRemaining <= 1 && unitsUsed > 0) messages.push("Letzte Einheit – Folgeverordnung anfragen.");
 
+  if (p.status === "correction_needed") messages.push("Abgerechnete Verordnung muss korrigiert werden (Korrekturvermerk) – danach erneut „abrechnungsreif“ setzen.");
   let light: Light = "green";
-  if (p.status === "billing_ready") light = "blue";
+  if (p.status === "correction_needed") light = "red";
+  else if (p.status === "billing_ready") light = "blue";
   else if (!running) light = "gray";
   else if (expiry || (firstDate && firstDate > startBy && !p.reopenedOn)) light = "red";
   else if (startState === "soon" || startedElsewhere || freq.length || (unitsRemaining <= 1 && unitsUsed > 0)) light = "yellow";

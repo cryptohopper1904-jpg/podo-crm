@@ -26,7 +26,8 @@ const MIGRATION_SUFFIX = "_fk_praxis_abgleich";
 const FOREIGN = /gehört nicht zu dieser Praxis/;
 
 type World = Record<string, string>;
-type Case = { table: string; col: string; target: string; insert: (w: World, ref: string) => [string, unknown[]] };
+/** `key`: Schlüssel der World für den getesteten Verweis, falls nicht der Standard der Zieltabelle (KEY) – z. B. eine abgerechnete Verordnung */
+type Case = { table: string; col: string; target: string; key?: string; insert: (w: World, ref: string) => [string, unknown[]] };
 
 /** Je abgesicherter Spalte: minimale Zeile, die getestete Spalte zeigt auf `ref`, alle übrigen Verweise auf die eigene Praxis. */
 const CASES: Case[] = [
@@ -168,6 +169,36 @@ const CASES: Case[] = [
       ],
     },
   ]),
+  // Absetzung und Korrekturvermerk (GKV Paket C): nur zu abgerechneten Verordnungen (World: „billed“)
+  ...(["prescription_id", "patient_id", "billing_batch_id"] as const).map((col) => ({
+    table: "gkv_deductions",
+    col,
+    target: { prescription_id: "prescriptions", patient_id: "patients", billing_batch_id: "billing_batches" }[col],
+    key: col === "prescription_id" ? "billed" : undefined,
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by) values ($1,$2,$3,$4,500,'Unterschrift fehlt','2026-02-01',$5)",
+      [w.org, col === "prescription_id" ? ref : w.billed, col === "patient_id" ? ref : w.patient, col === "billing_batch_id" ? ref : w.batch, w.user],
+    ],
+  })),
+  ...(["prescription_id", "patient_id", "deduction_id", "original_batch_id", "resolved_batch_id"] as const).map((col) => ({
+    table: "prescription_corrections",
+    col,
+    target: { prescription_id: "prescriptions", patient_id: "patients", deduction_id: "gkv_deductions", original_batch_id: "billing_batches", resolved_batch_id: "billing_batches" }[col],
+    key: col === "prescription_id" ? "billed" : undefined,
+    // resolved_batch_id setzt die App nur beim Abschließen; der Verweis wird hier beim INSERT (offener Vermerk) geprüft
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into prescription_corrections (organization_id, prescription_id, patient_id, deduction_id, original_batch_id, resolved_batch_id, reason, created_by) values ($1,$2,$3,$4,$5,$6,'ICD korrigieren',$7)",
+      [
+        w.org,
+        col === "prescription_id" ? ref : w.billed,
+        col === "patient_id" ? ref : w.patient,
+        col === "deduction_id" ? ref : w.deduction,
+        col === "original_batch_id" ? ref : w.batch,
+        col === "resolved_batch_id" ? ref : null,
+        w.user,
+      ],
+    ],
+  })),
   // Unterschrift je Behandlung (GKV Paket B)
   ...(["record_id", "patient_id", "prescription_id"] as const).map((col) => ({
     table: "treatment_signatures",
@@ -307,7 +338,17 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
         "insert into calendar_feeds (organization_id, label, url_enc, url_hint, therapist_id, source) values ($1,'Doctolib','x','calendar.example.org/…',$2,'doctolib') returning id",
         [org, user],
       );
-      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed };
+      // GKV Paket C: Abrechnungslauf, abgerechnete Verordnung, Absetzung
+      const batch = await id("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [org]);
+      const billed = await id(
+        "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id) values ($1,$2,'2026-01-05','DF',6,'billed',now(),$3) returning id",
+        [org, patient, batch],
+      );
+      const deduction = await id(
+        "insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by) values ($1,$2,$3,$4,500,'Unterschrift fehlt','2026-02-01',$5) returning id",
+        [org, billed, patient, batch, user],
+      );
+      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed, batch, billed, deduction };
     });
   }
   /** Einfügen im Praxis-Kontext und immer zurückrollen (keine Nebenwirkungen wie eindeutige aktive Links) – Fehler oder null */
@@ -335,6 +376,8 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     brace_episodes: "brace",
     vouchers: "voucher",
     devices: "device",
+    billing_batches: "batch",
+    gkv_deductions: "deduction",
   };
 
   it("jede abgesicherte Spalte: Verweis in eine fremde Praxis abgelehnt (23503), eigener erlaubt", async () => {
@@ -342,13 +385,13 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     const b = await world();
     for (const c of CASES) {
       const label = `${c.table}.${c.col}`;
-      const foreign = b[KEY[c.target]];
+      const foreign = b[c.key ?? KEY[c.target]];
       expect(foreign, label).toBeTruthy();
       const err = await tryInsert(a.org, ...c.insert(a, foreign));
       expect(err?.code, `${label}: fremd`).toBe("23503");
       expect(err?.message, label).toMatch(FOREIGN);
       // eigener Verweis funktioniert (gleiche Zeile, nur die getestete Spalte auf die eigene Praxis)
-      const ok = await tryInsert(a.org, ...c.insert(a, a[KEY[c.target]]));
+      const ok = await tryInsert(a.org, ...c.insert(a, a[c.key ?? KEY[c.target]]));
       expect(ok, `${label}: eigen`).toBeNull();
     }
   }, 60_000);

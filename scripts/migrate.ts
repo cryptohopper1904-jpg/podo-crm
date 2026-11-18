@@ -83,6 +83,9 @@ async function main() {
     // nur mit der Person über podo_delete_patient (SECURITY DEFINER, Eigentümer)
     await pool.query(`revoke delete on therapy_reports from ${appRole}`);
     await pool.query(`revoke update, delete on follow_up_requests from ${appRole}`);
+    // Absetzungen und Korrekturvermerke (Migration 0066, GKV Paket C) sind Abrechnungsunterlagen: nie löschen (Status
+    // ändern bzw. Korrektur abschließen, beides per Trigger begrenzt) – gelöscht wird nur mit der Praxis
+    await pool.query(`revoke delete on gkv_deductions, prescription_corrections from ${appRole}`);
     // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);

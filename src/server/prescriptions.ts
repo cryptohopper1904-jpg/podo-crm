@@ -1,8 +1,8 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
-import { billingBatches, media, organizations, patients, prescriptions, services, treatmentRecords } from "@/db/schema";
+import { billingBatches, media, organizations, patients, prescriptionCorrections, prescriptions, services, treatmentRecords } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { assertCan } from "./authz";
 import { gkvGuard } from "@/lib/features";
@@ -42,6 +42,8 @@ import { collectedCents, copaymentDue, copaymentReceiptsFor, legacyCopayment, ty
 import { missingSignatureCounts, signatureRequired } from "./signatures";
 import { reportOrdered, reportsFor, therapyReportDate } from "./therapy-reports";
 import { followUpForPatient } from "./follow-ups";
+import { changedPrescriptionFields, correctedFromBatch, correctionsFor, deductionsFor, prescriptionJson, resolveCorrectionsRebilled } from "./gkv-billing";
+import { KIND_MISSING, PRESCRIPTION_SPECIALS, rebillCopaymentHint, suggestPrescriptionKind, type PrescriptionSpecial } from "@/lib/rules/gkv-billing";
 import { priceFor } from "@/lib/rules/podologie-verguetung";
 
 export type PrescriptionRow = typeof prescriptions.$inferSelect;
@@ -220,6 +222,13 @@ export function redact(vo: PrescriptionRow): PrescriptionRow {
     interruptionNote: null,
     scanMediaId: null,
     priceSnapshot: null,
+    // Kennzeichen „04“/Genehmigung lassen auf den Heilmittelbedarf schließen (GKV Paket C)
+    prescriptionKind: null,
+    prescriptionKindConfirmedAt: null,
+    prescriptionKindConfirmedBy: null,
+    prescriptionSpecial: null,
+    approvalRef: null,
+    approvalDate: null,
   };
 }
 
@@ -242,6 +251,8 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
     const receipts = await copaymentReceiptsFor(tx, org, ids);
     const reports = await reportsFor(tx, org, ids);
     const followUps = await followUpForPatient(tx, org, patientId);
+    const deductions = await deductionsFor(tx, org, ids);
+    const corrections = await correctionsFor(tx, org, ids);
     return {
       patient: p,
       expired,
@@ -267,6 +278,10 @@ export async function listPatientPrescriptions(auth: AuthContext, patientId: str
         therapyReportOrdered: reportOrdered(r.positions),
         /** Hinweis „Folgeverordnung anfordern“ (nur neueste Verordnung) */
         followUp: followUps.get(r.id) ?? null,
+        /** GKV Paket C: Vorschlag Kennzeichen Verordnungsart (nur Hinweis, nie gesetzt), Absetzungen, Korrekturvermerke */
+        kindSuggestion: r.prescriptionKind ? null : suggestPrescriptionKind(r),
+        deductions: deductions.get(r.id) ?? [],
+        corrections: corrections.get(r.id) ?? [],
       })),
     };
   });
@@ -353,7 +368,7 @@ export async function bookablePrescriptions(tx: Tx, org: string, patientId: stri
 }
 
 /** Übersicht aller laufenden Verordnungen der Praxis (Ampel). */
-export async function listRunningPrescriptions(auth: AuthContext, statuses: PrescriptionStatus[] = ["open", "active", "completed", "billing_ready"]) {
+export async function listRunningPrescriptions(auth: AuthContext, statuses: PrescriptionStatus[] = ["open", "active", "completed", "billing_ready", "correction_needed"]) {
   assertCan(auth, "patients.read");
   const medical = auth.can("medical.read");
   const org = auth.organization.id;
@@ -409,7 +424,7 @@ export async function savePrescription(
   if (d.source === "ocr" && !ocr) return { error: "Die ausgelesenen Daten sind ungültig – bitte erneut auslesen oder manuell erfassen." };
   if (ocr && !d.scanMediaId) return { error: "Zur Auslesung gehört das Foto der Verordnung." };
 
-  const run = async (tx: Tx): Promise<{ error: string } | { id: string; warnings: string[]; created: boolean }> => {
+  const run = async (tx: Tx): Promise<{ error: string } | { id: string; warnings: string[]; created: boolean; correction?: boolean; changedFields?: string[] }> => {
     const [p] = await tx
       .select({ id: patients.id, birthDate: patients.birthDate, copaymentExemptions: patients.copaymentExemptions })
       .from(patients)
@@ -477,9 +492,23 @@ export async function savePrescription(
     const findings = findingsFor({ ...(values as unknown as PrescriptionRow), rulesVersion: RULES_VERSION }, ik);
     for (const f of findings) warnings.push(`${f.level === "warning" ? "Hinweis" : f.level === "start" ? "Fehler (Behandlung darf nicht beginnen)" : "Fehler (vor Abrechnung korrigieren)"}: ${f.message}`);
     if (d.id) {
-      const [old] = await tx.select({ status: prescriptions.status }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.id), eq(prescriptions.patientId, d.patientId)));
+      const [old] = await tx
+        .select({ status: prescriptions.status, rulesVersion: prescriptions.rulesVersion, copaymentCents: prescriptions.copaymentCents })
+        .from(prescriptions)
+        .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.id), eq(prescriptions.patientId, d.patientId)))
+        .for("update");
       if (!old) return { error: "Verordnung nicht gefunden." };
       const used = (await usageFor(tx, org, [d.id])).get(d.id)?.length ?? 0;
+      // „Korrektur nötig“ (GKV Paket C): abgerechnete Verordnung nach Korrekturvermerk wieder bearbeitbar – Regelwerk und
+      // Zuzahlung der Erstabrechnung bleiben (neuer Snapshot erst mit „abrechnungsreif“), Änderung im Audit als Korrektur
+      if (old.status === "correction_needed") {
+        if (d.units < used) return { error: `Es sind schon ${used} Einheiten erbracht – weniger verordnete Einheiten sind nicht möglich.` };
+        const before = await prescriptionJson(tx, org, d.id);
+        await tx.update(prescriptions).set({ ...values, rulesVersion: old.rulesVersion, copaymentCents: old.copaymentCents }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.id)));
+        // Audit: Namen der geänderten Felder (keine Werte – Diagnosen/ICD), damit keine Änderung im Korrekturstatus still bleibt
+        const changedFields = changedPrescriptionFields(before, await prescriptionJson(tx, org, d.id));
+        return { id: d.id, warnings, created: false, correction: true, changedFields };
+      }
       if (old.status !== "open" || used > 0) return { error: "Nach der ersten Behandlung ist die Verordnung nicht mehr änderbar." };
       await tx.update(prescriptions).set(values).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.id)));
       return { id: d.id, warnings, created: false };
@@ -493,7 +522,7 @@ export async function savePrescription(
   const result = opts.tx ? await run(opts.tx) : await withOrg(org, run);
   if ("error" in result) return { error: result.error };
   const writeAudit = () =>
-    audit({ organizationId: org, userId: auth.user.id, action: result.created ? "prescription.create" : "prescription.update", entity: "prescription", entityId: result.id, meta: { patientId: d.patientId, rulesVersion: RULES_VERSION, source: ocr ? "ocr" : undefined, edited: ocr?.edited } });
+    audit({ organizationId: org, userId: auth.user.id, action: result.created ? "prescription.create" : "prescription.update", entity: "prescription", entityId: result.id, meta: { patientId: d.patientId, rulesVersion: RULES_VERSION, source: ocr ? "ocr" : undefined, edited: ocr?.edited, correction: result.correction || undefined, changedFields: result.changedFields } });
   if (opts.tx) return { id: result.id, warnings: result.warnings, afterCommit: writeAudit };
   await writeAudit();
   return { id: result.id, warnings: result.warnings };
@@ -517,7 +546,11 @@ export async function changePrescriptionStatus(
     // Abbruch-/Unterbrechungsvermerk (der geht in den Abrechnungsexport) → reopen_note (PR #111 C1)
     const reopen = vo.status === "expired" && (input.to === "open" || input.to === "active");
     const note = reopen ? input.interruptionNote?.trim() || null : input.interruptionNote?.trim() || vo.interruptionNote;
-    const t = canTransition(vo.status as PrescriptionStatus, input.to, { unitsUsed: used, units: vo.units, interruptionNote: note, rulesVersion: vo.rulesVersion });
+    // offener Korrekturvermerk (GKV Paket C): Rückweg „abrechnungsreif“ → „Korrektur nötig“ und Hinweis zur Zuzahlung
+    const [openCorrection] = vo.status === "correction_needed" || vo.status === "billing_ready" || input.to === "correction_needed"
+      ? await tx.select().from(prescriptionCorrections).where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.prescriptionId, vo.id), isNull(prescriptionCorrections.resolvedAt)))
+      : [];
+    const t = canTransition(vo.status as PrescriptionStatus, input.to, { unitsUsed: used, units: vo.units, interruptionNote: note, rulesVersion: vo.rulesVersion, openCorrection: !!openCorrection });
     if (!t.ok) return { error: t.reason };
     const extra: Partial<typeof prescriptions.$inferInsert> = reopen ? {} : { interruptionNote: note ?? null };
     let auditMeta: Record<string, unknown> = {};
@@ -544,11 +577,19 @@ export async function changePrescriptionStatus(
       const snap = priceSnapshot({ positions: vo.positions, treatmentDates: dates, birthDate: pt?.birthDate, exemptions: pt?.copaymentExemptions, computedOn: today, insurerIk: vo.insurerIk ?? pt?.insurerIk ?? null, endedEarly, therapyReportDate: reportDate });
       // ohne Preis für jede Position und jeden Behandlungstag keine korrekten Heilmittelkosten/Zuzahlung (PR #111 S2)
       if (!snap.complete) return { error: `Noch nicht abrechnungsreif: Preis fehlt. ${snap.notes.filter((n) => n.startsWith("Kein Preis")).join(" ") || "Keine Behandlung erfasst."} Bitte jeder Position eine Positionsnummer aus der Vergütungsliste zuordnen.` };
+      // Kennzeichen Verordnungsart (Anlage 3 § 302, 8.1.12) muss bestätigt sein – nie raten (GKV Paket C)
+      if (!vo.prescriptionKind) return { error: `Noch nicht abrechnungsreif: ${KIND_MISSING}` };
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
       // bisherigen Snapshot nachvollziehbar halten, wenn neu berechnet wird (billing_ready → completed → billing_ready, S1)
       auditMeta = { snapshot: { remedyCents: snap.remedyCents, copaymentCents: snap.copaymentCents, computedOn: snap.computedOn }, ...(vo.priceSnapshot ? { previousSnapshot: vo.priceSnapshot } : {}) };
       // 78530 verordnet, aber kein Bericht → wird nicht abgerechnet; Hinweis statt Sperre (Review R2-23)
       if (!reportDate && reportOrdered(vo.positions)) warning = "Therapiebericht fehlt – Position 78530 wird nicht abgerechnet. Bericht erstellen und „abrechnungsreif“ erneut setzen, falls er angefordert war.";
+      // Neuabrechnung nach Korrektur: geändertes Zuzahlungs-Soll anzeigen (nicht blockieren) – gegenüber der
+      // Erstabrechnung und gegenüber bereits ausgestellten Zuzahlungsquittungen (+ Altvermerk)
+      if (openCorrection) {
+        const hint = rebillCopaymentHint(snap.copaymentCents, openCorrection.originalCopaymentCents, collectedCents((await copaymentReceiptsFor(tx, org, [vo.id])).get(vo.id)) + (legacyCopayment(vo)?.cents ?? 0));
+        if (hint) warning = warning ? `${warning} ${hint}` : hint;
+      }
     }
     if (vo.status === "billing_ready" && input.to === "completed" && vo.priceSnapshot) auditMeta = { previousSnapshot: vo.priceSnapshot };
     if (input.to === "expired") extra.expiredReason = vo.expiredReason ?? "manual";
@@ -631,6 +672,9 @@ export async function createBillingBatch(auth: AuthContext, ids: string[], opts:
     // fehlender Preis) → nicht übergeben; „Abrechnungsreif zurücknehmen“ und neu setzen erzeugt den Snapshot (Review-Runde 2)
     const incomplete = rows.filter((r) => !(r.priceSnapshot as PriceSnapshot | null)?.complete);
     if (incomplete.length) return { error: `${incomplete.length === 1 ? "Eine Verordnung hat" : `${incomplete.length} Verordnungen haben`} keinen vollständigen Preis-Snapshot – bitte „Abrechnungsreif zurücknehmen“ und erneut auf „Abrechnungsreif“ setzen (Preise prüfen).` };
+    // Kennzeichen Verordnungsart nicht bestätigt (Bestand vor Paket C) → erst bestätigen, nie raten
+    const noKind = rows.filter((r) => !r.prescriptionKind);
+    if (noKind.length) return { error: `${noKind.length === 1 ? "Eine Verordnung hat" : `${noKind.length} Verordnungen haben`} kein bestätigtes Kennzeichen Verordnungsart (03/04) – bitte in der Akte unter „Abrechnungsangaben“ wählen.` };
     const total = rows.reduce((s, r) => s + (r.copaymentCents ?? 0), 0);
     // Heilmittelkosten aus den Preis-Snapshots (fehlt einer → Summe unvollständig, Spalte bleibt trotzdem die Summe der vorhandenen)
     const remedyTotal = rows.reduce((s, r) => s + (r.remedyCostCents ?? 0), 0);
@@ -640,11 +684,24 @@ export async function createBillingBatch(auth: AuthContext, ids: string[], opts:
       .returning({ id: billingBatches.id });
     const now = new Date();
     await tx.update(prescriptions).set({ status: "billed", billedAt: now, billingBatchId: batch.id }).where(and(eq(prescriptions.organizationId, org), inArray(prescriptions.id, ids)));
-    return { id: batch.id, count: rows.length };
+    // erneut abgerechnete Korrekturen (GKV Paket C) als „erneut abgerechnet in diesem Lauf“ abschließen
+    const rebilled = await resolveCorrectionsRebilled(tx, org, auth.user.id, ids, batch.id);
+    return { id: batch.id, count: rows.length, rebilled };
   });
   if ("error" in result) return result;
-  await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.create", entity: "billing_batch", entityId: result.id, meta: { count: result.count, partner: opts.partner } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.create", entity: "billing_batch", entityId: result.id, meta: { count: result.count, partner: opts.partner, ...(result.rebilled ? { rebilledCorrections: result.rebilled } : {}) } });
   return result;
+}
+
+/** Spalte „Korrektur“: Bezug der Verordnung zu Korrekturvermerken aus Sicht dieses Laufs */
+function correctionNote(list: { originalBatchId: string | null; resolvedBatchId: string | null; resolution: string | null; createdAt: Date }[] | undefined, batchId: string): string {
+  if (!list?.length) return "";
+  const parts: string[] = [];
+  for (const c of list) {
+    if (c.originalBatchId === batchId) parts.push(c.resolution === "rebilled" ? "in späterem Lauf neu abgerechnet" : c.resolution === "no_rebill" ? "Korrektur ohne Neuabrechnung" : "Korrektur offen");
+    else if (c.resolvedBatchId === batchId) parts.push(`Neuabrechnung nach Korrektur vom ${berlinDateIso(c.createdAt)}`);
+  }
+  return parts.join(" | ");
 }
 
 /** Tag der Zuzahlung für den Export: letzte gültige Zuzahlungsquittung, sonst Altvermerk (copayment_paid_at) */
@@ -693,6 +750,12 @@ export const GKV_BATCH_HEADER = [
   "Heilmittelkosten EUR",
   "Preisstand",
   "Zuzahlungsfrei angekreuzt (VO)",
+  // GKV Paket C (am Ende angehängt, bestehende Spalten unverändert)
+  "Verordnungsart",
+  "Verordnungsbesonderheit",
+  "Genehmigung Kennzeichen",
+  "Genehmigung Datum",
+  "Korrektur",
 ];
 
 /** Zeilen für den neutralen CSV-Export eines Abrechnungslaufs (Übergabe an ein Abrechnungszentrum). */
@@ -704,18 +767,28 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     const [batch] = await tx.select().from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
     if (!batch) return null;
     const [o] = await tx.select({ ik: organizations.ik, legsCode: organizations.legsCode }).from(organizations).where(eq(organizations.id, org));
-    const rows = await tx
-      .select({ vo: prescriptions, p: patients })
-      .from(prescriptions)
-      .innerJoin(patients, eq(patients.id, prescriptions.patientId))
-      .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.billingBatchId, batchId)))
-      .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt));
+    // dazu Verordnungen, die in diesem Lauf abgerechnet und danach zur Korrektur geöffnet bzw. neu abgerechnet wurden
+    // (GKV Paket C) – sonst fiele die Verordnung aus dem Export ihres ursprünglichen Laufs
+    // – mit dem Stand der Erstabrechnung (original_row), nicht mit den korrigierten Werten (reproduzierbar, Zeilensumme = Laufsumme)
+    const corrected = await correctedFromBatch(tx, org, batchId);
+    const ids = [...corrected.keys()];
+    const inBatch = and(eq(prescriptions.billingBatchId, batchId), eq(prescriptions.status, "billed"));
+    const rows = (
+      await tx
+        .select({ vo: prescriptions, p: patients })
+        .from(prescriptions)
+        .innerJoin(patients, eq(patients.id, prescriptions.patientId))
+        // nur abgerechnete Verordnungen des Laufs (+ Korrekturen mit Stand der Erstabrechnung) – AppSec Runde 4, R1
+        .where(and(eq(prescriptions.organizationId, org), ids.length ? or(inBatch, inArray(prescriptions.id, ids)) : inBatch))
+        .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt))
+    ).map((r) => ({ ...r, vo: corrected.get(r.vo.id) ?? r.vo }));
+    const corrections = await correctionsFor(tx, org, rows.map((r) => r.vo.id));
     const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
     const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
     if (!batch.exportedAt) {
       await tx.update(billingBatches).set({ exportedAt: new Date(), status: "exported" }).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
     }
-    return { batch, rows, usage, receipts, org: o };
+    return { batch, rows, usage, receipts, org: o, corrections };
   });
   if (!data) return null;
   const euro = (c: number | null) => ((c ?? 0) / 100).toFixed(2).replace(".", ",");
@@ -725,7 +798,8 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
     lines.push([
       data.batch.id,
       vo.id,
-      p.insuranceNumber ?? "",
+      // Versichertennummer der Verordnung (Stand der Abrechnung bzw. original_row), nicht der heutige Stand der Person
+      vo.insuranceNumber || p.insuranceNumber || "",
       p.insurerName ?? "",
       p.lastName,
       p.firstName ?? "",
@@ -764,6 +838,11 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       vo.remedyCostCents === null ? "" : euro(vo.remedyCostCents),
       [...new Set(((vo.priceSnapshot as { lines?: { tableVersion: string | null }[] } | null)?.lines ?? []).map((l) => l.tableVersion).filter(Boolean))].join(" | "),
       vo.copaymentExempt ? "ja" : "nein",
+      vo.prescriptionKind ?? "",
+      vo.prescriptionSpecial ? `${vo.prescriptionSpecial} ${PRESCRIPTION_SPECIALS[vo.prescriptionSpecial as PrescriptionSpecial] ?? ""}`.trim() : "",
+      vo.approvalRef ?? "",
+      vo.approvalDate ?? "",
+      correctionNote(data.corrections.get(vo.id), batchId),
     ]);
   }
   await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.export", entity: "billing_batch", entityId: batchId, meta: { count: data.rows.length } });

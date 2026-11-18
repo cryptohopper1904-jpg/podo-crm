@@ -667,6 +667,19 @@ export const prescriptions = pgTable("prescriptions", {
   rulesVersion: text("rules_version"),
   billedAt: timestamp("billed_at", { withTimezone: true }),
   billingBatchId: uuid("billing_batch_id"),
+  /**
+   * Kennzeichen Verordnungsart (Anlage 3 zu § 302 V21, 8.1.12): „03“ orientierende Behandlungsmenge, „04“ besonderer
+   * Verordnungsbedarf/langfristiger Heilmittelbedarf. Nur von Nutzer:innen bestätigt (nie geraten); NULL = nicht
+   * bestätigt (Bestand) → keine Abrechnungsreife, kein § 302-Export. „05“ (Blankoverordnung) gibt es für Podologie nicht.
+   */
+  prescriptionKind: text("prescription_kind"),
+  prescriptionKindConfirmedAt: timestamp("prescription_kind_confirmed_at", { withTimezone: true }),
+  prescriptionKindConfirmedBy: uuid("prescription_kind_confirmed_by").references(() => users.id),
+  /** Kennzeichen Verordnungsbesonderheiten (Anlage 3 V21, 8.1.11), z. B. „4“ Entlassmanagement; NULL = keine */
+  prescriptionSpecial: text("prescription_special"),
+  /** Genehmigung eines langfristigen Heilmittelbedarfs (SKZ, Art der Genehmigung B2, Anlage 3 V21 8.1.17) */
+  approvalRef: text("approval_ref"),
+  approvalDate: date("approval_date"),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex("prescriptions_org_id").on(t.organizationId, t.id)]);
@@ -742,7 +755,96 @@ export const billingBatches = pgTable("billing_batches", {
   copaymentTotalCents: integer("copayment_total_cents"),
   exportedAt: timestamp("exported_at", { withTimezone: true }),
   note: text("note"),
-});
+}, (t) => [uniqueIndex("billing_batches_org_id").on(t.organizationId, t.id)]);
+
+/**
+ * Absetzung/Retaxe einer Krankenkasse zu einer abgerechneten Verordnung (GKV Paket C, Migration 0066). Betrag, Grund
+ * und Datum nur änderbar, solange „offen“; Bezug unveränderlich; nie löschbar (außer mit der Person über
+ * podo_delete_patient – die verweigert das aber, solange eine Absetzung existiert: Aufbewahrung).
+ */
+export const gkvDeductions = pgTable(
+  "gkv_deductions",
+  {
+    id: id(),
+    organizationId: orgId(),
+    prescriptionId: uuid("prescription_id")
+      .notNull()
+      .references(() => prescriptions.id, { onDelete: "cascade" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    /** Abrechnungslauf, in dem die Verordnung abgerechnet war (beim Erfassen aus der Verordnung übernommen) */
+    billingBatchId: uuid("billing_batch_id").references(() => billingBatches.id),
+    amountCents: integer("amount_cents").notNull(),
+    /** Absetzungs-/Retaxcode der Kasse bzw. des Abrechnungszentrums (frei, z. B. „R12“) */
+    reasonCode: text("reason_code"),
+    reason: text("reason").notNull(),
+    /** Datum der Absetzung (Mitteilung der Kasse/des Abrechnungszentrums) */
+    deductedOn: date("deducted_on").notNull(),
+    /** open | accepted | objected | done */
+    status: text("status").notNull().default("open"),
+    note: text("note"),
+    /** Aktenzeichen des Kassenschreibens bzw. der Mitteilung (optional) */
+    letterRef: text("letter_ref"),
+    /** Datum des Kassenschreibens (optional) */
+    letterDate: date("letter_date"),
+    /** Ausgang bei „erledigt“ (Pflicht, DB-CHECK): upheld = Absetzung bleibt | reversed = Widerspruch erfolgreich */
+    outcome: text("outcome"),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    updatedBy: uuid("updated_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("gkv_deductions_org_id").on(t.organizationId, t.id),
+    index("gkv_deductions_org_status").on(t.organizationId, t.status),
+    index("gkv_deductions_org_prescription").on(t.organizationId, t.prescriptionId),
+  ],
+);
+
+/**
+ * Korrektur einer abgerechneten Verordnung (GKV Paket C, Migration 0066): hält den Stand der Erstabrechnung fest
+ * (Lauf, Zeitpunkt, Preis-Snapshot, Beträge) und begründet den Statuswechsel „abgerechnet“ → „Korrektur nötig“. Erledigt
+ * durch erneute Abrechnung in einem späteren Lauf oder „ohne Neuabrechnung“. Nie löschbar (außer mit der Person).
+ */
+export const prescriptionCorrections = pgTable(
+  "prescription_corrections",
+  {
+    id: id(),
+    organizationId: orgId(),
+    prescriptionId: uuid("prescription_id")
+      .notNull()
+      .references(() => prescriptions.id, { onDelete: "cascade" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "cascade" }),
+    deductionId: uuid("deduction_id").references(() => gkvDeductions.id),
+    reason: text("reason").notNull(),
+    originalBatchId: uuid("original_batch_id").references(() => billingBatches.id),
+    originalBilledAt: timestamp("original_billed_at", { withTimezone: true }),
+    originalRemedyCostCents: integer("original_remedy_cost_cents"),
+    originalCopaymentCents: integer("original_copayment_cents"),
+    originalPriceSnapshot: jsonb("original_price_snapshot").$type<Record<string, unknown>>(),
+    /** vollständige Verordnungszeile beim Anlegen (to_jsonb, vom Trigger gesetzt, unveränderlich) – Export des alten Laufs, Prüfung „ohne Neuabrechnung“ */
+    originalRow: jsonb("original_row").$type<Record<string, unknown>>(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    /** rebilled (in einem neuen Lauf erneut abgerechnet) | no_rebill (ohne Neuabrechnung abgeschlossen) */
+    resolution: text("resolution"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: uuid("resolved_by").references(() => users.id),
+    resolvedBatchId: uuid("resolved_batch_id").references(() => billingBatches.id),
+    resolutionNote: text("resolution_note"),
+  },
+  (t) => [
+    index("prescription_corrections_org_prescription").on(t.organizationId, t.prescriptionId),
+    uniqueIndex("prescription_corrections_open").on(t.prescriptionId).where(sql`${t.resolvedAt} is null`),
+  ],
+);
 
 /** Einmal-Links für die Online-Anamnese / das Patientenportal (nur Hash des Tokens gespeichert) */
 export const patientLinks = pgTable(

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Download } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, Table, BackLink } from "@/components/ui";
@@ -27,7 +28,15 @@ export default async function BillingPage({ searchParams }: PageProps<"/verordnu
       units: `${ev.unitsUsed}/${vo.units}`,
       remedy: vo.remedyCostCents === null ? "–" : money(vo.remedyCostCents),
       copayment: `${money(vo.copaymentCents)}${(vo.copaymentCents ?? 0) > 0 ? (vo.copaymentPaidAt ? " ✓" : " (offen)") : ""}`,
-      warning: [missing.length ? `Fehlt: ${missing.join(", ")}` : null, vo.remedyCostCents === null ? "Kein Preis-Snapshot (erneut auf abrechnungsreif setzen)" : null].filter(Boolean).join(" · ") || null,
+      warning:
+        [
+          missing.length ? `Fehlt: ${missing.join(", ")}` : null,
+          vo.remedyCostCents === null ? "Kein Preis-Snapshot (erneut auf abrechnungsreif setzen)" : null,
+          // GKV Paket C: ohne bestätigtes Kennzeichen kein Abrechnungslauf (Bestand vor Paket C)
+          !vo.prescriptionKind ? "Verordnungsart nicht bestätigt (Akte → Abrechnungsangaben)" : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || null,
     };
   });
   return (
@@ -38,6 +47,10 @@ export default async function BillingPage({ searchParams }: PageProps<"/verordnu
         Hier werden abrechnungsreife Verordnungen zu einem Abrechnungslauf zusammengefasst und als CSV (neutrales Format) exportiert.
         Die eigentliche Abrechnung nach § 302 SGB V (Datenübermittlung an die Krankenkassen) erfolgt über das Abrechnungszentrum (Partner).
         Die Papierverordnungen gehen wie gewohnt per Post an den Partner.
+      </p>
+      <p className="mb-6 text-sm">
+        <Link href="/verordnungen/absetzungen" className="font-semibold text-primary">Absetzungen der Kassen</Link>
+        <span className="text-muted"> – offene Absetzungen und Retaxen; korrigierte Verordnungen erscheinen nach erneutem „abrechnungsreif“ hier.</span>
       </p>
       <Card className="mb-6">
         <CardTitle>Abrechnungsreif ({rows.length})</CardTitle>

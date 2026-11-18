@@ -7,13 +7,15 @@ import type { PrescriptionStatus } from "@/lib/rules/prescription";
 import { prescriptionStatusAction, type PrescriptionFormState } from "./actions";
 
 /** Statuswechsel einer Verordnung (Regeln in src/lib/rules/prescription.ts → canTransition). */
-export function StatusControls({ id, patientId, status, unitsUsed, units }: { id: string; patientId: string; status: PrescriptionStatus; unitsUsed: number; units: number }) {
+export function StatusControls({ id, patientId, status, unitsUsed, units, openCorrection = false }: { id: string; patientId: string; status: PrescriptionStatus; unitsUsed: number; units: number; openCorrection?: boolean }) {
   const [state, action, pending] = useActionState<PrescriptionFormState, FormData>(prescriptionStatusAction, undefined);
   const [early, setEarly] = useState(false);
   const [reopen, setReopen] = useState(false);
   const options: [PrescriptionStatus, string, "primary" | "secondary" | "danger"][] = [];
-  if (status === "completed") options.push(["billing_ready", "Abrechnungsreif", "primary"]);
-  if (status === "billing_ready") options.push(["completed", "Abrechnungsreif zurücknehmen", "secondary"]);
+  // nach „Korrektur nötig“ (GKV Paket C) erneut abrechnen: neuer Preis-Snapshot, nächster Abrechnungslauf
+  if (status === "completed" || status === "correction_needed") options.push(["billing_ready", status === "correction_needed" ? "Korrigiert – erneut abrechnungsreif" : "Abrechnungsreif", "primary"]);
+  // nach Korrektur abrechnungsreif, Vermerk noch offen: zurück nach „Korrektur nötig“ (z. B. doch ohne Neuabrechnung)
+  if (status === "billing_ready") options.push(openCorrection ? ["correction_needed", "Zurück zu „Korrektur nötig“", "secondary"] : ["completed", "Abrechnungsreif zurücknehmen", "secondary"]);
   if (status === "open") options.push(["expired", "Als verfallen markieren", "secondary"]);
   if (status === "open" || status === "active") options.push(["cancelled", "Stornieren", "danger"]);
   const canEnd = status === "active" && unitsUsed > 0 && unitsUsed < units;
@@ -25,6 +27,9 @@ export function StatusControls({ id, patientId, status, unitsUsed, units }: { id
       <input type="hidden" name="id" value={id} />
       <input type="hidden" name="patientId" value={patientId} />
       <FormError message={state?.error} />
+      {status === "billing_ready" && openCorrection ? (
+        <p className="text-xs text-muted">Korrekturvermerk offen: geht mit dem nächsten Abrechnungslauf als Neuabrechnung. „Zurück zu „Korrektur nötig““ öffnet die Korrektur wieder – z. B. um sie ohne Neuabrechnung abzuschließen (nur, wenn die Verordnung unverändert ist).</p>
+      ) : null}
       {state?.warning ? <p role="status" className="rounded-lg bg-warn-soft px-3 py-2 text-xs font-medium text-warn-soft-text">{state.warning}</p> : null}
       {reopen ? (
         <div className="flex flex-wrap items-end gap-2">

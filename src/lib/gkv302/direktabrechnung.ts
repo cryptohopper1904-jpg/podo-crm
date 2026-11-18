@@ -23,7 +23,7 @@ import { istGueltigesIk } from "./ik";
 import type { DeepReadonly } from "./kotr-cache";
 import { KostentraegerVerzeichnis, KotrFehler, pruefeKotrDateiname, type Kostentraegerdatei } from "./kostentraeger";
 import { erzeugeNutzdatendatei, pruefeNutzdatendatei, ZUZAHLUNG_PAUSCHALE_CENT, type NutzdateiErgebnis } from "./nutzdatei";
-import { istGueltigesTarifkennzeichen, type Verordnungsart } from "./schluessel";
+import { VERORDNUNGSBESONDERHEIT, istGueltigesTarifkennzeichen, type Verordnungsart } from "./schluessel";
 import type { Abrechnungsfall, Gesamtrechnung, KostentraegerAbrechnung, Nutzdatendatei, Praxis, TaVersion } from "./typen";
 
 /** Zuzahlungsprozentsatz (§ 61 Satz 3 SGB V) – wie im Preis-Snapshot (#111) */
@@ -78,10 +78,14 @@ export interface DaVerordnung {
   /** gespeicherter Preis-Snapshot (JSON aus der DB, unverändert) */
   priceSnapshot: unknown;
   /**
-   * Kennzeichen Verordnungsart (Anlage 3 8.1.12). PodoHero speichert es heute nicht (Schemafeld folgt, docs/GKV-302.md
-   * „Checkliste vor Echtbetrieb“); der Server liefert `null` → fehlende Angabe. Nie raten oder vorbelegen.
+   * Kennzeichen Verordnungsart (Anlage 3 8.1.12) – seit GKV Paket C an der Verordnung bestätigt
+   * (`prescriptions.prescription_kind`); nicht bestätigt (`null`) → fehlende Angabe. Nie raten oder vorbelegen.
    */
   verordnungsart?: Verordnungsart | null;
+  /** Kennzeichen Verordnungsbesonderheiten (Anlage 3 8.1.11), `null` = keine */
+  verordnungsbesonderheit?: string | null;
+  /** Genehmigung eines langfristigen Heilmittelbedarfs (SKZ, Art B2): Kennzeichen und Datum */
+  genehmigung?: { kennzeichen: string; datum: string } | null;
   patient: {
     lastName: string;
     firstName: string | null;
@@ -336,6 +340,10 @@ function bildeIntern(praxisDaten: DaPraxis, verordnungen: DaVerordnung[], kotr: 
     const ergaenzung: ErgaenzendeVerordnungsdaten = {
       // Kennzeichen Verordnungsart (Anlage 3 8.1.12): ohne Angabe meldet der Adapter eine fehlende Angabe
       verordnungsart: v.verordnungsart ?? undefined,
+      ...(v.verordnungsbesonderheit && (VERORDNUNGSBESONDERHEIT as readonly string[]).includes(v.verordnungsbesonderheit)
+        ? { verordnungsbesonderheit: v.verordnungsbesonderheit as NonNullable<ErgaenzendeVerordnungsdaten["verordnungsbesonderheit"]> }
+        : {}),
+      ...(v.genehmigung ? { genehmigung: { kennzeichen: v.genehmigung.kennzeichen, datum: v.genehmigung.datum, art: "B2" as const } } : {}),
       ...leitsymptomatikAus(v.leitsymptomatik, v.leitsymptomatikText),
       diagnosetext: v.diagnosisText ?? undefined,
       befreiungen: Array.isArray(v.patient.copaymentExemptions) ? (v.patient.copaymentExemptions as ErgaenzendeVerordnungsdaten["befreiungen"]) : [],

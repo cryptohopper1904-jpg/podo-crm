@@ -6,7 +6,9 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -62,8 +64,8 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, frequency_per_week, rules_version,
-             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik)
-           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c') returning id`,
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, prescription_kind, prescription_kind_confirmed_at)
+           values ($1,$2,$3,$4,$5,$6,($3::date + 28),$7,$8,$9,'E11.74','109911114','A000500015','1','123456601','123456789',true,'c','03',now()) returning id`,
           [org, patient, v.issuedAt, v.group ?? "DF", v.units ?? 2, v.status ?? "open", JSON.stringify([{ position: "78020", label: "groß", units: v.units ?? 2 }]), v.frequency ?? "1x alle 4-6 Wochen", v.rules === undefined ? RULES_VERSION : v.rules],
         )
       ).rows[0].id as string,
@@ -85,43 +87,89 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     fx.asOrg(org, (c) =>
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash) values ($1,$2,$3,$4,$5,$6)", [org, p, user, berlinToUtc(day, "10:00"), prescriptionId, `h-${Math.random()}`]),
     );
-  const runMigration = async (suffix: string) => {
-    const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
-    const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
-    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+  /**
+   * Migration (z. B. 0062) zweimal einspielen – in einer EIGENEN, frisch migrierten Datenbank (Review Runde 4): parallel
+   * laufende Testdateien in der gemeinsamen DB sehen so nie die alte Fassung ersetzter Funktionen oder fehlende Trigger
+   * späterer Migrationen und laufen nicht in Sperren/Deadlocks der DDL. `before` stellt Altbestand dort nach (Owner),
+   * `after` prüft das Ergebnis dort. Ohne Recht CREATE DATABASE `false` (Test überspringen). Danach wird die DB gelöscht.
+   */
+  const runMigration = async (suffix: string, hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void> } = {}): Promise<boolean> => {
+    const dir = path.join(__dirname, "../../drizzle");
+    const file = readdirSync(dir).find((f) => f.endsWith(suffix))!;
+    const sql = readFileSync(path.join(dir, file), "utf8").split("--> statement-breakpoint");
+    const name = `podo_mig_${Math.random().toString(36).slice(2, 10)}`;
+    const admin = new Pool({ connectionString: ownerUrl(), max: 1 });
+    admin.on("error", () => undefined);
     try {
-      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
+      const can = await admin.query("select rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
+      if (!can.rows[0]?.ok) return false;
+      await admin.query(`create database ${name}`);
+      const url = new URL(ownerUrl());
+      url.pathname = `/${name}`;
+      const pool = new Pool({ connectionString: url.toString(), max: 1 });
+      // Verbindungsfehler beim Abbau (Server beendet die Sitzung) nicht als „uncaught“ melden
+      pool.on("error", () => undefined);
+      try {
+        await pool.query("create extension if not exists pgcrypto");
+        await pool.query("create extension if not exists pg_trgm");
+        await migrate(drizzle(pool), { migrationsFolder: dir });
+        const c = await pool.connect();
+        try {
+          await hooks.before?.(c);
+          for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await c.query(stmt);
+          await hooks.after?.(c);
+        } finally {
+          c.release();
+        }
+      } finally {
+        await pool.end();
+      }
+      return true;
     } finally {
-      await owner.end();
+      // ohne FORCE (das beendete in der CI eine noch schließende Sitzung → „uncaught“ 57P01); kurz warten, bis sie weg ist
+      for (let i = 0; i < 20; i++) {
+        try {
+          await admin.query(`drop database if exists ${name}`);
+          break;
+        } catch (e) {
+          if ((e as { code?: string }).code !== "55006") break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      await admin.end();
     }
   };
 
-  it("Migration 0062 ist wiederholbar (idempotent)", async () => {
-    await runMigration("_gkv_review.sql");
+  it("Migration 0062 ist wiederholbar (idempotent)", { timeout: 120_000 }, async (ctx) => {
+    if (!(await runMigration("_gkv_review.sql"))) ctx.skip();
   });
 
-  it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", async () => {
-    const p1 = await fx.patient(org, { lastName: "Alt1" });
-    const p2 = await fx.patient(org, { lastName: "Alt2" });
-    await fx.asOrg(org, async (c) => {
-      await c.query(`update patients set extra = '{"payerIk":"109911114","gender":"female","insuranceStatus":"5000000"}' where id = $1`, [p1]);
-      await c.query(`update patients set extra = '{"payerIk":"12AB"}' where id = $1`, [p2]);
+  it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", { timeout: 120_000 }, async (ctx) => {
+    // in eigener, frisch migrierter DB (runMigration) – keine DDL/Datenmigration auf der gemeinsamen Test-DB
+    let p1 = "";
+    let p2 = "";
+    const ran = await runMigration(MIGRATION, {
+      before: async (c) => {
+        await c.query("set session_replication_role = replica");
+        const o = (await c.query("insert into organizations (name, slug) values ('Praxis', $1) returning id", [`m-${Math.random().toString(36).slice(2, 8)}`])).rows[0].id;
+        const ins = "insert into patients (organization_id, number, last_name, extra) values ($1, $2, $3, $4) returning id";
+        p1 = (await c.query(ins, [o, 1, "Alt1", '{"payerIk":"109911114","gender":"female","insuranceStatus":"5000000"}'])).rows[0].id;
+        p2 = (await c.query(ins, [o, 2, "Alt2", '{"payerIk":"12AB"}'])).rows[0].id;
+        await c.query("update patients set insurer_ik = null, insured_status = null where id = any($1)", [[p1, p2]]);
+        await c.query("set session_replication_role = origin");
+      },
+      after: async (c) => {
+        const rows = (await c.query("select id, insurer_ik, insured_status, extra from patients where id = any($1)", [[p1, p2]])).rows;
+        const a = rows.find((r) => r.id === p1)!;
+        const b = rows.find((r) => r.id === p2)!;
+        expect(a.insurer_ik).toBe("109911114");
+        expect(a.insured_status).toBe("5");
+        expect(a.extra).toEqual({ gender: "female", insuranceStatus: "5000000" });
+        expect(b.insurer_ik).toBeNull();
+        expect(b.extra).toEqual({ payerIk: "12AB" });
+      },
     });
-    const sql = readFileSync(path.join(__dirname, "../../drizzle", MIGRATION), "utf8").split("--> statement-breakpoint");
-    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
-    try {
-      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
-    } finally {
-      await owner.end();
-    }
-    const rows = await fx.asOrg(org, async (c) => (await c.query("select id, insurer_ik, insured_status, extra from patients where id = any($1)", [[p1, p2]])).rows);
-    const a = rows.find((r) => r.id === p1)!;
-    const b = rows.find((r) => r.id === p2)!;
-    expect(a.insurer_ik).toBe("109911114");
-    expect(a.insured_status).toBe("5");
-    expect(a.extra).toEqual({ gender: "female", insuranceStatus: "5000000" });
-    expect(b.insurer_ik).toBeNull();
-    expect(b.extra).toEqual({ payerIk: "12AB" });
+    if (!ran) ctx.skip();
   });
 
   it("abgelaufene Verordnung: Buchung abgelehnt, beim Lesen „Frist überschritten“ (nicht gelöscht)", async () => {
@@ -359,40 +407,47 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect(r.ok).toBe(true);
   });
 
-  it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", async (ctx) => {
+  it("Migration 0062: Termin-Verweise auf Verordnungen anderer Praxen werden geleert, FORCE RLS bleibt an", { timeout: 120_000 }, async (ctx) => {
     const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
     try {
       const su = await owner.query("select rolsuper from pg_roles where rolname = current_user");
       if (!su.rows[0]?.rolsuper) ctx.skip(); // Altbestand nachstellen braucht session_replication_role (Superuser)
-      const org2 = await fx.org();
-      const p2 = await fx.patient(org2, { lastName: "Fremdpraxis" });
-      const foreign = await fx.asOrg(org2, async (c) => (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id", [org2, p2, today])).rows[0].id as string);
-      const own = await vo({ issuedAt: today, units: 1 });
-      const c = await owner.connect();
-      let legacy: string, ok: string;
-      try {
-        await c.query("begin");
-        await c.query("set local session_replication_role = replica");
-        const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
-        legacy = (await c.query(ins, [org, patient, foreign])).rows[0].id;
-        ok = (await c.query(ins, [org, patient, own])).rows[0].id;
-        await c.query("commit");
-      } finally {
-        c.release();
-      }
-      await runMigration("_gkv_review.sql");
-      const rows = await fx.asOrg(org, async (cl) => (await cl.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows);
-      expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
-      expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
-      const force = await owner.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
-      expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
-      const idx = await owner.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
-      expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
-      const fn = await owner.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
-      expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
     } finally {
       await owner.end();
     }
+    let legacy = "";
+    let ok = "";
+    let own = "";
+    // Altbestand in der eigenen DB (Owner, Trigger aus): zwei Praxen, Termin mit Verordnung der fremden Praxis
+    const ran = await runMigration("_gkv_review.sql", {
+      before: async (c) => {
+        await c.query("set session_replication_role = replica");
+        const id = async (q: string, p: unknown[]) => (await c.query(q, p)).rows[0].id as string;
+        const o1 = await id("insert into organizations (name, slug) values ('Praxis A', $1) returning id", [`a-${Math.random().toString(36).slice(2, 8)}`]);
+        const o2 = await id("insert into organizations (name, slug) values ('Praxis B', $1) returning id", [`b-${Math.random().toString(36).slice(2, 8)}`]);
+        const p1 = await id("insert into patients (organization_id, number, last_name) values ($1, 1, 'Kasse') returning id", [o1]);
+        const p2 = await id("insert into patients (organization_id, number, last_name) values ($1, 1, 'Fremdpraxis') returning id", [o2]);
+        const vo = "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id";
+        const foreign = await id(vo, [o2, p2, today]);
+        own = await id(vo, [o1, p1, today]);
+        const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
+        legacy = await id(ins, [o1, p1, foreign]);
+        ok = await id(ins, [o1, p1, own]);
+        await c.query("set session_replication_role = origin");
+      },
+      after: async (c) => {
+        const rows = (await c.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows;
+        expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
+        expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
+        const force = await c.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
+        expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
+        const idx = await c.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
+        expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
+        const fn = await c.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
+        expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+      },
+    });
+    if (!ran) ctx.skip();
   });
 
   it("Paket B: neuer Altvermerk „Zuzahlung erhalten“ nicht mehr möglich; Server-Action ohne 500 bei Unsinn", async () => {
@@ -430,9 +485,10 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       (
         await c.query(
           `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, start_by, positions, rules_version,
-             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, interruption_note, expired_reason)
+             icd10, insurer_ik, insurance_number, insured_status, doctor_lanr, doctor_bsnr, doctor_signed, leitsymptomatik, interruption_note, expired_reason,
+             prescription_kind, prescription_kind_confirmed_at)
            values ($1,$2,$3,'UI1',2,'expired',($3::date + 28),'[{"position":"78610","label":"Spange","units":4}]',$4,
-             'L60.0','109911114','A000500015','1','123456601','123456789',true,'a','Pause wegen Urlaub der Patientin','start_missed') returning id`,
+             'L60.0','109911114','A000500015','1','123456601','123456789',true,'a','Pause wegen Urlaub der Patientin','start_missed','03',now()) returning id`,
           [org, p, addDaysIso(today, -60), RULES_VERSION],
         )
       ).rows[0].id as string,

@@ -1,7 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, inArray, isNotNull, isNull, max, sql } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { anamneses, consents, invoices, media, patientLinks, patients, paymentReceipts, payments, prescriptions, therapyReports, treatmentRecords, waitlist } from "@/db/schema";
+import { anamneses, consents, gkvDeductions, invoices, media, patientLinks, patients, paymentReceipts, payments, prescriptionCorrections, prescriptions, therapyReports, treatmentRecords, waitlist } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { ERASABLE_CONSENTS, retentionDecision, type RetentionDecision, type RetentionFacts } from "@/lib/patient-retention";
@@ -51,6 +51,10 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
       .select({ at: sql<string | null>`max(greatest(${prescriptions.billedAt}, ${prescriptions.copaymentPaidAt}))` })
       .from(prescriptions)
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.patientId, patientId)));
+    // Absetzungen/Korrekturvermerke (GKV Paket C) = Rückmeldungen der Kasse zur Abrechnung – dieselbe Prüfung in podo_delete_patient (0066)
+    const [ded] = await tx.select({ at: max(gkvDeductions.createdAt) }).from(gkvDeductions).where(and(eq(gkvDeductions.organizationId, org), eq(gkvDeductions.patientId, patientId)));
+    const [cor] = await tx.select({ at: max(prescriptionCorrections.createdAt) }).from(prescriptionCorrections).where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.patientId, patientId)));
+    const gkvDates = [gkv?.at ? new Date(gkv.at) : null, ded?.at ?? null, cor?.at ?? null].filter((d): d is Date => !!d);
     return {
       number: p.number,
       contactErasedAt: p.contactErasedAt,
@@ -59,7 +63,7 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
       recordMediaCount: Number(m?.n ?? 0),
       lastInvoiceAt: lastDocs.length ? new Date(Math.max(...lastDocs.map((d) => d.getTime()))) : null,
       lastRegisterPaymentAt: rp?.at ? new Date(rp.at) : null,
-      lastPrescriptionBillingAt: gkv?.at ? new Date(gkv.at) : null,
+      lastPrescriptionBillingAt: gkvDates.length ? new Date(Math.max(...gkvDates.map((d) => d.getTime()))) : null,
     };
   });
 }
