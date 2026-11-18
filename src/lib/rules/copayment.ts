@@ -111,7 +111,7 @@ export function legacyCopayment(vo: { copaymentPaidAt: Date | string | null; cop
 export function legacyCopaymentNote(legacy: LegacyCopayment): string {
   return legacy.amountKnown
     ? `Früher als „Zuzahlung erhalten“ vermerkt: ${eur(legacy.cents)} – angerechnet (ohne Beleg in PodoHero).`
-    : `Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung ${eur(legacy.cents)} (ohne Beleg in PodoHero).`;
+    : `Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung ${eur(legacy.cents)} (ohne Beleg in PodoHero).`;
 }
 
 /**

@@ -68,8 +68,13 @@ export function checkSignaturePng(bytes: Uint8Array): { ok: true; width: number;
       if (data[8] !== 8 || data[9] !== 6 || data[10] !== 0 || data[11] !== 0 || data[12] !== 0) return { ok: false, error: "Die Unterschrift hat ein ungültiges Bildformat." };
       if (width !== SIGNATURE_WIDTH || height !== SIGNATURE_HEIGHT) return { ok: false, error: "Die Unterschrift hat ungültige Abmessungen." };
       first = false;
-    } else if (type === "IDAT") idat.push(data);
-    else if (type === "IEND") {
+    } else if (type === "IDAT") {
+      // leere IDAT tragen nichts bei – nicht zulassen
+      if (len === 0) return { ok: false, error: BAD };
+      idat.push(data);
+    } else if (type === "IEND") {
+      // IEND ist laut Spezifikation leer (sonst ließen sich dort beliebige Daten verstecken)
+      if (len !== 0) return { ok: false, error: BAD };
       ended = true;
       pos = end;
       break;

@@ -215,7 +215,7 @@ Verordnung – nicht zwingend der Stand beim Vermerk) wird beim Quittieren anger
 nichts mehr offen ist; ein Restbetrag kann quittiert werden. Ohne Betrag und ohne Rechenwert über 0 (`copayment_cents`
 leer oder 0) gilt die Zuzahlung bewusst als vollständig erhalten – so entsteht keine Quittung über bereits Erhaltenes;
 das gilt auch ohne Preis (manueller Fall: kein Formular, nichts offen). Die Quittung nennt den Altvermerk gesondert:
-„vermerkt: X € – angerechnet“ bzw. ohne Betrag „ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung X €“,
+„vermerkt: X € – angerechnet“ bzw. ohne Betrag „ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung X €“,
 jeweils „ohne Beleg in PodoHero“. **„bereits quittiert“ meint nur Beträge mit ZZ-Beleg**; Hinweis auf der Quittung
 („bereits quittiert X €, Altvermerk Y €“), Akte („quittiert X € · Altvermerk Y €“) und Meldung („nichts mehr offen
 (quittiert X €, Altvermerk Y €)“) weisen beides getrennt aus. Neue Altvermerke sind nicht möglich. Entfernen nur als

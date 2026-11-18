@@ -547,7 +547,7 @@ const png = () => testPngDataUrl();
     const res = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: null, method: "cash" })) as { id: string; amountCents: number };
     expect(res.amountCents).toBe(due - 500);
     const [inv] = await w.q<{ notes: string }>("select notes from invoices where id = $1", [res.id]);
-    expect(inv.notes).toContain("ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung 5,00 €");
+    expect(inv.notes).toContain("ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung 5,00 €");
     expect(inv.notes).toContain("ohne Beleg in PodoHero");
     expect(inv.notes).not.toMatch(/Kassenbuchung|bereits quittiert/);
     expect(inv.notes).toContain("Altvermerk 5,00 €");

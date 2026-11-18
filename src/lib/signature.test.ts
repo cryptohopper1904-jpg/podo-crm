@@ -58,5 +58,10 @@ describe("Unterschrift (PNG) prüfen – nur das Format der Zeichenfläche", () 
     expect(checkSignaturePng(testPng({ extraChunks: [["gAMA", Buffer.alloc(32)]] }))).toMatchObject({ ok: false });
     // Zusatz-Chunk nach dem ersten IDAT → abgelehnt
     expect(checkSignaturePng(testPng({ chunksAfterIdat: [srgb()] }))).toMatchObject({ ok: false });
+    // Daten im IEND (≈ 195 KB) und leere IDAT-Chunks werden abgelehnt
+    expect(checkSignaturePng(testPng({ iendData: Buffer.alloc(195_000, 7) }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ iendData: Buffer.alloc(1) }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng({ emptyIdats: 1 }))).toMatchObject({ ok: false });
+    expect(checkSignaturePng(testPng())).toMatchObject({ ok: true });
   });
 });

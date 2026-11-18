@@ -62,13 +62,13 @@ describe("Paket-B-Nachzug: Altvermerk und quittierte Beträge getrennt", () => {
     expect(copaymentCollectedLabel(1500, 500)).toBe("quittiert 15,00 € · Altvermerk 5,00 €");
     expect(copaymentCollectedLabel(0, 0)).toBeNull();
   });
-  it("Belegtext Altvermerk: mit Betrag „vermerkt: X € – angerechnet“, ohne Betrag mit der berechneten Zuzahlung", () => {
+  it("Belegtext Altvermerk: mit Betrag „vermerkt: X € – angerechnet“, ohne Betrag mit der gespeicherten Zuzahlung", () => {
     const at = new Date("2026-01-10T10:00:00Z");
     expect(legacyCopaymentNote(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: 1500, copaymentCents: 2000 })!)).toBe(
       "Früher als „Zuzahlung erhalten“ vermerkt: 15,00 € – angerechnet (ohne Beleg in PodoHero).",
     );
     expect(legacyCopaymentNote(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: null, copaymentCents: 2000 })!)).toBe(
-      "Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung 20,00 € (ohne Beleg in PodoHero).",
+      "Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung 20,00 € (ohne Beleg in PodoHero).",
     );
   });
   it("Altvermerk ohne Betrag und mit berechneter Zuzahlung 0 (oder ohne) gilt als voll erhalten – keine Quittung über bereits Erhaltenes", () => {
