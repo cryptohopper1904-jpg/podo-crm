@@ -6,7 +6,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
@@ -85,43 +85,34 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     fx.asOrg(org, (c) =>
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash) values ($1,$2,$3,$4,$5,$6)", [org, p, user, berlinToUtc(day, "10:00"), prescriptionId, `h-${Math.random()}`]),
     );
-  const dir = path.join(__dirname, "../../drizzle");
-  /** Migrationen (aufsteigend), die als jeweils neueste eine der in `sqlText` per CREATE OR REPLACE FUNCTION definierten Funktionen fassen */
-  const latestMigrationsDefining = (sqlText: string, self: string): string[] => {
-    const names = [...sqlText.matchAll(/CREATE OR REPLACE FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(/gi)].map((m) => m[1].toLowerCase());
-    const files = readdirSync(dir).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
-    const out = new Set<string>();
-    for (const name of new Set(names)) {
-      const re = new RegExp(`CREATE OR REPLACE FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`, "i");
-      const newest = files.filter((f) => re.test(readFileSync(path.join(dir, f), "utf8"))).at(-1);
-      if (newest && newest !== self) out.add(newest);
-    }
-    return [...out].sort();
-  };
-  const retryDeadlock = async <T,>(fn: () => Promise<T>, tries = 5): Promise<T> => {
-    for (let i = 1; ; i++) {
-      try {
-        return await fn();
-      } catch (e) {
-        if ((e as { code?: string }).code !== "40P01" || i >= tries) throw e;
-        await new Promise((r) => setTimeout(r, 50 * i));
-      }
-    }
-  };
-  const runMigration = async (suffix: string) => {
+  /**
+   * Migration (z. B. 0062) zweimal einspielen – in EINER Transaktion, die immer zurückgerollt wird (Review Runde 4):
+   * parallel laufende Testdateien in der gemeinsamen DB sehen so nie die alte Fassung ersetzter Funktionen oder fehlende
+   * Trigger späterer Migrationen (früher: einspielen und danach die neuesten Fassungen wiederherstellen – mit Lücke).
+   * `before` stellt Altbestand in derselben Transaktion nach, `after` prüft das Ergebnis dort. Deadlock (40P01) neben
+   * parallel laufenden Tests → ganze Transaktion wiederholen.
+   */
+  const runMigration = async (suffix: string, hooks: { before?: (c: PoolClient) => Promise<void>; after?: (c: PoolClient) => Promise<void> } = {}) => {
     const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
     const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
     const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
-    // Die alte Migration ersetzt Funktionen, die spätere Migrationen neu fassen (0062: podo_prescription_billed_lock,
-    // podo_delete_patient, …). Danach je Funktion die jeweils NEUESTE Migration, die sie definiert, wieder einspielen
-    // (alle Migrationen sind idempotent) – damit parallel laufende Testdateien in der gemeinsamen DB den aktuellen
-    // Stand sehen. Bestimmt aus den Dateien selbst, nicht über einen festen Dateinamen: eine künftige Migration, die
-    // eine der Funktionen ersetzt, wird automatisch berücksichtigt (Review Paket C R1-7).
-    const restore = latestMigrationsDefining(sql.join("\n"), file).flatMap((f) => readFileSync(path.join(dir, f), "utf8").split("--> statement-breakpoint"));
     try {
-      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await retryDeadlock(() => owner.query(stmt));
-      // DDL neben parallel laufenden Testdateien (gemeinsame DB) kann in einen Deadlock (40P01) laufen – dann wiederholen
-      for (const stmt of restore) if (stmt.trim()) await retryDeadlock(() => owner.query(stmt));
+      for (let i = 1; ; i++) {
+        const c = await owner.connect();
+        try {
+          await c.query("begin");
+          await hooks.before?.(c);
+          for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await c.query(stmt);
+          await hooks.after?.(c);
+          break;
+        } catch (e) {
+          if ((e as { code?: string }).code !== "40P01" || i >= 5) throw e;
+          await new Promise((r) => setTimeout(r, 50 * i));
+        } finally {
+          await c.query("rollback").catch(() => undefined);
+          c.release();
+        }
+      }
     } finally {
       await owner.end();
     }
@@ -399,28 +390,28 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       const p2 = await fx.patient(org2, { lastName: "Fremdpraxis" });
       const foreign = await fx.asOrg(org2, async (c) => (await c.query("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',1) returning id", [org2, p2, today])).rows[0].id as string);
       const own = await vo({ issuedAt: today, units: 1 });
-      const c = await owner.connect();
-      let legacy: string, ok: string;
-      try {
-        await c.query("begin");
-        await c.query("set local session_replication_role = replica");
-        const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
-        legacy = (await c.query(ins, [org, patient, foreign])).rows[0].id;
-        ok = (await c.query(ins, [org, patient, own])).rows[0].id;
-        await c.query("commit");
-      } finally {
-        c.release();
-      }
-      await runMigration("_gkv_review.sql");
-      const rows = await fx.asOrg(org, async (cl) => (await cl.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows);
-      expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
-      expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
-      const force = await owner.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
-      expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
-      const idx = await owner.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
-      expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
-      const fn = await owner.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
-      expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+      let legacy = "";
+      let ok = "";
+      await runMigration("_gkv_review.sql", {
+        before: async (c) => {
+          await c.query("set local session_replication_role = replica");
+          const ins = "insert into appointments (organization_id, patient_id, starts_at, ends_at, prescription_id) values ($1,$2, now(), now() + interval '30 minutes', $3) returning id";
+          legacy = (await c.query(ins, [org, patient, foreign])).rows[0].id;
+          ok = (await c.query(ins, [org, patient, own])).rows[0].id;
+          await c.query("set local session_replication_role = origin");
+        },
+        after: async (c) => {
+          const rows = (await c.query("select id, prescription_id from appointments where id = any($1)", [[legacy, ok]])).rows;
+          expect(rows.find((x) => x.id === legacy)!.prescription_id).toBeNull();
+          expect(rows.find((x) => x.id === ok)!.prescription_id).toBe(own);
+          const force = await c.query("select relname, relforcerowsecurity from pg_class where relname in ('appointments', 'prescriptions') order by relname");
+          expect(force.rows).toEqual([{ relname: "appointments", relforcerowsecurity: true }, { relname: "prescriptions", relforcerowsecurity: true }]);
+          const idx = await c.query("select indexdef from pg_indexes where indexname = 'appointments_prescription_id'");
+          expect(idx.rows[0]?.indexdef).toMatch(/WHERE \(prescription_id IS NOT NULL\)/);
+          const fn = await c.query("select proconfig from pg_proc where proname = 'podo_prescription_billed_lock'");
+          expect(fn.rows[0].proconfig).toEqual(["search_path=pg_catalog, public, pg_temp"]);
+        },
+      });
     } finally {
       await owner.end();
     }

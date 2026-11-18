@@ -648,6 +648,19 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       expect(await presc.createBillingBatch(w.auth, [id], { partner: "manual" })).toMatchObject({ count: 1 });
     });
 
+    it("Runde 4: CSV – leere Versichertennummer an der Verordnung (Altbestand) fällt auf die Person zurück", async () => {
+      const w = await world();
+      await w.q("update patients set insurance_number = 'P123456789' where id = $1", [w.patient]);
+      const [b] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 1) returning id", [w.org]);
+      await w.q(
+        "insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, insurance_number) values ($1,$2,$3,'DF',2,'billed',now(),$4,'')",
+        [w.org, w.patient, addDaysIso(today, -60), b.id],
+      );
+      const exp = await presc.billingBatchExport(w.auth, b.id);
+      const header = exp!.lines[0] as string[];
+      expect((exp!.lines[1] as string[])[header.indexOf("Versichertennummer")]).toBe("P123456789");
+    });
+
     it("N2: Abrechnungslauf nach dem Anlegen unveränderlich – nur Übergabe (exported_at einmalig, Status draft → exported)", async () => {
       const w = await world();
       const { batchId } = await w.billed();

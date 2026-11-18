@@ -797,7 +797,7 @@ export async function billingBatchExport(auth: AuthContext, batchId: string) {
       data.batch.id,
       vo.id,
       // Versichertennummer der Verordnung (Stand der Abrechnung bzw. original_row), nicht der heutige Stand der Person
-      vo.insuranceNumber ?? p.insuranceNumber ?? "",
+      vo.insuranceNumber || p.insuranceNumber || "",
       p.insurerName ?? "",
       p.lastName,
       p.firstName ?? "",
