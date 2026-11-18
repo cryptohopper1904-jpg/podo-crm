@@ -125,7 +125,7 @@ export async function proofPdf(auth: AuthContext, prescriptionId: string): Promi
       positions: day?.text ?? (first ? "" : "(siehe oben, gleicher Tag)"),
       units: day?.units ?? 0,
       signature: r.signature
-        ? { kind: r.signature.kind, image: r.signature.kind === "device" ? (data.images.get(r.signature.id) ?? null) : null, signerName: r.signature.signerName, roleLabel: r.signature.signerRole ? SIGNER_ROLE_LABEL[r.signature.signerRole] : null, signedAt: r.signature.signedAt }
+        ? { kind: r.signature.kind, image: r.signature.kind === "device" ? (data.images.get(r.signature.id) ?? null) : null, signerName: r.signature.signerName, roleLabel: r.signature.signerRole ? SIGNER_ROLE_LABEL[r.signature.signerRole] : null, signedAt: r.signature.signedAt, late: r.signature.late }
         : null,
     };
   });

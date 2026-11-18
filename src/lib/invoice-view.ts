@@ -4,7 +4,8 @@
  * Keine Server-Importe.
  */
 import { fullName } from "./format";
-import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL } from "./invoice-labels";
+import { INTERNAL_NOTE_PREFIX, INVOICE_DOC_LABEL, vatExemptNote } from "./invoice-labels";
+import { COPAYMENT_LEGAL_NOTE } from "./rules/copayment";
 import { statusFromPayments } from "./invoice-math";
 
 type Org = {
@@ -54,9 +55,24 @@ export function internalNotes(notes: string | null | undefined): string[] {
 }
 
 /** § 4 Nr. 14 UStG-Hinweis nötig? */
-export function hasExemptNote(o: Org, inv: { kind: string }, lines: { vatRate: number }[]) {
+export function hasExemptNote(o: Pick<Org, "smallBusiness">, inv: { kind: string }, lines: readonly { vatRate: number }[]) {
   // Zuzahlungsquittung: eigener Hinweis (§ 32/§ 61 SGB V, kein Umsatzsteuerausweis) statt § 4 Nr. 14 UStG
   return !o.smallBusiness && inv.kind !== "no_show_fee" && inv.kind !== "copayment" && lines.some((l) => l.vatRate === 0);
+}
+
+/** Zuzahlungsquittung oder deren Stornobeleg (gleiche Steuerhinweise, Review R2-6) */
+export const isCopaymentDoc = (inv: { kind: string }, cancelsKind?: string | null) => inv.kind === "copayment" || (inv.kind === "credit_note" && cancelsKind === "copayment");
+
+/**
+ * Steuer-/Rechtshinweise auf dem Beleg – PDF und Browser-Ansicht einheitlich: Zuzahlungsquittung (und ihr Storno) nur der
+ * Zuzahlungshinweis (§ 32/§ 61 SGB V, § 4 Nr. 14 UStG – auch bei Kleinunternehmer:innen), sonst § 19 bzw. § 4 Nr. 14.
+ */
+export function taxNotes(o: { smallBusiness: boolean }, inv: { kind: string }, lines: readonly { vatRate: number; inTreatment?: boolean | null }[], opts: { cancelsKind?: string | null; smallBusinessNote: string }): string[] {
+  if (isCopaymentDoc(inv, opts.cancelsKind)) return [COPAYMENT_LEGAL_NOTE];
+  const out: string[] = [];
+  if (o.smallBusiness) out.push(opts.smallBusinessNote);
+  if (hasExemptNote(o, inv, lines)) out.push(vatExemptNote(lines));
+  return out;
 }
 
 /** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Anzahlung/Storno). */
@@ -312,6 +328,12 @@ export function invoiceHeading(
       if (c?.kind === "no_show_fee") return { heading, serviceDateNote: days.length ? `Ausfallhonorar für den Termin ${when}.` : null };
       return { heading, serviceDateNote: days.length ? `${range ? "Leistungszeitraum" : "Leistungsdatum"} der stornierten Rechnung: ${plain}` : null };
     }
+    case "copayment":
+      // Vorab-Quittung ohne Behandlung: kein „Leistungsdatum = Rechnungsdatum“ (Review R2-16); die Verordnung steht im Hinweis
+      return {
+        heading: "Zuzahlungsquittung",
+        serviceDateNote: days.length ? `Behandlungen auf die Verordnung bisher: ${plain}` : `Zuzahlung vorab für die Verordnung erhalten am ${dateDe(inv.issuedAt)} – die Behandlungen folgen.`,
+      };
     case "deposit": {
       const paid = `Anzahlung erhalten am ${dateDe(inv.issuedAt)}`;
       if (!days.length) return { heading: "Quittung über eine Anzahlung", serviceDateNote: `${paid}. Die Leistung wird mit der Rechnung abgerechnet; das Leistungsdatum steht dort.` };

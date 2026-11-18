@@ -58,10 +58,15 @@ DO $$ BEGIN
   END IF;
   -- Gerät: PNG in der Ablage der eigenen Praxis, höchstens 200 KB, Name (2–120 Zeichen) und Rolle Pflicht.
   -- Papier: keine Datei; Name/Rolle optional.
+  -- Fassung vor Review-Runde 2 (Rollen caregiver …) ersetzen – idempotent
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'treatment_signatures_values_check'
+             AND pg_get_constraintdef(oid) NOT LIKE '%care_staff%') THEN
+    ALTER TABLE "treatment_signatures" DROP CONSTRAINT "treatment_signatures_values_check";
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'treatment_signatures_values_check') THEN
     ALTER TABLE "treatment_signatures" ADD CONSTRAINT "treatment_signatures_values_check" CHECK (
-      (signer_role IS NULL OR signer_role IN ('insured', 'caregiver', 'relative'))
-      AND (signer_name IS NULL OR char_length(btrim(signer_name)) BETWEEN 2 AND 120)
+      (signer_role IS NULL OR signer_role IN ('insured', 'guardian', 'relative', 'care_staff'))
+      AND (signer_name IS NULL OR (char_length(btrim(signer_name)) BETWEEN 2 AND 120 AND signer_name !~ '[[:cntrl:]]'))
       AND (
         (kind = 'device' AND signer_name IS NOT NULL AND signer_role IS NOT NULL AND mime = 'image/png'
           AND size_bytes BETWEEN 1 AND 200000 AND sha256 ~ '^[0-9a-f]{64}$' AND length(storage_key) BETWEEN 1 AND 300
@@ -150,6 +155,64 @@ DROP TRIGGER IF EXISTS invoices_fk_same_org ON invoices;
 --> statement-breakpoint
 CREATE TRIGGER invoices_fk_same_org BEFORE INSERT OR UPDATE OF patient_id, billing_contact_id, prescription_id, organization_id ON invoices
   FOR EACH ROW EXECUTE FUNCTION podo_fk_same_org('patient_id', 'patients', 'billing_contact_id', 'billing_contacts', 'prescription_id', 'prescriptions');
+--> statement-breakpoint
+-- Ausgestellte Belege: prescription_id gehört zum unveränderlichen Belegkopf (Review R2-3). Sonst unverändert wie 0049,
+-- jetzt mit festem search_path.
+CREATE OR REPLACE FUNCTION podo_invoice_guard() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE locked boolean;
+BEGIN
+  locked := OLD.status <> 'draft' OR OLD.number IS NOT NULL;
+  IF TG_OP = 'DELETE' THEN
+    IF locked THEN
+      RAISE EXCEPTION 'Ausgestellte Rechnungen können nicht gelöscht werden (Storno verwenden).' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN OLD;
+  END IF;
+  IF locked THEN
+    IF NEW.status = 'draft' THEN
+      RAISE EXCEPTION 'Ausgestellte Rechnungen sind unveränderbar (kein Zurücksetzen auf Entwurf).' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.number IS DISTINCT FROM OLD.number OR NEW.total_cents IS DISTINCT FROM OLD.total_cents
+       OR NEW.net_cents IS DISTINCT FROM OLD.net_cents OR NEW.vat_cents IS DISTINCT FROM OLD.vat_cents
+       OR NEW.issued_at IS DISTINCT FROM OLD.issued_at OR NEW.patient_id IS DISTINCT FROM OLD.patient_id
+       OR NEW.kind IS DISTINCT FROM OLD.kind OR NEW.billing_contact_id IS DISTINCT FROM OLD.billing_contact_id
+       OR NEW.organization_id IS DISTINCT FROM OLD.organization_id OR NEW.notes IS DISTINCT FROM OLD.notes
+       OR NEW.due_at IS DISTINCT FROM OLD.due_at OR NEW.cancels_invoice_id IS DISTINCT FROM OLD.cancels_invoice_id
+       OR NEW.service_date IS DISTINCT FROM OLD.service_date OR NEW.service_date_to IS DISTINCT FROM OLD.service_date_to
+       OR NEW.service_date_fixed IS DISTINCT FROM OLD.service_date_fixed
+       OR NEW.issued_snapshot IS DISTINCT FROM OLD.issued_snapshot
+       OR NEW.prescription_id IS DISTINCT FROM OLD.prescription_id THEN
+      RAISE EXCEPTION 'Ausgestellte Rechnungen sind unveränderbar (Storno/Gutschrift verwenden).' USING ERRCODE = 'P0001';
+    END IF;
+    IF OLD.status = 'cancelled' AND NEW.status <> 'cancelled' THEN
+      RAISE EXCEPTION 'Stornierte Rechnungen können nicht reaktiviert werden.' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+-- Zuzahlungsquittung: Verordnung gehört zur Person des Belegs (Review R2-3). Triggername nach „…_fk_same_org“.
+CREATE OR REPLACE FUNCTION podo_invoice_prescription_patient() RETURNS trigger LANGUAGE plpgsql
+  SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE vo_patient uuid;
+BEGIN
+  IF NEW.prescription_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  SELECT p.patient_id INTO vo_patient FROM prescriptions p WHERE p.id = NEW.prescription_id AND p.organization_id = NEW.organization_id;
+  IF vo_patient IS NULL OR vo_patient IS DISTINCT FROM NEW.patient_id THEN
+    RAISE EXCEPTION 'Die Verordnung passt nicht zur Person des Belegs.' USING ERRCODE = 'P0001';
+  END IF;
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION podo_invoice_prescription_patient() FROM PUBLIC;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS invoices_prescription_patient ON invoices;
+--> statement-breakpoint
+CREATE TRIGGER invoices_prescription_patient BEFORE INSERT OR UPDATE OF prescription_id, patient_id ON invoices
+  FOR EACH ROW EXECUTE FUNCTION podo_invoice_prescription_patient();
 --> statement-breakpoint
 COMMENT ON TABLE treatment_signatures IS
   'Bestätigung der versicherten Person je Behandlung (Leistungsnachweis GKV, Anlage 3 Buchst. o): Unterschrift auf dem Gerät (PNG verschlüsselt in der Dateiablage) oder Vermerk Papier-Verordnung. Append-only (Migration 0064).';

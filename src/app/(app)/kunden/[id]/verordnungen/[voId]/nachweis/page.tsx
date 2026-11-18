@@ -5,11 +5,13 @@ import { Badge, BackLink, Card, Empty, LinkButton, Table, pageTitleBox, pageTitl
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
 import { downloadAllowed } from "@/lib/auth/access";
-import { dateDe, dateTimeDe, fullName } from "@/lib/format";
+import { berlinDateIso, dateDe, dateTimeDe, fullName } from "@/lib/format";
 import { PAPER_SIGNATURE_LABEL, SIGNER_ROLE_LABEL } from "@/lib/signature";
 import { loadPrescriptionWithPatient, positionsByDay } from "@/server/gkv-documents";
 import { proofRows, signatureRequired } from "@/server/signatures";
 import { SignatureLater } from "./signature-later";
+import { PaperBulkForm } from "./paper-bulk";
+import { requireFeature } from "@/server/features";
 
 export const metadata = { title: "Leistungsnachweis" };
 
@@ -20,6 +22,8 @@ export const metadata = { title: "Leistungsnachweis" };
 export default async function ProofPage(props: PageProps<"/kunden/[id]/verordnungen/[voId]/nachweis">) {
   const { id, voId } = await props.params;
   const auth = await requireAuth("medical.read");
+  // GKV-Bereich (Layout prüft schon; hier ausdrücklich, falls die Seite einmal anders eingebunden wird – Review R2-16)
+  requireFeature(auth, "verordnungen");
   if (!/^[0-9a-f-]{36}$/.test(voId)) notFound();
   const org = auth.organization.id;
   const data = await withOrg(org, async (tx) => {
@@ -54,6 +58,7 @@ export default async function ProofPage(props: PageProps<"/kunden/[id]/verordnun
           {signatureRequired(data.vo.rulesVersion) ? " „Abrechnungsreif“ ist erst möglich, wenn jede Behandlung unterschrieben bzw. „Unterschrift auf der Papier-Verordnung“ vermerkt ist." : " (Übernommene Verordnung: nur Hinweis.)"}
         </p>
       ) : null}
+      {canWrite && missing ? <PaperBulkForm prescriptionId={voId} patientId={id} maxDate={berlinDateIso()} defaultDate={data.rows.filter((r) => !r.signature).at(-1)!.date} /> : null}
       {data.rows.length === 0 ? (
         <Empty title="Noch keine Behandlung">Behandlungen auf diese Verordnung werden in der Doku erfasst (Feld „Verordnung“).</Empty>
       ) : (
@@ -93,6 +98,7 @@ export default async function ProofPage(props: PageProps<"/kunden/[id]/verordnun
                         <>
                           {[r.signature.signerName, r.signature.signerRole ? SIGNER_ROLE_LABEL[r.signature.signerRole] : null].filter(Boolean).join(", ") || "–"}
                           <span className="block text-xs text-muted">{dateTimeDe(r.signature.signedAt)}{r.signature.createdByName ? ` · erfasst von ${r.signature.createdByName}` : ""}</span>
+                          {r.signature.late ? <span className="mt-1 block text-xs font-medium text-warn-soft-text">Nicht am Behandlungstag unterschrieben (nachgetragen)</span> : null}
                         </>
                       ) : null}
                     </td>

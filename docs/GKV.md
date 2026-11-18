@@ -156,16 +156,22 @@ SELECT p.organization_id, (coalesce(p.rules_version, '') LIKE 'import-%') AS ueb
 ## Paket B: Unterschrift, Leistungsnachweis, Zuzahlungsquittung (PR „GKV Paket B“)
 
 **Unterschrift je Behandlung.** Beim Behandlungseintrag auf eine Verordnung (Doku-Formular, Besuchstag-Zeile im
-Pflegeheim) unterschreibt die versicherte Person bzw. Betreuungsperson/Angehörige:r auf dem Gerät (Finger/Stift, Feld
-`SignatureField`), mit Name und Rolle; Zeitstempel = Speicherzeitpunkt. Das Bild (PNG, höchstens 200 KB, 50–2000 px,
-Inhalt serverseitig geprüft) liegt verschlüsselt in der Dateiablage (`src/lib/storage.ts`, Schlüssel
+Pflegeheim) unterschreibt die versicherte Person – bzw. rechtliche Betreuung/Bevollmächtigte:r, Angehörige:r oder
+Pflegekraft der Einrichtung – auf dem Gerät (Finger/Stift, Feld `SignatureField`), mit Name (ohne Steuerzeichen) und
+Rolle; Zeitstempel = Speicherzeitpunkt. Das Bild (PNG genau 900×300, 8 Bit RGBA, nur IHDR/IDAT/IEND plus kleine
+Farbraum-Chunks, keine APNG, höchstens 200 KB, IDAT probeweise mit Obergrenze entpackt – `src/lib/signature-png.ts`) liegt verschlüsselt in der Dateiablage (`src/lib/storage.ts`, Schlüssel
 `<praxis>/…/<uuid>.bin`), nie als Blob in der Datenbank. Alternativ das bewusst gesetzte Häkchen „Unterschrift auf der
 Papier-Verordnung (Rückseite) erfasst“. Tabelle `treatment_signatures` (Migration 0064): je Behandlung höchstens eine
 Zeile, append-only (Trigger), Eintrag/Person/Verordnung müssen zusammenpassen, Verweise nur innerhalb der Praxis, RLS +
 FORCE. Audit `record.signature` bzw. `record.signature_paper` (ohne Namen/Bilddaten), Ansicht `record.signature_view`.
 Fehlt die Unterschrift, steht an der Verordnung „Unterschrift fehlt (n von m)“; nachtragen im **Leistungsnachweis**
 (`/kunden/<id>/verordnungen/<vo>/nachweis`, Recht `medical.write`). „Abrechnungsreif“ ist gesperrt, solange eine
-Behandlung ohne Unterschrift/Papier-Vermerk ist.
+Behandlung ohne Unterschrift/Papier-Vermerk ist. Für Bestands-Verordnungen (Behandlungen vor dem Deploy) gibt es im
+Leistungsnachweis den **Sammel-Vermerk „Unterschriften liegen auf Papier vor“** für alle offenen Behandlungen bis zu einem
+Datum (bewusst bestätigt, Audit `record.signature_paper_bulk`). Eine Unterschrift, die nicht am Behandlungstag erfolgte,
+ist im Leistungsnachweis (Seite und PDF) als „nachgetragen“ markiert. App-Rolle ohne UPDATE/DELETE auf
+`treatment_signatures` (scripts/migrate.ts); Unterschriften gehen in den Praxis-Export (`unterschriften/…`) und sind in
+`scripts/archive-orphans.ts` bekannt.
 
 **Leistungsnachweis-PDF** (`/api/verordnungen/<id>/leistungsnachweis`, Recht `medical.read`, im Support-Modus gesperrt,
 `Cache-Control: private, no-store`, `nosniff`): Praxiskopf mit IK, Person, Kasse, Verordnung; Tabelle aller
@@ -176,16 +182,22 @@ Unterschrift als Bild bzw. Papier-Vermerk/„Unterschrift fehlt“. Zum Ausdruck
 erzeugt einen Beleg der neuen Art `copayment` (Nummernkreis **ZZ**, `invoices.prescription_id`), sofort ausgestellt und
 bezahlt, im Beleg-Archiv. Positionen: 10-%-Anteil je Heilmittelposition + Verordnungsblattgebühr (aus dem Preis-Snapshot
 bzw. der Schätzung mit erbrachten und noch offenen Einheiten), bei abweichendem Betrag eine Zeile mit Hinweis auf die
-berechnete Zuzahlung. Kein USt-Ausweis (Hinweis „Gesetzliche Zuzahlung … § 32 Abs. 2 i. V. m. § 61 Satz 3 SGB V …“ statt
-§ 4 Nr. 14 UStG). Die Zahlung läuft über `applyPayments`: PodoHero-Kasse → TSE-Signatur, Tagesabschluss/Z-Bon,
+berechnete Zuzahlung. Kein USt-Ausweis; Hinweis „Gesetzliche Zuzahlung nach § 32 Abs. 2 i. V. m. § 61 SGB V …; Quittung
+nach § 61 Satz 4 SGB V. Umsatzsteuerfrei nach § 4 Nr. 14 Buchst. a UStG.“ – gleich auf PDF und Browser-Ansicht, auch
+für den Stornobeleg und bei Kleinunternehmer:innen. Ohne bekannten Preis/Positionsnummer: frei eingegebener Betrag (eine
+Zeile „Zuzahlung laut Verordnung“, höchstens 10.000 €, Vermerk „Betrag manuell, Berechnung nicht möglich“). Ein Betrag
+über der offenen Zuzahlung nur mit ausdrücklicher Bestätigung; Überweisung nur nach Zahlungseingang quittieren. Die Zahlung läuft über `applyPayments`: PodoHero-Kasse → TSE-Signatur, Tagesabschluss/Z-Bon,
 DSFinV-K; eigene Praxiskasse → Vermerk mit Bon-Nr. (`register = 'external'`, Kassenvermerke). **Keine zweite Kasse.**
 Erstattung (z. B. Überzahlung): „stornieren/erstatten“ → Stornobeleg mit negativer Zahlung über denselben Weg, danach den
-richtigen Betrag neu quittieren. Der CSV-Export „Zuzahlung erhalten am“ nimmt die letzte gültige Quittung, sonst den
+richtigen Betrag neu quittieren – erst, wenn die Erstattung gebucht ist. Zuzahlungsquittungen zählen nicht als
+„Leistung am Tag abgerechnet“ (`NOT_BILLING_KINDS`: Sammelrechnungs-Vorschlag, Jahresend-Erinnerung). Der CSV-Export „Zuzahlung erhalten am“ nimmt die letzte gültige Quittung, sonst den
 Altvermerk.
 
-**Altvermerke** (`copayment_paid_at/_cents/_method` aus der Zeit vor Paket B) bleiben unverändert als Anzeige
-(„Altvermerk … nicht in der Kasse gebucht“); neue Altvermerke sind nicht mehr möglich. Solange ein Altvermerk besteht, ist
-keine Quittung möglich (keine Doppelerfassung); „Altvermerk zurücksetzen“ protokolliert den alten Wert im Audit.
+**Altvermerke** (`copayment_paid_at/_cents/_method` aus der Zeit vor Paket B) bleiben unverändert und **gelten als
+erhalten** (zählen in der quittierten Summe, blockieren eine zweite Quittung); neue Altvermerke sind nicht möglich.
+Entfernen nur als „Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write` + `medical.read`,
+Audit mit altem Wert). Eine nachträgliche Quittung/Kassenbuchung für früher erhaltene Beträge gibt es bewusst nicht –
+ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
 
 ## Paket B Teil 2: Therapiebericht und Folgeverordnung
 

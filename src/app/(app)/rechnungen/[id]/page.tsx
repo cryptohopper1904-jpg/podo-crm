@@ -21,7 +21,6 @@ import {
   INVOICE_STATUS_TONE,
   NOTE_DEPOSIT,
   NOTE_NO_SHOW,
-  vatExemptNote,
   PAYMENT_METHOD_LABEL,
   IMPORTED_LEXOFFICE_NOTE,
   IMPORTED_PAYMENT_NOTE,
@@ -32,7 +31,7 @@ import {
   creditedReceiptsNote,
   serviceYear,
   formatIban,
-  hasExemptNote,
+  taxNotes,
   internalNotes as internalNoteLines,
   invoiceAsIssued,
   invoiceHeading,
@@ -129,7 +128,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const { invoice: doc, payments: docPayments, laterPayments } = invoiceAsIssued(cancelledOriginal ? { ...inv, status: "issued" as const } : inv, data.payments);
   const docOpen = doc.totalCents - doc.paidCents;
   const docOpenRow = openSumRow(doc);
-  const hasExempt = hasExemptNote(o, inv, lines);
+  // Steuer-/Rechtshinweise wie im PDF (Zuzahlungsquittung und ihr Storno: § 32/§ 61 SGB V, Review R2-7)
+  const taxNoteLines = taxNotes(o, inv, lines, { cancelsKind: data.cancels?.kind ?? null, smallBusinessNote: data.smallBusinessNote });
   const publicNotes = publicNoteText(inv.notes);
   const internalNotes = internalNoteLines(inv.notes);
   const recipient = invoiceRecipient(p, b);
@@ -529,8 +529,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         ))}
 
         <section className="print-keep mt-6 flex flex-col gap-2 text-[13px]">
-          {o.smallBusiness ? <p>{data.smallBusinessNote}</p> : null}
-          {hasExempt ? <p>{vatExemptNote(lines)}</p> : null}
+          {taxNoteLines.map((t) => <p key={t}>{t}</p>)}
           {inv.kind === "no_show_fee" ? <p>{NOTE_NO_SHOW}</p> : null}
           {inv.kind === "deposit" ? <p>{NOTE_DEPOSIT}</p> : null}
           {receiptBlock.rows.length ? <p>{creditedReceiptsNote(serviceYear(data.serviceDates, inv.issuedAt))}</p> : null}

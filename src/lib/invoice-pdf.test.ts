@@ -116,10 +116,33 @@ describe("Zuzahlungsquittung (GKV Paket B)", () => {
       spy.mockRestore();
     }
     const all = texts.join(" ");
-    expect(all).toMatch(/§ 32 Abs\. 2 i\. V\. m\. § 61 Satz 3 SGB V/);
-    expect(all).toMatch(/Kein Umsatzsteuerausweis/);
-    expect(all).not.toMatch(/§ 4 Nr\. 14/);
+    expect(all).toMatch(/Zuzahlung nach § 32 Abs\. 2 i\. V\. m\. § 61 SGB V/);
+    expect(all).toMatch(/§ 61 Satz 4 SGB V/);
+    expect(all).toMatch(/Umsatzsteuerfrei nach § 4 Nr\. 14 Buchst\. a UStG/);
+    expect(all).not.toMatch(/Heilbehandlung im Bereich der Humanmedizin/);
     expect(all).not.toMatch(/USt 0 %/);
     expect(all).toMatch(/Quittungsnummer/);
+    expect(all).toMatch(/Zuzahlungsquittung/);
+  });
+
+  it("Storno einer Zuzahlungsquittung und Kleinunternehmer: derselbe Zuzahlungshinweis, kein § 19-Hinweis", async () => {
+    const { taxNotes } = await import("./invoice-view");
+    const org = { smallBusiness: true };
+    const lines = [{ vatRate: 0 }];
+    const copay = taxNotes(org, { kind: "copayment" }, lines, { cancelsKind: null, smallBusinessNote: "Steuerbefreiung für Kleinunternehmer (§ 19 UStG)." });
+    const storno = taxNotes({ smallBusiness: false }, { kind: "credit_note" }, lines, { cancelsKind: "copayment", smallBusinessNote: "x" });
+    expect(copay).toEqual(storno);
+    expect(copay.join(" ")).toMatch(/§ 4 Nr\. 14 Buchst\. a UStG/);
+    expect(copay.join(" ")).not.toMatch(/§ 19/);
+    expect(taxNotes({ smallBusiness: false }, { kind: "receipt" }, lines, { cancelsKind: null, smallBusinessNote: "x" }).join(" ")).toMatch(/Heilbehandlung im Bereich der Humanmedizin/);
+  });
+
+  it("Überschrift: Vorab-Quittung ohne Behandlungstag nennt die Zuzahlung, nicht das Rechnungsdatum als Leistungsdatum", async () => {
+    const { invoiceHeading } = await import("./invoice-view");
+    const de = (d: string | null) => (d ? d.split("-").reverse().join(".") : "");
+    const r = invoiceHeading({ kind: "copayment", number: "ZZ2026-0001", issuedAt: "2026-11-18" }, { dates: [], linked: false, fixed: true, cancels: null }, de);
+    expect(r.heading).toBe("Zuzahlungsquittung");
+    expect(r.serviceDateNote).toMatch(/vorab .*erhalten am 18\.11\.2026/);
+    expect(r.serviceDateNote).not.toMatch(/Leistungsdatum entspricht dem Rechnungsdatum/);
   });
 });

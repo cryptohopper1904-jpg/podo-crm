@@ -96,7 +96,7 @@ export type ProofPdfRow = {
   /** z. B. „78020 × 1, 79933 × 1“ */
   positions: string;
   units: number;
-  signature: { kind: "device" | "paper"; image?: Uint8Array | null; signerName: string | null; roleLabel: string | null; signedAt: Date } | null;
+  signature: { kind: "device" | "paper"; image?: Uint8Array | null; signerName: string | null; roleLabel: string | null; signedAt: Date; late?: boolean } | null;
 };
 
 /**
@@ -154,7 +154,7 @@ export async function renderProofPdf(input: { organization: GkvPdfOrg; logos?: {
     if (r.signature) {
       const who = [r.signature.signerName, r.signature.roleLabel].filter(Boolean).join(", ");
       w.wrap(who || "–", RIGHT - col.who, 8).slice(0, 2).forEach((l, li) => w.text(l, col.who, top - 10 - li * 10, { size: 8 }));
-      w.text(dateTimeDe(r.signature.signedAt), col.who, top - 32, { size: 7, color: GRAY });
+      w.text(`${dateTimeDe(r.signature.signedAt)}${r.signature.late ? " – nachgetragen" : ""}`, col.who, top - 32, { size: 7, color: GRAY, font: r.signature.late ? fonts.bold : fonts.regular });
     }
     w.line(ML, top - rowH + 6, RIGHT, top - rowH + 6, 0.3);
     cur.y -= rowH;

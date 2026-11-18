@@ -77,6 +77,8 @@ async function main() {
     // Beleg-Archiv, Zahlungsbelege und Anrechnungen (Migration 0049) sind append-only: zusätzlich zum Trigger kein
     // UPDATE/DELETE für die App-Rolle (gelöscht wird nur mit der Praxis im Löschlauf als Eigentümer).
     await pool.query(`revoke update, delete on document_archive, payment_receipts, invoice_credits from ${appRole}`);
+    // Unterschriften je Behandlung (Migration 0064, GKV-Leistungsnachweis) sind append-only: kein UPDATE/DELETE
+    await pool.query(`revoke update, delete on treatment_signatures from ${appRole}`);
     // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);

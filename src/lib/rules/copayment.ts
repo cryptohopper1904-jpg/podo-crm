@@ -12,9 +12,12 @@ import type { PriceSnapshot } from "./prescription";
 export const COPAYMENT_RECEIPT_METHODS = ["cash", "card", "transfer"] as const;
 export type CopaymentReceiptMethod = (typeof COPAYMENT_RECEIPT_METHODS)[number];
 
-/** Pflichthinweis auf der Quittung – ohne Umsatzsteuerausweis */
+/**
+ * Pflichthinweis auf der Quittung (Review R2-6): Rechtsgrundlage der Zuzahlung, Quittungspflicht (§ 61 Satz 4 SGB V)
+ * und Steuerbefreiung der Heilbehandlung (Annahme: Zuzahlung ist Teil des Entgelts für die steuerfreie Heilbehandlung).
+ */
 export const COPAYMENT_LEGAL_NOTE =
-  "Gesetzliche Zuzahlung zu Heilmitteln nach § 32 Abs. 2 i. V. m. § 61 Satz 3 SGB V (10 % der Kosten zzgl. 10 € je Verordnung). Kein Umsatzsteuerausweis.";
+  "Gesetzliche Zuzahlung nach § 32 Abs. 2 i. V. m. § 61 SGB V (10 % der Kosten zzgl. 10 € je Verordnung); Quittung nach § 61 Satz 4 SGB V. Umsatzsteuerfrei nach § 4 Nr. 14 Buchst. a UStG.";
 
 export type CopaymentBreakdown = {
   /** 10-%-Anteil je Position (nur zuzahlungspflichtige Positionen mit Betrag > 0), Reihenfolge wie im Snapshot */

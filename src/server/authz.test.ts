@@ -37,6 +37,9 @@ describe("Empfang (reception) ohne medizinische Rechte", () => {
     await expect(records.createTreatmentRecord(r, { patientId: id, findings: "x", servicesText: null })).rejects.toBeInstanceOf(ForbiddenError);
     await expect(anamnesis.saveAnamnesis(r, id, {} as never, { updateRiskFlags: false })).rejects.toBeInstanceOf(ForbiddenError);
   });
+  it("Altvermerk „Zuzahlung erhalten“ zurücksetzen nur mit Rechnungsrecht (Azubi nicht, Paket B R2-11)", async () => {
+    await expect(prescriptions.setCopaymentPaid(as("trainee"), { id, patientId: id, paid: false, reason: "Vermerk war falsch" })).rejects.toBeInstanceOf(ForbiddenError);
+  });
   it("Übersicht ohne medizinische Details (redact)", () => {
     const vo = { diagnosisGroup: "DF", icd10: "E11.74", remedy: "Komplex", positions: [{ label: "x", units: 6 }], doctorName: "Dr. X", doctorLanr: "123456789", doctorBsnr: "123456789", interruptionNote: "n", scanMediaId: id, units: 6 };
     const red = prescriptions.redact(vo as never);

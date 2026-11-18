@@ -198,7 +198,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                           <Badge tone="warn">teilweise quittiert · offen {money((vo.copaymentCents ?? 0) - vo.copaymentCollectedCents)}</Badge>
                         ) : <Badge tone="warn">offen</Badge>
                       ) : null}
-                      {legacy(vo) ? <span className="text-xs text-muted">Nur Vermerk aus der Zeit vor der Zuzahlungsquittung – nicht in der Kasse gebucht.</span> : null}
+                      {legacy(vo) ? <span className="text-xs text-muted">Vermerk aus der Zeit vor der Zuzahlungsquittung – gilt als erhalten, wurde nie in der Kasse gebucht (Nacherfassung mit der Steuerberatung klären).</span> : null}
                       {legacy(vo) && copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents) ? <span className="text-xs font-medium text-warn-soft-text">{copaymentOverpaid(vo.copaymentPaidCents, vo.copaymentCents)}</span> : null}
                       {vo.copaymentReceipts.length ? (
                         <ul className="flex w-full flex-col gap-1 text-xs" aria-label="Zuzahlungsquittungen">
@@ -212,7 +212,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                           ))}
                         </ul>
                       ) : null}
-                      {canWrite && legacy(vo) ? <CopaymentLegacyReset id={vo.id} patientId={id} /> : null}
+                      {canCash && legacy(vo) ? <CopaymentLegacyReset id={vo.id} patientId={id} /> : null}
                       {canCash && !legacy(vo) && (current || !vo.copaymentExempt) && (vo.copaymentCents ?? 0) > vo.copaymentCollectedCents && vo.status !== "cancelled" ? (
                         <CopaymentReceiptForm prescriptionId={vo.id} patientId={id} openCents={(vo.copaymentCents ?? 0) - vo.copaymentCollectedCents} external={external} />
                       ) : null}
