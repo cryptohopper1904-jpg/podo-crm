@@ -17,7 +17,7 @@ const ZERTIFIKAT: Record<string, string> = {
  * verschlüsselt abgelegt) und – nur vorbereitet – das ITSG-Zertifikat. Es werden in diesem Stand KEINE Schlüssel
  * gespeichert; das Upload-Feld für das Zertifikat ist deaktiviert (docs/GKV-302.md, „Was die Praxis beantragen muss“).
  */
-export async function Gkv302Card({ org, readOnlyHint }: { org: string; readOnlyHint: boolean }) {
+export async function Gkv302Card({ org, readOnly, support }: { org: string; readOnly: boolean; support: boolean }) {
   const s = await gkv302Status(org);
   const heute = berlinDateIso();
   return (
@@ -56,10 +56,9 @@ export async function Gkv302Card({ org, readOnlyHint }: { org: string; readOnlyH
                 <td className="tabular-nums">{k.institutionen}</td>
                 <td>{dateTimeDe(new Date(k.hochgeladenAm))}</td>
                 <td>
-                  <form action={removeKotrAction}>
+                  <ActionForm action={removeKotrAction} submit="Entfernen" className="flex flex-col gap-2">
                     <input type="hidden" name="kassenart" value={k.kassenart} />
-                    <button type="submit" className="min-h-11 text-sm font-semibold text-danger">Entfernen</button>
-                  </form>
+                  </ActionForm>
                 </td>
               </tr>
             ))}
@@ -86,7 +85,8 @@ export async function Gkv302Card({ org, readOnlyHint }: { org: string; readOnlyH
       <Field label="Zertifikat einspielen (folgt)" hint="Noch nicht verfügbar – bitte keine Schlüsseldateien hochladen oder per E-Mail schicken.">
         <input type="file" disabled aria-disabled className="text-sm opacity-60 file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface-2 file:px-4 file:font-semibold" />
       </Field>
-      {readOnlyHint ? <p className="mt-3 text-sm text-muted">Im Nur-Lesen- bzw. Support-Modus sind Änderungen gesperrt.</p> : null}
+      {readOnly ? <p className="mt-3 text-sm text-muted">Im Nur-Lesen-Modus sind Änderungen gesperrt.</p> : null}
+      {support ? <p className="mt-3 text-sm text-muted">Im Support-Modus können Kostenträgerdateien nicht hochgeladen oder entfernt werden – das entscheidet die Praxis selbst.</p> : null}
     </Card>
   );
 }

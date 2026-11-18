@@ -59,6 +59,12 @@ export async function Direktabrechnung({ auth, quelle, batches }: { auth: AuthCo
         <p className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">{ergebnis.error}</p>
       ) : (
         <div className="flex flex-col gap-4">
+          {ergebnis.laufFehler.length ? (
+            <div className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
+              <p className="font-semibold">Zu viele Verordnungen für einen Lauf:</p>
+              <ul className="ml-5 list-disc">{ergebnis.laufFehler.map((f) => <li key={f}>{f}</li>)}</ul>
+            </div>
+          ) : null}
           {ergebnis.praxisFehler.length ? (
             <div className="rounded-xl bg-warn-soft p-4 text-sm text-warn-soft-text">
               <p className="font-semibold">Praxisdaten unvollständig – es kann keine Datei entstehen:</p>
@@ -130,7 +136,7 @@ export async function Direktabrechnung({ auth, quelle, batches }: { auth: AuthCo
                 ) : (
                   <p className="text-sm text-muted">Im Nur-Lesen- bzw. Support-Modus können keine Dateien erzeugt werden.</p>
                 )}
-                {!ergebnis.testpaketMoeglich && kannErzeugen ? <p className="mt-2 text-sm text-muted">Erst möglich, wenn die Praxisdaten vollständig sind, eine Kostenträgerdatei hinterlegt ist und mindestens ein Fall „ok“ ist.</p> : null}
+                {!ergebnis.testpaketMoeglich && kannErzeugen ? <p className="mt-2 text-sm text-muted">Erst möglich, wenn die Praxisdaten vollständig sind, eine Kostenträgerdatei hinterlegt ist, höchstens 1000 Verordnungen gewählt sind und mindestens ein Fall „ok“ ist.</p> : null}
               </div>
             </>
           )}

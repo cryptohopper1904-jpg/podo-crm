@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import JSZip from "jszip";
 import { db, withOrg, type Tx } from "@/db";
@@ -19,9 +20,11 @@ import {
   type DaPraxis,
   type DaVerordnung,
   type Pruefergebnis,
+  type Testpaket,
 } from "@/lib/gkv302/direktabrechnung";
 import { ausLatin1 } from "@/lib/gkv302/edifact";
-import { KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname } from "@/lib/gkv302/kostentraeger";
+import { KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang, type Kostentraegerdatei } from "@/lib/gkv302/kostentraeger";
+import { createRateLimiter } from "@/lib/rate-limit";
 import { istGueltigesTarifkennzeichen } from "@/lib/gkv302/schluessel";
 import { aktivesKryptomodul, type KryptoStatus } from "@/lib/gkv302/sicherheit";
 import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
@@ -34,7 +37,8 @@ import { assertCan } from "./authz";
  *    invoices.write + medical.read (Diagnosen). Daten nur über withOrg (RLS) und mit organization_id-Filter.
  *  - Preis-Snapshots werden unverändert aus der DB übernommen (keine Neuberechnung, docs/GKV-302.md 2a/2b).
  *  - Nummernkreise (Test) in organizations.settings.gkv302Zaehler, fortgeschrieben unter Zeilensperre (FOR UPDATE)
- *    in derselben Transaktion wie das Erzeugen; scheitert das Paket, bleibt der Zählerstand unverändert.
+ *    in derselben Transaktion wie das Erzeugen – Nutzdateien, Begleitzettel-PDF und ZIP entstehen VOR dem Speichern des
+ *    Zählerstands; scheitert irgendein Schritt, rollt die Transaktion zurück und es werden keine Nummern verbraucht.
  *  - Kostenträgerdateien (KOTR) verschlüsselt in der Dateiablage, Metadaten in organizations.settings.gkv302.kotr.
  *  - Keine Patientendaten in Audit-Einträgen oder Logs (nur Anzahlen, Dateinamen, Rechnungsnummern, IKs von Kassen).
  *
@@ -45,6 +49,33 @@ import { assertCan } from "./authz";
 export const KOTR_MAX_BYTES = 8 * 1024 * 1024;
 /** höchstens so viele Kostenträgerdateien je Praxis (eine je Kassenart) */
 export const KOTR_MAX_DATEIEN = 12;
+/** Uploads je Praxis und 10 Minuten (Zerlegen kostet Rechenzeit; Review-Runde 2, AppSec H1) */
+export const KOTR_UPLOADS_JE_FENSTER = 10;
+const kotrUploads = createRateLimiter({ windowMs: 10 * 60_000, max: KOTR_UPLOADS_JE_FENSTER, maxKeys: 5_000 });
+
+/** Speicherschlüssel aus settings nur verwenden, wenn er zur eigenen Praxis gehört (Review-Runde 2, AppSec H4) */
+const eigenerSchluessel = (org: string, key: string) => typeof key === "string" && key.startsWith(`${org}/`) && !key.includes("..");
+
+/** zerlegte Kostenträgerdateien je Prüfsumme (klein, LRU) – spart das erneute Zerlegen bei jedem Prüflauf */
+const kotrCache = new Map<string, Kostentraegerdatei>();
+const KOTR_CACHE_MAX = 16;
+function kotrAusCache(sha256: string, laden: () => Kostentraegerdatei): Kostentraegerdatei {
+  const treffer = kotrCache.get(sha256);
+  if (treffer) {
+    kotrCache.delete(sha256);
+    kotrCache.set(sha256, treffer);
+    return treffer;
+  }
+  const d = laden();
+  kotrCache.set(sha256, d);
+  while (kotrCache.size > KOTR_CACHE_MAX) kotrCache.delete(kotrCache.keys().next().value!);
+  return d;
+}
+
+/** Support (Break-Glass) ändert keine Kostenträgerdateien – das entscheidet die Praxis (Review-Runde 2, AppSec H5) */
+function keinSupport(auth: AuthContext) {
+  if (auth.support) throw new Gkv302Fehler("Im Support-Modus können Kostenträgerdateien nicht geändert werden – das erledigt die Praxis selbst.");
+}
 
 export type KotrEintrag = {
   kassenart: string;
@@ -133,6 +164,11 @@ export function pruefeKotrUpload(dateiname: string, buf: Buffer): { kassenart: s
     if (e instanceof KotrFehler) throw new Gkv302Fehler(`Kostenträgerdatei nicht lesbar: ${e.message}`);
     throw new Gkv302Fehler("Kostenträgerdatei nicht lesbar (Format nach Anhang 3 zur TA1 erwartet).");
   }
+  try {
+    pruefeKotrUmfang(datei);
+  } catch (e) {
+    throw new Gkv302Fehler(`Kostenträgerdatei abgelehnt: ${(e as Error).message}`);
+  }
   const kurz = (dateiname.split(/[\\/]/).pop() ?? "").trim();
   const name = pruefeKotrDateiname(kurz) ? kurz : datei.dateiname.length > 3 ? `${datei.dateiname.slice(0, -3)}.${datei.dateiname.slice(-3)}` : datei.dateiname;
   const info = pruefeKotrDateiname(name);
@@ -144,10 +180,13 @@ export function pruefeKotrUpload(dateiname: string, buf: Buffer): { kassenart: s
 
 export async function kotrHochladen(auth: AuthContext, dateiname: string, buf: Buffer): Promise<KotrEintrag> {
   assertCan(auth, "settings.manage");
+  keinSupport(auth);
   const blocked = gkvGuard(auth.organization, "gkvBilling");
   if (blocked) throw new Gkv302Fehler(blocked.error);
-  const info = pruefeKotrUpload(dateiname, buf);
   const org = auth.organization.id;
+  // vor dem Zerlegen drosseln (jeder Versuch zählt, auch abgelehnte Dateien)
+  if (kotrUploads.limited(org)) throw new Gkv302Fehler("Zu viele Uploads in kurzer Zeit. Bitte in einigen Minuten erneut versuchen.");
+  const info = pruefeKotrUpload(dateiname, buf);
   const stored = await storeEncrypted(org, buf);
   const eintrag: KotrEintrag = {
     kassenart: info.kassenart,
@@ -177,13 +216,14 @@ export async function kotrHochladen(auth: AuthContext, dateiname: string, buf: B
     throw e;
   }
   // ersetzte Datei erst nach erfolgreichem Speichern entfernen (öffentliche Verzeichnisdaten, keine Aufbewahrungspflicht)
-  if (alt) await discardStored(alt).catch(() => {});
+  if (alt && eigenerSchluessel(org, alt)) await discardStored(alt).catch(() => {});
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.gkv302_kotr_upload", entity: "organization", entityId: org, meta: { kassenart: eintrag.kassenart, dateiname: eintrag.dateiname, sizeBytes: eintrag.sizeBytes, sha256: eintrag.sha256, institutionen: eintrag.institutionen, ersetzt: !!alt } });
   return eintrag;
 }
 
 export async function kotrEntfernen(auth: AuthContext, kassenart: string): Promise<boolean> {
   assertCan(auth, "settings.manage");
+  keinSupport(auth);
   const org = auth.organization.id;
   const alt = await withOrg(org, async (tx) => {
     const s = await sperreOrganisation(tx, org);
@@ -194,7 +234,7 @@ export async function kotrEntfernen(auth: AuthContext, kassenart: string): Promi
     return weg.storageKey;
   });
   if (!alt) return false;
-  await discardStored(alt).catch(() => {});
+  if (eigenerSchluessel(org, alt)) await discardStored(alt).catch(() => {});
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.gkv302_kotr_remove", entity: "organization", entityId: org, meta: { kassenart } });
   return true;
 }
@@ -213,13 +253,16 @@ export async function gkv302Status(org: string): Promise<Gkv302Einstellungen & {
 export type Gkv302Quelle = { art: "bereit" } | { art: "lauf"; batchId: string };
 
 /** KOTR-Dateien entschlüsseln und zerlegen; unlesbare werden übersprungen und gemeldet */
-async function ladeKotr(eintraege: KotrEintrag[]): Promise<{ dateien: DaKotrDatei[]; hinweise: string[] }> {
+async function ladeKotr(org: string, eintraege: KotrEintrag[]): Promise<{ dateien: DaKotrDatei[]; hinweise: string[] }> {
   const dateien: DaKotrDatei[] = [];
   const hinweise: string[] = [];
   for (const e of eintraege) {
     try {
+      if (!eigenerSchluessel(org, e.storageKey)) throw new Error("fremder Speicherschlüssel");
       const buf = await readDecrypted(e.storageKey);
-      dateien.push({ datei: parseKostentraegerdatei(ausLatin1(new Uint8Array(buf))), kassenart: e.kassenart });
+      // Prüfsumme des entschlüsselten Inhalts als Cache-Schlüssel (nicht der gespeicherte Wert aus settings)
+      const sha = createHash("sha256").update(buf).digest("hex");
+      dateien.push({ datei: kotrAusCache(sha, () => parseKostentraegerdatei(ausLatin1(new Uint8Array(buf)))), kassenart: e.kassenart });
     } catch {
       hinweise.push(`Kostenträgerdatei ${e.dateiname} ist nicht lesbar – bitte erneut hochladen.`);
     }
@@ -329,8 +372,9 @@ export async function pruefe302(auth: AuthContext, quelle: Gkv302Quelle, jetzt =
   if (blocked) return blocked;
   const org = auth.organization.id;
   const [o] = await db.select(ORG_FELDER).from(organizations).where(eq(organizations.id, org));
+  if (!o) return { error: "Praxis nicht gefunden." };
   const g = gkv302Einstellungen(o.settings);
-  const kotr = await ladeKotr(g.kotr);
+  const kotr = await ladeKotr(org, g.kotr);
   const vos = await withOrg(org, (tx) => ladeVerordnungen(tx, org, quelle));
   if (!vos) return { error: "Abrechnungslauf nicht gefunden." };
   const e = pruefeFaelle(praxisAus(o), vos, kotr.dateien, jetzt.datum);
@@ -357,8 +401,9 @@ export async function testpaket302(auth: AuthContext, quelle: Gkv302Quelle, jetz
   if (blocked) return blocked;
   const org = auth.organization.id;
   const [vorab] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, org));
-  const kotr = await ladeKotr(gkv302Einstellungen(vorab?.settings).kotr);
-  const r = await withOrg(org, async (tx) => {
+  if (!vorab) return { error: "Praxis nicht gefunden." };
+  const kotr = await ladeKotr(org, gkv302Einstellungen(vorab.settings).kotr);
+  const r = await withOrg(org, async (tx): Promise<{ error: string } | { paket: Testpaket; bytes: Uint8Array }> => {
     const settings = await sperreOrganisation(tx, org);
     const [o] = await tx.select(ORG_FELDER).from(organizations).where(eq(organizations.id, org));
     const vos = await ladeVerordnungen(tx, org, quelle);
@@ -372,6 +417,11 @@ export async function testpaket302(auth: AuthContext, quelle: Gkv302Quelle, jetz
       if (e instanceof TestpaketFehler) return { error: e.meldungen.slice(0, 20).join("\n") };
       throw e;
     }
+    // ZIP und Begleitzettel-PDF noch in der Transaktion: scheitern sie, wird der Zählerstand nicht gespeichert
+    const zip = new JSZip();
+    for (const d of paket.dateien) zip.file(d.name, d.bytes, { date: new Date() });
+    if (paket.begleitzettel.length) zip.file("Begleitzettel_TEST.pdf", await begleitzettelPdf(paket.begleitzettel, { test: true }));
+    const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
     await setzeEinstellung(tx, org, "gkv302Zaehler", { ...zaehler, test: nummern.stand });
     await audit(
       {
@@ -384,12 +434,9 @@ export async function testpaket302(auth: AuthContext, quelle: Gkv302Quelle, jetz
       },
       tx,
     );
-    return paket;
+    return { paket, bytes };
   });
   if ("error" in r) return r;
-  const zip = new JSZip();
-  for (const d of r.dateien) zip.file(d.name, d.bytes, { date: new Date() });
-  if (r.begleitzettel.length) zip.file("Begleitzettel_TEST.pdf", await begleitzettelPdf(r.begleitzettel, { test: true }));
-  const bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
-  return { dateiname: `TEST-302-${jetzt.datum}-${r.uebersicht.map((u) => u.nutzdatei).join("_")}.zip`, zip: bytes, ausgeschlossen: r.ausgeschlossen, dateien: r.dateien.length };
+  const { paket, bytes } = r;
+  return { dateiname: `TEST-302-${jetzt.datum}-${paket.uebersicht.map((u) => u.nutzdatei).join("_")}.zip`, zip: bytes, ausgeschlossen: paket.ausgeschlossen, dateien: paket.dateien.length };
 }

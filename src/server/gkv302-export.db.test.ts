@@ -22,6 +22,14 @@ vi.mock("@/lib/gkv302/direktabrechnung", async (orig) => {
     erzeugeTestpaket: (p: never, vos: never, k: never, j: never, n: never) => m.erzeugeTestpaket(p, mit(vos), k, j, n),
   };
 });
+const pdfSchalter = vi.hoisted(() => ({ fehler: false }));
+vi.mock("@/lib/gkv302/begleitzettel-pdf", async (orig) => {
+  const m = await orig<typeof import("@/lib/gkv302/begleitzettel-pdf")>();
+  return { begleitzettelPdf: async (...a: Parameters<typeof m.begleitzettelPdf>) => {
+    if (pdfSchalter.fehler) throw new Error("PDF kaputt (Test)");
+    return m.begleitzettelPdf(...a);
+  } };
+});
 import { audit } from "@/lib/audit";
 import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
 
@@ -34,8 +42,8 @@ const PRAXIS_IK = "990010013";
   const files = new Map<string, Buffer>();
   let x: typeof import("./gkv302-export");
   let org: string, org2: string, user: string;
-  const authFor = (o: string, perms: string[] | "all" = "all") =>
-    ({ organization: { id: o, name: "Testpraxis Fuß", slug: "t", smallBusiness: false, state: "BE", billingMode: "with_gkv" }, user: { id: user, name: "Test" }, role: "owner", readOnly: false, support: null, can: (p: string) => perms === "all" || perms.includes(p) }) as never;
+  const authFor = (o: string, perms: string[] | "all" = "all", support: unknown = null) =>
+    ({ organization: { id: o, name: "Testpraxis Fuß", slug: "t", smallBusiness: false, state: "BE", billingMode: "with_gkv" }, user: { id: user, name: "Test" }, role: "owner", readOnly: false, support, can: (p: string) => perms === "all" || perms.includes(p) }) as never;
   const JETZT = { datum: "2026-11-18", uhrzeit: "10:15", sekunde: "30" };
 
   const snapshot = {
@@ -164,5 +172,71 @@ const PRAXIS_IK = "990010013";
     await expect(x.testpaket302(authFor(org, ["medical.read"]), { art: "bereit" }, JETZT)).rejects.toThrow(/invoices.write/);
     const privat = { ...(authFor(org) as object), organization: { id: org, name: "T", slug: "t", smallBusiness: false, state: "BE", billingMode: "private_only" } } as never;
     expect(await x.testpaket302(privat, { art: "bereit" }, JETZT)).toEqual({ error: expect.any(String) });
+  });
+
+  describe("Review-Runde 2", () => {
+    it("Support (auch mit Schreibrecht) darf keine Kostenträgerdateien hochladen oder entfernen", async () => {
+      const sup = authFor(org, "all", { grantId: "g", scope: "write", expiresAt: new Date(Date.now() + 60_000) });
+      await expect(x.kotrHochladen(sup, "GK05Q426.KE0", KOTR)).rejects.toThrow(/Support/);
+      await expect(x.kotrEntfernen(sup, "GK")).rejects.toThrow(/Support/);
+    });
+
+    it("Uploads je Praxis gedrosselt", async () => {
+      const o = await f.org();
+      for (let i = 0; i < x.KOTR_UPLOADS_JE_FENSTER; i++) await x.kotrHochladen(authFor(o), "GK05Q426.KE0", KOTR);
+      await expect(x.kotrHochladen(authFor(o), "GK05Q426.KE0", KOTR)).rejects.toThrow(/Zu viele Uploads/);
+    });
+
+    it("fremder Speicherschlüssel in settings wird weder gelesen noch gelöscht", async () => {
+      const o = await f.org();
+      const fremd = `${org2}/2026/11/00000000-0000-4000-8000-000000000001.bin`;
+      files.set(fremd, Buffer.from("fremd"));
+      const eintrag = { kassenart: "GK", dateiname: "GK05Q426.KE0", storageKey: fremd, sha256: "x", sizeBytes: 5, gueltigAb: "Q4/2026", gueltigAbDatum: "2026-10-01", erstellt: "", institutionen: 1, hochgeladenAm: new Date().toISOString() };
+      await f.pool.query("update organizations set ik = $2, legs_code = '7100501', street = 'S 1', zip = '10115', city = 'Berlin', settings = $3 where id = $1", [o, PRAXIS_IK, JSON.stringify({ gkv302: { tarifkennzeichen: "50000", kotr: [eintrag] } })]);
+      const e = await x.pruefe302(authFor(o), { art: "bereit" }, JETZT);
+      if ("error" in e) throw new Error(e.error);
+      expect(e.kotrVorhanden).toBe(false);
+      expect(e.kotrHinweise.join(" ")).toContain("GK05Q426.KE0 ist nicht lesbar");
+      expect(await x.kotrEntfernen(authFor(o), "GK")).toBe(true);
+      expect(files.has(fremd)).toBe(true);
+    });
+
+    it("ohne Organisation: Fehlermeldung statt Absturz", async () => {
+      expect(await x.pruefe302(authFor("00000000-0000-4000-8000-0000000000ff"), { art: "bereit" }, JETZT)).toEqual({ error: "Praxis nicht gefunden." });
+    });
+
+    it("scheitert das Begleitzettel-PDF, werden keine Nummern verbraucht", async () => {
+      schalter.verordnungsart = "03";
+      const vorher = await zaehler(org);
+      pdfSchalter.fehler = true;
+      try {
+        await expect(x.testpaket302(authFor(org), { art: "bereit" }, JETZT)).rejects.toThrow(/PDF kaputt/);
+      } finally {
+        pdfSchalter.fehler = false;
+      }
+      expect(await zaehler(org)).toEqual(vorher);
+    });
+
+    it("8 gleichzeitige Testpakete: eindeutige, lückenlose Rechnungs- und Transfernummern", async () => {
+      schalter.verordnungsart = "03";
+      const o = await f.org();
+      await f.pool.query("update organizations set ik = $2, legs_code = '7100501', street = 'S 1', zip = '10115', city = 'Berlin' where id = $1", [o, PRAXIS_IK]);
+      await x.saveTarifkennzeichen(authFor(o), "50000");
+      await x.kotrHochladen(authFor(o), "GK05Q426.KE0", KOTR);
+      await verordnung(o);
+      const r = await Promise.all(Array.from({ length: 8 }, () => x.testpaket302(authFor(o), { art: "bereit" }, JETZT)));
+      const nummern: string[] = [];
+      const transfer: string[] = [];
+      for (const z of r) {
+        if ("error" in z) throw new Error(z.error);
+        const zip = await JSZip.loadAsync(z.zip);
+        const nutz = Object.keys(zip.files).find((n) => /\/TSOL0\d{3}$/.test(n))!;
+        transfer.push(nutz.slice(-3));
+        nummern.push(/T2026-\d{5}/.exec(Buffer.from(await zip.file(nutz)!.async("uint8array")).toString("latin1"))![0]);
+      }
+      expect(nummern.sort()).toEqual(Array.from({ length: 8 }, (_, i) => `T2026-0000${i + 1}`));
+      expect(transfer.sort()).toEqual(Array.from({ length: 8 }, (_, i) => `00${i}`));
+      expect(await zaehler(o)).toEqual({ test: { rechnung: { "2026": 8 }, transfer: 7, dar: { "990030017": 8 } } });
+    });
   });
 });

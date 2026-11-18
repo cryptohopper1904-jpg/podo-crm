@@ -680,9 +680,16 @@ export async function uploadKotrAction(_: SettingsState, form: FormData): Promis
   }
 }
 
-export async function removeKotrAction(form: FormData) {
+export async function removeKotrAction(_: SettingsState, form: FormData): Promise<SettingsState> {
   const auth = await requireAuth("settings.manage");
-  const kassenart = z.string().regex(/^[A-Z]{2}$/).parse(form.get("kassenart"));
-  await kotrEntfernen(auth, kassenart);
+  const kassenart = z.string().regex(/^[A-Z]{2}$/).safeParse(form.get("kassenart"));
+  if (!kassenart.success) return { error: "Ungültige Anfrage (Kassenart)." };
+  try {
+    if (!(await kotrEntfernen(auth, kassenart.data))) return { error: "Diese Kostenträgerdatei ist nicht (mehr) hinterlegt." };
+  } catch (e) {
+    if (e instanceof Gkv302Fehler) return { error: e.message };
+    throw e;
+  }
   revalidatePath("/einstellungen/praxis");
+  return { ok: "Kostenträgerdatei entfernt." };
 }

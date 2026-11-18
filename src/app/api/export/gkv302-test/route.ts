@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { downloadAllowed, SUPPORT_DOWNLOAD_DENIED } from "@/lib/auth/access";
 import { getAuth } from "@/lib/auth/session";
 import { log } from "@/lib/log";
+import { testdateiStarten } from "@/server/gkv302-drossel";
 import { testpaket302, type Gkv302Quelle } from "@/server/gkv302-export";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
   if (q === "bereit") quelle = { art: "bereit" };
   else if (typeof q === "string" && UUID.test(q)) quelle = { art: "lauf", batchId: q };
   else return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
+  const start = testdateiStarten(auth.organization.id);
+  if ("error" in start) return NextResponse.json({ error: start.error }, { status: 429, headers: { "Cache-Control": "private, no-store", "Retry-After": "60" } });
   try {
     const r = await testpaket302(auth, quelle);
     if ("error" in r) return NextResponse.json({ error: r.error }, { status: 422, headers: { "Cache-Control": "private, no-store" } });
@@ -45,5 +48,7 @@ export async function POST(req: NextRequest) {
     // keine Patientendaten im Log: nur Fehlerart
     log.error("gkv302.testdatei.failed", { error: e instanceof Error ? e.name : "unbekannt" });
     return NextResponse.json({ error: "Die Testdatei konnte nicht erzeugt werden." }, { status: 500 });
+  } finally {
+    start.fertig();
   }
 }

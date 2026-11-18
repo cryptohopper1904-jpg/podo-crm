@@ -77,7 +77,7 @@ export default async function PracticeSettings() {
         </ActionForm>
       </Card>
     )}
-    {isPrivateOnly(o) ? null : <Gkv302Card org={o.id} readOnlyHint={auth.readOnly || !!auth.support} />}
+    {isPrivateOnly(o) ? null : <Gkv302Card org={o.id} readOnly={auth.readOnly} support={!!auth.support} />}
     <Card>
       <h2 className="mb-2 font-display text-lg font-semibold">Online-Buchung</h2>
       <p className="text-sm text-muted">Eigene Buchungsseite für Selbstzahler-Leistungen (Alternative/Ergänzung zu Doctolib). Link auf der Website, bei Google und in WhatsApp teilen:</p>
