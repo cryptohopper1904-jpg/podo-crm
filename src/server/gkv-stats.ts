@@ -21,16 +21,28 @@ import { periodBounds } from "./stats";
  *  - Neuabrechnung nach Korrektur: die Verordnung steckt im alten UND im neuen Lauf. Abgezogen wird deshalb „ersetzt durch
  *    Neuabrechnung“ = Heilmittelkosten/Zuzahlung der Erstabrechnung (original_* der Vermerke mit resolution = 'rebilled'),
  *    im Monat des neuen Laufs (resolved_batch_id) – über beide Läufe zählt die Verordnung genau einmal (neuer Stand).
- *    Nur, wenn der alte Lauf Heilmittelkosten gespeichert hat (sonst war die Erstabrechnung nicht summiert).
+ *    Nur, wenn der alte Lauf Heilmittelkosten gespeichert hat (sonst war die Erstabrechnung nicht summiert). original_*
+ *    setzt der DB-Trigger aus derselben Verordnungszeile wie original_row (Export des alten Laufs) – gleiche Quelle;
+ *    Auswertung und Belegliste nutzen dieselbe Bedingung (REPLACED_SQL). Ein Monat kann dadurch negativ werden (Abzug im
+ *    Monat des neuen Laufs größer als dessen Läufe).
  *  - Zuzahlungen (ZZ) = Zuzahlungsquittungen nach Belegdatum, ohne stornierte (wie countedInvoiceSql) – Ist.
  *  - Privat = alle übrigen gezählten Belege (Rechnungen, Quittungen, Sammelrechnungen, Ausfallgebühren) nach
  *    Belegdatum, brutto, ohne Entwürfe/Stornos/Gutschriften/Anzahlungen und ohne angerechnete Quittungen.
  *  - Absetzungen nach Datum der Absetzung: Minderung = akzeptiert + erledigt/„Absetzung bleibt“; offen/Widerspruch und
- *    erledigt/„Widerspruch erfolgreich“ getrennt (keine Minderung). Nicht automatisch vom Kassenanteil abgezogen.
+ *    erledigt/„Widerspruch erfolgreich“ getrennt (keine Minderung). Hängt die Absetzung (deduction_id) an einem Vermerk,
+ *    der neu abgerechnet wurde, ist sie „durch Neuabrechnung ersetzt“ (die Erstabrechnung zieht schon „ersetzt durch
+ *    Neuabrechnung“ ab) – getrennt, keine Minderung. Nicht automatisch vom Kassenanteil abgezogen.
  *  - Stand Abruf: Stornos/Korrekturen wirken rückwirkend auf frühere Zeiträume.
  */
 
 const n = (v: unknown) => Number(v ?? 0);
+
+/**
+ * Bedingung „Erstabrechnung durch Neuabrechnung ersetzt“ für einen Korrekturvermerk `c` mit altem Lauf `ob` – gemeinsam
+ * für Auswertung und Belegliste (Code-Review H-5): neu abgerechnet, Erstabrechnung mit Heilmittelkosten im alten Lauf
+ * summiert. original_* setzt der Trigger aus der Verordnungszeile (wie original_row im Export des alten Laufs).
+ */
+const REPLACED_SQL = sql`c.resolution = 'rebilled' and c.original_remedy_cost_cents is not null and ob.remedy_total_cents is not null`;
 
 export type GkvPrivateMonth = { month: string; insurerCents: number; copaymentCents: number; privateCents: number; deductionCents: number };
 export type GkvPrivateStats = {
@@ -52,8 +64,20 @@ export type GkvPrivateStats = {
   copayments: { count: number; cents: number };
   private: { count: number; cents: number };
   deductions: Record<DeductionStatus, { count: number; cents: number }>;
-  /** Minderung = akzeptiert + erledigt/upheld; ausstehend = offen + Widerspruch; reversed = erledigt/Widerspruch erfolgreich */
-  deductionSummary: { reductionCents: number; reductionCount: number; pendingCents: number; pendingCount: number; reversedCents: number; reversedCount: number };
+  /**
+   * Minderung = akzeptiert + erledigt/upheld; ausstehend = offen + Widerspruch; reversed = erledigt/Widerspruch erfolgreich;
+   * replaced = an einem neu abgerechneten Korrekturvermerk (durch Neuabrechnung ersetzt, keine Minderung)
+   */
+  deductionSummary: {
+    reductionCents: number;
+    reductionCount: number;
+    pendingCents: number;
+    pendingCount: number;
+    reversedCents: number;
+    reversedCount: number;
+    replacedCents: number;
+    replacedCount: number;
+  };
   months: GkvPrivateMonth[];
 };
 
@@ -92,17 +116,19 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
         from prescription_corrections c
         join billing_batches nb on nb.id = c.resolved_batch_id and nb.organization_id = ${org}
         join billing_batches ob on ob.id = c.original_batch_id and ob.organization_id = ${org}
-        where c.organization_id = ${org} and c.resolution = 'rebilled' and ob.remedy_total_cents is not null
-          and c.original_remedy_cost_cents is not null
+        where c.organization_id = ${org} and ${REPLACED_SQL}
           and nb.created_at >= ${fromTs} and nb.created_at < ${toTs}
         group by 1`)
     ).rows;
     const dedRows = (
-      await tx.execute<{ ym: string; status: string; outcome: string | null; n: number; v: number }>(sql`
-        select to_char(d.deducted_on, 'YYYY-MM') as ym, d.status, d.outcome, count(*)::int as n, coalesce(sum(d.amount_cents), 0)::bigint as v
+      await tx.execute<{ ym: string; status: string; outcome: string | null; replaced: boolean; n: number; v: number }>(sql`
+        select to_char(d.deducted_on, 'YYYY-MM') as ym, d.status, d.outcome,
+               exists (select 1 from prescription_corrections c
+                        where c.organization_id = ${org} and c.deduction_id = d.id and c.resolution = 'rebilled') as replaced,
+               count(*)::int as n, coalesce(sum(d.amount_cents), 0)::bigint as v
         from gkv_deductions d
         where d.organization_id = ${org} and d.deducted_on >= ${period.from} and d.deducted_on <= ${period.until}
-        group by 1, 2, 3`)
+        group by 1, 2, 3, 4`)
     ).rows;
     return { batchRows, invRows, dedRows, replacedRows };
   });
@@ -138,12 +164,12 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     else at(r.ym).privateCents += n(r.v);
   }
   const deductions = Object.fromEntries(DEDUCTION_STATUSES.map((s) => [s, { count: 0, cents: 0 }])) as GkvPrivateStats["deductions"];
-  const deductionSummary = { reductionCents: 0, reductionCount: 0, pendingCents: 0, pendingCount: 0, reversedCents: 0, reversedCount: 0 };
+  const deductionSummary = { reductionCents: 0, reductionCount: 0, pendingCents: 0, pendingCount: 0, reversedCents: 0, reversedCount: 0, replacedCents: 0, replacedCount: 0 };
   for (const r of res.dedRows) {
     const s = (DEDUCTION_STATUSES as readonly string[]).includes(r.status) ? (r.status as DeductionStatus) : "open";
     deductions[s].count += n(r.n);
     deductions[s].cents += n(r.v);
-    const kind = deductionKind(s, r.outcome);
+    const kind = deductionKind(s, r.outcome, r.replaced === true);
     deductionSummary[`${kind}Cents`] += n(r.v);
     deductionSummary[`${kind}Count`] += n(r.n);
     // Monatsspalte „Absetzungen“: nur die Minderung (akzeptiert + erledigt/Absetzung bleibt)
@@ -153,8 +179,13 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
   return { gkvEnabled, batches, copayments, private: priv, deductions, deductionSummary, months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)) };
 }
 
-/** Einordnung einer Absetzung für die Auswertung (Minderung nur akzeptiert bzw. erledigt mit „Absetzung bleibt“) */
-export function deductionKind(status: DeductionStatus, outcome: string | null): "reduction" | "pending" | "reversed" {
+/**
+ * Einordnung einer Absetzung für die Auswertung (Minderung nur akzeptiert bzw. erledigt mit „Absetzung bleibt“). Hängt sie
+ * an einem neu abgerechneten Korrekturvermerk, ist sie durch die Neuabrechnung ersetzt (unabhängig vom Status): Die
+ * Erstabrechnung wird schon als „ersetzt durch Neuabrechnung“ abgezogen – sonst zählte sie doppelt.
+ */
+export function deductionKind(status: DeductionStatus, outcome: string | null, replacedByRebill = false): "reduction" | "pending" | "reversed" | "replaced" {
+  if (replacedByRebill) return "replaced";
   if (status === "accepted") return "reduction";
   if (status === "done") return outcome === "reversed" ? "reversed" : "reduction";
   return "pending";
@@ -248,10 +279,14 @@ export async function belegliste(auth: AuthContext, period: Pick<Period, "from" 
         rebills: number;
       }>(sql`
         select b.id, b.seq, b.created_at, b.partner, b.prescription_count, b.remedy_total_cents as remedy, b.copayment_total_cents as copay, b.total_cents as total, b.exported_at, b.note,
-               (select count(*)::int from prescription_corrections c where c.organization_id = ${org} and c.original_batch_id = b.id and c.resolution = 'rebilled') as replaced,
-               (select coalesce(sum(coalesce(c.original_remedy_cost_cents, 0) - coalesce(c.original_copayment_cents, 0)), 0)::bigint from prescription_corrections c
-                 where c.organization_id = ${org} and c.original_batch_id = b.id and c.resolution = 'rebilled') as replaced_insurer,
+               (select count(*)::int from prescription_corrections c join billing_batches ob on ob.id = c.original_batch_id and ob.organization_id = ${org}
+                 where c.organization_id = ${org} and c.original_batch_id = b.id and ${REPLACED_SQL}) as replaced,
+               (select coalesce(sum(c.original_remedy_cost_cents - coalesce(c.original_copayment_cents, 0)), 0)::bigint
+                  from prescription_corrections c join billing_batches ob on ob.id = c.original_batch_id and ob.organization_id = ${org}
+                 where c.organization_id = ${org} and c.original_batch_id = b.id and ${REPLACED_SQL}) as replaced_insurer,
                (select count(*)::int from prescription_corrections c where c.organization_id = ${org} and c.resolved_batch_id = b.id and c.resolution = 'rebilled') as rebills
+        -- laufende Nummer der Praxis: stabil, weil Läufe nie löschbar sind und created_at vom Server kommt und unveränderlich
+        -- ist (Trigger billing_batches_guard, Migration 0066); nur die endgültige Löschung der ganzen Praxis entfernt Läufe
         from (select bb.*, row_number() over (order by bb.created_at, bb.id)::int as seq from billing_batches bb where bb.organization_id = ${org}) b
         where b.created_at >= ${fromTs} and b.created_at < ${toTs}
         order by b.created_at`)

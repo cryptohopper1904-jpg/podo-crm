@@ -81,8 +81,15 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
             <div className="flex justify-between gap-4 font-semibold"><dt>Minderung: akzeptiert bzw. erledigt – Absetzung bleibt ({ds.reductionCount})</dt><dd className="tabular-nums">{money(ds.reductionCents)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-muted">noch offen bzw. im Widerspruch ({ds.pendingCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.pendingCents)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="text-muted">erledigt – Widerspruch erfolgreich ({ds.reversedCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.reversedCents)}</dd></div>
+            {ds.replacedCount ? (
+              <div className="flex justify-between gap-4"><dt className="text-muted">durch Neuabrechnung ersetzt ({ds.replacedCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.replacedCents)}</dd></div>
+            ) : null}
           </dl>
-          <p className="mt-3 text-xs text-muted">Nach Datum der Absetzung. Die Minderung ist im Kassenanteil noch enthalten (Läufe bleiben unverändert); Buchung mit der Steuerberatung klären.</p>
+          <p className="mt-3 text-xs text-muted">
+            Nach Datum der Absetzung. Die Minderung wird nicht vom Kassenanteil abgezogen (der Kassenanteil zeigt die Forderung laut Läufen); Buchung mit der
+            Steuerberatung klären. Absetzungen zu einer Verordnung, die nach Korrektur neu abgerechnet wurde, sind keine Minderung: Die Erstabrechnung ist dort
+            schon als „ersetzt durch Neuabrechnung“ abgezogen.
+          </p>
         </Card>
       </div>
 
@@ -95,6 +102,10 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
           rows={s.months.map((m) => [monthLabel(m.month), money(m.insurerCents), money(m.copaymentCents), money(m.privateCents), money(m.deductionCents)])}
           csv={csvOk ? { filename: file("kasse-privat"), head: ["Monat", "Kassenanteil laut Läufen (ohne Doppelzählung)", "Zuzahlungen (ZZ)", "Privat (Belege brutto)", "Absetzungen (Minderung)"], rows: s.months.map((m) => [m.month, eur(m.insurerCents), eur(m.copaymentCents), eur(m.privateCents), eur(m.deductionCents)]) } : null}
         />
+        <p className="mt-3 text-xs text-muted">
+          Der Kassenanteil eines Monats kann negativ sein: Die Erstabrechnung einer neu abgerechneten Verordnung wird im Monat des neuen Laufs abgezogen – ist
+          dieser Lauf kleiner als die ersetzten Erstabrechnungen, ergibt sich ein negativer Monatswert.
+        </p>
         <p className="mt-3 text-xs text-muted">Privat = Rechnungen, Quittungen, Sammelrechnungen und Ausfallgebühren brutto nach Belegdatum, ohne Entwürfe, Stornos, Gutschriften, Anzahlungen und ohne angerechnete Quittungen (wie „Leistungen &amp; Produkte“).</p>
       </Card>
     </div>

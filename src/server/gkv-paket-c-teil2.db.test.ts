@@ -11,7 +11,7 @@ vi.mock("@/lib/auth/session", () => ({ requireAuth: async () => session.auth }))
 import { addDaysIso } from "@/lib/calendar-grid";
 import { RULES_VERSION } from "@/lib/rules/prescription";
 import { resolvePeriod } from "@/lib/stats";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
 
 (TEST_DB ? describe : describe.skip)("GKV Paket C Teil 2 – Kasse vs. privat und Belegliste (DB)", () => {
   const fx = fixtures(TEST_DB ?? "");
@@ -60,15 +60,21 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
           [org, patient, addDaysIso(today, -3), RULES_VERSION],
         )
       )[0].id;
-    return { org, user, patient, auth, authWith, q, vo };
+    /**
+     * Lauf rückdatieren: den Anlagezeitpunkt setzt sonst der Server (Trigger billing_batches_guard, Migration 0066) – als
+     * Owner mit abgeschalteten Triggern (insertLegacy); ohne Superuser `false` (Test überspringen)
+     */
+    const backdate = (id: string, ago: string) => insertLegacy("update billing_batches set created_at = now() - $2::interval where id = $1", [id, ago]);
+    return { org, user, patient, auth, authWith, q, vo, backdate };
   };
 
-  it("Kasse vs. privat: Kassenanteil laut Lauf, ZZ getrennt (ohne Storno), Privat ohne Entwürfe/ZZ, Absetzungen; Zeitraum; fremde Praxis leer", async () => {
+  it("Kasse vs. privat: Kassenanteil laut Lauf, ZZ getrennt (ohne Storno), Privat ohne Entwürfe/ZZ, Absetzungen; Zeitraum; fremde Praxis leer", async (ctx) => {
     const w = await world();
     // Abrechnungslauf heute: Heilmittelkosten 71,10 €, Zuzahlungen 17,12 € → Kassenanteil 53,98 €; alter Lauf ohne Heilmittelkosten
     await w.q("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 2, 1712, 1712, 7110)", [w.org]);
     await w.q("insert into billing_batches (organization_id, prescription_count, total_cents) values ($1, 1, 500)", [w.org]);
-    await w.q("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, created_at) values ($1, 1, 100, 100, 1000, now() - interval '400 days')", [w.org]);
+    const [lastYear] = await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 100, 100, 1000) returning id", [w.org]);
+    if (!(await w.backdate(lastYear.id, "400 days"))) ctx.skip();
     // Zuzahlungsquittungen: eine gültige, eine stornierte (mit Stornobeleg)
     const a = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: await w.vo(), patientId: w.patient, amountCents: 1500, method: "transfer", confirmOverpay: true })) as { id: string; number: string };
     const b = (await copay.createCopaymentReceipt(w.auth, { prescriptionId: await w.vo(), patientId: w.patient, amountCents: 900, method: "transfer", confirmOverpay: true })) as { id: string; number: string };
@@ -133,11 +139,12 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(prev.batches).toHaveLength(1);
     expect(prev.receipts).toEqual([]);
   });
-  it("Review R1-11/R1-14: Neuabrechnung nicht doppelt gezählt („ersetzt durch Neuabrechnung“, Monat des neuen Laufs); Belegliste gekennzeichnet", async () => {
+  it("Review R1-11/R1-14: Neuabrechnung nicht doppelt gezählt („ersetzt durch Neuabrechnung“, Monat des neuen Laufs); Belegliste gekennzeichnet", async (ctx) => {
     const w = await world();
-    const run = async (remedy: number, copayment: number, ago: string) =>
-      (await w.q<{ id: string }>(`insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, created_at, note) values ($1, 1, $2, $2, $3, now() - $4::interval, 'interne Notiz') returning id`, [w.org, copayment, remedy, ago]))[0].id;
-    const old = await run(7110, 1712, "400 days");
+    const run = async (remedy: number, copayment: number) =>
+      (await w.q<{ id: string }>(`insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents, note) values ($1, 1, $2, $2, $3, 'interne Notiz') returning id`, [w.org, copayment, remedy]))[0].id;
+    const old = await run(7110, 1712);
+    if (!(await w.backdate(old, "400 days"))) ctx.skip();
     const id = (await w.q<{ id: string }>(
       `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
        values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
@@ -150,7 +157,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     ))[0].id;
     await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
     await w.q("update prescriptions set status = 'billing_ready', remedy_cost_cents = 7500, copayment_cents = 1000 where id = $1", [id]);
-    const neu = await run(7500, 1000, "0 days");
+    const neu = await run(7500, 1000);
     await fx.asOrg(w.org, async (cl) => {
       await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, neu]);
       await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [c, w.user, neu]);
@@ -195,7 +202,80 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     await ded(100, "objected", null);
     await ded(50, "open", null);
     const s = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "monat" }, today));
-    expect(s.deductionSummary).toEqual({ reductionCents: 1000, reductionCount: 2, pendingCents: 150, pendingCount: 2, reversedCents: 200, reversedCount: 1 });
+    expect(s.deductionSummary).toEqual({ reductionCents: 1000, reductionCount: 2, pendingCents: 150, pendingCount: 2, reversedCents: 200, reversedCount: 1, replacedCents: 0, replacedCount: 0 });
     expect(s.months.find((m) => m.month === today.slice(0, 7))!.deductionCents).toBe(1000);
+  });
+
+  describe("Review-Runde 2", () => {
+    /** abgerechnete Verordnung im (rückdatierten) Lauf, Korrektur, Neuabrechnung im heutigen Lauf – Trigger aktiv */
+    const rebilledWorld = async (ctx: { skip: () => void }, o: { oldRemedy?: number | null; deduction?: { cents: number; status: string; outcome: string | null } } = {}) => {
+      const w = await world();
+      const oldRemedy = o.oldRemedy === undefined ? 7110 : o.oldRemedy;
+      const old = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1712, 1712, $2) returning id", [w.org, oldRemedy]))[0].id;
+      if (!(await w.backdate(old, "400 days"))) ctx.skip();
+      const id = (await w.q<{ id: string }>(
+        `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at, billing_batch_id, remedy_cost_cents, copayment_cents)
+         values ($1,$2,$3,'DF',1,'billed',now() - interval '400 days',$4,7110,1712) returning id`,
+        [w.org, w.patient, addDaysIso(today, -450), old],
+      ))[0].id;
+      let deductionId: string | null = null;
+      if (o.deduction) {
+        deductionId = (await w.q<{ id: string }>(
+          "insert into gkv_deductions (organization_id, prescription_id, patient_id, amount_cents, reason, deducted_on, created_by, status, outcome) values ($1,$2,$3,$4,'Frist',$5,$6,$7,$8) returning id",
+          [w.org, id, w.patient, o.deduction.cents, today, w.user, o.deduction.status, o.deduction.outcome],
+        ))[0].id;
+      }
+      const c = (await w.q<{ id: string }>("insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, deduction_id, created_by) values ($1,$2,$3,'ICD falsch',$4,$5) returning id", [w.org, id, w.patient, deductionId, w.user]))[0].id;
+      await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
+      await w.q("update prescriptions set status = 'billing_ready', remedy_cost_cents = 7500, copayment_cents = 1000 where id = $1", [id]);
+      const neu = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 1, 1000, 1000, 7500) returning id", [w.org]))[0].id;
+      await fx.asOrg(w.org, async (cl) => {
+        await cl.query("update prescriptions set status = 'billed', billed_at = now(), billing_batch_id = $2 where id = $1", [id, neu]);
+        await cl.query("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_by = $2, resolved_batch_id = $3 where id = $1", [c, w.user, neu]);
+      });
+      return { ...w, id, old, neu, correction: c };
+    };
+    const wide = () => resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -420), bis: today }, today);
+
+    it("N1: Absetzung, die an einer Neuabrechnung hängt, ist keine Minderung, sondern „durch Neuabrechnung ersetzt“", async (ctx) => {
+      const w = await rebilledWorld(ctx, { deduction: { cents: 3555, status: "accepted", outcome: null } });
+      // weitere, normale Absetzung (Minderung) an einer anderen Verordnung
+      const other = (await w.q<{ id: string }>("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billed_at) values ($1,$2,$3,'DF',1,'billed',now()) returning id", [w.org, w.patient, addDaysIso(today, -30)]))[0].id;
+      await w.q("insert into gkv_deductions (organization_id, prescription_id, patient_id, amount_cents, reason, deducted_on, created_by, status) values ($1,$2,$3,700,'Frist',$4,$5,'accepted')", [w.org, other, w.patient, today, w.user]);
+      const s = await stats.gkvPrivateStats(w.auth, resolvePeriod({ zeitraum: "monat" }, today));
+      expect(s.deductionSummary).toMatchObject({ reductionCents: 700, reductionCount: 1, replacedCents: 3555, replacedCount: 1, pendingCents: 0, reversedCents: 0 });
+      expect(s.months.find((m) => m.month === today.slice(0, 7))!.deductionCents).toBe(700);
+      expect(stats.deductionKind("accepted", null, true)).toBe("replaced");
+      expect(stats.deductionKind("done", "upheld", false)).toBe("reduction");
+    });
+
+    it("H-5: „ersetzt“ in Auswertung und Belegliste mit derselben Bedingung und Quelle wie der Export des alten Laufs", async (ctx) => {
+      // alter Lauf ohne gespeicherte Heilmittelkosten → weder Auswertung noch Belegliste ziehen etwas ab
+      const a = await rebilledWorld(ctx, { oldRemedy: null });
+      const sa = await stats.gkvPrivateStats(a.auth, wide());
+      const la = await stats.belegliste(a.auth, wide());
+      expect(sa.batches.replaced).toEqual({ count: 0, remedyCents: 0, copaymentCents: 0, insurerCents: 0 });
+      expect(la.batches.find((x) => x.id === a.old)).toMatchObject({ replacedCount: 0, replacedInsurerCents: 0 });
+      // mit Heilmittelkosten: Auswertung = Belegliste = Stand der Erstabrechnung (original_row, wie CSV/§ 302 des alten Laufs)
+      const b = await rebilledWorld(ctx);
+      const sb = await stats.gkvPrivateStats(b.auth, wide());
+      const lb = await stats.belegliste(b.auth, wide());
+      const [orig] = await b.q<{ remedy: number; copay: number }>("select (original_row->>'remedy_cost_cents')::int as remedy, (original_row->>'copayment_cents')::int as copay from prescription_corrections where id = $1", [b.correction]);
+      expect(sb.batches.replaced).toEqual({ count: 1, remedyCents: orig.remedy, copaymentCents: orig.copay, insurerCents: orig.remedy - orig.copay });
+      expect(lb.batches.find((x) => x.id === b.old)).toMatchObject({ replacedCount: 1, replacedInsurerCents: sb.batches.replaced.insurerCents });
+    });
+
+    it("H-5: Laufnummer stabil – Läufe nicht löschbar, Anlagezeitpunkt vom Server (kein Einschieben vor bestehende Läufe)", async () => {
+      const w = await world();
+      const mk = async () => (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count) values ($1, 0) returning id", [w.org]))[0].id;
+      const first = await mk();
+      const second = await mk();
+      const labels = async () => new Map((await stats.belegliste(w.auth, resolvePeriod({ zeitraum: "monat" }, today))).batches.map((b) => [b.id, b.label.split(" vom ")[0]]));
+      expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"]]);
+      await expect(w.q("delete from billing_batches where id = $1", [first])).rejects.toThrow(/nicht gelöscht/);
+      // rückdatiertes Anlegen durch die Anwendung wirkt nicht: der neue Lauf bekommt die nächste Nummer
+      const third = (await w.q<{ id: string }>("insert into billing_batches (organization_id, prescription_count, created_at) values ($1, 0, now() - interval '1 day') returning id", [w.org]))[0].id;
+      expect([...(await labels()).entries()]).toEqual([[first, "Lauf 1"], [second, "Lauf 2"], [third, "Lauf 3"]]);
+    });
   });
 });
