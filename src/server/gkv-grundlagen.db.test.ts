@@ -132,28 +132,32 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     if (!(await runMigration("_gkv_review.sql"))) ctx.skip();
   });
 
-  it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", async () => {
-    const p1 = await fx.patient(org, { lastName: "Alt1" });
-    const p2 = await fx.patient(org, { lastName: "Alt2" });
-    await fx.asOrg(org, async (c) => {
-      await c.query(`update patients set extra = '{"payerIk":"109911114","gender":"female","insuranceStatus":"5000000"}' where id = $1`, [p1]);
-      await c.query(`update patients set extra = '{"payerIk":"12AB"}' where id = $1`, [p2]);
+  it("Migration: payerIk aus extra in insurer_ik übernommen, ungültige bleiben, wiederholbar", { timeout: 120_000 }, async (ctx) => {
+    // in eigener, frisch migrierter DB (runMigration) – keine DDL/Datenmigration auf der gemeinsamen Test-DB
+    let p1 = "";
+    let p2 = "";
+    const ran = await runMigration(MIGRATION, {
+      before: async (c) => {
+        await c.query("set session_replication_role = replica");
+        const o = (await c.query("insert into organizations (name, slug) values ('Praxis', $1) returning id", [`m-${Math.random().toString(36).slice(2, 8)}`])).rows[0].id;
+        const ins = "insert into patients (organization_id, number, last_name, extra) values ($1, $2, $3, $4) returning id";
+        p1 = (await c.query(ins, [o, 1, "Alt1", '{"payerIk":"109911114","gender":"female","insuranceStatus":"5000000"}'])).rows[0].id;
+        p2 = (await c.query(ins, [o, 2, "Alt2", '{"payerIk":"12AB"}'])).rows[0].id;
+        await c.query("update patients set insurer_ik = null, insured_status = null where id = any($1)", [[p1, p2]]);
+        await c.query("set session_replication_role = origin");
+      },
+      after: async (c) => {
+        const rows = (await c.query("select id, insurer_ik, insured_status, extra from patients where id = any($1)", [[p1, p2]])).rows;
+        const a = rows.find((r) => r.id === p1)!;
+        const b = rows.find((r) => r.id === p2)!;
+        expect(a.insurer_ik).toBe("109911114");
+        expect(a.insured_status).toBe("5");
+        expect(a.extra).toEqual({ gender: "female", insuranceStatus: "5000000" });
+        expect(b.insurer_ik).toBeNull();
+        expect(b.extra).toEqual({ payerIk: "12AB" });
+      },
     });
-    const sql = readFileSync(path.join(__dirname, "../../drizzle", MIGRATION), "utf8").split("--> statement-breakpoint");
-    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
-    try {
-      for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
-    } finally {
-      await owner.end();
-    }
-    const rows = await fx.asOrg(org, async (c) => (await c.query("select id, insurer_ik, insured_status, extra from patients where id = any($1)", [[p1, p2]])).rows);
-    const a = rows.find((r) => r.id === p1)!;
-    const b = rows.find((r) => r.id === p2)!;
-    expect(a.insurer_ik).toBe("109911114");
-    expect(a.insured_status).toBe("5");
-    expect(a.extra).toEqual({ gender: "female", insuranceStatus: "5000000" });
-    expect(b.insurer_ik).toBeNull();
-    expect(b.extra).toEqual({ payerIk: "12AB" });
+    if (!ran) ctx.skip();
   });
 
   it("abgelaufene Verordnung: Buchung abgelehnt, beim Lesen „Frist überschritten“ (nicht gelöscht)", async () => {
