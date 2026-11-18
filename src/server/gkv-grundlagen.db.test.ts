@@ -99,6 +99,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     const sql = readFileSync(path.join(dir, file), "utf8").split("--> statement-breakpoint");
     const name = `podo_mig_${Math.random().toString(36).slice(2, 10)}`;
     const admin = new Pool({ connectionString: ownerUrl(), max: 1 });
+    admin.on("error", () => undefined);
     try {
       const can = await admin.query("select rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
       if (!can.rows[0]?.ok) return false;
@@ -106,6 +107,8 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       const url = new URL(ownerUrl());
       url.pathname = `/${name}`;
       const pool = new Pool({ connectionString: url.toString(), max: 1 });
+      // Verbindungsfehler beim Abbau (Server beendet die Sitzung) nicht als „uncaught“ melden
+      pool.on("error", () => undefined);
       try {
         await pool.query("create extension if not exists pgcrypto");
         await pool.query("create extension if not exists pg_trgm");
@@ -123,7 +126,16 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       }
       return true;
     } finally {
-      await admin.query(`drop database if exists ${name} with (force)`).catch(() => undefined);
+      // ohne FORCE (das beendete in der CI eine noch schließende Sitzung → „uncaught“ 57P01); kurz warten, bis sie weg ist
+      for (let i = 0; i < 20; i++) {
+        try {
+          await admin.query(`drop database if exists ${name}`);
+          break;
+        } catch (e) {
+          if ((e as { code?: string }).code !== "55006") break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
       await admin.end();
     }
   };
