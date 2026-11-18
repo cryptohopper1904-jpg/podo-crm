@@ -206,8 +206,10 @@ ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
 (`/api/verordnungen/<id>/therapiebericht`: Praxiskopf mit Logo, Ärztin/Arzt mit LANR/BSNR, Person, Verordnung, Datum)
 mit `medical.read`, im Support-Modus gesperrt. Steht 78530 auf der Verordnung (oder ist „Therapiebericht angefordert“
 angekreuzt) und fehlt der Bericht → Hinweis „Therapiebericht fehlt“. Tabelle `therapy_reports` (Migration 0065):
-höchstens ein Bericht je Verordnung, ab „abrechnungsreif“/„abgerechnet“ nicht mehr änder- oder neu anlegbar (Trigger),
-nie löschbar (außer mit der Person über `podo_delete_patient`). Audit ohne Inhalte. Versand bleibt manuell
+höchstens ein Bericht je Verordnung, Berichtsdatum ein echtes Kalenderdatum und nicht vor dem ersten Behandlungstag, ab
+„abrechnungsreif“/„abgerechnet“ nicht mehr änder- oder neu anlegbar (Trigger), nie löschbar (App-Rolle ohne DELETE) und –
+als medizinische Dokumentation – Aufbewahrungsgrund gegen die vollständige Löschung der Person (`podo_delete_patient`,
+`retentionFacts`). Steht 78530 auf der Verordnung und fehlt der Bericht, warnt „abrechnungsreif“ (keine Sperre). Audit ohne Inhalte. Versand bleibt manuell
 (Download/Druck) – für die Ärztin/den Arzt ist keine E-Mail-Adresse gespeichert, daher kein E-Mail-Versand.
 
 **78530 im Preis-Snapshot.** Der Bericht zählt als erbrachte Einheit 78530 mit dem **Berichtsdatum** (nicht mehr
@@ -223,9 +225,13 @@ Schalter auf der Verordnungsseite), UND es keine neuere Verordnung gibt (`follow
 (Patientenseite, Verordnungen) und auf „Heute“ (Karte „Folgeverordnung anfordern“, nur noch nicht angeforderte).
 Vorlage „Anforderung Folgeverordnung“ als PDF bzw. Text (`/api/verordnungen/<id>/folgeverordnung[?format=text]`) mit
 Diagnose/ICD, Heilmitteln, Behandlungszeitraum und – falls vorhanden – Verlauf/Ergebnis/Empfehlung aus dem
-Therapiebericht. Vermerk „angefordert am“ (`follow_up_requests`, append-only, Audit `prescription.follow_up_requested`).
-Beim Planen: Termin nach dem Ende der letzten Verordnung ohne neue Verordnung (GKV-Versicherte) → Hinweis; Termine über
-die Restmenge hinaus → Erinnerung an die Folgeverordnung.
+Therapiebericht. Vermerk „angefordert am“ (`follow_up_requests`, append-only, App-Rolle ohne UPDATE/DELETE; geht nur mit
+der Person über `podo_delete_patient`, Prüfung `podo_owner_delete_allowed` wie 0019; Audit
+`prescription.follow_up_requested`). „Frist überschritten“ nach mindestens einer Behandlung zählt als beendet. Die Karte
+auf „Heute“ braucht `medical.read` und filtert in SQL auf Personen mit künftigen Terminen bzw. „Dauerpatient:in“.
+Beim Planen: zuerst „gewählte Verordnung nicht mehr buchbar“, sonst Termin nach dem Ende der letzten Verordnung ohne neue
+Verordnung (GKV-Versicherte) → Hinweis (ohne `medical.read` ohne Datumsangaben); Termine über die Restmenge hinaus →
+Erinnerung an die Folgeverordnung.
 
 ## Offene Punkte (fachlich prüfen)
 

@@ -96,7 +96,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     // ab „abrechnungsreif“: App und DB sperren Änderungen, Löschen nie
     expect(await reports.saveTherapyReport(w.auth, { ...base, findings: "neu" })).toEqual({ error: expect.stringMatching(/nicht mehr änderbar/) });
     await expect(w.q("update therapy_reports set findings = 'x' where prescription_id = $1", [id])).rejects.toThrow(/nicht mehr änderbar/);
-    await expect(w.q("delete from therapy_reports where prescription_id = $1", [id])).rejects.toThrow(/nicht gelöscht/);
+    await expect(w.q("delete from therapy_reports where prescription_id = $1", [id])).rejects.toThrow(/permission denied|nicht gelöscht/);
     // PDF
     const pdf = await reports.therapyReportPdf(w.auth, id);
     expect(Buffer.from(pdf!.bytes).subarray(0, 5).toString()).toBe("%PDF-");
@@ -111,7 +111,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const w = await world();
     const id = await w.vo({ units: 1, status: "completed" });
     await w.past(id, addDaysIso(today, -5));
-    expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+    expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true, warning: expect.stringMatching(/Therapiebericht fehlt/) });
     const [row] = await w.q<{ price_snapshot: { lines: { position: string }[]; notes: string[] } }>("select price_snapshot from prescriptions where id = $1", [id]);
     expect(row.price_snapshot.lines.map((l) => l.position)).toEqual(["78610"]);
     expect(row.price_snapshot.notes.join(" ")).toMatch(/Therapiebericht \(78530\) noch nicht erstellt/);
@@ -146,7 +146,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(await follow.markFollowUpRequested(w.auth, { prescriptionId: id, patientId: w.patient, note: "per Fax" })).toEqual({ ok: true });
     expect(await state()).toMatchObject({ requestedOn: today });
     expect((await follow.followUpsDue(w.auth)).total).toBe(0);
-    await expect(w.q("update follow_up_requests set note = 'x' where prescription_id = $1", [id])).rejects.toThrow(/unveränderbar/);
+    await expect(w.q("update follow_up_requests set note = 'x' where prescription_id = $1", [id])).rejects.toThrow(/permission denied|unveränderbar/);
     // neue Verordnung → kein Hinweis mehr an der alten
     await w.vo({ group: "DF", issuedAt: today });
     expect(await state()).toBeNull();
@@ -169,15 +169,62 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(after.warnings).toEqual([expect.stringMatching(/nach Ende der Verordnung vom .* keine neue Verordnung vorhanden/)]);
   });
 
-  it("B3/B4: Löschen der Person (ohne Aufbewahrungspflicht) nimmt Bericht und Vermerk mit", async () => {
+  it("R2-18/21: Therapiebericht ist aufbewahrungspflichtig; Vermerk geht mit der Person; App-Rolle kann nicht löschen", async () => {
     const w = await world();
     const p = await fx.patient(w.org, { lastName: "Löschbar" });
     const [vo] = await w.q<{ id: string }>("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',6) returning id", [w.org, p, today]);
-    await w.q("insert into therapy_reports (organization_id, prescription_id, patient_id, report_date, findings, created_by) values ($1,$2,$3,$4,'x',$5)", [w.org, vo.id, p, today, w.user]);
     await w.q("insert into follow_up_requests (organization_id, prescription_id, patient_id, requested_on, created_by) values ($1,$2,$3,$4,$5)", [w.org, vo.id, p, today, w.user]);
+    // App-Rolle: auch mit gesetztem podo.patient_delete kein Löschen (Rechteentzug + Prüfung auf Eigentümer)
+    await expect(
+      fx.asOrg(w.org, async (c) => {
+        await c.query("select set_config('podo.patient_delete', $1, true)", [p]);
+        await c.query("delete from follow_up_requests where patient_id = $1", [p]);
+      }),
+    ).rejects.toThrow(/permission denied|unveränderbar/);
+    // ohne Bericht: Löschen der Person nimmt den Vermerk mit
     const [del] = await w.q<{ ok: boolean }>("select podo_delete_patient($1) as ok", [p]);
     expect(del.ok).toBe(true);
-    expect((await w.q("select id from therapy_reports where patient_id = $1", [p])).length).toBe(0);
     expect((await w.q("select id from follow_up_requests where patient_id = $1", [p])).length).toBe(0);
+    // mit Bericht: aufbewahrungspflichtig (App-Prüfung und DB-Funktion)
+    const q2 = await fx.patient(w.org, { lastName: "MitBericht" });
+    const [vo2] = await w.q<{ id: string }>("insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units) values ($1,$2,$3,'DF',6) returning id", [w.org, q2, today]);
+    await w.q("insert into therapy_reports (organization_id, prescription_id, patient_id, report_date, findings, created_by) values ($1,$2,$3,$4,'x',$5)", [w.org, vo2.id, q2, today, w.user]);
+    const { retentionFacts } = await import("./patient-deletion");
+    expect((await retentionFacts(w.org, q2))!.lastTreatmentAt).not.toBeNull();
+    await expect(w.q("select podo_delete_patient($1) as ok", [q2])).rejects.toThrow(/Aufbewahrungspflicht/);
+    // auch der Eigentümer (Kaskade über die Verordnung) kann den Bericht nicht löschen
+    await expect(w.q("delete from prescriptions where id = $1", [vo2.id])).rejects.toThrow(/Aufbewahrungspflicht|permission denied/);
+  });
+
+  it("R2-19: gewählte, abgeschlossene Verordnung → Hinweis „nicht mehr buchbar“ vor dem Folgeverordnungs-Hinweis", async () => {
+    const w = await world();
+    const id = await w.vo({ group: "DF", units: 1, status: "completed" });
+    await w.past(id, addDaysIso(today, -3));
+    const plan = await planning.planningForPatient(w.auth, { patientId: w.patient, dates: [addDaysIso(today, 7)], prescriptionId: id });
+    expect(plan.warnings).toEqual([expect.stringMatching(/nicht mehr buchbar/)]);
+  });
+
+  it("R2-20: Berichtsdatum nicht vor dem ersten Behandlungstag, ungültiges Kalenderdatum → Formularfehler", async () => {
+    const w = await world();
+    const id = await w.vo({ status: "active" });
+    await w.past(id, addDaysIso(today, -5));
+    const base = { prescriptionId: id, patientId: w.patient, findings: "x", course: null, result: null, recommendation: null, notes: null };
+    expect(await reports.saveTherapyReport(w.auth, { ...base, reportDate: addDaysIso(today, -6) })).toEqual({ error: expect.stringMatching(/ersten Behandlungstag/) });
+    expect(await reports.saveTherapyReport(w.auth, { ...base, reportDate: "2026-02-30" })).toEqual({ error: expect.stringMatching(/Datum/) });
+    expect(await reports.saveTherapyReport(w.auth, { ...base, reportDate: addDaysIso(today, -5) })).toHaveProperty("id");
+  });
+
+  it("R2-22/23: followUpsDue nur mit medizinischem Leserecht; abrechnungsreif ohne Bericht bei 78530 → Warnung; Frist überschritten → Hinweis", async () => {
+    const w = await world();
+    const reception = { ...(w.auth as object), role: "reception", can: (p: string) => p !== "medical.read" && p !== "medical.write" } as never;
+    await expect(follow.followUpsDue(reception)).rejects.toThrow();
+    const id = await w.vo({ status: "completed", units: 1 });
+    await w.past(id, addDaysIso(today, -3));
+    expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true, warning: expect.stringMatching(/Therapiebericht fehlt/) });
+    // abgelaufene Verordnung mit Behandlung + Dauerpatient:in → Hinweis
+    const ex = await w.vo({ group: "DF", units: 6, status: "expired", issuedAt: today });
+    await w.past(ex, addDaysIso(today, 0));
+    await follow.setFollowUpExpected(w.auth, { patientId: w.patient, on: true });
+    expect((await follow.patientFollowUpHint(w.auth, w.patient))?.reason).toBe("ended");
   });
 });

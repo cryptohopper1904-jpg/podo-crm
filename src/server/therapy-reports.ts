@@ -27,7 +27,8 @@ export const therapyReportInput = z
   .object({
     prescriptionId: z.string().uuid(),
     patientId: z.string().uuid(),
-    reportDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Berichtsdatum fehlt."),
+    // echtes Kalenderdatum (2026-02-30 → Formularfehler statt Datenbankfehler, Review R2-20)
+    reportDate: z.iso.date({ message: "Berichtsdatum fehlt oder ist kein gültiges Datum." }),
     findings: text,
     course: text,
     result: text,
@@ -82,6 +83,14 @@ export async function saveTherapyReport(auth: AuthContext, raw: TherapyReportInp
       if (vo.status === "billing_ready" || vo.status === "billed") return { error: "Die Verordnung ist abrechnungsreif bzw. abgerechnet – der Therapiebericht ist nicht mehr änderbar." };
       if (vo.status === "cancelled") return { error: "Die Verordnung ist storniert." };
       if (d.reportDate < vo.issuedAt) return { error: "Das Berichtsdatum liegt vor dem Ausstellungsdatum der Verordnung." };
+      // Bericht über die Behandlung: nicht vor dem ersten Behandlungstag (Review R2-20)
+      const [first] = await tx
+        .select({ at: treatmentRecords.treatedAt })
+        .from(treatmentRecords)
+        .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, d.prescriptionId)))
+        .orderBy(asc(treatmentRecords.treatedAt))
+        .limit(1);
+      if (first && d.reportDate < berlinDateIso(first.at)) return { error: `Das Berichtsdatum liegt vor dem ersten Behandlungstag (${berlinDateIso(first.at).split("-").reverse().join(".")}).` };
       const values = { reportDate: d.reportDate, findings: d.findings, course: d.course, result: d.result, recommendation: d.recommendation, notes: d.notes };
       const [existing] = await tx.select({ id: therapyReports.id }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.prescriptionId, d.prescriptionId)));
       if (existing) {

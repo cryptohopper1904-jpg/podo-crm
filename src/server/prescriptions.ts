@@ -498,7 +498,7 @@ export async function savePrescription(
 export async function changePrescriptionStatus(
   auth: AuthContext,
   input: { id: string; patientId: string; to: PrescriptionStatus; interruptionNote?: string | null },
-): Promise<{ ok: true } | { error: string }> {
+): Promise<{ ok: true; warning?: string } | { error: string }> {
   assertCan(auth, "medical.write");
   const blocked = gkvGuard(auth.organization, "verordnungen");
   if (blocked) return blocked;
@@ -517,6 +517,7 @@ export async function changePrescriptionStatus(
     if (!t.ok) return { error: t.reason };
     const extra: Partial<typeof prescriptions.$inferInsert> = reopen ? {} : { interruptionNote: note ?? null };
     let auditMeta: Record<string, unknown> = {};
+    let warning: string | null = null;
     if (input.to === "billing_ready") {
       // Pflichtangaben (Anlage 3): Korrekturen müssen vor Einreichung zur Abrechnung erfolgt sein
       const findings = findingsFor(vo, await practiceIk(tx, org));
@@ -542,16 +543,18 @@ export async function changePrescriptionStatus(
       Object.assign(extra, { priceSnapshot: snap, remedyCostCents: snap.remedyCents, copaymentCents: snap.copaymentCents });
       // bisherigen Snapshot nachvollziehbar halten, wenn neu berechnet wird (billing_ready → completed → billing_ready, S1)
       auditMeta = { snapshot: { remedyCents: snap.remedyCents, copaymentCents: snap.copaymentCents, computedOn: snap.computedOn }, ...(vo.priceSnapshot ? { previousSnapshot: vo.priceSnapshot } : {}) };
+      // 78530 verordnet, aber kein Bericht → wird nicht abgerechnet; Hinweis statt Sperre (Review R2-23)
+      if (!reportDate && reportOrdered(vo.positions)) warning = "Therapiebericht fehlt – Position 78530 wird nicht abgerechnet. Bericht erstellen und „abrechnungsreif“ erneut setzen, falls er angefordert war.";
     }
     if (vo.status === "billing_ready" && input.to === "completed" && vo.priceSnapshot) auditMeta = { previousSnapshot: vo.priceSnapshot };
     if (input.to === "expired") extra.expiredReason = vo.expiredReason ?? "manual";
     if (reopen) Object.assign(extra, { expiredReason: null, reopenedAt: today, reopenNote: note });
     await tx.update(prescriptions).set({ status: input.to, ...extra }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, vo.id)));
-    return { ok: true as const, from: vo.status, meta: reopen ? { reopen: true, note, expiredReason: vo.expiredReason } : auditMeta };
+    return { ok: true as const, from: vo.status, warning, meta: reopen ? { reopen: true, note, expiredReason: vo.expiredReason } : auditMeta };
   });
   if ("error" in result) return { error: result.error ?? "Fehler" };
   await audit({ organizationId: org, userId: auth.user.id, action: "prescription.status", entity: "prescription", entityId: input.id, meta: { from: result.from, to: input.to, ...result.meta } });
-  return { ok: true };
+  return result.warning ? { ok: true, warning: result.warning } : { ok: true };
 }
 
 export const COPAYMENT_METHODS = { cash: "bar", card: "Karte", transfer: "Überweisung", other: "sonstig" } as const;

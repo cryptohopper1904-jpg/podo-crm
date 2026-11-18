@@ -13,6 +13,9 @@ describe("Folgeverordnung: Hinweis", () => {
     expect(followUpReason({ ...base, status: "active", unitsUsed: 4, unitsRemaining: 2, futureAppointments: 2 })).toBeNull();
     expect(followUpReason({ ...base, status: "open", unitsUsed: 0, unitsRemaining: 1, futureAppointments: 2 })).toBeNull();
     expect(followUpReason({ ...base, status: "cancelled", futureAppointments: 2 })).toBeNull();
+    // Frist überschritten nach mindestens einer Behandlung: ebenfalls beendet (Review R2-23)
+    expect(followUpReason({ ...base, status: "expired", unitsUsed: 2, unitsRemaining: 4, futureAppointments: 1 })).toBe("ended");
+    expect(followUpReason({ ...base, status: "expired", unitsUsed: 0, unitsRemaining: 6, futureAppointments: 1 })).toBeNull();
   });
 
   it("Planungshinweis nur für Termine nach der letzten Behandlung einer beendeten Verordnung", () => {

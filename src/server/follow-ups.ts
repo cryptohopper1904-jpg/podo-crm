@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, desc, eq, gte, inArray, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { appointments, followUpRequests, patients, prescriptions, treatmentRecords } from "@/db/schema";
@@ -48,21 +48,27 @@ async function latestPrescriptionState(tx: Tx, org: string, patientIds: string[]
     .from(followUpRequests)
     .where(and(eq(followUpRequests.organizationId, org), inArray(followUpRequests.prescriptionId, ids)))
     .orderBy(asc(followUpRequests.requestedOn));
+  // Maps statt find je Zeile (Review R2-23)
+  const usedBy = new Map(used.map((u) => [u.id, Number(u.n)]));
+  const futureBy = new Map(future.map((f) => [f.patientId, Number(f.n)]));
+  const patBy = new Map(pats.map((x) => [x.id, x]));
+  const reqBy = new Map<string, string>();
+  for (const x of reqs) reqBy.set(x.prescriptionId, x.requestedOn); // aufsteigend → letzter gewinnt
   return rows.map((r) => {
-    const unitsUsed = Number(used.find((u) => u.id === r.id)?.n ?? 0);
-    const p = pats.find((x) => x.id === r.patientId);
+    const unitsUsed = usedBy.get(r.id) ?? 0;
+    const p = patBy.get(r.patientId);
     const reason = p?.archivedAt
       ? null
       : followUpReason({
           status: r.status,
           unitsUsed,
           unitsRemaining: Math.max(0, r.units - unitsUsed),
-          futureAppointments: Number(future.find((f) => f.patientId === r.patientId)?.n ?? 0),
+          futureAppointments: futureBy.get(r.patientId) ?? 0,
           followUpExpected: !!p?.followUpExpected,
           // nur die neueste Verordnung je Person wird betrachtet – eine neuere gibt es per Definition nicht
           newerPrescription: false,
         });
-    return { ...r, patient: p, reason, requestedOn: reqs.filter((x) => x.prescriptionId === r.id).at(-1)?.requestedOn ?? null };
+    return { ...r, patient: p, reason, requestedOn: reqBy.get(r.id) ?? null };
   });
 }
 
@@ -85,10 +91,32 @@ export async function patientFollowUpHint(auth: AuthContext, patientId: string):
 
 /** „Heute“: Personen, für die eine Folgeverordnung anzufordern ist (noch nicht angefordert) */
 export async function followUpsDue(auth: AuthContext, limit = 6): Promise<{ total: number; items: { patientId: string; name: string; prescriptionId: string; hint: string }[] }> {
-  assertCan(auth, "patients.read");
+  // Hinweis beruht auf Verordnungsdaten → zusätzlich medizinisches Leserecht (Review R2-22)
+  assertCan(auth, "patients.read", "medical.read");
   if (!feature(auth.organization, "verordnungen")) return { total: 0, items: [] };
   const org = auth.organization.id;
-  const rows = await withOrg(org, (tx) => latestPrescriptionState(tx, org, null));
+  const rows = await withOrg(org, async (tx) => {
+    // in SQL vorfiltern (Review R2-23): nur Personen mit künftigen Terminen oder Markierung „Dauerpatient:in“
+    const candidates = await tx
+      .select({ id: patients.id })
+      .from(patients)
+      .where(
+        and(
+          eq(patients.organizationId, org),
+          isNull(patients.archivedAt),
+          or(
+            eq(patients.followUpExpected, true),
+            exists(
+              tx
+                .select({ x: appointments.id })
+                .from(appointments)
+                .where(and(eq(appointments.organizationId, org), eq(appointments.patientId, patients.id), gte(appointments.startsAt, berlinToUtc(berlinDateIso(), "00:00")), inArray(appointments.status, ["planned", "confirmed"]))),
+            ),
+          ),
+        ),
+      );
+    return candidates.length ? latestPrescriptionState(tx, org, candidates.map((c) => c.id)) : [];
+  });
   const due = rows.filter((r) => r.reason && !r.requestedOn);
   return {
     total: due.length,

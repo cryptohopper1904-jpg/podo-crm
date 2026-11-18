@@ -1,7 +1,7 @@
 import "server-only";
 import { and, count, desc, eq, inArray, isNotNull, isNull, max, sql } from "drizzle-orm";
 import { withOrg } from "@/db";
-import { anamneses, consents, invoices, media, patientLinks, patients, paymentReceipts, payments, prescriptions, treatmentRecords, waitlist } from "@/db/schema";
+import { anamneses, consents, invoices, media, patientLinks, patients, paymentReceipts, payments, prescriptions, therapyReports, treatmentRecords, waitlist } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/auth/session";
 import { ERASABLE_CONSENTS, retentionDecision, type RetentionDecision, type RetentionFacts } from "@/lib/patient-retention";
@@ -25,6 +25,8 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
     const [p] = await tx.select({ number: patients.number, contactErasedAt: patients.contactErasedAt }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
     if (!p) return null;
     const [r] = await tx.select({ at: max(treatmentRecords.treatedAt) }).from(treatmentRecords).where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.patientId, patientId)));
+    // Therapiebericht (GKV Paket B) = medizinische Dokumentation wie ein Behandlungseintrag – dieselbe Prüfung in podo_delete_patient (0065)
+    const [tr] = await tx.select({ at: max(therapyReports.createdAt) }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.patientId, patientId)));
     const [a] = await tx.select({ at: max(anamneses.createdAt) }).from(anamneses).where(and(eq(anamneses.organizationId, org), eq(anamneses.patientId, patientId)));
     const [m] = await tx.select({ n: count() }).from(media).where(and(eq(media.organizationId, org), eq(media.patientId, patientId), isNotNull(media.recordId)));
     const [i] = await tx
@@ -52,7 +54,7 @@ export async function retentionFacts(org: string, patientId: string): Promise<(R
     return {
       number: p.number,
       contactErasedAt: p.contactErasedAt,
-      lastTreatmentAt: r?.at ?? null,
+      lastTreatmentAt: [r?.at, tr?.at].filter((d): d is Date => !!d).sort((x, y) => y.getTime() - x.getTime())[0] ?? null,
       lastAnamnesisAt: a?.at ?? null,
       recordMediaCount: Number(m?.n ?? 0),
       lastInvoiceAt: lastDocs.length ? new Date(Math.max(...lastDocs.map((d) => d.getTime()))) : null,

@@ -22,7 +22,8 @@ export type FollowUpInput = {
 export type FollowUpReason = "ended" | "last_unit";
 
 /**
- * „Folgeverordnung anfordern“: Verordnung abgeschlossen/abrechnungsreif/abgerechnet oder höchstens noch 1 Einheit offen
+ * „Folgeverordnung anfordern“: Verordnung abgeschlossen/abrechnungsreif/abgerechnet (bzw. Frist überschritten nach
+ * mindestens einer Behandlung) oder höchstens noch 1 Einheit offen
  * (nach mindestens einer Behandlung), UND die Person hat weitere Termine oder ist als Dauerpatient:in markiert, UND es
  * gibt noch keine neuere laufende Verordnung. Gibt den Grund zurück oder null.
  */
@@ -30,6 +31,8 @@ export function followUpReason(v: FollowUpInput): FollowUpReason | null {
   if (v.newerPrescription) return null;
   if (!(v.futureAppointments > 0 || v.followUpExpected)) return null;
   if (ENDED.has(v.status)) return "ended";
+  // Frist überschritten nach mindestens einer Behandlung: Verordnung ist beendet (Review R2-23)
+  if (v.status === "expired" && v.unitsUsed > 0) return "ended";
   if (RUNNING.has(v.status) && v.unitsUsed > 0 && v.unitsRemaining <= 1) return "last_unit";
   return null;
 }

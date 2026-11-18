@@ -3,8 +3,9 @@
 -- 1. therapy_reports – Therapiebericht je Verordnung (höchstens einer, eindeutiger Index) für die verordnende
 --    Ärztin/den Arzt. Zählt mit dem Berichtsdatum als erbrachte Einheit 78530 im Preis-Snapshot. Änderbar, solange die
 --    Verordnung nicht „abrechnungsreif“/„abgerechnet“ ist (dann auch kein neuer Bericht); Bezug (Verordnung, Person,
---    Praxis) unveränderlich; nie löschbar – außer mit der Person über podo_delete_patient (setzt podo.patient_delete).
--- 2. follow_up_requests – Vermerk „Folgeverordnung angefordert am“, append-only (gleiche Ausnahme beim Löschen der Person).
+--    Praxis) unveränderlich; nie löschbar. Medizinische Dokumentation → Aufbewahrungsgrund in podo_delete_patient.
+-- 2. follow_up_requests – Vermerk „Folgeverordnung angefordert am“, append-only; geht nur mit der Person
+--    (podo_delete_patient als Eigentümer, podo_owner_delete_allowed wie 0019). App-Rolle ohne DELETE (scripts/migrate.ts).
 -- 3. patients.follow_up_expected – Dauerpatient:in: Hinweis „Folgeverordnung anfordern“ auch ohne geplante Termine.
 -- Verweise nur innerhalb der Praxis (podo_fk_same_org, podo_user_in_org), RLS + FORCE, alle Funktionen mit festem
 -- search_path. Idempotent: IF NOT EXISTS, Constraints nur wenn fehlend, CREATE OR REPLACE, DROP TRIGGER/POLICY IF EXISTS.
@@ -97,16 +98,16 @@ BEGIN
 END $$;
 --> statement-breakpoint
 -- Therapiebericht: Verordnung gehört zur Person; kein neuer/geänderter Bericht ab „abrechnungsreif“ (der Bericht ist
--- Teil des Preis-Snapshots); Bezug unveränderlich; Löschen nur mit der Person (podo_delete_patient)
+-- Teil des Preis-Snapshots); Bezug unveränderlich; nie löschbar (Aufbewahrung)
 CREATE OR REPLACE FUNCTION podo_therapy_report_guard() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE vo_patient uuid; vo_status text;
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    IF coalesce(current_setting('podo.patient_delete', true), '') = OLD.patient_id::text THEN
-      RETURN OLD;
-    END IF;
-    RAISE EXCEPTION 'Ein Therapiebericht kann nicht gelöscht werden.' USING ERRCODE = 'P0001';
+    -- nie – auch nicht mit der Person: medizinische Dokumentation ist aufbewahrungspflichtig (podo_delete_patient prüft
+    -- das vorab; dieser Trigger hält auch dann, wenn eine ältere Fassung von podo_delete_patient eingespielt wäre).
+    -- Gelöscht wird nur mit der ganzen Praxis (Löschlauf als Eigentümer, Trigger abgeschaltet).
+    RAISE EXCEPTION 'Ein Therapiebericht kann nicht gelöscht werden (Aufbewahrungspflicht).' USING ERRCODE = 'P0001';
   END IF;
   IF TG_OP = 'UPDATE' AND (NEW.prescription_id IS DISTINCT FROM OLD.prescription_id OR NEW.patient_id IS DISTINCT FROM OLD.patient_id
       OR NEW.organization_id IS DISTINCT FROM OLD.organization_id OR NEW.created_by IS DISTINCT FROM OLD.created_by
@@ -136,7 +137,7 @@ CREATE OR REPLACE FUNCTION podo_follow_up_request_guard() RETURNS trigger LANGUA
   SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE vo_patient uuid;
 BEGIN
-  IF TG_OP = 'DELETE' AND coalesce(current_setting('podo.patient_delete', true), '') = OLD.patient_id::text THEN
+  IF TG_OP = 'DELETE' AND podo_owner_delete_allowed(TG_RELID, OLD.patient_id) THEN
     RETURN OLD;
   END IF;
   IF TG_OP <> 'INSERT' THEN
@@ -199,3 +200,36 @@ COMMENT ON TABLE therapy_reports IS
 --> statement-breakpoint
 COMMENT ON TABLE follow_up_requests IS
   'Vermerk „Folgeverordnung angefordert am“ je Verordnung, append-only (Migration 0065).';
+--> statement-breakpoint
+-- podo_delete_patient (zuletzt 0062): Therapieberichte sind medizinische Dokumentation (Aufbewahrung) – wie
+-- treatment_records ein Grund gegen die vollständige Löschung. Sonst unverändert; fester search_path, Rechte wie 0062.
+CREATE OR REPLACE FUNCTION podo_delete_patient(p_patient uuid) RETURNS boolean
+  LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE
+  org uuid := NULLIF(current_setting('app.org_id', true), '')::uuid;
+  n int;
+BEGIN
+  IF org IS NULL THEN
+    RAISE EXCEPTION 'Kein Praxis-Kontext.' USING ERRCODE = 'P0001';
+  END IF;
+  IF EXISTS (SELECT 1 FROM treatment_records WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM therapy_reports WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM anamneses WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM invoices WHERE organization_id = org AND patient_id = p_patient)
+     OR EXISTS (SELECT 1 FROM media WHERE organization_id = org AND patient_id = p_patient AND record_id IS NOT NULL)
+     OR EXISTS (SELECT 1 FROM prescriptions WHERE organization_id = org AND patient_id = p_patient
+                  AND (billed_at IS NOT NULL OR copayment_paid_at IS NOT NULL)) THEN
+    RAISE EXCEPTION 'Aufbewahrungspflichtige Daten vorhanden – vollständige Löschung nicht zulässig.' USING ERRCODE = 'P0001';
+  END IF;
+  PERFORM set_config('podo.patient_delete', p_patient::text, true);
+  DELETE FROM appointments WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM messages WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM voice_calls WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM media WHERE patient_id = p_patient AND organization_id = org;
+  DELETE FROM patients WHERE id = p_patient AND organization_id = org;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  PERFORM set_config('podo.patient_delete', '', true);
+  RETURN n = 1;
+END $$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION podo_delete_patient(uuid) FROM PUBLIC;

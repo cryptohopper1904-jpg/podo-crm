@@ -15,7 +15,7 @@ import { saveTherapyReport, therapyReportInput } from "@/server/therapy-reports"
 import { markFollowUpRequested, setFollowUpExpected } from "@/server/follow-ups";
 import { addCopaymentExemption, exemptionInput, removeCopaymentExemption } from "@/server/copayment-exemptions";
 
-export type PrescriptionFormState = { error?: string } | undefined;
+export type PrescriptionFormState = { error?: string; warning?: string } | undefined;
 
 export async function savePrescriptionAction(_: PrescriptionFormState, form: FormData): Promise<PrescriptionFormState> {
   const auth = await requireAuth("medical.write");
@@ -44,7 +44,7 @@ export async function prescriptionStatusAction(_: PrescriptionFormState, form: F
   if ("error" in res) return { error: res.error };
   revalidatePath(`/kunden/${parsed.data.patientId}/verordnungen`);
   revalidatePath("/verordnungen");
-  return undefined;
+  return res.warning ? { warning: res.warning } : undefined;
 }
 
 const legacyResetSchema = z.object({ id: z.string().uuid(), patientId: z.string().uuid(), reason: z.string().max(300).optional() });

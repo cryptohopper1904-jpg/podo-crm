@@ -71,13 +71,14 @@ export async function planningForPatient(
     const options = vos.map((v) => ({ id: v.id, label: v.label, remaining: v.remaining, units: v.units }));
     // Vorschlag: ausdrücklich gewählte, sonst die älteste laufende Verordnung (Vertrag § 7 Abs. 5: erst die frühere zu Ende).
     // Ausdrücklich gewählte, die nicht (mehr) buchbar ist → keine stille Ersatzauswahl, sondern Hinweis (PR #111 Nice).
-    // keine laufende Verordnung: Termin nach dem Ende der letzten (GKV-)Verordnung → Hinweis Folgeverordnung (Paket B)
-    if (!vos.length) {
-      const w = await afterEndWarning(tx, org, input.patientId, input.dates);
-      return { options, selectedId: null, warnings: w ? [w] : [] };
-    }
+    // Reihenfolge (Review R2-19): erst die ausdrücklich gewählte, nicht mehr buchbare Verordnung melden …
     if (input.prescriptionId && !vos.some((v) => v.id === input.prescriptionId)) {
       return { options, selectedId: null, warnings: ["Die gewählte Verordnung ist nicht mehr buchbar (abgeschlossen, Frist überschritten oder keine Einheit frei) – bitte eine andere wählen oder ohne Verordnung planen."] };
+    }
+    // … dann: keine laufende Verordnung, Termin nach dem Ende der letzten (GKV-)Verordnung → Hinweis Folgeverordnung
+    if (!vos.length) {
+      const w = await afterEndWarning(tx, org, input.patientId, input.dates, medical);
+      return { options, selectedId: null, warnings: w ? [w] : [] };
     }
     const selectedId = input.prescriptionId === "" ? null : (input.prescriptionId ?? vos[0]?.id ?? null);
     const vo = vos.find((v) => v.id === selectedId);
@@ -89,7 +90,7 @@ export async function planningForPatient(
 }
 
 /** Letzte Verordnung der Person beendet und neue Termine danach → Hinweis (nur GKV-Versicherte) */
-async function afterEndWarning(tx: Tx, org: string, patientId: string, dates: string[]): Promise<string | null> {
+async function afterEndWarning(tx: Tx, org: string, patientId: string, dates: string[], medical: boolean): Promise<string | null> {
   if (!dates.length) return null;
   const [p] = await tx.select({ type: patients.insuranceType }).from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId)));
   if (p?.type !== "gkv") return null;
@@ -104,7 +105,9 @@ async function afterEndWarning(tx: Tx, org: string, patientId: string, dates: st
     .select({ at: max(treatmentRecords.treatedAt) })
     .from(treatmentRecords)
     .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, last.id)));
-  return afterPrescriptionWarning({ lastPrescription: { issuedAt: last.issuedAt, status: last.status, lastDate: rec?.at ? berlinDateIso(rec.at) : null }, newDates: dates });
+  const w = afterPrescriptionWarning({ lastPrescription: { issuedAt: last.issuedAt, status: last.status, lastDate: rec?.at ? berlinDateIso(rec.at) : null }, newDates: dates });
+  // ohne medizinisches Leserecht (Empfang) keine Verordnungs-/Behandlungsdaten im Hinweis (Review R2-22)
+  return w && !medical ? "Keine laufende Verordnung – Termin nach dem Ende der letzten Verordnung. Bitte Folgeverordnung anfordern (sonst Behandlung als Selbstzahler)." : w;
 }
 
 /**

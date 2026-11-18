@@ -79,6 +79,10 @@ async function main() {
     await pool.query(`revoke update, delete on document_archive, payment_receipts, invoice_credits from ${appRole}`);
     // Unterschriften je Behandlung (Migration 0064, GKV-Leistungsnachweis) sind append-only: kein UPDATE/DELETE
     await pool.query(`revoke update, delete on treatment_signatures from ${appRole}`);
+    // Therapieberichte nie löschen, Vermerke „Folgeverordnung angefordert“ append-only (Migration 0065) – gelöscht wird
+    // nur mit der Person über podo_delete_patient (SECURITY DEFINER, Eigentümer)
+    await pool.query(`revoke delete on therapy_reports from ${appRole}`);
+    await pool.query(`revoke update, delete on follow_up_requests from ${appRole}`);
     // nur lesend: Migrationsstand für /api/health/deep (Tabelle legt drizzle beim ersten migrate an)
     await pool.query(`grant usage on schema drizzle to ${appRole}`);
     await pool.query(`grant select on drizzle.__drizzle_migrations to ${appRole}`);
