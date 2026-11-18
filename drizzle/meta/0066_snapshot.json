@@ -3354,6 +3354,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "letter_ref": {
+          "name": "letter_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "letter_date": {
+          "name": "letter_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_by": {
           "name": "created_by",
           "type": "uuid",
@@ -7004,6 +7022,12 @@
         },
         "original_price_snapshot": {
           "name": "original_price_snapshot",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "original_row": {
+          "name": "original_row",
           "type": "jsonb",
           "primaryKey": false,
           "notNull": false

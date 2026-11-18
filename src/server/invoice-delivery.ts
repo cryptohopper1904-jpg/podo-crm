@@ -9,7 +9,7 @@ import { audit } from "@/lib/audit";
 import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { berlinDateIso, berlinToUtc, dateDe, money } from "@/lib/format";
-import { INVOICE_DOC_LABEL, NOT_BILLING_KINDS } from "@/lib/invoice-labels";
+import { NOT_BILLING_KINDS, invoiceDocLabel } from "@/lib/invoice-labels";
 import { invoicePdfFilename, renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { dueImmediately, invoiceAsIssued, isReceiptLike, showsDueDate } from "@/lib/invoice-view";
 import { ArchivePendingError, archivePdf, findInvoiceArchive, readArchivedPdf, withArchiveCleanup, type PendingFiles } from "./document-archive";
@@ -153,10 +153,11 @@ export function pdfResponseHeaders(filename: string, disposition: "inline" | "at
  * Text der Begleit-E-Mail – nur Belegdaten, keine Leistungen/Diagnosen. Das PDF zeigt den Stand bei Ausstellung;
  * der Begleittext nennt den aktuellen Stand (spätere Zahlungen aus `payments`).
  */
-export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organization"> & { payments?: InvoiceBundle["payments"]; recipientName?: string | null }) {
+export function invoiceEmailText(b: Pick<InvoiceBundle, "invoice" | "organization"> & { payments?: InvoiceBundle["payments"]; recipientName?: string | null; cancels?: InvoiceBundle["cancels"] }) {
   const inv = b.invoice;
   const o = b.organization;
-  const label = inv.kind === "credit_note" ? "Stornorechnung" : INVOICE_DOC_LABEL[inv.kind] ?? "Rechnung";
+  // Storno einer Zuzahlungsquittung: „Storno Zuzahlungsquittung“, nicht „Stornorechnung“ (Paket-B-Nachzug)
+  const label = invoiceDocLabel(inv.kind, b.cancels?.kind);
   const open = inv.totalCents - inv.paidCents;
   const lines = [
     "Guten Tag,",

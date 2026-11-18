@@ -7,7 +7,9 @@ import {
   cleanText,
   deductionPending,
   deductionTotals,
+  isDeductionOutcome,
   isPrescriptionKind,
+  rebillCopaymentHint,
   suggestPrescriptionKind,
 } from "./gkv-billing";
 import { VERORDNUNGSART, VERORDNUNGSBESONDERHEIT } from "@/lib/gkv302/schluessel";
@@ -42,6 +44,12 @@ describe("GKV Paket C – Kennzeichen Verordnungsart", () => {
 });
 
 describe("GKV Paket C – Absetzungen", () => {
+  it("Review R1-9: Ausgang bei „erledigt“ nur upheld/reversed", () => {
+    expect(isDeductionOutcome("upheld")).toBe(true);
+    expect(isDeductionOutcome("reversed")).toBe(true);
+    expect(isDeductionOutcome("done")).toBe(false);
+  });
+
   it("Statuswechsel: erledigt ist abschließend; Widerspruch kann wieder offen werden", () => {
     expect(canChangeDeductionStatus("open", "objected")).toBe(true);
     expect(canChangeDeductionStatus("objected", "open")).toBe(true);
@@ -80,6 +88,21 @@ describe("GKV Paket C – Status „Korrektur nötig“", () => {
     expect(canTransition("correction_needed", "billing_ready", { unitsUsed: 0, units: 2 })).toMatchObject({ ok: false });
     expect(canTransition("correction_needed", "billed")).toMatchObject({ ok: false });
     expect(canTransition("correction_needed", "open")).toMatchObject({ ok: false });
+  });
+
+  it("Review R1-4: „abrechnungsreif“ nach Korrektur zurück nach „Korrektur nötig“ nur mit offenem Vermerk", () => {
+    expect(canTransition("billing_ready", "correction_needed", { openCorrection: true })).toEqual({ ok: true });
+    expect(canTransition("billing_ready", "correction_needed")).toMatchObject({ ok: false, reason: expect.stringMatching(/offenem Korrekturvermerk/) });
+    expect(canTransition("completed", "correction_needed", { openCorrection: true })).toMatchObject({ ok: false });
+  });
+
+  it("Review R1-5: Hinweis bei geänderter Zuzahlung (Erstabrechnung, Quittungen) – nur Hinweis", () => {
+    expect(rebillCopaymentHint(2000, 2000, 0)).toBeNull();
+    expect(rebillCopaymentHint(2000, 2000, 2000)).toBeNull();
+    expect(rebillCopaymentHint(1500, 2000, 0)).toBe("Die Zuzahlung ändert sich gegenüber der Erstabrechnung von 20,00 € auf 15,00 €.");
+    expect(rebillCopaymentHint(1500, 2000, 2000)).toMatch(/Quittiert sind 20,00 € – 5,00 € zu viel \(Erstattung prüfen\)/);
+    expect(rebillCopaymentHint(2500, 2500, 2000)).toBe("Quittiert sind 20,00 € – 5,00 € noch offen.");
+    expect(rebillCopaymentHint(null, null, 0)).toBeNull();
   });
 
   it("Ampel rot mit Hinweis", () => {

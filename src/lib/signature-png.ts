@@ -1,7 +1,7 @@
 /**
  * Prüfung der Unterschrift-PNG (nur Server, nutzt node:zlib): genau das Format der Zeichenfläche (SignatureField) –
- * 900×300, 8 Bit RGBA, ohne Interlace, nur IHDR/IDAT/IEND (plus kleine, harmlose Farbraum-Chunks, die manche Browser
- * schreiben), keine APNG-Animation. IDAT wird probeweise mit Obergrenze entpackt (Schutz vor Dekompressionsbomben,
+ * 900×300, 8 Bit RGBA, ohne Interlace, nur IHDR/IDAT/IEND (plus kleine, harmlose Farbraum-Chunks fester Länge, die manche
+ * Browser schreiben – je Typ einmal, vor IDAT), keine APNG-Animation. IDAT wird probeweise mit Obergrenze entpackt (Schutz vor Dekompressionsbomben,
  * die später beim Einbetten ins PDF Speicher fressen würden). Die Bytes stammen aus dem Browser und sind nicht
  * vertrauenswürdig. Zusätzlich (Review R3-5): CRC jedes Chunks, keine Daten nach dem Ende des zlib-Stroms, Filter-Byte je
  * Zeile 0–4.
@@ -10,8 +10,17 @@ import * as zlib from "node:zlib";
 import { MAX_SIGNATURE_BYTES, SIGNATURE_HEIGHT, SIGNATURE_WIDTH } from "./signature";
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-/** Farbraum-/Auflösungsangaben fester Größe (Chrome/Firefox/Safari) – alles andere (tEXt, iCCP, acTL, fdAT …) wird abgelehnt */
-const HARMLESS = new Set(["sRGB", "gAMA", "pHYs", "cHRM"]);
+/**
+ * Farbraum-/Auflösungsangaben fester Größe (Chrome/Firefox/Safari) mit ihrer Pflichtlänge laut PNG-Spezifikation – alles
+ * andere (tEXt, iCCP, acTL, fdAT …) wird abgelehnt. Jeder Typ höchstens einmal und nur vor dem ersten IDAT (Paket-B-Nachzug:
+ * sonst ließen sich z. B. Hunderte sRGB-Chunks als Füllmaterial einschleusen).
+ */
+const HARMLESS = new Map<string, number>([
+  ["sRGB", 1],
+  ["gAMA", 4],
+  ["pHYs", 9],
+  ["cHRM", 32],
+]);
 const BAD = "Die Unterschrift ist kein gültiges Bild (PNG).";
 
 /** CRC-32 (ISO 3309, wie PNG) – zlib.crc32 ab Node 22.2, sonst eigene Tabelle */
@@ -42,6 +51,7 @@ export function checkSignaturePng(bytes: Uint8Array): { ok: true; width: number;
   const idat: Buffer[] = [];
   let first = true;
   let ended = false;
+  const seen = new Set<string>();
   while (pos + 12 <= buf.length) {
     const len = buf.readUInt32BE(pos);
     const type = buf.toString("latin1", pos + 4, pos + 8);
@@ -58,12 +68,21 @@ export function checkSignaturePng(bytes: Uint8Array): { ok: true; width: number;
       if (data[8] !== 8 || data[9] !== 6 || data[10] !== 0 || data[11] !== 0 || data[12] !== 0) return { ok: false, error: "Die Unterschrift hat ein ungültiges Bildformat." };
       if (width !== SIGNATURE_WIDTH || height !== SIGNATURE_HEIGHT) return { ok: false, error: "Die Unterschrift hat ungültige Abmessungen." };
       first = false;
-    } else if (type === "IDAT") idat.push(data);
-    else if (type === "IEND") {
+    } else if (type === "IDAT") {
+      // leere IDAT tragen nichts bei – nicht zulassen
+      if (len === 0) return { ok: false, error: BAD };
+      idat.push(data);
+    } else if (type === "IEND") {
+      // IEND ist laut Spezifikation leer (sonst ließen sich dort beliebige Daten verstecken)
+      if (len !== 0) return { ok: false, error: BAD };
       ended = true;
       pos = end;
       break;
-    } else if (!(HARMLESS.has(type) && len <= 32)) return { ok: false, error: BAD };
+    } else {
+      // Zusatz-Chunk: bekannter Typ, exakte Länge, noch nicht gesehen, noch kein IDAT
+      if (HARMLESS.get(type) !== len || seen.has(type) || idat.length) return { ok: false, error: BAD };
+      seen.add(type);
+    }
     pos = end;
   }
   if (first || !ended || pos !== buf.length || !idat.length) return { ok: false, error: BAD };

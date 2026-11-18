@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { Badge, BackLink, Card, CardTitle, Empty, Stat, Table } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, money } from "@/lib/format";
-import { DEDUCTION_STATUS_LABEL, deductionTotals, type DeductionStatus } from "@/lib/rules/gkv-billing";
+import { DEDUCTION_OUTCOME_LABEL, DEDUCTION_STATUS_LABEL, deductionTotals, type DeductionStatus } from "@/lib/rules/gkv-billing";
+import { requireFeature } from "@/server/features";
 import { listDeductions } from "@/server/gkv-billing";
 import { DeductionStatusForm } from "./status-form";
 
@@ -23,10 +24,12 @@ const FILTERS: { key: string; label: string; statuses?: DeductionStatus[] }[] = 
 export default async function DeductionsPage(props: PageProps<"/verordnungen/absetzungen">) {
   const auth = await requireAuth("invoices.write");
   if (!auth.can("medical.read")) redirect("/kein-zugriff");
+  requireFeature(auth, "gkvBilling");
   const sp = await props.searchParams;
   const key = typeof sp.filter === "string" ? sp.filter : "";
   const filter = FILTERS.find((f) => f.key === key) ?? FILTERS[0];
-  const all = await listDeductions(auth);
+  const listed = await listDeductions(auth);
+  const all = "error" in listed ? [] : listed;
   const rows = filter.statuses ? all.filter((r) => filter.statuses!.includes(r.status)) : all;
   const totals = deductionTotals(all);
   const canEdit = !auth.support && !auth.readOnly;
@@ -71,10 +74,13 @@ export default async function DeductionsPage(props: PageProps<"/verordnungen/abs
                     <div className="text-xs text-muted">VO vom {dateDe(r.issuedAt)}{r.prescriptionStatus === "correction_needed" ? " · Korrektur nötig" : ""}</div>
                   </td>
                   <td className="tabular-nums">{money(r.amountCents)}</td>
-                  <td>{r.reasonCode ? <span className="font-semibold">{r.reasonCode} · </span> : null}{r.reason}</td>
-                  <td><Badge tone={r.status === "done" ? "neutral" : r.status === "objected" ? "info" : r.status === "accepted" ? "primary" : "warn"}>{DEDUCTION_STATUS_LABEL[r.status]}</Badge></td>
+                  <td>
+                    {r.reasonCode ? <span className="font-semibold">{r.reasonCode} · </span> : null}{r.reason}
+                    {r.letterRef || r.letterDate ? <div className="text-xs text-muted">Schreiben {r.letterRef ?? ""}{r.letterDate ? ` vom ${dateDe(r.letterDate)}` : ""}</div> : null}
+                  </td>
+                  <td><Badge tone={r.status === "done" ? "neutral" : r.status === "objected" ? "info" : r.status === "accepted" ? "primary" : "warn"}>{DEDUCTION_STATUS_LABEL[r.status]}{r.outcome ? ` · ${DEDUCTION_OUTCOME_LABEL[r.outcome]}` : ""}</Badge></td>
                   {canEdit ? (
-                    <td>{r.status === "done" ? <span className="text-xs text-muted">{r.note ?? "abgeschlossen"}</span> : <DeductionStatusForm id={r.id} status={r.status} note={r.note} amount={(r.amountCents / 100).toFixed(2).replace(".", ",")} />}</td>
+                    <td>{r.status === "done" ? <span className="text-xs text-muted">{r.note ?? "abgeschlossen"}</span> : <DeductionStatusForm id={r.id} status={r.status} note={r.note} amount={(r.amountCents / 100).toFixed(2).replace(".", ",")} letterRef={r.letterRef} letterDate={r.letterDate} />}</td>
                   ) : (
                     <td className="text-xs">{r.note ?? ""}</td>
                   )}

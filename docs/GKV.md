@@ -198,20 +198,35 @@ DSFinV-K; eigene Praxiskasse → Vermerk mit Bon-Nr. (`register = 'external'`, K
 Erstattung (z. B. Überzahlung): „stornieren/erstatten“ → Stornobeleg mit negativer Zahlung über denselben Weg, danach den
 richtigen Betrag neu quittieren – erst, wenn die Erstattung gebucht ist. Zuzahlungsquittungen zählen nicht als
 „Leistung am Tag abgerechnet“ (`NOT_BILLING_KINDS`: Sammelrechnungs-Vorschlag, Jahresend-Erinnerung). Der CSV-Export „Zuzahlung erhalten am“ nimmt die letzte gültige Quittung, sonst den
-Altvermerk. Der Stornobeleg einer Zuzahlungsquittung heißt „Storno zur Zuzahlungsquittung ZZ…“.
+Altvermerk. Der Stornobeleg einer Zuzahlungsquittung heißt „Storno zur Zuzahlungsquittung ZZ…“ (Datumshinweis „Leistungsdatum der
+stornierten Zuzahlungsquittung“, Begleit-E-Mail „Storno Zuzahlungsquittung“).
 
 **Buchhaltung:** Zuzahlungsquittungen **entweder** über lexoffice **oder** über den Kassenexport (DSFinV-K/Z-Bon) an
 die Buchhaltung geben, nicht beides – sonst ist die Zuzahlung doppelt erfasst. Die Auszahlung des Abrechnungszentrums
 enthält die Zuzahlung nicht (die Kasse zahlt Heilmittelkosten abzüglich Zuzahlung); sie wird netto als Kassenanteil
-gebucht. Beides mit der Steuerberatung klären (siehe docs/KASSE.md, offener Punkt 15).
+gebucht. Beides mit der Steuerberatung klären (siehe docs/KASSE.md, offener Punkt 15). **Eigene Praxiskasse**
+(`register = 'external'`, Vermerk mit Bon-Nr.): Die Einnahme steht dann bereits im Z-Bon der Praxiskasse; der ZZ-Beleg
+ist nur die Quittung für die Person und darf weder über lexoffice noch über den PodoHero-Kassenexport ein zweites Mal
+an die Buchhaltung gemeldet werden (mit der Steuerberatung klären).
 
 **Altvermerke** (`copayment_paid_at/_cents/_method` aus der Zeit vor Paket B) bleiben unverändert und **gelten als
-erhalten**: Ihr Betrag (`copayment_paid_cents`, sonst die damals berechnete Zuzahlung; ohne jeden Betrag gilt die
-Zuzahlung als vollständig erhalten) zählt in der quittierten Summe und wird beim Quittieren angerechnet – gesperrt ist
-nur, wenn danach nichts mehr offen ist; ein Restbetrag kann quittiert werden (Hinweis auf der Quittung). Neue Altvermerke
-sind nicht möglich. Entfernen nur als „Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write`
-+ `medical.read`, Audit mit altem Wert; ohne Vermerk: Meldung „kein Vermerk vorhanden“, kein Audit). Eine nachträgliche Quittung/Kassenbuchung für früher erhaltene Beträge gibt es bewusst nicht –
-ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
+erhalten**: Ihr Betrag (`copayment_paid_cents`, sonst der **zuletzt gespeicherte Rechenwert** `copayment_cents` der
+Verordnung – nicht zwingend der Stand beim Vermerk) wird beim Quittieren angerechnet – gesperrt ist nur, wenn danach
+nichts mehr offen ist; ein Restbetrag kann quittiert werden. Ohne Betrag und ohne Rechenwert über 0 (`copayment_cents`
+leer oder 0) gilt die Zuzahlung bewusst als vollständig erhalten – so entsteht keine Quittung über bereits Erhaltenes;
+das gilt auch ohne Preis (manueller Fall: kein Formular, nichts offen). Die Quittung nennt den Altvermerk gesondert:
+„vermerkt: X € – angerechnet“ bzw. ohne Betrag „ohne Betrag vermerkt – angerechnet mit der in der Verordnung gespeicherten Zuzahlung X €“,
+jeweils „ohne Beleg in PodoHero“. **„bereits quittiert“ meint nur Beträge mit ZZ-Beleg**; Hinweis auf der Quittung
+(„bereits quittiert X €, Altvermerk Y €“), Akte („quittiert X € · Altvermerk Y €“) und Meldung („nichts mehr offen
+(quittiert X €, Altvermerk Y €)“) weisen beides getrennt aus. Neue Altvermerke sind nicht möglich. Entfernen nur als
+„Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write` + `medical.read`, Audit mit altem
+Wert; ohne Vermerk: Meldung „kein Vermerk vorhanden“, kein Audit). Eine nachträgliche Quittung/Kassenbuchung für früher
+erhaltene Beträge gibt es bewusst nicht – ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
+
+**Bekannter Prozessfall „Altvermerk nur teilweise richtig“:** Stimmt der Betrag eines Altvermerks nicht (z. B. weniger
+erhalten als vermerkt), gibt es keine Korrektur des Betrags. Weg: „Vermerk war falsch – nichts erhalten“ mit Begründung
+(alter Wert steht im Audit), danach den tatsächlich früher erhaltenen Betrag mit der Steuerberatung klären und den noch
+offenen Rest regulär quittieren. Ein früher erhaltener Teilbetrag erscheint dann nicht mehr als Altvermerk in der Akte.
 
 ## Paket B Teil 2: Therapiebericht und Folgeverordnung
 
@@ -276,8 +291,9 @@ Erinnerung an die Folgeverordnung.
 14. **Übernahmen mit Status „in Behandlung“** (Import-Altbestand): Beginnfrist gilt als eingehalten; ohne erfassten
     Behandlungstag zählt die 12-Wochen-Unterbrechung ab dem **Importdatum** (die Termine im Altsystem sind nicht bekannt).
     Ob dieser Fristbeginn fachlich trägt, bitte mit dem Abrechnungszentrum klären.
-15. **Storno/Korrektur eines Abrechnungslaufs**: abgerechnete Verordnungen sind gesperrt; ein Weg für Rückläufer/Korrekturen
-    der Kasse fehlt noch.
+15. **Storno/Korrektur eines Abrechnungslaufs**: abgerechnete Verordnungen sind gesperrt; seit Paket C gibt es einen
+    internen Korrekturweg (Korrekturvermerk, Neuabrechnung im nächsten Lauf, siehe Paket C). Weiter offen: Annahme durch
+    Abrechnungszentrum/Kasse (Fachfrage 33) und das Korrekturverfahren § 302.
 16. **Pflegeheim-Praxen**: Bei Besuchstagen im festen Rhythmus (z. B. alle 3 Wochen) kann die verordnete Frequenz
     (DF/NF/QF: alle 4–6 Wochen) unterschritten werden – dann ist je Behandlung eine Begründung (Absprache mit der Ärztin/dem
     Arzt) Pflicht. Ob eine einmalige Absprache für die ganze Verordnung genügt, ist nicht belegt.
@@ -331,30 +347,54 @@ https://www.gkv-datenaustausch.de/media/dokumente/leistungserbringer_1/sonstige_
 **Absetzungen/Retaxen** (`gkv_deductions`): an der abgerechneten Verordnung in der Akte erfassen (Betrag, Datum, Code
 optional, Grund – ohne Gesundheitsangaben formulieren), Recht **Rechnungen schreiben + medizinisch lesen** (wie
 Abrechnungslauf), `gkvGuard("gkvBilling")`. Der Abrechnungslauf wird aus der Verordnung übernommen. Status offen →
-Widerspruch/akzeptiert → erledigt (abschließend; Widerspruch kann wieder „offen“ werden). Betrag/Grund/Datum nur bei
+Widerspruch/akzeptiert → erledigt (abschließend; Widerspruch kann wieder „offen“ werden). Optional Aktenzeichen und Datum
+des Kassenschreibens (`letter_ref`, `letter_date`). Beim Wechsel auf **erledigt** ist der **Ausgang** Pflicht (`outcome`:
+`upheld` = Absetzung bleibt, `reversed` = Widerspruch erfolgreich; DB-CHECK `gkv_deductions_outcome_check`:
+erledigt ⇔ Ausgang gesetzt) – nur so lässt sich später unterscheiden, ob die Absetzung den Kassenbetrag tatsächlich
+mindert. Betrag/Grund/Datum nur bei
 „offen“ änderbar (Fehleingabe), Bezug unveränderlich, **nie löschbar** (App-Rolle ohne DELETE, Trigger; Löschen nur mit der
 Person über `podo_owner_delete_allowed` – `podo_delete_patient` verweigert aber, solange eine Absetzung existiert).
 Auswertung offener Absetzungen: **Verordnungen → GKV-Abrechnung → Absetzungen** (`/verordnungen/absetzungen`: offen,
-Widerspruch, akzeptiert, Summe des Jahres; Filter; Status/Notiz pflegen). Audit ohne Grund/Notiz.
+Widerspruch, akzeptiert, Summe des Jahres; Filter; Status/Notiz/Kassenschreiben/Ausgang pflegen; nur mit
+Kassenabrechnung – `requireFeature`/`gkvGuard("gkvBilling")` auch beim Lesen). Audit ohne Grund/Notiz (Ausgang und
+„Kassenschreiben geändert“ ja, ohne Aktenzeichen).
 
 **Korrektur abgerechneter Verordnungen** (`prescription_corrections`, Status `correction_needed` „Korrektur nötig“):
 Eine abgerechnete Verordnung bleibt unveränderbar (`prescriptions_billed_lock`). Einziger Weg: „Korrektur nötig …“ mit
 Begründung (optional Bezug auf eine Absetzung). Dabei entsteht ein **Korrekturvermerk mit dem Stand der Erstabrechnung**
-(Lauf, Zeitpunkt, Heilmittelkosten, Zuzahlung, Preis-Snapshot); der Trigger erlaubt aus „abgerechnet“ nur diesen
-Statuswechsel und nur mit offenem Vermerk. Danach ist die Verordnung bearbeitbar (Formular „Bearbeiten“, Abrechnungsangaben,
-Therapiebericht; Regelwerk und Zuzahlung der Erstabrechnung bleiben bis zum neuen Snapshot; Audit `prescription.update` mit
-`correction: true`), wird erneut „abrechnungsreif“ (neuer Preis-Snapshot, alle Prüfungen) und geht in den **nächsten
-Abrechnungslauf**; dort wird der Vermerk als „erneut abgerechnet“ (mit neuem Lauf) abgeschlossen. Alternativ „ohne
-Neuabrechnung abschließen“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im ursprünglichen Lauf.
-Abgeschlossene Vermerke sind unveränderlich, nie löschbar. Der CSV-Export des ursprünglichen Laufs führt die Verordnung
-weiter (Spalte „Korrektur“: offen / in späterem Lauf neu abgerechnet / ohne Neuabrechnung), der neue Lauf mit
-„Neuabrechnung nach Korrektur vom …“. **Achtung:** Der Export liest – wie bisher – die aktuellen Werte der Verordnung; die
-Werte der Erstabrechnung stehen im Korrekturvermerk. Absetzungen und Korrekturvermerke sind Aufbewahrungsgründe
+(Lauf, Zeitpunkt, Heilmittelkosten, Zuzahlung, Preis-Snapshot und die **vollständige Verordnungszeile** `original_row`
+– vom Trigger aus der abgerechneten Zeile gesetzt, nie aus der Anwendung, unveränderlich); der Trigger erlaubt aus
+„abgerechnet“ nur diesen Statuswechsel und nur mit offenem Vermerk. Danach ist die Verordnung bearbeitbar (Formular
+„Bearbeiten“, Abrechnungsangaben, Therapiebericht; Regelwerk und Zuzahlung der Erstabrechnung bleiben bis zum neuen
+Snapshot; Audit `prescription.update` bzw. `prescription.billing_details` mit `correction: true` und **`changedFields`** –
+Liste der geänderten Spaltennamen, keine Werte), wird erneut „abrechnungsreif“ (neuer Preis-Snapshot, alle Prüfungen;
+**Hinweis**, wenn sich das Zuzahlungs-Soll gegenüber der Erstabrechnung oder den schon quittierten Beträgen ändert – keine
+Sperre) und geht in den **nächsten Abrechnungslauf**; dort wird der Vermerk als „erneut abgerechnet“ (mit neuem Lauf)
+abgeschlossen – der Trigger prüft, dass dieser Lauf die Verordnung enthält. Solange der Vermerk offen ist, geht es aus
+„abrechnungsreif“ auch zurück nach „Korrektur nötig“ (Trigger: „Korrektur nötig“ nur mit offenem Vermerk).
+
+„**Ohne Neuabrechnung abschließen**“ (z. B. Absetzung akzeptiert, Begründung Pflicht) → wieder „abgerechnet“ im
+ursprünglichen Lauf – **nur, wenn die Verordnung inhaltlich unverändert ist** (Vergleich mit `original_row` ohne Status,
+Altvermerk Zuzahlung, Bestätigungszeitpunkt/-person des Kennzeichens und ohne die abgeleiteten Beträge Preis-Snapshot,
+Heilmittelkosten, Zuzahlung – diese werden aus der Erstabrechnung wiederhergestellt). Sonst Fehler „Geänderte Verordnung
+muss neu abgerechnet werden“. Der Trigger `podo_prescription_billed_lock` erzwingt dasselbe: „Korrektur nötig“ →
+„abgerechnet“ nur, wenn der jüngste Vermerk im selben Vorgang als `no_rebill` abgeschlossen wurde, keiner mehr offen ist und
+die Zeile (ohne die genannten Felder außer den abgeleiteten Beträgen) `original_row` entspricht. Damit gibt es keine stille
+Änderung im alten Lauf.
+
+Abgeschlossene Vermerke sind unveränderlich, nie löschbar. Der **CSV-Export des ursprünglichen Laufs** führt die
+Verordnung weiter (Spalte „Korrektur“: offen / in späterem Lauf neu abgerechnet / ohne Neuabrechnung) – **mit dem Stand
+der Erstabrechnung** aus `original_row` (reproduzierbar, Zeilensumme = Laufsumme); der neue Lauf mit den korrigierten
+Werten und „Neuabrechnung nach Korrektur vom …“. Ebenso der **§ 302-Prüflauf/Testpaket „Abrechnungslauf“**: der alte Lauf
+mit dem Originalstand (je Verordnung einmal), die korrigierte Fassung nur unter „bereit“ bzw. im Lauf der Neuabrechnung.
+Personenangaben (Name, Anschrift, Versichertennummer der Person) kommen weiter aus der aktuellen Akte. Absetzungen und Korrekturvermerke sind Aufbewahrungsgründe
 (`retentionFacts`, `podo_delete_patient`), gehen in den Praxis-Export (`tables/gkv_deductions.json`,
 `tables/prescription_corrections.json`) und haben keine Dateien (archive-orphans unverändert).
 
-Damit ist Offener Punkt 15 (Storno/Korrektur eines Abrechnungslaufs) für den Weg über das Abrechnungszentrum abgedeckt;
-das Korrekturverfahren § 302 (VKZ 02–04 mit URI-Daten) folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
+Offener Punkt 15 (Storno/Korrektur eines Abrechnungslaufs) bleibt **offen**: PodoHero bietet einen internen,
+nachvollziehbaren Korrekturweg (Vermerk, Neuabrechnung im nächsten Lauf), aber ob das Abrechnungszentrum bzw. die Kasse
+eine Neuabrechnung so annimmt, ist nicht geklärt (Fachfrage 33); das Korrekturverfahren § 302 (VKZ 02–04 mit URI-Daten)
+folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
 
 ### Offene Fachfragen Paket C (Abrechnungszentrum/Steuerberatung)
 
@@ -374,6 +414,12 @@ das Korrekturverfahren § 302 (VKZ 02–04 mit URI-Daten) folgt mit dem Echtbetr
     Datei an der Absetzung abgelegt werden? (Steuerberatung)
 35. **Verordnungsart vor Behandlungsbeginn**: Soll das Kennzeichen schon beim Anlegen Pflicht sein (heute erst vor der
     Abrechnungsreife, damit Übernahmen/Bestand nicht blockieren)? (Produktentscheidung)
+36. **Ausgang einer erledigten Absetzung**: Reichen „Absetzung bleibt“/„Widerspruch erfolgreich“, oder braucht es einen
+    Teilerfolg (Teilbetrag erstattet)? Heute: Teilerfolg = Betrag vor „erledigt“ korrigieren geht nur bei „offen“ –
+    sonst Notiz. (Abrechnungszentrum/Steuerberatung)
+37. **Sicherung der Erstabrechnung**: `original_row` hält die Verordnungszeile beim Öffnen der Korrektur fest; Personenangaben
+    (Name, Anschrift, Versichertennummer an der Person) sind nicht mitgesichert. Reicht das für die Nachvollziehbarkeit
+    des alten Laufs, oder soll auch der Personenstand gesichert werden? (Datenschutz/Steuerberatung)
 
 ### Paket C Teil 2: Auswertung Kasse vs. privat und Belegliste
 
@@ -396,10 +442,10 @@ Kassenanteil, Export) im Zeitraum. Audit `stats.gkv_private` bzw. `belegliste.re
 
 Offene Fachfragen (Steuerberatung):
 
-36. **Abgrenzung Kassenanteil**: Erstellungstag des Laufs (Forderung) oder Zahlungseingang des Abrechnungszentrums
+38. **Abgrenzung Kassenanteil**: Erstellungstag des Laufs (Forderung) oder Zahlungseingang des Abrechnungszentrums
     (Zuflussprinzip wie „Finanzen“)? Die Auszahlung des Abrechnungszentrums wird heute nicht erfasst.
-37. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
+39. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
     welchem Monat (Absetzungsdatum oder Lauf)?
-38. **Belegliste als Buchungsgrundlage**: Reicht die interne Liste (ZZ + Läufe) der Steuerberatung, oder werden die
+40. **Belegliste als Buchungsgrundlage**: Reicht die interne Liste (ZZ + Läufe) der Steuerberatung, oder werden die
     Sammelbelege des Abrechnungszentrums zusätzlich benötigt? Doppelte Erfassung der ZZ (Kassenexport/lexoffice) vermeiden
     (siehe Paket B „Buchhaltung“).

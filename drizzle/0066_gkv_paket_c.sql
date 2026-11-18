@@ -7,13 +7,16 @@
 --    ADD COLUMN/ADD CONSTRAINT lösen keine Zeilen-Trigger aus: abgerechnete Zeilen (prescriptions_billed_lock) bleiben
 --    unberührt.
 -- 2. gkv_deductions: Absetzung/Retaxe der Kasse zu einer abgerechneten Verordnung (Betrag, Grund/Code, Datum, Status
---    offen/akzeptiert/Widerspruch/erledigt, Notiz). Betrag/Grund/Datum nur „offen“ änderbar, Bezug unveränderlich,
+--    offen/akzeptiert/Widerspruch/erledigt, Notiz, Aktenzeichen/Datum des Kassenschreibens, Ausgang bei „erledigt“:
+--    upheld/reversed). Betrag/Grund/Datum nur „offen“ änderbar, Bezug unveränderlich,
 --    nie löschbar (außer mit der Person: podo_owner_delete_allowed wie 0019/0065 – podo_delete_patient verweigert das
 --    aber, solange eine Absetzung existiert).
 -- 3. prescription_corrections: nachvollziehbare Korrektur einer abgerechneten Verordnung. Hält den Stand der
---    Erstabrechnung fest (Lauf, Zeitpunkt, Beträge, Preis-Snapshot) und ist Voraussetzung für den einzigen erlaubten
---    Wechsel aus „abgerechnet“: → „Korrektur nötig“ (correction_needed). Erledigt durch erneute Abrechnung (rebilled)
---    oder ohne Neuabrechnung (no_rebill); danach unveränderlich.
+--    Erstabrechnung fest (Lauf, Zeitpunkt, Beträge, Preis-Snapshot und die vollständige Verordnungszeile original_row,
+--    vom Trigger gesetzt) und ist Voraussetzung für den einzigen erlaubten Wechsel aus „abgerechnet“: → „Korrektur
+--    nötig“ (correction_needed). Erledigt durch erneute Abrechnung (rebilled, nur mit dem Lauf, der die Verordnung
+--    enthält) oder ohne Neuabrechnung (no_rebill, nur wenn die Verordnung inhaltlich original_row entspricht); danach
+--    unveränderlich.
 -- 4. billing_batches_org_id: eindeutiger Index (organization_id, id) für den Lookup in podo_fk_same_org.
 -- Verweise nur innerhalb der Praxis (podo_fk_same_org, podo_user_in_org), RLS + FORCE, alle Funktionen mit festem
 -- search_path. Idempotent: IF NOT EXISTS, Constraints nur wenn fehlend, CREATE OR REPLACE, DROP TRIGGER/POLICY IF EXISTS.
@@ -29,6 +32,9 @@ CREATE TABLE IF NOT EXISTS "gkv_deductions" (
 	"deducted_on" date NOT NULL,
 	"status" text DEFAULT 'open' NOT NULL,
 	"note" text,
+	"letter_ref" text,
+	"letter_date" date,
+	"outcome" text,
 	"created_by" uuid NOT NULL,
 	"updated_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -47,6 +53,7 @@ CREATE TABLE IF NOT EXISTS "prescription_corrections" (
 	"original_remedy_cost_cents" integer,
 	"original_copayment_cents" integer,
 	"original_price_snapshot" jsonb,
+	"original_row" jsonb,
 	"created_by" uuid NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"resolution" text,
@@ -56,6 +63,11 @@ CREATE TABLE IF NOT EXISTS "prescription_corrections" (
 	"resolution_note" text
 );
 --> statement-breakpoint
+-- Spalten aus Review-Runde 1 (Paket C noch nicht ausgeliefert): für Datenbanken, in denen die Tabellen schon bestehen
+ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "letter_ref" text;--> statement-breakpoint
+ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "letter_date" date;--> statement-breakpoint
+ALTER TABLE "gkv_deductions" ADD COLUMN IF NOT EXISTS "outcome" text;--> statement-breakpoint
+ALTER TABLE "prescription_corrections" ADD COLUMN IF NOT EXISTS "original_row" jsonb;--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind" text;--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind_confirmed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "prescriptions" ADD COLUMN IF NOT EXISTS "prescription_kind_confirmed_by" uuid;--> statement-breakpoint
@@ -131,6 +143,14 @@ DO $$ BEGIN
       AND char_length(reason) BETWEEN 3 AND 500
       AND coalesce(char_length(reason_code), 0) <= 20
       AND coalesce(char_length(note), 0) <= 1000);
+  END IF;
+  -- Kassenschreiben (Aktenzeichen/Datum, optional) und Ausgang: „erledigt“ ⇔ Ausgang gesetzt (upheld = Absetzung
+  -- bleibt, reversed = Widerspruch erfolgreich)
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'gkv_deductions_outcome_check') THEN
+    ALTER TABLE gkv_deductions ADD CONSTRAINT gkv_deductions_outcome_check CHECK (
+      (outcome IS NULL OR outcome IN ('upheld', 'reversed'))
+      AND (status = 'done') = (outcome IS NOT NULL)
+      AND coalesce(char_length(letter_ref), 0) <= 60);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'prescription_corrections_values_check') THEN
     ALTER TABLE prescription_corrections ADD CONSTRAINT prescription_corrections_values_check CHECK (
@@ -214,6 +234,7 @@ CREATE OR REPLACE FUNCTION podo_prescription_correction_guard() RETURNS trigger 
 DECLARE
   vo_patient uuid;
   vo_status text;
+  vo_row jsonb;
   ded_vo uuid;
   resolve_cols text[] := ARRAY['resolution', 'resolved_at', 'resolved_by', 'resolved_batch_id', 'resolution_note'];
 BEGIN
@@ -230,9 +251,18 @@ BEGIN
     IF (to_jsonb(NEW) - resolve_cols) IS DISTINCT FROM (to_jsonb(OLD) - resolve_cols) OR NEW.resolved_at IS NULL THEN
       RAISE EXCEPTION 'Ein Korrekturvermerk kann nur abgeschlossen, nicht geändert werden.' USING ERRCODE = 'P0001';
     END IF;
+    -- erneut abgerechnet nur mit dem Lauf, der die Verordnung jetzt enthält; ohne Neuabrechnung ohne Lauf
+    IF NEW.resolution = 'rebilled' AND NOT EXISTS (
+         SELECT 1 FROM prescriptions p WHERE p.id = NEW.prescription_id AND p.organization_id = NEW.organization_id
+            AND p.billing_batch_id = NEW.resolved_batch_id AND p.status = 'billed') THEN
+      RAISE EXCEPTION 'Der Lauf der Neuabrechnung enthält die Verordnung nicht.' USING ERRCODE = 'P0001';
+    END IF;
+    IF NEW.resolution = 'no_rebill' AND NEW.resolved_batch_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Ohne Neuabrechnung gibt es keinen neuen Lauf.' USING ERRCODE = 'P0001';
+    END IF;
     RETURN NEW;
   END IF;
-  SELECT p.patient_id, p.status INTO vo_patient, vo_status FROM prescriptions p
+  SELECT p.patient_id, p.status, to_jsonb(p) INTO vo_patient, vo_status, vo_row FROM prescriptions p
    WHERE p.id = NEW.prescription_id AND p.organization_id = NEW.organization_id;
   IF vo_patient IS NULL OR vo_patient IS DISTINCT FROM NEW.patient_id THEN
     RAISE EXCEPTION 'Korrekturvermerk passt nicht zur Verordnung.' USING ERRCODE = 'P0001';
@@ -243,6 +273,8 @@ BEGIN
   IF NEW.resolved_at IS NOT NULL THEN
     RAISE EXCEPTION 'Ein neuer Korrekturvermerk ist noch offen.' USING ERRCODE = 'P0001';
   END IF;
+  -- Stand der Erstabrechnung: immer die aktuelle (abgerechnete, gesperrte) Zeile – nie ein Wert der Anwendung
+  NEW.original_row := vo_row;
   IF NEW.deduction_id IS NOT NULL THEN
     SELECT d.prescription_id INTO ded_vo FROM gkv_deductions d WHERE d.id = NEW.deduction_id AND d.organization_id = NEW.organization_id;
     IF ded_vo IS DISTINCT FROM NEW.prescription_id THEN
@@ -303,24 +335,50 @@ DROP TRIGGER IF EXISTS prescriptions_user_in_org ON prescriptions;
 CREATE TRIGGER prescriptions_user_in_org BEFORE INSERT OR UPDATE OF created_by, prescription_kind_confirmed_by, organization_id ON prescriptions
   FOR EACH ROW EXECUTE FUNCTION podo_user_in_org('created_by', 'actor', 'prescription_kind_confirmed_by', 'actor');
 --> statement-breakpoint
--- Abgerechnete Verordnung (zuletzt 0062): unverändert gesperrt bis auf den Altvermerk – einzige Ausnahme ist der
--- Wechsel „abgerechnet“ → „Korrektur nötig“ (nur der Status), und nur mit offenem Korrekturvermerk
--- (prescription_corrections, im selben Vorgang angelegt). Damit gibt es keine stille Änderung einer abgerechneten
--- Verordnung: Der Stand der Erstabrechnung steht im Korrekturvermerk, jede weitere Änderung im Audit-Protokoll.
+-- Abgerechnete Verordnung (zuletzt 0062): unverändert gesperrt bis auf den Altvermerk. Ausnahmen (GKV Paket C):
+-- 1. „abgerechnet“ → „Korrektur nötig“ (nur der Status), nur mit offenem Korrekturvermerk (im selben Vorgang angelegt).
+-- 2. „Korrektur nötig“ wird nur mit offenem Vermerk betreten (auch aus „abrechnungsreif“ zurück, solange der Vermerk
+--    offen ist).
+-- 3. „Korrektur nötig“ → „abgerechnet“ (ohne Neuabrechnung) nur, wenn der jüngste Vermerk im selben Vorgang
+--    (resolved_at = now()) als no_rebill abgeschlossen wurde, kein Vermerk mehr offen ist und die Zeile inhaltlich dem
+--    Stand der Erstabrechnung (original_row) entspricht – ohne Status, Altvermerk Zuzahlung und Bestätigungszeitpunkt/-person
+--    des Kennzeichens; Preis-Snapshot, Heilmittelkosten und Zuzahlung müssen wieder der Erstabrechnung entsprechen.
+-- Damit gibt es keine stille Änderung einer abgerechneten Verordnung: Der Stand der Erstabrechnung steht im
+-- Korrekturvermerk, jede Änderung im Korrekturstatus im Audit-Protokoll (Feldnamen), und zurück auf „abgerechnet“ im
+-- alten Lauf geht es nur unverändert – sonst Neuabrechnung.
 CREATE OR REPLACE FUNCTION podo_prescription_billed_lock() RETURNS trigger
   LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
   allowed text[] := ARRAY['copayment_paid_at', 'copayment_paid_cents', 'copayment_paid_method'];
+  volatile text[] := ARRAY['status', 'copayment_paid_at', 'copayment_paid_cents', 'copayment_paid_method',
+                           'prescription_kind_confirmed_at', 'prescription_kind_confirmed_by'];
+  c record;
 BEGIN
+  IF NEW.status = 'correction_needed' AND OLD.status IS DISTINCT FROM 'correction_needed'
+     AND NOT EXISTS (SELECT 1 FROM prescription_corrections pc
+                      WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id AND pc.resolved_at IS NULL) THEN
+    RAISE EXCEPTION '„Korrektur nötig“ nur mit offenem Korrekturvermerk.' USING ERRCODE = 'check_violation';
+  END IF;
   IF OLD.status = 'billed' AND NEW.status = 'correction_needed'
-     AND (to_jsonb(NEW) - allowed - 'status') = (to_jsonb(OLD) - allowed - 'status')
-     AND EXISTS (SELECT 1 FROM prescription_corrections c
-                  WHERE c.prescription_id = NEW.id AND c.organization_id = NEW.organization_id AND c.resolved_at IS NULL) THEN
+     AND (to_jsonb(NEW) - allowed - 'status') = (to_jsonb(OLD) - allowed - 'status') THEN
     RETURN NEW;
   END IF;
   IF OLD.status = 'billed' AND (to_jsonb(NEW) - allowed) IS DISTINCT FROM (to_jsonb(OLD) - allowed) THEN
     RAISE EXCEPTION 'Abgerechnete Verordnung ist unveränderbar (Korrektur nur über „Korrektur nötig“ mit Begründung).'
       USING ERRCODE = 'check_violation';
+  END IF;
+  IF OLD.status = 'correction_needed' AND NEW.status = 'billed' THEN
+    SELECT pc.resolution, pc.resolved_at, pc.original_row INTO c FROM prescription_corrections pc
+     WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id
+     ORDER BY pc.created_at DESC, pc.id DESC LIMIT 1;
+    IF c.resolution IS DISTINCT FROM 'no_rebill' OR c.resolved_at IS DISTINCT FROM now() OR c.original_row IS NULL
+       OR EXISTS (SELECT 1 FROM prescription_corrections pc
+                   WHERE pc.prescription_id = NEW.id AND pc.organization_id = NEW.organization_id AND pc.resolved_at IS NULL) THEN
+      RAISE EXCEPTION 'Zurück auf „abgerechnet“ nur über „ohne Neuabrechnung abschließen“.' USING ERRCODE = 'check_violation';
+    END IF;
+    IF (to_jsonb(NEW) - volatile) IS DISTINCT FROM (c.original_row - volatile) THEN
+      RAISE EXCEPTION 'Geänderte Verordnung muss neu abgerechnet werden.' USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   RETURN NEW;
 END $$;

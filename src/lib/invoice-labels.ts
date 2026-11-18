@@ -18,6 +18,15 @@ export const INVOICE_KIND_LABEL: Record<string, string> = {
  */
 export const INVOICE_DOC_LABEL: Record<string, string> = { ...INVOICE_KIND_LABEL, deposit: "Quittung (Anzahlung)" };
 
+/**
+ * Bezeichnung eines Belegs beim Versand (Betreff/Text der Begleit-E-Mail): Storno einer Zuzahlungsquittung ist keine
+ * „Stornorechnung“ (Paket-B-Nachzug) – `cancelsKind` = Belegart des stornierten Belegs.
+ */
+export function invoiceDocLabel(kind: string, cancelsKind?: string | null): string {
+  if (kind === "credit_note") return cancelsKind === "copayment" ? "Storno Zuzahlungsquittung" : "Stornorechnung";
+  return INVOICE_DOC_LABEL[kind] ?? "Rechnung";
+}
+
 /** Hinweis bei Quittungen: sie können später in die Sammelrechnung übernommen werden. */
 export const RECEIPT_COLLECTIVE_HINT = "Bezahlte Quittungen können später in die Sammelrechnung übernommen werden.";
 /** Wofür eine Anzahlung (Vorauszahlung) gedacht ist. */

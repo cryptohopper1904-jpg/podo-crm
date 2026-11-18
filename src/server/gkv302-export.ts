@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import JSZip from "jszip";
 import { db, withOrg, type Tx } from "@/db";
 import { billingBatches, organizations, patients, prescriptions } from "@/db/schema";
@@ -30,6 +30,7 @@ import { istGueltigesTarifkennzeichen } from "@/lib/gkv302/schluessel";
 import { aktivesKryptomodul, type KryptoStatus } from "@/lib/gkv302/sicherheit";
 import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
 import { assertCan } from "./authz";
+import { correctedFromBatch } from "./gkv-billing";
 
 /**
  * Direktabrechnung § 302 SGB V – Server-Teil (Paket D, Erprobung, docs/GKV-302.md „Bedienung in PodoHero“).
@@ -293,20 +294,37 @@ const ORG_FELDER = {
   settings: organizations.settings,
 };
 
-/** Verordnungen der Quelle (nur dieser Praxis), sortiert nach Name und Ausstellungsdatum */
-async function ladeVerordnungen(tx: Tx, org: string, quelle: Gkv302Quelle): Promise<DaVerordnung[] | null> {
+/**
+ * Verordnungen der Quelle (nur dieser Praxis), sortiert nach Name und Ausstellungsdatum. Abrechnungslauf: wie der
+ * CSV-Export (billingBatchExport) einschließlich der Verordnungen, die in diesem Lauf abgerechnet und danach zur
+ * Korrektur geöffnet bzw. neu abgerechnet wurden – mit dem Stand der Erstabrechnung (original_row), je Verordnung einmal.
+ * Die korrigierte Fassung erscheint nur unter „bereit“ bzw. im Lauf der Neuabrechnung. Exportiert für Tests.
+ */
+export async function ladeVerordnungen(tx: Tx, org: string, quelle: Gkv302Quelle): Promise<DaVerordnung[] | null> {
+  let original = new Map<string, typeof prescriptions.$inferSelect | null>();
   if (quelle.art === "lauf") {
     const [b] = await tx.select({ id: billingBatches.id }).from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, quelle.batchId)));
     if (!b) return null;
+    original = await correctedFromBatch(tx, org, quelle.batchId);
   }
+  const korrigiert = [...original.keys()];
   const rows = await tx
     .select({ vo: prescriptions, p: patients })
     .from(prescriptions)
     .innerJoin(patients, and(eq(patients.id, prescriptions.patientId), eq(patients.organizationId, org)))
-    .where(and(eq(prescriptions.organizationId, org), quelle.art === "lauf" ? eq(prescriptions.billingBatchId, quelle.batchId) : inArray(prescriptions.status, ["billing_ready"])))
+    .where(
+      and(
+        eq(prescriptions.organizationId, org),
+        quelle.art === "lauf"
+          ? korrigiert.length
+            ? or(eq(prescriptions.billingBatchId, quelle.batchId), inArray(prescriptions.id, korrigiert))
+            : eq(prescriptions.billingBatchId, quelle.batchId)
+          : inArray(prescriptions.status, ["billing_ready"]),
+      ),
+    )
     .orderBy(asc(patients.lastName), asc(patients.firstName), asc(prescriptions.issuedAt), asc(prescriptions.id))
     .limit(MAX_FAELLE_JE_LAUF + 1);
-  return rows.map(({ vo, p }) => ({
+  return rows.map(({ vo: aktuell, p }) => ({ vo: original.get(aktuell.id) ?? aktuell, p })).map(({ vo, p }) => ({
     id: vo.id,
     anzeige: `${[p.firstName, p.lastName].filter(Boolean).join(" ")} (#${p.number}) · VO ${vo.issuedAt.split("-").reverse().join(".")}`,
     issuedAt: vo.issuedAt,

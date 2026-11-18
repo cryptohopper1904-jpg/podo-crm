@@ -16,6 +16,9 @@ describe("Folgeverordnung: Hinweis", () => {
     // Frist überschritten nach mindestens einer Behandlung: ebenfalls beendet (Review R2-23)
     expect(followUpReason({ ...base, status: "expired", unitsUsed: 2, unitsRemaining: 4, futureAppointments: 1 })).toBe("ended");
     expect(followUpReason({ ...base, status: "expired", unitsUsed: 0, unitsRemaining: 6, futureAppointments: 1 })).toBeNull();
+    // „Korrektur nötig“ (GKV Paket C): Behandlung ist beendet, nur die Abrechnung wird korrigiert → wie „abgerechnet“
+    expect(followUpReason({ ...base, status: "correction_needed", futureAppointments: 1 })).toBe("ended");
+    expect(afterPrescriptionWarning({ lastPrescription: { issuedAt: "2026-01-05", status: "correction_needed", lastDate: "2026-02-01" }, newDates: ["2026-03-01"] })).toMatch(/nach Ende der Verordnung/);
   });
 
   it("Planungshinweis nur für Termine nach der letzten Behandlung einer beendeten Verordnung", () => {

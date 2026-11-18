@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui";
 import { dateDe, money } from "@/lib/format";
-import { DEDUCTION_STATUS_LABEL, PRESCRIPTION_KINDS, PRESCRIPTION_SPECIALS, isDeductionStatus, type KindSuggestion, type PrescriptionKind, type PrescriptionSpecial } from "@/lib/rules/gkv-billing";
+import { DEDUCTION_OUTCOME_LABEL, DEDUCTION_STATUS_LABEL, PRESCRIPTION_KINDS, isDeductionOutcome, PRESCRIPTION_SPECIALS, isDeductionStatus, type KindSuggestion, type PrescriptionKind, type PrescriptionSpecial } from "@/lib/rules/gkv-billing";
 import { BillingDetailsForm, CorrectionForm, DeductionForm, ResolveCorrectionForm } from "./gkv-billing-forms";
 
 type Vo = {
@@ -13,7 +13,7 @@ type Vo = {
   approvalRef: string | null;
   approvalDate: string | null;
   kindSuggestion: KindSuggestion;
-  deductions: { id: string; amountCents: number; reasonCode: string | null; reason: string; deductedOn: string; status: string; note: string | null }[];
+  deductions: { id: string; amountCents: number; reasonCode: string | null; reason: string; deductedOn: string; status: string; note: string | null; letterRef: string | null; letterDate: string | null; outcome: string | null }[];
   corrections: { id: string; reason: string; createdAt: Date; originalBilledAt: Date | null; resolution: string | null; resolvedAt: Date | null; resolutionNote: string | null }[];
 };
 
@@ -55,7 +55,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
       {vo.status === "correction_needed" ? (
         <div className="rounded-lg bg-danger-soft px-3 py-2 text-danger-soft-text">
           <p className="font-medium">Korrektur nötig{openCorrection ? ` seit ${dateDe(openCorrection.createdAt)}: ${openCorrection.reason}` : ""}</p>
-          <p className="text-xs">Verordnung korrigieren (Bearbeiten bzw. Abrechnungsangaben), dann „abrechnungsreif“ setzen – sie geht in den nächsten Abrechnungslauf.</p>
+          <p className="text-xs">Verordnung korrigieren (Bearbeiten bzw. Abrechnungsangaben), dann „abrechnungsreif“ setzen – sie geht in den nächsten Abrechnungslauf. „Ohne Neuabrechnung abschließen“ geht nur, solange die Verordnung inhaltlich unverändert ist (Stand der Erstabrechnung); jede Änderung im Korrekturstatus wird protokolliert.</p>
           {canBilling ? <div className="mt-1"><ResolveCorrectionForm prescriptionId={vo.id} patientId={patientId} /></div> : null}
         </div>
       ) : null}
@@ -66,7 +66,8 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
             <li key={d.id} className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">Absetzung {money(d.amountCents)}</span>
               <span>{dateDe(d.deductedOn)}{d.reasonCode ? ` · ${d.reasonCode}` : ""} · {d.reason}</span>
-              <Badge tone={d.status === "done" ? "neutral" : d.status === "objected" ? "info" : d.status === "accepted" ? "primary" : "warn"}>{isDeductionStatus(d.status) ? DEDUCTION_STATUS_LABEL[d.status] : d.status}</Badge>
+              {d.letterRef || d.letterDate ? <span className="text-muted">Schreiben {d.letterRef ?? ""}{d.letterDate ? ` vom ${dateDe(d.letterDate)}` : ""}</span> : null}
+              <Badge tone={d.status === "done" ? "neutral" : d.status === "objected" ? "info" : d.status === "accepted" ? "primary" : "warn"}>{isDeductionStatus(d.status) ? DEDUCTION_STATUS_LABEL[d.status] : d.status}{isDeductionOutcome(d.outcome) ? ` · ${DEDUCTION_OUTCOME_LABEL[d.outcome]}` : ""}</Badge>
               {d.note ? <span className="text-muted">{d.note}</span> : null}
             </li>
           ))}

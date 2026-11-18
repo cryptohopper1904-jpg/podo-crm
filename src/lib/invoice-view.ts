@@ -327,7 +327,8 @@ export function invoiceHeading(
       const heading = !c?.number ? "Stornorechnung" : c.kind === "copayment" ? `Storno zur Zuzahlungsquittung ${c.number}` : `Stornorechnung zur ${c.kind === "deposit" ? "Anzahlung" : "Rechnung"} ${c.number}`;
       if (c?.kind === "deposit") return { heading, serviceDateNote: c.issuedAt ? `Storno der Anzahlung vom ${dateDe(c.issuedAt)}.` : null };
       if (c?.kind === "no_show_fee") return { heading, serviceDateNote: days.length ? `Ausfallhonorar für den Termin ${when}.` : null };
-      return { heading, serviceDateNote: days.length ? `${range ? "Leistungszeitraum" : "Leistungsdatum"} der stornierten Rechnung: ${plain}` : null };
+      const what = c?.kind === "copayment" ? "Zuzahlungsquittung" : "Rechnung";
+      return { heading, serviceDateNote: days.length ? `${range ? "Leistungszeitraum" : "Leistungsdatum"} der stornierten ${what}: ${plain}` : null };
     }
     case "copayment":
       // Vorab-Quittung ohne Behandlung: kein „Leistungsdatum = Rechnungsdatum“ (Review R2-16); die Verordnung steht im Hinweis

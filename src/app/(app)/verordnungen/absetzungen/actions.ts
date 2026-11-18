@@ -14,7 +14,15 @@ export async function deductionStatusAction(_: DeductionStatusState, form: FormD
   const rawAmount = String(form.get("amount") ?? "").trim();
   const amount = rawAmount ? parseEuroInputCents(rawAmount) : null;
   if (amount !== null && typeof amount === "object") return { error: amount.error };
-  const parsed = deductionUpdateInput.safeParse({ id: form.get("id"), status: form.get("status"), note: form.get("note") ?? undefined, amountCents: amount ?? undefined });
+  const parsed = deductionUpdateInput.safeParse({
+    id: form.get("id"),
+    status: form.get("status"),
+    note: form.get("note") ?? undefined,
+    amountCents: amount ?? undefined,
+    outcome: form.get("outcome") ?? undefined,
+    letterRef: form.get("letterRef") ?? undefined,
+    letterDate: form.get("letterDate") ?? undefined,
+  });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingaben prüfen." };
   const res = await updateDeduction(auth, parsed.data);
   if ("error" in res) return { error: res.error };

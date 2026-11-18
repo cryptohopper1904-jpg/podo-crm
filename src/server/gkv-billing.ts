@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg, type Tx } from "@/db";
 import { gkvDeductions, patients, prescriptionCorrections, prescriptions } from "@/db/schema";
@@ -10,13 +10,18 @@ import { berlinDateIso } from "@/lib/format";
 import { NOTE_MIN } from "@/lib/rules/prescription";
 import {
   APPROVAL_REF_PATTERN,
+  CORRECTION_DERIVED_KEYS,
+  CORRECTION_VOLATILE_KEYS,
   DEDUCTION_MAX_CENTS,
+  DEDUCTION_OUTCOMES,
   DEDUCTION_STATUSES,
   PRESCRIPTION_KIND_CODES,
   PRESCRIPTION_SPECIAL_CODES,
   canChangeDeductionStatus,
   cleanText,
+  isDeductionOutcome,
   isDeductionStatus,
+  type DeductionOutcome,
   type DeductionStatus,
 } from "@/lib/rules/gkv-billing";
 import { assertCan } from "./authz";
@@ -65,6 +70,7 @@ export async function saveBillingDetails(auth: AuthContext, d: BillingDetailsInp
     if (!vo) return { error: "Verordnung nicht gefunden." };
     if (vo.status === "billed") return { error: "Die Verordnung ist abgerechnet – Änderungen nur über „Korrektur nötig“." };
     if (vo.status === "cancelled") return { error: "Die Verordnung ist storniert." };
+    const before = vo.status === "correction_needed" ? await prescriptionJson(tx, org, d.id) : null;
     const changed = {
       kind: vo.kind !== d.prescriptionKind,
       special: (vo.special ?? null) !== (d.prescriptionSpecial ?? null),
@@ -81,10 +87,12 @@ export async function saveBillingDetails(auth: AuthContext, d: BillingDetailsInp
         approvalDate: d.approvalDate ?? null,
       })
       .where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.id)));
-    return { ok: true as const, changed, firstConfirmation: !vo.kind, status: vo.status };
+    // im Korrekturstatus: geänderte Feldnamen (ohne Werte) ins Audit
+    const changedFields = before ? changedPrescriptionFields(before, await prescriptionJson(tx, org, d.id)) : undefined;
+    return { ok: true as const, changed, firstConfirmation: !vo.kind, status: vo.status, changedFields };
   });
   if ("error" in res) return { error: res.error ?? "Fehler" };
-  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.billing_details", entity: "prescription", entityId: d.id, meta: { ...res.changed, firstConfirmation: res.firstConfirmation, status: res.status } });
+  await audit({ organizationId: org, userId: auth.user.id, action: "prescription.billing_details", entity: "prescription", entityId: d.id, meta: { ...res.changed, firstConfirmation: res.firstConfirmation, status: res.status, ...(res.changedFields ? { correction: true, changedFields: res.changedFields } : {}) } });
   return { ok: true };
 }
 
@@ -106,6 +114,9 @@ export const deductionInput = z.object({
   reason: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 600) : v), z.string().min(3, "Bitte den Grund der Absetzung angeben.").max(500, "Grund: höchstens 500 Zeichen.")),
   deductedOn: z.string().refine(realDate, "Datum der Absetzung ungültig."),
   note: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 1200) || undefined : v), z.string().max(1000, "Notiz: höchstens 1000 Zeichen.").optional()),
+  /** Aktenzeichen und Datum des Kassenschreibens (optional) */
+  letterRef: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 80) || undefined : v), z.string().max(60, "Aktenzeichen: höchstens 60 Zeichen.").optional()),
+  letterDate: z.preprocess(emptyToUndef, z.string().refine(realDate, "Datum des Kassenschreibens ungültig.").optional()),
 });
 export type DeductionInput = z.infer<typeof deductionInput>;
 
@@ -116,6 +127,7 @@ export async function createDeduction(auth: AuthContext, d: DeductionInput): Pro
   const org = auth.organization.id;
   const today = berlinDateIso();
   if (d.deductedOn > today) return { error: "Das Datum der Absetzung liegt in der Zukunft." };
+  if (d.letterDate && d.letterDate > today) return { error: "Das Datum des Kassenschreibens liegt in der Zukunft." };
   const res = await withOrg(org, async (tx) => {
     const [vo] = await tx
       .select({ status: prescriptions.status, billedAt: prescriptions.billedAt, batch: prescriptions.billingBatchId })
@@ -135,6 +147,8 @@ export async function createDeduction(auth: AuthContext, d: DeductionInput): Pro
         reason: d.reason,
         deductedOn: d.deductedOn,
         note: d.note ?? null,
+        letterRef: d.letterRef ?? null,
+        letterDate: d.letterDate ?? null,
         createdBy: auth.user.id,
       })
       .returning({ id: gkvDeductions.id });
@@ -152,6 +166,11 @@ export const deductionUpdateInput = z.object({
   note: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 1200) : v), z.string().max(1000, "Notiz: höchstens 1000 Zeichen.").optional()),
   /** nur bei Status „offen“: Betrag korrigieren (Fehleingabe) */
   amountCents: z.preprocess(emptyToUndef, euroCents.optional()),
+  /** Pflicht beim Wechsel auf „erledigt“: upheld = Absetzung bleibt | reversed = Widerspruch erfolgreich */
+  outcome: z.preprocess(emptyToUndef, z.enum(DEDUCTION_OUTCOMES, { message: "Ausgang ungültig." }).optional()),
+  /** Aktenzeichen/Datum des Kassenschreibens nachtragen (solange nicht erledigt); leer = unverändert */
+  letterRef: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 80) || undefined : v), z.string().max(60, "Aktenzeichen: höchstens 60 Zeichen.").optional()),
+  letterDate: z.preprocess(emptyToUndef, z.string().refine(realDate, "Datum des Kassenschreibens ungültig.").optional()),
 });
 export type DeductionUpdateInput = z.infer<typeof deductionUpdateInput>;
 
@@ -168,15 +187,33 @@ export async function updateDeduction(auth: AuthContext, d: DeductionUpdateInput
     if (!canChangeDeductionStatus(from, d.status)) return { error: "Dieser Statuswechsel ist nicht möglich." };
     const amountChange = d.amountCents !== undefined && d.amountCents !== old.amountCents;
     if (amountChange && from !== "open") return { error: "Der Betrag ist nur bei offenen Absetzungen änderbar." };
+    // „erledigt“ nur mit Ausgang (DB-CHECK gkv_deductions_outcome_check); sonst kein Ausgang
+    if (d.status === "done" && !d.outcome) return { error: "Bitte den Ausgang angeben: Absetzung bleibt oder Widerspruch erfolgreich." };
     const note = d.note === undefined ? old.note : d.note || null;
+    const letterRef = d.letterRef ?? old.letterRef;
+    const letterDate = d.letterDate ?? old.letterDate;
+    if (d.letterDate && d.letterDate > berlinDateIso()) return { error: "Das Datum des Kassenschreibens liegt in der Zukunft." };
     await tx
       .update(gkvDeductions)
-      .set({ status: d.status, note, ...(amountChange ? { amountCents: d.amountCents } : {}), updatedBy: auth.user.id, updatedAt: new Date() })
+      .set({ status: d.status, note, letterRef, letterDate, outcome: d.status === "done" ? d.outcome : null, ...(amountChange ? { amountCents: d.amountCents } : {}), updatedBy: auth.user.id, updatedAt: new Date() })
       .where(and(eq(gkvDeductions.organizationId, org), eq(gkvDeductions.id, d.id)));
-    return { ok: true as const, from, amount: amountChange ? { from: old.amountCents, to: d.amountCents } : undefined, noteChanged: (old.note ?? null) !== note };
+    return {
+      ok: true as const,
+      from,
+      amount: amountChange ? { from: old.amountCents, to: d.amountCents } : undefined,
+      noteChanged: (old.note ?? null) !== note,
+      letterChanged: (old.letterRef ?? null) !== (letterRef ?? null) || (old.letterDate ?? null) !== (letterDate ?? null),
+    };
   });
   if ("error" in res) return { error: res.error ?? "Fehler" };
-  await audit({ organizationId: org, userId: auth.user.id, action: "gkv_deduction.update", entity: "gkv_deduction", entityId: d.id, meta: { from: res.from, to: d.status, ...(res.amount ? { amountCents: res.amount } : {}), noteChanged: res.noteChanged } });
+  await audit({
+    organizationId: org,
+    userId: auth.user.id,
+    action: "gkv_deduction.update",
+    entity: "gkv_deduction",
+    entityId: d.id,
+    meta: { from: res.from, to: d.status, ...(d.status === "done" ? { outcome: d.outcome } : {}), ...(res.amount ? { amountCents: res.amount } : {}), noteChanged: res.noteChanged, letterChanged: res.letterChanged },
+  });
   return { ok: true };
 }
 
@@ -193,14 +230,18 @@ export type DeductionRow = {
   reason: string;
   deductedOn: string;
   status: DeductionStatus;
+  outcome: DeductionOutcome | null;
+  letterRef: string | null;
+  letterDate: string | null;
   note: string | null;
   prescriptionStatus: string;
   createdAt: Date;
 };
 
 /** Absetzungen der Praxis (optional nach Status und Zeitraum des Absetzungsdatums), neueste zuerst, höchstens 500. */
-export async function listDeductions(auth: AuthContext, filter: { statuses?: DeductionStatus[]; from?: string; to?: string } = {}): Promise<DeductionRow[]> {
-  assertCan(auth, "invoices.write", "medical.read");
+export async function listDeductions(auth: AuthContext, filter: { statuses?: DeductionStatus[]; from?: string; to?: string } = {}): Promise<DeductionRow[] | { error: string }> {
+  const blocked = billingAccess(auth);
+  if (blocked) return blocked;
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) =>
     tx
@@ -233,6 +274,9 @@ export async function listDeductions(auth: AuthContext, filter: { statuses?: Ded
     reason: d.reason,
     deductedOn: d.deductedOn,
     status: isDeductionStatus(d.status) ? d.status : "open",
+    outcome: isDeductionOutcome(d.outcome) ? d.outcome : null,
+    letterRef: d.letterRef,
+    letterDate: d.letterDate,
     note: d.note,
     prescriptionStatus: vo.status,
     createdAt: d.createdAt,
@@ -251,6 +295,35 @@ export async function deductionsFor(tx: Tx, org: string, ids: string[]) {
 // ───────────────────────── Korrektur abgerechneter Verordnungen ─────────────────────────
 
 export type CorrectionRow = typeof prescriptionCorrections.$inferSelect;
+type PrescriptionDbRow = typeof prescriptions.$inferSelect;
+
+/** Verordnungszeile als jsonb (to_jsonb, wie original_row) – für Vergleich und Feldliste im Audit */
+export async function prescriptionJson(tx: Tx, org: string, id: string): Promise<Record<string, unknown>> {
+  const r = await tx.execute(sql`select to_jsonb(p) as j from prescriptions p where p.organization_id = ${org} and p.id = ${id}`);
+  return ((r.rows[0] as { j?: Record<string, unknown> } | undefined)?.j ?? {}) as Record<string, unknown>;
+}
+
+/** Namen der geänderten Spalten (keine Werte – können Gesundheitsangaben enthalten), sortiert */
+export function changedPrescriptionFields(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].filter((k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null)).sort();
+}
+
+/**
+ * original_row (to_jsonb der Verordnungszeile, Spaltennamen) → Drizzle-Zeile (Feldnamen, Zeitstempel als Date). Für den
+ * Export des alten Laufs (CSV, § 302) mit dem Stand der Erstabrechnung.
+ */
+export function prescriptionFromOriginalRow(j: Record<string, unknown>): PrescriptionDbRow {
+  const out: Record<string, unknown> = {};
+  for (const [key, col] of Object.entries(getTableColumns(prescriptions))) {
+    const v = j[col.name];
+    out[key] = v === undefined ? null : col.dataType === "date" && typeof v === "string" ? new Date(v) : v;
+  }
+  return out as PrescriptionDbRow;
+}
+
+/** SQL-Liste der beim Vergleich mit original_row ausgenommenen Schlüssel (feste Konstanten, kein Nutzereingang) */
+const keysSql = (keys: readonly string[]) => sql.raw(`ARRAY[${keys.map((k) => `'${k.replace(/'/g, "")}'`).join(", ")}]::text[]`);
 
 /** Korrekturvermerke je Verordnung (neueste zuletzt) */
 export async function correctionsFor(tx: Tx, org: string, ids: string[]) {
@@ -330,13 +403,34 @@ export async function resolveCorrectionWithoutRebill(auth: AuthContext, d: z.inf
     const [vo] = await tx.select({ id: prescriptions.id, status: prescriptions.status }).from(prescriptions).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, d.prescriptionId), eq(prescriptions.patientId, d.patientId))).for("update");
     if (!vo) return { error: "Verordnung nicht gefunden." };
     if (vo.status !== "correction_needed") return { error: "Die Verordnung ist nicht im Status „Korrektur nötig“ – bitte Seite neu laden." };
+    // Nur unverändert zurück in den alten Lauf: Inhalt gegen den Stand der Erstabrechnung (original_row), ohne Status,
+    // Altvermerk Zuzahlung, Bestätigungszeitpunkt und abgeleitete Beträge (die werden unten wiederhergestellt)
+    const cmp = await tx.execute(sql`
+      select c.id, c.original_row is null as missing,
+             (to_jsonb(p) - ${keysSql(CORRECTION_VOLATILE_KEYS)} - ${keysSql(CORRECTION_DERIVED_KEYS)})
+               = (c.original_row - ${keysSql(CORRECTION_VOLATILE_KEYS)} - ${keysSql(CORRECTION_DERIVED_KEYS)}) as same
+        from prescription_corrections c join prescriptions p on p.id = c.prescription_id and p.organization_id = c.organization_id
+       where c.organization_id = ${org} and c.prescription_id = ${vo.id} and c.resolved_at is null`);
+    const open = cmp.rows[0] as { id: string; missing: boolean; same: boolean | null } | undefined;
+    if (!open) return { error: "Kein offener Korrekturvermerk gefunden." };
+    if (open.missing || !open.same) return { error: "Geänderte Verordnung muss neu abgerechnet werden." };
+    // resolved_at = now(): der DB-Trigger erkennt so den Abschluss im selben Vorgang
     const done = await tx
       .update(prescriptionCorrections)
-      .set({ resolution: "no_rebill", resolvedAt: new Date(), resolvedBy: auth.user.id, resolutionNote: d.note })
-      .where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.prescriptionId, vo.id), isNull(prescriptionCorrections.resolvedAt)))
+      .set({ resolution: "no_rebill", resolvedAt: sql`now()`, resolvedBy: auth.user.id, resolutionNote: d.note })
+      .where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.id, open.id), isNull(prescriptionCorrections.resolvedAt)))
       .returning({ id: prescriptionCorrections.id });
     if (!done.length) return { error: "Kein offener Korrekturvermerk gefunden." };
-    await tx.update(prescriptions).set({ status: "billed" }).where(and(eq(prescriptions.organizationId, org), eq(prescriptions.id, vo.id)));
+    // Preis-Snapshot, Heilmittelkosten und Zuzahlung der Erstabrechnung wiederherstellen (ein zwischenzeitlich neu
+    // berechneter Snapshot aus „abrechnungsreif“ gilt nicht – die Verordnung bleibt im alten Lauf)
+    await tx.execute(sql`
+      update prescriptions p
+         set status = 'billed',
+             price_snapshot = c.original_row->'price_snapshot',
+             remedy_cost_cents = (c.original_row->>'remedy_cost_cents')::int,
+             copayment_cents = (c.original_row->>'copayment_cents')::int
+        from prescription_corrections c
+       where c.id = ${open.id} and c.organization_id = ${org} and p.id = c.prescription_id and p.organization_id = ${org}`);
     return { ok: true as const, correctionId: done[0].id };
   });
   if ("error" in res) return { error: res.error ?? "Fehler" };
@@ -359,13 +453,21 @@ export async function resolveCorrectionsRebilled(tx: Tx, org: string, userId: st
   return done.length;
 }
 
-/** Verordnungen, die ursprünglich in diesem Lauf abgerechnet und danach zur Korrektur geöffnet wurden (Export des alten Laufs) */
-export async function correctedFromBatch(tx: Tx, org: string, batchId: string): Promise<string[]> {
+/**
+ * Verordnungen, die ursprünglich in diesem Lauf abgerechnet und danach zur Korrektur geöffnet wurden (Export des alten
+ * Laufs): je Verordnung der Stand der Erstabrechnung aus dem ältesten Korrekturvermerk dieses Laufs (original_row). Der
+ * alte Lauf wird damit reproduzierbar exportiert (Zeilensumme = Laufsumme), egal ob die Korrektur offen, ohne
+ * Neuabrechnung abgeschlossen oder in einem späteren Lauf neu abgerechnet ist.
+ */
+export async function correctedFromBatch(tx: Tx, org: string, batchId: string): Promise<Map<string, PrescriptionDbRow | null>> {
   const rows = await tx
-    .select({ id: prescriptionCorrections.prescriptionId })
+    .select({ id: prescriptionCorrections.prescriptionId, row: prescriptionCorrections.originalRow })
     .from(prescriptionCorrections)
-    .where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.originalBatchId, batchId)));
-  return [...new Set(rows.map((r) => r.id))];
+    .where(and(eq(prescriptionCorrections.organizationId, org), eq(prescriptionCorrections.originalBatchId, batchId)))
+    .orderBy(asc(prescriptionCorrections.createdAt), asc(prescriptionCorrections.id));
+  const out = new Map<string, PrescriptionDbRow | null>();
+  for (const r of rows) if (!out.has(r.id)) out.set(r.id, r.row ? prescriptionFromOriginalRow(r.row) : null);
+  return out;
 }
 
 /** Anzahl offener Korrekturen der Praxis (Hinweis auf der Abrechnungsseite) */
