@@ -204,3 +204,6 @@ Im Code als `// TODO DSFinV-K prüfen` markiert:
     Zuzahlungsquittungen (Belege ZZ) gehen **entweder** über lexoffice **oder** über den Kassenexport (DSFinV-K/Z-Bon) an
     die Buchhaltung, nicht beides (sonst doppelt erfasst). Die Auszahlung des Abrechnungszentrums enthält die Zuzahlung
     nicht und wird netto als Kassenanteil gebucht. Beides mit der Steuerberatung klären.
+    **Eigene Praxiskasse** (`register = 'external'`): Die Einnahme steht im Z-Bon der Praxiskasse; der ZZ-Beleg ist nur
+    Quittung und wird weder über lexoffice noch über den PodoHero-Kassenexport ein zweites Mal gemeldet (er erscheint
+    ohnehin nicht in DSFinV-K/Z-Bon von PodoHero). Mit der Steuerberatung klären.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copaymentBreakdown, copaymentExpectedNote, copaymentReceiptLines } from "./copayment";
+import { copaymentBreakdown, copaymentCollectedLabel, copaymentExpectedNote, copaymentFormVisible, copaymentReceiptLines, legacyCopayment, legacyCopaymentNote } from "./copayment";
 import { priceSnapshot } from "./prescription";
 import { priceFor } from "./podologie-verguetung";
 
@@ -46,5 +46,43 @@ describe("Zuzahlungsquittung: Aufteilung je Position + Pauschale", () => {
     expect(copaymentExpectedNote(b, 2000, 0)).toBeNull();
     expect(copaymentExpectedNote(b, 500, 0)).toBe("Berechnete Zuzahlung 20,00 € (Pos. 78020: 10,00 €, je Verordnung: 10,00 €), offen nach dieser Zahlung 15,00 €.");
     expect(copaymentExpectedNote(b, 500, 1500)).toBe("Berechnete Zuzahlung 20,00 € (Pos. 78020: 10,00 €, je Verordnung: 10,00 €), bereits quittiert 15,00 €.");
+  });
+});
+
+describe("Paket-B-Nachzug: Altvermerk und quittierte Beträge getrennt", () => {
+  const b = { positions: [{ position: "78020", units: 2, cents: 1000 }], flatCents: 1000, totalCents: 2000 };
+  it("Hinweis auf der Quittung: „bereits quittiert“ nur für ZZ-Belege, Altvermerk gesondert", () => {
+    expect(copaymentExpectedNote(b, 500, 1000, 500)).toBe("Berechnete Zuzahlung 20,00 € (Pos. 78020: 10,00 €, je Verordnung: 10,00 €), bereits quittiert 10,00 €, Altvermerk 5,00 €.");
+    expect(copaymentExpectedNote(b, 500, 0, 500)).toBe("Berechnete Zuzahlung 20,00 € (Pos. 78020: 10,00 €, je Verordnung: 10,00 €), Altvermerk 5,00 €, offen nach dieser Zahlung 10,00 €.");
+    expect(copaymentExpectedNote(b, 1500, 0, 500)).toBe("Berechnete Zuzahlung 20,00 € (Pos. 78020: 10,00 €, je Verordnung: 10,00 €), Altvermerk 5,00 €.");
+  });
+  it("Akte: Beschriftung trennt quittiert und Altvermerk", () => {
+    expect(copaymentCollectedLabel(1500, 0)).toBe("quittiert 15,00 €");
+    expect(copaymentCollectedLabel(0, 500)).toBe("Altvermerk 5,00 €");
+    expect(copaymentCollectedLabel(1500, 500)).toBe("quittiert 15,00 € · Altvermerk 5,00 €");
+    expect(copaymentCollectedLabel(0, 0)).toBeNull();
+  });
+  it("Belegtext Altvermerk: mit Betrag „vermerkt: X € – angerechnet“, ohne Betrag mit der berechneten Zuzahlung", () => {
+    const at = new Date("2026-01-10T10:00:00Z");
+    expect(legacyCopaymentNote(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: 1500, copaymentCents: 2000 })!)).toBe(
+      "Früher als „Zuzahlung erhalten“ vermerkt: 15,00 € – angerechnet (ohne Beleg in PodoHero).",
+    );
+    expect(legacyCopaymentNote(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: null, copaymentCents: 2000 })!)).toBe(
+      "Früher als „Zuzahlung erhalten“ ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung 20,00 € (ohne Beleg in PodoHero).",
+    );
+  });
+  it("Altvermerk ohne Betrag und mit berechneter Zuzahlung 0 (oder ohne) gilt als voll erhalten – keine Quittung über bereits Erhaltenes", () => {
+    const at = new Date("2026-01-10T10:00:00Z");
+    expect(legacyCopayment({ copaymentPaidAt: null, copaymentPaidCents: null, copaymentCents: 2000 })).toBeNull();
+    expect(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: null, copaymentCents: 0 })).toMatchObject({ cents: 0, full: true });
+    expect(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: null, copaymentCents: null })).toMatchObject({ cents: 0, full: true });
+    expect(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: null, copaymentCents: 2000 })).toMatchObject({ cents: 2000, full: false });
+    expect(legacyCopayment({ copaymentPaidAt: at, copaymentPaidCents: 700, copaymentCents: 0 })).toMatchObject({ cents: 700, full: false });
+  });
+  it("Formular in der Akte: manuell nur, solange nicht durch Altvermerk erledigt; berechnet nur bei offenem Betrag", () => {
+    expect(copaymentFormVisible({ manual: true, openCents: null })).toBe(true);
+    expect(copaymentFormVisible({ manual: true, openCents: 0 })).toBe(false);
+    expect(copaymentFormVisible({ manual: false, openCents: 0 })).toBe(false);
+    expect(copaymentFormVisible({ manual: false, openCents: 300 })).toBe(true);
   });
 });

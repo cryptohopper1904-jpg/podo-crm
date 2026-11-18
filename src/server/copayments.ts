@@ -12,7 +12,7 @@ import { berlinDateIso, dateDe } from "@/lib/format";
 import { computeTotals } from "@/lib/invoice-math";
 import { nextNumber } from "@/lib/numbering";
 import { PRAXISKASSE_BON_RE } from "@/lib/kasse/model";
-import { COPAYMENT_RECEIPT_METHODS, copaymentBreakdown, copaymentExpectedNote, copaymentReceiptLines, type CopaymentBreakdown } from "@/lib/rules/copayment";
+import { COPAYMENT_RECEIPT_METHODS, copaymentBreakdown, copaymentExpectedNote, copaymentReceiptLines, legacyCopayment, legacyCopaymentNote, type CopaymentBreakdown } from "@/lib/rules/copayment";
 import { COPAYMENT_FREE_UNDER_AGE, addDaysIso, ageOn, copaymentPaidHint, exemptOn, priceSnapshot, type PriceSnapshot } from "@/lib/rules/prescription";
 import { positionInfo } from "@/lib/rules/podologie-verguetung";
 import { withArchiveCleanup } from "./document-archive";
@@ -23,8 +23,9 @@ import { InvoiceError, addPayments, applyPayments, archiveIssued, cancelInvoice,
  * Nummernkreis ZZ) mit Zahlung über den bestehenden Weg (applyPayments): PodoHero-Kasse → TSE-Signatur, Z-Bon und
  * DSFinV-K; eigene Praxiskasse → Vermerk mit Bon-Nr. (payments.register = 'external'). Keine zweite Kasse.
  * Erstattung (z. B. Überzahlung): Quittung stornieren → Stornobeleg mit negativer Zahlung, danach ggf. neu quittieren.
- * Die bisherigen Felder prescriptions.copayment_paid_* sind Altvermerke (nur Anzeige, keine nachträgliche Kassenbuchung);
- * ihr Betrag gilt als erhalten und wird angerechnet – ein Rest kann quittiert werden (Review R3-3).
+ * Die bisherigen Felder prescriptions.copayment_paid_* sind Altvermerke (nur Anzeige, kein Beleg in PodoHero, keine
+ * nachträgliche Kassenbuchung); ihr Betrag gilt als erhalten und wird angerechnet – ein Rest kann quittiert werden
+ * (Review R3-3). „bereits quittiert“ meint nur Beträge mit ZZ-Beleg; der Altvermerk wird gesondert ausgewiesen.
  */
 
 /** Plausibilitätsgrenze bei frei eingegebenem Betrag (Preis unbekannt): darüber nur mit ausdrücklicher Bestätigung */
@@ -95,22 +96,15 @@ export function expectedCopayment(
   return { snapshot, breakdown: copaymentBreakdown(snapshot), estimated: true };
 }
 
-/**
- * Altvermerk „Zuzahlung erhalten“ (vor Paket B) als bereits erhaltener Betrag: copayment_paid_cents, sonst die damals
- * berechnete Zuzahlung. Ohne jeden Betrag gilt der Vermerk als vollständig erhalten (`full`).
- */
-export function legacyCopayment(vo: Pick<typeof prescriptions.$inferSelect, "copaymentPaidAt" | "copaymentPaidCents" | "copaymentCents">): { cents: number; full: boolean } | null {
-  if (!vo.copaymentPaidAt) return null;
-  const cents = vo.copaymentPaidCents ?? vo.copaymentCents;
-  return cents === null ? { cents: 0, full: true } : { cents, full: false };
-}
+/** Altvermerk (vor Paket B) als bereits erhaltener Betrag – reine Funktion in @/lib/rules/copayment */
+export { legacyCopayment };
 
 export type CopaymentDue = {
   /** Preis bzw. Positionsnummer fehlt → keine Berechnung, Betrag wird frei eingegeben */
   manual: boolean;
   /** erwartete Zuzahlung (null bei manual) */
   expectedCents: number | null;
-  /** noch offen nach Quittungen und Altvermerk (null bei manual) */
+  /** noch offen nach Quittungen und Altvermerk (null bei manual; 0 auch bei manual, wenn ein voller Altvermerk vorliegt) */
   openCents: number | null;
   /** Schätzung (noch kein vollständiger Preis-Snapshot) */
   estimated: boolean;
@@ -125,8 +119,9 @@ export function copaymentDue(
   today = berlinDateIso(),
 ): CopaymentDue {
   const exp = expectedCopayment(vo, patient, dates, today);
-  if (!exp.snapshot.complete) return { manual: true, expectedCents: null, openCents: null, estimated: exp.estimated };
   const legacy = legacyCopayment(vo);
+  // ohne Preis: frei einzugebender Betrag – außer der Altvermerk gilt als vollständig erhalten (Paket-B-Nachzug)
+  if (!exp.snapshot.complete) return { manual: true, expectedCents: null, openCents: legacy?.full ? 0 : null, estimated: exp.estimated };
   const open = legacy?.full ? 0 : Math.max(0, exp.breakdown.totalCents - collectedCents(receipts) - (legacy?.cents ?? 0));
   return { manual: false, expectedCents: exp.breakdown.totalCents, openCents: open, estimated: exp.estimated };
 }
@@ -214,7 +209,8 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
         // Storno ohne gebuchte Erstattung: erst erstatten (am Stornobeleg), dann neu quittieren (Review R2-14)
         const unrefunded = existing.find((r) => r.status === "cancelled" && r.refund && !r.refund.refunded);
         if (unrefunded) throw new InvoiceError(`Die Erstattung zur stornierten Quittung ${unrefunded.number} ist noch nicht gebucht – bitte zuerst am Stornobeleg ${unrefunded.refund!.number} die Erstattung erfassen.`);
-        const already = collectedCents(existing) + (legacy?.cents ?? 0);
+        const receipted = collectedCents(existing);
+        const already = receipted + (legacy?.cents ?? 0);
         const dates = await treatmentDates(tx, org, vo.id);
         const exp = expectedCopayment(vo, p, dates, today);
         // ohne Preis/Positionsnummer lässt sich die Zuzahlung nicht berechnen → frei eingegebener Betrag (Review R2-4)
@@ -237,7 +233,11 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
         } else {
           if (exp.breakdown.totalCents <= 0) throw new InvoiceError("Laut Berechnung ist keine Zuzahlung fällig (befreit, unter 18 oder ohne zuzahlungspflichtige Position).");
           open = exp.breakdown.totalCents - already;
-          if (legacy && open <= 0) throw legacyBlocked();
+          if (legacy && open <= 0) {
+            // Rest schon per Zuzahlungsquittung erhalten: beide Beträge nennen, nicht nur den Altvermerk (Paket-B-Nachzug)
+            if (receipted > 0) throw new InvoiceError(`Die Zuzahlung ist vollständig erhalten – nichts mehr offen (quittiert ${euro(receipted)}, Altvermerk ${euro(legacy.cents)}), keine weitere Quittung.`);
+            throw legacyBlocked();
+          }
           amount = input.amountCents ?? open;
           if (amount <= 0 || (open <= 0 && input.amountCents === null)) throw new InvoiceError("Die Zuzahlung ist bereits vollständig quittiert.");
           if (amount > Math.max(0, open) && !input.confirmOverpay) {
@@ -254,8 +254,8 @@ export async function createCopaymentReceipt(auth: AuthContext, raw: CopaymentRe
           ? [{ description: "Zuzahlung laut Verordnung", cents: amount }]
           : copaymentReceiptLines(already ? null : exp.breakdown, amount, { prescriptionLabel: `Verordnung vom ${dateDe(vo.issuedAt)}`, positionLabel: (code) => positionInfo(code)?.label ?? null });
         const totals = computeTotals(lines.map((l) => ({ totalCents: l.cents, vatRate: 0 })));
-        const expectedNote = manual ? "Betrag manuell, Berechnung nicht möglich (Preis bzw. Positionsnummer fehlt)." : copaymentExpectedNote(exp.breakdown, amount, already);
-        const legacyNote = legacy ? `Früher als „Zuzahlung erhalten“ vermerkt (ohne Kassenbuchung): ${euro(legacy.cents)} – angerechnet.` : null;
+        const expectedNote = manual ? "Betrag manuell, Berechnung nicht möglich (Preis bzw. Positionsnummer fehlt)." : copaymentExpectedNote(exp.breakdown, amount, receipted, legacy?.cents ?? 0);
+        const legacyNote = legacy ? legacyCopaymentNote(legacy) : null;
         const [draft] = await tx
           .insert(invoices)
           .values({

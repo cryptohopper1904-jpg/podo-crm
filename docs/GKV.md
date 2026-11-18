@@ -198,20 +198,35 @@ DSFinV-K; eigene Praxiskasse → Vermerk mit Bon-Nr. (`register = 'external'`, K
 Erstattung (z. B. Überzahlung): „stornieren/erstatten“ → Stornobeleg mit negativer Zahlung über denselben Weg, danach den
 richtigen Betrag neu quittieren – erst, wenn die Erstattung gebucht ist. Zuzahlungsquittungen zählen nicht als
 „Leistung am Tag abgerechnet“ (`NOT_BILLING_KINDS`: Sammelrechnungs-Vorschlag, Jahresend-Erinnerung). Der CSV-Export „Zuzahlung erhalten am“ nimmt die letzte gültige Quittung, sonst den
-Altvermerk. Der Stornobeleg einer Zuzahlungsquittung heißt „Storno zur Zuzahlungsquittung ZZ…“.
+Altvermerk. Der Stornobeleg einer Zuzahlungsquittung heißt „Storno zur Zuzahlungsquittung ZZ…“ (Datumshinweis „Leistungsdatum der
+stornierten Zuzahlungsquittung“, Begleit-E-Mail „Storno Zuzahlungsquittung“).
 
 **Buchhaltung:** Zuzahlungsquittungen **entweder** über lexoffice **oder** über den Kassenexport (DSFinV-K/Z-Bon) an
 die Buchhaltung geben, nicht beides – sonst ist die Zuzahlung doppelt erfasst. Die Auszahlung des Abrechnungszentrums
 enthält die Zuzahlung nicht (die Kasse zahlt Heilmittelkosten abzüglich Zuzahlung); sie wird netto als Kassenanteil
-gebucht. Beides mit der Steuerberatung klären (siehe docs/KASSE.md, offener Punkt 15).
+gebucht. Beides mit der Steuerberatung klären (siehe docs/KASSE.md, offener Punkt 15). **Eigene Praxiskasse**
+(`register = 'external'`, Vermerk mit Bon-Nr.): Die Einnahme steht dann bereits im Z-Bon der Praxiskasse; der ZZ-Beleg
+ist nur die Quittung für die Person und darf weder über lexoffice noch über den PodoHero-Kassenexport ein zweites Mal
+an die Buchhaltung gemeldet werden (mit der Steuerberatung klären).
 
 **Altvermerke** (`copayment_paid_at/_cents/_method` aus der Zeit vor Paket B) bleiben unverändert und **gelten als
-erhalten**: Ihr Betrag (`copayment_paid_cents`, sonst die damals berechnete Zuzahlung; ohne jeden Betrag gilt die
-Zuzahlung als vollständig erhalten) zählt in der quittierten Summe und wird beim Quittieren angerechnet – gesperrt ist
-nur, wenn danach nichts mehr offen ist; ein Restbetrag kann quittiert werden (Hinweis auf der Quittung). Neue Altvermerke
-sind nicht möglich. Entfernen nur als „Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write`
-+ `medical.read`, Audit mit altem Wert; ohne Vermerk: Meldung „kein Vermerk vorhanden“, kein Audit). Eine nachträgliche Quittung/Kassenbuchung für früher erhaltene Beträge gibt es bewusst nicht –
-ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
+erhalten**: Ihr Betrag (`copayment_paid_cents`, sonst der **zuletzt gespeicherte Rechenwert** `copayment_cents` der
+Verordnung – nicht zwingend der Stand beim Vermerk) wird beim Quittieren angerechnet – gesperrt ist nur, wenn danach
+nichts mehr offen ist; ein Restbetrag kann quittiert werden. Ohne Betrag und ohne Rechenwert über 0 (`copayment_cents`
+leer oder 0) gilt die Zuzahlung bewusst als vollständig erhalten – so entsteht keine Quittung über bereits Erhaltenes;
+das gilt auch ohne Preis (manueller Fall: kein Formular, nichts offen). Die Quittung nennt den Altvermerk gesondert:
+„vermerkt: X € – angerechnet“ bzw. ohne Betrag „ohne Betrag vermerkt – angerechnet mit der berechneten Zuzahlung X €“,
+jeweils „ohne Beleg in PodoHero“. **„bereits quittiert“ meint nur Beträge mit ZZ-Beleg**; Hinweis auf der Quittung
+(„bereits quittiert X €, Altvermerk Y €“), Akte („quittiert X € · Altvermerk Y €“) und Meldung („nichts mehr offen
+(quittiert X €, Altvermerk Y €)“) weisen beides getrennt aus. Neue Altvermerke sind nicht möglich. Entfernen nur als
+„Vermerk war falsch – nichts erhalten“ (Pflichtbegründung, Recht `invoices.write` + `medical.read`, Audit mit altem
+Wert; ohne Vermerk: Meldung „kein Vermerk vorhanden“, kein Audit). Eine nachträgliche Quittung/Kassenbuchung für früher
+erhaltene Beträge gibt es bewusst nicht – ob und wie diese Beträge nachzuerfassen sind, mit der Steuerberatung klären.
+
+**Bekannter Prozessfall „Altvermerk nur teilweise richtig“:** Stimmt der Betrag eines Altvermerks nicht (z. B. weniger
+erhalten als vermerkt), gibt es keine Korrektur des Betrags. Weg: „Vermerk war falsch – nichts erhalten“ mit Begründung
+(alter Wert steht im Audit), danach den tatsächlich früher erhaltenen Betrag mit der Steuerberatung klären und den noch
+offenen Rest regulär quittieren. Ein früher erhaltener Teilbetrag erscheint dann nicht mehr als Altvermerk in der Akte.
 
 ## Paket B Teil 2: Therapiebericht und Folgeverordnung
 
