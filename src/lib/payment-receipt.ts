@@ -10,7 +10,7 @@
  */
 import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { dateDe, dateTimeDe, money } from "./format";
-import { INVOICE_DOC_LABEL, PAYMENT_METHOD_LABEL } from "./invoice-labels";
+import { invoiceDocLabel, PAYMENT_METHOD_LABEL } from "./invoice-labels";
 import type { SnapshotOrganization } from "./invoice-snapshot";
 import { A4, CONTENT_WIDTH, drawAddressBlock, drawFooters, drawLogoHead, embedFonts, embedImage, FOOTER_TOP, GRAY, makeSafe, makeWriter, ML, TOP, type PdfImage } from "./pdf-letter";
 import { dateTimeSecondsDe, TSE_FAILED_NOTICE, TSE_TEST_NOTICE, tseLines, type FiscalInfo } from "./tse-receipt";
@@ -29,7 +29,8 @@ export type PaymentReceiptSnapshot = {
   organization: SnapshotOrganization;
   /** Empfänger:in der Rechnung (Anzeige auf dem Beleg) */
   recipient: { name: string; patientNumber: number | null } | null;
-  invoice: { id: string; number: string; kind: string; issuedAt: string | null; totalCents: number };
+  /** `cancelsKind`: bei einem Storno die Belegart des stornierten Belegs (fehlt bei älteren Zahlungsbelegen) */
+  invoice: { id: string; number: string; kind: string; issuedAt: string | null; totalCents: number; cancelsKind?: string | null };
   payment: { id: string; paidAt: string; method: string; amountCents: number; voucherCode: string | null };
   /** noch offen (positiv) bzw. zu erstatten (negativ) nach dieser Zahlung */
   openAfterCents: number;
@@ -75,13 +76,31 @@ export const isRefund = (d: Pick<PaymentReceiptSnapshot, "payment">) => d.paymen
 
 /** Belegtitel, z. B. „Beleg über Zahlungseingang zu Rechnung Nr. R2026-0042 vom 02.11.2026“ */
 export function paymentReceiptTitle(d: Pick<PaymentReceiptSnapshot, "payment" | "invoice">): string {
-  const doc = INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung";
+  const doc = invoiceDocLabel(d.invoice.kind, d.invoice.cancelsKind);
   return `${isRefund(d) ? "Beleg über Auszahlung (Erstattung)" : "Beleg über Zahlungseingang"} zu ${doc} Nr. ${d.invoice.number} vom ${dateDe(d.invoice.issuedAt)}`;
+}
+
+/**
+ * Betreff und Text der Begleit-E-Mail zum Zahlungsbeleg. `fallbackCancelsKind`: Originalart eines Stornos, wenn der
+ * Zahlungsbeleg sie (älterer Beleg) nicht festgeschrieben hat.
+ */
+export function paymentReceiptEmail(d: Pick<PaymentReceiptSnapshot, "payment" | "invoice" | "organization">, receiptNumber: string, fallbackCancelsKind?: string | null): { subject: string; body: string } {
+  const doc = invoiceDocLabel(d.invoice.kind, d.invoice.cancelsKind ?? fallbackCancelsKind);
+  const subject = `Zahlungsbeleg ${receiptNumber} zu ${doc} ${d.invoice.number} – ${d.organization.name}`;
+  const body = [
+    "Guten Tag,",
+    "",
+    `anbei erhalten Sie den Beleg ${receiptNumber} über Ihre ${d.payment.amountCents < 0 ? "Erstattung" : "Zahlung"} von ${money(Math.abs(d.payment.amountCents))} zu ${doc} ${d.invoice.number} vom ${dateDe(d.invoice.issuedAt)} als PDF.`,
+    "",
+    "Mit freundlichen Grüßen",
+    d.organization.legalName ?? d.organization.name,
+  ].join("\n");
+  return { subject, body };
 }
 
 /** Hinweis zur Umsatzsteuer (kein eigener Ausweis) */
 export function paymentReceiptVatNote(d: Pick<PaymentReceiptSnapshot, "invoice" | "organization">): string {
-  const doc = INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung";
+  const doc = invoiceDocLabel(d.invoice.kind, d.invoice.cancelsKind);
   return d.organization.smallBusiness
     ? `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung und Entgelt siehe ${doc} Nr. ${d.invoice.number}. Steuerbefreiung für Kleinunternehmer (§ 19 UStG).`
     : `Dieser Beleg bestätigt nur die Zahlung; er ist keine Rechnung. Leistung, Entgelt und die umsatzsteuerlichen Angaben (Steuersatz bzw. Steuerbefreiung) sind in der ${doc} Nr. ${d.invoice.number} ausgewiesen – hier erfolgt kein gesonderter Steuerausweis.`;
@@ -155,7 +174,7 @@ export async function renderPaymentReceiptPdf(input: PaymentReceiptPdfData): Pro
     [isRefund(d) ? "Ausgezahlter Betrag" : "Erhaltener Betrag", money(Math.abs(d.payment.amountCents)), true],
     ["Zahlart", `${PAYMENT_METHOD_LABEL[d.payment.method] ?? d.payment.method}${d.payment.voucherCode ? ` ${d.payment.voucherCode}` : ""}`],
     [isRefund(d) ? "Ausgezahlt am" : "Bezahlt am", dateTimeDe(d.payment.paidAt)],
-    [`${INVOICE_DOC_LABEL[d.invoice.kind] ?? "Rechnung"}`, `Nr. ${d.invoice.number} vom ${dateDe(d.invoice.issuedAt)} über ${money(d.invoice.totalCents)}`],
+    [`${invoiceDocLabel(d.invoice.kind, d.invoice.cancelsKind)}`, `Nr. ${d.invoice.number} vom ${dateDe(d.invoice.issuedAt)} über ${money(d.invoice.totalCents)}`],
   ];
   for (const [k, v, strong] of rows) {
     text(k, ML, y, { size: 10, color: GRAY });
