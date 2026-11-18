@@ -92,3 +92,34 @@ describe("PDF im Stand der Ausstellung", () => {
     expect(strip(await renderInvoicePdf(paidLater))).toBe(strip(await renderInvoicePdf(issued)));
   });
 });
+
+describe("Zuzahlungsquittung (GKV Paket B)", () => {
+  it("Titel „Zuzahlungsquittung“, ohne USt-Spalte, mit § 61-Hinweis statt § 4 Nr. 14", async () => {
+    const { PDFPage } = await import("pdf-lib");
+    const texts: string[] = [];
+    const spy = vi.spyOn(PDFPage.prototype, "drawText").mockImplementation(function (this: unknown, t: string) {
+      texts.push(t);
+    });
+    try {
+      const bytes = await renderInvoicePdf(
+        data({
+          invoice: { ...data().invoice, number: "ZZ2026-0001", kind: "copayment", status: "paid", totalCents: 2347, paidCents: 2347, notes: "Heilmittelverordnung vom 01.08.2026 (Dr. Beispiel)." },
+          lines: [
+            { description: "Zuzahlung 10 % – Pos. 78020 Podologische Behandlung (groß) (2 Einheiten)", quantity: "1", factor: "1", unitPriceCents: 1347, vatRate: 0, totalCents: 1347 },
+            { description: "Zuzahlung je Verordnung (Verordnungsblattgebühr)", quantity: "1", factor: "1", unitPriceCents: 1000, vatRate: 0, totalCents: 1000 },
+          ],
+          payments: [{ paidAt: "2026-11-03T10:00:00Z", method: "cash", amountCents: 2347 }],
+        }),
+      );
+      expect(Buffer.from(bytes.slice(0, 5)).toString("latin1")).toBe("%PDF-");
+    } finally {
+      spy.mockRestore();
+    }
+    const all = texts.join(" ");
+    expect(all).toMatch(/§ 32 Abs\. 2 i\. V\. m\. § 61 Satz 3 SGB V/);
+    expect(all).toMatch(/Kein Umsatzsteuerausweis/);
+    expect(all).not.toMatch(/§ 4 Nr\. 14/);
+    expect(all).not.toMatch(/USt 0 %/);
+    expect(all).toMatch(/Quittungsnummer/);
+  });
+});

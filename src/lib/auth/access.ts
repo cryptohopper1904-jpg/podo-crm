@@ -66,6 +66,8 @@ export const DOWNLOAD_KINDS = [
   "invoice_pdf",
   "z_bon_pdf",
   "trip_log_export",
+  /** GKV-Dokumente mit Gesundheitsdaten (Leistungsnachweis mit Unterschriften, Therapiebericht, Anforderung Folgeverordnung) */
+  "gkv_document",
 ] as const;
 export type DownloadKind = (typeof DOWNLOAD_KINDS)[number];
 

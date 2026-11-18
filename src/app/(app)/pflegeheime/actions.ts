@@ -6,6 +6,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth/session";
 import { assignResident, careHomeInput, isResident, removeResident, saveCareHome } from "@/server/care-homes";
 import { createTreatmentRecord } from "@/server/records";
+import { prepareSignature, signatureFields } from "@/server/signatures";
 
 type State = { error?: string; ok?: string } | undefined;
 
@@ -64,10 +65,16 @@ export async function quickRecordAction(_: QuickRecordState, form: FormData): Pr
   const d = parsed.data;
   if (!d.servicesText && !d.findings) return { error: "Bitte Leistung oder Befund eintragen." };
   if (!(await isResident(auth, d.careHomeId, d.patientId))) return { error: "Patient wohnt nicht in diesem Pflegeheim." };
+  // Unterschrift der Bewohnerin/des Bewohners bzw. der Betreuungsperson (Leistungsnachweis) – optional
+  const sigFields = signatureFields.safeParse(Object.fromEntries([...form.entries()].filter(([k, v]) => v !== "" && ["signatureData", "signerName", "signerRole", "paperSigned"].includes(k))));
+  if (!sigFields.success) return { error: sigFields.error.issues[0]?.message ?? "Unterschrift prüfen." };
+  const signature = d.prescriptionId ? prepareSignature(sigFields.data) : null;
+  if (signature && "error" in signature) return { error: signature.error };
   const res = await createTreatmentRecord(
     auth,
     { patientId: d.patientId, prescriptionId: d.prescriptionId ?? null, frequencyDeviationNote: d.frequencyDeviationNote, servicesText: d.servicesText, findings: d.findings, structured: { mode: "care_home", careHomeId: d.careHomeId } },
     { mode: "care_home" },
+    signature,
   );
   if ("error" in res) return { error: res.error, deviationText: res.deviationText ?? null };
   revalidatePath(`/kunden/${d.patientId}`);

@@ -186,9 +186,9 @@ export type InvoiceInput = Omit<ParsedInvoiceInput, "depositIds" | "receiptIds" 
   })[];
 };
 
-type OrgRow = typeof organizations.$inferSelect;
+export type OrgRow = typeof organizations.$inferSelect;
 
-async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
+export async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
   const [o] = await tx.select().from(organizations).where(eq(organizations.id, org));
   if (!o) throw new InvoiceError("Praxis nicht gefunden.");
   return o;
@@ -198,7 +198,7 @@ async function loadOrg(tx: Tx, org: string): Promise<OrgRow> {
  * Momentaufnahme der Belegangaben (Praxis, Bankverbindung, Empfänger:in mit Anschrift, Buchungshinweis) für
  * invoices.issued_snapshot – beim Ausstellen in derselben Transaktion (src/lib/invoice-snapshot.ts).
  */
-async function issuedSnapshot(tx: Tx, org: string, o: OrgRow, patientId: string | null, billingContactId: string | null) {
+export async function issuedSnapshot(tx: Tx, org: string, o: OrgRow, patientId: string | null, billingContactId: string | null) {
   const settings = (o.settings ?? {}) as Record<string, unknown>;
   const doc = readDocumentSettings(settings);
   const patient = patientId ? ((await tx.select().from(patients).where(and(eq(patients.organizationId, org), eq(patients.id, patientId))))[0] ?? null) : null;
@@ -222,7 +222,7 @@ async function issuedSnapshot(tx: Tx, org: string, o: OrgRow, patientId: string 
  * aus den festgeschriebenen Daten nachgeholt (beim Abruf, im Hintergrundlauf); die Praxis bekommt eine Meldung.
  * Gibt false zurück, wenn das Archiv nachgeholt werden muss.
  */
-async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: string, pending: PendingFiles): Promise<boolean> {
+export async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: string, pending: PendingFiles): Promise<boolean> {
   // dynamisch: invoice-delivery importiert dieses Modul (loadInvoiceBundle)
   const { archiveInvoicePdf } = await import("./invoice-delivery");
   const mark = pending.length;
@@ -238,7 +238,7 @@ async function archiveIssued(tx: Tx, org: string, invoiceId: string, userId: str
 }
 
 /** Nach dem COMMIT: Meldung, dass das Archiv-PDF nachgeholt wird (Ausstellung selbst ist gültig). */
-async function reportInvoiceArchivePending(org: string, r: { id: string; number: string | null; archived: boolean }) {
+export async function reportInvoiceArchivePending(org: string, r: { id: string; number: string | null; archived: boolean }) {
   if (r.archived) return;
   await reportToInbox(
     org,
@@ -267,7 +267,7 @@ async function signPayment(inv: { id: string; number?: string | null }, method: 
  * Bucht Zahlungen auf eine (bereits ausgestellte) Rechnung und aktualisiert paidCents/Status.
  * Gutschein-Zahlungen werden gegen das Restguthaben geprüft (Zeile wird gesperrt).
  */
-async function applyPayments(
+export async function applyPayments(
   tx: Tx,
   org: string,
   userId: string,

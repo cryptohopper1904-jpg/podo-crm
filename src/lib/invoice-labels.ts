@@ -9,6 +9,7 @@ export const INVOICE_KIND_LABEL: Record<string, string> = {
   no_show_fee: "Ausfallhonorar",
   credit_note: "Stornorechnung",
   deposit: "Anzahlung",
+  copayment: "Zuzahlungsquittung",
 };
 
 /**

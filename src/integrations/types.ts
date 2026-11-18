@@ -69,7 +69,7 @@ export interface AccountingVoucherInput {
   invoiceId: string;
   /** Rechnungsnummer aus dem CRM */
   number: string;
-  kind: "invoice" | "receipt" | "collective" | "credit_note" | "no_show_fee" | "deposit";
+  kind: "invoice" | "receipt" | "collective" | "credit_note" | "no_show_fee" | "deposit" | "copayment";
   /** YYYY-MM-DD */
   date: string;
   /** Leistungsdatum (YYYY-MM-DD, lexoffice „shippingDate“); fehlt → Belegdatum. Siehe accountingServiceDate */

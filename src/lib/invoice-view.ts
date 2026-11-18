@@ -55,12 +55,13 @@ export function internalNotes(notes: string | null | undefined): string[] {
 
 /** § 4 Nr. 14 UStG-Hinweis nötig? */
 export function hasExemptNote(o: Org, inv: { kind: string }, lines: { vatRate: number }[]) {
-  return !o.smallBusiness && inv.kind !== "no_show_fee" && lines.some((l) => l.vatRate === 0);
+  // Zuzahlungsquittung: eigener Hinweis (§ 32/§ 61 SGB V, kein Umsatzsteuerausweis) statt § 4 Nr. 14 UStG
+  return !o.smallBusiness && inv.kind !== "no_show_fee" && inv.kind !== "copayment" && lines.some((l) => l.vatRate === 0);
 }
 
 /** „Zahlbar bis“ und Überweisungshinweis nur bei offenen Rechnungen (nicht bei Quittung/Anzahlung/Storno). */
 export function showsDueDate(inv: { kind: string; status: string }) {
-  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "credit_note" && inv.status !== "paid" && inv.status !== "cancelled";
+  return inv.kind !== "receipt" && inv.kind !== "deposit" && inv.kind !== "copayment" && inv.kind !== "credit_note" && inv.status !== "paid" && inv.status !== "cancelled";
 }
 
 /** Fällig am Rechnungstag (Zahlungsziel 0 Tage) → „sofort“ statt Datum */
@@ -70,7 +71,7 @@ export const dueImmediately = (inv: { issuedAt?: string | null; dueAt: string | 
 export const dueLabel = (inv: { issuedAt?: string | null; dueAt: string | null }, dateDe: (d: string | null) => string) => (dueImmediately(inv) ? "sofort" : dateDe(inv.dueAt));
 
 /** Quittung (auch über eine Anzahlung): Beschriftung der Nummer und „Betrag dankend erhalten“. */
-export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit";
+export const isReceiptLike = (kind: string) => kind === "receipt" || kind === "deposit" || kind === "copayment";
 
 /**
  * Auf die (Sammel-)Rechnung angerechnete Teilrechnung: Anzahlungs-Quittung (kind = deposit) oder normale, bereits

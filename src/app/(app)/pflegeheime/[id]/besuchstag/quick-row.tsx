@@ -3,7 +3,8 @@
 import { keepValues } from "@/lib/forms";
 import { useActionState, useState } from "react";
 import { deviationHint } from "@/lib/deviation-hint";
-import { Check } from "lucide-react";
+import { Check, PenLine } from "lucide-react";
+import { SignatureField } from "@/components/signature-field";
 import { Button, Input, Select, cx } from "@/components/ui";
 import { quickRecordAction, type QuickRecordState } from "../../actions";
 
@@ -11,11 +12,13 @@ type Service = { id: string; code: string; name: string };
 type Vo = { id: string; label: string; remaining: number; warning: string | null; deviationText?: string | null };
 
 /** Eine Zeile der Listen-Doku: Leistungs-Chips + kurzer Befund + Speichern. */
-export function QuickRow({ careHomeId, patientId, services, prescriptions }: { careHomeId: string; patientId: string; services: Service[]; prescriptions: Vo[] }) {
+export function QuickRow({ careHomeId, patientId, patientName, services, prescriptions }: { careHomeId: string; patientId: string; patientName: string; services: Service[]; prescriptions: Vo[] }) {
   const [state, action, pending] = useActionState<QuickRecordState, FormData>(quickRecordAction, undefined);
   const [picked, setPicked] = useState<string[]>([]);
   const [prescriptionId, setPrescriptionId] = useState(prescriptions.length === 1 ? prescriptions[0].id : "");
   const done = !!state?.ok;
+  // Unterschrift (Leistungsnachweis) nur bei Behandlung auf Verordnung; aufklappbar, damit die Liste kompakt bleibt
+  const [signing, setSigning] = useState(false);
   // Server-Hinweis gehört zur beim Speichern gewählten VO: nach einem Wechsel der Auswahl verwerfen (bis zum nächsten Speichern)
   const [staleState, setStaleState] = useState<QuickRecordState>(undefined);
   // Abweichung laut Seitenstand oder – falls erst beim Speichern erkannt – laut Server (PR #111 C5)
@@ -60,6 +63,11 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
           {deviation ? (
             <Input name="frequencyDeviationNote" required minLength={5} maxLength={500} placeholder="Begründung Frequenzabweichung (Absprache Arzt)" className="min-w-56 flex-1" aria-label="Begründung Frequenzabweichung" title={deviation} />
           ) : null}
+          {prescriptionId ? (
+            <Button type="button" variant="ghost" className="h-11 text-sm" aria-expanded={signing} onClick={() => setSigning(!signing)}>
+              <PenLine size={16} aria-hidden /> Unterschrift
+            </Button>
+          ) : null}
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" name="confirm" required className="size-5 accent-[var(--primary)]" /> geprüft
           </label>
@@ -67,6 +75,7 @@ export function QuickRow({ careHomeId, patientId, services, prescriptions }: { c
             {done ? <><Check size={18} aria-hidden /> Gespeichert</> : pending ? "…" : "Speichern"}
           </Button>
         </div>
+        {prescriptionId && signing ? <SignatureField key={prescriptionId} patientName={patientName} compact /> : null}
       </fieldset>
       {deviation ? (
         <p className="text-xs text-warn-soft-text">

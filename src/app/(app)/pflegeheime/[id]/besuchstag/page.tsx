@@ -42,7 +42,7 @@ export default async function VisitDayPage(props: PageProps<"/pflegeheime/[id]/b
                 </div>
                 {r.notes ? <p className="mb-3 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn-soft-text">{r.notes}</p> : null}
                 {canDoc ? (
-                  <QuickRow careHomeId={id} patientId={r.id} services={data.services} prescriptions={r.prescriptions} />
+                  <QuickRow careHomeId={id} patientId={r.id} patientName={[r.firstName, r.lastName].filter(Boolean).join(" ")} services={data.services} prescriptions={r.prescriptions} />
                 ) : (
                   <p className="text-sm text-muted">Dokumentieren ist nur für Behandler:innen möglich.</p>
                 )}

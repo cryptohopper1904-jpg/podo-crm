@@ -69,6 +69,17 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
       ).rows[0].id as string,
     );
 
+  /** Paket B: alle Behandlungen einer Verordnung mit Papier-Vermerk bestätigen (sonst nicht abrechnungsreif) */
+  const signAll = (prescriptionId: string) =>
+    fx.asOrg(org, (c) =>
+      c.query(
+        `insert into treatment_signatures (organization_id, record_id, patient_id, prescription_id, kind, created_by)
+         select t.organization_id, t.id, t.patient_id, t.prescription_id, 'paper', $2 from treatment_records t
+          where t.prescription_id = $1 and not exists (select 1 from treatment_signatures s where s.record_id = t.id)`,
+        [prescriptionId, user],
+      ),
+    );
+
   /** vergangene Behandlung direkt anlegen (insertTreatmentRecord bucht immer „jetzt“) */
   const pastRecord = (prescriptionId: string, day: string, p = patient) =>
     fx.asOrg(org, (c) =>
@@ -137,6 +148,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     await dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: patient, prescriptionId: id, findings: "o. B.", servicesText: "x" }));
     // Befreiung für heute erfassen → 10-%-Anteil und Gebühr entfallen
     expect(await exemptions.addCopaymentExemption(auth, { patientId: patient, validFrom: today, validTo: `${today.slice(0, 4)}-12-31`, insurerName: "Beispiel-BKK", insurerIk: "109911114", note: null })).toEqual({ ok: true });
+    await signAll(id);
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: patient, to: "billing_ready" })).toEqual({ ok: true });
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select remedy_cost_cents, copayment_cents, price_snapshot from prescriptions where id = $1", [id])).rows);
     const expected = (await import("@/lib/rules/podologie-verguetung")).priceFor("78020", today)!.cents;
@@ -238,6 +250,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     const id = await vo({ issuedAt: today, units: 1 });
     await fx.asOrg(org, (c) => c.query(`update prescriptions set positions = '[{"label":"Behandlung ohne Positionsnummer","units":1}]' where id = $1`, [id]));
     await dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: patient, prescriptionId: id, findings: "o. B.", servicesText: "x" }));
+    await signAll(id);
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: patient, to: "billing_ready" })).toMatchObject({ error: expect.stringMatching(/Preis/) });
     expect((await status(id)).status).toBe("completed");
   });
@@ -382,27 +395,24 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     }
   });
 
-  it("Runde 3 V-1/B2: „Zuzahlung erhalten“ höchstens bis zu den Heilmittelkosten; zu große Eingaben → Fehler statt 500", async () => {
-    const id = await vo({ issuedAt: today, units: 1 }); // 1 × 78020 → Kosten laut Anlage 2 (Schätzung)
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 6000 })).toEqual({ error: expect.stringMatching(/höher als die Heilmittelkosten/) });
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1_000_001 })).toEqual({ error: "Betrag ist zu groß." });
-    // ohne bekannte Kosten (keine Positionsnummer): feste Grenze 10.000 €
-    const free = await vo({ issuedAt: today, units: 1 });
-    await fx.asOrg(org, (c) => c.query(`update prescriptions set positions = '[{"label":"ohne Nummer","units":1}]' where id = $1`, [free]));
-    expect(await presc.setCopaymentPaid(auth, { id: free, patientId: patient, paid: true, amountCents: 1_000_000 })).not.toHaveProperty("error");
-    // Server-Action: riesige Eingaben werden zur Fehlermeldung (kein integer out of range)
-    const { copaymentPaidAction } = await import("@/app/(app)/kunden/[id]/verordnungen/actions");
+  it("Paket B: neuer Altvermerk „Zuzahlung erhalten“ nicht mehr möglich; Server-Action ohne 500 bei Unsinn", async () => {
+    const id = await vo({ issuedAt: today, units: 1 });
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1000 })).toEqual({ error: presc.COPAYMENT_LEGACY_BLOCKED });
+    // Server-Action der Quittung: riesige/ungültige Eingaben werden zur Fehlermeldung (kein integer out of range)
+    const { copaymentReceiptAction } = await import("@/app/(app)/kunden/[id]/verordnungen/actions");
     const form = (amount: string) => {
       const f = new FormData();
-      for (const [k, v] of Object.entries({ id, patientId: patient, paid: "1", amount, method: "cash" })) f.set(k, v);
+      for (const [k, v] of Object.entries({ prescriptionId: id, patientId: patient, amount, method: "cash" })) f.set(k, v);
       return f;
     };
-    expect(await copaymentPaidAction(undefined, form("21474836,48"))).toEqual({ error: "Betrag ist zu groß." });
-    expect(await copaymentPaidAction(undefined, form("99999999"))).toEqual({ error: "Betrag ist zu groß." });
-    expect(await copaymentPaidAction(undefined, form("12 50"))).toHaveProperty("error");
-    expect(await copaymentPaidAction(undefined, form("x".repeat(21)))).toHaveProperty("error");
-    const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_at from prescriptions where id = $1", [id])).rows);
-    expect(row.copayment_paid_at).toBeNull();
+    expect(await copaymentReceiptAction(undefined, form("21474836,48"))).toEqual({ error: "Betrag ist zu groß." });
+    expect(await copaymentReceiptAction(undefined, form("99999999"))).toEqual({ error: "Betrag ist zu groß." });
+    expect(await copaymentReceiptAction(undefined, form("12 50"))).toHaveProperty("error");
+    expect(await copaymentReceiptAction(undefined, form("x".repeat(21)))).toHaveProperty("error");
+    // höher als die Heilmittelkosten (1 × 78020)
+    expect(await copaymentReceiptAction(undefined, form("60,00"))).toEqual({ error: expect.stringMatching(/höher als die Heilmittelkosten/) });
+    const [row] = await fx.asOrg(org, async (c) => (await c.query("select count(*)::int as n from invoices where prescription_id = $1", [id])).rows);
+    expect(row.n).toBe(0);
   });
 
   it("Runde 3 H-2: doppelte Positionen mit negativer Zeile werden abgelehnt, nicht verrechnet", async () => {
@@ -431,6 +441,7 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: p, to: "active", interruptionNote: "Beginn war rechtzeitig, Doku nachgetragen" })).toEqual({ ok: true });
     await dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: p, prescriptionId: id, findings: "o. B.", servicesText: "x" }));
     expect((await status(id)).status).toBe("completed");
+    await signAll(id);
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: p, to: "billing_ready" })).toEqual({ ok: true });
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select price_snapshot from prescriptions where id = $1", [id])).rows);
     expect(row.price_snapshot.lines.map((l: { units: number }) => l.units)).toEqual([2, 2]);
@@ -465,6 +476,9 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
   it("S1: abgerechnete Verordnung unveränderbar (Trigger), „Zuzahlung erhalten“ mit Betrag/Zahlungsart bleibt möglich; alter Snapshot im Protokoll", async () => {
     const id = await vo({ issuedAt: today, units: 1 });
     await dbm.withOrg(org, (tx) => records.insertTreatmentRecord(tx, { org, userId: user, role: "owner" }, { patientId: patient, prescriptionId: id, findings: "o. B.", servicesText: "x" }));
+    // Paket B: ohne Unterschrift nicht abrechnungsreif
+    expect(await presc.changePrescriptionStatus(auth, { id, patientId: patient, to: "billing_ready" })).toMatchObject({ error: expect.stringMatching(/keine Unterschrift/) });
+    await signAll(id);
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: patient, to: "billing_ready" })).toEqual({ ok: true });
     vi.mocked(audit).mockClear();
     expect(await presc.changePrescriptionStatus(auth, { id, patientId: patient, to: "completed" })).toEqual({ ok: true });
@@ -474,10 +488,11 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     expect("id" in batch).toBe(true);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set copayment_cents = 0 where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
     await expect(fx.asOrg(org, (c) => c.query("update prescriptions set status = 'completed' where id = $1", [id]))).rejects.toThrow(/unveränderbar/);
-    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: true, amountCents: 1506, method: "card" })).toEqual({ warning: "Restbetrag 0,13 € offen." });
+    // Altvermerk (vor Paket B) darf auch nach „abgerechnet“ zurückgesetzt werden (Trigger erlaubt copayment_paid_*)
+    await fx.asOrg(org, (c) => c.query("update prescriptions set copayment_paid_at = now(), copayment_paid_cents = 1506, copayment_paid_method = 'card' where id = $1", [id]));
+    expect(await presc.setCopaymentPaid(auth, { id, patientId: patient, paid: false })).toEqual({});
     const [row] = await fx.asOrg(org, async (c) => (await c.query("select copayment_paid_cents, copayment_paid_method, copayment_paid_at from prescriptions where id = $1", [id])).rows);
-    expect(row).toMatchObject({ copayment_paid_cents: 1506, copayment_paid_method: "card" });
-    expect(row.copayment_paid_at).not.toBeNull();
+    expect(row).toMatchObject({ copayment_paid_cents: null, copayment_paid_method: null, copayment_paid_at: null });
     // Export: Befreiung laut Snapshot (Person ist volljährig, keine Bescheinigung) + Kreuz der VO in eigener Spalte
     const exp = await presc.billingBatchExport(auth, (batch as { id: string }).id);
     const header = exp!.lines[0] as string[];

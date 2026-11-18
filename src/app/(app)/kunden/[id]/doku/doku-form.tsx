@@ -8,6 +8,7 @@ import type { FootPoint } from "@/db/schema";
 import { FootFindings } from "@/components/foot3d";
 import { serializeFootPoints } from "@/lib/foot3d";
 import { Badge, Button, Card, Checkbox, Field, FormActions, FormError, Input, Select, Textarea, cx } from "@/components/ui";
+import { SignatureField } from "@/components/signature-field";
 import { saveTreatmentAction, type DokuFormState } from "./actions";
 
 type Service = { id: string; code: string; name: string };
@@ -34,6 +35,7 @@ export function DokuForm({
   voiceEnabled,
   prescriptions = [],
   defaultPrescriptionId,
+  patientName = "",
 }: {
   patientId: string;
   appointmentId?: string;
@@ -43,6 +45,8 @@ export function DokuForm({
   /** buchbare Verordnungen (open/active mit Resteinheiten) */
   prescriptions?: { id: string; label: string; remaining: number; warning: string | null; deviationText?: string | null }[];
   defaultPrescriptionId?: string | null;
+  /** Vorbelegung „Name der unterschreibenden Person“ (Leistungsnachweis) */
+  patientName?: string;
 }) {
   const [state, action, pending] = useActionState<DokuFormState, FormData>(saveTreatmentAction, undefined);
   const [points, setPoints] = useState<FootPoint[]>([]);
@@ -160,6 +164,11 @@ export function DokuForm({
             >
               <Textarea name="frequencyDeviationNote" rows={2} minLength={5} maxLength={500} required placeholder="z. B. Absprache mit Dr. … am …: Termin wegen Krankenhausaufenthalt verschoben" />
             </Field>
+          ) : null}
+          {selectedVo ? (
+            <div className="mt-4 border-t border-border pt-4">
+              <SignatureField key={prescriptionId} patientName={patientName} />
+            </div>
           ) : null}
         </Card>
       ) : null}

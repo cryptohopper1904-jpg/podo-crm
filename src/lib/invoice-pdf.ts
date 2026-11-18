@@ -42,6 +42,7 @@ import {
 import { type InvoiceBookingLink } from "./practice-documents";
 import { TSE_TEST_NOTICE, tseLines, type FiscalInfo } from "./tse-receipt";
 import { externalRegisterNote } from "./kasse/model";
+import { COPAYMENT_LEGAL_NOTE } from "./rules/copayment";
 import {
   A4,
   CONT_TOP,
@@ -472,7 +473,9 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   // ── Hinweise ──
   const giro = !data.cancellation && isValidIban(o.iban) ? invoicePaymentQr(inv, o) : null;
   const notes: { t: string; strong?: boolean }[] = [];
-  if (o.smallBusiness) notes.push({ t: data.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY });
+  // Zuzahlungsquittung: gesetzliche Zuzahlung ohne Umsatzsteuerausweis (§ 32 Abs. 2 / § 61 SGB V)
+  if (inv.kind === "copayment") notes.push({ t: COPAYMENT_LEGAL_NOTE });
+  else if (o.smallBusiness) notes.push({ t: data.smallBusinessNote ?? NOTE_SMALL_BUSINESS_LEGACY });
   if (hasExemptNote(o, inv, lines)) notes.push({ t: vatExemptNote(lines) });
   if (inv.kind === "no_show_fee") notes.push({ t: NOTE_NO_SHOW });
   if (inv.kind === "deposit") notes.push({ t: NOTE_DEPOSIT });

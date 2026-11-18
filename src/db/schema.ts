@@ -65,8 +65,10 @@ export const appointmentSourceEnum = pgEnum("appointment_source", [
 /**
  * deposit = Quittung über eine Anzahlung (z. B. bar beim Termin), die später auf die Sammelrechnung der Person
  * angerechnet wird (invoices.collective_invoice_id). Kein eigener Umsatz neben der Sammelrechnung.
+ * copayment = Zuzahlungsquittung zu einer GKV-Verordnung (§ 32 Abs. 2 / § 61 SGB V, invoices.prescription_id) –
+ * sofort ausgestellt und bezahlt, Zahlung über denselben Kassen-/TSE-Weg wie jede Quittung (Migration 0064).
  */
-export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee", "deposit"]);
+export const invoiceKindEnum = pgEnum("invoice_kind", ["invoice", "receipt", "collective", "credit_note", "no_show_fee", "deposit", "copayment"]);
 export const invoiceStatusEnum = pgEnum("invoice_status", [
   "draft",
   "issued",
@@ -916,6 +918,45 @@ export const treatmentRecords = pgTable(
   ],
 );
 
+/**
+ * Bestätigung der versicherten Person je Behandlung (Leistungsnachweis, Vertrag § 125 SGB V Podologie / Anlage 3
+ * Buchst. o): Unterschrift auf dem Gerät (PNG, verschlüsselt in der Dateiablage src/lib/storage.ts – nie als Blob in
+ * der DB) mit Name und Rolle der unterschreibenden Person, oder bewusst gesetzter Vermerk „Unterschrift auf der
+ * Papier-Verordnung (Rückseite) erfasst“. Je Behandlungseintrag höchstens einmal; append-only (Trigger, Migration 0064).
+ */
+export const treatmentSignatures = pgTable(
+  "treatment_signatures",
+  {
+    id: id(),
+    organizationId: orgId(),
+    recordId: uuid("record_id")
+      .notNull()
+      .references(() => treatmentRecords.id, { onDelete: "restrict" }),
+    patientId: uuid("patient_id")
+      .notNull()
+      .references(() => patients.id, { onDelete: "restrict" }),
+    prescriptionId: uuid("prescription_id").references(() => prescriptions.id),
+    /** device = auf dem Gerät unterschrieben, paper = Unterschrift auf der Papier-Verordnung (Rückseite) */
+    kind: text("kind").$type<"device" | "paper">().notNull(),
+    signerName: text("signer_name"),
+    /** insured = Versicherte:r, caregiver = Betreuungsperson, relative = Angehörige:r */
+    signerRole: text("signer_role").$type<"insured" | "caregiver" | "relative">(),
+    storageKey: text("storage_key"),
+    mime: text("mime"),
+    sizeBytes: integer("size_bytes"),
+    sha256: text("sha256"),
+    signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("treatment_signatures_record").on(t.recordId),
+    index("treatment_signatures_org_prescription").on(t.organizationId, t.prescriptionId),
+  ],
+);
+
 export const recordAddenda = pgTable("record_addenda", {
   id: id(),
   organizationId: orgId(),
@@ -1022,6 +1063,8 @@ export const invoices = pgTable(
     cancelsInvoiceId: uuid("cancels_invoice_id"),
     /** Anzahlung (kind = deposit): Sammelrechnung/Rechnung, auf die sie angerechnet wurde (null = noch offen) */
     collectiveInvoiceId: uuid("collective_invoice_id"),
+    /** Zuzahlungsquittung (kind = copayment): Verordnung, deren Zuzahlung quittiert wird (Migration 0064) */
+    prescriptionId: uuid("prescription_id").references(() => prescriptions.id),
     /** crm | excel-import | … */
     source: text("source").notNull().default("crm"),
     externalRef: text("external_ref"),
@@ -1049,6 +1092,7 @@ export const invoices = pgTable(
     index("invoices_org_collective").on(t.organizationId, t.collectiveInvoiceId),
     /** Auswertung nach Rechnungsdatum */
     index("invoices_org_issued").on(t.organizationId, t.issuedAt),
+    index("invoices_org_prescription").on(t.organizationId, t.prescriptionId),
   ],
 );
 
