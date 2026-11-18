@@ -497,10 +497,10 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     } finally {
       c.release();
     }
-    // B löscht die eigene Person; die FK-Aktion setzt patient_id im A-Termin auf NULL – ausgelöst im Kontext von B.
-    // Der Trigger braucht dafür keinen Lookup (NULL, Standort unverändert) und lehnt deshalb auch nicht wegen des
-    // fremden Kontexts ab.
-    expect(await pgCode(f.asOrg(b.org, (cl) => cl.query("delete from patients where id = $1", [gone])))).toBeNull();
+    // B löscht die eigene Person (über podo_delete_patient – die App-Rolle hat kein DELETE auf patients, 0067); die
+    // FK-Aktion setzt patient_id im A-Termin auf NULL – ausgelöst im Kontext von B. Der Trigger braucht dafür keinen
+    // Lookup (NULL, Standort unverändert) und lehnt deshalb auch nicht wegen des fremden Kontexts ab.
+    expect(await pgCode(f.asOrg(b.org, (cl) => cl.query("select podo_delete_patient($1::uuid)", [gone])))).toBeNull();
     const row = await f.asOrg(a.org, async (cl) => (await cl.query("select patient_id, location_id from appointments where id = $1", [legacy])).rows[0]);
     expect(row).toEqual({ patient_id: null, location_id: a.location });
     // Orakel-Sperre bleibt: sobald ein Lookup nötig wäre, wird eine Zeile der anderen Praxis ohne Lookup abgelehnt

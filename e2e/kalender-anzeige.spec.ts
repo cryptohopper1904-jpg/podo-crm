@@ -45,7 +45,8 @@ async function resetPrefs() {
 async function cleanup() {
   await asOrg(async (c) => {
     await c.query("delete from appointments where organization_id = $1 and title like 'E2E Anzeige%'", [org]);
-    await c.query("delete from patients where organization_id = $1 and last_name = 'E2E-Anzeige'", [org]);
+    // Personen nur über podo_delete_patient (App-Rolle ohne DELETE auf patients, Migration 0067)
+    await c.query("select podo_delete_patient(id) from patients where organization_id = $1 and last_name = 'E2E-Anzeige'", [org]);
   });
 }
 
