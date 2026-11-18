@@ -295,7 +295,7 @@ export default async function PatientPrescriptionsPage(props: PageProps<"/kunden
                 {vo.dates.length ? <p className="mt-3 text-xs text-muted">Behandlungstage: {vo.dates.map((d) => dateDe(d)).join(", ")}</p> : null}
                 {canWrite ? (
                   <div className="mt-4 flex flex-wrap items-start gap-3 border-t border-border pt-4">
-                    <StatusControls id={vo.id} patientId={id} status={vo.status as PrescriptionStatus} unitsUsed={ev.unitsUsed} units={vo.units} />
+                    <StatusControls id={vo.id} patientId={id} status={vo.status as PrescriptionStatus} unitsUsed={ev.unitsUsed} units={vo.units} openCorrection={vo.corrections.some((c) => !c.resolvedAt)} />
                     {(vo.status === "open" && vo.dates.length === 0) || vo.status === "correction_needed" ? <LinkButton href={`/kunden/${id}/verordnungen?bearbeiten=${vo.id}`} variant="ghost" className="h-10 text-sm">Bearbeiten</LinkButton> : null}
                   </div>
                 ) : null}

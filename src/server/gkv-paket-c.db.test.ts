@@ -18,6 +18,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
   let gb: typeof import("./gkv-billing");
   let del: typeof import("./patient-deletion");
   let dbm: typeof import("@/db");
+  let g302: typeof import("./gkv302-export");
   let today: string;
 
   beforeAll(async () => {
@@ -26,6 +27,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     gb = await import("./gkv-billing");
     del = await import("./patient-deletion");
     dbm = await import("@/db");
+    g302 = await import("./gkv302-export");
     today = (await import("@/lib/format")).berlinDateIso();
   });
   afterAll(async () => {
@@ -101,7 +103,14 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
       if ("error" in batch) throw new Error(batch.error);
       return { id, batchId: batch.id };
     };
-    return { org, user, patient, auth, authWith, q, vo, past, ready, billed };
+    /** Formular-Eingabe der Verordnung aus vo() (für savePrescription im Korrekturstatus) */
+    const formInput = (id: string, icd10 = "E11.74") =>
+      presc.prescriptionInput.parse({
+        id, patientId: patient, issuedAt: addDaysIso(today, -30), diagnosisGroup: "DF", units: "2", icd10, doctorLanr: "123456601", doctorBsnr: "123456789",
+        insurerIk: "109911114", insuranceNumber: "A000500015", insuredStatus: "1", leitsymptomatik: "c", doctorSigned: "on", frequencyPerWeek: "1x alle 4-6 Wochen", doctorName: "Dr. Beispiel",
+        positions: JSON.stringify([{ position: "78020", label: "groß", units: 2 }]),
+      });
+    return { org, user, patient, auth, authWith, q, vo, past, ready, billed, formInput };
   };
 
   it("C1: Kennzeichen Verordnungsart – Bestand NULL sperrt „abrechnungsreif“ und den Lauf; Bestätigung mit Person/Zeit; nie 05", async () => {
@@ -191,7 +200,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const open = await gb.listDeductions(w.auth, { statuses: ["open", "objected"] });
     expect(open).toHaveLength(0);
     expect(await gb.listDeductions(w.auth)).toEqual([expect.objectContaining({ id: created.id, amountCents: 1500, status: "accepted", reasonCode: "R12", patient: "Erika Musterfrau" })]);
-    expect(await gb.updateDeduction(w.auth, { id: created.id, status: "done" })).toEqual({ ok: true });
+    expect(await gb.updateDeduction(w.auth, { id: created.id, status: "done", outcome: "upheld" })).toEqual({ ok: true });
     expect(await gb.updateDeduction(w.auth, { id: created.id, status: "open" })).toEqual({ error: expect.stringMatching(/erledigt/) });
     await expect(w.q("update gkv_deductions set note = 'x' where id = $1", [created.id])).rejects.toThrow(/erledigt/);
     // nie löschen: App-Rolle ohne DELETE bzw. Trigger
@@ -208,7 +217,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const ded = await gb.createDeduction(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 3555, reason: "ICD passt nicht", deductedOn: today });
     if ("error" in ded) throw new Error(ded.error);
     // ohne Vermerk: abgerechnete Verordnung bleibt gesperrt – auch der Statuswechsel
-    await expect(w.q("update prescriptions set status = 'correction_needed' where id = $1", [id])).rejects.toThrow(/unveränderbar/);
+    await expect(w.q("update prescriptions set status = 'correction_needed' where id = $1", [id])).rejects.toThrow(/nur mit offenem Korrekturvermerk/);
     await expect(w.q("update prescriptions set icd10 = 'E11.40' where id = $1", [id])).rejects.toThrow(/unveränderbar/);
     expect(gb.correctionInput.safeParse({ prescriptionId: id, patientId: w.patient, reason: "x" }).success).toBe(false);
     expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "correction_needed" })).toEqual({ error: expect.stringMatching(/nicht erlaubt/) });
@@ -283,5 +292,166 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const facts = await del.retentionFacts(w.org, w.patient);
     expect(facts!.lastPrescriptionBillingAt).toBeInstanceOf(Date);
     await expect(w.q("select podo_delete_patient($1)", [w.patient])).rejects.toThrow(/Aufbewahrungspflichtige Daten/);
+  });
+  describe("Review-Runde 1", () => {
+    it("R1-1: Stand der Erstabrechnung (original_row) vom Trigger; geänderte Verordnung nicht ohne Neuabrechnung; Audit mit Feldnamen", async () => {
+      const w = await world();
+      const { id, batchId } = await w.billed();
+      const [before] = await w.q<{ j: Record<string, unknown> }>("select to_jsonb(p) as j from prescriptions p where id = $1", [id]);
+      // original_row setzt der Trigger – ein Wert der Anwendung wird überschrieben
+      await w.q("insert into prescription_corrections (organization_id, prescription_id, patient_id, reason, created_by, original_row) values ($1,$2,$3,'Testvermerk',$4,'{\"icd10\":\"X\"}')", [w.org, id, w.patient, w.user]);
+      const [c] = await w.q<{ id: string; original_row: Record<string, unknown> }>("select id, original_row from prescription_corrections where prescription_id = $1", [id]);
+      expect(c.original_row).toEqual(before.j);
+      await expect(w.q("update prescription_corrections set original_row = '{}' where id = $1", [c.id])).rejects.toThrow(/nur abgeschlossen/);
+      await w.q("update prescriptions set status = 'correction_needed' where id = $1", [id]);
+
+      // ICD im Korrekturstatus ändern → Audit mit Feldnamen, ohne Werte
+      expect(await presc.savePrescription(w.auth, w.formInput(id, "E11.40"))).toMatchObject({ id });
+      const [upd] = await w.q<{ meta: { correction?: boolean; changedFields?: string[] } }>("select meta from audit_log where organization_id = $1 and action = 'prescription.update' and entity_id = $2 order by id desc limit 1", [w.org, id]);
+      expect(upd.meta).toMatchObject({ correction: true, changedFields: ["icd10"] });
+      expect(JSON.stringify(upd.meta)).not.toMatch(/E11/);
+      // ohne Neuabrechnung abschließen → Fehler, Vermerk bleibt offen, Status bleibt
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ error: "Geänderte Verordnung muss neu abgerechnet werden." });
+      const [st] = await w.q<{ status: string; open: number }>("select p.status, (select count(*)::int from prescription_corrections c where c.prescription_id = p.id and c.resolved_at is null) as open from prescriptions p where p.id = $1", [id]);
+      expect(st).toEqual({ status: "correction_needed", open: 1 });
+      // DB: auch direkt nicht zurück auf „abgerechnet“ – weder ohne Abschluss noch mit Abschluss, solange geändert
+      await expect(w.q("update prescriptions set status = 'billed' where id = $1", [id])).rejects.toThrow(/ohne Neuabrechnung abschließen/);
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          await cl.query("update prescription_corrections set resolution = 'no_rebill', resolved_at = now(), resolved_by = $2 where id = $1", [c.id, w.user]);
+          await cl.query("update prescriptions set status = 'billed' where id = $1", [id]);
+        }),
+      ).rejects.toThrow(/Geänderte Verordnung muss neu abgerechnet werden/);
+      // Abschluss in einem früheren Vorgang zählt nicht (resolved_at = now() im selben Vorgang)
+      await expect(
+        fx.asOrg(w.org, async (cl) => {
+          await cl.query("update prescription_corrections set resolution = 'no_rebill', resolved_at = now() - interval '1 minute', resolved_by = $2 where id = $1", [c.id, w.user]);
+          await cl.query("update prescriptions set status = 'billed' where id = $1", [id]);
+        }),
+      ).rejects.toThrow(/ohne Neuabrechnung abschließen/);
+
+      // zurückkorrigieren auf den Stand der Erstabrechnung → ohne Neuabrechnung möglich
+      expect(await presc.savePrescription(w.auth, w.formInput(id, "E11.74"))).toMatchObject({ id });
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: id, patientId: w.patient, note: "doch richtig" })).toEqual({ ok: true });
+      const [after] = await w.q<{ status: string; billing_batch_id: string; icd10: string }>("select status, billing_batch_id, icd10 from prescriptions where id = $1", [id]);
+      expect(after).toEqual({ status: "billed", billing_batch_id: batchId, icd10: "E11.74" });
+    });
+
+    it("R1-1/R1-4: unverändert über „abrechnungsreif“ und zurück → ohne Neuabrechnung; Snapshot der Erstabrechnung wiederhergestellt", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const [orig] = await w.q<{ price_snapshot: { computedOn: string }; remedy_cost_cents: number; copayment_cents: number }>("select price_snapshot, remedy_cost_cents, copayment_cents from prescriptions where id = $1", [id]);
+      // Snapshot der Erstabrechnung künstlich „älter“ machen, damit die Neuberechnung sichtbar abweicht
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Absetzung prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      // ohne offenen Vermerk kein Rückweg aus „abrechnungsreif“ (normale Verordnung)
+      const other = await w.ready();
+      expect(await presc.changePrescriptionStatus(w.auth, { id: other, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      expect(await presc.changePrescriptionStatus(w.auth, { id: other, patientId: w.patient, to: "correction_needed" })).toEqual({ error: expect.stringMatching(/offenem Korrekturvermerk/) });
+      await expect(w.q("update prescriptions set status = 'correction_needed' where id = $1", [other])).rejects.toThrow(/nur mit offenem Korrekturvermerk/);
+      // mit offenem Vermerk: abrechnungsreif → zurück nach „Korrektur nötig“
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      await w.q("update prescriptions set price_snapshot = jsonb_set(price_snapshot, '{computedOn}', '\"2099-01-01\"'), remedy_cost_cents = remedy_cost_cents + 1 where id = $1", [id]);
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "correction_needed" })).toEqual({ ok: true });
+      expect(await gb.resolveCorrectionWithoutRebill(w.auth, { prescriptionId: id, patientId: w.patient, note: "Absetzung akzeptiert" })).toEqual({ ok: true });
+      const [now] = await w.q<{ status: string; price_snapshot: unknown; remedy_cost_cents: number; copayment_cents: number }>("select status, price_snapshot, remedy_cost_cents, copayment_cents from prescriptions where id = $1", [id]);
+      expect(now).toEqual({ status: "billed", price_snapshot: orig.price_snapshot, remedy_cost_cents: orig.remedy_cost_cents, copayment_cents: orig.copayment_cents });
+    });
+
+    it("R1-2/R1-3: alter Lauf (CSV und § 302) mit dem Stand der Erstabrechnung, je Verordnung einmal; Zeilensumme = Laufsumme", async () => {
+      const w = await world();
+      const { id, batchId } = await w.billed();
+      const second = await w.ready();
+      expect(await presc.changePrescriptionStatus(w.auth, { id: second, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      const [b] = await w.q<{ copayment_total_cents: number; remedy_total_cents: number }>("select copayment_total_cents, remedy_total_cents from billing_batches where id = $1", [batchId]);
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "ICD laut Kasse falsch" });
+      if ("error" in res) throw new Error(res.error);
+      // Korrektur: ICD und Einheiten der Position ändern (Zuzahlung/Heilmittelkosten ändern sich mit dem neuen Snapshot)
+      expect(await presc.savePrescription(w.auth, w.formInput(id, "E11.40"))).toMatchObject({ id });
+      await w.q("update prescriptions set copayment_cents = copayment_cents + 500 where id = $1", [id]);
+      const csv = async (batch: string) => {
+        const exp = await presc.billingBatchExport(w.auth, batch);
+        const header = exp!.lines[0] as string[];
+        return (exp!.lines.slice(1) as string[][]).map((l) => Object.fromEntries(header.map((h, i) => [h, l[i]])));
+      };
+      const cents = (v: string) => Math.round(Number(v.replace(",", ".")) * 100);
+      // offen: alter Lauf zeigt den Stand der Erstabrechnung
+      let old = await csv(batchId);
+      expect(old).toHaveLength(1);
+      expect(old[0]["ICD-10"]).toBe("E11.74");
+      expect(old[0]["Korrektur"]).toBe("Korrektur offen");
+      expect(cents(old[0]["Zuzahlung EUR"])).toBe(b.copayment_total_cents);
+      // § 302 „lauf“: Originalstand; „bereit“ enthält die Verordnung noch nicht (Korrektur nötig)
+      const lauf = await dbm.withOrg(w.org, (tx) => g302.ladeVerordnungen(tx, w.org, { art: "lauf", batchId }));
+      expect(lauf!.map((v) => [v.id, v.icd10])).toEqual([[id, "E11.74"]]);
+
+      // neu abrechnen im zweiten Lauf
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toMatchObject({ ok: true });
+      const bereit = await dbm.withOrg(w.org, (tx) => g302.ladeVerordnungen(tx, w.org, { art: "bereit" }));
+      expect(bereit!.find((v) => v.id === id)?.icd10).toBe("E11.40");
+      const batch2 = await presc.createBillingBatch(w.auth, [id, second], { partner: "manual" });
+      if ("error" in batch2) throw new Error(batch2.error);
+      old = await csv(batchId);
+      expect(old).toHaveLength(1);
+      expect(old[0]).toMatchObject({ "ICD-10": "E11.74", Korrektur: "in späterem Lauf neu abgerechnet" });
+      expect(cents(old[0]["Zuzahlung EUR"])).toBe(b.copayment_total_cents);
+      expect(cents(old[0]["Heilmittelkosten EUR"])).toBe(b.remedy_total_cents);
+      const lauf2 = await dbm.withOrg(w.org, (tx) => g302.ladeVerordnungen(tx, w.org, { art: "lauf", batchId }));
+      expect(lauf2!.map((v) => [v.id, v.icd10])).toEqual([[id, "E11.74"]]);
+      // neuer Lauf: korrigierte Fassung; Summe der Zeilen = Laufsumme
+      const neu = await csv(batch2.id);
+      const [b2] = await w.q<{ copayment_total_cents: number }>("select copayment_total_cents from billing_batches where id = $1", [batch2.id]);
+      expect(neu.find((r) => r["Verordnung-ID"] === id)!["ICD-10"]).toBe("E11.40");
+      expect(neu.reduce((s, r) => s + cents(r["Zuzahlung EUR"]), 0)).toBe(b2.copayment_total_cents);
+      const lauf3 = await dbm.withOrg(w.org, (tx) => g302.ladeVerordnungen(tx, w.org, { art: "lauf", batchId: batch2.id }));
+      expect(lauf3!.map((v) => v.id).sort()).toEqual([id, second].sort());
+      expect(lauf3!.find((v) => v.id === id)!.icd10).toBe("E11.40");
+    });
+
+    it("R1-5: Neuabrechnung mit geänderter Zuzahlung → Hinweis (nicht blockiert)", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Zuzahlung prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      // unverändert → kein Hinweis
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" })).toEqual({ ok: true });
+      expect(await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "correction_needed" })).toEqual({ ok: true });
+      // Person inzwischen befreit (Bescheinigung) → Zuzahlung 0 statt Erstabrechnung
+      await w.q(`update patients set copayment_exemptions = $2 where id = $1`, [w.patient, JSON.stringify([{ id: "e1", validFrom: addDaysIso(today, -365), validTo: addDaysIso(today, 365), insurerIk: "109911114" }])]);
+      const r = await presc.changePrescriptionStatus(w.auth, { id, patientId: w.patient, to: "billing_ready" });
+      expect(r).toEqual({ ok: true, warning: expect.stringMatching(/Zuzahlung ändert sich gegenüber der Erstabrechnung von .* auf 0,00 €/) });
+    });
+
+    it("R1-6: Absetzungen nur mit Kassenabrechnung (Feature)", async () => {
+      const w = await world();
+      const privat = { ...(w.auth as object), organization: { id: w.org, name: "T", slug: "t", smallBusiness: false, state: "BE", billingMode: "private_only" } } as never;
+      expect(await gb.listDeductions(privat)).toEqual({ error: expect.any(String) });
+    });
+
+    it("R1-9: Absetzung mit Kassenschreiben; „erledigt“ nur mit Ausgang (App und DB-CHECK)", async () => {
+      const w = await world();
+      const { id } = await w.billed();
+      const created = await gb.createDeduction(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 900, reason: "Frist", deductedOn: today, letterRef: "AZ 4711/26", letterDate: addDaysIso(today, -2) });
+      if ("error" in created) throw new Error(created.error);
+      expect(await gb.createDeduction(w.auth, { prescriptionId: id, patientId: w.patient, amountCents: 900, reason: "Frist", deductedOn: today, letterDate: addDaysIso(today, 2) })).toEqual({ error: expect.stringMatching(/Kassenschreibens liegt in der Zukunft/) });
+      expect(await gb.updateDeduction(w.auth, { id: created.id, status: "done" })).toEqual({ error: expect.stringMatching(/Ausgang/) });
+      await expect(w.q("update gkv_deductions set status = 'done' where id = $1", [created.id])).rejects.toThrow(/gkv_deductions_outcome_check/);
+      await expect(w.q("update gkv_deductions set outcome = 'reversed' where id = $1", [created.id])).rejects.toThrow(/gkv_deductions_outcome_check/);
+      await expect(w.q("update gkv_deductions set status = 'done', outcome = 'egal' where id = $1", [created.id])).rejects.toThrow(/gkv_deductions_outcome_check/);
+      expect(await gb.updateDeduction(w.auth, { id: created.id, status: "done", outcome: "reversed" })).toEqual({ ok: true });
+      const list = await gb.listDeductions(w.auth);
+      expect(list).toEqual([expect.objectContaining({ id: created.id, status: "done", outcome: "reversed", letterRef: "AZ 4711/26", letterDate: addDaysIso(today, -2) })]);
+    });
+
+    it("R1-10: Vermerk „erneut abgerechnet“ nur mit dem Lauf, der die Verordnung enthält", async () => {
+      const w = await world();
+      const { id, batchId } = await w.billed();
+      const res = await gb.markCorrectionNeeded(w.auth, { prescriptionId: id, patientId: w.patient, reason: "Absetzung prüfen" });
+      if ("error" in res) throw new Error(res.error);
+      const other = await w.billed();
+      await expect(w.q("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_batch_id = $2 where id = $1", [res.id, other.batchId])).rejects.toThrow(/enthält die Verordnung nicht/);
+      await expect(w.q("update prescription_corrections set resolution = 'rebilled', resolved_at = now(), resolved_batch_id = $2 where id = $1", [res.id, batchId])).rejects.toThrow(/enthält die Verordnung nicht/);
+      await expect(w.q("update prescription_corrections set resolution = 'no_rebill', resolved_at = now(), resolved_batch_id = $2 where id = $1", [res.id, batchId])).rejects.toThrow(/keinen neuen Lauf/);
+    });
   });
 });

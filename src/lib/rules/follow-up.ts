@@ -4,7 +4,12 @@
  * Anforderung vor. Keine Frist/Regel aus dem Vertrag – reiner Praxis-Hinweis (docs/GKV.md, Paket B).
  */
 
-const ENDED = new Set(["completed", "billing_ready", "billed"]);
+/**
+ * beendet: Behandlung abgeschlossen. „Korrektur nötig“ (GKV Paket C) gehört dazu – es ist eine abgerechnete Verordnung,
+ * an der nur die Abrechnung korrigiert wird (Absetzung/Rückläufer); weitere Behandlungen darauf gibt es nicht, also
+ * braucht es bei weiterem Bedarf wie bei „abgerechnet“ eine Folgeverordnung.
+ */
+const ENDED = new Set(["completed", "billing_ready", "billed", "correction_needed"]);
 const RUNNING = new Set(["open", "active"]);
 
 export type FollowUpInput = {

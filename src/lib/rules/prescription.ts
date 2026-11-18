@@ -167,7 +167,8 @@ const TRANSITIONS: Record<PrescriptionStatus, readonly PrescriptionStatus[]> = {
   // vorzeitig „abrechnungsreif“ nur mit Abbruch-Begründung (siehe canTransition)
   active: ["completed", "billing_ready", "expired", "cancelled"],
   completed: ["billing_ready"],
-  billing_ready: ["billed", "completed"],
+  // zurück nach „Korrektur nötig“ nur, solange der Korrekturvermerk offen ist (ctx.openCorrection, Trigger prüft dasselbe)
+  billing_ready: ["billed", "completed", "correction_needed"],
   // „abgerechnet“ → „Korrektur nötig“ nur über markCorrectionNeeded (Korrekturvermerk mit Begründung, src/server/gkv-billing.ts)
   billed: [],
   // nach der Korrektur erneut abrechnen (Preis-Snapshot neu, nächster Abrechnungslauf); ohne Neuabrechnung → resolveCorrection
@@ -183,9 +184,10 @@ export const NOTE_MIN = 5;
 export function canTransition(
   from: PrescriptionStatus,
   to: PrescriptionStatus,
-  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null; rulesVersion?: string | null } = {},
+  ctx: { unitsUsed?: number; units?: number; interruptionNote?: string | null; rulesVersion?: string | null; openCorrection?: boolean } = {},
 ): { ok: true } | { ok: false; reason: string } {
   if (!TRANSITIONS[from]?.includes(to)) return { ok: false, reason: `Statuswechsel ${STATUS_LABEL[from]} → ${STATUS_LABEL[to]} ist nicht erlaubt.` };
+  if (to === "correction_needed" && !ctx.openCorrection) return { ok: false, reason: "„Korrektur nötig“ gibt es nur mit offenem Korrekturvermerk (an der abgerechneten Verordnung)." };
   // „in Behandlung“ ohne erfasste Einheit gibt es nur bei Übernahmen/Altbestand (Beginn im Fremdsystem). Bei mit
   // PodoHero erfassten Verordnungen setzt erst die dokumentierte Einheit den Status (statusAfterUnit) – sonst ließe sich
   // die Beginnfrist per Statuswechsel umgehen (PR #111 Review-Runde 2, S-1).

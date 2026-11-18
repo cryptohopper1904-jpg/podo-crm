@@ -100,6 +100,13 @@ export function DeductionForm({ prescriptionId, patientId, today }: { prescripti
         <input type="date" name="deductedOn" required defaultValue={today} max={today} aria-label="Datum der Absetzung" className={inputCls} />
         <input name="reasonCode" maxLength={20} placeholder="Code (optional)" aria-label="Absetzungscode" className={`${inputCls} w-32`} />
         <input name="reason" required minLength={3} maxLength={500} placeholder="Grund der Absetzung" aria-label="Grund der Absetzung" className={`${inputCls} min-w-56 flex-1`} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input name="letterRef" maxLength={60} placeholder="Aktenzeichen Kassenschreiben (optional)" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-64`} />
+        <label className="flex items-center gap-1 text-xs text-muted">
+          Schreiben vom
+          <input type="date" name="letterDate" max={today} aria-label="Datum des Kassenschreibens" className={inputCls} />
+        </label>
         <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Absetzung erfassen"}</button>
       </div>
       <p className="text-xs text-muted">Grund ohne Gesundheitsangaben formulieren (z. B. „Unterschrift fehlt“, „Frist überschritten“).</p>

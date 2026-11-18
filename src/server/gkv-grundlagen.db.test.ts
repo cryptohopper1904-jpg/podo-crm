@@ -85,14 +85,29 @@ const MIGRATION = readdirSync(path.join(__dirname, "../../drizzle")).find((f) =>
     fx.asOrg(org, (c) =>
       c.query("insert into treatment_records (organization_id, patient_id, author_id, treated_at, prescription_id, hash) values ($1,$2,$3,$4,$5,$6)", [org, p, user, berlinToUtc(day, "10:00"), prescriptionId, `h-${Math.random()}`]),
     );
+  const dir = path.join(__dirname, "../../drizzle");
+  /** Migrationen (aufsteigend), die als jeweils neueste eine der in `sqlText` per CREATE OR REPLACE FUNCTION definierten Funktionen fassen */
+  const latestMigrationsDefining = (sqlText: string, self: string): string[] => {
+    const names = [...sqlText.matchAll(/CREATE OR REPLACE FUNCTION\s+(?:public\.)?([a-z_0-9]+)\s*\(/gi)].map((m) => m[1].toLowerCase());
+    const files = readdirSync(dir).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
+    const out = new Set<string>();
+    for (const name of new Set(names)) {
+      const re = new RegExp(`CREATE OR REPLACE FUNCTION\\s+(?:public\\.)?${name}\\s*\\(`, "i");
+      const newest = files.filter((f) => re.test(readFileSync(path.join(dir, f), "utf8"))).at(-1);
+      if (newest && newest !== self) out.add(newest);
+    }
+    return [...out].sort();
+  };
   const runMigration = async (suffix: string) => {
     const file = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith(suffix))!;
     const sql = readFileSync(path.join(__dirname, "../../drizzle", file), "utf8").split("--> statement-breakpoint");
     const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
-    // 0062 ersetzt podo_prescription_billed_lock und podo_delete_patient – danach die neueste Fassung (GKV Paket C, 0066,
-    // idempotent) wieder einspielen, damit parallel laufende Testdateien in der gemeinsamen DB den aktuellen Stand sehen
-    const latest = readdirSync(path.join(__dirname, "../../drizzle")).find((f) => f.endsWith("_gkv_paket_c.sql"))!;
-    const restore = readFileSync(path.join(__dirname, "../../drizzle", latest), "utf8").split("--> statement-breakpoint");
+    // Die alte Migration ersetzt Funktionen, die spätere Migrationen neu fassen (0062: podo_prescription_billed_lock,
+    // podo_delete_patient, …). Danach je Funktion die jeweils NEUESTE Migration, die sie definiert, wieder einspielen
+    // (alle Migrationen sind idempotent) – damit parallel laufende Testdateien in der gemeinsamen DB den aktuellen
+    // Stand sehen. Bestimmt aus den Dateien selbst, nicht über einen festen Dateinamen: eine künftige Migration, die
+    // eine der Funktionen ersetzt, wird automatisch berücksichtigt (Review Paket C R1-7).
+    const restore = latestMigrationsDefining(sql.join("\n"), file).flatMap((f) => readFileSync(path.join(dir, f), "utf8").split("--> statement-breakpoint"));
     try {
       for (let run = 0; run < 2; run++) for (const stmt of sql) if (stmt.trim()) await owner.query(stmt);
       for (const stmt of restore) if (stmt.trim()) await owner.query(stmt);

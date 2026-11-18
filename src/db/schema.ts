@@ -784,6 +784,12 @@ export const gkvDeductions = pgTable(
     /** open | accepted | objected | done */
     status: text("status").notNull().default("open"),
     note: text("note"),
+    /** Aktenzeichen des Kassenschreibens bzw. der Mitteilung (optional) */
+    letterRef: text("letter_ref"),
+    /** Datum des Kassenschreibens (optional) */
+    letterDate: date("letter_date"),
+    /** Ausgang bei „erledigt“ (Pflicht, DB-CHECK): upheld = Absetzung bleibt | reversed = Widerspruch erfolgreich */
+    outcome: text("outcome"),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),
@@ -821,6 +827,8 @@ export const prescriptionCorrections = pgTable(
     originalRemedyCostCents: integer("original_remedy_cost_cents"),
     originalCopaymentCents: integer("original_copayment_cents"),
     originalPriceSnapshot: jsonb("original_price_snapshot").$type<Record<string, unknown>>(),
+    /** vollständige Verordnungszeile beim Anlegen (to_jsonb, vom Trigger gesetzt, unveränderlich) – Export des alten Laufs, Prüfung „ohne Neuabrechnung“ */
+    originalRow: jsonb("original_row").$type<Record<string, unknown>>(),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),

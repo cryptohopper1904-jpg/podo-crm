@@ -71,6 +71,15 @@ export const DEDUCTION_STATUS_LABEL: Record<DeductionStatus, string> = {
 };
 export const isDeductionStatus = (v: unknown): v is DeductionStatus => typeof v === "string" && (DEDUCTION_STATUSES as readonly string[]).includes(v);
 
+/** Ausgang einer erledigten Absetzung (Pflicht bei „erledigt“, DB-CHECK gkv_deductions_outcome_check) */
+export const DEDUCTION_OUTCOMES = ["upheld", "reversed"] as const;
+export type DeductionOutcome = (typeof DEDUCTION_OUTCOMES)[number];
+export const DEDUCTION_OUTCOME_LABEL: Record<DeductionOutcome, string> = {
+  upheld: "Absetzung bleibt",
+  reversed: "Widerspruch erfolgreich",
+};
+export const isDeductionOutcome = (v: unknown): v is DeductionOutcome => typeof v === "string" && (DEDUCTION_OUTCOMES as readonly string[]).includes(v);
+
 /** erlaubte Statuswechsel (Trigger podo_gkv_deduction_guard: „erledigt“ ist abschließend) */
 const DEDUCTION_TRANSITIONS: Record<DeductionStatus, readonly DeductionStatus[]> = {
   open: ["accepted", "objected", "done"],
@@ -102,4 +111,33 @@ export function deductionTotals(rows: readonly { status: string; amountCents: nu
 /** Steuerzeichen/Zeilenumbrüche aus Freitexten entfernen (Grund, Notiz) */
 export function cleanText(v: string | null | undefined, max: number): string {
   return (v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+// ───────────────────────── Korrektur abgerechneter Verordnungen ─────────────────────────
+
+/**
+ * Spalten der Verordnung, die beim Vergleich mit dem Stand der Erstabrechnung (prescription_corrections.original_row)
+ * nicht als inhaltliche Änderung zählen: Status, Altvermerk Zuzahlung (auch an abgerechneten Verordnungen änderbar) und
+ * Bestätigungszeitpunkt/-person des Kennzeichens (jede Speicherung bestätigt neu). Gleiche Liste im Trigger
+ * podo_prescription_billed_lock (Migration 0066).
+ */
+export const CORRECTION_VOLATILE_KEYS = ["status", "copayment_paid_at", "copayment_paid_cents", "copayment_paid_method", "prescription_kind_confirmed_at", "prescription_kind_confirmed_by"] as const;
+/** abgeleitete Beträge (bei „abrechnungsreif“ neu berechnet) – bei „ohne Neuabrechnung“ aus der Erstabrechnung wiederhergestellt */
+export const CORRECTION_DERIVED_KEYS = ["price_snapshot", "remedy_cost_cents", "copayment_cents"] as const;
+
+const eur = (c: number) => `${(c / 100).toFixed(2).replace(".", ",")} €`;
+
+/**
+ * Hinweis bei Neuabrechnung nach Korrektur, wenn sich das Zuzahlungs-Soll ändert – gegenüber der Erstabrechnung und
+ * gegenüber schon quittierten Beträgen (gültige Zuzahlungsquittungen + Altvermerk). Nur Hinweis, keine Sperre: Erstattung
+ * bzw. Nachforderung entscheidet die Praxis (Storno/neue Quittung). null = nichts zu melden.
+ */
+export function rebillCopaymentHint(newCents: number | null, originalCents: number | null, receiptedCents: number): string | null {
+  const now = newCents ?? 0;
+  const parts: string[] = [];
+  if (originalCents !== null && originalCents !== now) parts.push(`Die Zuzahlung ändert sich gegenüber der Erstabrechnung von ${eur(originalCents)} auf ${eur(now)}.`);
+  if (receiptedCents > 0 && receiptedCents !== now) {
+    parts.push(receiptedCents > now ? `Quittiert sind ${eur(receiptedCents)} – ${eur(receiptedCents - now)} zu viel (Erstattung prüfen).` : `Quittiert sind ${eur(receiptedCents)} – ${eur(now - receiptedCents)} noch offen.`);
+  }
+  return parts.length ? parts.join(" ") : null;
 }
