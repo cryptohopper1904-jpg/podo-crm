@@ -16,7 +16,7 @@ export const KOTR_CACHE_GEWICHT_JE_BYTE = 10;
 /**
  * Struktur-Gewichte (Review-Runden 5/6, gemessen mit V8/Node 22, `heapUsed` nach GC): ein eingefrorenes Objekt/Array
  * belegt 75–215 Byte samt Eigenschaften; jede Zeichenkette mit mehr als einem Zeichen hat zusätzlich einen festen Kopf
- * (≈ 24 Byte, Einzelzeichen legt V8 nur einmal an). Ohne die Pauschale je Zeichenkette lag die Schätzung bei vielen
+ * (≈ 24 Byte; einzelne Latin-1-Zeichen legt V8 nur einmal an – bei UNOC/Latin-1 gibt es keine anderen). Ohne die Pauschale je Zeichenkette lag die Schätzung bei vielen
  * kurzen Werten (z. B. „ASP+ab+cd+ef+gh+ij'“) nur 1,0- bis 1,07-mal über dem Heap; mit ihr bleibt Spielraum für andere
  * V8-Versionen und den Dictionary-Modus.
  */

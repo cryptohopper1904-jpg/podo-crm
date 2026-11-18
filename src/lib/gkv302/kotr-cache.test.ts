@@ -26,7 +26,7 @@ describe("Cache zerlegter Kostenträgerdateien (Review-Runde 3)", () => {
     }).toThrow();
   });
 
-  it("begrenzt nach geschätztem Heap (Eingabe-Bytes × 10, LRU), nicht nach Anzahl", () => {
+  it("begrenzt nach geschätztem Heap (Struktur-Gewicht, mindestens Eingabe-Bytes × 10; LRU), nicht nach Anzahl", () => {
     expect(KOTR_CACHE_GEWICHT_JE_BYTE).toBe(10);
     // Gewicht eines Eintrags (Struktur-Gewicht, mindestens Eingabe × 10)
     const probe = new KotrCache(Number.MAX_SAFE_INTEGER);
