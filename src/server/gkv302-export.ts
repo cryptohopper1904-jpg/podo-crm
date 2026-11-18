@@ -23,7 +23,8 @@ import {
   type Testpaket,
 } from "@/lib/gkv302/direktabrechnung";
 import { ausLatin1 } from "@/lib/gkv302/edifact";
-import { KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang, type Kostentraegerdatei } from "@/lib/gkv302/kostentraeger";
+import { KotrCache } from "@/lib/gkv302/kotr-cache";
+import { KOTR_MAX_BYTES, KotrFehler, parseKostentraegerdatei, pruefeKotrDateiname, pruefeKotrUmfang } from "@/lib/gkv302/kostentraeger";
 import { createRateLimiter } from "@/lib/rate-limit";
 import { istGueltigesTarifkennzeichen } from "@/lib/gkv302/schluessel";
 import { aktivesKryptomodul, type KryptoStatus } from "@/lib/gkv302/sicherheit";
@@ -45,8 +46,8 @@ import { assertCan } from "./authz";
  * Kein Versand, keine Verschlüsselung: siehe src/lib/gkv302/sicherheit.ts.
  */
 
-/** Größte KOTR-Datei (die bundesweiten Dateien der AOK/BKK liegen deutlich darunter) */
-export const KOTR_MAX_BYTES = 8 * 1024 * 1024;
+/** Größte KOTR-Datei: 2 MB (größte gemessene echte Datei 214 KB), definiert in der Bibliothek */
+export { KOTR_MAX_BYTES } from "@/lib/gkv302/kostentraeger";
 /** höchstens so viele Kostenträgerdateien je Praxis (eine je Kassenart) */
 export const KOTR_MAX_DATEIEN = 12;
 /** Uploads je Praxis und 10 Minuten (Zerlegen kostet Rechenzeit; Review-Runde 2, AppSec H1) */
@@ -56,21 +57,8 @@ const kotrUploads = createRateLimiter({ windowMs: 10 * 60_000, max: KOTR_UPLOADS
 /** Speicherschlüssel aus settings nur verwenden, wenn er zur eigenen Praxis gehört (Review-Runde 2, AppSec H4) */
 const eigenerSchluessel = (org: string, key: string) => typeof key === "string" && key.startsWith(`${org}/`) && !key.includes("..");
 
-/** zerlegte Kostenträgerdateien je Prüfsumme (klein, LRU) – spart das erneute Zerlegen bei jedem Prüflauf */
-const kotrCache = new Map<string, Kostentraegerdatei>();
-const KOTR_CACHE_MAX = 16;
-function kotrAusCache(sha256: string, laden: () => Kostentraegerdatei): Kostentraegerdatei {
-  const treffer = kotrCache.get(sha256);
-  if (treffer) {
-    kotrCache.delete(sha256);
-    kotrCache.set(sha256, treffer);
-    return treffer;
-  }
-  const d = laden();
-  kotrCache.set(sha256, d);
-  while (kotrCache.size > KOTR_CACHE_MAX) kotrCache.delete(kotrCache.keys().next().value!);
-  return d;
-}
+/** zerlegte Kostenträgerdateien je Prüfsumme: LRU nach Bytes (≤ 32 MB), tief eingefroren (geteilt zwischen Praxen) */
+const kotrCache = new KotrCache();
 
 /** Support (Break-Glass) ändert keine Kostenträgerdateien – das entscheidet die Praxis (Review-Runde 2, AppSec H5) */
 function keinSupport(auth: AuthContext) {
@@ -262,7 +250,7 @@ async function ladeKotr(org: string, eintraege: KotrEintrag[]): Promise<{ dateie
       const buf = await readDecrypted(e.storageKey);
       // Prüfsumme des entschlüsselten Inhalts als Cache-Schlüssel (nicht der gespeicherte Wert aus settings)
       const sha = createHash("sha256").update(buf).digest("hex");
-      dateien.push({ datei: kotrAusCache(sha, () => parseKostentraegerdatei(ausLatin1(new Uint8Array(buf)))), kassenart: e.kassenart });
+      dateien.push({ datei: kotrCache.hole(sha, buf.length, () => parseKostentraegerdatei(ausLatin1(new Uint8Array(buf)))), kassenart: e.kassenart });
     } catch {
       hinweise.push(`Kostenträgerdatei ${e.dateiname} ist nicht lesbar – bitte erneut hochladen.`);
     }

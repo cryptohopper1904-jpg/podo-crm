@@ -34,6 +34,16 @@ describe("Rate-Limit", () => {
   });
 });
 
+describe("Rate-Limit: Speicher je Schlüssel begrenzt (Review-Runde 3)", () => {
+  it("abgelehnte Versuche wachsen nicht unbegrenzt (höchstens max + 1 Zeitstempel)", () => {
+    const l = createRateLimiter({ windowMs: 60_000, max: 3 });
+    for (let i = 0; i < 10_000; i++) l.limited("a", i);
+    expect(l.stored("a")).toBeLessThanOrEqual(4);
+    expect(l.exceeded("a", 10_000)).toBe(true);
+    expect(l.limited("a", 10_000 + 60_000)).toBe(false);
+  });
+});
+
 describe("Drosselung: IPv6 je /64", () => {
   it("Adressen desselben /64 teilen einen Schlüssel, IPv4 bleibt", () => {
     expect(ipKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:1:2::/64");

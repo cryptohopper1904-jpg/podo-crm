@@ -131,25 +131,44 @@ export function pruefeKotrDateiname(name: string): { kassenart: string; gueltigA
   return { kassenart: m[1].toUpperCase(), gueltigAb: m[2].toUpperCase(), jahr: m[3], nachtrag: Number(m[5]) };
 }
 
+/** Größte zulässige Kostenträgerdatei (Upload) in Byte; größte gemessene echte Datei: 214 KB (BN050526.KE0) */
+export const KOTR_MAX_BYTES = 2 * 1024 * 1024;
+
 /**
- * Obergrenzen für Kostenträgerdateien (Review-Runde 2, AppSec H1/H2). Echte Dateien liegen weit darunter (bundesweite
- * Dateien: wenige MB, einige zehntausend Segmente; Segmente haben höchstens ~15 Datenelemente).
+ * Obergrenzen vor dem Zerlegen (Review-Runden 2 und 3, AppSec H1). Ausgerichtet an sechs echten öffentlichen
+ * Kostenträgerdateien (Stand Q4/2026, Messung docs/GKV-302.md 7.1): höchstens 6 471 Segmente, 12 Datenelemente und
+ * 4 Gruppendatenelemente je Segment, 116 Zeichen je Segment, rund 63 000 Datenelemente gesamt. Die Grenzen lassen das
+ * Zehnfache Spielraum und halten das Zerlegen auch im ungünstigsten Fall unter 100 MB Heap (Test „schlimmste noch
+ * zulässige Eingabe“).
  */
-export const KOTR_GRENZEN: EdifactGrenzen = { maxSegmente: 200_000, maxElemente: 100, maxGruppen: 20, maxSegmentLaenge: 4_000, maxDatenelementeGesamt: 1_500_000 };
+export const KOTR_GRENZEN: EdifactGrenzen = { maxZeichen: KOTR_MAX_BYTES, maxSegmente: 80_000, maxElemente: 40, maxGruppen: 10, maxSegmentLaenge: 1_000, maxDatenelementeGesamt: 300_000 };
 
 export interface KotrUmfang {
   maxInstitutionen: number;
+  /** je Institution */
   maxVerknuepfungen: number;
   maxAnschriften: number;
+  /** je Segmentart (VKG, ASP, UEM, DFU) über die ganze Datei */
+  maxGesamt: number;
 }
-export const KOTR_UMFANG: KotrUmfang = { maxInstitutionen: 30_000, maxVerknuepfungen: 2_000, maxAnschriften: 50 };
+/** echte Höchstwerte: 365 Institutionen, 229 VKG je Institution, 6 183 VKG gesamt, 3 Anschriften je Institution */
+export const KOTR_UMFANG: KotrUmfang = { maxInstitutionen: 10_000, maxVerknuepfungen: 2_000, maxAnschriften: 50, maxGesamt: 50_000 };
 
-/** Inhaltliche Grenzen nach dem Zerlegen (Institutionen gesamt, Verknüpfungen/Anschriften je Institution) */
+/** Inhaltliche Grenzen nach dem Zerlegen (Institutionen, Verknüpfungen/Anschriften je Institution, Gesamtzahlen) */
 export function pruefeKotrUmfang(d: Kostentraegerdatei, g: KotrUmfang = KOTR_UMFANG): void {
   if (d.institutionen.length > g.maxInstitutionen) throw new KotrFehler(`Die Kostenträgerdatei hat zu viele Institutionen (${d.institutionen.length}, höchstens ${g.maxInstitutionen}).`);
+  const gesamt = { vkg: 0, asp: 0, uem: 0, dfu: 0 };
   for (const i of d.institutionen) {
     if (i.verknuepfungen.length > g.maxVerknuepfungen) throw new KotrFehler(`IK ${i.ik}: zu viele Verknüpfungen (${i.verknuepfungen.length}, höchstens ${g.maxVerknuepfungen}).`);
     if (i.anschriften.length > g.maxAnschriften) throw new KotrFehler(`IK ${i.ik}: zu viele Anschriften (${i.anschriften.length}, höchstens ${g.maxAnschriften}).`);
+    gesamt.vkg += i.verknuepfungen.length;
+    gesamt.asp += i.ansprechpartner.length;
+    gesamt.uem += i.uebermittlung.length;
+    for (const u of i.uebermittlung) gesamt.dfu += u.dfu.length;
+  }
+  const namen: Record<keyof typeof gesamt, string> = { vkg: "Verknüpfungen", asp: "Ansprechpartner", uem: "Übermittlungsangaben", dfu: "DFÜ-Angaben" };
+  for (const k of Object.keys(gesamt) as (keyof typeof gesamt)[]) {
+    if (gesamt[k] > g.maxGesamt) throw new KotrFehler(`Die Kostenträgerdatei hat zu viele ${namen[k]} insgesamt (${gesamt[k]}, höchstens ${g.maxGesamt}).`);
   }
 }
 

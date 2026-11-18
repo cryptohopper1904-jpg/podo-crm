@@ -68,7 +68,7 @@ export async function Gkv302Card({ org, readOnly, support }: { org: string; read
         <p className="mb-3 rounded-xl bg-info-soft px-4 py-3 text-sm text-info-soft-text">Noch keine Kostenträgerdatei hinterlegt – ohne sie lassen sich Kostenträger und Datenannahmestelle nicht ermitteln.</p>
       )}
       <ActionForm action={uploadKotrAction} submit="Hochladen" className="mt-3 flex flex-col gap-3">
-        <Field label="Kostenträgerdatei hochladen" hint="Textdatei nach Anhang 3 zur TA1, höchstens 8 MB. Wird geprüft (Format, Dateiname) und nie ausgeführt.">
+        <Field label="Kostenträgerdatei hochladen" hint="Textdatei nach Anhang 3 zur TA1, höchstens 2 MB. Wird geprüft (Format, Dateiname) und nie ausgeführt.">
           <input type="file" name="file" required className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface-2 file:px-4 file:font-semibold" />
         </Field>
       </ActionForm>
