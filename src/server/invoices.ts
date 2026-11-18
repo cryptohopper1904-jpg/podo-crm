@@ -48,7 +48,7 @@ import {
   vatPortion,
   voucherBalance,
 } from "@/lib/invoice-math";
-import { CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, IMPORTED_APPOINTMENT_NOT_BILLABLE, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
+import { accountingRemark, CREATABLE_KINDS, DEPOSIT_METHODS, DEPOSIT_PAST_ERROR, IMPORTED_APPOINTMENT_NOT_BILLABLE, INTERNAL_NOTE_PREFIX, INVOICE_KIND_LABEL, PAYMENT_METHODS, THERAPEUTIC_LABEL } from "@/lib/invoice-labels";
 import { inTreatmentSuffix, resolveProductVat, type VatRuleLine } from "@/lib/product-vat";
 import { bookSaleStock, lockProducts, ProductError, productsForInvoice, restoreSaleStock } from "./products";
 import { buildInvoiceSnapshot, readInvoiceSnapshot, smallBusinessNoteFor, withSnapshot } from "@/lib/invoice-snapshot";
@@ -1965,7 +1965,8 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
       totalGrossCents: groups.reduce((s, g) => s + g.grossCents, 0),
       totalTaxCents: groups.reduce((s, g) => s + vatPortion(g.grossCents, g.rate), 0),
       lines: groups.map((g) => ({ grossCents: g.grossCents, vatRate: g.rate })),
-      remark: `${inv.kind === "credit_note" ? "Stornorechnung" : inv.kind === "copayment" ? "Zuzahlungsquittung" : "Rechnung"} ${number}${receiptLines.length ? " (abzgl. angerechneter Quittungen)" : ""}`,
+      // Storno einer Zuzahlungsquittung: „Storno Zuzahlungsquittung …“ statt „Stornorechnung …“
+      remark: accountingRemark(inv.kind, number, original?.kind, receiptLines.length > 0),
       // TODO: Kontakt (upsertContact) und PDF-Belegbild übergeben, sobald PDF-Erzeugung vorhanden ist
     });
     externalId = res.externalId;

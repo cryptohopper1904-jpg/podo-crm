@@ -17,7 +17,7 @@ import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
 import { invoicePaymentQr, isValidIban } from "./epc-qr";
 import { dateDe, dateTimeDe, money } from "./format";
 import { computeTotals } from "./invoice-math";
-import { INVOICE_KIND_LABEL, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS_LEGACY, PAYMENT_METHOD_LABEL } from "./invoice-labels";
+import { INVOICE_KIND_LABEL, invoiceDocLabel, NOTE_DEPOSIT, NOTE_NO_SHOW, NOTE_SMALL_BUSINESS_LEGACY, PAYMENT_METHOD_LABEL } from "./invoice-labels";
 import {
   creditedReceiptsBlock,
   creditedReceiptsNote,
@@ -136,7 +136,7 @@ export type InvoicePdfData = {
   booking?: InvoiceBookingLink | null;
   /**
    * Neudruck einer stornierten Rechnung: Beleg wie ausgestellt mit deutlichem Vermerk „STORNIERT durch Stornorechnung
-   * Nr. … vom …“, ohne GiroCode (nichts mehr zu überweisen).
+   * Nr. … vom …“ (Zuzahlungsquittung: „STORNIERT durch Storno Nr. … vom …“), ohne GiroCode (nichts mehr zu überweisen).
    */
   cancellation?: { number: string | null; issuedAt: string | null } | null;
   /**
@@ -155,9 +155,12 @@ export type InvoicePdfData = {
 
 const STAMP_RED = rgb(0.75, 0.05, 0.05);
 
-/** Vermerk auf dem Neudruck einer stornierten Rechnung */
-export function cancellationStamp(c: { number: string | null; issuedAt: string | null }): string {
-  return `STORNIERT durch Stornorechnung Nr. ${c.number ?? "–"} vom ${dateDe(c.issuedAt)}`;
+/**
+ * Vermerk auf dem Neudruck einer stornierten Rechnung; `originalKind` = Belegart des stornierten Belegs – eine
+ * Zuzahlungsquittung wird durch ein „Storno“ storniert, nicht durch eine Stornorechnung.
+ */
+export function cancellationStamp(c: { number: string | null; issuedAt: string | null }, originalKind?: string | null): string {
+  return `STORNIERT durch ${originalKind === "copayment" ? "Storno" : "Stornorechnung"} Nr. ${c.number ?? "–"} vom ${dateDe(c.issuedAt)}`;
 }
 export const CANCELLATION_SUB = "Neudruck des ausgestellten Belegs – dieser Beleg ist ungültig und nicht mehr zu bezahlen.";
 
@@ -188,7 +191,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   const { regular, bold } = fonts;
   const safe = makeSafe(regular);
 
-  doc.setTitle(safe(invoiceTitle(inv)));
+  doc.setTitle(safe(invoiceTitle(inv, data.cancels?.kind)));
   doc.setAuthor(safe(o.legalName ?? o.name));
   doc.setCreator("PodoHero");
   doc.setProducer("PodoHero (pdf-lib)");
@@ -239,7 +242,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
 
   // ── Stornovermerk (Neudruck einer stornierten Rechnung) ──
   if (data.cancellation) {
-    const stamp = wrap(cancellationStamp(data.cancellation), width - 16, 12, bold);
+    const stamp = wrap(cancellationStamp(data.cancellation, inv.kind), width - 16, 12, bold);
     const sub = wrap(CANCELLATION_SUB, width - 16, 9);
     const h = stamp.length * 15 + sub.length * 11 + 12;
     page.drawRectangle({ x: ML, y: y - h, width, height: h, borderColor: STAMP_RED, borderWidth: 2 });
@@ -523,7 +526,7 @@ export async function renderInvoicePdf(input: InvoicePdfData): Promise<Uint8Arra
   }
 
   // ── Fußzeile (jede Seite) ──
-  const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  const kindLabel = inv.kind === "credit_note" ? invoiceDocLabel(inv.kind, data.cancels?.kind) : (INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung");
   drawFooters(doc, fonts, safe, o, inv.number ? `${kindLabel} Nr. ${inv.number}${data.cancellation ? " (STORNIERT)" : ""}` : `${kindLabel} – Entwurf`);
 
   return doc.save();

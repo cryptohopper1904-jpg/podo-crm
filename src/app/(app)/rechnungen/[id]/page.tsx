@@ -17,6 +17,7 @@ import { computeTotals } from "@/lib/invoice-math";
 import { cssString } from "@/lib/css-string";
 import {
   INVOICE_KIND_LABEL,
+  invoiceDocLabel,
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_TONE,
   NOTE_DEPOSIT,
@@ -112,7 +113,8 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
   const isDraft = inv.status === "draft" || !inv.number;
   /** Altbestand aus dem Import (Excel-Rechnungsmanager): nicht versenden, nicht an lexoffice (Buchhaltung L1/P1) */
   const imported = inv.source !== "crm";
-  const kindLabel = INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung";
+  // wie im PDF: Storno einer Zuzahlungsquittung heißt „Storno Zuzahlungsquittung“
+  const kindLabel = inv.kind === "credit_note" ? invoiceDocLabel(inv.kind, data.cancels?.kind) : (INVOICE_KIND_LABEL[inv.kind] ?? "Rechnung");
   const runningHead = inv.number ? `${kindLabel} Nr. ${inv.number}` : `${kindLabel} – Entwurf`;
   const totals = computeTotals(lines);
   const open = inv.totalCents - inv.paidCents;
@@ -345,7 +347,7 @@ export default async function InvoicePage(props: PageProps<"/rechnungen/[id]">) 
         ) : null}
         {cancelledOriginal ? (
           <div role="note" className="cancel-stamp mb-6 rounded border-2 border-danger px-3 py-2 text-danger">
-            <p className="text-base font-bold tracking-wide">{cancellationStamp({ number: data.cancelledBy?.number ?? null, issuedAt: data.cancelledBy?.issuedAt ?? null })}</p>
+            <p className="text-base font-bold tracking-wide">{cancellationStamp({ number: data.cancelledBy?.number ?? null, issuedAt: data.cancelledBy?.issuedAt ?? null }, inv.kind)}</p>
             <p className="text-sm">{CANCELLATION_SUB}</p>
           </div>
         ) : null}

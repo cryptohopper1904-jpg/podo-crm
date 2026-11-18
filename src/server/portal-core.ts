@@ -9,6 +9,7 @@ import { assertCan } from "@/lib/auth/assert";
 import type { AuthContext } from "@/lib/auth/session";
 import { dateDe, timeDe } from "@/lib/format";
 import { voucherBalance } from "@/lib/invoice-math";
+import { invoiceDocLabel } from "@/lib/invoice-labels";
 import {
   canCancelOnline,
   hashPortalToken,
@@ -143,11 +144,17 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
           .where(and(eq(appointmentServices.organizationId, org), inArray(appointmentServices.appointmentId, appts.map((a) => a.id))))
       : [];
     const invs = await tx
-      .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, issuedAt: invoices.issuedAt, dueAt: invoices.dueAt, totalCents: invoices.totalCents, paidCents: invoices.paidCents, paymentLinkUrl: invoices.paymentLinkUrl })
+      .select({ id: invoices.id, number: invoices.number, kind: invoices.kind, issuedAt: invoices.issuedAt, dueAt: invoices.dueAt, totalCents: invoices.totalCents, paidCents: invoices.paidCents, paymentLinkUrl: invoices.paymentLinkUrl, cancelsInvoiceId: invoices.cancelsInvoiceId })
       .from(invoices)
       // nur eigene Rechnungen – übernommener Altbestand (Import) erscheint nicht als „offen“ im Portal (Buchhaltung P1)
       .where(and(eq(invoices.organizationId, org), eq(invoices.patientId, link.patientId), eq(invoices.source, "crm"), inArray(invoices.status, ["issued", "partially_paid"])))
       .orderBy(asc(invoices.issuedAt));
+    const open = invs.filter((i) => i.totalCents - i.paidCents > 0);
+    // Storno: Belegart des stornierten Belegs („Storno Zuzahlungsquittung“ statt „Stornorechnung“), mandantengefiltert
+    const cancelsIds = open.flatMap((i) => (i.kind === "credit_note" && i.cancelsInvoiceId ? [i.cancelsInvoiceId] : []));
+    const cancelled = cancelsIds.length
+      ? await tx.select({ id: invoices.id, kind: invoices.kind }).from(invoices).where(and(eq(invoices.organizationId, org), inArray(invoices.id, cancelsIds)))
+      : [];
     // Gutscheine der Person = über eine ihrer Rechnungen verkauft
     const vs = await tx
       .select({ id: vouchers.id, code: vouchers.code, amountCents: vouchers.amountCents, validUntil: vouchers.validUntil })
@@ -163,9 +170,11 @@ export async function loadPortalView(link: PortalLink & { id: string }) {
     return {
       firstName: p.firstName,
       appointments: appts.map((a) => ({ ...a, services: svc.filter((s) => s.appointmentId === a.id).map((s) => s.name), cancellable: canCancelOnline(a.startsAt) })),
-      invoices: invs
-        .filter((i) => i.totalCents - i.paidCents > 0)
-        .map((i) => ({ ...i, paymentLinkUrl: i.paymentLinkUrl && /^https:\/\//i.test(i.paymentLinkUrl) ? i.paymentLinkUrl : null })),
+      invoices: open.map(({ cancelsInvoiceId, ...i }) => ({
+        ...i,
+        label: invoiceDocLabel(i.kind, cancelled.find((c) => c.id === cancelsInvoiceId)?.kind),
+        paymentLinkUrl: i.paymentLinkUrl && /^https:\/\//i.test(i.paymentLinkUrl) ? i.paymentLinkUrl : null,
+      })),
       vouchers: vs
         .map((v) => ({ code: v.code, validUntil: v.validUntil, balanceCents: voucherBalance(v.amountCents, used.filter((u) => u.voucherId === v.id)) }))
         .filter((v) => v.balanceCents > 0),
