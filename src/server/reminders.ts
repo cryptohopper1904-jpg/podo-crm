@@ -239,7 +239,7 @@ export async function runRemindersForOrg(org: { id: string; name: string; phone:
   return summary;
 }
 
-/** Runner für alle Praxen (organizations hat keine RLS; pro Praxis withOrg). Fehler einer Praxis stoppen nicht die anderen. */
+/** Runner für alle Praxen (organizations: RLS nur im Praxis-Kontext, Migration 0069; pro Praxis withOrg). Fehler einer Praxis stoppen nicht die anderen. */
 export async function runReminders(opts: { now?: Date; organizationId?: string } = {}) {
   const orgs = await db
     .select({ id: organizations.id, name: organizations.name, phone: organizations.phone, settings: organizations.settings })
@@ -278,14 +278,15 @@ export async function reminderLogFor(org: string, limit = 50) {
 
 // ───────────── Einstellungen (mit Rechteprüfung) ─────────────
 
-/** Einstellungen speichern (organizations hat keine RLS → nur die eigene Praxis aus der Sitzung). */
+/** Einstellungen speichern (nur die eigene Praxis aus der Sitzung; RLS im Praxis-Kontext, Migration 0069). */
 export async function saveReminderSettings(auth: AuthContext, settings: ReminderSettings) {
   assertCan(auth, "settings.manage");
   const clean = parseReminderSettings(settings);
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('reminders', ${JSON.stringify(clean)}::jsonb)` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('reminders', ${JSON.stringify(clean)}::jsonb)` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.reminders", meta: clean });
   return clean;
 }

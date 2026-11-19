@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, withOrg } from "@/db";
+import { withOrg } from "@/db";
 import { organizations, products, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
@@ -22,10 +22,11 @@ async function ownerAuth() {
 }
 
 async function markDone(orgId: string, key: OnboardingKey) {
-  await db
-    .update(organizations)
-    .set({ onboarding: sql`${organizations.onboarding} || ${JSON.stringify({ [key]: true })}::jsonb` })
-    .where(eq(organizations.id, orgId));
+  await withOrg(orgId, (tx) =>
+    tx
+      .update(organizations)
+      .set({ onboarding: sql`${organizations.onboarding} || ${JSON.stringify({ [key]: true })}::jsonb` })
+      .where(eq(organizations.id, orgId)));
 }
 
 const goNext = (key: OnboardingKey): never => {
@@ -48,7 +49,7 @@ export async function savePracticeStepAction(_: WelcomeState, form: FormData): P
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben prüfen." };
   const { smallBusiness, billingMode, ...rest } = d.data;
-  await db.update(organizations).set({ ...rest, smallBusiness: smallBusiness === "on" }).where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) => tx.update(organizations).set({ ...rest, smallBusiness: smallBusiness === "on" }).where(eq(organizations.id, auth.organization.id)));
   // Praxis-Modus (src/lib/features.ts): nur Privat-/Selbstzahler oder mit Kassenzulassung
   if (isBillingMode(billingMode)) await setBillingMode(auth, billingMode, "onboarding");
   await markDone(auth.organization.id, "practice");

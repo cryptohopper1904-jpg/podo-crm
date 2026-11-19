@@ -26,6 +26,8 @@ export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * App-Code filtert zusätzlich immer selbst nach organizationId (Defense in Depth).
  */
 export async function withOrg<T>(organizationId: string, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  // Ein leerer/ungültiger Kontext würde organizations (0069) freigeben und die übrigen Tabellen leeren – nie still zulassen
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId)) throw new Error("withOrg: ungültige Praxis-ID");
   return db.transaction(async (tx) => {
     await tx.execute(sql`select set_config('app.org_id', ${organizationId}, true)`);
     return fn(tx);

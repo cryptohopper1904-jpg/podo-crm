@@ -109,7 +109,10 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E1: Übergabepaket – Inhalt (CSV/JSON/PDF/Prüfsummen), Archiv beim ersten Export, Nachdruck byte-gleich", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(2);
-    const first = await ho.handoverPackage(w.auth, batchId);
+    // ohne ausdrückliches create kein Erst-Export (Standard: nur Nachdruck) – weder Paket noch CSV
+    expect(await ho.handoverPackage(w.auth, batchId)).toEqual({ error: expect.stringMatching(/noch nicht erzeugt/), notArchived: true });
+    expect(await ho.handoverCsv(w.auth, batchId)).toEqual({ error: expect.stringMatching(/noch nicht erzeugt/), notArchived: true });
+    const first = await ho.handoverPackage(w.auth, batchId, { create: true });
     if (!first || "error" in first) throw new Error("kein Paket");
     expect(first.reprint).toBe(false);
     expect(first.filename).toMatch(/^Uebergabe-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.zip$/);
@@ -176,7 +179,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const w = await world();
     const { batchId } = await w.batch(1);
     expect(await presc.billingBatchExport(w.auth, batchId)).not.toBeNull(); // alter CSV-Weg vermerkt die Übergabe
-    const p = await ho.handoverPackage(w.auth, batchId);
+    const p = await ho.handoverPackage(w.auth, batchId, { create: true });
     if (!p || "error" in p) throw new Error("kein Paket");
     expect(p.afterFirstHandover).toBe(true);
     const files = await unzip(p.bytes);
@@ -189,7 +192,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const w = await world();
     const other = await world();
     const { batchId } = await w.batch(1);
-    const p = await ho.handoverPackage(w.auth, batchId);
+    const p = await ho.handoverPackage(w.auth, batchId, { create: true });
     if (!p || "error" in p) throw new Error("kein Paket");
     expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 1000, paidAt: addDaysIso(today, -1), reference: "SR-1" })).toEqual({ id: expect.any(String) });
     for (const t of ["billing_batch_exports", "billing_batch_payouts"]) {
@@ -236,17 +239,17 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     ).rejects.toThrow();
     // RLS: andere Praxis sieht nichts
     expect(await other.q("select * from billing_batch_exports where billing_batch_id = $1", [batchId])).toEqual([]);
-    expect(await ho.handoverPackage(other.auth, batchId)).toBeNull();
+    expect(await ho.handoverPackage(other.auth, batchId, { create: true })).toBeNull();
   });
 
   it("E4: Rechte – invoices.write + medical.read, Kassenabrechnung aktiv, Support ändert nichts", async () => {
     const w = await world();
     const { batchId } = await w.batch(1);
-    await expect(ho.handoverPackage(w.authWith(["invoices.write"]), batchId)).rejects.toThrow(/medical.read/);
-    await expect(ho.handoverPackage(w.authWith(["medical.read"]), batchId)).rejects.toThrow(/invoices.write/);
-    expect(await ho.handoverPackage(w.authWith("all", { billingMode: "private_only" }), batchId)).toEqual({ error: expect.any(String) });
+    await expect(ho.handoverPackage(w.authWith(["invoices.write"]), batchId, { create: true })).rejects.toThrow(/medical.read/);
+    await expect(ho.handoverPackage(w.authWith(["medical.read"]), batchId, { create: true })).rejects.toThrow(/invoices.write/);
+    expect(await ho.handoverPackage(w.authWith("all", { billingMode: "private_only" }), batchId, { create: true })).toEqual({ error: expect.any(String) });
     expect((await w.q("select 1 from billing_batch_exports where billing_batch_id = $1", [batchId])).length).toBe(0);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const support = w.authWith("all", { support: true });
     expect(await ho.recordManualPayout(support, { batchId, amountCents: 1, paidAt: today, reference: null })).toEqual({ error: expect.stringMatching(/Support/) });
     expect(await ho.previewPayoutImport(support, batchId, Buffer.from("x"), "r.csv")).toEqual({ error: expect.stringMatching(/Support/) });
@@ -265,7 +268,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     );
     // Lauf noch nicht übergeben → keine Rückmeldung
     expect(await ho.previewPayoutImport(w.auth, batchId, file, "r.csv")).toEqual({ error: expect.stringMatching(/übergeben/) });
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const prev = await ho.previewPayoutImport(w.auth, batchId, file, "r.csv");
     if ("error" in prev) throw new Error(prev.error);
     expect(prev.fehler).toEqual([]);
@@ -321,7 +324,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E6: Rückmeldung – nicht zuordenbare oder mehrdeutige Zeilen, Widersprüche → Fehler, nichts gespeichert", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const paid = addDaysIso(today, -2);
     const bad = csvFile(
       ["66666666-6666-4666-8666-666666666666", "", "", "", "5", "", "", "", paid, "SR"],
@@ -343,8 +346,8 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const w = await world();
     const { batchId, ids } = await w.batch(1);
     const { batchId: otherBatch } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
-    await ho.handoverPackage(w.auth, otherBatch);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
+    await ho.handoverPackage(w.auth, otherBatch, { create: true });
     const r = await ho.recordManualPayout(w.auth, { batchId: otherBatch, amountCents: 500, paidAt: addDaysIso(today, -1), reference: null });
     if ("error" in r) throw new Error(r.error);
     await expect(
@@ -370,7 +373,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const w = await world();
     const { batchId } = await w.batch(1);
     expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 100, paidAt: today, reference: null })).toEqual({ error: expect.stringMatching(/übergeben/) });
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 100, paidAt: addDaysIso(today, 3), reference: null })).toEqual({ error: expect.stringMatching(/Zukunft/) });
     expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 4321, paidAt: today, reference: "Avis 1" })).toEqual({ id: expect.any(String) });
     const info = await ho.batchHandoverInfo(w.auth, batchId);
@@ -386,7 +389,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E9: Praxis-Export enthält das archivierte Übergabepaket byte-gleich (Zuordnung über exportFile)", async () => {
     const w = await world();
     const { batchId } = await w.batch(1);
-    const p = await ho.handoverPackage(w.auth, batchId);
+    const p = await ho.handoverPackage(w.auth, batchId, { create: true });
     if (!p || "error" in p) throw new Error("kein Paket");
     const exp = await import("./practice-export");
     const result = await exp.buildPracticeExport({ organizationId: w.org, exportedBy: { name: "Inhaberin", email: "i@example.org" } });
@@ -412,7 +415,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const w = await world();
     const { batchId, ids } = await w.batch(2);
     expect(await gb.markCorrectionNeeded(w.auth, { prescriptionId: ids[0], patientId: w.patient, reason: "ICD-Code prüfen" })).toEqual({ id: expect.any(String) });
-    const p = await ho.handoverPackage(w.auth, batchId);
+    const p = await ho.handoverPackage(w.auth, batchId, { create: true });
     if (!p || "error" in p) throw new Error("kein Paket");
     const files = await unzip(p.bytes);
     const json = JSON.parse(files["abrechnungslauf.json"].toString("utf8"));
@@ -437,7 +440,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E11: Storno einer Auszahlung – Gegenbuchung exakt negativ, Pflichtbegründung, höchstens einmal, Storno nicht stornierbar; Summen rechnen Stornos mit", async () => {
     const w = await world();
     const { batchId } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const pay = await ho.recordManualPayout(w.auth, { batchId, amountCents: 5000, feeCents: 300, paidAt: addDaysIso(today, -3), reference: "Avis 7" });
     if ("error" in pay) throw new Error(pay.error);
     expect(await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "kurz" })).toEqual({ error: expect.stringMatching(/Begründung/) });
@@ -472,7 +475,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E12: Rückmeldungsdatei als Beleg archiviert; nach Storno dieselbe Datei erneut einlesbar; verknüpfte Absetzungen mit Hinweis, unverändert", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const paid = addDaysIso(today, -2);
     const file = csvFile([ids[0], "", "", "", "50,00", "5,00", "R1", "Formfehler Rückseite", paid, "SR-1"]);
     const prev = await ho.previewPayoutImport(w.auth, batchId, file, "rueck.csv");
@@ -519,7 +522,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E13: Doppelerfassung – gleiche Auszahlung (Datum, Referenz, Betrag) als JSON bzw. von Hand → Warnung, nur mit Bestätigung", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const paid = addDaysIso(today, -2);
     const csv = csvFile([ids[0], "", "", "", "70,00", "", "", "", paid, "SR-9"]);
     const p1 = await ho.previewPayoutImport(w.auth, batchId, csv, "a.csv");
@@ -542,7 +545,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E14: Noch offen = Soll − Auszahlungen − Gebühren − Absetzungen des Laufs (aus gkv_deductions, nach Status, ohne Doppelte); Gebühr aus der Rückmeldung", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const info0 = await ho.batchHandoverInfo(w.auth, batchId);
     const soll = info0!.sollInsurerCents!;
     const paid = addDaysIso(today, -2);
@@ -637,13 +640,13 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     expect(failed).toBe(true);
     expect(got).toBeLessThan(again.sizeBytes);
     // Bytes-Weg: Abbruch mit Meldung statt beschädigter Datei
-    expect(await ho.handoverPackage(w.auth, batchId)).toEqual({ error: expect.stringMatching(/beschädigt/) });
+    expect(await ho.handoverPackage(w.auth, batchId, { create: true })).toEqual({ error: expect.stringMatching(/beschädigt/) });
   });
 
   it("E18: gleichzeitiger Erst-Export → genau ein Archiv, beide erhalten dieselbe Datei", async () => {
     const w = await world();
     const { batchId } = await w.batch(1);
-    const [a, b] = await Promise.all([ho.handoverPackage(w.auth, batchId), ho.handoverPackage(w.auth, batchId)]);
+    const [a, b] = await Promise.all([ho.handoverPackage(w.auth, batchId, { create: true }), ho.handoverPackage(w.auth, batchId, { create: true })]);
     if (!a || "error" in a || !b || "error" in b) throw new Error("kein Paket");
     expect(a.sha256).toBe(b.sha256);
     expect([a.reprint, b.reprint].sort()).toEqual([false, true]);
@@ -653,7 +656,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E19: Absetzung nur an einer Import-Auszahlung (nicht an Storno oder Handeingabe); Auswertung brutto/Gebühr/netto", async () => {
     const w = await world();
     const { batchId, ids } = await w.batch(1);
-    await ho.handoverPackage(w.auth, batchId);
+    await ho.handoverPackage(w.auth, batchId, { create: true });
     const pay = await ho.recordManualPayout(w.auth, { batchId, amountCents: 900, feeCents: 100, paidAt: today, reference: "X1" });
     if ("error" in pay) throw new Error(pay.error);
     const st = await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "Fehleingabe Test" });
