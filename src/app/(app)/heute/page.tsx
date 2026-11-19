@@ -10,6 +10,7 @@ import { followUpsDue } from "@/server/follow-ups";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { withOrg } from "@/db";
 import { AI_APPROVAL_PAUSED_HINT, aiProcessingApproved, envAiApproved, isAiProvider } from "@/integrations/ai-approval";
+import { hasOwnApiKey } from "@/server/integrations";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
 import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
@@ -90,7 +91,7 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   const aiPaused =
     auth.role === "owner" &&
     !auth.support &&
-    stats.integ.some((i) => isAiProvider(i.provider) && i.status === "connected" && !aiProcessingApproved({ ...i, config: i.config as Record<string, unknown> }, envAiApproved(i.provider)));
+    stats.integ.some((i) => isAiProvider(i.provider) && i.status === "connected" && !aiProcessingApproved({ ...i, config: i.config as Record<string, unknown> }, envAiApproved(i.provider), hasOwnApiKey(i.secretEnc, org)));
   // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];

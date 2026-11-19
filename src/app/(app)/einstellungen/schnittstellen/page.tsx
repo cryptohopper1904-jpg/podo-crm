@@ -12,7 +12,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
 import { decryptSecret } from "@/lib/secrets";
-import { recentSyncLog } from "@/server/integrations";
+import { hasOwnApiKey, recentSyncLog } from "@/server/integrations";
 import { webhookStatus } from "@/server/webhooks";
 import { saveIntegrationAction, testIntegrationAction } from "./actions";
 import { MailCard } from "./mail-card";
@@ -31,7 +31,7 @@ export default async function IntegrationsSettings() {
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost"}`;
   const mockEnv = process.env.INTEGRATIONS_MODE === "mock";
   // Wer hat die KI-Bestätigung abgegeben? (nur Mitglieder dieser Praxis)
-  const approverIds = [...new Set(rows.flatMap((r) => (isAiProvider(r.provider) ? [aiApprovalInfo(r.config as Record<string, unknown>)?.by] : [])).filter((x): x is string => !!x))];
+  const approverIds = [...new Set(rows.flatMap((r) => (isAiProvider(r.provider) ? [aiApprovalInfo(r.config as Record<string, unknown>, hasOwnApiKey(r.secretEnc, org))?.by] : [])).filter((x): x is string => !!x))];
   const approvers = approverIds.length
     ? await withOrg(org, (tx) =>
         tx
@@ -131,9 +131,10 @@ export default async function IntegrationsSettings() {
               </div>
               {isAiProvider(info.provider) ? (
                 (() => {
-                  const approval = aiApprovalInfo(cfg);
+                  const ownKey = !!secretValues.apiKey;
+                  const approval = aiApprovalInfo(cfg, ownKey);
                   const by = approval ? approvers.find((a) => a.id === approval.by)?.name : null;
-                  const problem = aiApprovalProblem(cfg);
+                  const problem = aiApprovalProblem(cfg, ownKey);
                   const mayApprove = auth.role === "owner" && !auth.support;
                   return (
                     <div className="rounded-xl border border-border bg-surface-2 px-4 py-2">
@@ -145,11 +146,11 @@ export default async function IntegrationsSettings() {
                       />
                       <p className="pb-2 text-[13px] text-muted">
                         {approval
-                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""} für ${approval.baseUrl ? new URL(approval.baseUrl).host : "den Plattform-Anbieter"}${approval.model ? ` (Modell ${approval.model})` : ""}. Häkchen nur setzen, um neu zu bestätigen; bei geänderter Basis-URL oder geändertem Modell ist eine neue Bestätigung nötig.`
+                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""} für ${approval.baseUrl ? new URL(approval.baseUrl).host : "den Plattform-Anbieter"}${approval.model ? ` (Modell ${approval.model})` : ""}${approval.ownKey ? " mit eigenem API-Schlüssel" : ""}. Häkchen nur setzen, um neu zu bestätigen; bei geänderter Basis-URL, geändertem Modell oder neuem bzw. gelöschtem API-Schlüssel ist eine neue Bestätigung nötig.`
                           : problem === "version"
                             ? "Die frühere Bestätigung gilt nicht mehr (neuer Wortlaut) – bitte erneut bestätigen, sonst bleibt der Anbieter gesperrt."
                             : problem === "target"
-                              ? "Die frühere Bestätigung galt für ein anderes Ziel (Basis-URL oder Modell) – bitte für das eingetragene Ziel neu bestätigen."
+                              ? "Die frühere Bestätigung galt für ein anderes Ziel (Basis-URL, Modell oder API-Schlüssel) – bitte für das eingetragene Ziel neu bestätigen."
                               : "Noch nicht bestätigt – ohne Häkchen lässt sich der echte Anbieter nicht einschalten."}
                         {!mayApprove ? ` ${auth.support ? AI_APPROVAL_NO_SUPPORT : AI_APPROVAL_OWNER_ONLY}` : ""}
                       </p>

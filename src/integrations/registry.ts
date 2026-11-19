@@ -111,7 +111,7 @@ const REAL: { [P in SupportedProvider]: Builder<P> } = {
       baseUrl: str(cfg.baseUrl),
       apiKey: sec.apiKey,
       model: str(cfg.model),
-      dataProcessingApproved: aiApprovalValid(cfg),
+      dataProcessingApproved: aiApprovalValid(cfg, !!sec.apiKey),
       fetch: f,
     }),
   llm: (cfg, sec, f) =>
@@ -119,7 +119,7 @@ const REAL: { [P in SupportedProvider]: Builder<P> } = {
       baseUrl: str(cfg.baseUrl),
       apiKey: sec.apiKey,
       model: str(cfg.model),
-      dataProcessingApproved: aiApprovalValid(cfg),
+      dataProcessingApproved: aiApprovalValid(cfg, !!sec.apiKey),
       fetch: f,
     }),
 };

@@ -4,6 +4,7 @@ import { withOrg } from "@/db";
 import { integrationConnections, syncLog } from "@/db/schema";
 import { aiProcessingApproved, envAiApproved } from "@/integrations/ai-approval";
 import { getAdapter } from "@/integrations/registry";
+import { decryptSecret } from "@/lib/secrets";
 import type { IntegrationConnection, PortByProvider, ProviderId, SupportedProvider } from "@/integrations/types";
 
 /** Lädt die Verbindung eines Mandanten (Geheimnis bleibt verschlüsselt; die Registry entschlüsselt mit AAD = Mandant). */
@@ -59,5 +60,20 @@ export async function recentSyncLog(organizationId: string, limit = 20) {
  * eine eigene Basis-URL oder einen eigenen API-Schlüssel eingetragen hat (Verbindung nicht „aus“).
  */
 export async function processingApproved(organizationId: string, provider: "llm" | "transcription"): Promise<boolean> {
-  return aiProcessingApproved(await loadConnection(organizationId, provider), envAiApproved(provider));
+  const conn = await loadConnection(organizationId, provider);
+  return aiProcessingApproved(conn, envAiApproved(provider), hasOwnApiKey(conn?.secretEnc, organizationId));
+}
+
+/**
+ * Liegt im verschlüsselten Secret einer Verbindung ein eigener API-Schlüssel der Praxis? Nicht entschlüsselbar → true
+ * (vorsichtig: dann gilt die env-Freigabe nicht, eine eigene Bestätigung ist nötig).
+ */
+export function hasOwnApiKey(secretEnc: string | null | undefined, organizationId: string): boolean {
+  if (!secretEnc) return false;
+  try {
+    const s = JSON.parse(decryptSecret(secretEnc, organizationId)) as Record<string, unknown>;
+    return typeof s.apiKey === "string" && s.apiKey.trim() !== "";
+  } catch {
+    return true;
+  }
 }
