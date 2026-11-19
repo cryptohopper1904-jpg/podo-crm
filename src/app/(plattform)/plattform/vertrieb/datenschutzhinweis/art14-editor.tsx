@@ -102,8 +102,8 @@ export function Art14Editor({ template, filename }: { template: string; filename
         <fieldset className="grid gap-3 sm:grid-cols-2">
           <legend className="mb-2 font-semibold">Platzhalter ausfüllen</legend>
           {keys.map((k) => (
-            <label key={k} className="flex flex-col gap-1">
-              <span className="font-medium">{LABEL[k] ?? k}</span>
+            <div key={k} className="flex flex-col gap-1">
+              <label htmlFor={`${id}-${k}`} className="font-medium">{LABEL[k] ?? k}</label>
               <input
                 id={`${id}-${k}`}
                 className="h-10 rounded-xl border border-border bg-surface px-3"
@@ -113,17 +113,12 @@ export function Art14Editor({ template, filename }: { template: string; filename
                 maxLength={300}
               />
               {k === ART14_OPTIONAL_PLACEHOLDER ? (
-                <span className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="size-5 accent-[var(--primary)]"
-                    checked={none}
-                    onChange={(e) => setNone(e.target.checked)}
-                  />
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" className="size-5 accent-[var(--primary)]" checked={none} onChange={(e) => setNone(e.target.checked)} />
                   keine weiteren Dienstleister
-                </span>
+                </label>
               ) : null}
-            </label>
+            </div>
           ))}
         </fieldset>
       ) : null}
