@@ -27,7 +27,15 @@ Migration `drizzle/0068_gkv_paket_e.sql`.
   der Seite). Das Archiv wird nie stillschweigend neu erzeugt: Ist die Datei unlesbar oder stimmt die Prüfsumme nicht,
   bricht der Download mit Hinweis auf den Support ab.
 - **„nur Verordnungen (CSV)“** (`/api/export/gkv-batch/<lauf>`, bisheriger CSV-Link): liefert `verordnungen.csv` aus dem
-  archivierten Paket (der erste Abruf archiviert das Paket ebenso).
+  archivierten Paket. **Achtung:** Schon der erste CSV-Abruf erzeugt und archiviert das vollständige Übergabepaket (ZIP)
+  und vermerkt den Lauf als übergeben.
+- **Reihenfolge beim ersten Export** (eine Transaktion): Lauf sperren → Paket erzeugen (technische Fehler, z. B. eine nicht
+  lesbare Unterschrift, brechen ab – nichts wird archiviert, ein Neuversuch ist möglich) → Lauf als übergeben vermerken →
+  Datei ablegen → Archiv-Eintrag (der Trigger verlangt einen übergebenen Lauf). Dokumente, die **fachlich** fehlen (kein
+  Behandlungseintrag, angeforderter Therapiebericht nicht erstellt), stehen im LIESMICH, als Anzahl am Archiv
+  (`missing_documents`), auf der Laufseite und im Header `X-Podo-Fehlende-Dokumente`.
+- **Grenzen** (AppSec H1): höchstens **500 Verordnungen** je Paket und **200 MB** Paketgröße (klare Meldung, nichts
+  archiviert). Der Nachdruck wird **gestreamt** entschlüsselt; die SHA-256 läuft mit, bei Abweichung bricht der Download ab.
 - Im **Support-Modus** sind beide Downloads gesperrt (`downloadAllowed`, Arten `gkv_handover` bzw.
   `billing_batch_export`); Rückmeldungen und Auszahlungen kann der Support nicht erfassen.
 - Läufe, die **vor Paket E** schon als CSV übergeben wurden, werden beim ersten Paket-Download mit dem dann aktuellen
@@ -71,7 +79,8 @@ dem **Stand der Erstabrechnung** (`prescription_corrections.original_row`). Zeil
 ### 2.2 `verordnungen.csv`
 
 Die ersten 43 Spalten entsprechen dem bisherigen CSV-Export des Abrechnungslaufs (unverändert in Reihenfolge und
-Schreibweise); die Spalten 44–52 sind mit Paket E hinzugekommen. Spalten werden künftig nur **hinten angehängt**.
+Schreibweise). **Neu sind die 9 Zusatzspalten 44–52** (Status bis Therapiebericht-Datei) – ein Import, der den alten
+Export kennt, muss sie ignorieren oder neu zuordnen. Spalten werden künftig nur **hinten angehängt**.
 
 | Nr. | Spalte | Typ | Beispiel / Werte |
 |---|---|---|---|
@@ -236,6 +245,7 @@ beliebig, Groß-/Kleinschreibung egal):
 | Absetzung Grund | bei Absetzung | Text 3–500 Zeichen (ohne Gesundheitsangaben formulieren) |
 | Auszahlungsdatum | ja | `JJJJ-MM-TT` oder `TT.MM.JJJJ`, nicht in der Zukunft, nicht vor 2000; in allen Zeilen gleich |
 | Sammelrechnungsnummer | nein | Text ≤ 60; in allen Zeilen gleich |
+| Gebühr EUR | nein (Spalte darf fehlen) | vom Zentrum einbehaltene Gebühr je Verordnung, Format wie „Ausgezahlt EUR“ |
 
 ¹ Zuordnung: **Verordnung-ID** (empfohlen) **oder** Versichertennummer **und** Ausstellungsdatum. Sind beide angegeben,
 müssen sie zusammenpassen. Gibt es zu Versichertennummer + Ausstellungsdatum mehrere Verordnungen im Lauf, ist die
@@ -264,18 +274,42 @@ Verordnung-ID;Lauf-ID;Versichertennummer;Ausstellungsdatum;Ausgezahlt EUR;Absetz
 }
 ```
 
-Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, `absetzung.betrag_cent` ≥ 1). Unbekannte Felder sind ein Fehler
+Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, optional `gebuehr_cent` ≥ 0, `absetzung.betrag_cent` ≥ 1). Unbekannte Felder sind ein Fehler
 (strikte Prüfung). Erkennung: Dateiendung `.json` oder Inhalt beginnt mit `{`.
 
 ### 3.3 Prüfung (strikt, alles oder nichts)
 
-- höchstens **1 MB** und **5.000 Zeilen** je Datei; gültiges UTF-8; keine Binärdaten;
+- höchstens **1 MB** und **5.000 Zeilen** je Datei; gültiges UTF-8; keine Binärdaten; Steuer- und Bidi-Zeichen in
+  Textfeldern werden entfernt;
+- Fehlermeldungen nennen die **echte Dateizeile** (Leerzeilen und Zeilenumbrüche in Feldern mitgezählt; Kopf = Zeile 1);
 - jede Zeile einzeln geprüft (Meldung mit Zeilen- bzw. Positionsnummer, höchstens 50 Meldungen); eine Verordnung höchstens
   einmal je Datei; bei **einem** Fehler wird **nichts** übernommen;
 - Zuordnung nur zu Verordnungen dieses Laufs (wie im Übergabepaket); nicht zuordenbar → Fehler;
 - Absetzung nur zu einer (noch) abgerechneten Verordnung;
 - Inhalte werden **nie ausgewertet** (keine Formeln, keine Makros): Textfelder bleiben Text, Steuerzeichen werden entfernt;
-- Hinweise ohne Sperre: „ausgezahlt + Absetzung“ weicht vom Kassenanteil laut Lauf ab; Absetzung ohne Code.
+- Hinweise ohne Sperre: „ausgezahlt + Gebühr + Absetzung“ weicht vom Kassenanteil laut Lauf ab; Absetzung ohne Code.
+- **Doppelerfassung**: Gibt es zum Lauf schon eine nicht stornierte Auszahlung mit gleichem Auszahlungsdatum, gleicher
+  Referenz (nur Buchstaben/Ziffern verglichen, „SR-9“ = „sr 9“) und gleichem Nettobetrag – von Hand oder eingelesen, auch
+  bei anderer Datei (CRLF, JSON statt CSV) –, warnt die Vorschau; übernommen wird nur mit ausdrücklicher Bestätigung
+  (Häkchen). Dasselbe gilt bei der Erfassung von Hand.
+
+### 3.4 Beleg, Gebühren, Storno
+
+- **Beleg**: Die eingelesene Datei wird beim Übernehmen verschlüsselt abgelegt (`storeEncrypted`) und an der Auszahlung
+  verzeichnet (`storage_key`, `source_sha256`, `source_filename`); im Praxis-Export unter
+  `abrechnung/rueckmeldungen/<Lauf-ID>/<Auszahlungs-ID>_<Dateiname>`.
+- **Gebühren**: `amount_cents` ist der tatsächlich überwiesene Betrag (**netto nach Gebühren**), `fee_cents` die einbehaltene
+  Gebühr (aus der Rückmeldung oder von Hand, optional). Brutto = netto + Gebühr. „Noch offen“ = Kassenanteil laut Lauf −
+  netto − Gebühren − mindernde Absetzungen.
+- **Storno**: Eine Auszahlung wird nie geändert oder gelöscht. Korrektur = **Storno** (Gegenbuchung `source = reversal`,
+  `reverses_payout_id`, Beträge exakt negativ, Begründung ≥ 5 Zeichen, Datum = Tag des Stornos) und danach neue Erfassung.
+  Höchstens ein Storno je Auszahlung; ein Storno ist nicht stornierbar (Trigger + eindeutiger Index). Summen (Laufseite,
+  Übersicht, Auswertung) rechnen Stornos mit – in der Auswertung im **Monat des Stornos**, nicht rückwirkend. Nach dem Storno
+  einer eingelesenen Rückmeldung lässt sich dieselbe Datei erneut einlesen (laufende Nummer `import_seq` je Lauf und
+  Datei). Absetzungen aus einer stornierten Rückmeldung bleiben unverändert und werden auf der Laufseite als „bitte
+  prüfen“ gezählt.
+- **„Noch offen“**: Absetzungen kommen aus `gkv_deductions` des Laufs (jede einmal, nach Status): mindernd = akzeptiert
+  bzw. erledigt/„bleibt“; offen/Widerspruch und „Widerspruch erfolgreich“ werden getrennt gezeigt und mindern nicht.
 
 ## 4. Archiv und Aufbewahrung
 
@@ -284,7 +318,10 @@ Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, `absetzung.betrag_cent` ≥ 1)
   **Append-only**: kein UPDATE/DELETE/TRUNCATE (Trigger; App-Rolle zusätzlich ohne UPDATE/DELETE, scripts/migrate.ts).
   Zeitpunkt und `after_first_handover` setzt der Trigger; Speicherschlüssel nur im Bereich der eigenen Praxis.
 - `billing_batch_payouts` (Migration 0068): **append-only** wie oben; nur zu einem **übergebenen** Lauf; `source` =
-  `import` (mit Prüfsumme der Datei, eindeutig je Lauf) oder `manual` (von Hand erfasst, ohne Datei).
+  `import` (mit Datei als Beleg und Prüfsumme; je Lauf nur einmal aktiv), `manual` (von Hand) oder `reversal` (Storno,
+  Abschnitt 3.4).
+- `billing_batch_exports` nur zu einem übergebenen Lauf (die App vermerkt die Übergabe zuerst); Absetzungen mit Lauf nur
+  zu einer Verordnung dieses Laufs (bzw. dessen Erstabrechnung bei Korrektur) – Trigger.
 - Beide Tabellen: `organization_id`, RLS ENABLE + FORCE mit `tenant_isolation` (USING + WITH CHECK), Verweise nur
   innerhalb der Praxis (`podo_fk_same_org`), `created_by` nur Mitglieder der Praxis (`podo_user_in_org`).
 - Gelöscht wird beides nur mit der Praxis (Löschlauf als Eigentümer, `src/server/purge-organization.ts`, erfasst neue
@@ -292,8 +329,10 @@ Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, `absetzung.betrag_cent` ≥ 1)
   abgerechneten Verordnungen sind ohnehin nicht vollständig löschbar (`podo_delete_patient`).
 - **Praxis-Export**: archivierte Pakete unter `abrechnung/uebergabe/<Dateiname>` (byte-gleich, gegen SHA-256 geprüft),
   Zuordnung in `tables/billing_batch_exports.json` (Feld `exportFile`); Auszahlungen in
-  `tables/billing_batch_payouts.json`.
-- **Verwaiste Dateien**: `scripts/archive-orphans.ts` kennt `billing_batch_exports` (KNOWN_TABLES).
+  `tables/billing_batch_payouts.json` mit den Rückmeldungsdateien unter `abrechnung/rueckmeldungen/…` (Feld `exportFile`).
+  Pfad der Pakete: `abrechnung/uebergabe/<volle Lauf-ID>/<Dateiname>`.
+- **Verwaiste Dateien**: `scripts/archive-orphans.ts` kennt `billing_batch_exports` und `billing_batch_payouts` (KNOWN_TABLES).
 - **Audit** ohne Gesundheitsdaten: `billing_batch.handover` (Nachdruck ja/nein, Format, Anzahl, Größe, Prüfsumme),
   `billing_batch.payout_preview`, `billing_batch.payout_import` (Anzahlen, Summen, Prüfsumme der Datei – keine Gründe,
-  keine Namen), `billing_batch.payout_manual` (Betrag, Datum).
+  keine Namen), `billing_batch.payout_manual` (Betrag, Gebühr, Datum), `billing_batch.payout_reversal` (Beträge,
+  Anzahl verknüpfter Absetzungen – ohne Begründung).

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { requireAuth } from "@/lib/auth/session";
 import { parseMoney } from "@/lib/format";
 import { RUECKMELDUNG_MAX_BYTES } from "@/lib/gkv-handover/rueckmeldung";
-import { confirmPayoutImport, previewPayoutImport, recordManualPayout, type PayoutPreview } from "@/server/gkv-handover";
+import { confirmPayoutImport, previewPayoutImport, recordManualPayout, reversePayout, type PayoutPreview } from "@/server/gkv-handover";
 
 export type PreviewState = { error?: string; preview?: PayoutPreview } | undefined;
 export type SimpleState = { error?: string; ok?: string } | undefined;
@@ -41,7 +41,7 @@ export async function confirmPayoutAction(form: FormData): Promise<SimpleState> 
   if (!id.success || !sha.success) return { error: "Ungültige Anfrage." };
   const f = await fileFrom(form);
   if ("error" in f) return f;
-  const res = await confirmPayoutImport(auth, id.data, f.bytes, f.name, sha.data);
+  const res = await confirmPayoutImport(auth, id.data, f.bytes, f.name, sha.data, { confirmDuplicate: form.get("confirmDuplicate") === "1" });
   if ("error" in res) return { error: res.error };
   revalidatePath(`/verordnungen/abrechnung/${id.data}`);
   revalidatePath("/verordnungen/absetzungen");
@@ -56,8 +56,31 @@ export async function manualPayoutAction(_: SimpleState, form: FormData): Promis
   if (!id.success) return { error: "Ungültige Anfrage." };
   const cents = parseMoney(String(form.get("amount") ?? ""));
   if (cents === null) return { error: "Betrag ungültig." };
-  const res = await recordManualPayout(auth, { batchId: id.data, amountCents: cents, paidAt: String(form.get("paidAt") ?? ""), reference: String(form.get("reference") ?? "") });
+  const feeRaw = String(form.get("fee") ?? "").trim();
+  const fee = feeRaw ? parseMoney(feeRaw) : 0;
+  if (fee === null) return { error: "Gebühr ungültig." };
+  const res = await recordManualPayout(auth, {
+    batchId: id.data,
+    amountCents: cents,
+    feeCents: fee,
+    paidAt: String(form.get("paidAt") ?? ""),
+    reference: String(form.get("reference") ?? ""),
+    confirmDuplicate: form.get("confirmDuplicate") === "on",
+  });
   if ("error" in res) return { error: res.error };
   revalidatePath(`/verordnungen/abrechnung/${id.data}`);
   return { ok: "Auszahlung erfasst." };
+}
+
+/** Auszahlung stornieren (Gegenbuchung mit Begründung) */
+export async function reversePayoutAction(_: SimpleState, form: FormData): Promise<SimpleState> {
+  const auth = await requireAuth("invoices.write");
+  if (!auth.can("medical.read")) return { error: "Keine Berechtigung." };
+  const id = batchId.safeParse(form.get("batchId"));
+  const payout = z.string().uuid().safeParse(form.get("payoutId"));
+  if (!id.success || !payout.success) return { error: "Ungültige Anfrage." };
+  const res = await reversePayout(auth, { payoutId: payout.data, reason: String(form.get("reason") ?? "") });
+  if ("error" in res) return { error: res.error };
+  revalidatePath(`/verordnungen/abrechnung/${id.data}`);
+  return { ok: "Auszahlung storniert (Gegenbuchung erfasst)." };
 }

@@ -1,4 +1,6 @@
 import "server-only";
+import { createHash } from "node:crypto";
+import { Readable, Transform } from "node:stream";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import JSZip from "jszip";
 import { z } from "zod";
@@ -10,7 +12,9 @@ import { gkvGuard } from "@/lib/features";
 import { berlinDateIso } from "@/lib/format";
 import { deckblattPdf } from "@/lib/gkv-handover/deckblatt-pdf";
 import {
+  HANDOVER_MAX_BYTES,
   PAKET_SCHEMA,
+  paketGrenze,
   VERORDNUNGEN_ZUSATZ_KOPF,
   behandlungenZeilen,
   csvBytes,
@@ -30,13 +34,13 @@ import { normalizeId } from "@/lib/rules/gkv-ids";
 import { exemptionSummary, THERAPY_REPORT_HPNR, type PriceSnapshot } from "@/lib/rules/prescription";
 import { toZlHpnr } from "@/lib/rules/podologie-verguetung";
 import { log } from "@/lib/log";
-import { discardStored, readDecrypted, storeEncrypted } from "@/lib/storage";
+import { discardStored, readDecrypted, readDecryptedStream, storeEncrypted } from "@/lib/storage";
 import { assertCan } from "./authz";
 import { copaymentPaidOn, batchCorrectionNote, batchCsvLine, GKV_BATCH_HEADER, loadBatchExport, markBatchExported, type BatchExportData } from "./prescriptions";
 import { letterOrg, proofPdfInTx } from "./gkv-documents";
 import { loadLogos } from "./practice-logos";
 import { proofRows } from "./signatures";
-import { therapyReportPdfInTx } from "./therapy-reports";
+import { reportsFor, therapyReportPdfInTx } from "./therapy-reports";
 
 /**
  * GKV Paket E – neutrale Übergabe an ein beliebiges Abrechnungszentrum (docs/GKV-ABRECHNUNGSZENTRUM.md):
@@ -67,7 +71,7 @@ const baseName = (batch: { id: string; createdAt: Date }) => `Uebergabe-${berlin
 
 // ───────────────────────── Übergabepaket ─────────────────────────
 
-type BuiltPackage = { bytes: Buffer; count: number };
+type BuiltPackage = { bytes: Buffer; count: number; missing: number };
 
 /** Positionsbezeichnung je Code (ZL-Nummer bzw. Rohwert) aus den Positionen der Verordnung */
 function labels(positions: { position?: string | null; label: string }[]): Map<string, string> {
@@ -83,6 +87,7 @@ async function buildPackage(tx: Tx, org: string, data: BatchExportData, erzeugt:
   const logos = await loadLogos(org, tx);
   const ids = data.rows.map((r) => r.vo.id);
   const proof = await proofRows(tx, org, ids);
+  const reports = await reportsFor(tx, org, ids);
   const meta: PaketMeta = {
     erzeugt: erzeugt.toISOString(),
     praxis: { name: o.legalName?.trim() || o.name, ik: o.ik ?? null, leistungserbringergruppe: data.org?.legsCode ?? null, strasse: o.street, plz: o.zip, ort: o.city },
@@ -108,27 +113,22 @@ async function buildPackage(tx: Tx, org: string, data: BatchExportData, erzeugt:
     let nachweis: string | null = null;
     let bericht: { name: string; datum: string } | null = null;
     const proofList = proof.get(vo.id) ?? [];
-    try {
-      if (proofList.length) {
-        nachweis = `dokumente/leistungsnachweis/Leistungsnachweis_${kurz}.pdf`;
-        files.push({ name: nachweis, bytes: Buffer.from(await proofPdfInTx(tx, org, vo, p, o, logos, erzeugt)) });
-        nachweise++;
-      } else fehlend.push(`Leistungsnachweis zu Verordnung ${vo.id.slice(0, 8)}: keine Behandlungseinträge`);
-    } catch (e) {
-      log.error("gkv_handover.proof_failed", { error: e, prescriptionId: vo.id });
-      nachweis = null;
-      fehlend.push(`Leistungsnachweis zu Verordnung ${vo.id.slice(0, 8)}: konnte nicht erzeugt werden`);
-    }
-    try {
+    // Technische Fehler (Unterschrift nicht lesbar, PDF-Fehler) werfen: die Transaktion rollt zurück, nichts wird
+    // archiviert, ein Neuversuch ist möglich (Code-Review A). „Fehlend“ nur, was fachlich fehlt.
+    if (proofList.length) {
+      nachweis = `dokumente/leistungsnachweis/Leistungsnachweis_${kurz}.pdf`;
+      files.push({ name: nachweis, bytes: Buffer.from(await proofPdfInTx(tx, org, vo, p, o, logos, erzeugt, proofList)) });
+      nachweise++;
+    } else fehlend.push(`Leistungsnachweis zu Verordnung ${vo.id.slice(0, 8)}: keine Behandlungseinträge`);
+    if (reports.has(vo.id)) {
       const r = await therapyReportPdfInTx(tx, org, { vo, p, o, logos });
       if (r) {
         bericht = { name: `dokumente/therapiebericht/Therapiebericht_${kurz}.pdf`, datum: r.reportDate };
         files.push({ name: bericht.name, bytes: Buffer.from(r.bytes) });
         berichte++;
       }
-    } catch (e) {
-      log.error("gkv_handover.report_failed", { error: e, prescriptionId: vo.id });
-      fehlend.push(`Therapiebericht zu Verordnung ${vo.id.slice(0, 8)}: konnte nicht erzeugt werden`);
+    } else if (vo.therapyReportRequested || vo.positions.some((x) => (toZlHpnr(x.position) ?? x.position) === THERAPY_REPORT_HPNR)) {
+      fehlend.push(`Therapiebericht zu Verordnung ${vo.id.slice(0, 8)}: angefordert bzw. verordnet, aber nicht erstellt`);
     }
     const snap = vo.priceSnapshot as PriceSnapshot | null;
     const namen = labels(vo.positions);
@@ -201,35 +201,69 @@ async function buildPackage(tx: Tx, org: string, data: BatchExportData, erzeugt:
   files.push({ name: "PRUEFSUMMEN.sha256", bytes: Buffer.from(pruefsummenDatei(files), "utf8") });
   const zip = new JSZip();
   for (const f of files) zip.file(f.name, f.bytes, { date: erzeugt });
-  const bytes = Buffer.from(await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } }));
-  return { bytes, count: vos.length };
+  const bytes = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } });
+  return { bytes, count: vos.length, missing: fehlend.length };
 }
 
 export class HandoverIntegrityError extends Error {}
 
-export type HandoverDownload = { bytes: Buffer; filename: string; sha256: string; reprint: boolean; afterFirstHandover: boolean; archivedAt: Date };
+export type HandoverDownload = { bytes: Buffer; filename: string; sha256: string; reprint: boolean; afterFirstHandover: boolean; archivedAt: Date; missingDocuments: number };
+export type HandoverStream = Omit<HandoverDownload, "bytes"> & { body: Buffer | Readable; sizeBytes: number };
+
+const ARCHIVE_BROKEN = "Das archivierte Übergabepaket ist nicht lesbar oder beschädigt – bitte den Support kontaktieren (es wird bewusst nicht neu erzeugt).";
+
+function checkKey(org: string, key: string) {
+  if (!key.startsWith(`${org}/`) || key.includes("..")) throw new HandoverIntegrityError("Speicherschlüssel gehört nicht zur Praxis.");
+}
 
 /** Archivierte Datei lesen und gegen die gespeicherte Prüfsumme prüfen (nie stillschweigend neu erzeugen); auch für den Praxis-Export */
 export async function readArchive(org: string, a: { storageKey: string; sha256: string }): Promise<Buffer> {
-  if (!a.storageKey.startsWith(`${org}/`) || a.storageKey.includes("..")) throw new HandoverIntegrityError("Speicherschlüssel gehört nicht zur Praxis.");
+  checkKey(org, a.storageKey);
   const bytes = await readDecrypted(a.storageKey);
   if (sha256Hex(bytes) !== a.sha256) throw new HandoverIntegrityError("Prüfsumme des archivierten Übergabepakets stimmt nicht.");
   return bytes;
 }
 
+/** Rückmeldungsdatei (Beleg einer eingelesenen Auszahlung) lesen und gegen die Prüfsumme prüfen – Praxis-Export */
+export async function readPayoutFile(org: string, a: { storageKey: string; sha256: string }): Promise<Buffer> {
+  checkKey(org, a.storageKey);
+  const bytes = await readDecrypted(a.storageKey);
+  if (sha256Hex(bytes) !== a.sha256) throw new HandoverIntegrityError("Prüfsumme der Rückmeldungsdatei stimmt nicht.");
+  return bytes;
+}
+
 /**
- * Übergabepaket eines Abrechnungslaufs. Erster Abruf: erzeugen, verschlüsselt archivieren, Lauf als übergeben vermerken
- * (eine Transaktion, Zeilensperre auf dem Lauf). Jeder weitere Abruf: die archivierte Datei (byte-gleich, „Nachdruck“).
- * null = Lauf nicht gefunden.
+ * Archivierte Datei als Stream (Nachdruck ohne die ganze Datei im Speicher, AppSec H1): entschlüsselt blockweise
+ * (GCM-Tag am Ende), SHA-256 läuft mit – stimmt sie am Ende nicht, bricht der Stream mit Fehler ab (Download unvollständig).
  */
-export async function handoverPackage(auth: AuthContext, batchId: string, opts: { format?: "zip" | "csv" } = {}): Promise<HandoverDownload | { error: string } | null> {
-  const blocked = access(auth);
-  if (blocked) return blocked;
+function streamArchive(org: string, a: { storageKey: string; sha256: string }): Readable {
+  checkKey(org, a.storageKey);
+  const hash = createHash("sha256");
+  const check = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      hash.update(chunk);
+      cb(null, chunk);
+    },
+    flush(cb) {
+      cb(hash.digest("hex") === a.sha256 ? null : new HandoverIntegrityError("Prüfsumme des archivierten Übergabepakets stimmt nicht."));
+    },
+  });
+  const src = readDecryptedStream(a.storageKey);
+  src.on("error", (e) => check.destroy(e));
+  return src.pipe(check);
+}
+
+type ArchiveRow = typeof billingBatchExports.$inferSelect;
+
+/**
+ * Erster Abruf: erzeugen, Lauf als übergeben vermerken (zuerst – der Trigger verlangt einen übergebenen Lauf, AppSec H3),
+ * verschlüsselt archivieren (eine Transaktion, Zeilensperre auf dem Lauf). Sonst: vorhandenes Archiv. null = nicht gefunden.
+ */
+async function ensureArchive(auth: AuthContext, batchId: string, format: "zip" | "csv"): Promise<{ archive: ArchiveRow; bytes: Buffer | null; batch: { id: string; createdAt: Date } } | { error: string } | null> {
   const org = auth.organization.id;
   let written: string | null = null;
-  let res: { archive: typeof billingBatchExports.$inferSelect; bytes: Buffer | null; batch: { id: string; createdAt: Date } } | null;
   try {
-    res = await withOrg(org, async (tx) => {
+    return await withOrg(org, async (tx) => {
       // gleichzeitige Erst-Exporte desselben Laufs warten hier aufeinander → genau ein Archiv
       const [batch] = await tx
         .select({ id: billingBatches.id, createdAt: billingBatches.createdAt })
@@ -244,7 +278,12 @@ export async function handoverPackage(auth: AuthContext, batchId: string, opts: 
       if (archive) return { archive, bytes: null, batch };
       const data = await loadBatchExport(tx, org, batchId);
       if (!data) return null;
+      const limit = paketGrenze(data.rows.length);
+      if (limit) return { error: limit };
       const built = await buildPackage(tx, org, data, new Date());
+      if (built.bytes.length > HANDOVER_MAX_BYTES)
+        return { error: `Das Übergabepaket wäre ${Math.round(built.bytes.length / 1_048_576)} MB groß (höchstens ${HANDOVER_MAX_BYTES / 1_048_576} MB) – bitte den Support kontaktieren.` };
+      await markBatchExported(tx, org, batchId);
       const stored = await storeEncrypted(org, built.bytes);
       written = stored.storageKey;
       const [row] = await tx
@@ -259,12 +298,19 @@ export async function handoverPackage(auth: AuthContext, batchId: string, opts: 
           filename: `${baseName(batch)}.zip`,
           schemaVersion: PAKET_SCHEMA,
           prescriptionCount: built.count,
+          missingDocuments: built.missing,
           createdBy: auth.user.id,
         })
         .returning();
-      await markBatchExported(tx, org, batchId);
       await audit(
-        { organizationId: org, userId: auth.user.id, action: "billing_batch.handover", entity: "billing_batch", entityId: batchId, meta: { reprint: false, format: opts.format ?? "zip", count: built.count, sizeBytes: stored.sizeBytes, sha256: stored.sha256, afterFirstHandover: row.afterFirstHandover } },
+        {
+          organizationId: org,
+          userId: auth.user.id,
+          action: "billing_batch.handover",
+          entity: "billing_batch",
+          entityId: batchId,
+          meta: { reprint: false, format, count: built.count, missingDocuments: built.missing, sizeBytes: stored.sizeBytes, sha256: stored.sha256, afterFirstHandover: row.afterFirstHandover },
+        },
         tx,
       );
       return { archive: row, bytes: built.bytes, batch };
@@ -275,26 +321,58 @@ export async function handoverPackage(auth: AuthContext, batchId: string, opts: 
     if (written) await discardIfUnreferenced(org, written);
     throw e;
   }
-  if (!res) return null;
-  const reprint = res.bytes === null;
-  let bytes = res.bytes;
-  if (!bytes) {
-    try {
-      bytes = await readArchive(org, res.archive);
-    } catch (e) {
-      log.error("gkv_handover.archive_unreadable", { error: e, batchId });
-      return { error: "Das archivierte Übergabepaket ist nicht lesbar oder beschädigt – bitte den Support kontaktieren (es wird bewusst nicht neu erzeugt)." };
-    }
-    await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.handover", entity: "billing_batch", entityId: batchId, meta: { reprint: true, format: opts.format ?? "zip", sha256: res.archive.sha256 } });
+}
+
+const meta = (a: ArchiveRow, batch: { id: string; createdAt: Date }, reprint: boolean) => ({
+  filename: `${baseName(batch)}${reprint ? "-Nachdruck" : ""}.zip`,
+  sha256: a.sha256,
+  reprint,
+  afterFirstHandover: a.afterFirstHandover,
+  archivedAt: a.createdAt,
+  missingDocuments: a.missingDocuments,
+});
+
+const auditReprint = (auth: AuthContext, batchId: string, format: string, sha256: string) =>
+  audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "billing_batch.handover", entity: "billing_batch", entityId: batchId, meta: { reprint: true, format, sha256 } });
+
+/**
+ * Übergabepaket eines Abrechnungslaufs als Bytes (erster Abruf archiviert; danach die archivierte Datei, byte-gleich,
+ * „Nachdruck“, gegen SHA-256 geprüft). null = Lauf nicht gefunden.
+ */
+export async function handoverPackage(auth: AuthContext, batchId: string, opts: { format?: "zip" | "csv" } = {}): Promise<HandoverDownload | { error: string } | null> {
+  const blocked = access(auth);
+  if (blocked) return blocked;
+  const org = auth.organization.id;
+  const res = await ensureArchive(auth, batchId, opts.format ?? "zip");
+  if (!res || "error" in res) return res;
+  if (res.bytes) return { bytes: res.bytes, ...meta(res.archive, res.batch, false) };
+  let bytes: Buffer;
+  try {
+    bytes = await readArchive(org, res.archive);
+  } catch (e) {
+    log.error("gkv_handover.archive_unreadable", { error: e, batchId });
+    return { error: ARCHIVE_BROKEN };
   }
-  return {
-    bytes,
-    filename: `${baseName(res.batch)}${reprint ? "-Nachdruck" : ""}.zip`,
-    sha256: res.archive.sha256,
-    reprint,
-    afterFirstHandover: res.archive.afterFirstHandover,
-    archivedAt: res.archive.createdAt,
-  };
+  await auditReprint(auth, batchId, opts.format ?? "zip", res.archive.sha256);
+  return { bytes, ...meta(res.archive, res.batch, true) };
+}
+
+/** Wie handoverPackage, der Nachdruck aber als Stream (Route) – Prüfsumme läuft beim Lesen mit. */
+export async function handoverPackageStream(auth: AuthContext, batchId: string): Promise<HandoverStream | { error: string } | null> {
+  const blocked = access(auth);
+  if (blocked) return blocked;
+  const res = await ensureArchive(auth, batchId, "zip");
+  if (!res || "error" in res) return res;
+  if (res.bytes) return { body: res.bytes, sizeBytes: res.bytes.length, ...meta(res.archive, res.batch, false) };
+  let body: Readable;
+  try {
+    body = streamArchive(auth.organization.id, res.archive);
+  } catch (e) {
+    log.error("gkv_handover.archive_unreadable", { error: e, batchId });
+    return { error: ARCHIVE_BROKEN };
+  }
+  await auditReprint(auth, batchId, "zip", res.archive.sha256);
+  return { body, sizeBytes: res.archive.sizeBytes, ...meta(res.archive, res.batch, true) };
 }
 
 async function discardIfUnreferenced(org: string, key: string) {
@@ -316,9 +394,52 @@ export async function handoverCsv(auth: AuthContext, batchId: string): Promise<{
   return { bytes: Buffer.from(await f.async("uint8array")), filename: pkg.filename.replace(/^Uebergabe-/, "gkv-abrechnung-").replace(/\.zip$/, ".csv"), reprint: pkg.reprint };
 }
 
-export type PayoutRow = { id: string; amountCents: number; deductionCents: number; paidAt: string; reference: string | null; source: string; lineCount: number; createdAt: Date };
+export type PayoutRow = {
+  id: string;
+  amountCents: number;
+  deductionCents: number;
+  feeCents: number;
+  paidAt: string;
+  reference: string | null;
+  source: string;
+  lineCount: number;
+  createdAt: Date;
+  reversesPayoutId: string | null;
+  reason: string | null;
+  /** Storno dieser Auszahlung (falls storniert) */
+  reversedBy: string | null;
+};
 
-/** Lauf mit Archiv und Auszahlungen (Detailseite) */
+/** Spalten einer Auszahlung für Übersichten */
+const PAYOUT_COLS = {
+  id: billingBatchPayouts.id,
+  amountCents: billingBatchPayouts.amountCents,
+  deductionCents: billingBatchPayouts.deductionCents,
+  feeCents: billingBatchPayouts.feeCents,
+  paidAt: billingBatchPayouts.paidAt,
+  reference: billingBatchPayouts.reference,
+  source: billingBatchPayouts.source,
+  lineCount: billingBatchPayouts.lineCount,
+  createdAt: billingBatchPayouts.createdAt,
+  reversesPayoutId: billingBatchPayouts.reversesPayoutId,
+  reason: billingBatchPayouts.reason,
+};
+
+async function payoutsOf(tx: Tx, org: string, batchId: string): Promise<PayoutRow[]> {
+  const rows = await tx
+    .select(PAYOUT_COLS)
+    .from(billingBatchPayouts)
+    .where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.billingBatchId, batchId)))
+    .orderBy(asc(billingBatchPayouts.paidAt), asc(billingBatchPayouts.createdAt));
+  const reversedBy = new Map(rows.filter((r) => r.reversesPayoutId).map((r) => [r.reversesPayoutId!, r.id]));
+  return rows.map((r) => ({ ...r, reversedBy: reversedBy.get(r.id) ?? null }));
+}
+
+/**
+ * Lauf mit Archiv, Auszahlungen (Stornos als Gegenbuchung mitgerechnet) und Absetzungen. „Noch offen“ = Kassenanteil laut
+ * Lauf − Auszahlungen − Gebühren − Absetzungen, die den Kassenanteil mindern (aus gkv_deductions des Laufs: akzeptiert
+ * bzw. erledigt/„bleibt“); offene/im Widerspruch stehende Absetzungen werden getrennt gezeigt. Hilfsrechnung, keine Buchung.
+ */
 export async function batchHandoverInfo(auth: AuthContext, batchId: string) {
   const blocked = access(auth);
   if (blocked) return null;
@@ -327,31 +448,46 @@ export async function batchHandoverInfo(auth: AuthContext, batchId: string) {
     const [batch] = await tx.select().from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
     if (!batch) return null;
     const [archive] = await tx
-      .select({ sha256: billingBatchExports.sha256, sizeBytes: billingBatchExports.sizeBytes, createdAt: billingBatchExports.createdAt, afterFirstHandover: billingBatchExports.afterFirstHandover, filename: billingBatchExports.filename, schemaVersion: billingBatchExports.schemaVersion })
+      .select({
+        sha256: billingBatchExports.sha256,
+        sizeBytes: billingBatchExports.sizeBytes,
+        createdAt: billingBatchExports.createdAt,
+        afterFirstHandover: billingBatchExports.afterFirstHandover,
+        filename: billingBatchExports.filename,
+        schemaVersion: billingBatchExports.schemaVersion,
+        missingDocuments: billingBatchExports.missingDocuments,
+      })
       .from(billingBatchExports)
       .where(and(eq(billingBatchExports.organizationId, org), eq(billingBatchExports.billingBatchId, batchId), eq(billingBatchExports.kind, HANDOVER_KIND)));
-    const payouts: PayoutRow[] = await tx
-      .select({
-        id: billingBatchPayouts.id,
-        amountCents: billingBatchPayouts.amountCents,
-        deductionCents: billingBatchPayouts.deductionCents,
-        paidAt: billingBatchPayouts.paidAt,
-        reference: billingBatchPayouts.reference,
-        source: billingBatchPayouts.source,
-        lineCount: billingBatchPayouts.lineCount,
-        createdAt: billingBatchPayouts.createdAt,
-      })
-      .from(billingBatchPayouts)
-      .where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.billingBatchId, batchId)))
-      .orderBy(asc(billingBatchPayouts.paidAt), asc(billingBatchPayouts.createdAt));
+    const payouts = await payoutsOf(tx, org, batchId);
+    // Absetzungen des Laufs je Absetzung genau einmal, nach Status (nicht je Rückmeldung summiert)
+    const ded = await tx
+      .select({ status: gkvDeductions.status, outcome: gkvDeductions.outcome, amountCents: gkvDeductions.amountCents, payoutId: gkvDeductions.payoutId })
+      .from(gkvDeductions)
+      .where(and(eq(gkvDeductions.organizationId, org), eq(gkvDeductions.billingBatchId, batchId)));
+    const deductions = { reductionCents: 0, pendingCents: 0, reversedCents: 0 };
+    for (const d of ded) {
+      if (d.status === "accepted" || (d.status === "done" && d.outcome !== "reversed")) deductions.reductionCents += d.amountCents;
+      else if (d.status === "done") deductions.reversedCents += d.amountCents;
+      else deductions.pendingCents += d.amountCents;
+    }
+    const reversed = new Set(payouts.filter((p) => p.reversedBy).map((p) => p.id));
     const copay = batch.copaymentTotalCents ?? batch.totalCents;
+    const sollInsurerCents = batch.remedyTotalCents === null ? null : batch.remedyTotalCents - copay;
+    const paidCents = payouts.reduce((s, p) => s + p.amountCents, 0);
+    const feeCents = payouts.reduce((s, p) => s + p.feeCents, 0);
     return {
       batch,
       archive: archive ?? null,
       payouts,
-      sollInsurerCents: batch.remedyTotalCents === null ? null : batch.remedyTotalCents - copay,
-      paidCents: payouts.reduce((s, p) => s + p.amountCents, 0),
-      deductionCents: payouts.reduce((s, p) => s + p.deductionCents, 0),
+      sollInsurerCents,
+      /** netto ausgezahlt (nach Gebühren, Stornos mitgerechnet) */
+      paidCents,
+      feeCents,
+      deductions,
+      openCents: sollInsurerCents === null ? null : sollInsurerCents - paidCents - feeCents - deductions.reductionCents,
+      /** Absetzungen aus stornierten Rückmeldungen (bitte prüfen – werden nicht automatisch geändert) */
+      reversedDeductionHints: ded.filter((d) => d.payoutId && reversed.has(d.payoutId)).length,
     };
   });
 }
@@ -367,6 +503,7 @@ export type PayoutPreviewLine = {
   /** Kassenanteil laut Lauf (Heilmittelkosten − Zuzahlung), null = ohne Heilmittelkosten */
   sollCent: number | null;
   ausgezahltCent: number;
+  gebuehrCent: number;
   absetzung: RueckmeldungZeile["absetzung"];
   /** gleiche Absetzung (Betrag, Code) zu dieser Verordnung ist schon erfasst → wird nicht erneut angelegt */
   absetzungVorhanden: boolean;
@@ -385,8 +522,11 @@ export type PayoutPreview = {
   andererLauf: number;
   summeAusgezahltCent: number;
   summeAbsetzungCent: number;
-  /** diese Datei ist für diesen Lauf schon eingelesen */
+  summeGebuehrCent: number;
+  /** diese Datei ist für diesen Lauf schon eingelesen (und nicht storniert) */
   bereitsEingelesen: boolean;
+  /** inhaltlich gleiche Auszahlung (Datum, Referenz, Betrag) schon erfasst – nur mit Bestätigung übernehmen */
+  duplikat: string | null;
 };
 
 /** Zuordnung der geprüften Zeilen zu den Verordnungen des Laufs (wie im Übergabepaket) – liest nur */
@@ -406,13 +546,18 @@ async function matchRueckmeldung(tx: Tx, org: string, batchId: string, bytes: Ui
     andererLauf: 0,
     summeAusgezahltCent: 0,
     summeAbsetzungCent: 0,
+    summeGebuehrCent: 0,
     bereitsEingelesen: false,
+    duplikat: null,
   };
-  const [dup] = await tx
-    .select({ id: billingBatchPayouts.id })
-    .from(billingBatchPayouts)
-    .where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.billingBatchId, batchId), eq(billingBatchPayouts.sourceSha256, parsed.sha256)));
-  preview.bereitsEingelesen = !!dup;
+  const active = (await payoutsOf(tx, org, batchId)).filter((p) => p.source !== "reversal" && !p.reversedBy);
+  const shas = active.length
+    ? await tx
+        .select({ id: billingBatchPayouts.id })
+        .from(billingBatchPayouts)
+        .where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.billingBatchId, batchId), eq(billingBatchPayouts.sourceSha256, parsed.sha256)))
+    : [];
+  preview.bereitsEingelesen = shas.some((r) => active.some((a) => a.id === r.id));
   if (parsed.fehler.length) return preview;
   const data = await loadBatchExport(tx, org, batchId);
   if (!data) return { error: "Abrechnungslauf nicht gefunden." };
@@ -478,8 +623,9 @@ async function matchRueckmeldung(tx: Tx, org: string, batchId: string, bytes: Ui
     }
     const soll = row.vo.remedyCostCents === null ? null : row.vo.remedyCostCents - (row.vo.copaymentCents ?? 0);
     const hinweise: string[] = [];
-    if (soll !== null && z.ausgezahltCent + (z.absetzung?.betragCent ?? 0) !== soll)
-      hinweise.push(`Ausgezahlt + Absetzung weicht vom Kassenanteil laut Lauf ab (${((z.ausgezahltCent + (z.absetzung?.betragCent ?? 0) - soll) / 100).toFixed(2).replace(".", ",")} €)`);
+    const gedeckt = z.ausgezahltCent + z.gebuehrCent + (z.absetzung?.betragCent ?? 0);
+    if (soll !== null && gedeckt !== soll)
+      hinweise.push(`Ausgezahlt + Gebühr + Absetzung weicht vom Kassenanteil laut Lauf ab (${((gedeckt - soll) / 100).toFixed(2).replace(".", ",")} €)`);
     if (z.absetzung && !z.absetzung.code) hinweise.push("Absetzung ohne Code");
     const absetzungVorhanden = !!z.absetzung && existing.some((d) => d.prescriptionId === row!.vo.id && d.amountCents === z.absetzung!.betragCent && (d.reasonCode ?? null) === z.absetzung!.code);
     preview.zeilen.push({
@@ -490,18 +636,37 @@ async function matchRueckmeldung(tx: Tx, org: string, batchId: string, bytes: Ui
       ausstellungsdatum: row.vo.issuedAt,
       sollCent: soll,
       ausgezahltCent: z.ausgezahltCent,
+      gebuehrCent: z.gebuehrCent,
       absetzung: z.absetzung,
       absetzungVorhanden,
       hinweise,
     });
     preview.summeAusgezahltCent += z.ausgezahltCent;
     preview.summeAbsetzungCent += z.absetzung?.betragCent ?? 0;
+    preview.summeGebuehrCent += z.gebuehrCent;
   }
   if (!preview.fehler.length && !preview.zeilen.length) preview.fehler.push("Keine Zeile gehört zu diesem Abrechnungslauf.");
   if (preview.summeAusgezahltCent > 100_000_000 || preview.summeAbsetzungCent > 100_000_000) preview.fehler.push("Summe über 1 Mio. € – bitte prüfen.");
   if (preview.fehler.length) preview.zeilen = [];
+  else preview.duplikat = duplicateOf(active, { paidAt: preview.auszahlungsdatum, reference: preview.sammelrechnungsnummer, amountCents: preview.summeAusgezahltCent });
   return preview;
 }
+
+/** Referenz vergleichbar machen: nur Buchstaben/Ziffern, klein („SR-9“ = „sr 9“) */
+const refKey = (r: string | null | undefined) => (r ?? "").toLowerCase().replace(/[^a-z0-9äöüß]/g, "");
+
+/**
+ * Inhaltlich gleiche, nicht stornierte Auszahlung (Lauf, Auszahlungsdatum, Referenz, Betrag) – unabhängig davon, ob von
+ * Hand oder eingelesen und ob die Datei bytegleich ist (CRLF, JSON statt CSV). Warnung, keine Sperre.
+ */
+function duplicateOf(active: PayoutRow[], k: { paidAt: string | null; reference: string | null; amountCents: number }): string | null {
+  const hit = active.find((a) => a.paidAt === k.paidAt && refKey(a.reference) === refKey(k.reference) && a.amountCents === k.amountCents);
+  return hit
+    ? `Eine gleiche Auszahlung ist bereits erfasst (${hit.paidAt.split("-").reverse().join(".")}, ${hit.reference ?? "ohne Referenz"}, ${(hit.amountCents / 100).toFixed(2).replace(".", ",")} €, ${hit.source === "import" ? "Rückmeldung" : "von Hand"}) – mögliche Doppelerfassung.`
+    : null;
+}
+
+const DUPLICATE_ERROR = "Mögliche Doppelerfassung: Eine gleiche Auszahlung (Datum, Referenz, Betrag) ist bereits erfasst – bitte prüfen und ausdrücklich bestätigen.";
 
 const MAX_NAME = 200;
 
@@ -518,10 +683,19 @@ export async function previewPayoutImport(auth: AuthContext, batchId: string, by
   return res;
 }
 
+/** 23505 nur dann als „bereits eingelesen“ melden, wenn er vom Index bzw. Trigger der Datei-Prüfsumme kommt (Code-Review D) */
+function isSourceDuplicate(e: unknown): boolean {
+  const x = e as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
+  const code = x?.cause?.code ?? x?.code;
+  const constraint = x?.cause?.constraint ?? x?.constraint;
+  return code === "23505" && constraint === "billing_batch_payouts_source";
+}
+
 /**
- * Rückmeldung übernehmen – nur mit derselben Datei wie in der Vorschau (Prüfsumme) und ohne Fehler: eine Auszahlung
- * (Summe der Zeilen dieses Laufs) und neue Absetzungen (Status „offen“, Kassenschreiben = Sammelrechnungsnummer). Bereits
- * erfasste gleiche Absetzungen werden übersprungen. Verordnungen bleiben unverändert.
+ * Rückmeldung übernehmen – nur mit derselben Datei wie in der Vorschau (Prüfsumme) und ohne Fehler: die Datei wird als Beleg
+ * verschlüsselt abgelegt, dazu eine Auszahlung (Summe der Zeilen dieses Laufs, Gebühr) und neue Absetzungen (Status
+ * „offen“, Kassenschreiben = Sammelrechnungsnummer). Bereits erfasste gleiche Absetzungen werden übersprungen.
+ * Inhaltlich gleiche Auszahlung (Datum, Referenz, Betrag) nur mit `confirmDuplicate`. Verordnungen bleiben unverändert.
  */
 export async function confirmPayoutImport(
   auth: AuthContext,
@@ -529,21 +703,28 @@ export async function confirmPayoutImport(
   bytes: Uint8Array,
   dateiname: string,
   expectedSha256: string,
+  opts: { confirmDuplicate?: boolean } = {},
 ): Promise<{ payoutId: string; deductions: number; skippedDeductions: number } | { error: string }> {
   const blocked = access(auth);
   if (blocked) return blocked;
   if (auth.support) return { error: SUPPORT_DENIED };
   const org = auth.organization.id;
   if (sha256Hex(bytes) !== expectedSha256) return { error: "Die Datei wurde seit der Vorschau geändert – bitte erneut prüfen." };
+  const name = dateiname.slice(0, MAX_NAME);
+  let written: string | null = null;
   try {
     return await withOrg(org, async (tx) => {
       // je Lauf nacheinander (gleichzeitiges Einlesen derselben Datei scheitert zusätzlich am eindeutigen Index)
       const [locked] = await tx.select({ id: billingBatches.id }).from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId))).for("update");
       if (!locked) return { error: "Abrechnungslauf nicht gefunden." };
-      const p = await matchRueckmeldung(tx, org, batchId, bytes, dateiname.slice(0, MAX_NAME));
+      const p = await matchRueckmeldung(tx, org, batchId, bytes, name);
       if ("error" in p) return p;
       if (p.bereitsEingelesen) return { error: "Diese Rückmeldung ist für diesen Abrechnungslauf bereits eingelesen." };
       if (p.fehler.length || !p.zeilen.length || !p.auszahlungsdatum) return { error: `Die Rückmeldung enthält Fehler – bitte die Vorschau prüfen.${p.fehler.length ? ` (${p.fehler[0]})` : ""}` };
+      if (p.duplikat && !opts.confirmDuplicate) return { error: DUPLICATE_ERROR };
+      // Datei als Beleg (verschlüsselt) – vor dem Eintrag; scheitert der Vorgang, wird sie unten wieder entfernt
+      const stored = await storeEncrypted(org, Buffer.from(bytes));
+      written = stored.storageKey;
       const [payout] = await tx
         .insert(billingBatchPayouts)
         .values({
@@ -551,12 +732,15 @@ export async function confirmPayoutImport(
           billingBatchId: batchId,
           amountCents: p.summeAusgezahltCent,
           deductionCents: p.summeAbsetzungCent,
+          feeCents: p.summeGebuehrCent,
           paidAt: p.auszahlungsdatum,
           reference: p.sammelrechnungsnummer,
           source: "import",
           sourceSha256: p.sha256,
+          storageKey: stored.storageKey,
+          sourceFilename: cleanText(name, 200) || "rueckmeldung",
           lineCount: p.zeilen.length,
-          details: p.zeilen.map((z) => ({ prescriptionId: z.prescriptionId, paidCents: z.ausgezahltCent, deductionCents: z.absetzung?.betragCent ?? 0 })),
+          details: p.zeilen.map((z) => ({ prescriptionId: z.prescriptionId, paidCents: z.ausgezahltCent, deductionCents: z.absetzung?.betragCent ?? 0, feeCents: z.gebuehrCent })),
           createdBy: auth.user.id,
         })
         .returning({ id: billingBatchPayouts.id });
@@ -588,26 +772,52 @@ export async function confirmPayoutImport(
           action: "billing_batch.payout_import",
           entity: "billing_batch",
           entityId: batchId,
-          meta: { payoutId: payout.id, lines: p.zeilen.length, amountCents: p.summeAusgezahltCent, deductionCents: p.summeAbsetzungCent, deductions: neu.length, skippedDeductions: skipped, otherBatch: p.andererLauf, sha256: p.sha256 },
+          meta: {
+            payoutId: payout.id,
+            lines: p.zeilen.length,
+            amountCents: p.summeAusgezahltCent,
+            deductionCents: p.summeAbsetzungCent,
+            feeCents: p.summeGebuehrCent,
+            deductions: neu.length,
+            skippedDeductions: skipped,
+            otherBatch: p.andererLauf,
+            sha256: p.sha256,
+            duplicateConfirmed: !!p.duplikat,
+          },
         },
         tx,
       );
       return { payoutId: payout.id, deductions: neu.length, skippedDeductions: skipped };
     });
   } catch (e) {
-    const code = (e as { code?: string; cause?: { code?: string } })?.cause?.code ?? (e as { code?: string })?.code;
-    if (code === "23505") return { error: "Diese Rückmeldung ist für diesen Abrechnungslauf bereits eingelesen." };
+    if (isSourceDuplicate(e)) return { error: "Diese Rückmeldung ist für diesen Abrechnungslauf bereits eingelesen." };
     throw e;
+  } finally {
+    // Antwort mit Fehler (kein Eintrag, z. B. Validierung nach dem Ablegen) → Datei entfernen
+    if (written) await discardPayoutFileIfUnreferenced(org, written);
+  }
+}
+
+async function discardPayoutFileIfUnreferenced(org: string, key: string) {
+  try {
+    const [ref] = await withOrg(org, (tx) => tx.select({ id: billingBatchPayouts.id }).from(billingBatchPayouts).where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.storageKey, key))));
+    if (!ref) await discardStored(key);
+  } catch (e) {
+    log.warn("gkv_handover.cleanup_skipped", { error: e });
   }
 }
 
 export const manualPayoutInput = z.object({
   batchId: z.string().uuid(),
   amountCents: z.coerce.number().int("Betrag ungültig.").min(1, "Betrag muss größer als 0 sein.").max(AUSZAHLUNG_MAX_CENT * 10, "Betrag über 1 Mio. € – bitte prüfen."),
+  /** einbehaltene Gebühr des Abrechnungszentrums (optional) */
+  feeCents: z.coerce.number().int("Gebühr ungültig.").min(0, "Gebühr darf nicht negativ sein.").max(AUSZAHLUNG_MAX_CENT * 10, "Gebühr über 1 Mio. € – bitte prüfen.").optional(),
   paidAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum der Auszahlung ungültig."),
   reference: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 80) || null : v ?? null), z.string().max(60, "Referenz: höchstens 60 Zeichen.").nullable()),
+  /** inhaltlich gleiche Auszahlung trotzdem erfassen (Häkchen) */
+  confirmDuplicate: z.boolean().optional(),
 });
-export type ManualPayoutInput = z.infer<typeof manualPayoutInput>;
+export type ManualPayoutInput = z.input<typeof manualPayoutInput>;
 
 /** Auszahlung von Hand erfassen (ohne Datei des Abrechnungszentrums) – nur zu einem übergebenen Lauf. */
 export async function recordManualPayout(auth: AuthContext, input: ManualPayoutInput): Promise<{ id: string } | { error: string }> {
@@ -621,36 +831,102 @@ export async function recordManualPayout(auth: AuthContext, input: ManualPayoutI
   if (Number.isNaN(real.getTime()) || real.toISOString().slice(0, 10) !== d.paidAt || d.paidAt < "2000-01-01") return { error: "Datum der Auszahlung ungültig." };
   if (d.paidAt > berlinDateIso()) return { error: "Das Datum der Auszahlung liegt in der Zukunft." };
   const org = auth.organization.id;
-  const res = await withOrg(org, async (tx) => {
-    const [b] = await tx.select({ exportedAt: billingBatches.exportedAt }).from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, d.batchId)));
+  return withOrg(org, async (tx) => {
+    const [b] = await tx.select({ exportedAt: billingBatches.exportedAt }).from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, d.batchId))).for("update");
     if (!b) return { error: "Abrechnungslauf nicht gefunden." };
     if (!b.exportedAt) return { error: "Auszahlungen gibt es nur zu übergebenen Abrechnungsläufen." };
+    const active = (await payoutsOf(tx, org, d.batchId)).filter((p) => p.source !== "reversal" && !p.reversedBy);
+    const dup = duplicateOf(active, { paidAt: d.paidAt, reference: d.reference, amountCents: d.amountCents });
+    if (dup && !d.confirmDuplicate) return { error: DUPLICATE_ERROR };
     const [row] = await tx
       .insert(billingBatchPayouts)
-      .values({ organizationId: org, billingBatchId: d.batchId, amountCents: d.amountCents, paidAt: d.paidAt, reference: d.reference, source: "manual", createdBy: auth.user.id })
+      .values({ organizationId: org, billingBatchId: d.batchId, amountCents: d.amountCents, feeCents: d.feeCents ?? 0, paidAt: d.paidAt, reference: d.reference, source: "manual", createdBy: auth.user.id })
       .returning({ id: billingBatchPayouts.id });
-    await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.payout_manual", entity: "billing_batch", entityId: d.batchId, meta: { payoutId: row.id, amountCents: d.amountCents, paidAt: d.paidAt } }, tx);
+    await audit(
+      { organizationId: org, userId: auth.user.id, action: "billing_batch.payout_manual", entity: "billing_batch", entityId: d.batchId, meta: { payoutId: row.id, amountCents: d.amountCents, feeCents: d.feeCents ?? 0, paidAt: d.paidAt, duplicateConfirmed: !!dup } },
+      tx,
+    );
     return { id: row.id };
   });
-  return res;
 }
 
-/** Auszahlungen je Lauf (Übersicht) – Summe und letzte Auszahlung */
+export const reversePayoutInput = z.object({
+  payoutId: z.string().uuid(),
+  reason: z.preprocess((v) => (typeof v === "string" ? cleanText(v, 600) : v), z.string().min(5, "Bitte eine Begründung angeben (mindestens 5 Zeichen).").max(500, "Begründung: höchstens 500 Zeichen.")),
+});
+
+/**
+ * Storno einer Auszahlung (Fehleingabe, falsche Rückmeldung): Gegenbuchung mit exakt negativen Beträgen am heutigen Tag
+ * (wirkt in der Auswertung im Monat des Stornos, nicht rückwirkend). Höchstens ein Storno je Auszahlung, ein Storno ist nicht
+ * stornierbar (Trigger + eindeutiger Index). Verknüpfte Absetzungen bleiben unverändert (Hinweis auf der Laufseite); eine
+ * stornierte Rückmeldungsdatei kann erneut eingelesen werden.
+ */
+export async function reversePayout(auth: AuthContext, input: z.input<typeof reversePayoutInput>): Promise<{ id: string } | { error: string }> {
+  const blocked = access(auth);
+  if (blocked) return blocked;
+  if (auth.support) return { error: SUPPORT_DENIED };
+  const parsed = reversePayoutInput.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Eingabe ungültig." };
+  const org = auth.organization.id;
+  try {
+    return await withOrg(org, async (tx) => {
+      const [o] = await tx.select().from(billingBatchPayouts).where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.id, parsed.data.payoutId)));
+      if (!o) return { error: "Auszahlung nicht gefunden." };
+      // Lauf sperren: Stornos und Importe desselben Laufs nacheinander
+      await tx.select({ id: billingBatches.id }).from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, o.billingBatchId))).for("update");
+      if (o.source === "reversal") return { error: "Ein Storno kann nicht storniert werden." };
+      const [already] = await tx.select({ id: billingBatchPayouts.id }).from(billingBatchPayouts).where(and(eq(billingBatchPayouts.organizationId, org), eq(billingBatchPayouts.reversesPayoutId, o.id)));
+      if (already) return { error: "Diese Auszahlung ist bereits storniert." };
+      const [row] = await tx
+        .insert(billingBatchPayouts)
+        .values({
+          organizationId: org,
+          billingBatchId: o.billingBatchId,
+          amountCents: -o.amountCents,
+          deductionCents: -o.deductionCents,
+          feeCents: -o.feeCents,
+          paidAt: berlinDateIso(),
+          reference: o.reference,
+          source: "reversal",
+          reversesPayoutId: o.id,
+          reason: parsed.data.reason,
+          createdBy: auth.user.id,
+        })
+        .returning({ id: billingBatchPayouts.id });
+      const linked = await tx.select({ id: gkvDeductions.id }).from(gkvDeductions).where(and(eq(gkvDeductions.organizationId, org), eq(gkvDeductions.payoutId, o.id)));
+      // Audit ohne Begründung (Freitext)
+      await audit(
+        { organizationId: org, userId: auth.user.id, action: "billing_batch.payout_reversal", entity: "billing_batch", entityId: o.billingBatchId, meta: { payoutId: o.id, reversalId: row.id, amountCents: -o.amountCents, linkedDeductions: linked.length } },
+        tx,
+      );
+      return { id: row.id };
+    });
+  } catch (e) {
+    const x = e as { code?: string; cause?: { code?: string } };
+    if ((x?.cause?.code ?? x?.code) === "23505") return { error: "Diese Auszahlung ist bereits storniert." };
+    throw e;
+  }
+}
+
+/** Auszahlungen je Lauf (Übersicht) – Summe netto inkl. Stornos und letzte Auszahlung; Rechte wie die Abrechnung (AppSec H5) */
 export async function payoutTotals(auth: AuthContext): Promise<Map<string, { cents: number; count: number; last: string | null }>> {
-  assertCan(auth, "invoices.write");
+  const out = new Map<string, { cents: number; count: number; last: string | null }>();
+  if (access(auth)) return out;
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) =>
     tx
-      .select({ batchId: billingBatchPayouts.billingBatchId, amountCents: billingBatchPayouts.amountCents, paidAt: billingBatchPayouts.paidAt })
+      .select({ batchId: billingBatchPayouts.billingBatchId, amountCents: billingBatchPayouts.amountCents, paidAt: billingBatchPayouts.paidAt, source: billingBatchPayouts.source })
       .from(billingBatchPayouts)
       .where(eq(billingBatchPayouts.organizationId, org))
       .orderBy(desc(billingBatchPayouts.paidAt)),
   );
-  const out = new Map<string, { cents: number; count: number; last: string | null }>();
   for (const r of rows) {
-    const cur = out.get(r.batchId) ?? { cents: 0, count: 0, last: r.paidAt };
+    const cur = out.get(r.batchId) ?? { cents: 0, count: 0, last: null };
     cur.cents += r.amountCents;
-    cur.count++;
+    if (r.source !== "reversal") {
+      cur.count++;
+      cur.last ??= r.paidAt;
+    }
     out.set(r.batchId, cur);
   }
   return out;

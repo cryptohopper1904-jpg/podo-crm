@@ -4,12 +4,12 @@ import archiver from "archiver";
 import { and, asc, eq, gt, inArray, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import { withOrg } from "@/db";
-import { billingBatchExports, documentArchive, media, memberships, organizations, patients, treatmentSignatures, users } from "@/db/schema";
+import { billingBatchExports, billingBatchPayouts, documentArchive, media, memberships, organizations, patients, treatmentSignatures, users } from "@/db/schema";
 import { mediaPath, sanitizeOrganizationRow, stripRow, tenantTables } from "@/lib/practice-export";
 import { readDecryptedStream, verifyStored } from "@/lib/storage";
 import { berlinDateIso } from "@/lib/format";
 import { readArchivedPdf } from "./document-archive";
-import { readArchive as readHandoverArchive } from "./gkv-handover";
+import { readArchive as readHandoverArchive, readPayoutFile } from "./gkv-handover";
 import { catchUpArchives, missingArchives } from "./archive-catchup";
 import { log } from "@/lib/log";
 
@@ -28,6 +28,9 @@ export type ExportSummary = {
   /** archivierte Übergabepakete der Abrechnungsläufe (abrechnung/uebergabe/…, GKV Paket E) */
   handoverFiles: number;
   handoverErrors: number;
+  /** eingelesene Rückmeldungsdateien des Abrechnungszentrums (abrechnung/rueckmeldungen/…) */
+  payoutFiles: number;
+  payoutErrors: number;
 };
 
 export type PracticeExport = {
@@ -110,6 +113,8 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
   // archivierte Übergabepakete (GKV Paket E): Pfad je Zeile, Fehler (Prüfsumme/Entschlüsselung)
   const handoverFiles = new Map<string, string>();
   const handoverErrors = new Set<string>();
+  const payoutFiles = new Map<string, string>();
+  const payoutErrors = new Set<string>();
   /** Pfad im ZIP für ein archiviertes Beleg-PDF (Dateiname = Belegnummer, je Praxis eindeutig) */
   const archivePath = (r: Row) => `belege/${r.kind === "payment_receipt" ? "zahlungsbelege" : "rechnungen"}/${String(r.filename).replace(/[^A-Za-z0-9._-]/g, "_")}`;
 
@@ -287,7 +292,14 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       (after, limit) =>
         withOrg(org, (tx) =>
           tx
-            .select({ id: billingBatchExports.id, storageKey: billingBatchExports.storageKey, sha256: billingBatchExports.sha256, filename: billingBatchExports.filename, createdAt: billingBatchExports.createdAt })
+            .select({
+              id: billingBatchExports.id,
+              batchId: billingBatchExports.billingBatchId,
+              storageKey: billingBatchExports.storageKey,
+              sha256: billingBatchExports.sha256,
+              filename: billingBatchExports.filename,
+              createdAt: billingBatchExports.createdAt,
+            })
             .from(billingBatchExports)
             .where(and(eq(billingBatchExports.organizationId, org), after === undefined ? undefined : gt(billingBatchExports.id, after as string)))
             .orderBy(asc(billingBatchExports.id))
@@ -304,9 +316,46 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
           handoverErrors.add(h.id);
           continue;
         }
-        const file = `abrechnung/uebergabe/${String(h.filename).replace(/[^A-Za-z0-9._-]/g, "_")}`;
+        // volle Lauf-ID im Pfad (Dateinamen enthalten nur die ersten 8 Zeichen – eindeutig je Praxis, Code-Review D)
+        const file = `abrechnung/uebergabe/${h.batchId}/${String(h.filename).replace(/[^A-Za-z0-9._-]/g, "_")}`;
         await add(Readable.from([bytes]), { name: file, store: true, date: new Date(h.createdAt) });
         handoverFiles.set(h.id, file);
+      }
+    }
+
+    // 1e) Rückmeldungsdateien des Abrechnungszentrums (Beleg je eingelesener Auszahlung) – gegen die SHA-256 geprüft
+    const payoutPages = pages(
+      (after, limit) =>
+        withOrg(org, (tx) =>
+          tx
+            .select({
+              id: billingBatchPayouts.id,
+              batchId: billingBatchPayouts.billingBatchId,
+              storageKey: billingBatchPayouts.storageKey,
+              sha256: billingBatchPayouts.sourceSha256,
+              filename: billingBatchPayouts.sourceFilename,
+              createdAt: billingBatchPayouts.createdAt,
+            })
+            .from(billingBatchPayouts)
+            .where(and(eq(billingBatchPayouts.organizationId, org), after === undefined ? undefined : gt(billingBatchPayouts.id, after as string)))
+            .orderBy(asc(billingBatchPayouts.id))
+            .limit(limit),
+        ),
+      mediaPageSize,
+    );
+    for await (const page of payoutPages) {
+      for (const r of page) {
+        if (!r.storageKey || !r.sha256) continue;
+        let bytes: Buffer;
+        try {
+          bytes = await readPayoutFile(org, { storageKey: r.storageKey, sha256: r.sha256 });
+        } catch {
+          payoutErrors.add(r.id);
+          continue;
+        }
+        const file = `abrechnung/rueckmeldungen/${r.batchId}/${r.id}_${String(r.filename ?? "rueckmeldung").replace(/[^A-Za-z0-9._-]/g, "_")}`;
+        await add(Readable.from([bytes]), { name: file, store: true, date: new Date(r.createdAt) });
+        payoutFiles.set(r.id, file);
       }
     }
 
@@ -316,6 +365,7 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
       const isArchive = t.name === "document_archive";
       const isSignature = t.name === "treatment_signatures";
       const isHandover = t.name === "billing_batch_exports";
+      const isPayout = t.name === "billing_batch_payouts";
       const source = jsonTable(t.name, pages(tableReader(t.table), pageSize), async (rows) => {
         const numbers = isMedia ? await numbersFor(rows.map((r) => r.patientId as string)) : null;
         return rows.map((r) => {
@@ -326,6 +376,12 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
               clean.exportFile = null;
               clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden";
             } else clean.exportFile = signatureFiles.get(r.id as string) ?? null;
+          }
+          if (isPayout && r.storageKey) {
+            if (payoutErrors.has(r.id as string)) {
+              clean.exportFile = null;
+              clean.exportError = "Datei konnte nicht gelesen/entschlüsselt werden oder Prüfsumme stimmt nicht";
+            } else clean.exportFile = payoutFiles.get(r.id as string) ?? null;
           }
           if (isHandover) {
             if (handoverErrors.has(r.id as string)) {
@@ -368,12 +424,12 @@ export async function buildPracticeExport(opts: ExportOptions): Promise<Practice
     await add(JSON.stringify(orgRow ? [sanitizeOrganizationRow(orgRow)] : [], replacer, 2), { name: "tables/organizations.json" });
     const missing = await missingArchives(org, 10_000);
     const notArchived = [...missing.invoices.map((i) => i.number ?? i.id), ...missing.receipts.map((r) => r.number)];
-    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors], archiveFiles, archiveErrors: [...archiveErrors], notArchived, handoverFiles: handoverFiles.size, handoverErrors: handoverErrors.size }), {
+    await add(readme({ orgName: orgRow?.name ?? "", exportedBy: opts.exportedBy, counts, mediaFiles, mediaErrors: [...mediaErrors], archiveFiles, archiveErrors: [...archiveErrors], notArchived, handoverFiles: handoverFiles.size, handoverErrors: handoverErrors.size, payoutFiles: payoutFiles.size, payoutErrors: payoutErrors.size }), {
       name: "README.txt",
     });
     await archive.finalize();
     finished = true;
-    return { counts, mediaFiles, mediaErrors: mediaErrors.size, archiveFiles, archiveErrors: archiveErrors.size, handoverFiles: handoverFiles.size, handoverErrors: handoverErrors.size };
+    return { counts, mediaFiles, mediaErrors: mediaErrors.size, archiveFiles, archiveErrors: archiveErrors.size, handoverFiles: handoverFiles.size, handoverErrors: handoverErrors.size, payoutFiles: payoutFiles.size, payoutErrors: payoutErrors.size };
   }
 
   const done = produce().catch((e: unknown) => {
@@ -399,6 +455,8 @@ function readme(p: {
   notArchived: string[];
   handoverFiles: number;
   handoverErrors: number;
+  payoutFiles: number;
+  payoutErrors: number;
 }) {
   const lines = [
     "PodoHero – Vollständiger Datenexport",
@@ -427,6 +485,8 @@ function readme(p: {
     "abrechnung/uebergabe/  GKV-Abrechnung: die beim ersten Export archivierten Übergabepakete der Abrechnungsläufe (ZIP) –",
     "                       byte-gleich, beim Export gegen ihre Prüfsumme (sha256) geprüft; Zuordnung in",
     "                       tables/billing_batch_exports.json (Feld exportFile).",
+    "abrechnung/rueckmeldungen/  eingelesene Rückmeldungen des Abrechnungszentrums (Beleg je Auszahlung, byte-gleich, gegen",
+    "                       sha256 geprüft); Zuordnung in tables/billing_batch_payouts.json (Feld exportFile).",
     "",
     "NICHT ENTHALTEN – BITTE SEPARAT ERSTELLEN: der DSFinV-K-Export (Kasse → DSFinV-K-Export, ggf. mehrere Zeiträume –",
     "max. 3 Jahre je Export) und der TSE-Export (beim TSE-Anbieter) für ALLE Zeiträume bis zur Kündigung. Beide sind",
@@ -444,6 +504,8 @@ function readme(p: {
     ...(p.mediaErrors.length ? ["", `ACHTUNG: ${p.mediaErrors.length} Datei(en) konnten nicht gelesen werden (IDs in tables/media.json, Feld exportError).`] : []),
     `${"Archivierte Belege (PDF)".padEnd(28)} ${p.archiveFiles}`,
     `${"GKV-Übergabepakete (ZIP)".padEnd(28)} ${p.handoverFiles}`,
+    `${"Rückmeldungsdateien".padEnd(28)} ${p.payoutFiles}`,
+    ...(p.payoutErrors ? ["", `ACHTUNG: ${p.payoutErrors} Rückmeldungsdatei(en) konnten nicht gelesen werden (IDs in tables/billing_batch_payouts.json, Feld exportError).`] : []),
     ...(p.handoverErrors ? ["", `ACHTUNG: ${p.handoverErrors} Übergabepaket(e) konnten nicht gelesen werden (IDs in tables/billing_batch_exports.json, Feld exportError).`] : []),
     ...(p.archiveErrors.length ? ["", `ACHTUNG: ${p.archiveErrors.length} archivierte(r) Beleg(e) konnten nicht gelesen werden (IDs in tables/document_archive.json, Feld exportError).`] : []),
     ...(p.notArchived.length

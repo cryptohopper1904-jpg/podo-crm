@@ -12,7 +12,7 @@ import { priceSnapshot, type PriceSnapshot } from "@/lib/rules/prescription";
 import { SIGNER_ROLE_LABEL } from "@/lib/signature";
 import { assertCan } from "./authz";
 import { loadLogos } from "./practice-logos";
-import { proofRows, signatureImages } from "./signatures";
+import { proofRows, signatureImages, type ProofRow } from "./signatures";
 
 /** Praxis als Briefkopf (Fußzeile wie Rechnungen) inkl. IK */
 export async function letterOrg(tx: Tx, org: string): Promise<GkvPdfOrg | null> {
@@ -102,8 +102,8 @@ type PatientRow = typeof patients.$inferSelect;
 type Logos = Awaited<ReturnType<typeof loadLogos>>;
 
 /** Behandlungen mit Unterschriften, Bilder und Berichtsdatum für den Leistungsnachweis (in der laufenden Transaktion) */
-async function loadProof(tx: Tx, org: string, prescriptionId: string) {
-  const rows = (await proofRows(tx, org, [prescriptionId])).get(prescriptionId) ?? [];
+async function loadProof(tx: Tx, org: string, prescriptionId: string, preloaded?: ProofRow[]) {
+  const rows = preloaded ?? (await proofRows(tx, org, [prescriptionId])).get(prescriptionId) ?? [];
   const images = await signatureImages(tx, org, rows.flatMap((r) => (r.signature?.kind === "device" ? [r.signature.id] : [])));
   const [report] = await tx.select({ reportDate: therapyReports.reportDate }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.prescriptionId, prescriptionId)));
   return { rows, images, reportDate: report?.reportDate ?? null };
@@ -134,8 +134,9 @@ async function renderProof(vo: VoRow, p: PatientRow, d: Awaited<ReturnType<typeo
  * Leistungsnachweis-PDF in einer laufenden Transaktion, ohne Audit – für das Übergabepaket eines Abrechnungslaufs (GKV
  * Paket E; der Aufrufer prüft Rechte und protokolliert). `vo` darf der Stand der Erstabrechnung sein (original_row).
  */
-export async function proofPdfInTx(tx: Tx, org: string, vo: VoRow, p: PatientRow, o: GkvPdfOrg, logos: Logos, generatedAt = new Date()): Promise<Uint8Array> {
-  return (await renderProof(vo, p, await loadProof(tx, org, vo.id), o, logos, generatedAt)).bytes;
+export async function proofPdfInTx(tx: Tx, org: string, vo: VoRow, p: PatientRow, o: GkvPdfOrg, logos: Logos, generatedAt = new Date(), rows?: ProofRow[]): Promise<Uint8Array> {
+  // bereits geladene Behandlungszeilen (Übergabepaket lädt sie für alle Verordnungen auf einmal) – kein N+1
+  return (await renderProof(vo, p, await loadProof(tx, org, vo.id, rows), o, logos, generatedAt)).bytes;
 }
 
 /** Leistungsnachweis-PDF je Verordnung (Recht medical.read; Aufrufer prüft Download im Support-Modus) */

@@ -548,8 +548,15 @@ Typen, Beispiele) steht vollständig in **docs/GKV-ABRECHNUNGSZENTRUM.md**. Code
   Damit sind auch Behandlungstage, Unterschriften und „Zuzahlung erhalten am“ des übergebenen Stands belegbar (bisher
   nicht eingefroren, siehe Fachfrage 37). Läufe, die vor Paket E schon per CSV übergeben wurden, werden beim ersten
   Paket-Download mit dem dann aktuellen Stand archiviert und als „nach Erstübergabe“ gekennzeichnet
-  (`after_first_handover`, Trigger). `billingBatchExport` (Live-Stand ohne Archiv) bleibt als interne Funktion für Tests
-  und Vergleiche.
+  (`after_first_handover`, Trigger). `billingBatchExport` (Live-Stand ohne Archiv) ist nur noch für Tests (`@internal`,
+  von der App nicht aufgerufen) – keine Übergabe ohne Archiv.
+- **Nachbesserung (Bookkeeper/AppSec/Code-Review)**: Storno von Auszahlungen (Gegenbuchung), Rückmeldungsdatei als
+  verschlüsselter Beleg, Warnung bei Doppelerfassung (inhaltlicher Schlüssel, Bestätigung nötig), „Noch offen“ aus den
+  Absetzungen des Laufs (nach Status), Gebühren (`fee_cents`, netto/brutto), Obergrenze 500 Verordnungen/200 MB je Paket,
+  gestreamter Nachdruck, technische PDF-Fehler brechen den Erst-Export ab (fachlich fehlende Dokumente werden gezählt
+  und angezeigt), Übergabevermerk vor dem Archiv (Trigger), Absetzung nur zu Verordnungen des Laufs (Trigger),
+  Bidi-Zeichen aus Freitexten entfernt, `payoutTotals` mit vollen Abrechnungsrechten. Details:
+  docs/GKV-ABRECHNUNGSZENTRUM.md Abschnitte 1 und 3.4. Erster CSV-Download archiviert bereits das ganze Paket.
 - **Rückmeldung einlesen**: CSV oder JSON (`podohero-rueckmeldung/1`), höchstens 1 MB/5.000 Zeilen, strikt geprüft
   (Zeilennummern, alles oder nichts), Zuordnung über Verordnungs-ID oder Versichertennummer + Ausstellungsdatum nur zu
   Verordnungen des Laufs, Zeilen anderer Läufe übersprungen. Vorschau ändert nichts; „Übernehmen“ nur mit derselben Datei
@@ -578,18 +585,31 @@ Typen, Beispiele) steht vollständig in **docs/GKV-ABRECHNUNGSZENTRUM.md**. Code
     Unterschrift als Ersatz für das Bestätigungsfeld auf der Rückseite der Verordnung (vgl. offener Punkt 22)? (Abrechnungszentrum)
 44. **Rückmeldeformat**: Liefern Zentren je Verordnung Auszahlung und Absetzung (wie hier gefordert) oder nur Summen je
     Sammelrechnung? Bei Summen bleibt nur die Auszahlung von Hand. Ist „eine Auszahlung je Datei“ praxisnah? (Abrechnungszentrum)
-45. **Fehleingabe einer Auszahlung**: Auszahlungen sind unveränderlich; eine Korrekturbuchung (negativer Betrag,
-    Stornozeile) ist nicht vorgesehen. Welcher Korrekturweg ist buchhalterisch gewünscht? (Steuerberatung)
-46. **Gebühren des Abrechnungszentrums**: Zentren ziehen ihre Gebühr meist von der Auszahlung ab. Soll PodoHero
-    Bruttoforderung, Gebühr und Nettoauszahlung getrennt erfassen? Heute: nur der ausgezahlte Betrag. (Steuerberatung)
-47. **Abgrenzung Kassenanteil (Fortsetzung 38)**: Die Auswertung zeigt jetzt Soll (Lauf) und Ist (Zahlungseingang)
-    nebeneinander. Welche Größe ist für die Gewinnermittlung maßgeblich (Zuflussprinzip § 11 EStG bei EÜR)? (Steuerberatung)
+45. **Fehleingabe einer Auszahlung**: Umgesetzt als **Storno** (Gegenbuchung mit exakt negativen Beträgen,
+    Pflichtbegründung, höchstens einmal, Datum = Tag des Stornos) und Neuerfassung. Offen: Reicht das als
+    Korrekturbuchung, oder braucht es einen Stornobeleg/Verweis auf ein Schreiben des Zentrums? (Steuerberatung)
+46. **Gebühren des Abrechnungszentrums**: Umgesetzt: `fee_cents` (Rückmeldung „Gebühr EUR“ bzw. Handeingabe, optional);
+    Auszahlung = netto nach Gebühr, Anzeige brutto = netto + Gebühr. Offen: Ist die Gebühr als Betriebsausgabe (mit
+    Rechnung des Zentrums, ggf. USt) zu buchen und nicht als Minderung der Einnahme? (Steuerberatung)
+47. **Abgrenzung Kassenanteil (Fortsetzung 38)**: Die Auswertung zeigt Soll (Lauf) und Ist (Zahlungseingang netto, Stornos
+    im Monat des Stornos) nebeneinander. Welche Größe ist für die Gewinnermittlung maßgeblich (Zuflussprinzip § 11 EStG bei
+    EÜR), und gehört die Gebühr in den Zufluss (brutto) oder nicht (netto)? (Steuerberatung)
 48. **Archiv bei Altläufen**: Läufe, die vor Paket E per CSV übergeben wurden, erhalten ein Archiv mit dem späteren Stand
     („nach Erstübergabe“). Reicht das, oder soll die damalige CSV aus anderen Quellen (E-Mail-Ausgang) beigelegt werden?
     (Steuerberatung/Datenschutz)
-49. **Aufbewahrungsfrist des Archivs**: Das Übergabepaket enthält Gesundheitsdaten und ist zugleich Abrechnungsunterlage
-    (10 Jahre § 147 AO bzw. § 630f BGB). Gilt für das ZIP die längere Frist, und wie wird es danach gelöscht (heute nur mit
-    der Praxis)? (Datenschutz/Steuerberatung)
+49. **Aufbewahrungsfrist des Archivs**: Übergabepaket und – neu – die eingelesenen Rückmeldungsdateien enthalten
+    Gesundheitsdaten bzw. Abrechnungsdaten und sind zugleich Abrechnungsunterlage/Buchungsbeleg (10 Jahre § 147 AO bzw.
+    § 630f BGB). Gilt jeweils die längere Frist, und wie werden sie danach gelöscht (heute nur mit der Praxis)?
+    (Datenschutz/Steuerberatung)
 50. **Übermittlungsweg**: Das Paket wird heruntergeladen und von der Praxis übergeben (Portal des Zentrums, verschlüsselte
     E-Mail, Datenträger). Braucht es einen eigenen, verschlüsselten Übertragungsweg (z. B. passwortgeschütztes ZIP,
     SFTP)? Auftragsverarbeitungsvertrag mit dem Zentrum? (Datenschutz)
+51. **Rückmeldungsdatei als Beleg**: Die eingelesene Datei wird verschlüsselt archiviert (Prüfsumme, Praxis-Export). Ist sie
+    der Buchungsbeleg für den Zahlungseingang, oder ist zusätzlich die Sammelabrechnung/Avis des Zentrums (PDF) abzulegen?
+    (Steuerberatung)
+52. **Duplikatschutz Hand/Import**: Gleiche Auszahlung (Lauf, Datum, Referenz, Nettobetrag) wird nur nach ausdrücklicher
+    Bestätigung ein zweites Mal erfasst. Gibt es Fälle (Teilzahlungen mit gleicher Referenz und gleichem Betrag), in denen
+    das regelmäßig vorkommt, oder soll stattdessen streng gesperrt werden? (Abrechnungszentrum/Steuerberatung)
+53. **Monat des Stornos**: Ein Storno mindert den Zahlungseingang im Monat des Stornos (nicht rückwirkend im Monat der
+    stornierten Auszahlung). Ist das für die Auswertung/EÜR so gewünscht, oder soll ein Storno im Monat der ursprünglichen
+    Auszahlung wirken (dann ändern sich abgeschlossene Monate)? (Steuerberatung)

@@ -19,6 +19,7 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
   const [state, setState] = useState<PreviewState>(undefined);
   const [done, setDone] = useState<{ error?: string; ok?: string } | undefined>(undefined);
   const [pending, start] = useTransition();
+  const [confirmDup, setConfirmDup] = useState(false);
   const p = state?.preview;
   const form = (extra: Record<string, string> = {}) => {
     const fd = new FormData();
@@ -40,6 +41,7 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
             setFile(e.target.files?.[0] ?? null);
             setState(undefined);
             setDone(undefined);
+            setConfirmDup(false);
           }}
           className="text-sm file:mr-3 file:h-11 file:rounded-xl file:border file:border-border file:bg-surface-2 file:px-4 file:font-semibold"
         />
@@ -55,7 +57,16 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
             Datei {p.dateiname} · Auszahlung am <strong>{de(p.auszahlungsdatum)}</strong>
             {p.sammelrechnungsnummer ? <> · Sammelrechnung <strong>{p.sammelrechnungsnummer}</strong></> : null} · Prüfsumme <code className="text-xs">{p.sha256.slice(0, 16)}…</code>
           </p>
-          {p.bereitsEingelesen ? <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">Diese Datei ist für diesen Abrechnungslauf bereits eingelesen.</p> : null}
+          {p.bereitsEingelesen ? <p className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">Diese Datei ist für diesen Abrechnungslauf bereits eingelesen (erneut nur nach Storno der Auszahlung).</p> : null}
+          {p.duplikat && !p.fehler.length ? (
+            <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
+              <p>{p.duplikat}</p>
+              <label className="mt-2 flex items-center gap-2">
+                <input type="checkbox" checked={confirmDup} onChange={(e) => setConfirmDup(e.target.checked)} className="size-5 accent-[var(--primary)]" />
+                Geprüft – trotzdem als weitere Auszahlung übernehmen
+              </label>
+            </div>
+          ) : null}
           {p.fehler.length ? (
             <div className="rounded-xl bg-accent-soft px-4 py-3 text-sm text-accent-soft-text">
               <p className="font-semibold">Fehler – nichts übernommen. Bitte die Datei korrigieren:</p>
@@ -65,7 +76,7 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
             <>
               {p.andererLauf ? <p className="text-sm text-muted">{p.andererLauf} Zeile(n) gehören zu einem anderen Abrechnungslauf und werden hier übersprungen.</p> : null}
               <Table label="Zuordnung der Rückmeldung" minWidth={820}>
-                <thead><tr><th>Zeile</th><th>Person</th><th>VO vom</th><th>Kassenanteil (Soll)</th><th>Ausgezahlt</th><th>Absetzung</th><th>Hinweis</th></tr></thead>
+                <thead><tr><th>Zeile</th><th>Person</th><th>VO vom</th><th>Kassenanteil (Soll)</th><th>Ausgezahlt</th><th>Gebühr</th><th>Absetzung</th><th>Hinweis</th></tr></thead>
                 <tbody>
                   {p.zeilen.map((z) => (
                     <tr key={z.zeile}>
@@ -74,6 +85,7 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
                       <td>{de(z.ausstellungsdatum)}</td>
                       <td className="tabular-nums">{z.sollCent === null ? "–" : money(z.sollCent)}</td>
                       <td className="tabular-nums">{money(z.ausgezahltCent)}</td>
+                      <td className="tabular-nums">{z.gebuehrCent ? money(z.gebuehrCent) : "–"}</td>
                       <td>{z.absetzung ? `${money(z.absetzung.betragCent)}${z.absetzung.code ? ` (${z.absetzung.code})` : ""} – ${z.absetzung.grund}${z.absetzungVorhanden ? " · schon erfasst, wird nicht erneut angelegt" : ""}` : "–"}</td>
                       <td className="text-sm text-warn-soft-text">{z.hinweise.join(" · ") || "–"}</td>
                     </tr>
@@ -81,16 +93,17 @@ export function PayoutImport({ batchId, disabled }: { batchId: string; disabled:
                 </tbody>
               </Table>
               <p className="text-sm">
-                Summe ausgezahlt <strong>{money(p.summeAusgezahltCent)}</strong> · Absetzungen <strong>{money(p.summeAbsetzungCent)}</strong>. Übernehmen legt eine Auszahlung und die neuen
-                Absetzungen (Status „offen“) an. Die Verordnungen bleiben unverändert.
+                Summe ausgezahlt (netto) <strong>{money(p.summeAusgezahltCent)}</strong>
+                {p.summeGebuehrCent ? <> · Gebühren <strong>{money(p.summeGebuehrCent)}</strong></> : null} · Absetzungen <strong>{money(p.summeAbsetzungCent)}</strong>. Übernehmen
+                legt die Datei als Beleg ab und eine Auszahlung sowie die neuen Absetzungen (Status „offen“) an. Die Verordnungen bleiben unverändert.
               </p>
               <div>
                 <Button
                   type="button"
-                  disabled={disabled || pending || p.bereitsEingelesen}
+                  disabled={disabled || pending || p.bereitsEingelesen || (!!p.duplikat && !confirmDup)}
                   onClick={() =>
                     start(async () => {
-                      const r = await confirmPayoutAction(form({ sha256: p.sha256 }));
+                      const r = await confirmPayoutAction(form({ sha256: p.sha256, confirmDuplicate: confirmDup ? "1" : "0" }));
                       setDone(r);
                       if (r?.ok) {
                         setState(undefined);

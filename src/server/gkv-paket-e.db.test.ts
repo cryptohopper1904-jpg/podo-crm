@@ -289,8 +289,8 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     );
     expect(pay).toMatchObject({ amount_cents: 11000, deduction_cents: 1250, paid_at: paid, reference: "SR-77", source: "import", line_count: 2 });
     expect(pay.details).toEqual([
-      { prescriptionId: ids[0], paidCents: 5000, deductionCents: 1250 },
-      { prescriptionId: ids[1], paidCents: 6000, deductionCents: 0 },
+      { prescriptionId: ids[0], paidCents: 5000, deductionCents: 1250, feeCents: 0 },
+      { prescriptionId: ids[1], paidCents: 6000, deductionCents: 0, feeCents: 0 },
     ]);
     const ded = await w.q<{ prescription_id: string; amount_cents: number; reason_code: string; status: string; payout_id: string; billing_batch_id: string; letter_ref: string; deducted_on: string }>(
       "select prescription_id, amount_cents, reason_code, status, payout_id, billing_batch_id, letter_ref, deducted_on::text from gkv_deductions where organization_id = $1",
@@ -404,7 +404,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const zip = await JSZip.loadAsync(Buffer.concat(chunks));
     const rows = JSON.parse(await zip.file("tables/billing_batch_exports.json")!.async("string"));
     expect(rows).toHaveLength(1);
-    expect(rows[0].exportFile).toMatch(/^abrechnung\/uebergabe\/Uebergabe-.*\.zip$/);
+    expect(rows[0].exportFile).toBe(`abrechnung/uebergabe/${batchId}/${rows[0].filename}`);
     expect(rows[0].storageKey).toBeUndefined();
     const inner = Buffer.from(await zip.file(rows[0].exportFile)!.async("uint8array"));
     expect(Buffer.compare(inner, p.bytes)).toBe(0);
@@ -428,5 +428,174 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     if ("error" in prev) throw new Error(prev.error);
     expect(prev.fehler).toEqual([]);
     expect(prev.zeilen[0].hinweise.join()).toMatch(/ohne Code/);
+  });
+  const csvGeb = (rows: string[][]) => Buffer.from(`${[[...RUECKMELDUNG_SPALTEN, "Gebühr EUR"].join(";"), ...rows.map((r) => r.join(";"))].join("\n")}\n`);
+  const readPayouts = (w: Awaited<ReturnType<typeof world>>, batchId: string) =>
+    w.q<{ id: string; amount_cents: number; deduction_cents: number; fee_cents: number; source: string; reverses_payout_id: string | null; reason: string | null; storage_key: string | null; source_sha256: string | null; paid_at: string }>(
+      "select id, amount_cents, deduction_cents, fee_cents, source, reverses_payout_id, reason, storage_key, source_sha256, paid_at::text from billing_batch_payouts where billing_batch_id = $1 order by created_at, amount_cents desc",
+      [batchId],
+    );
+
+  it("E11: Storno einer Auszahlung – Gegenbuchung exakt negativ, Pflichtbegründung, höchstens einmal, Storno nicht stornierbar; Summen rechnen Stornos mit", async () => {
+    const w = await world();
+    const { batchId } = await w.batch(1);
+    await ho.handoverPackage(w.auth, batchId);
+    const pay = await ho.recordManualPayout(w.auth, { batchId, amountCents: 5000, feeCents: 300, paidAt: addDaysIso(today, -3), reference: "Avis 7" });
+    if ("error" in pay) throw new Error(pay.error);
+    expect(await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "kurz" })).toEqual({ error: expect.stringMatching(/Begründung/) });
+    const st = await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "Betrag falsch erfasst" });
+    if ("error" in st) throw new Error(st.error);
+    const rows = await readPayouts(w, batchId);
+    expect(rows.find((r) => r.id === st.id)).toMatchObject({ amount_cents: -5000, fee_cents: -300, deduction_cents: 0, source: "reversal", reverses_payout_id: pay.id, reason: "Betrag falsch erfasst", paid_at: today });
+    expect(await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "noch einmal storno" })).toEqual({ error: expect.stringMatching(/bereits storniert/) });
+    expect(await ho.reversePayout(w.auth, { payoutId: st.id, reason: "Storno vom Storno" })).toEqual({ error: expect.stringMatching(/Storno/) });
+    // Trigger: Storno mit abweichendem Betrag oder ohne Begründung abgelehnt (auch direkt per SQL)
+    const pay2 = await ho.recordManualPayout(w.auth, { batchId, amountCents: 1000, paidAt: addDaysIso(today, -1), reference: null });
+    if ("error" in pay2) throw new Error(pay2.error);
+    const raw = (amount: number, reason: string | null) =>
+      w.q("insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, fee_cents, deduction_cents, paid_at, source, reverses_payout_id, reason, created_by) values ($1,$2,$3,0,0,$4,'reversal',$5,$6,$7)", [w.org, batchId, amount, today, pay2.id, reason, w.user]);
+    await expect(raw(-999, "falscher Betrag")).rejects.toThrow(/Storno/);
+    await expect(raw(-1000, null)).rejects.toThrow();
+    await expect(w.q("insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, paid_at, source, created_by) values ($1,$2,-5,$3,'manual',$4)", [w.org, batchId, today, w.user])).rejects.toThrow();
+    // Summen: Lauf, Übersicht, Auswertung (Storno im Monat des Stornos)
+    const info = await ho.batchHandoverInfo(w.auth, batchId);
+    expect(info!.paidCents).toBe(1000);
+    expect(info!.feeCents).toBe(0);
+    expect((await ho.payoutTotals(w.auth)).get(batchId)!.cents).toBe(1000);
+    const s = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -40), bis: today }, today));
+    expect(s.payouts.cents).toBe(1000);
+    expect(s.months.reduce((a, m) => a + m.payoutCents, 0)).toBe(1000);
+    // Audit ohne Begründung
+    const a = await w.q<{ meta: unknown }>("select meta from audit_log where organization_id = $1 and action = 'billing_batch.payout_reversal'", [w.org]);
+    expect(a.length).toBe(1);
+    expect(JSON.stringify(a)).not.toMatch(/Betrag falsch/);
+  });
+
+  it("E12: Rückmeldungsdatei als Beleg archiviert; nach Storno dieselbe Datei erneut einlesbar; verknüpfte Absetzungen mit Hinweis, unverändert", async () => {
+    const w = await world();
+    const { batchId, ids } = await w.batch(1);
+    await ho.handoverPackage(w.auth, batchId);
+    const paid = addDaysIso(today, -2);
+    const file = csvFile([ids[0], "", "", "", "50,00", "5,00", "R1", "Formfehler Rückseite", paid, "SR-1"]);
+    const prev = await ho.previewPayoutImport(w.auth, batchId, file, "rueck.csv");
+    if ("error" in prev) throw new Error(prev.error);
+    const done = await ho.confirmPayoutImport(w.auth, batchId, file, "rueck.csv", prev.sha256);
+    if ("error" in done) throw new Error(done.error);
+    const [row] = await readPayouts(w, batchId);
+    expect(row.storage_key?.startsWith(`${w.org}/`)).toBe(true);
+    expect(row.source_sha256).toBe(sha(file));
+    const { readDecrypted } = await import("@/lib/storage");
+    expect(Buffer.compare(await readDecrypted(row.storage_key!), file)).toBe(0);
+    // Storno → erneut einlesbar, Absetzung nicht doppelt, Hinweis an verknüpften Absetzungen
+    const st = await ho.reversePayout(w.auth, { payoutId: done.payoutId, reason: "falscher Lauf gemeldet" });
+    if ("error" in st) throw new Error(st.error);
+    const info = await ho.batchHandoverInfo(w.auth, batchId);
+    expect(info!.reversedDeductionHints).toBe(1);
+    expect((await w.q<{ status: string }>("select status from gkv_deductions where organization_id = $1", [w.org])).map((d) => d.status)).toEqual(["open"]);
+    const again = await ho.previewPayoutImport(w.auth, batchId, file, "rueck.csv");
+    if ("error" in again) throw new Error(again.error);
+    expect(again.bereitsEingelesen).toBe(false);
+    const d2 = await ho.confirmPayoutImport(w.auth, batchId, file, "rueck.csv", again.sha256);
+    if ("error" in d2) throw new Error(d2.error);
+    expect(d2.skippedDeductions).toBe(1);
+    // ohne Storno: dieselbe Datei nicht ein drittes Mal
+    expect(await ho.confirmPayoutImport(w.auth, batchId, file, "rueck.csv", again.sha256)).toEqual({ error: expect.stringMatching(/bereits eingelesen/) });
+    // Praxis-Export: Rückmeldungsdatei als Beleg
+    const exp = await import("./practice-export");
+    const result = await exp.buildPracticeExport({ organizationId: w.org, exportedBy: { name: "I", email: "i@example.org" } });
+    const chunks: Uint8Array[] = [];
+    const reader = result.stream.getReader();
+    for (;;) {
+      const { done: end, value } = await reader.read();
+      if (end) break;
+      chunks.push(value);
+    }
+    expect(await result.done).toMatchObject({ payoutFiles: 2, payoutErrors: 0 });
+    const zip = await JSZip.loadAsync(Buffer.concat(chunks));
+    const pr = JSON.parse(await zip.file("tables/billing_batch_payouts.json")!.async("string"));
+    const withFile = pr.filter((r: { exportFile?: string }) => r.exportFile);
+    expect(withFile).toHaveLength(2);
+    expect(Buffer.compare(Buffer.from(await zip.file(withFile[0].exportFile)!.async("uint8array")), file)).toBe(0);
+  });
+
+  it("E13: Doppelerfassung – gleiche Auszahlung (Datum, Referenz, Betrag) als JSON bzw. von Hand → Warnung, nur mit Bestätigung", async () => {
+    const w = await world();
+    const { batchId, ids } = await w.batch(1);
+    await ho.handoverPackage(w.auth, batchId);
+    const paid = addDaysIso(today, -2);
+    const csv = csvFile([ids[0], "", "", "", "70,00", "", "", "", paid, "SR-9"]);
+    const p1 = await ho.previewPayoutImport(w.auth, batchId, csv, "a.csv");
+    if ("error" in p1) throw new Error(p1.error);
+    expect(p1.duplikat).toBeNull();
+    const c1 = await ho.confirmPayoutImport(w.auth, batchId, csv, "a.csv", p1.sha256);
+    if ("error" in c1) throw new Error(c1.error);
+    const json = Buffer.from(JSON.stringify({ schema: "podohero-rueckmeldung/1", sammelrechnungsnummer: "sr-9", auszahlungsdatum: paid, positionen: [{ verordnung_id: ids[0], ausgezahlt_cent: 7000 }] }));
+    const p2 = await ho.previewPayoutImport(w.auth, batchId, json, "a.json");
+    if ("error" in p2) throw new Error(p2.error);
+    expect(p2.bereitsEingelesen).toBe(false);
+    expect(p2.duplikat).toMatch(/bereits erfasst/);
+    expect(await ho.confirmPayoutImport(w.auth, batchId, json, "a.json", p2.sha256)).toEqual({ error: expect.stringMatching(/Doppel/) });
+    expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 7000, paidAt: paid, reference: "SR 9" })).toEqual({ error: expect.stringMatching(/Doppel/) });
+    expect(await ho.recordManualPayout(w.auth, { batchId, amountCents: 7000, paidAt: paid, reference: "SR 9", confirmDuplicate: true })).toEqual({ id: expect.any(String) });
+    const c2 = await ho.confirmPayoutImport(w.auth, batchId, json, "a.json", p2.sha256, { confirmDuplicate: true });
+    expect("error" in c2).toBe(false);
+  });
+
+  it("E14: Noch offen = Soll − Auszahlungen − Gebühren − Absetzungen des Laufs (aus gkv_deductions, nach Status, ohne Doppelte); Gebühr aus der Rückmeldung", async () => {
+    const w = await world();
+    const { batchId, ids } = await w.batch(1);
+    await ho.handoverPackage(w.auth, batchId);
+    const info0 = await ho.batchHandoverInfo(w.auth, batchId);
+    const soll = info0!.sollInsurerCents!;
+    const paid = addDaysIso(today, -2);
+    // Rückmeldung mit Gebühr: ausgezahlt + Gebühr + Absetzung = Soll → kein Abweichungshinweis
+    const file = csvGeb([[ids[0], "", "", "", ((soll - 1500) / 100).toFixed(2).replace(".", ","), "10,00", "R1", "Unterschrift fehlt", paid, "SR-2", "5,00"]]);
+    const p = await ho.previewPayoutImport(w.auth, batchId, file, "g.csv");
+    if ("error" in p) throw new Error(p.error);
+    expect(p.fehler).toEqual([]);
+    expect(p.summeGebuehrCent).toBe(500);
+    expect(p.zeilen[0].hinweise.join()).not.toMatch(/weicht/);
+    const c = await ho.confirmPayoutImport(w.auth, batchId, file, "g.csv", p.sha256);
+    if ("error" in c) throw new Error(c.error);
+    // zusätzlich eine von Hand erfasste Absetzung (gleiche Verordnung) – zählt einmal, nach Status
+    const d = await gb.createDeduction(w.auth, { prescriptionId: ids[0], patientId: w.patient, amountCents: 200, reason: "Zweite Absetzung", deductedOn: today });
+    if ("error" in d) throw new Error(d.error);
+    const info = await ho.batchHandoverInfo(w.auth, batchId);
+    expect(info!.feeCents).toBe(500);
+    expect(info!.deductions).toEqual({ reductionCents: 0, pendingCents: 1200, reversedCents: 0 });
+    expect(info!.openCents).toBe(soll - (soll - 1500) - 500);
+    expect((await w.q<{ fee_cents: number }>("select fee_cents from billing_batch_payouts where billing_batch_id = $1", [batchId]))[0].fee_cents).toBe(500);
+  });
+
+  it("E15: Archiv nur zu übergebenem Lauf (Trigger); Absetzung nur zu einer Verordnung des Laufs (Trigger); Obergrenze je Lauf", async () => {
+    const w = await world();
+    const { batchId, ids } = await w.batch(1);
+    const { batchId: other } = await w.batch(1);
+    await expect(
+      w.q(
+        "insert into billing_batch_exports (organization_id, billing_batch_id, kind, storage_key, sha256, size_bytes, filename, schema_version, prescription_count, created_by) values ($1,$2,'handover_zip',$3,repeat('a',64),1,'x.zip','podohero-abrechnung/1',1,$4)",
+        [w.org, batchId, `${w.org}/2026/11/x.bin`, w.user],
+      ),
+    ).rejects.toThrow(/übergeben/);
+    await expect(
+      w.q("insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by) values ($1,$2,$3,$4,100,'Test',$5,$6)", [w.org, ids[0], w.patient, other, today, w.user]),
+    ).rejects.toThrow(/gehört nicht zu diesem Abrechnungslauf/);
+    const { paketGrenze, HANDOVER_MAX_VERORDNUNGEN } = await import("@/lib/gkv-handover/paket");
+    expect(paketGrenze(HANDOVER_MAX_VERORDNUNGEN)).toBeNull();
+    expect(paketGrenze(HANDOVER_MAX_VERORDNUNGEN + 1)).toMatch(/höchstens/);
+  });
+
+  it("E16: Nachdruck als Stream byte-gleich; fehlende Dokumente gezählt", async () => {
+    const w = await world();
+    const { batchId } = await w.batch(1);
+    const first = await ho.handoverPackageStream(w.auth, batchId);
+    if (!first || "error" in first) throw new Error("kein Paket");
+    expect(first.missingDocuments).toBe(0);
+    const again = await ho.handoverPackageStream(w.auth, batchId);
+    if (!again || "error" in again) throw new Error("kein Paket");
+    expect(again.reprint).toBe(true);
+    const chunks: Buffer[] = [];
+    for await (const c of again.body as AsyncIterable<Buffer>) chunks.push(Buffer.from(c));
+    expect(Buffer.compare(Buffer.concat(chunks), first.body as Buffer)).toBe(0);
   });
 });

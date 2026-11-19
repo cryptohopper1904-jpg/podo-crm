@@ -25,8 +25,8 @@ describe("parseRueckmeldung – CSV", () => {
     expect(r.auszahlungsdatum).toBe("2026-11-10");
     expect(r.sammelrechnungsnummer).toBe("SR-2026-0815");
     expect(r.zeilen).toEqual([
-      { zeile: 2, verordnungId: VO1, laufId: LAUF, versichertennummer: null, ausstellungsdatum: null, ausgezahltCent: 12345, absetzung: { betragCent: 1000, code: "R12", grund: "Unterschrift fehlt" } },
-      { zeile: 3, verordnungId: null, laufId: null, versichertennummer: "A000500015", ausstellungsdatum: "2026-10-01", ausgezahltCent: 5000, absetzung: null },
+      { zeile: 2, verordnungId: VO1, laufId: LAUF, versichertennummer: null, ausstellungsdatum: null, ausgezahltCent: 12345, gebuehrCent: 0, absetzung: { betragCent: 1000, code: "R12", grund: "Unterschrift fehlt" } },
+      { zeile: 3, verordnungId: null, laufId: null, versichertennummer: "A000500015", ausstellungsdatum: "2026-10-01", ausgezahltCent: 5000, gebuehrCent: 0, absetzung: null },
     ]);
     expect(r.sha256).toMatch(/^[0-9a-f]{64}$/);
   });
@@ -121,5 +121,13 @@ describe("parseRueckmeldung – JSON", () => {
     const r = parseRueckmeldung(json({ schema: RUECKMELDUNG_SCHEMA, auszahlungsdatum: "2026-11-10", positionen: [{ verordnung_id: VO1, ausgezahlt_cent: 1.5, extra: 1 }] }), "r.json");
     expect(r.fehler.join("\n")).toMatch(/Position 1/);
     expect(parseRueckmeldung(Buffer.from("{kaputt"), "r.json").fehler.join()).toMatch(/JSON/);
+  });
+  it("Fehlerzeilen = echte Dateizeilen (Leerzeilen mitgezählt); optionale Spalte Gebühr EUR", () => {
+    const text = `${kopf};Gebühr EUR\n\n${VO1};;;;5;;;;2026-11-10;SR1;1,50\n\n${VO2};;;;x;;;;2026-11-10;SR1;\n`;
+    const r = parseRueckmeldung(Buffer.from(text), "r.csv");
+    expect(r.fehler.join()).toMatch(/Zeile 5: /);
+    const ok = parseRueckmeldung(Buffer.from(`${kopf};Gebühr EUR\n${VO1};;;;5;;;;2026-11-10;SR1;1,50\n`), "r.csv");
+    expect(ok.fehler).toEqual([]);
+    expect(ok.zeilen[0].gebuehrCent).toBe(150);
   });
 });

@@ -21,7 +21,7 @@ import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 
 /** Tabellen mit Dateiverweis (storage_key) – bei neuen Tabellen hier ergänzen */
-export const KNOWN_TABLES = ["billing_batch_exports", "document_archive", "media", "organization_logos", "treatment_signatures"] as const;
+export const KNOWN_TABLES = ["billing_batch_exports", "billing_batch_payouts", "document_archive", "media", "organization_logos", "treatment_signatures"] as const;
 const MIN_AGE_MS = 60 * 60 * 1000;
 const KEY_RE = /^[a-z0-9/-]+\.bin$/;
 const QUARANTINE = "_quarantaene";

@@ -1,5 +1,5 @@
 {
-  "id": "839e8106-0d79-4e60-9061-88bc807227b1",
+  "id": "5e974080-b2ad-4c6a-8fa7-7bbba93f1412",
   "prevId": "864d168b-4cf6-40a5-b9b5-49f5e99b89b8",
   "version": "7",
   "dialect": "postgresql",
@@ -857,6 +857,13 @@
           "notNull": true,
           "default": false
         },
+        "missing_documents": {
+          "name": "missing_documents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "created_by": {
           "name": "created_by",
           "type": "uuid",
@@ -977,6 +984,13 @@
           "notNull": true,
           "default": 0
         },
+        "fee_cents": {
+          "name": "fee_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "paid_at": {
           "name": "paid_at",
           "type": "date",
@@ -997,6 +1011,36 @@
         },
         "source_sha256": {
           "name": "source_sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "import_seq": {
+          "name": "import_seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "storage_key": {
+          "name": "storage_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_filename": {
+          "name": "source_filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reverses_payout_id": {
+          "name": "reverses_payout_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reason": {
+          "name": "reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -1107,10 +1151,32 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last"
+            },
+            {
+              "expression": "import_seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
             }
           ],
           "isUnique": true,
           "where": "\"billing_batch_payouts\".\"source_sha256\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "billing_batch_payouts_reverses": {
+          "name": "billing_batch_payouts_reverses",
+          "columns": [
+            {
+              "expression": "reverses_payout_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"billing_batch_payouts\".\"reverses_payout_id\" is not null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1136,6 +1202,19 @@
           "tableTo": "billing_batches",
           "columnsFrom": [
             "billing_batch_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "billing_batch_payouts_reverses_payout_id_billing_batch_payouts_id_fk": {
+          "name": "billing_batch_payouts_reverses_payout_id_billing_batch_payouts_id_fk",
+          "tableFrom": "billing_batch_payouts",
+          "tableTo": "billing_batch_payouts",
+          "columnsFrom": [
+            "reverses_payout_id"
           ],
           "columnsTo": [
             "id"

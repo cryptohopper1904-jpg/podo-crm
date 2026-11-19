@@ -76,6 +76,8 @@ describe("GKV Paket C – Absetzungen", () => {
   it("Freitext ohne Steuerzeichen, gekürzt", () => {
     expect(cleanText("a\nb\u0007c  d", 100)).toBe("a b c d");
     expect(cleanText("x".repeat(20), 5)).toBe("xxxxx");
+    // Bidi-Steuerzeichen (Trojan-Source/Spoofing in Gründen, AppSec H4)
+    expect(cleanText("a\u202Eb\u2066c\u200Fd\u200E", 100)).toBe("abcd");
     expect(cleanText(null, 5)).toBe("");
   });
 });

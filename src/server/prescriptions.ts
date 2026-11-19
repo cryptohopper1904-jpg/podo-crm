@@ -861,9 +861,11 @@ export function batchCsvLine(data: BatchExportData, { vo, p }: BatchExportData["
 }
 
 /**
- * Zeilen für den CSV-Export eines Abrechnungslaufs mit dem aktuellen Stand (ohne Archiv). Die Übergabe an das
- * Abrechnungszentrum läuft seit GKV Paket E über das archivierte Übergabepaket (src/server/gkv-handover.ts), dessen
- * verordnungen.csv dieselben Spalten (plus Zusatzspalten) führt; diese Funktion bleibt als Live-Ansicht für Prüfungen.
+ * NUR FÜR TESTS (Altweg vor GKV Paket E, von der App nicht mehr aufgerufen): CSV-Zeilen eines Abrechnungslaufs mit dem
+ * aktuellen Stand, ohne Archiv. Vermerkt – wie der frühere CSV-Export – die Übergabe; damit stellen Tests „vor Paket E
+ * übergebene“ Läufe nach. Die Übergabe an das Abrechnungszentrum läuft ausschließlich über das archivierte Übergabepaket
+ * (src/server/gkv-handover.ts) – keine Übergabe ohne Archiv.
+ * @internal
  */
 export async function billingBatchExport(auth: AuthContext, batchId: string) {
   // enthält Diagnosen (ICD-10) → zusätzlich medizinisches Leserecht

@@ -9,7 +9,7 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { detectDelimiter, parseCsv, stripBom } from "@/integrations/csv";
+import { detectDelimiter, parseCsvWithLines, stripBom } from "@/integrations/csv";
 import { cleanText, DEDUCTION_MAX_CENTS } from "@/lib/rules/gkv-billing";
 import { normalizeId } from "@/lib/rules/gkv-ids";
 
@@ -33,6 +33,8 @@ export const RUECKMELDUNG_SPALTEN = [
   "Auszahlungsdatum",
   "Sammelrechnungsnummer",
 ] as const;
+/** optionale Spalten (dürfen fehlen) */
+export const RUECKMELDUNG_OPTIONAL = ["Gebühr EUR"] as const;
 
 export type RueckmeldungZeile = {
   /** Zeilennummer in der Datei (CSV: Kopf = 1) bzw. Position (JSON: ab 1) */
@@ -42,6 +44,8 @@ export type RueckmeldungZeile = {
   versichertennummer: string | null;
   ausstellungsdatum: string | null;
   ausgezahltCent: number;
+  /** vom Abrechnungszentrum einbehaltene Gebühr (optional, 0 = keine Angabe) */
+  gebuehrCent: number;
   absetzung: { betragCent: number; code: string | null; grund: string } | null;
 };
 
@@ -96,6 +100,7 @@ type Roh = {
   versichertennummer: string;
   ausstellungsdatum: string;
   ausgezahlt: string | number | undefined;
+  gebuehr: string | number | undefined;
   absetzungBetrag: string | number | undefined;
   absetzungCode: string;
   absetzungGrund: string;
@@ -119,6 +124,10 @@ function pruefeZeile(r: Roh, praefix: string, heute: string, fehler: string[]): 
   const ausgezahlt = cent(r.ausgezahlt);
   if (ausgezahlt === null) f.push("Ausgezahlt EUR fehlt oder ist ungültig (z. B. 123,45 – ohne Vorzeichen und Tausenderpunkt)");
   else if (ausgezahlt > AUSZAHLUNG_MAX_CENT) f.push("Ausgezahlt EUR über 100.000 € – bitte prüfen");
+  const hatGebuehr = r.gebuehr !== undefined && String(r.gebuehr).trim() !== "";
+  const gebuehr = hatGebuehr ? cent(r.gebuehr) : 0;
+  if (gebuehr === null) f.push("Gebühr EUR ungültig (z. B. 3,50)");
+  else if (gebuehr > AUSZAHLUNG_MAX_CENT) f.push("Gebühr über 100.000 € – bitte prüfen");
   const hatAbsetzung = r.absetzungBetrag !== undefined && String(r.absetzungBetrag).trim() !== "";
   const absBetrag = hatAbsetzung ? cent(r.absetzungBetrag) : 0;
   if (absBetrag === null) f.push("Absetzung EUR ungültig (z. B. 12,50)");
@@ -144,6 +153,7 @@ function pruefeZeile(r: Roh, praefix: string, heute: string, fehler: string[]): 
     versichertennummer: vnr || null,
     ausstellungsdatum: ausgestellt,
     ausgezahltCent: ausgezahlt!,
+    gebuehrCent: gebuehr!,
     absetzung: absBetrag ? { betragCent: absBetrag, code: code || null, grund } : null,
   };
 }
@@ -155,6 +165,7 @@ const jsonPosition = z
     versichertennummer: z.string().max(30).optional(),
     ausstellungsdatum: z.string().max(10).optional(),
     ausgezahlt_cent: z.number().int().min(0),
+    gebuehr_cent: z.number().int().min(0).optional(),
     absetzung: z.object({ betrag_cent: z.number().int().min(1), code: z.string().max(40).optional(), grund: z.string().max(600) }).strict().optional(),
   })
   .strict();
@@ -213,6 +224,7 @@ export function parseRueckmeldung(bytes: Uint8Array, dateiname: string, heute = 
         versichertennummer: d.versichertennummer ?? "",
         ausstellungsdatum: d.ausstellungsdatum ?? "",
         ausgezahlt: d.ausgezahlt_cent,
+        gebuehr: d.gebuehr_cent,
         absetzungBetrag: d.absetzung?.betrag_cent,
         absetzungCode: d.absetzung?.code ?? "",
         absetzungGrund: d.absetzung?.grund ?? "",
@@ -222,10 +234,10 @@ export function parseRueckmeldung(bytes: Uint8Array, dateiname: string, heute = 
     });
   } else {
     format = "csv";
-    const zeilen = parseCsv(inhalt, detectDelimiter(inhalt));
+    const zeilen = parseCsvWithLines(inhalt, detectDelimiter(inhalt));
     if (!zeilen.length) return leer(sha256, groesse, ["Die Rückmeldung enthält keine Zeilen."], format);
-    const kopf = zeilen[0].map((h) => h.trim().toLowerCase());
-    const bekannt = new Map(RUECKMELDUNG_SPALTEN.map((s) => [s.toLowerCase(), s]));
+    const kopf = zeilen[0].fields.map((h) => h.trim().toLowerCase());
+    const bekannt = new Map([...RUECKMELDUNG_SPALTEN, ...RUECKMELDUNG_OPTIONAL].map((s) => [s.toLowerCase(), s]));
     const fehlend = RUECKMELDUNG_SPALTEN.filter((s) => !kopf.includes(s.toLowerCase()));
     if (fehlend.length) return leer(sha256, groesse, [`Spalte(n) fehlen: ${fehlend.join(", ")}.`], format);
     const unbekannt = kopf.filter((h) => h && !bekannt.has(h));
@@ -234,20 +246,23 @@ export function parseRueckmeldung(bytes: Uint8Array, dateiname: string, heute = 
     const daten = zeilen.slice(1);
     if (!daten.length) return leer(sha256, groesse, ["Die Rückmeldung enthält keine Zeilen."], format);
     if (daten.length > RUECKMELDUNG_MAX_ZEILEN) return leer(sha256, groesse, [`Zu viele Zeilen: höchstens ${RUECKMELDUNG_MAX_ZEILEN} je Datei.`], format);
-    const idx = (s: (typeof RUECKMELDUNG_SPALTEN)[number]) => kopf.indexOf(s.toLowerCase());
-    daten.forEach((z, i) => {
+    type Spalte = (typeof RUECKMELDUNG_SPALTEN)[number] | (typeof RUECKMELDUNG_OPTIONAL)[number];
+    const idx = (s: Spalte) => kopf.indexOf(s.toLowerCase());
+    // Zeilennummer = echte Dateizeile (Leerzeilen und Umbrüche in Feldern mitgezählt)
+    daten.forEach(({ line, fields: z }) => {
       if (z.length > kopf.length) {
-        fehler.push(`Zeile ${i + 2}: mehr Felder als Spalten im Kopf`);
+        fehler.push(`Zeile ${line}: mehr Felder als Spalten im Kopf`);
         return;
       }
-      const v = (s: (typeof RUECKMELDUNG_SPALTEN)[number]) => z[idx(s)] ?? "";
+      const v = (s: Spalte) => (idx(s) < 0 ? "" : (z[idx(s)] ?? ""));
       roh.push({
-        zeile: i + 2,
+        zeile: line,
         verordnungId: v("Verordnung-ID"),
         laufId: v("Lauf-ID"),
         versichertennummer: v("Versichertennummer"),
         ausstellungsdatum: v("Ausstellungsdatum"),
         ausgezahlt: v("Ausgezahlt EUR"),
+        gebuehr: v("Gebühr EUR"),
         absetzungBetrag: v("Absetzung EUR"),
         absetzungCode: v("Absetzung Code"),
         absetzungGrund: v("Absetzung Grund"),

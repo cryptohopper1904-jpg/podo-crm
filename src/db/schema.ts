@@ -785,6 +785,8 @@ export const billingBatchExports = pgTable(
     prescriptionCount: integer("prescription_count").notNull(),
     /** vom Trigger gesetzt: Lauf war beim Archivieren schon übergeben (Export vor Paket E) – Archiv ist nicht die Erstübergabe */
     afterFirstHandover: boolean("after_first_handover").notNull().default(false),
+    /** Dokumente, die fachlich fehlen (z. B. Leistungsnachweis ohne Behandlungseintrag) – im Paket im LIESMICH gelistet */
+    missingDocuments: integer("missing_documents").notNull().default(0),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: createdAt(),
   },
@@ -793,8 +795,9 @@ export const billingBatchExports = pgTable(
 
 /**
  * Auszahlung des Abrechnungszentrums zu einem Abrechnungslauf (GKV Paket E, Migration 0068): aus einer eingelesenen
- * Rückmeldung (source = import, mit Prüfsumme der Datei gegen doppeltes Einlesen) oder von Hand erfasst (manual).
- * Append-only; Korrektur nur über eine weitere Zeile (negative Beträge sind nicht vorgesehen – offene Fachfrage).
+ * Rückmeldung (source = import; Datei verschlüsselt als Beleg, Prüfsumme, je Lauf nur einmal aktiv) oder von Hand erfasst
+ * (manual). Append-only; Korrektur nur als Storno (source = reversal, reverses_payout_id, exakt negative Beträge,
+ * Pflichtbegründung, höchstens ein Storno je Auszahlung – Trigger).
  */
 export const billingBatchPayouts = pgTable(
   "billing_batch_payouts",
@@ -808,16 +811,27 @@ export const billingBatchPayouts = pgTable(
     amountCents: integer("amount_cents").notNull(),
     /** Summe der mit dieser Rückmeldung gemeldeten Absetzungen (Cent, nur zur Information) */
     deductionCents: integer("deduction_cents").notNull().default(0),
+    /** vom Abrechnungszentrum einbehaltene Gebühr (Cent, optional) */
+    feeCents: integer("fee_cents").notNull().default(0),
     paidAt: date("paid_at").notNull(),
     /** Sammelrechnungs-/Avisnummer des Abrechnungszentrums */
     reference: text("reference"),
-    /** import | manual */
+    /** import | manual | reversal (Storno) */
     source: text("source").notNull(),
     /** SHA-256 der eingelesenen Datei (nur import) */
     sourceSha256: text("source_sha256"),
+    /** laufende Nummer je (Lauf, Datei) – vom Trigger gesetzt; erneutes Einlesen nur nach Storno */
+    importSeq: integer("import_seq"),
+    /** eingelesene Datei als Beleg (verschlüsselt, nur import) */
+    storageKey: text("storage_key"),
+    sourceFilename: text("source_filename"),
+    /** Storno: stornierte Auszahlung */
+    reversesPayoutId: uuid("reverses_payout_id").references((): AnyPgColumn => billingBatchPayouts.id),
+    /** Begründung (Pflicht beim Storno) */
+    reason: text("reason"),
     lineCount: integer("line_count").notNull().default(0),
-    /** je Verordnung: { prescriptionId, paidCents, deductionCents } – keine Namen/Diagnosen */
-    details: jsonb("details").$type<{ prescriptionId: string; paidCents: number; deductionCents: number }[]>().notNull().default([]),
+    /** je Verordnung: { prescriptionId, paidCents, deductionCents, feeCents } – keine Namen/Diagnosen */
+    details: jsonb("details").$type<{ prescriptionId: string; paidCents: number; deductionCents: number; feeCents?: number }[]>().notNull().default([]),
     createdBy: uuid("created_by")
       .notNull()
       .references(() => users.id),
@@ -827,7 +841,8 @@ export const billingBatchPayouts = pgTable(
     uniqueIndex("billing_batch_payouts_org_id").on(t.organizationId, t.id),
     index("billing_batch_payouts_org_batch").on(t.organizationId, t.billingBatchId),
     index("billing_batch_payouts_org_paid").on(t.organizationId, t.paidAt),
-    uniqueIndex("billing_batch_payouts_source").on(t.billingBatchId, t.sourceSha256).where(sql`${t.sourceSha256} is not null`),
+    uniqueIndex("billing_batch_payouts_source").on(t.billingBatchId, t.sourceSha256, t.importSeq).where(sql`${t.sourceSha256} is not null`),
+    uniqueIndex("billing_batch_payouts_reverses").on(t.reversesPayoutId).where(sql`${t.reversesPayoutId} is not null`),
   ],
 );
 

@@ -7,8 +7,9 @@ import { handoverCsv } from "@/server/gkv-handover";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Abrechnungslauf als CSV (neutrales Format, „verordnungen.csv“ des Übergabepakets, GKV Paket E). Der erste Abruf
- * archiviert das Übergabepaket; danach kommt die CSV immer aus dem Archiv (byte-gleich, „Nachdruck“).
+ * Abrechnungslauf als CSV (neutrales Format, „verordnungen.csv“ des Übergabepakets, GKV Paket E). Achtung: Schon der erste
+ * CSV-Abruf erzeugt und archiviert das vollständige Übergabepaket (ZIP) und vermerkt den Lauf als übergeben; danach kommt
+ * die CSV immer aus dem Archiv (byte-gleich, „Nachdruck“).
  * Die Übermittlung nach § 302 SGB V übernimmt der Partner – dies ist KEIN §-302-Datensatz.
  */
 export async function GET(_req: NextRequest, ctx: RouteContext<"/api/export/gkv-batch/[id]">) {
@@ -21,8 +22,8 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/export/gkv-
   if (!UUID.test(id)) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
   const data = await handoverCsv(auth, id);
   if (!data) return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
-  if ("error" in data) return NextResponse.json(data, { status: 500 });
-  return new NextResponse(new Uint8Array(data.bytes), {
+  if ("error" in data) return NextResponse.json(data, { status: 409 });
+  return new NextResponse(data.bytes as Uint8Array<ArrayBuffer>, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${data.filename}"`,

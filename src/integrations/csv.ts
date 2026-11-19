@@ -29,17 +29,27 @@ export function stripBom(text: string): string {
 
 /** Zerlegt CSV-Text in Zeilen aus Feldern. Leere Zeilen werden entfernt. */
 export function parseCsv(input: string, delimiter?: Delimiter): string[][] {
+  return parseCsvWithLines(input, delimiter).map((r) => r.fields);
+}
+
+/**
+ * Wie parseCsv, zusätzlich mit der physischen Zeilennummer (1-basiert, Leerzeilen und Umbrüche in Feldern mitgezählt),
+ * in der ein Datensatz beginnt – für Fehlermeldungen, die zur Datei passen.
+ */
+export function parseCsvWithLines(input: string, delimiter?: Delimiter): { line: number; fields: string[] }[] {
   const text = stripBom(input);
   const d = delimiter ?? detectDelimiter(text);
-  const rows: string[][] = [];
+  const rows: { line: number; fields: string[] }[] = [];
   let row: string[] = [];
   let field = "";
   let inQuotes = false;
   let i = 0;
+  let line = 1;
+  let start = 1;
   const pushRow = () => {
     row.push(field);
     field = "";
-    if (!(row.length === 1 && row[0] === "")) rows.push(row);
+    if (!(row.length === 1 && row[0] === "")) rows.push({ line: start, fields: row });
     row = [];
   };
   while (i < text.length) {
@@ -55,6 +65,7 @@ export function parseCsv(input: string, delimiter?: Delimiter): string[][] {
         i++;
         continue;
       }
+      if (c === "\n" || (c === "\r" && text[i + 1] !== "\n")) line++;
       field += c;
       i++;
       continue;
@@ -69,6 +80,8 @@ export function parseCsv(input: string, delimiter?: Delimiter): string[][] {
     } else if (c === "\r" || c === "\n") {
       pushRow();
       i += c === "\r" && text[i + 1] === "\n" ? 2 : 1;
+      line++;
+      start = line;
     } else {
       field += c;
       i++;

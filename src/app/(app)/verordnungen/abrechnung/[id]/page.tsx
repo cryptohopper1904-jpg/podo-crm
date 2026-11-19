@@ -5,7 +5,7 @@ import { Badge, BackLink, Card, CardTitle, Empty, Field, Input, Stat, Table } fr
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, dateTimeDe, money } from "@/lib/format";
 import { batchHandoverInfo } from "@/server/gkv-handover";
-import { manualPayoutAction } from "./actions";
+import { manualPayoutAction, reversePayoutAction } from "./actions";
 import { PayoutImport } from "./payout-import";
 
 export const metadata = { title: "Abrechnungslauf" };
@@ -26,7 +26,8 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
   const { batch: b, archive } = info;
   const downloads = !auth.support;
   const writes = !auth.support && !auth.readOnly && !!b.exportedAt;
-  const open = info.sollInsurerCents === null ? null : info.sollInsurerCents - info.paidCents - info.deductionCents;
+  const open = info.openCents;
+  const d = info.deductions;
   return (
     <div className="mx-auto max-w-6xl">
       <BackLink href="/verordnungen/abrechnung" label="GKV-Abrechnung" />
@@ -38,9 +39,19 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat label="Kassenanteil laut Lauf (Soll)" value={info.sollInsurerCents === null ? "–" : money(info.sollInsurerCents)} tone="info" sub={`Heilmittelkosten ${b.remedyTotalCents === null ? "–" : money(b.remedyTotalCents)} − Zuzahlungen ${money(b.copaymentTotalCents ?? b.totalCents)}`} />
-        <Stat label="Ausgezahlt (erfasst)" value={money(info.paidCents)} tone="primary" sub={`${info.payouts.length} Auszahlung(en)`} />
-        <Stat label="Absetzungen laut Rückmeldungen" value={money(info.deductionCents)} tone={info.deductionCents ? "warn" : "neutral"} sub="Bearbeitung unter „Absetzungen“" />
-        <Stat label="Noch offen (Soll − Auszahlung − Absetzung)" value={open === null ? "–" : money(open)} tone={open ? "warn" : "neutral"} sub="Hilfsrechnung, keine Buchung" />
+        <Stat
+          label="Ausgezahlt netto nach Gebühren"
+          value={money(info.paidCents)}
+          tone="primary"
+          sub={`${info.payouts.filter((p) => p.source !== "reversal").length} Auszahlung(en)${info.feeCents ? ` · Gebühren ${money(info.feeCents)} · brutto ${money(info.paidCents + info.feeCents)}` : ""} · Stornos mitgerechnet`}
+        />
+        <Stat
+          label="Absetzungen des Laufs (mindern)"
+          value={money(d.reductionCents)}
+          tone={d.pendingCents ? "warn" : "neutral"}
+          sub={`akzeptiert/bleibt · offen/Widerspruch ${money(d.pendingCents)}${d.reversedCents ? ` · Widerspruch erfolgreich ${money(d.reversedCents)}` : ""}`}
+        />
+        <Stat label="Noch offen (Soll − Auszahlung − Gebühr − Absetzung)" value={open === null ? "–" : money(open)} tone={open ? "warn" : "neutral"} sub="Hilfsrechnung, keine Buchung; offene Absetzungen zählen noch als offen" />
       </div>
 
       <Card className="mb-6">
@@ -54,12 +65,14 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
             <div className="flex flex-wrap gap-2"><dt className="text-muted">Archiviert:</dt><dd>{dateTimeDe(archive.createdAt)} · {archive.filename} · {(archive.sizeBytes / 1024).toFixed(0)} KB · Format {archive.schemaVersion}</dd></div>
             <div className="flex flex-wrap gap-2"><dt className="text-muted">SHA-256:</dt><dd className="break-all font-mono text-xs">{archive.sha256}</dd></div>
             {archive.afterFirstHandover ? <dd className="text-warn-soft-text">Der Lauf war schon vor dem Archiv übergeben – das Archiv gibt den Stand beim Archivieren wieder.</dd> : null}
+            {archive.missingDocuments ? <dd className="text-warn-soft-text">{archive.missingDocuments} Dokument(e) fehlen fachlich (z. B. Leistungsnachweis ohne Behandlungseintrag) – Liste im LIESMICH des Pakets.</dd> : null}
           </dl>
         ) : null}
         {downloads ? (
           <div className="flex flex-wrap gap-3">
             <a href={`/api/export/gkv-batch/${b.id}/paket`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> {archive ? "Übergabepaket (Nachdruck)" : "Übergabepaket erzeugen und herunterladen"}</a>
             <a href={`/api/export/gkv-batch/${b.id}`} className="inline-flex h-11 items-center gap-2 rounded-xl border border-border px-4 font-semibold"><Download size={18} aria-hidden /> nur Verordnungen (CSV)</a>
+            {!archive ? <p className="basis-full text-xs text-muted">Auch der CSV-Download erzeugt beim ersten Mal das vollständige Paket, archiviert es und vermerkt den Lauf als übergeben.</p> : null}
           </div>
         ) : (
           <p className="text-sm text-muted">Im Support-Modus sind Downloads gesperrt.</p>
@@ -75,18 +88,36 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
 
       <Card>
         <CardTitle>Auszahlungen</CardTitle>
+        {info.reversedDeductionHints ? (
+          <p className="mb-3 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
+            {info.reversedDeductionHints} Absetzung(en) stammen aus einer stornierten Rückmeldung – bitte unter „Absetzungen“ prüfen (werden nicht automatisch geändert).
+          </p>
+        ) : null}
         {info.payouts.length ? (
-          <Table label="Auszahlungen zu diesem Lauf">
-            <thead><tr><th>Ausgezahlt am</th><th>Betrag</th><th>Absetzungen</th><th>Referenz</th><th>Quelle</th><th>Erfasst</th></tr></thead>
+          <Table label="Auszahlungen zu diesem Lauf" minWidth={880}>
+            <thead><tr><th>Datum</th><th>Netto</th><th>Gebühr</th><th>Absetzungen</th><th>Referenz</th><th>Quelle</th><th>Erfasst</th><th><span className="sr-only">Aktion</span></th></tr></thead>
             <tbody>
               {info.payouts.map((p) => (
-                <tr key={p.id}>
+                <tr key={p.id} className={p.reversedBy ? "text-muted line-through" : undefined}>
                   <td>{dateDe(p.paidAt)}</td>
                   <td className="tabular-nums">{money(p.amountCents)}</td>
+                  <td className="tabular-nums">{p.feeCents ? money(p.feeCents) : "–"}</td>
                   <td className="tabular-nums">{p.deductionCents ? money(p.deductionCents) : "–"}</td>
                   <td>{p.reference ?? "–"}</td>
-                  <td>{p.source === "import" ? `Rückmeldung (${p.lineCount} Zeilen)` : "von Hand"}</td>
+                  <td>{p.source === "import" ? `Rückmeldung (${p.lineCount} Zeilen)` : p.source === "reversal" ? `Storno – ${p.reason ?? ""}` : "von Hand"}</td>
                   <td>{dateTimeDe(p.createdAt)}</td>
+                  <td>
+                    {writes && p.source !== "reversal" && !p.reversedBy ? (
+                      <details>
+                        <summary className="cursor-pointer font-semibold text-primary">Stornieren</summary>
+                        <ActionForm action={reversePayoutAction} submit="Storno buchen" className="mt-2 flex min-w-64 flex-col gap-2">
+                          <input type="hidden" name="batchId" value={b.id} />
+                          <input type="hidden" name="payoutId" value={p.id} />
+                          <Field label="Begründung (Pflicht)"><Input name="reason" required minLength={5} maxLength={500} placeholder="z. B. Betrag falsch erfasst" /></Field>
+                        </ActionForm>
+                      </details>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -94,15 +125,23 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
         ) : (
           <Empty title="Noch keine Auszahlung erfasst" />
         )}
-        <p className="mt-3 text-xs text-muted">Auszahlungen sind unveränderlich. Eine Fehleingabe bitte mit der Steuerberatung klären (offene Fachfrage) – es gibt bewusst keine Lösch- oder Minusbuchung.</p>
+        <p className="mt-3 text-xs text-muted">
+          Auszahlungen sind unveränderlich. Eine Fehleingabe wird storniert (Gegenbuchung mit Begründung, wirkt im Monat des Stornos) und danach richtig erfasst;
+          eine stornierte Rückmeldung kann erneut eingelesen werden. Netto = tatsächlich ausgezahlt nach Gebühren des Abrechnungszentrums.
+        </p>
         {writes ? (
           <div className="mt-6">
             <h3 className="mb-2 font-semibold">Auszahlung von Hand erfassen</h3>
-            <ActionForm action={manualPayoutAction} submit="Auszahlung erfassen" className="grid gap-4 sm:grid-cols-[160px_180px_1fr_auto] sm:items-end">
+            <ActionForm action={manualPayoutAction} submit="Auszahlung erfassen" className="grid gap-4 sm:grid-cols-[150px_150px_170px_1fr] sm:items-end">
               <input type="hidden" name="batchId" value={b.id} />
-              <Field label="Betrag (€)"><Input name="amount" inputMode="decimal" required placeholder="0,00" /></Field>
+              <Field label="Netto ausgezahlt (€)"><Input name="amount" inputMode="decimal" required placeholder="0,00" /></Field>
+              <Field label="Gebühr (€, optional)"><Input name="fee" inputMode="decimal" placeholder="0,00" /></Field>
               <Field label="Ausgezahlt am"><Input name="paidAt" type="date" required max={berlinDateIso()} /></Field>
               <Field label="Referenz (optional)"><Input name="reference" maxLength={60} placeholder="z. B. Sammelrechnung / Avis" /></Field>
+              <label className="flex items-center gap-2 text-sm sm:col-span-4">
+                <input type="checkbox" name="confirmDuplicate" className="size-5 accent-[var(--primary)]" />
+                Gleiche Auszahlung (Datum, Referenz, Betrag) ist schon erfasst – trotzdem erfassen (nur nach Prüfung; sonst wird eine mögliche Doppelerfassung abgelehnt)
+              </label>
             </ActionForm>
           </div>
         ) : null}

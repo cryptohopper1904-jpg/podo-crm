@@ -202,6 +202,16 @@ const CASES: Case[] = [
   },
   {
     table: "billing_batch_payouts",
+    col: "reverses_payout_id",
+    target: "billing_batch_payouts",
+    // Storno (Gegenbuchung) der World-Auszahlung (100 Cent, von Hand)
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, paid_at, source, reverses_payout_id, reason, created_by) values ($1,$2,-100,'2026-02-02','reversal',$3,'Fehleingabe',$4)",
+      [w.org, w.batch, ref, w.user],
+    ],
+  },
+  {
+    table: "billing_batch_payouts",
     col: "billing_batch_id",
     target: "billing_batches",
     insert: (w: World, ref: string): [string, unknown[]] => [

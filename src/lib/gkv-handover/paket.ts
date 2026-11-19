@@ -12,6 +12,20 @@ import { writeCsv } from "@/integrations/csv";
 
 export const PAKET_SCHEMA = "podohero-abrechnung/1";
 
+/**
+ * Obergrenze je Übergabepaket (AppSec H1): Das ZIP entsteht beim ersten Export im Speicher (mit einem PDF je Verordnung).
+ * 500 Verordnungen ≈ höchstens einige Dutzend MB; größere Läufe bitte aufteilen. Zusätzlich Grenze der fertigen Datei.
+ */
+export const HANDOVER_MAX_VERORDNUNGEN = 500;
+export const HANDOVER_MAX_BYTES = 200 * 1024 * 1024;
+
+/** Meldung, wenn ein Lauf zu groß für ein Übergabepaket ist; sonst null */
+export function paketGrenze(anzahl: number): string | null {
+  return anzahl > HANDOVER_MAX_VERORDNUNGEN
+    ? `Der Abrechnungslauf hat ${anzahl} Verordnungen – ein Übergabepaket umfasst höchstens ${HANDOVER_MAX_VERORDNUNGEN}. Bitte künftig kleinere Läufe bilden und für diesen Lauf den Support kontaktieren.`
+    : null;
+}
+
 export type Unterschrift = "geraet" | "papier" | "fehlt";
 
 export type PaketLeistung = {
