@@ -72,6 +72,8 @@ export const DOWNLOAD_KINDS = [
   "gkv_document",
   /** Belegliste (Zuzahlungsquittungen und Abrechnungsläufe, GKV Paket C) */
   "belegliste_export",
+  /** neutrales Übergabepaket eines Abrechnungslaufs (ZIP mit Gesundheitsdaten, GKV Paket E) */
+  "gkv_handover",
 ] as const;
 export type DownloadKind = (typeof DOWNLOAD_KINDS)[number];
 

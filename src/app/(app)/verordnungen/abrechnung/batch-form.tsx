@@ -17,7 +17,10 @@ export function BatchForm({ rows }: { rows: ReadyRow[] }) {
         <div className="flex flex-wrap items-center gap-3">
           <FormSuccess message={state.ok} />
           {state.batchId ? (
-            <a href={`/api/export/gkv-batch/${state.batchId}`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> CSV herunterladen</a>
+            <>
+              <a href={`/api/export/gkv-batch/${state.batchId}/paket`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Übergabepaket herunterladen</a>
+              <a href={`/verordnungen/abrechnung/${state.batchId}`} className="font-semibold text-primary">Lauf öffnen</a>
+            </>
           ) : null}
         </div>
       ) : null}

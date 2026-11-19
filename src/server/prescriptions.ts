@@ -762,98 +762,120 @@ export const GKV_BATCH_HEADER = [
   "Korrektur",
 ];
 
-/** Zeilen für den neutralen CSV-Export eines Abrechnungslaufs (Übergabe an ein Abrechnungszentrum). */
+/**
+ * Daten eines Abrechnungslaufs für den Export (CSV, Übergabepaket GKV Paket E): Lauf, Praxis-IK, abgerechnete
+ * Verordnungen des Laufs samt Person – dazu Verordnungen, die in diesem Lauf abgerechnet und danach zur Korrektur
+ * geöffnet bzw. neu abgerechnet wurden (GKV Paket C), mit dem Stand der Erstabrechnung (original_row, reproduzierbar,
+ * Zeilensumme = Laufsumme). Liest nur; null = Lauf nicht gefunden.
+ */
+export async function loadBatchExport(tx: Tx, org: string, batchId: string) {
+  const [batch] = await tx.select().from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
+  if (!batch) return null;
+  const [o] = await tx.select({ ik: organizations.ik, legsCode: organizations.legsCode }).from(organizations).where(eq(organizations.id, org));
+  const corrected = await correctedFromBatch(tx, org, batchId);
+  const ids = [...corrected.keys()];
+  const inBatch = and(eq(prescriptions.billingBatchId, batchId), eq(prescriptions.status, "billed"));
+  const rows = (
+    await tx
+      .select({ vo: prescriptions, p: patients })
+      .from(prescriptions)
+      .innerJoin(patients, eq(patients.id, prescriptions.patientId))
+      // nur abgerechnete Verordnungen des Laufs (+ Korrekturen mit Stand der Erstabrechnung) – AppSec Runde 4, R1
+      .where(and(eq(prescriptions.organizationId, org), ids.length ? or(inBatch, inArray(prescriptions.id, ids)) : inBatch))
+      .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt))
+  ).map((r) => ({ ...r, vo: corrected.get(r.vo.id) ?? r.vo }));
+  const corrections = await correctionsFor(tx, org, rows.map((r) => r.vo.id));
+  const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
+  const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
+  return { batch, rows, usage, receipts, org: o, corrections };
+}
+export type BatchExportData = NonNullable<Awaited<ReturnType<typeof loadBatchExport>>>;
+
+/** Lauf beim ersten Export als übergeben vermerken – nur, solange nicht übergeben (erster Übergabezeitpunkt bleibt) */
+export async function markBatchExported(tx: Tx, org: string, batchId: string) {
+  // ein gleichzeitiger zweiter Export wartet auf die Zeilensperre und ändert danach nichts (statt am Guard
+  // „Übergabezeitpunkt unveränderlich“ zu scheitern)
+  await tx
+    .update(billingBatches)
+    .set({ exportedAt: new Date(), status: "exported" })
+    .where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId), isNull(billingBatches.exportedAt)));
+}
+
+const euroCsv = (c: number | null) => ((c ?? 0) / 100).toFixed(2).replace(".", ",");
+
+/** Spalte „Korrektur“ einer Verordnung aus Sicht des Laufs */
+export const batchCorrectionNote = (data: BatchExportData, prescriptionId: string) => correctionNote(data.corrections.get(prescriptionId), data.batch.id);
+
+/** Eine CSV-Zeile (Spalten GKV_BATCH_HEADER) – ohne Formel-Entschärfung (macht der Aufrufer bzw. writeCsv) */
+export function batchCsvLine(data: BatchExportData, { vo, p }: BatchExportData["rows"][number]): unknown[] {
+  const dates = data.usage.get(vo.id) ?? [];
+  return [
+    data.batch.id,
+    vo.id,
+    // Versichertennummer der Verordnung (Stand der Abrechnung bzw. original_row), nicht der heutige Stand der Person
+    vo.insuranceNumber || p.insuranceNumber || "",
+    p.insurerName ?? "",
+    p.lastName,
+    p.firstName ?? "",
+    p.birthDate ?? "",
+    vo.doctorName ?? "",
+    vo.doctorLanr ?? "",
+    vo.doctorBsnr ?? "",
+    vo.issuedAt,
+    vo.diagnosisGroup,
+    vo.icd10 ?? "",
+    vo.remedy ?? "",
+    vo.homeVisit ? "ja" : "nein",
+    vo.urgent ? "ja" : "nein",
+    vo.units,
+    dates.length,
+    vo.positions.map((x) => `${x.position ?? ""}:${x.label}:${x.units}`).join(" | "),
+    dates.join(" | "),
+    euroCsv(vo.copaymentCents),
+    // tatsächliche Befreiung je Behandlungstag aus dem Preis-Snapshot (Bescheinigung/minderjährig, PR #111 B1);
+    // das Kreuz auf der VO steht in der Spalte „Zuzahlungsfrei angekreuzt (VO)“
+    exemptionSummary(vo.priceSnapshot as PriceSnapshot | null),
+    // Zuzahlungsquittung(en) seit Paket B (letzte gültige), sonst Altvermerk
+    copaymentPaidOn(data.receipts.get(vo.id), vo.copaymentPaidAt),
+    vo.therapyReportRequested ? "ja" : "nein",
+    vo.interruptionNote ?? "",
+    vo.rulesVersion ?? "",
+    data.org?.ik ?? "",
+    data.org?.legsCode ?? "",
+    vo.insurerIk ?? p.insurerIk ?? "",
+    vo.insuredStatus ?? p.insuredStatus ?? "",
+    vo.icd10Second ?? "",
+    vo.diagnosisText ?? "",
+    vo.leitsymptomatik === "x" ? (vo.leitsymptomatikText ?? "") : (vo.leitsymptomatik ?? ""),
+    vo.accident ? "ja" : "nein",
+    vo.bvg ? "ja" : "nein",
+    vo.remedyCostCents === null ? "" : euroCsv(vo.remedyCostCents),
+    [...new Set(((vo.priceSnapshot as { lines?: { tableVersion: string | null }[] } | null)?.lines ?? []).map((l) => l.tableVersion).filter(Boolean))].join(" | "),
+    vo.copaymentExempt ? "ja" : "nein",
+    vo.prescriptionKind ?? "",
+    vo.prescriptionSpecial ? `${vo.prescriptionSpecial} ${PRESCRIPTION_SPECIALS[vo.prescriptionSpecial as PrescriptionSpecial] ?? ""}`.trim() : "",
+    vo.approvalRef ?? "",
+    vo.approvalDate ?? "",
+    correctionNote(data.corrections.get(vo.id), data.batch.id),
+  ];
+}
+
+/**
+ * Zeilen für den CSV-Export eines Abrechnungslaufs mit dem aktuellen Stand (ohne Archiv). Die Übergabe an das
+ * Abrechnungszentrum läuft seit GKV Paket E über das archivierte Übergabepaket (src/server/gkv-handover.ts), dessen
+ * verordnungen.csv dieselben Spalten (plus Zusatzspalten) führt; diese Funktion bleibt als Live-Ansicht für Prüfungen.
+ */
 export async function billingBatchExport(auth: AuthContext, batchId: string) {
   // enthält Diagnosen (ICD-10) → zusätzlich medizinisches Leserecht
   assertCan(auth, "invoices.write", "medical.read");
   const org = auth.organization.id;
   const data = await withOrg(org, async (tx) => {
-    const [batch] = await tx.select().from(billingBatches).where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId)));
-    if (!batch) return null;
-    const [o] = await tx.select({ ik: organizations.ik, legsCode: organizations.legsCode }).from(organizations).where(eq(organizations.id, org));
-    // dazu Verordnungen, die in diesem Lauf abgerechnet und danach zur Korrektur geöffnet bzw. neu abgerechnet wurden
-    // (GKV Paket C) – sonst fiele die Verordnung aus dem Export ihres ursprünglichen Laufs
-    // – mit dem Stand der Erstabrechnung (original_row), nicht mit den korrigierten Werten (reproduzierbar, Zeilensumme = Laufsumme)
-    const corrected = await correctedFromBatch(tx, org, batchId);
-    const ids = [...corrected.keys()];
-    const inBatch = and(eq(prescriptions.billingBatchId, batchId), eq(prescriptions.status, "billed"));
-    const rows = (
-      await tx
-        .select({ vo: prescriptions, p: patients })
-        .from(prescriptions)
-        .innerJoin(patients, eq(patients.id, prescriptions.patientId))
-        // nur abgerechnete Verordnungen des Laufs (+ Korrekturen mit Stand der Erstabrechnung) – AppSec Runde 4, R1
-        .where(and(eq(prescriptions.organizationId, org), ids.length ? or(inBatch, inArray(prescriptions.id, ids)) : inBatch))
-        .orderBy(asc(patients.lastName), asc(prescriptions.issuedAt))
-    ).map((r) => ({ ...r, vo: corrected.get(r.vo.id) ?? r.vo }));
-    const corrections = await correctionsFor(tx, org, rows.map((r) => r.vo.id));
-    const usage = await usageFor(tx, org, rows.map((r) => r.vo.id));
-    const receipts = await copaymentReceiptsFor(tx, org, rows.map((r) => r.vo.id));
-    if (!batch.exportedAt) {
-      // nur, solange nicht übergeben: ein gleichzeitiger zweiter Export wartet auf die Zeilensperre und ändert danach nichts
-      // (statt am Guard „Übergabezeitpunkt unveränderlich“ zu scheitern) – der erste Übergabezeitpunkt bleibt
-      await tx
-        .update(billingBatches)
-        .set({ exportedAt: new Date(), status: "exported" })
-        .where(and(eq(billingBatches.organizationId, org), eq(billingBatches.id, batchId), isNull(billingBatches.exportedAt)));
-    }
-    return { batch, rows, usage, receipts, org: o, corrections };
+    const d = await loadBatchExport(tx, org, batchId);
+    if (d && !d.batch.exportedAt) await markBatchExported(tx, org, batchId);
+    return d;
   });
   if (!data) return null;
-  const euro = (c: number | null) => ((c ?? 0) / 100).toFixed(2).replace(".", ",");
-  const lines: unknown[][] = [GKV_BATCH_HEADER];
-  for (const { vo, p } of data.rows) {
-    const dates = data.usage.get(vo.id) ?? [];
-    lines.push([
-      data.batch.id,
-      vo.id,
-      // Versichertennummer der Verordnung (Stand der Abrechnung bzw. original_row), nicht der heutige Stand der Person
-      vo.insuranceNumber || p.insuranceNumber || "",
-      p.insurerName ?? "",
-      p.lastName,
-      p.firstName ?? "",
-      p.birthDate ?? "",
-      vo.doctorName ?? "",
-      vo.doctorLanr ?? "",
-      vo.doctorBsnr ?? "",
-      vo.issuedAt,
-      vo.diagnosisGroup,
-      vo.icd10 ?? "",
-      vo.remedy ?? "",
-      vo.homeVisit ? "ja" : "nein",
-      vo.urgent ? "ja" : "nein",
-      vo.units,
-      dates.length,
-      vo.positions.map((x) => `${x.position ?? ""}:${x.label}:${x.units}`).join(" | "),
-      dates.join(" | "),
-      euro(vo.copaymentCents),
-      // tatsächliche Befreiung je Behandlungstag aus dem Preis-Snapshot (Bescheinigung/minderjährig, PR #111 B1);
-      // das Kreuz auf der VO steht in der Spalte „Zuzahlungsfrei angekreuzt (VO)“
-      exemptionSummary(vo.priceSnapshot as PriceSnapshot | null),
-      // Zuzahlungsquittung(en) seit Paket B (letzte gültige), sonst Altvermerk
-      copaymentPaidOn(data.receipts.get(vo.id), vo.copaymentPaidAt),
-      vo.therapyReportRequested ? "ja" : "nein",
-      vo.interruptionNote ?? "",
-      vo.rulesVersion ?? "",
-      data.org?.ik ?? "",
-      data.org?.legsCode ?? "",
-      vo.insurerIk ?? p.insurerIk ?? "",
-      vo.insuredStatus ?? p.insuredStatus ?? "",
-      vo.icd10Second ?? "",
-      vo.diagnosisText ?? "",
-      vo.leitsymptomatik === "x" ? (vo.leitsymptomatikText ?? "") : (vo.leitsymptomatik ?? ""),
-      vo.accident ? "ja" : "nein",
-      vo.bvg ? "ja" : "nein",
-      vo.remedyCostCents === null ? "" : euro(vo.remedyCostCents),
-      [...new Set(((vo.priceSnapshot as { lines?: { tableVersion: string | null }[] } | null)?.lines ?? []).map((l) => l.tableVersion).filter(Boolean))].join(" | "),
-      vo.copaymentExempt ? "ja" : "nein",
-      vo.prescriptionKind ?? "",
-      vo.prescriptionSpecial ? `${vo.prescriptionSpecial} ${PRESCRIPTION_SPECIALS[vo.prescriptionSpecial as PrescriptionSpecial] ?? ""}`.trim() : "",
-      vo.approvalRef ?? "",
-      vo.approvalDate ?? "",
-      correctionNote(data.corrections.get(vo.id), batchId),
-    ]);
-  }
+  const lines: unknown[][] = [GKV_BATCH_HEADER, ...data.rows.map((r) => batchCsvLine(data, r))];
   await audit({ organizationId: org, userId: auth.user.id, action: "billing_batch.export", entity: "billing_batch", entityId: batchId, meta: { count: data.rows.length } });
   // Formel-Injection verhindern (Namen, Arzt, Freitexte stammen aus Eingaben)
   return { batch: data.batch, lines: neutralizeCsvRows(lines) };

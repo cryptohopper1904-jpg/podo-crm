@@ -180,6 +180,35 @@ const CASES: Case[] = [
       [w.org, col === "prescription_id" ? ref : w.billed, col === "patient_id" ? ref : w.patient, col === "billing_batch_id" ? ref : w.batch, w.user],
     ],
   })),
+  // Absetzung aus einer Rückmeldung (GKV Paket E): Auszahlung desselben Laufs
+  {
+    table: "gkv_deductions",
+    col: "payout_id",
+    target: "billing_batch_payouts",
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by, payout_id) values ($1,$2,$3,$4,500,'Rückmeldung','2026-02-01',$5,$6)",
+      [w.org, w.billed, w.patient, w.batch, w.user, ref],
+    ],
+  },
+  // Archiv des Übergabepakets und Auszahlungen (GKV Paket E): nur zu Läufen der Praxis (World-Lauf ist übergeben)
+  {
+    table: "billing_batch_exports",
+    col: "billing_batch_id",
+    target: "billing_batches",
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into billing_batch_exports (organization_id, billing_batch_id, kind, storage_key, sha256, size_bytes, filename, schema_version, prescription_count, created_by) values ($1,$2,'handover_zip',$3,repeat('a',64),1,'x.zip','podohero-abrechnung/1',1,$4)",
+      [w.org, ref, `${w.org}/2026/01/x.bin`, w.user],
+    ],
+  },
+  {
+    table: "billing_batch_payouts",
+    col: "billing_batch_id",
+    target: "billing_batches",
+    insert: (w: World, ref: string): [string, unknown[]] => [
+      "insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, paid_at, source, created_by) values ($1,$2,100,'2026-02-01','manual',$3)",
+      [w.org, ref, w.user],
+    ],
+  },
   ...(["prescription_id", "patient_id", "deduction_id", "original_batch_id", "resolved_batch_id"] as const).map((col) => ({
     table: "prescription_corrections",
     col,
@@ -349,7 +378,14 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
         "insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by) values ($1,$2,$3,$4,500,'Unterschrift fehlt','2026-02-01',$5) returning id",
         [org, billed, patient, batch, user],
       );
-      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed, batch, billed, deduction };
+      // GKV Paket E: Lauf übergeben (Auszahlungen nur zu übergebenen Läufen), eine Auszahlung
+      await c.query("update billing_batches set exported_at = now(), status = 'exported' where id = $1", [batch]);
+      const payout = await id("insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, paid_at, source, created_by) values ($1,$2,100,'2026-02-01','manual',$3) returning id", [
+        org,
+        batch,
+        user,
+      ]);
+      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed, batch, billed, deduction, payout };
     });
   }
   /** Einfügen im Praxis-Kontext und immer zurückrollen (keine Nebenwirkungen wie eindeutige aktive Links) – Fehler oder null */
@@ -378,6 +414,7 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     vouchers: "voucher",
     devices: "device",
     billing_batches: "batch",
+    billing_batch_payouts: "payout",
     gkv_deductions: "deduction",
   };
 
