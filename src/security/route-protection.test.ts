@@ -41,6 +41,7 @@ export const INTENDED_PUBLIC: Record<string, string> = {
   "/unterauftragnehmer": "Website",
   "/vergleich": "Website: Software-Vergleich (statisch)",
   "/wechseln": "Website: Wechsel-Ratgeber (statisch)",
+  "/connector-fuer-doctolib": "Website: Infoseite zum geplanten Connector für Doctolib (statisch)",
   "/wissen": "Website: Wissensartikel (statisch)",
   "/robots.txt": "robots.txt (keine Daten)",
   "/sitemap.xml": "Sitemap der öffentlichen Website (keine Praxisdaten)",
@@ -87,7 +88,7 @@ describe("Proxy: Routen-Schutz", () => {
   });
 
   it("Präfix-Freigaben gelten nicht für ähnlich benannte Pfade", async () => {
-    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/screenshotsx", "/offlinex", "/appx", "/apps", "/sw.jsx", "/splashx", "/videox", "/videos"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
+    for (const p of ["/loginx", "/portalx", "/api/webhooksx/a", "/api/voicex", "/buchenx", "/plattform", "/px", "/preisex", "/abmeldenx", "/aktionx", "/aktionscodes", "/plattform/vertrieb", "/plattform/vertrieb/aktionscodes", "/vergleichx", "/wissenx", "/wechselnx", "/connector-fuer-doctolibx", "/screenshotsx", "/offlinex", "/appx", "/apps", "/sw.jsx", "/splashx", "/videox", "/videos"]) expect(redirectsToLogin(await call(p)), p).toBe(true);
   });
 
   it("mit Sitzungs-Cookie wird eine geschützte Route durchgelassen (echte Prüfung danach in requireAuth)", async () => {
