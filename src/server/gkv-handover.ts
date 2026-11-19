@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { Readable, Transform } from "node:stream";
+import { pipeline, Readable, Transform } from "node:stream";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import JSZip from "jszip";
 import { z } from "zod";
@@ -239,7 +239,7 @@ export async function readPayoutFile(org: string, a: { storageKey: string; sha25
  * (decryptChunks) und Prüfsumme stimmen – sonst fehlen dem Empfänger Bytes (Content-Length) und der Download scheitert,
  * statt eine veränderte Datei vollständig auszuliefern.
  */
-function streamArchive(org: string, a: { storageKey: string; sha256: string }): Readable {
+export function streamArchive(org: string, a: { storageKey: string; sha256: string }): Readable {
   checkKey(org, a.storageKey);
   const hash = createHash("sha256");
   let held: Buffer | null = null;
@@ -256,11 +256,10 @@ function streamArchive(org: string, a: { storageKey: string; sha256: string }): 
       cb();
     },
   });
-  const src = readDecryptedStream(a.storageKey);
-  src.on("error", (e) => check.destroy(e));
-  // Bricht der Client ab, auch die Entschlüsselung beenden
-  check.on("close", () => src.destroy());
-  return src.pipe(check);
+  // pipeline statt pipe: Fehler der Quelle (GCM-Tag, Lesefehler) kommen am Ergebnis an, und jede Seite wird bei Fehler
+  // oder Abbruch der anderen zerstört (Client bricht ab → Entschlüsselung endet). Der Fehler erreicht den Aufrufer über
+  // den zurückgegebenen Stream; der Callback verhindert nur eine unbehandelte Ablehnung.
+  return pipeline(readDecryptedStream(a.storageKey), check, () => undefined);
 }
 
 type ArchiveRow = typeof billingBatchExports.$inferSelect;
@@ -299,23 +298,25 @@ async function ensureArchive(
         .where(and(eq(billingBatchExports.organizationId, org), eq(billingBatchExports.billingBatchId, batchId), eq(billingBatchExports.kind, HANDOVER_KIND)));
       if (archive) return { archive, bytes: null, batch };
       if (!create) return NOT_ARCHIVED;
-      const data = await loadBatchExport(tx, org, batchId);
-      if (!data) return null;
-      const limit = paketGrenze(data.rows.length);
-      if (limit) return { error: limit };
+      // Zähler umfasst den ganzen Erstbau – Laden, Bauen, Verschlüsseln und Ablegen (Speicher-Spitze), nicht nur buildPackage
       if (buildsRunning >= MAX_PARALLEL_BUILDS) return { error: "Gerade werden schon Übergabepakete erzeugt – bitte in einer Minute erneut versuchen.", busy: true };
       buildsRunning++;
       let built: BuiltPackage;
+      let stored: Awaited<ReturnType<typeof storeEncrypted>>;
       try {
+        const data = await loadBatchExport(tx, org, batchId);
+        if (!data) return null;
+        const limit = paketGrenze(data.rows.length);
+        if (limit) return { error: limit };
         built = await buildPackage(tx, org, data, new Date());
+        if (built.bytes.length > HANDOVER_MAX_BYTES)
+          return { error: `Das Übergabepaket wäre ${Math.round(built.bytes.length / 1_048_576)} MB groß (höchstens ${HANDOVER_MAX_BYTES / 1_048_576} MB) – bitte den Support kontaktieren.` };
+        await markBatchExported(tx, org, batchId);
+        stored = await storeEncrypted(org, built.bytes);
+        written = stored.storageKey;
       } finally {
         buildsRunning--;
       }
-      if (built.bytes.length > HANDOVER_MAX_BYTES)
-        return { error: `Das Übergabepaket wäre ${Math.round(built.bytes.length / 1_048_576)} MB groß (höchstens ${HANDOVER_MAX_BYTES / 1_048_576} MB) – bitte den Support kontaktieren.` };
-      await markBatchExported(tx, org, batchId);
-      const stored = await storeEncrypted(org, built.bytes);
-      written = stored.storageKey;
       const [row] = await tx
         .insert(billingBatchExports)
         .values({
@@ -366,14 +367,15 @@ const auditReprint = (auth: AuthContext, batchId: string, format: string, sha256
   audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "billing_batch.handover", entity: "billing_batch", entityId: batchId, meta: { reprint: true, format, sha256 } });
 
 /**
- * Übergabepaket eines Abrechnungslaufs als Bytes (erster Abruf archiviert; danach die archivierte Datei, byte-gleich,
- * „Nachdruck“, gegen SHA-256 geprüft). null = Lauf nicht gefunden.
+ * Übergabepaket eines Abrechnungslaufs als Bytes (archivierte Datei, byte-gleich, „Nachdruck“, gegen SHA-256 geprüft).
+ * Der Erst-Export, der den Lauf unumkehrbar übergibt, nur mit ausdrücklichem `create: true` (Standard: nur Nachdruck,
+ * sonst NOT_ARCHIVED). null = Lauf nicht gefunden.
  */
 export async function handoverPackage(auth: AuthContext, batchId: string, opts: { format?: "zip" | "csv"; create?: boolean } = {}): Promise<HandoverDownload | HandoverError | null> {
   const blocked = access(auth);
   if (blocked) return blocked;
   const org = auth.organization.id;
-  const res = await ensureArchive(auth, batchId, opts.format ?? "zip", opts.create ?? true);
+  const res = await ensureArchive(auth, batchId, opts.format ?? "zip", opts.create ?? false);
   if (!res || "error" in res) return res;
   if (res.bytes) return { bytes: res.bytes, ...meta(res.archive, res.batch, false) };
   let bytes: Buffer;
@@ -417,9 +419,9 @@ async function discardIfUnreferenced(org: string, key: string) {
   }
 }
 
-/** verordnungen.csv aus dem archivierten Übergabepaket (mit `create` archiviert der erste Abruf das Paket; Route: nur Nachdruck) */
+/** verordnungen.csv aus dem archivierten Übergabepaket (nur mit ausdrücklichem `create: true` archiviert der erste Abruf das Paket; Standard und Route: nur Nachdruck) */
 export async function handoverCsv(auth: AuthContext, batchId: string, opts: { create?: boolean } = {}): Promise<{ bytes: Buffer; filename: string; reprint: boolean } | HandoverError | null> {
-  const pkg = await handoverPackage(auth, batchId, { format: "csv", create: opts.create ?? true });
+  const pkg = await handoverPackage(auth, batchId, { format: "csv", create: opts.create ?? false });
   if (!pkg || "error" in pkg) return pkg;
   const zip = await JSZip.loadAsync(pkg.bytes);
   const f = zip.file("verordnungen.csv");

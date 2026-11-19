@@ -139,7 +139,7 @@ function assertRealPort(port: BillingPort, subId: string) {
   if (port.isMock && !subId.startsWith("sub_mock_")) throw new BillingNotConfiguredError("STRIPE_SECRET_KEY fehlt.");
 }
 
-/** Hat eine ANDERE Praxis dieselbe Stripe-Kunden-ID? (organizations hat keine RLS) */
+/** Hat eine ANDERE Praxis dieselbe Stripe-Kunden-ID? (organizations: RLS nur im Praxis-Kontext, Migration 0069) */
 export async function sharesStripeCustomer(organizationId: string, customerId: string): Promise<boolean> {
   const r = await db.execute(sql`select 1 from organizations where stripe_customer_id = ${customerId} and id <> ${organizationId} limit 1`);
   return r.rows.length > 0;

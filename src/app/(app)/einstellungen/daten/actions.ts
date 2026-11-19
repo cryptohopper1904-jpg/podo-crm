@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, withOrg } from "@/db";
 import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
@@ -34,12 +34,13 @@ export async function requestDeletionAction(_: DataState, form: FormData): Promi
   const name = String(form.get("confirmName") ?? "");
   if (form.get("acknowledge") !== "on") return { error: "Bitte bestätige, dass du einen Export gesichert hast und deine Aufbewahrungspflichten kennst." };
   if (!confirmsPracticeName(name, auth.organization.name)) return { error: "Der eingegebene Praxisname stimmt nicht überein." };
-  // organizations hat keine RLS – Filter auf die eigene Praxis ist hier die Zugriffskontrolle
-  const [row] = await db
-    .update(organizations)
-    .set({ deletionRequestedAt: new Date() })
-    .where(and(eq(organizations.id, auth.organization.id), isNull(organizations.deletionRequestedAt)))
-    .returning({ at: organizations.deletionRequestedAt });
+  // eigene Praxis: Filter plus RLS im Praxis-Kontext (Migration 0069)
+  const [row] = await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ deletionRequestedAt: new Date() })
+      .where(and(eq(organizations.id, auth.organization.id), isNull(organizations.deletionRequestedAt)))
+      .returning({ at: organizations.deletionRequestedAt }));
   if (!row) return { error: "Die Löschung wurde bereits beantragt." };
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_requested", entity: "organization", entityId: auth.organization.id });
   // AGB § 8 Nr. 3: Der Löschantrag gilt als Kündigung → Stripe-Abo zum Periodenende kündigen. Ein Fehler verhindert den
@@ -87,17 +88,18 @@ export async function cancelDeletionAction(_: DataState, _form: FormData): Promi
   if (!isWithinGrace(org.at)) return { error: "Die Karenzzeit ist abgelaufen. Bitte wende dich an den Support." };
   // bedingt: nur ein noch zurücknehmbarer, selbst gestellter Antrag (Karenzzeit läuft, kein automatischer Antrag) –
   // schützt gegen einen gleichzeitig startenden Löschlauf bzw. Cron
-  const withdrawn = await db
-    .update(organizations)
-    .set({ deletionRequestedAt: null })
-    .where(
-      and(
-        eq(organizations.id, auth.organization.id),
-        gt(organizations.deletionRequestedAt, purgeCutoff()),
-        sql`coalesce(${organizations.settings}->>'deletionReason', '') <> ${AUTO_DELETION_REASON}`,
-      ),
-    )
-    .returning({ id: organizations.id });
+  const withdrawn = await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ deletionRequestedAt: null })
+      .where(
+        and(
+          eq(organizations.id, auth.organization.id),
+          gt(organizations.deletionRequestedAt, purgeCutoff()),
+          sql`coalesce(${organizations.settings}->>'deletionReason', '') <> ${AUTO_DELETION_REASON}`,
+        ),
+      )
+      .returning({ id: organizations.id }));
   if (!withdrawn.length) return { error: "Der Löschantrag lässt sich nicht mehr zurücknehmen. Bitte lade die Seite neu oder wende dich an den Support." };
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "org.deletion_cancelled", entity: "organization", entityId: auth.organization.id });
   // Rücknahme gilt auch für die Kündigung – aber nur, wenn sie durch den Löschantrag kam (eine separat, z. B. über das

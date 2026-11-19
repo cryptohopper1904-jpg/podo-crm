@@ -456,10 +456,11 @@ export async function saveChecklist(auth: AuthContext, list: HygieneChecklist) {
   need(auth.can("settings.manage"), "Checkliste bearbeiten");
   const org = auth.organization.id;
   // atomar mergen, damit parallele Einstellungsänderungen nicht überschrieben werden
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('hygieneChecklist', ${JSON.stringify(list)}::jsonb)` })
-    .where(eq(organizations.id, org));
+  await withOrg(org, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('hygieneChecklist', ${JSON.stringify(list)}::jsonb)` })
+      .where(eq(organizations.id, org)));
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.hygiene_checklist" });
 }
 
