@@ -49,7 +49,7 @@ const n = (v: unknown) => Number(v ?? 0);
  */
 const REPLACED_SQL = sql`c.resolution = 'rebilled' and c.original_remedy_cost_cents is not null and ob.remedy_total_cents is not null`;
 
-export type GkvPrivateMonth = { month: string; insurerCents: number; copaymentCents: number; privateCents: number; deductionCents: number; payoutCents: number };
+export type GkvPrivateMonth = { month: string; insurerCents: number; copaymentCents: number; privateCents: number; deductionCents: number; payoutCents: number; payoutFeeCents: number };
 export type GkvPrivateStats = {
   gkvEnabled: boolean;
   /**
@@ -67,8 +67,12 @@ export type GkvPrivateStats = {
     insurerNetCents: number;
   };
   copayments: { count: number; cents: number };
-  /** Zahlungseingang laut erfassten Auszahlungen des Abrechnungszentrums (GKV Paket E) nach Auszahlungsdatum – Ist */
-  payouts: { count: number; cents: number };
+  /**
+   * Zahlungseingang laut erfassten Auszahlungen des Abrechnungszentrums (GKV Paket E) nach Auszahlungsdatum – Ist.
+   * `cents` = netto (überwiesen), `feeCents` = einbehaltene Gebühr (Betriebsausgabe), `grossCents` = brutto; Stornos im
+   * Monat des Stornos; `count` ohne Stornos und stornierte Auszahlungen
+   */
+  payouts: { count: number; cents: number; feeCents: number; grossCents: number };
   private: { count: number; cents: number };
   deductions: Record<DeductionStatus, { count: number; cents: number }>;
   /**
@@ -142,16 +146,19 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     // Zahlungseingang (GKV Paket E): Auszahlungen des Abrechnungszentrums nach Auszahlungsdatum, netto nach Gebühren;
     // Stornos (Gegenbuchung, negativ) im Monat des Stornos – nicht rückwirkend; gezählt werden nur Auszahlungen
     const payoutRows = (
-      await tx.execute<{ ym: string; n: number; v: number }>(sql`
-        select to_char(bp.paid_at, 'YYYY-MM') as ym, count(*) filter (where bp.source <> 'reversal')::int as n, coalesce(sum(bp.amount_cents), 0)::bigint as v
+      await tx.execute<{ ym: string; n: number; v: number; fee: number }>(sql`
+        select to_char(bp.paid_at, 'YYYY-MM') as ym,
+               count(*) filter (where bp.source <> 'reversal'
+                 and not exists (select 1 from billing_batch_payouts r where r.organization_id = ${org} and r.reverses_payout_id = bp.id))::int as n,
+               coalesce(sum(bp.amount_cents), 0)::bigint as v, coalesce(sum(bp.fee_cents), 0)::bigint as fee
         from billing_batch_payouts bp
         where bp.organization_id = ${org} and bp.paid_at >= ${period.from} and bp.paid_at <= ${period.until}
         group by 1`)
     ).rows;
     return { batchRows, invRows, dedRows, replacedRows, payoutRows };
   });
-  const byMonth = new Map<string, GkvPrivateMonth>(months.map((m) => [m, { month: m, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0 }]));
-  const at = (ym: string) => byMonth.get(ym) ?? byMonth.set(ym, { month: ym, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0 }).get(ym)!;
+  const byMonth = new Map<string, GkvPrivateMonth>(months.map((m) => [m, { month: m, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0, payoutFeeCents: 0 }]));
+  const at = (ym: string) => byMonth.get(ym) ?? byMonth.set(ym, { month: ym, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0, payoutFeeCents: 0 }).get(ym)!;
   const batches: GkvPrivateStats["batches"] = { count: 0, prescriptions: 0, remedyCents: 0, copaymentCents: 0, insurerCents: 0, withoutRemedy: 0, replaced: { count: 0, remedyCents: 0, copaymentCents: 0, insurerCents: 0 }, insurerNetCents: 0 };
   for (const r of res.batchRows) {
     const insurer = n(r.remedy) - n(r.copay);
@@ -193,12 +200,15 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     // Monatsspalte „Absetzungen“: nur die Minderung (akzeptiert + erledigt/Absetzung bleibt)
     if (kind === "reduction") at(r.ym).deductionCents += n(r.v);
   }
-  const payouts = { count: 0, cents: 0 };
+  const payouts = { count: 0, cents: 0, feeCents: 0, grossCents: 0 };
   for (const r of res.payoutRows) {
     payouts.count += n(r.n);
     payouts.cents += n(r.v);
+    payouts.feeCents += n(r.fee);
     at(r.ym).payoutCents += n(r.v);
+    at(r.ym).payoutFeeCents += n(r.fee);
   }
+  payouts.grossCents = payouts.cents + payouts.feeCents;
   await audit({ organizationId: org, userId: auth.user.id, action: "stats.gkv_private", meta: { from: period.from, to: period.until } });
   return { gkvEnabled, batches, copayments, payouts, private: priv, deductions, deductionSummary, months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)) };
 }

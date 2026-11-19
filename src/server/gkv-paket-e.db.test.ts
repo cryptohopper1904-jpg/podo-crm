@@ -130,7 +130,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     expect(names.filter((n) => !n.startsWith("dokumente/")).sort()).toEqual(["LIESMICH.txt", "PRUEFSUMMEN.sha256", "abrechnungslauf.json", "begleitzettel.pdf", "behandlungen.csv", "verordnungen.csv"]);
     const docs = names.filter((n) => n.startsWith("dokumente/"));
     expect(docs).toHaveLength(2);
-    for (const id of ids) expect(docs.some((n) => new RegExp(`^dokumente/leistungsnachweis/Leistungsnachweis_.*${id.slice(0, 8)}\\.pdf$`).test(n))).toBe(true);
+    for (const id of ids) expect(docs.some((n) => new RegExp(`^dokumente/leistungsnachweis/Leistungsnachweis_\\d{4}-\\d{2}-\\d{2}_${id}\\.pdf$`).test(n))).toBe(true);
     for (const d of docs) expect(files[d].subarray(0, 5).toString()).toBe("%PDF-");
     // Prüfsummen stimmen für jede Datei
     const sums = files["PRUEFSUMMEN.sha256"].toString("utf8").trim().split("\n").map((l) => l.split("  "));
@@ -382,7 +382,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     expect(info.paidCents).toBe(4321);
     const period = (await import("@/lib/stats")).resolvePeriod({ zeitraum: "monat" }, today);
     const s = await stats.gkvPrivateStats(w.auth, period);
-    expect(s.payouts).toEqual({ count: 1, cents: 4321 });
+    expect(s.payouts).toEqual({ count: 1, cents: 4321, feeCents: 0, grossCents: 4321 });
     expect(s.months.find((m) => m.month === today.slice(0, 7))!.payoutCents).toBe(4321);
   });
   it("E9: Praxis-Export enthält das archivierte Übergabepaket byte-gleich (Zuordnung über exportFile)", async () => {
@@ -588,7 +588,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
   it("E16: Nachdruck als Stream byte-gleich; fehlende Dokumente gezählt", async () => {
     const w = await world();
     const { batchId } = await w.batch(1);
-    const first = await ho.handoverPackageStream(w.auth, batchId);
+    const first = await ho.handoverPackageStream(w.auth, batchId, { create: true });
     if (!first || "error" in first) throw new Error("kein Paket");
     expect(first.missingDocuments).toBe(0);
     const again = await ho.handoverPackageStream(w.auth, batchId);
@@ -597,5 +597,75 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const chunks: Buffer[] = [];
     for await (const c of again.body as AsyncIterable<Buffer>) chunks.push(Buffer.from(c));
     expect(Buffer.compare(Buffer.concat(chunks), first.body as Buffer)).toBe(0);
+  });
+  it("E17: Nachdruck-Stream hält den letzten Block zurück – bei falscher Prüfsumme kommt nie die ganze Datei an", async () => {
+    const w = await world();
+    const { batchId } = await w.batch(1);
+    const first = await ho.handoverPackageStream(w.auth, batchId, { create: true });
+    if (!first || "error" in first) throw new Error("kein Paket");
+    // ohne Archiv kein Erst-Export über den Nachdruck-Weg
+    const { batchId: other } = await w.batch(1);
+    expect(await ho.handoverPackageStream(w.auth, other)).toEqual({ error: expect.stringMatching(/noch nicht erzeugt/), notArchived: true });
+    const owner = new Pool({ connectionString: ownerUrl(), max: 1 });
+    try {
+      const c = await owner.connect();
+      try {
+        await c.query("begin");
+        await c.query("select set_config('app.org_id', $1, true)", [w.org]);
+        await c.query("alter table billing_batch_exports disable trigger billing_batch_exports_guard");
+        await c.query("update billing_batch_exports set sha256 = repeat('0', 64) where billing_batch_id = $1", [batchId]);
+        await c.query("alter table billing_batch_exports enable trigger billing_batch_exports_guard");
+        await c.query("commit");
+      } finally {
+        c.release();
+      }
+    } finally {
+      await owner.end();
+    }
+    const again = await ho.handoverPackageStream(w.auth, batchId);
+    if (!again || "error" in again) throw new Error("kein Paket");
+    let got = 0;
+    let failed = false;
+    try {
+      for await (const chunk of again.body as AsyncIterable<Buffer>) got += chunk.length;
+    } catch {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(got).toBeLessThan(again.sizeBytes);
+    // Bytes-Weg: Abbruch mit Meldung statt beschädigter Datei
+    expect(await ho.handoverPackage(w.auth, batchId)).toEqual({ error: expect.stringMatching(/beschädigt/) });
+  });
+
+  it("E18: gleichzeitiger Erst-Export → genau ein Archiv, beide erhalten dieselbe Datei", async () => {
+    const w = await world();
+    const { batchId } = await w.batch(1);
+    const [a, b] = await Promise.all([ho.handoverPackage(w.auth, batchId), ho.handoverPackage(w.auth, batchId)]);
+    if (!a || "error" in a || !b || "error" in b) throw new Error("kein Paket");
+    expect(a.sha256).toBe(b.sha256);
+    expect([a.reprint, b.reprint].sort()).toEqual([false, true]);
+    expect((await w.q("select 1 from billing_batch_exports where billing_batch_id = $1", [batchId])).length).toBe(1);
+  });
+
+  it("E19: Absetzung nur an einer Import-Auszahlung (nicht an Storno oder Handeingabe); Auswertung brutto/Gebühr/netto", async () => {
+    const w = await world();
+    const { batchId, ids } = await w.batch(1);
+    await ho.handoverPackage(w.auth, batchId);
+    const pay = await ho.recordManualPayout(w.auth, { batchId, amountCents: 900, feeCents: 100, paidAt: today, reference: "X1" });
+    if ("error" in pay) throw new Error(pay.error);
+    const st = await ho.reversePayout(w.auth, { payoutId: pay.id, reason: "Fehleingabe Test" });
+    if ("error" in st) throw new Error(st.error);
+    for (const payoutId of [pay.id, st.id])
+      await expect(
+        w.q("insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by, payout_id) values ($1,$2,$3,$4,100,'Test',$5,$6,$7)", [w.org, ids[0], w.patient, batchId, today, w.user, payoutId]),
+      ).rejects.toThrow(/Rückmeldung/);
+    const pay2 = await ho.recordManualPayout(w.auth, { batchId, amountCents: 800, feeCents: 50, paidAt: today, reference: "X2" });
+    if ("error" in pay2) throw new Error(pay2.error);
+    const s = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "monat" }, today));
+    expect(s.payouts).toEqual({ count: 1, cents: 800, feeCents: 50, grossCents: 850 });
+    const m = s.months.find((x) => x.month === today.slice(0, 7))!;
+    expect([m.payoutCents, m.payoutFeeCents]).toEqual([800, 50]);
+    // K3: „Ausgezahlt“ zählt stornierte Auszahlungen nicht mit
+    expect((await ho.payoutTotals(w.auth)).get(batchId)).toMatchObject({ cents: 800, count: 1 });
   });
 });

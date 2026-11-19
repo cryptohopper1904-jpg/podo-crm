@@ -67,13 +67,17 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">+ Zuzahlungsquittungen (ZZ) im Zeitraum</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.copayments.cents)}</dd></div>
             <div className="flex justify-between gap-4 font-semibold"><dt>GKV gesamt</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(gkvTotal)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">Anteil am Abrechnungsvolumen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{pct(gkvTotal, total)}</dd></div>
-            <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="min-w-0 text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
+            <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="min-w-0 text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum brutto ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.grossCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">− Gebühr des Abrechnungszentrums (Betriebsausgabe)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.feeCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Zahlungseingang netto (überwiesen)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
           </dl>
           <p className="mt-3 text-xs text-muted">
             Kassenanteil = Heilmittelkosten − Zuzahlungen der Abrechnungsläufe nach Erstellungstag (Forderung an die Kassen, nicht der Zahlungseingang).
             Eine nach Korrektur neu abgerechnete Verordnung steht im alten und im neuen Lauf – der Stand der Erstabrechnung wird im Monat des neuen Laufs abgezogen.
             Zuzahlungen zählen nach dem Datum der Quittung – Läufe und Quittungen können in verschiedenen Monaten liegen.
-            Der Zahlungseingang (Ist) stammt aus den am Abrechnungslauf erfassten Auszahlungen (Rückmeldung oder von Hand) und wird nicht mit dem Soll verrechnet.
+            Der Zahlungseingang (Ist) stammt aus den am Abrechnungslauf erfassten Auszahlungen (Rückmeldung oder von Hand) und wird nicht mit dem Soll verrechnet;
+            Stornos zählen im Monat des Stornos. Die Gebühr des Abrechnungszentrums ist eine Betriebsausgabe: Rechnung des Abrechnungszentrums gesondert
+            ablegen; die Gebühr kann Umsatzsteuer enthalten – mit der Steuerberatung klären.
             {s.batches.withoutRemedy ? ` ${s.batches.withoutRemedy} Lauf/Läufe ohne gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) sind nicht enthalten.` : ""}
           </p>
         </Card>
@@ -100,9 +104,17 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
         <ValuesTable
           caption="Abrechnungsvolumen Kasse und privat je Monat"
           open={open || s.months.length <= 12}
-          head={["Monat", "Kassenanteil", "Zahlungseingang AZ", "Zuzahlungen (ZZ)", "Privat (brutto)", "Absetzungen (Minderung)"]}
-          rows={s.months.map((m) => [monthLabel(m.month), money(m.insurerCents), money(m.payoutCents), money(m.copaymentCents), money(m.privateCents), money(m.deductionCents)])}
-          csv={csvOk ? { filename: file("kasse-privat"), head: ["Monat", "Kassenanteil laut Läufen (ohne Doppelzählung)", "Zahlungseingang Abrechnungszentrum", "Zuzahlungen (ZZ)", "Privat (Belege brutto)", "Absetzungen (Minderung)"], rows: s.months.map((m) => [m.month, eur(m.insurerCents), eur(m.payoutCents), eur(m.copaymentCents), eur(m.privateCents), eur(m.deductionCents)]) } : null}
+          head={["Monat", "Kassenanteil", "Zahlungseingang AZ netto", "Gebühr AZ", "Zuzahlungen (ZZ)", "Privat (brutto)", "Absetzungen (Minderung)"]}
+          rows={s.months.map((m) => [monthLabel(m.month), money(m.insurerCents), money(m.payoutCents), money(m.payoutFeeCents), money(m.copaymentCents), money(m.privateCents), money(m.deductionCents)])}
+          csv={
+            csvOk
+              ? {
+                  filename: file("kasse-privat"),
+                  head: ["Monat", "Kassenanteil laut Läufen (ohne Doppelzählung)", "Zahlungseingang Abrechnungszentrum netto", "Gebühr Abrechnungszentrum (Betriebsausgabe)", "Zuzahlungen (ZZ)", "Privat (Belege brutto)", "Absetzungen (Minderung)"],
+                  rows: s.months.map((m) => [m.month, eur(m.insurerCents), eur(m.payoutCents), eur(m.payoutFeeCents), eur(m.copaymentCents), eur(m.privateCents), eur(m.deductionCents)]),
+                }
+              : null
+          }
         />
         <p className="mt-3 text-xs text-muted">
           Der Kassenanteil eines Monats kann negativ sein: Die Erstabrechnung einer neu abgerechneten Verordnung wird im Monat des neuen Laufs abgezogen – ist

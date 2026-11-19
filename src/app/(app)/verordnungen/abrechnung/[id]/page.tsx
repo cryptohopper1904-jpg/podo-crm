@@ -43,7 +43,7 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
           label="Ausgezahlt netto nach Gebühren"
           value={money(info.paidCents)}
           tone="primary"
-          sub={`${info.payouts.filter((p) => p.source !== "reversal").length} Auszahlung(en)${info.feeCents ? ` · Gebühren ${money(info.feeCents)} · brutto ${money(info.paidCents + info.feeCents)}` : ""} · Stornos mitgerechnet`}
+          sub={`${info.payouts.filter((p) => p.source !== "reversal" && !p.reversedBy).length} Auszahlung(en)${info.feeCents ? ` · Gebühren ${money(info.feeCents)} · brutto ${money(info.paidCents + info.feeCents)}` : ""} · Stornos mitgerechnet`}
         />
         <Stat
           label="Absetzungen des Laufs (mindern)"
@@ -68,12 +68,24 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
             {archive.missingDocuments ? <dd className="text-warn-soft-text">{archive.missingDocuments} Dokument(e) fehlen fachlich (z. B. Leistungsnachweis ohne Behandlungseintrag) – Liste im LIESMICH des Pakets.</dd> : null}
           </dl>
         ) : null}
-        {downloads ? (
+        {downloads && archive ? (
           <div className="flex flex-wrap gap-3">
-            <a href={`/api/export/gkv-batch/${b.id}/paket`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> {archive ? "Übergabepaket (Nachdruck)" : "Übergabepaket erzeugen und herunterladen"}</a>
+            <a href={`/api/export/gkv-batch/${b.id}/paket`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Übergabepaket (Nachdruck)</a>
             <a href={`/api/export/gkv-batch/${b.id}`} className="inline-flex h-11 items-center gap-2 rounded-xl border border-border px-4 font-semibold"><Download size={18} aria-hidden /> nur Verordnungen (CSV)</a>
-            {!archive ? <p className="basis-full text-xs text-muted">Auch der CSV-Download erzeugt beim ersten Mal das vollständige Paket, archiviert es und vermerkt den Lauf als übergeben.</p> : null}
           </div>
+        ) : downloads ? (
+          // Erst-Export nur per POST mit Bestätigung (übergibt den Lauf unumkehrbar, AppSec M2); danach Seite neu laden
+          <form method="post" action={`/api/export/gkv-batch/${b.id}/paket`} className="flex flex-col gap-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" required className="mt-0.5 size-5 accent-[var(--primary)]" />
+              Ich übergebe diesen Abrechnungslauf an das Abrechnungszentrum. Das Paket wird archiviert und der Lauf als übergeben vermerkt – das lässt sich
+              nicht rückgängig machen.
+            </label>
+            <div>
+              <button type="submit" className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Übergabepaket erzeugen und herunterladen</button>
+            </div>
+            <p className="text-xs text-muted">Nach dem Download die Seite neu laden. Die CSV „nur Verordnungen“ gibt es danach aus dem Archiv.</p>
+          </form>
         ) : (
           <p className="text-sm text-muted">Im Support-Modus sind Downloads gesperrt.</p>
         )}

@@ -20,15 +20,24 @@ Migration `drizzle/0068_gkv_paket_e.sql`.
 - **Verordnungen → GKV-Abrechnung → Abrechnungslauf → „Öffnen“** (`/verordnungen/abrechnung/<lauf>`), Recht
   **Rechnungen schreiben + medizinisch lesen** (`invoices.write` + `medical.read`), nur mit Kassenabrechnung
   (`gkvGuard("gkvBilling")`).
-- **Übergabepaket herunterladen** (`/api/export/gkv-batch/<lauf>/paket`): Der **erste** Download erzeugt das Paket, legt es
+- **Übergabepaket erzeugen** (Knopf am Lauf mit Bestätigungs-Häkchen → `POST /api/export/gkv-batch/<lauf>/paket`): Der
+  **erste** Export erzeugt das Paket, legt es
   verschlüsselt in der Dateiablage ab (AES-256-GCM je Praxis, `storeEncrypted`), verzeichnet es mit SHA-256 in
   `billing_batch_exports` und vermerkt den Lauf als übergeben. **Jeder weitere Download liefert genau diese Datei**
   (byte-gleich, Dateiname mit „-Nachdruck“, Header `X-Podo-Nachdruck: 1`, Prüfsumme im Header `X-Podo-Sha256` und auf
-  der Seite). Das Archiv wird nie stillschweigend neu erzeugt: Ist die Datei unlesbar oder stimmt die Prüfsumme nicht,
-  bricht der Download mit Hinweis auf den Support ab.
+  der Seite). Der Nachdruck läuft über `GET …/paket` und liefert **nur** das Archiv (ohne Archiv: 409). Das Archiv wird
+  nie stillschweigend neu erzeugt: Ist die Datei unlesbar oder stimmt die Prüfsumme nicht, bricht der Download mit
+  Hinweis auf den Support ab (beim Stream wird der letzte Block bis zur Prüfung zurückgehalten – der Empfänger erhält nie
+  eine veränderte Datei vollständig).
+- **Schutz der Routen** (AppSec M1/M2): Der Erst-Export, der den Lauf unumkehrbar übergibt, nur per POST (Sitzungs-Cookie
+  `SameSite=Lax` → keine fremde Seite kann ihn auslösen); alle Übergabe-Routen lehnen `Sec-Fetch-Site: cross-site` ab
+  (fehlt der Header, zugelassen); höchstens 5 Abrufe je Praxis und Minute und höchstens 2 gleichzeitige Paket-Erstbauten
+  im Prozess (sonst 429 mit `Retry-After`).
+- **Nur-Lese-Modus** (z. B. nach Vertragsende): Nachdruck und CSV bleiben möglich (GET); der Erst-Export (POST, schreibend)
+  ist gesperrt – bewusste Entscheidung, da er den Lauf als übergeben vermerkt. Folgeaufgabe: prüfen, ob Praxen im
+  Nur-Lese-Modus noch nicht übergebene Läufe übergeben können müssen (Code-Review K6).
 - **„nur Verordnungen (CSV)“** (`/api/export/gkv-batch/<lauf>`, bisheriger CSV-Link): liefert `verordnungen.csv` aus dem
-  archivierten Paket. **Achtung:** Schon der erste CSV-Abruf erzeugt und archiviert das vollständige Übergabepaket (ZIP)
-  und vermerkt den Lauf als übergeben.
+  archivierten Paket – erst nachdem das Paket erzeugt ist (sonst 409).
 - **Reihenfolge beim ersten Export** (eine Transaktion): Lauf sperren → Paket erzeugen (technische Fehler, z. B. eine nicht
   lesbare Unterschrift, brechen ab – nichts wird archiviert, ein Neuversuch ist möglich) → Lauf als übergeben vermerken →
   Datei ablegen → Archiv-Eintrag (der Trigger verlangt einen übergebenen Lauf). Dokumente, die **fachlich** fehlen (kein
@@ -52,8 +61,8 @@ Dateiname: `Uebergabe-<JJJJ-MM-TT>-<erste 8 Zeichen der Lauf-ID>.zip` (Datum = A
 | `behandlungen.csv` | eine Zeile je Behandlungstag und Heilmittelposition (Abschnitt 2.3) |
 | `abrechnungslauf.json` | gleicher Inhalt maschinenlesbar mit Schema-Version (Abschnitt 2.4) |
 | `begleitzettel.pdf` | Deckblatt: Praxis (IK, Leistungserbringergruppe), Lauf, Summen, Liste der Verordnungen (Name, Personennummer, Versichertennummer, Kassen-IK, Ausstellungsdatum, Status, Heilmittelkosten, Zuzahlung, Kassenanteil) – ohne Diagnosen |
-| `dokumente/leistungsnachweis/Leistungsnachweis_<Ausstellungsdatum>_<VO-ID 8>.pdf` | Leistungsnachweis je Verordnung (Behandlungen mit Positionen und Unterschrift bzw. Papier-Vermerk), nur wenn Behandlungseinträge vorhanden |
-| `dokumente/therapiebericht/Therapiebericht_<Ausstellungsdatum>_<VO-ID 8>.pdf` | Therapiebericht (Position 78530), falls vorhanden |
+| `dokumente/leistungsnachweis/Leistungsnachweis_<Ausstellungsdatum>_<Verordnung-ID>.pdf` | Leistungsnachweis je Verordnung (Behandlungen mit Positionen und Unterschrift bzw. Papier-Vermerk), nur wenn Behandlungseinträge vorhanden |
+| `dokumente/therapiebericht/Therapiebericht_<Ausstellungsdatum>_<Verordnung-ID>.pdf` | Therapiebericht (Position 78530), falls vorhanden |
 | `LIESMICH.txt` | Kurzbeschreibung, Anzahlen, nicht erzeugbare Dokumente, Datenschutzhinweis |
 | `PRUEFSUMMEN.sha256` | SHA-256 jeder anderen Datei im Format von `sha256sum` (`<hex>␣␣<pfad>`), sortiert; prüfen mit `sha256sum -c PRUEFSUMMEN.sha256` |
 
@@ -200,7 +209,7 @@ Lauf-ID;Verordnung-ID;Versichertennummer;Ausstellungsdatum;Datum;Positionsnummer
       "kassenanteil_cent": 7100, "zuzahlungsbefreit": "nein", "zuzahlungsfrei_angekreuzt": false, "zuzahlung_erhalten_am": "2026-10-05",
       "abbruchvermerk": null, "regelwerk": "podo-2026-11-anlage3-2025-06",
       "therapiebericht": null,
-      "dokumente": { "leistungsnachweis": "dokumente/leistungsnachweis/Leistungsnachweis_2026-10-01_9a7e1234.pdf", "therapiebericht": null }
+      "dokumente": { "leistungsnachweis": "dokumente/leistungsnachweis/Leistungsnachweis_2026-10-01_9a7e….pdf", "therapiebericht": null }
     }
   ]
 }
@@ -287,6 +296,7 @@ Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, optional `gebuehr_cent` ≥ 0,
 - Zuordnung nur zu Verordnungen dieses Laufs (wie im Übergabepaket); nicht zuordenbar → Fehler;
 - Absetzung nur zu einer (noch) abgerechneten Verordnung;
 - Inhalte werden **nie ausgewertet** (keine Formeln, keine Makros): Textfelder bleiben Text, Steuerzeichen werden entfernt;
+- Summen (ausgezahlt, Absetzungen, Gebühren) höchstens 1 Mio. € je Datei – sonst Fehler in der Vorschau.
 - Hinweise ohne Sperre: „ausgezahlt + Gebühr + Absetzung“ weicht vom Kassenanteil laut Lauf ab; Absetzung ohne Code.
 - **Doppelerfassung**: Gibt es zum Lauf schon eine nicht stornierte Auszahlung mit gleichem Auszahlungsdatum, gleicher
   Referenz (nur Buchstaben/Ziffern verglichen, „SR-9“ = „sr 9“) und gleichem Nettobetrag – von Hand oder eingelesen, auch
@@ -299,7 +309,9 @@ Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, optional `gebuehr_cent` ≥ 0,
   verzeichnet (`storage_key`, `source_sha256`, `source_filename`); im Praxis-Export unter
   `abrechnung/rueckmeldungen/<Lauf-ID>/<Auszahlungs-ID>_<Dateiname>`.
 - **Gebühren**: `amount_cents` ist der tatsächlich überwiesene Betrag (**netto nach Gebühren**), `fee_cents` die einbehaltene
-  Gebühr (aus der Rückmeldung oder von Hand, optional). Brutto = netto + Gebühr. „Noch offen“ = Kassenanteil laut Lauf −
+  Gebühr (aus der Rückmeldung oder von Hand, optional). Brutto = netto + Gebühr. Die Auswertung „Kasse vs. privat“ zeigt
+  brutto, Gebühr (als Betriebsausgabe) und netto getrennt. Die Rechnung des Abrechnungszentrums gesondert ablegen; die
+  Gebühr kann Umsatzsteuer enthalten – mit der Steuerberatung klären. „Noch offen“ = Kassenanteil laut Lauf −
   netto − Gebühren − mindernde Absetzungen.
 - **Storno**: Eine Auszahlung wird nie geändert oder gelöscht. Korrektur = **Storno** (Gegenbuchung `source = reversal`,
   `reverses_payout_id`, Beträge exakt negativ, Begründung ≥ 5 Zeichen, Datum = Tag des Stornos) und danach neue Erfassung.
@@ -312,6 +324,19 @@ Beträge als ganze Cent (`ausgezahlt_cent` ≥ 0, optional `gebuehr_cent` ≥ 0,
   bzw. erledigt/„bleibt“; offen/Widerspruch und „Widerspruch erfolgreich“ werden getrennt gezeigt und mindern nicht.
 
 ## 4. Archiv und Aufbewahrung
+
+- **Inhalt und Schutz** (Bookkeeper L1, AppSec M3): Das archivierte Übergabepaket (ZIP) und die eingelesenen
+  Rückmeldungsdateien enthalten **Gesundheits- bzw. Abrechnungsdaten im Klartext** (Namen, Versichertennummern,
+  Diagnosen, Beträge). Sie werden ausschließlich **verschlüsselt** abgelegt (AES-256-GCM je Praxis, `storeEncrypted`) und nur
+  mit Abrechnungsrechten ausgeliefert; außerhalb von PodoHero (Download, Praxis-Export) gelten die Hinweise zum Umgang mit
+  Gesundheitsdaten.
+- **Fristen**: Buchungsbelege (Rückmeldung als Beleg des Zahlungseingangs, Übergabe als Abrechnungsunterlage) **8 Jahre**
+  nach § 147 Abs. 3 AO in der Fassung des Bürokratieentlastungsgesetzes IV; Patientendokumentation (Leistungsnachweise,
+  Therapieberichte, Diagnosen im Paket) **10 Jahre** nach § 630f Abs. 3 BGB. Maßgeblich für das Paket ist damit die längere
+  Frist.
+- **Löschpfad nach Fristablauf: gibt es noch nicht** (Archiv und Auszahlungen sind append-only; gelöscht wird heute nur mit
+  der Praxis). **Folgeaufgabe**: fristgerechtes Löschen bzw. Sperren nach Ablauf (mit Protokoll), abgestimmt mit
+  Datenschutz und Steuerberatung (docs/GKV.md, Frage 49).
 
 - `billing_batch_exports` (Migration 0068): je Lauf und Art (`handover_zip`) höchstens ein Eintrag; Speicherschlüssel,
   SHA-256 des Klartexts, Größe, Dateiname, Format-Version, Anzahl, `after_first_handover`, `created_by`, `created_at`.

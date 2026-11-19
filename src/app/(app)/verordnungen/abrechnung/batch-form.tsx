@@ -18,8 +18,7 @@ export function BatchForm({ rows }: { rows: ReadyRow[] }) {
           <FormSuccess message={state.ok} />
           {state.batchId ? (
             <>
-              <a href={`/api/export/gkv-batch/${state.batchId}/paket`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Übergabepaket herunterladen</a>
-              <a href={`/verordnungen/abrechnung/${state.batchId}`} className="font-semibold text-primary">Lauf öffnen</a>
+              <a href={`/verordnungen/abrechnung/${state.batchId}`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Lauf öffnen und Übergabepaket erzeugen</a>
             </>
           ) : null}
         </div>

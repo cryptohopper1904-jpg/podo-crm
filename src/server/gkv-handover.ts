@@ -109,7 +109,8 @@ async function buildPackage(tx: Tx, org: string, data: BatchExportData, erzeugt:
   let berichte = 0;
   for (const row of data.rows) {
     const { vo, p } = row;
-    const kurz = `${sichererName(vo.issuedAt)}_${vo.id.slice(0, 8)}`;
+    // volle Verordnungs-ID im Dateinamen (eindeutig, Code-Review K7)
+    const kurz = `${sichererName(vo.issuedAt)}_${vo.id}`;
     let nachweis: string | null = null;
     let bericht: { name: string; datum: string } | null = null;
     const proofList = proof.get(vo.id) ?? [];
@@ -233,19 +234,26 @@ export async function readPayoutFile(org: string, a: { storageKey: string; sha25
 }
 
 /**
- * Archivierte Datei als Stream (Nachdruck ohne die ganze Datei im Speicher, AppSec H1): entschlüsselt blockweise
- * (GCM-Tag am Ende), SHA-256 läuft mit – stimmt sie am Ende nicht, bricht der Stream mit Fehler ab (Download unvollständig).
+ * Archivierte Datei als Stream (Nachdruck ohne die ganze Datei im Speicher, AppSec H1): entschlüsselt blockweise, SHA-256
+ * läuft mit. Der jeweils letzte Block wird zurückgehalten (Code-Review W1) und erst ausgegeben, wenn GCM-Tag
+ * (decryptChunks) und Prüfsumme stimmen – sonst fehlen dem Empfänger Bytes (Content-Length) und der Download scheitert,
+ * statt eine veränderte Datei vollständig auszuliefern.
  */
 function streamArchive(org: string, a: { storageKey: string; sha256: string }): Readable {
   checkKey(org, a.storageKey);
   const hash = createHash("sha256");
+  let held: Buffer | null = null;
   const check = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       hash.update(chunk);
-      cb(null, chunk);
+      const out = held;
+      held = chunk;
+      cb(null, out ?? undefined);
     },
     flush(cb) {
-      cb(hash.digest("hex") === a.sha256 ? null : new HandoverIntegrityError("Prüfsumme des archivierten Übergabepakets stimmt nicht."));
+      if (hash.digest("hex") !== a.sha256) return cb(new HandoverIntegrityError("Prüfsumme des archivierten Übergabepakets stimmt nicht."));
+      if (held) this.push(held);
+      cb();
     },
   });
   const src = readDecryptedStream(a.storageKey);
@@ -255,11 +263,23 @@ function streamArchive(org: string, a: { storageKey: string; sha256: string }): 
 
 type ArchiveRow = typeof billingBatchExports.$inferSelect;
 
+/** höchstens so viele Erst-Exporte (Paketbau) gleichzeitig im Prozess (AppSec M1) – sonst „bitte später“ (429) */
+export const MAX_PARALLEL_BUILDS = 2;
+let buildsRunning = 0;
+
+export type HandoverError = { error: string; busy?: true; notArchived?: true };
+const NOT_ARCHIVED: HandoverError = { error: "Das Übergabepaket ist noch nicht erzeugt – bitte auf der Laufseite „Übergabepaket erzeugen“ wählen.", notArchived: true };
+
 /**
  * Erster Abruf: erzeugen, Lauf als übergeben vermerken (zuerst – der Trigger verlangt einen übergebenen Lauf, AppSec H3),
  * verschlüsselt archivieren (eine Transaktion, Zeilensperre auf dem Lauf). Sonst: vorhandenes Archiv. null = nicht gefunden.
  */
-async function ensureArchive(auth: AuthContext, batchId: string, format: "zip" | "csv"): Promise<{ archive: ArchiveRow; bytes: Buffer | null; batch: { id: string; createdAt: Date } } | { error: string } | null> {
+async function ensureArchive(
+  auth: AuthContext,
+  batchId: string,
+  format: "zip" | "csv",
+  create: boolean,
+): Promise<{ archive: ArchiveRow; bytes: Buffer | null; batch: { id: string; createdAt: Date } } | HandoverError | null> {
   const org = auth.organization.id;
   let written: string | null = null;
   try {
@@ -276,11 +296,19 @@ async function ensureArchive(auth: AuthContext, batchId: string, format: "zip" |
         .from(billingBatchExports)
         .where(and(eq(billingBatchExports.organizationId, org), eq(billingBatchExports.billingBatchId, batchId), eq(billingBatchExports.kind, HANDOVER_KIND)));
       if (archive) return { archive, bytes: null, batch };
+      if (!create) return NOT_ARCHIVED;
       const data = await loadBatchExport(tx, org, batchId);
       if (!data) return null;
       const limit = paketGrenze(data.rows.length);
       if (limit) return { error: limit };
-      const built = await buildPackage(tx, org, data, new Date());
+      if (buildsRunning >= MAX_PARALLEL_BUILDS) return { error: "Gerade werden schon Übergabepakete erzeugt – bitte in einer Minute erneut versuchen.", busy: true };
+      buildsRunning++;
+      let built: BuiltPackage;
+      try {
+        built = await buildPackage(tx, org, data, new Date());
+      } finally {
+        buildsRunning--;
+      }
       if (built.bytes.length > HANDOVER_MAX_BYTES)
         return { error: `Das Übergabepaket wäre ${Math.round(built.bytes.length / 1_048_576)} MB groß (höchstens ${HANDOVER_MAX_BYTES / 1_048_576} MB) – bitte den Support kontaktieren.` };
       await markBatchExported(tx, org, batchId);
@@ -339,11 +367,11 @@ const auditReprint = (auth: AuthContext, batchId: string, format: string, sha256
  * Übergabepaket eines Abrechnungslaufs als Bytes (erster Abruf archiviert; danach die archivierte Datei, byte-gleich,
  * „Nachdruck“, gegen SHA-256 geprüft). null = Lauf nicht gefunden.
  */
-export async function handoverPackage(auth: AuthContext, batchId: string, opts: { format?: "zip" | "csv" } = {}): Promise<HandoverDownload | { error: string } | null> {
+export async function handoverPackage(auth: AuthContext, batchId: string, opts: { format?: "zip" | "csv"; create?: boolean } = {}): Promise<HandoverDownload | HandoverError | null> {
   const blocked = access(auth);
   if (blocked) return blocked;
   const org = auth.organization.id;
-  const res = await ensureArchive(auth, batchId, opts.format ?? "zip");
+  const res = await ensureArchive(auth, batchId, opts.format ?? "zip", opts.create ?? true);
   if (!res || "error" in res) return res;
   if (res.bytes) return { bytes: res.bytes, ...meta(res.archive, res.batch, false) };
   let bytes: Buffer;
@@ -357,11 +385,14 @@ export async function handoverPackage(auth: AuthContext, batchId: string, opts: 
   return { bytes, ...meta(res.archive, res.batch, true) };
 }
 
-/** Wie handoverPackage, der Nachdruck aber als Stream (Route) – Prüfsumme läuft beim Lesen mit. */
-export async function handoverPackageStream(auth: AuthContext, batchId: string): Promise<HandoverStream | { error: string } | null> {
+/**
+ * Wie handoverPackage, der Nachdruck aber als Stream (Route). Ohne `create` nur Nachdruck (GET) – der Erst-Export, der den
+ * Lauf unumkehrbar übergibt, nur mit `create` (POST mit Bestätigung, AppSec M2).
+ */
+export async function handoverPackageStream(auth: AuthContext, batchId: string, opts: { create?: boolean } = {}): Promise<HandoverStream | HandoverError | null> {
   const blocked = access(auth);
   if (blocked) return blocked;
-  const res = await ensureArchive(auth, batchId, "zip");
+  const res = await ensureArchive(auth, batchId, "zip", opts.create ?? false);
   if (!res || "error" in res) return res;
   if (res.bytes) return { body: res.bytes, sizeBytes: res.bytes.length, ...meta(res.archive, res.batch, false) };
   let body: Readable;
@@ -384,9 +415,9 @@ async function discardIfUnreferenced(org: string, key: string) {
   }
 }
 
-/** verordnungen.csv aus dem archivierten Übergabepaket (erster Abruf archiviert das Paket) */
-export async function handoverCsv(auth: AuthContext, batchId: string): Promise<{ bytes: Buffer; filename: string; reprint: boolean } | { error: string } | null> {
-  const pkg = await handoverPackage(auth, batchId, { format: "csv" });
+/** verordnungen.csv aus dem archivierten Übergabepaket (mit `create` archiviert der erste Abruf das Paket; Route: nur Nachdruck) */
+export async function handoverCsv(auth: AuthContext, batchId: string, opts: { create?: boolean } = {}): Promise<{ bytes: Buffer; filename: string; reprint: boolean } | HandoverError | null> {
+  const pkg = await handoverPackage(auth, batchId, { format: "csv", create: opts.create ?? true });
   if (!pkg || "error" in pkg) return pkg;
   const zip = await JSZip.loadAsync(pkg.bytes);
   const f = zip.file("verordnungen.csv");
@@ -646,7 +677,8 @@ async function matchRueckmeldung(tx: Tx, org: string, batchId: string, bytes: Ui
     preview.summeGebuehrCent += z.gebuehrCent;
   }
   if (!preview.fehler.length && !preview.zeilen.length) preview.fehler.push("Keine Zeile gehört zu diesem Abrechnungslauf.");
-  if (preview.summeAusgezahltCent > 100_000_000 || preview.summeAbsetzungCent > 100_000_000) preview.fehler.push("Summe über 1 Mio. € – bitte prüfen.");
+  // Grenzen wie in der Datenbank (CHECK) – verständliche Meldung statt Datenbankfehler (Code-Review K2)
+  if (preview.summeAusgezahltCent > 100_000_000 || preview.summeAbsetzungCent > 100_000_000 || preview.summeGebuehrCent > 100_000_000) preview.fehler.push("Summe über 1 Mio. € – bitte prüfen.");
   if (preview.fehler.length) preview.zeilen = [];
   else preview.duplikat = duplicateOf(active, { paidAt: preview.auszahlungsdatum, reference: preview.sammelrechnungsnummer, amountCents: preview.summeAusgezahltCent });
   return preview;
@@ -915,15 +947,24 @@ export async function payoutTotals(auth: AuthContext): Promise<Map<string, { cen
   const org = auth.organization.id;
   const rows = await withOrg(org, (tx) =>
     tx
-      .select({ batchId: billingBatchPayouts.billingBatchId, amountCents: billingBatchPayouts.amountCents, paidAt: billingBatchPayouts.paidAt, source: billingBatchPayouts.source })
+      .select({
+        id: billingBatchPayouts.id,
+        batchId: billingBatchPayouts.billingBatchId,
+        amountCents: billingBatchPayouts.amountCents,
+        paidAt: billingBatchPayouts.paidAt,
+        source: billingBatchPayouts.source,
+        reversesPayoutId: billingBatchPayouts.reversesPayoutId,
+      })
       .from(billingBatchPayouts)
       .where(eq(billingBatchPayouts.organizationId, org))
       .orderBy(desc(billingBatchPayouts.paidAt)),
   );
+  // stornierte Auszahlungen und Stornos zählen nicht als Auszahlung (Betrag: Gegenbuchung hebt sich auf, Code-Review K3)
+  const reversed = new Set(rows.map((r) => r.reversesPayoutId).filter(Boolean));
   for (const r of rows) {
     const cur = out.get(r.batchId) ?? { cents: 0, count: 0, last: null };
     cur.cents += r.amountCents;
-    if (r.source !== "reversal") {
+    if (r.source !== "reversal" && !reversed.has(r.id)) {
       cur.count++;
       cur.last ??= r.paidAt;
     }

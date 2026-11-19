@@ -270,8 +270,8 @@ DROP TRIGGER IF EXISTS billing_batch_payouts_user_in_org ON billing_batch_payout
 CREATE TRIGGER billing_batch_payouts_user_in_org BEFORE INSERT OR UPDATE OF created_by, organization_id ON billing_batch_payouts
   FOR EACH ROW EXECUTE FUNCTION podo_user_in_org('created_by', 'actor');
 --> statement-breakpoint
--- Absetzungen (zuletzt 0066): zusätzlich payout_id – unveränderlich; beim Anlegen nur zu einer Auszahlung desselben
--- Laufs der Praxis (unter RLS gelesen). Mit Lauf: die Verordnung gehört zu diesem Lauf (billing_batch_id oder Lauf der
+-- Absetzungen (zuletzt 0066): zusätzlich payout_id – unveränderlich; beim Anlegen nur zu einer eingelesenen Rückmeldung
+-- (source = import, nie Storno oder Handeingabe, AppSec N1) desselben Laufs der Praxis (unter RLS gelesen). Mit Lauf: die Verordnung gehört zu diesem Lauf (billing_batch_id oder Lauf der
 -- Erstabrechnung eines Korrekturvermerks, AppSec H3). Sonst unverändert.
 CREATE OR REPLACE FUNCTION podo_gkv_deduction_guard() RETURNS trigger LANGUAGE plpgsql
   SET search_path = pg_catalog, public, pg_temp AS $$
@@ -316,7 +316,7 @@ BEGIN
   END IF;
   IF NEW.payout_id IS NOT NULL AND NOT EXISTS (
        SELECT 1 FROM billing_batch_payouts bp
-        WHERE bp.id = NEW.payout_id AND bp.organization_id = NEW.organization_id
+        WHERE bp.id = NEW.payout_id AND bp.organization_id = NEW.organization_id AND bp.source = 'import'
           AND bp.billing_batch_id IS NOT DISTINCT FROM NEW.billing_batch_id) THEN
     RAISE EXCEPTION 'Absetzung passt nicht zur Rückmeldung (Auszahlung desselben Abrechnungslaufs).' USING ERRCODE = 'P0001';
   END IF;

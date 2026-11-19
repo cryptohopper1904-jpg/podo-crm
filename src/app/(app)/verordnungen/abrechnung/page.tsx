@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Download } from "lucide-react";
 import { Badge, Card, CardTitle, Empty, Table, BackLink } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
 import { dateDe, dateTimeDe, fullName, money } from "@/lib/format";
@@ -46,7 +45,7 @@ export default async function BillingPage({ searchParams }: PageProps<"/verordnu
       <h1 className="mb-2 font-display text-3xl font-semibold tracking-tight wrap-break-word">GKV-Abrechnung</h1>
       <p className="mb-6 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         Hier werden abrechnungsreife Verordnungen zu einem Abrechnungslauf zusammengefasst und als neutrales Übergabepaket (ZIP mit CSV, JSON, Begleitzettel und
-        Leistungsnachweisen) an ein beliebiges Abrechnungszentrum übergeben. Das Paket wird beim ersten Download archiviert; die Rückmeldung (Auszahlung,
+        Leistungsnachweisen) an ein beliebiges Abrechnungszentrum übergeben. Das Paket wird beim Erzeugen (mit Bestätigung am Lauf) archiviert; die Rückmeldung (Auszahlung,
         Absetzungen) lässt sich am Lauf wieder einlesen.
         Die eigentliche Abrechnung nach § 302 SGB V (Datenübermittlung an die Krankenkassen) erfolgt über das Abrechnungszentrum (Partner).
         Die Papierverordnungen gehen wie gewohnt per Post an den Partner.
@@ -78,9 +77,6 @@ export default async function BillingPage({ searchParams }: PageProps<"/verordnu
                   <td className="tabular-nums">{payouts.get(b.id) ? `${money(payouts.get(b.id)!.cents)} (${dateDe(payouts.get(b.id)!.last)})` : "–"}</td>
                   <td className="whitespace-nowrap">
                     <Link href={`/verordnungen/abrechnung/${b.id}`} className="font-semibold text-primary">Öffnen</Link>
-                    {auth.support ? null : (
-                      <a href={`/api/export/gkv-batch/${b.id}/paket`} className="ml-3 inline-flex items-center gap-1 font-semibold text-primary"><Download size={16} aria-hidden /> Paket</a>
-                    )}
                   </td>
                 </tr>
               ))}

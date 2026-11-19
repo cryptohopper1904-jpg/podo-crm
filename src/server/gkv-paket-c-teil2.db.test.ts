@@ -143,7 +143,7 @@ import { fixtures, insertLegacy, TEST_DB } from "./__tests__/db-fixtures";
     expect(s.deductions.open).toEqual({ count: 1, cents: 700 });
     const month = s.months.find((m) => m.month === today.slice(0, 7))!;
     // Monatsspalte „Absetzungen“ nur Minderung (akzeptiert/erledigt-bleibt) – die offene Absetzung zählt dort nicht (R1-13)
-    expect(month).toEqual({ month: today.slice(0, 7), insurerCents: 5398, copaymentCents: 1500, privateCents: 6500, deductionCents: 0, payoutCents: 0 });
+    expect(month).toEqual({ month: today.slice(0, 7), insurerCents: 5398, copaymentCents: 1500, privateCents: 6500, deductionCents: 0, payoutCents: 0, payoutFeeCents: 0 });
     expect(s.deductionSummary).toMatchObject({ pendingCents: 700, reductionCents: 0 });
     // Rechte und Mandanten
     await expect(stats.gkvPrivateStats(w.authWith(["invoices.read"]), period)).rejects.toThrow(/finance.read/);

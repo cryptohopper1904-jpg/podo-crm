@@ -185,6 +185,8 @@ const CASES: Case[] = [
     table: "gkv_deductions",
     col: "payout_id",
     target: "billing_batch_payouts",
+    // nur eingelesene Rückmeldungen tragen Absetzungen (source = import, AppSec N1)
+    key: "importPayout",
     insert: (w: World, ref: string): [string, unknown[]] => [
       "insert into gkv_deductions (organization_id, prescription_id, patient_id, billing_batch_id, amount_cents, reason, deducted_on, created_by, payout_id) values ($1,$2,$3,$4,500,'Rückmeldung','2026-02-01',$5,$6)",
       [w.org, w.billed, w.patient, w.batch, w.user, ref],
@@ -395,7 +397,11 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
         batch,
         user,
       ]);
-      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed, batch, billed, deduction, payout };
+      const importPayout = await id(
+        "insert into billing_batch_payouts (organization_id, billing_batch_id, amount_cents, paid_at, source, source_sha256, storage_key, created_by) values ($1,$2,100,'2026-02-01','import',md5(random()::text) || md5(random()::text),$3,$4) returning id",
+        [org, batch, `${org}/2026/02/r.bin`, user],
+      );
+      return { org, user, patient, location, service, contact, appointment, invoice, prescription, record, brace, voucher, device, feed, batch, billed, deduction, payout, importPayout };
     });
   }
   /** Einfügen im Praxis-Kontext und immer zurückrollen (keine Nebenwirkungen wie eindeutige aktive Links) – Fehler oder null */

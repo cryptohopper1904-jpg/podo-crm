@@ -556,7 +556,13 @@ Typen, Beispiele) steht vollständig in **docs/GKV-ABRECHNUNGSZENTRUM.md**. Code
   gestreamter Nachdruck, technische PDF-Fehler brechen den Erst-Export ab (fachlich fehlende Dokumente werden gezählt
   und angezeigt), Übergabevermerk vor dem Archiv (Trigger), Absetzung nur zu Verordnungen des Laufs (Trigger),
   Bidi-Zeichen aus Freitexten entfernt, `payoutTotals` mit vollen Abrechnungsrechten. Details:
-  docs/GKV-ABRECHNUNGSZENTRUM.md Abschnitte 1 und 3.4. Erster CSV-Download archiviert bereits das ganze Paket.
+  docs/GKV-ABRECHNUNGSZENTRUM.md Abschnitte 1 und 3.4.
+- **Letzte Nachbesserung vor dem Merge**: Erst-Export nur per POST mit Bestätigung (GET nur Nachdruck/CSV aus dem
+  Archiv, sonst 409), Cross-Site abgelehnt, Rate-Limit 5/min je Praxis und höchstens 2 parallele Paketbauten (429),
+  Nachdruck-Stream hält den letzten Block bis zur Prüfung zurück, Absetzungen nur an eingelesenen Rückmeldungen,
+  `cleanText` ohne unsichtbare/C1-Zeichen, Auswertung brutto/Gebühr/netto, volle Verordnungs-ID in Dateinamen.
+  Folgeaufgaben: Löschpfad nach Fristablauf (Frage 49), Erst-Export im Nur-Lese-Modus (Code-Review K6, heute bewusst
+  gesperrt), Logo in PDFs verkleinern.
 - **Rückmeldung einlesen**: CSV oder JSON (`podohero-rueckmeldung/1`), höchstens 1 MB/5.000 Zeilen, strikt geprüft
   (Zeilennummern, alles oder nichts), Zuordnung über Verordnungs-ID oder Versichertennummer + Ausstellungsdatum nur zu
   Verordnungen des Laufs, Zeilen anderer Läufe übersprungen. Vorschau ändert nichts; „Übernehmen“ nur mit derselben Datei
@@ -597,10 +603,11 @@ Typen, Beispiele) steht vollständig in **docs/GKV-ABRECHNUNGSZENTRUM.md**. Code
 48. **Archiv bei Altläufen**: Läufe, die vor Paket E per CSV übergeben wurden, erhalten ein Archiv mit dem späteren Stand
     („nach Erstübergabe“). Reicht das, oder soll die damalige CSV aus anderen Quellen (E-Mail-Ausgang) beigelegt werden?
     (Steuerberatung/Datenschutz)
-49. **Aufbewahrungsfrist des Archivs**: Übergabepaket und – neu – die eingelesenen Rückmeldungsdateien enthalten
-    Gesundheitsdaten bzw. Abrechnungsdaten und sind zugleich Abrechnungsunterlage/Buchungsbeleg (10 Jahre § 147 AO bzw.
-    § 630f BGB). Gilt jeweils die längere Frist, und wie werden sie danach gelöscht (heute nur mit der Praxis)?
-    (Datenschutz/Steuerberatung)
+49. **Aufbewahrungsfrist des Archivs**: Übergabepaket und eingelesene Rückmeldungsdateien enthalten Gesundheits- bzw.
+    Abrechnungsdaten im Klartext (verschlüsselt abgelegt). Fristen: Buchungsbelege 8 Jahre (§ 147 Abs. 3 AO i. d. F. BEG IV),
+    Patientendokumentation 10 Jahre (§ 630f Abs. 3 BGB) – für das Paket gilt die längere. Ein Löschpfad nach Fristablauf
+    fehlt noch (heute Löschung nur mit der Praxis) – Folgeaufgabe. Offen: Reicht für die Rückmeldungsdatei die 8-Jahres-Frist,
+    und wie wird nach Ablauf gelöscht bzw. gesperrt? (Datenschutz/Steuerberatung)
 50. **Übermittlungsweg**: Das Paket wird heruntergeladen und von der Praxis übergeben (Portal des Zentrums, verschlüsselte
     E-Mail, Datenträger). Braucht es einen eigenen, verschlüsselten Übertragungsweg (z. B. passwortgeschütztes ZIP,
     SFTP)? Auftragsverarbeitungsvertrag mit dem Zentrum? (Datenschutz)
