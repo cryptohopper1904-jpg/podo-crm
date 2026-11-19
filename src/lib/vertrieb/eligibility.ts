@@ -17,7 +17,7 @@ export type LeadForSend = {
   /** dokumentierte E-Mail-Einwilligung (sales_leads.consent_at) – ohne sie wird nie gesendet */
   consentEmailAt: Date | null;
   /** Widerruf der E-Mail-Einwilligung – dann wird ebenfalls nie gesendet */
-  consentEmailRevokedAt?: Date | null;
+  consentEmailRevokedAt: Date | null;
 };
 
 export type Delays = { delay2Days: number; delay3Days: number };

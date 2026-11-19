@@ -4,9 +4,10 @@ import { db, type Tx } from "@/db";
 import { promoCodes, salesCampaigns, salesLeadEvents, salesLeads, salesSends, salesSettings } from "@/db/schema";
 import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
+import { dateDe } from "@/lib/format";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { dedupeLeads, nameZipKey, parseLeadCsv, type ImportDecision, type LeadInput } from "@/lib/vertrieb/csv";
-import { CHANNEL_LABEL, checkRetrievedDate, CONSENT_KIND_LABEL, CONSENT_RETENTION_MONTHS, DELETE_MONTHS, deleteAfterFor, isConsentChannel, isConsentKind, isDeleteMonths, isExistingCustomer, REACTION_RETENTION_MONTHS, type ConsentChannel, type ConsentKind } from "@/lib/vertrieb/dsgvo";
+import { CHANNEL_LABEL, checkRetrievedDate, CONSENT_KIND_LABEL, CONSENT_RETENTION_MONTHS, DELETE_MONTHS, deleteAfterFor, deleteMonthsOf, isConsentChannel, isConsentKind, DELETE_MIN_LEAD_DAYS, isDeleteMonths, isExistingCustomerForRetention, REACTION_RETENTION_MONTHS, type ConsentChannel, type ConsentKind } from "@/lib/vertrieb/dsgvo";
 import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibility";
 import { deriveStage } from "@/lib/vertrieb/pipeline";
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
@@ -34,7 +35,7 @@ import { platformMailPort } from "./mail";
  * - Audit: Import, Versand, Statuswechsel, Einstellungen, Löschen, Abmeldung (ohne Mailinhalte).
  * - Rechtsprüfung (src/lib/vertrieb/dsgvo.ts): Quelle + Abrufdatum Pflicht beim Anlegen und Import; Löschfrist
  *   delete_after (6–12 Monate ab Erhebung, Standard 12), abgelaufene Einträge ohne gültige Einwilligung löscht
- *   purgeStaleLeads(), außer bei Bestandskunden (isExistingCustomer); Einwilligung je Kanal mit Datum, Erteilungsweg,
+ *   purgeStaleLeads(), außer bei Bestandskunden (isExistingCustomerForRetention); Einwilligung je Kanal mit Datum, Erteilungsweg,
  *   Wortlaut/Nachweis und Widerruf.
  */
 
@@ -226,6 +227,20 @@ function checkMonths(m: number | null | undefined): number | null {
   return m;
 }
 
+/**
+ * Neue Löschfrist beim Bearbeiten: nicht in der Vergangenheit (mindestens heute + 7 Tage) und beim Altbestand nie vor dem
+ * bisherigen Löschdatum (Schonfrist). Sonst Fehler mit Hinweis auf „Löschen“.
+ */
+function checkNewDeleteAfter(next: Date, before: { deleteAfter: Date; legacy: boolean }, now: Date): Date {
+  if (before.legacy && next.getTime() < before.deleteAfter.getTime()) {
+    throw new Error("Altbestand: Die Löschung kann nicht vorgezogen werden. Zum früheren Löschen bitte „Löschen“ verwenden.");
+  }
+  if (next.getTime() < now.getTime() + DELETE_MIN_LEAD_DAYS * 86_400_000) {
+    throw new Error(`Die neue Löschfrist läge vor dem ${dateDe(new Date(now.getTime() + DELETE_MIN_LEAD_DAYS * 86_400_000))}. Bitte eine längere Frist wählen – zum früheren Löschen „Löschen“ verwenden.`);
+  }
+  return next;
+}
+
 export async function createLead(adminUserId: string, input: LeadInput, opts: LeadOptions = {}, now = new Date()): Promise<string> {
   const clean = assertOrigin(input, now);
   const months = checkMonths(opts.deleteMonths) ?? DELETE_MONTHS.default;
@@ -249,8 +264,15 @@ export async function updateLead(adminUserId: string, id: string, rawInput: Lead
   await assertNoDuplicate(input, id, prev);
   const email = input.email ? normalizeEmail(input.email) : null;
   await db.transaction(async (tx) => {
-    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentEmailAt, createdAt: salesLeads.createdAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
+    const [before] = await tx
+      .select({ email: salesLeads.email, consentAt: salesLeads.consentEmailAt, createdAt: salesLeads.createdAt, deleteAfter: salesLeads.deleteAfter, legacy: salesLeads.deleteAfterLegacy })
+      .from(salesLeads)
+      .where(eq(salesLeads.id, id))
+      .for("update");
     if (!before) throw new Error("Eintrag nicht gefunden.");
+    // unveränderte Frist (Formular schickt die aktuelle Auswahl mit) → nichts prüfen, nichts ändern
+    const unchanged = !!months && !before.legacy && deleteMonthsOf(before.createdAt, before.deleteAfter) === months;
+    const newDeleteAfter = months && !unchanged ? checkNewDeleteAfter(deleteAfterFor(before.createdAt, months), before, now) : null;
     // E-Mail-Einwilligung gilt für die bisherige Adresse – bei neuer Adresse entfernen
     const consentLost = !!before.consentAt && (before.email ? normalizeEmail(before.email) : null) !== email;
     // ausgeblendete Telefonnummer (ohne Einwilligung) bleibt erhalten, wenn das Feld leer ankommt
@@ -263,12 +285,12 @@ export async function updateLead(adminUserId: string, id: string, rawInput: Lead
         ...(keepPhone ? {} : { phone }),
         email,
         ...(consentLost ? { consentEmailAt: null, consentEmailNote: null, consentEmailKind: null, consentEmailRevokedAt: null } : {}),
-        ...(months ? { deleteAfter: deleteAfterFor(before.createdAt, months), deleteAfterLegacy: false } : {}),
+        ...(newDeleteAfter ? { deleteAfter: newDeleteAfter, deleteAfterLegacy: false } : {}),
         updatedAt: now,
       })
       .where(eq(salesLeads.id, id));
     if (consentLost) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "consent", text: null, meta: { removed: true, channel: "email", reason: "E-Mail geändert" }, createdBy: adminUserId });
-    const meta = { ...(consentLost ? { consentRemoved: true } : {}), ...(months ? { deleteMonths: months } : {}) };
+    const meta = { ...(consentLost ? { consentRemoved: true } : {}), ...(newDeleteAfter ? { deleteMonths: months } : {}) };
     await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id, meta: Object.keys(meta).length ? meta : undefined }, tx);
   });
 }
@@ -658,13 +680,14 @@ export async function sendStats(now = new Date()) {
 export const LEAD_RETENTION_MONTHS = { withoutConsent: REACTION_RETENTION_MONTHS, withConsent: CONSENT_RETENTION_MONTHS } as const;
 
 /**
- * Nächtlicher Löschlauf (Cron /api/cron/lead-search). Bestandskunden (isExistingCustomer: Status „Kunde“ oder eine
+ * Nächtlicher Löschlauf (Cron /api/cron/lead-search). Bestandskunden (isExistingCustomerForRetention: Status „Kunde“ oder eine
  * zugeordnete registrierte Praxis in Stufe „Test“/„Kunde“) bleiben immer, die Sperrliste bleibt.
- * Ohne gültige Einwilligung: gelöscht zum FRÜHEREN Zeitpunkt aus (Erhebung + gewählte Frist = delete_after) und
- *   (letzte Reaktion der Praxis + 12 Monate). Da die Frist höchstens 12 Monate beträgt und jede Reaktion nach der
- *   Erhebung liegt, ist das immer delete_after – außer beim Altbestand mit Schonfrist (delete_after_legacy, Migration
- *   0070: frühestens 30 Tage nach der Migration), für den bewusst nur delete_after zählt.
- * Mit gültiger Einwilligung (E-Mail oder Telefon, nicht widerrufen): 24 Monate nach der letzten Reaktion der Praxis.
+ * Ohne gültige Einwilligung: gelöscht AM Löschdatum (deutscher Kalendertag von delete_after = Erhebung + 6–12 Monate).
+ *   Schreiben und Antworten verlängern die Frist nicht. (Die Regel „früherer Zeitpunkt aus Erhebung + Frist und letzter
+ *   Antwort + 12 Monate“ ergibt wegen der Höchstfrist von 12 Monaten immer delete_after.) Altbestand mit Schonfrist
+ *   (delete_after_legacy, Migration 0070: frühestens 30 Tage nach der Migration): nur delete_after zählt.
+ * Mit gültiger Einwilligung (E-Mail oder Telefon, nicht widerrufen): 24 Monate nach der letzten Reaktion der Praxis,
+ *   beim Altbestand frühestens am Löschdatum (Schonfrist).
  * „Reaktion“ = Antwort (replied_at, Verlauf „Antwort erhalten“) oder erteilte Einwilligung – NICHT unser eigenes Schreiben.
  * Audit nur mit Anzahlen, ohne Personendaten. Gibt die Anzahl gelöschter Einträge zurück.
  */
@@ -679,8 +702,12 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
   const lastReaction = sql`greatest(${salesLeads.createdAt}, coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}),
     coalesce(${salesLeads.consentEmailAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentPhoneAt}, ${salesLeads.createdAt}),
     coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id} and e.kind = 'reply'), ${salesLeads.createdAt}))`;
-  const expired = and(sql`not ${emailOk}`, sql`not ${phoneOk}`, sql`${salesLeads.deleteAfter} <= ${now}::timestamptz`);
-  const stale = and(sql`(${emailOk} or ${phoneOk})`, sql`${lastReaction} < ${before(LEAD_RETENTION_MONTHS.withConsent)}::timestamptz`);
+  // Löschdatum erreicht = deutscher Kalendertag von delete_after ist heute oder vorbei (so steht es im Art.-14-Brief:
+  // „Wir löschen Ihre Daten automatisch am {{Löschdatum}}“)
+  const due = sql`(${salesLeads.deleteAfter} at time zone 'Europe/Berlin')::date <= (${now}::timestamptz at time zone 'Europe/Berlin')::date`;
+  const expired = and(sql`not ${emailOk}`, sql`not ${phoneOk}`, due);
+  // Schonfrist des Altbestands (0070) gilt auch mit Einwilligung: vor delete_after wird ein Altbestand-Eintrag nie gelöscht
+  const stale = and(sql`(${emailOk} or ${phoneOk})`, sql`${lastReaction} < ${before(LEAD_RETENTION_MONTHS.withConsent)}::timestamptz`, sql`(not ${salesLeads.deleteAfterLegacy} or ${due})`);
   const { matchOrgs } = await import("./vertrieb-pipeline");
   const r = await db.transaction(async (tx) => {
     const rows = await tx
@@ -699,7 +726,7 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
     if (!rows.length) return { count: 0, expired: 0, kept: 0 };
     // Bestandskunden (registrierte Praxis zugeordnet) nie löschen – gleiche Definition wie bei der Telefon-Anzeige
     const orgs = await matchOrgs(rows.map((x) => ({ ...x, suppressed: false })));
-    const del = rows.filter((x) => !isExistingCustomer({ status: x.status, stage: deriveStage(x, orgs.get(x.id)) }));
+    const del = rows.filter((x) => !isExistingCustomerForRetention({ status: x.status, stage: deriveStage(x, orgs.get(x.id)) }));
     if (!del.length) return { count: 0, expired: 0, kept: rows.length };
     const ids = del.map((x) => x.id);
     await anonymizeLeadCodes(tx, ids);

@@ -278,6 +278,8 @@ test("Plattform-Admin: /plattform mit 200 in der App-Hülle (Kopfzeile, Navigati
     await page.getByLabel("Aufsichtsbehörde").fill("Landesbeauftragte für den Datenschutz");
     await expect(page.getByRole("button", { name: "Text kopieren" })).toBeDisabled();
     await page.getByRole("checkbox", { name: "keine weiteren Dienstleister" }).check();
+    await expect(page.getByRole("button", { name: "Text kopieren" })).toBeDisabled();
+    await page.getByRole("checkbox", { name: "kein E-Mail-Dienstleister" }).check();
     await expect(page.getByRole("button", { name: "Text kopieren" })).toBeEnabled();
     await expect(page.getByText(/^Ihr Widerspruchsrecht \(Art\. 21 Abs\. 2 DSGVO\): .*Eine formlose Nachricht an Muster GmbH genügt/)).toBeVisible();
     await page.goto("/plattform/vertrieb");

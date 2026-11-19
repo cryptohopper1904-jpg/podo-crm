@@ -13,7 +13,10 @@ import {
   emailConsentValid,
   fillPlaceholders,
   isConsentKind,
-  isExistingCustomer,
+  ART14_MAIL_PLACEHOLDER,
+  isExistingCustomerForPhone,
+  isExistingCustomerForRetention,
+  minDeleteMonths,
   NO_CONSENT_CONTACT_HINT,
   openPlaceholders,
   originLabel,
@@ -35,6 +38,13 @@ describe("Löschfrist", () => {
     expect(() => deleteAfterFor(c, 8.5)).toThrow(/Löschfrist/);
     expect(deleteMonthsOf(c, deleteAfterFor(c, 9))).toBe(9);
     expect(deleteMonthsOf(c, new Date("2028-11-15T10:00:00Z"))).toBeNull();
+  });
+
+  it("beim Bearbeiten nur Fristen, deren Löschung mindestens 7 Tage in der Zukunft liegt", () => {
+    const c = new Date("2026-01-10T10:00:00Z");
+    expect(minDeleteMonths(c, new Date("2026-03-01T10:00:00Z"))).toBe(6);
+    expect(minDeleteMonths(c, new Date("2026-07-05T10:00:00Z"))).toBe(7); // 6 Monate = 10.07. < 12.07.
+    expect(minDeleteMonths(c, new Date("2027-01-05T10:00:00Z"))).toBeNull();
   });
 });
 
@@ -74,15 +84,24 @@ describe("Einwilligung je Kanal und Telefonnummer", () => {
     expect(anyConsentValid(none)).toBe(false);
   });
 
-  it("Telefonnummer nur mit Telefon-Einwilligung oder bei Bestandskunden (Status Kunde, Stufe Kunde oder Test)", () => {
+  it("Telefonnummer nur mit Telefon-Einwilligung oder bei Bestandskunden (streng: Domain-Treffer nur bei bezahltem Abo)", () => {
     expect(phoneVisible({ ...none, status: "neu" })).toBe(false);
     expect(phoneVisible({ ...none, consentEmailAt: new Date(), status: "neu" })).toBe(false); // E-Mail-Einwilligung reicht nicht
     expect(phoneVisible({ ...none, consentPhoneAt: new Date(), status: "neu" })).toBe(true);
     expect(phoneVisible({ ...none, consentPhoneAt: new Date(), consentPhoneRevokedAt: new Date(), status: "neu" })).toBe(false);
     expect(phoneVisible({ ...none, status: "kunde" })).toBe(true);
-    expect(phoneVisible({ ...none, status: "neu", stage: "kunde" })).toBe(true);
-    expect(phoneVisible({ ...none, status: "neu", stage: "test" })).toBe(true);
-    expect(isExistingCustomer({ status: "interessiert", stage: "geantwortet" })).toBe(false);
+    expect(phoneVisible({ ...none, status: "neu", org: { via: "email", converted: false } })).toBe(true);
+    expect(phoneVisible({ ...none, status: "neu", org: { via: "code", converted: false } })).toBe(true);
+    expect(phoneVisible({ ...none, status: "neu", org: { via: "domain", converted: false } })).toBe(false);
+    expect(phoneVisible({ ...none, status: "neu", org: { via: "domain", converted: true } })).toBe(true);
+    expect(isExistingCustomerForPhone({ status: "neu", org: null })).toBe(false);
+  });
+
+  it("Löschlauf (vorsichtig): jede zugeordnete Praxis schont, auch ein unsicherer Domain-Treffer", () => {
+    expect(isExistingCustomerForRetention({ status: "neu", stage: "test" })).toBe(true);
+    expect(isExistingCustomerForRetention({ status: "neu", stage: "kunde" })).toBe(true);
+    expect(isExistingCustomerForRetention({ status: "kunde", stage: "neu" })).toBe(true);
+    expect(isExistingCustomerForRetention({ status: "interessiert", stage: "geantwortet" })).toBe(false);
   });
 
   it("Erteilungsweg nur aus der Liste; Hinweistext wörtlich", () => {
@@ -107,32 +126,39 @@ describe("Datenschutzhinweis nach Art. 14 DSGVO", () => {
       "Eine Pflicht zur Benennung eines Datenschutzbeauftragten besteht nicht. Ihre Anfragen richten Sie an {{Datenschutzkontakt}}.",
       "bei Einzelpraxen damit auch der Name der Inhaberin oder des Inhabers",
       "eine Antwort von Ihnen zuordnen zu können und doppelte Anschreiben zu vermeiden",
+      "soweit dort veröffentlicht: Name einer Ansprechperson, geschäftliche E-Mail-Adresse, Telefonnummer und Website; die Entfernung Ihrer Praxis zu unserem Standort;",
+      "sowie Vermerke über eine Einwilligung und deren Widerruf.",
       "Art. 6 Abs. 1 lit. f DSGVO",
       "Wir verkaufen oder vermieten Ihre Daten nicht.",
-      "Hosting in Deutschland {{ggf. Druck- und Versanddienstleister}}.",
-      "12 Monate nach unserem letzten Kontakt mit Ihnen, spätestens am {{Löschdatum}}",
-      "Website-Adresse sowie Praxisname und Postleitzahl nur noch als verschlüsselten Prüfwert",
+      "Hosting in Deutschland {{E-Mail-Dienstleister}} {{ggf. Druck- und Versanddienstleister}}.",
+      "Wir löschen Ihre Daten automatisch am {{Löschdatum}}. Unsere Schreiben und Ihre Antworten verlängern diese Frist nicht.",
+      "Widerrufen Sie Ihre Einwilligung, löschen wir am {{Löschdatum}} oder, wenn dieser Tag schon vorbei ist, umgehend.",
+      "Werden Sie Kundin oder Kunde, gelten die Fristen unseres Vertrags und die gesetzlichen Aufbewahrungsfristen.",
+      "Website-Adresse sowie Praxisname und Postleitzahl nur noch als nicht umkehrbaren Prüfwert (nicht im Klartext)",
       "(Art. 7 Abs. 3 DSGVO)",
       "{{Abrufdatum}}",
     ]) {
       expect(t).toContain(part);
     }
     expect(t).not.toContain("Art. 20");
-    expect(t).not.toContain("24 Monate");
+    expect(t).toContain("bis 24 Monate nach Ihrer letzten Antwort oder Einwilligung");
+    expect(t).not.toContain("verschlüsselten");
   });
 
   it("setzt Quelle, Abrufdatum und Löschdatum ein; Platzhalter füllen, optionaler Dienstleister entfällt oder wird ergänzt", () => {
     const t = art14Text({ quelle: "OpenStreetMap", abrufdatum: "03.11.2026", loeschdatum: "03.11.2027" });
     expect(t).toContain("Quellen: OpenStreetMap, abgerufen am 03.11.2026.");
-    expect(t).toContain("spätestens am 03.11.2027");
-    expect(openPlaceholders(t)).toEqual(["Firma", "E-Mail", "Datenschutzkontakt", ART14_OPTIONAL_PLACEHOLDER, "Aufsichtsbehörde"]);
+    expect(t).toContain("automatisch am 03.11.2027.");
+    expect(openPlaceholders(t)).toEqual(["Firma", "E-Mail", "Datenschutzkontakt", ART14_MAIL_PLACEHOLDER, ART14_OPTIONAL_PLACEHOLDER, "Aufsichtsbehörde"]);
     const base = { Firma: "Muster GmbH", "E-Mail": "datenschutz@muster.example", Datenschutzkontakt: "datenschutz@muster.example", Aufsichtsbehörde: "LDA Brandenburg" };
-    expect(openPlaceholders(fillPlaceholders(t, base))).toEqual([ART14_OPTIONAL_PLACEHOLDER]);
+    expect(openPlaceholders(fillPlaceholders(t, base))).toEqual([ART14_MAIL_PLACEHOLDER, ART14_OPTIONAL_PLACEHOLDER]);
     expect(openPlaceholders(fillPlaceholders(t, { ...base, Firma: "  " }))).toContain("Firma");
-    const ohne = fillPlaceholders(t, { ...base, [ART14_OPTIONAL_PLACEHOLDER]: "" });
+    const ohne = fillPlaceholders(t, { ...base, [ART14_MAIL_PLACEHOLDER]: "", [ART14_OPTIONAL_PLACEHOLDER]: "" });
     expect(openPlaceholders(ohne)).toEqual([]);
     expect(ohne).toContain("Hosting in Deutschland. Eine Übermittlung");
-    expect(fillPlaceholders(t, { ...base, [ART14_OPTIONAL_PLACEHOLDER]: "Druckerei Beispiel GmbH" })).toContain("Hosting in Deutschland, Druckerei Beispiel GmbH. Eine");
+    expect(fillPlaceholders(t, { ...base, [ART14_MAIL_PLACEHOLDER]: "Mailversand GmbH (Deutschland)", [ART14_OPTIONAL_PLACEHOLDER]: "Druckerei Beispiel GmbH" })).toContain(
+      "Hosting in Deutschland; E-Mail-Dienstleister Mailversand GmbH (Deutschland); Druckerei Beispiel GmbH. Eine",
+    );
     expect(ohne).toContain("Eine formlose Nachricht an Muster GmbH genügt");
   });
 });

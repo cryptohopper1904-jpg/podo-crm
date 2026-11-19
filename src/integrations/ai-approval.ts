@@ -82,3 +82,25 @@ export function nextAiApproval(
   if (!keep) return { error: AI_APPROVAL_MISSING };
   return { dataProcessingApproved: true, dataProcessingApproval: approvalOf(oldConfig), changed: false };
 }
+
+type ConnLike = { status: string; config?: Record<string, unknown> | null; secretEnc?: string | null } | null | undefined;
+
+/**
+ * Hat die Praxis ein eigenes Ziel eingetragen? Eigene Basis-URL ODER eigener API-Schlüssel (Verbindung nicht „aus“).
+ * Dann gilt die env-Freigabe des Betreibers nicht – nötig ist die eigene Bestätigung der Inhaber:in.
+ */
+export const hasPracticeTarget = (conn: ConnLike) => !!conn && conn.status !== "disconnected" && (target(conn.config?.baseUrl) !== null || !!conn.secretEnc);
+
+/**
+ * Darf der KI-Anbieter Gesundheitsdaten verarbeiten? Gültige Bestätigung bei „verbunden (echt)“ ODER env-Freigabe des
+ * Betreibers (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED) für den Plattform-Anbieter ohne Praxisziel. Rein, für
+ * processingApproved (Server) und den Hinweis „KI pausiert“ auf „Heute“ – dieselbe Logik an beiden Stellen.
+ */
+export function aiProcessingApproved(conn: ConnLike, envApproved: boolean): boolean {
+  if (conn?.status === "connected" && aiApprovalValid(conn.config)) return true;
+  return envApproved && !hasPracticeTarget(conn);
+}
+
+/** env-Freigabe des Betreibers je Anbieter */
+export const envAiApproved = (provider: AiProvider, env: Record<string, string | undefined> = process.env) =>
+  (provider === "llm" ? env.LLM_DATA_PROCESSING_APPROVED : env.TRANSCRIPTION_DATA_PROCESSING_APPROVED) === "true";

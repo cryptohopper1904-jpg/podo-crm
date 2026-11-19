@@ -2,7 +2,7 @@
 
 import { ActionForm } from "@/components/action-form";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui";
-import { DELETE_MONTHS } from "@/lib/vertrieb/dsgvo";
+import { DELETE_MIN_LEAD_DAYS, DELETE_MONTHS } from "@/lib/vertrieb/dsgvo";
 
 type State = { error?: string; ok?: string } | undefined;
 
@@ -25,6 +25,10 @@ export type LeadFormValues = {
   deleteMonths?: number | null;
   /** Löschdatum zur Anzeige (TT.MM.JJJJ) */
   deleteAfterLabel?: string | null;
+  /** Altbestand mit Schonfrist: Löschfrist nicht änderbar */
+  deleteAfterLegacy?: boolean;
+  /** kleinste wählbare Frist beim Bearbeiten (Löschung mindestens heute + 7 Tage); null = keine kürzere/neue Frist wählbar */
+  minDeleteMonths?: number | null;
 };
 
 const MONTHS = Array.from({ length: DELETE_MONTHS.max - DELETE_MONTHS.min + 1 }, (_, i) => DELETE_MONTHS.min + i);
@@ -48,8 +52,10 @@ export function LeadForm({
   today: string;
 }) {
   const v = (x: string | number | null | undefined) => (x === null || x === undefined ? "" : String(x));
-  // Altbestand ohne passende Monatszahl (Schonfrist aus 0070): „unverändert“ vorauswählen
-  const legacy = !!values.id && values.deleteMonths == null;
+  // Altbestand (Schonfrist aus 0070) bzw. keine passende Monatszahl: nur „unverändert“
+  const legacy = !!values.id && (values.deleteAfterLegacy === true || values.deleteMonths == null);
+  // beim Bearbeiten: Fristen, deren Löschung in weniger als 7 Tagen läge, sind gesperrt (außer der aktuellen)
+  const allowed = (m: number) => !values.id || m === values.deleteMonths || (values.minDeleteMonths != null && m >= values.minDeleteMonths);
   const months = legacy ? "" : (values.deleteMonths ?? DELETE_MONTHS.default);
   // Bearbeiten ohne gespeichertes Abrufdatum: darf leer bleiben (kein erfundenes Datum)
   const missingDate = !!values.id && !values.sourceRetrievedAt;
@@ -94,11 +100,11 @@ export function LeadForm({
         )}
         <Field
           label="Löschfrist"
-          hint={`Monate ab Erhebung (${DELETE_MONTHS.min}–${DELETE_MONTHS.max}, Standard ${DELETE_MONTHS.default}), spätestens 12 Monate nach der letzten Antwort der Praxis.${values.deleteAfterLabel ? ` Derzeit: Löschung am ${values.deleteAfterLabel}.` : ""} Ohne Einwilligung wird der Eintrag danach automatisch gelöscht, außer bei Bestandskunden.`}
+          hint={`Monate ab Erhebung (${DELETE_MONTHS.min}–${DELETE_MONTHS.max}, Standard ${DELETE_MONTHS.default}), spätestens 12 Monate nach der letzten Antwort der Praxis.${values.deleteAfterLabel ? ` Derzeit: Löschung am ${values.deleteAfterLabel}.` : ""} Ohne Einwilligung wird der Eintrag am Löschdatum automatisch gelöscht, außer bei Bestandskunden.${values.id ? ` Eine neue Frist muss mindestens ${DELETE_MIN_LEAD_DAYS} Tage in der Zukunft enden; zum früheren Löschen „Löschen“ verwenden.` : ""}`}
         >
           <Select name="deleteMonths" defaultValue={String(months)} required={!legacy}>
             {legacy ? <option value="">unverändert (Altbestand: Löschung am {values.deleteAfterLabel})</option> : null}
-            {MONTHS.map((m) => <option key={m} value={m}>{m} Monate</option>)}
+            {legacy ? null : MONTHS.map((m) => <option key={m} value={m} disabled={!allowed(m)}>{m} Monate</option>)}
           </Select>
         </Field>
       </div>

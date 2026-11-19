@@ -2241,7 +2241,7 @@ export const salesLeads = pgTable(
     consentPhoneRevokedAt: timestamp("consent_phone_revoked_at", { withTimezone: true }),
     /**
      * Löschfrist: Erhebung + 6–12 Monate (Standard 12, CHECK in 0070). Danach löscht der nächtliche Lauf
-     * (purgeStaleLeads) den Eintrag, außer bei gültiger Einwilligung oder Bestandskunden (isExistingCustomer).
+     * (purgeStaleLeads) den Eintrag, außer bei gültiger Einwilligung oder Bestandskunden (isExistingCustomerForRetention).
      */
     deleteAfter: timestamp("delete_after", { withTimezone: true }).notNull().default(sql`(now() + interval '12 months')`),
     /** Altbestand aus 0070 mit Schonfrist (delete_after mindestens Migration + 30 Tage) – nur hier gilt die 12-Monats-Obergrenze nicht */

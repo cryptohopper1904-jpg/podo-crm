@@ -573,6 +573,56 @@ const day = 86_400_000;
       expect(JSON.stringify(purged[0])).not.toMatch(/Pipe|pipe9|pipe11|@/);
     });
 
+    it("Löschung AM Löschdatum (deutscher Kalendertag); Altbestand mit alter Einwilligung bleibt bis zur Schonfrist", async () => {
+      const heute = await mk("Pipe Tag Heute", null);
+      const morgen = await mk("Pipe Tag Morgen", null);
+      // Löschdatum: morgen 20:00 bzw. übermorgen 20:00 (Berlin); der Lauf läuft „morgen 08:00“
+      await f.pool.query(
+        `update sales_leads set created_at = now() - interval '7 months',
+           delete_after = (date_trunc('day', (now() + make_interval(days => $2)) at time zone 'Europe/Berlin') + interval '20 hours') at time zone 'Europe/Berlin'
+         where id = $1`,
+        [heute, 1],
+      );
+      await f.pool.query(
+        `update sales_leads set created_at = now() - interval '7 months',
+           delete_after = (date_trunc('day', (now() + make_interval(days => $2)) at time zone 'Europe/Berlin') + interval '20 hours') at time zone 'Europe/Berlin'
+         where id = $1`,
+        [morgen, 2],
+      );
+      const lauf = new Date((await f.pool.query("select delete_after - interval '12 hours' as t from sales_leads where id = $1", [heute])).rows[0].t);
+      // Altbestand mit Einwilligung älter als 24 Monate: Schonfrist (delete_after in 30 Tagen) gilt auch hier
+      const alt = await mk("Pipe Altbestand Einwilligung", `altbestand@pipe13-${sfx}.example`);
+      await f.pool.query("delete from sales_lead_events where lead_id = $1", [alt]);
+      await f.pool.query(
+        "update sales_leads set created_at = now() - interval '30 months', consent_at = now() - interval '30 months', delete_after = now() + interval '30 days', delete_after_legacy = true where id = $1",
+        [alt],
+      );
+      await v.purgeStaleLeads(lauf);
+      expect(await v.getLead(heute)).toBeNull();
+      expect(await v.getLead(morgen)).not.toBeNull();
+      expect(await v.getLead(alt)).not.toBeNull();
+      // nach Ablauf der Schonfrist: gelöscht (Einwilligung älter als 24 Monate ohne Reaktion)
+      await v.purgeStaleLeads(new Date(Date.now() + 31 * day));
+      expect(await v.getLead(alt)).toBeNull();
+    });
+
+    it("Neue Löschfrist beim Bearbeiten: mindestens heute + 7 Tage; Altbestand nicht vorziehen; unveränderte Frist immer speicherbar", async () => {
+      const base = { contactPerson: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, notes: null, email: null, phone: null, source: "manuell", sourceRetrievedAt: "2026-11-01" };
+      const id = await mk("Pipe Frist Neu", null);
+      // vor 6 Monaten und 2 Tagen erhoben, Frist 12 Monate
+      await f.pool.query("update sales_leads set created_at = now() - interval '6 months' - interval '2 days', delete_after = now() - interval '6 months' - interval '2 days' + interval '12 months' where id = $1", [id]);
+      await expect(v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 6 })).rejects.toThrow(/Löschfrist läge vor dem .*„Löschen“/);
+      await v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 12 }); // unverändert
+      await v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 8 });
+      expect((await f.pool.query("select (delete_after - created_at) > interval '7 months' as ok from sales_leads where id = $1", [id])).rows[0].ok).toBe(true);
+      // Altbestand: jede gewählte Frist läge vor der Schonfrist → abgelehnt
+      const alt = await mk("Pipe Frist Alt", null);
+      await f.pool.query("update sales_leads set created_at = now() - interval '13 months', delete_after = now() + interval '30 days', delete_after_legacy = true where id = $1", [alt]);
+      await expect(v.updateLead(admin, alt, { ...base, name: "Pipe Frist Alt" }, { deleteMonths: 12 })).rejects.toThrow(/Altbestand/);
+      await v.updateLead(admin, alt, { ...base, name: "Pipe Frist Alt" }, {});
+      expect((await f.pool.query("select delete_after_legacy from sales_leads where id = $1", [alt])).rows[0].delete_after_legacy).toBe(true);
+    });
+
     it("Herkunft und Löschfrist beim Anlegen/Bearbeiten; ausgeblendete Telefonnummer bleibt; Einwilligung je Kanal; Erstbrief", async () => {
       const base = { contactPerson: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, notes: null };
       const t = new Date("2026-11-15T10:00:00Z");

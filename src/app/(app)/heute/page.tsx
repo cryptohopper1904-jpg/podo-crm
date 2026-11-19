@@ -9,7 +9,7 @@ import { OnboardingCard } from "@/components/onboarding-card";
 import { followUpsDue } from "@/server/follow-ups";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { withOrg } from "@/db";
-import { AI_APPROVAL_PAUSED_HINT, aiApprovalValid, isAiProvider } from "@/integrations/ai-approval";
+import { AI_APPROVAL_PAUSED_HINT, aiProcessingApproved, envAiApproved, isAiProvider } from "@/integrations/ai-approval";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
 import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
@@ -85,9 +85,12 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
   const voiceQuota =
     auth.role === "owner" && stats.integ.some((i) => i.provider === "voice_agent" && i.status === "connected") ? await voiceQuotaFor(auth) : null;
-  // Inhaber:innen: KI-Anbieter verbunden, aber Datenschutz-Bestätigung ungültig (alter Wortlaut, fehlt, anderes Ziel) → KI pausiert
+  // Inhaber:innen: KI-Anbieter verbunden, aber tatsächlich gesperrt (dieselbe Logik wie processingApproved: keine gültige
+  // Bestätigung und keine env-Freigabe für den Plattform-Anbieter ohne Praxisziel) → KI pausiert
   const aiPaused =
-    auth.role === "owner" && !auth.support && stats.integ.some((i) => isAiProvider(i.provider) && i.status === "connected" && !aiApprovalValid(i.config as Record<string, unknown>));
+    auth.role === "owner" &&
+    !auth.support &&
+    stats.integ.some((i) => isAiProvider(i.provider) && i.status === "connected" && !aiProcessingApproved({ ...i, config: i.config as Record<string, unknown> }, envAiApproved(i.provider)));
   // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];

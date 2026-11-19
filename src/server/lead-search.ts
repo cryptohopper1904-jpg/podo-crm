@@ -255,7 +255,8 @@ async function enrichExisting(c: RunCtx, enrich: LeadSearch["enrich"], startedAt
     try {
       const upd = await db
         .update(salesLeads)
-        .set({ email: f.email, source: "osm+impressum", sourceRetrievedAt: berlinDateIso(c.now()), notes: notesFor(null, f.kind, l.notes) })
+        // ursprüngliches Abrufdatum (OSM) bleibt erhalten – sonst verschöbe sich die Art.-14-Frist
+        .set({ email: f.email, source: "osm+impressum", sourceRetrievedAt: sql`coalesce(${salesLeads.sourceRetrievedAt}, ${berlinDateIso(c.now())}::date)`, notes: notesFor(null, f.kind, l.notes) })
         .where(and(eq(salesLeads.id, l.id), isNull(salesLeads.email), sql`${salesLeads.updatedAt} <= ${salesLeads.createdAt} + interval '1 minute'`))
         .returning({ id: salesLeads.id });
       if (upd.length) {

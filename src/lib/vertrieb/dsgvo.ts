@@ -1,7 +1,8 @@
 /**
  * Vertrieb: Vorgaben der Rechtsprüfung (DSGVO/UWG) – rein und testbar.
  * - Herkunft je Lead: Quelle + Abrufdatum (Pflicht beim Import und beim manuellen Anlegen)
- * - Löschfrist: Erhebung + 6–12 Monate (Standard 12); höchstens 12 Monate nach der letzten Antwort der Praxis
+ * - Löschfrist: Erhebung + 6–12 Monate (Standard 12), gelöscht AM Löschdatum (deutscher Kalendertag); Schreiben und
+ *   Antworten verlängern sie nicht. Mit Einwilligung: 24 Monate nach der letzten Antwort bzw. Einwilligung
  * - Einwilligung je Kanal (E-Mail, Telefon) mit Datum, Erteilungsweg, Wortlaut/Nachweis und Widerruf; ohne E-Mail-Einwilligung
  *   keine Werbe-E-Mails (serverseitig in eligibility()), ohne Telefon-Einwilligung keine Anzeige der Telefonnummer
  *   (außer Bestandskunde) und ein deutlicher Hinweis
@@ -32,6 +33,16 @@ export function addMonthsUtc(d: Date, n: number): Date {
 export function deleteAfterFor(createdAt: Date, months: number): Date {
   if (!isDeleteMonths(months)) throw new Error(`Löschfrist: ${DELETE_MONTHS.min} bis ${DELETE_MONTHS.max} Monate.`);
   return addMonthsUtc(createdAt, months);
+}
+
+/** Mindestabstand einer beim Bearbeiten neu gewählten Löschfrist zu heute – wer schneller löschen will, nutzt „Löschen“ */
+export const DELETE_MIN_LEAD_DAYS = 7;
+
+/** Kleinste beim Bearbeiten wählbare Frist (Löschung mindestens heute + 7 Tage); null = keine Frist mehr wählbar */
+export function minDeleteMonths(createdAt: Date, now = new Date()): number | null {
+  const min = now.getTime() + DELETE_MIN_LEAD_DAYS * 86_400_000;
+  for (let n = DELETE_MONTHS.min; n <= DELETE_MONTHS.max; n++) if (addMonthsUtc(createdAt, n).getTime() >= min) return n;
+  return null;
 }
 
 /** Welche Frist (Monate ab Anlage) ergibt dieses Löschdatum? null, wenn keine ganze Monatszahl im erlaubten Bereich passt (z. B. Altbestand). */
@@ -121,13 +132,21 @@ export const NO_CONSENT_CONTACT_HINT =
   "Werbung per E-Mail nur mit vorheriger ausdrücklicher Einwilligung in E-Mails (§ 7 Abs. 2 Nr. 2 UWG). Werbeanrufe nur mit vorheriger ausdrücklicher Einwilligung in Anrufe (§ 7 Abs. 2 Nr. 1 UWG). Auf eine „mutmaßliche Einwilligung“ stützen wir uns bewusst nicht. Kaltanrufe sind nicht erlaubt. Die Einwilligung gilt nur für den Kanal, für den sie erteilt wurde.";
 
 /**
- * Bestandskunde – EINE Definition für Löschlauf und Telefon-Anzeige: Status „Kunde“ oder eine zugeordnete registrierte
- * Praxis (Stufe „Kunde“ = bezahltes Abo, Stufe „Test“ = registriert, siehe deriveStage in ./pipeline.ts).
+ * Bestandskunde für den LÖSCHLAUF (vorsichtig): Status „Kunde“ oder irgendeine zugeordnete registrierte Praxis
+ * (Stufe „Kunde“ = bezahltes Abo, Stufe „Test“ = registriert, siehe deriveStage in ./pipeline.ts) – auch unsichere
+ * Domain-Treffer schonen den Eintrag, damit nie eine Kundin versehentlich gelöscht wird.
  */
-export const isExistingCustomer = (l: { status: string; stage?: string | null }) => l.status === "kunde" || l.stage === "kunde" || l.stage === "test";
+export const isExistingCustomerForRetention = (l: { status: string; stage?: string | null }) => l.status === "kunde" || l.stage === "kunde" || l.stage === "test";
 
-/** Telefonnummer nur mit gültiger Telefon-Einwilligung oder bei Bestandskunden anzeigen. */
-export const phoneVisible = (l: ConsentFields & { status: string; stage?: string | null }) => phoneConsentValid(l) || isExistingCustomer(l);
+/**
+ * Bestandskunde für die TELEFON-Anzeige (streng): Status „Kunde“ oder eine sicher zugeordnete registrierte Praxis
+ * (persönlicher Code oder gleiche E-Mail); ein unsicherer Domain-Treffer zählt nur bei bezahltem Abo (converted).
+ */
+export const isExistingCustomerForPhone = (l: { status: string; org?: { via: string; converted: boolean } | null }) =>
+  l.status === "kunde" || (!!l.org && (l.org.via !== "domain" || l.org.converted));
+
+/** Telefonnummer nur mit gültiger Telefon-Einwilligung oder bei Bestandskunden (streng) anzeigen. */
+export const phoneVisible = (l: ConsentFields & { status: string; org?: { via: string; converted: boolean } | null }) => phoneConsentValid(l) || isExistingCustomerForPhone(l);
 
 // ───────────── Datenschutzhinweis nach Art. 14 DSGVO (Entwurf) ─────────────
 
@@ -136,8 +155,13 @@ export const ART14_DRAFT_MARK = "ENTWURF – vor Verwendung rechtlich prüfen la
 
 export type Art14Values = { quelle?: string | null; abrufdatum?: string | null; loeschdatum?: string | null };
 
-/** Optionaler Platzhalter: leer = entfällt (samt Leerzeichen davor) */
+/** Optionale Platzhalter: leer = entfällt (samt Leerzeichen davor), sonst mit Vorsatz eingefügt */
 export const ART14_OPTIONAL_PLACEHOLDER = "ggf. Druck- und Versanddienstleister";
+export const ART14_MAIL_PLACEHOLDER = "E-Mail-Dienstleister";
+export const ART14_OPTIONAL: Record<string, (v: string) => string> = {
+  [ART14_MAIL_PLACEHOLDER]: (v) => `; E-Mail-Dienstleister ${v}`,
+  [ART14_OPTIONAL_PLACEHOLDER]: (v) => `; ${v}`,
+};
 
 export const ART14_OBJECTION =
   "Ihr Widerspruchsrecht (Art. 21 Abs. 2 DSGVO): Sie können der Verwendung Ihrer Daten für Werbung jederzeit ohne Angabe von Gründen widersprechen. Eine formlose Nachricht an {{Firma}} genügt, per E-Mail an {{E-Mail}} oder per Brief an die Anschrift im Briefkopf. Wir verwenden Ihre Daten dann nicht mehr für Werbung und löschen sie (siehe Speicherdauer).";
@@ -165,7 +189,7 @@ export function art14Text(v: Art14Values = {}): string {
     "Verantwortlich für die Verarbeitung ist {{Firma}} (Anschrift und Kontaktdaten siehe Briefkopf). Eine Pflicht zur Benennung eines Datenschutzbeauftragten besteht nicht. Ihre Anfragen richten Sie an {{Datenschutzkontakt}}.",
     "",
     "2. Welche Daten wir verarbeiten",
-    "Name und Anschrift Ihrer Praxis, bei Einzelpraxen damit auch der Name der Inhaberin oder des Inhabers; soweit dort veröffentlicht: geschäftliche E-Mail-Adresse, Telefonnummer und Website; Quelle und Abrufdatum; Datum und Inhalt unserer Schreiben sowie gegebenenfalls Ihre Antwort und Notizen dazu.",
+    "Name und Anschrift Ihrer Praxis, bei Einzelpraxen damit auch der Name der Inhaberin oder des Inhabers; soweit dort veröffentlicht: Name einer Ansprechperson, geschäftliche E-Mail-Adresse, Telefonnummer und Website; die Entfernung Ihrer Praxis zu unserem Standort; Quelle und Abrufdatum; Datum und Inhalt unserer Schreiben, gegebenenfalls Ihre Antwort und Notizen dazu sowie Vermerke über eine Einwilligung und deren Widerruf.",
     "",
     "3. Zweck und Rechtsgrundlage",
     "Wir verarbeiten diese Daten, um Ihnen per Brief Informationen zu unserer Praxissoftware zu senden, eine Antwort von Ihnen zuordnen zu können und doppelte Anschreiben zu vermeiden. Rechtsgrundlage ist Art. 6 Abs. 1 lit. f DSGVO. Unser berechtigtes Interesse ist es, Praxen auf unser Angebot aufmerksam zu machen (Direktwerbung). Werbe-E-Mails und Werbeanrufe erhalten Sie von uns nur, wenn Sie vorher ausdrücklich eingewilligt haben.",
@@ -174,10 +198,10 @@ export function art14Text(v: Art14Values = {}): string {
     `Die Daten stammen aus öffentlich zugänglichen Quellen: ${quelle}, abgerufen am ${abruf}.`,
     "",
     "5. Empfänger",
-    `Wir verkaufen oder vermieten Ihre Daten nicht. Zugriff haben nur Dienstleister, die in unserem Auftrag und nach unserer Weisung tätig sind (Art. 28 DSGVO): Hosting in Deutschland {{${ART14_OPTIONAL_PLACEHOLDER}}}. Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.`,
+    `Wir verkaufen oder vermieten Ihre Daten nicht. Zugriff haben nur Dienstleister, die in unserem Auftrag und nach unserer Weisung tätig sind (Art. 28 DSGVO): Hosting in Deutschland {{${ART14_MAIL_PLACEHOLDER}}} {{${ART14_OPTIONAL_PLACEHOLDER}}}. Eine Übermittlung in Länder außerhalb der EU bzw. des EWR findet nicht statt.`,
     "",
     "6. Speicherdauer",
-    `Wir löschen Ihre Daten automatisch 12 Monate nach unserem letzten Kontakt mit Ihnen, spätestens am ${loesch}. Werden Sie Kundin oder Kunde oder willigen Sie in weitere Informationen ein, gelten die dafür maßgeblichen Fristen, über die wir Sie dann informieren. Widersprechen Sie, löschen wir Ihre Daten unverzüglich. Damit wir Sie danach nicht erneut anschreiben, speichern wir Ihre E-Mail-Adresse, Ihre Website-Adresse sowie Praxisname und Postleitzahl nur noch als verschlüsselten Prüfwert (nicht im Klartext) in einer Sperrliste. Rechtsgrundlage ist unser berechtigtes Interesse, Ihren Widerspruch dauerhaft zu beachten (Art. 6 Abs. 1 lit. f DSGVO). Die Sperrliste löschen wir, sobald wir keine Vertriebsschreiben mehr versenden.`,
+    `Wir löschen Ihre Daten automatisch am ${loesch}. Unsere Schreiben und Ihre Antworten verlängern diese Frist nicht. Haben Sie in Werbe-E-Mails oder Werbeanrufe eingewilligt, speichern wir Ihre Daten bis 24 Monate nach Ihrer letzten Antwort oder Einwilligung. Widerrufen Sie Ihre Einwilligung, löschen wir am ${loesch} oder, wenn dieser Tag schon vorbei ist, umgehend. Werden Sie Kundin oder Kunde, gelten die Fristen unseres Vertrags und die gesetzlichen Aufbewahrungsfristen. Widersprechen Sie, löschen wir Ihre Daten unverzüglich. Damit wir Sie danach nicht erneut anschreiben, speichern wir Ihre E-Mail-Adresse, Ihre Website-Adresse sowie Praxisname und Postleitzahl nur noch als nicht umkehrbaren Prüfwert (nicht im Klartext) in einer Sperrliste. Rechtsgrundlage ist unser berechtigtes Interesse, Ihren Widerspruch dauerhaft zu beachten (Art. 6 Abs. 1 lit. f DSGVO). Die Sperrliste löschen wir, sobald wir keine Vertriebsschreiben mehr versenden.`,
     "",
     "7. Ihr Widerspruchsrecht",
     "Siehe den hervorgehobenen Hinweis am Anfang dieses Schreibens (Art. 21 Abs. 2 DSGVO).",
@@ -195,15 +219,16 @@ export function openPlaceholders(text: string): string[] {
 }
 
 /**
- * Platzhalter einsetzen. Werte ohne Inhalt (nur Leerzeichen) bleiben offen – außer beim optionalen Platzhalter
- * (Dienstleister): leer = entfällt samt Leerzeichen davor, sonst „, Wert“.
+ * Platzhalter einsetzen. Werte ohne Inhalt (nur Leerzeichen) bleiben offen – außer bei den optionalen Platzhaltern
+ * (Dienstleister, ART14_OPTIONAL): "" = entfällt samt Leerzeichen davor, sonst mit Vorsatz („; …“); undefined = offen.
  */
 export function fillPlaceholders(text: string, values: Record<string, string | undefined>): string {
   return text.replace(/( ?)\{\{([^{}]+)\}\}/g, (all, space: string, key: string) => {
     const v = values[key];
-    if (key === ART14_OPTIONAL_PLACEHOLDER) {
+    const optional = ART14_OPTIONAL[key];
+    if (optional) {
       if (v === undefined) return all;
-      return v.trim() ? `, ${v.trim()}` : "";
+      return v.trim() ? optional(v.trim()) : "";
     }
     return v?.trim() ? `${space}${v.trim()}` : all;
   });

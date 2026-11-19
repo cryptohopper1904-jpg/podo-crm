@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState, useSyncExternalStore } from "react";
-import { ART14_DRAFT_MARK, ART14_OPTIONAL_PLACEHOLDER, fillPlaceholders, openPlaceholders } from "@/lib/vertrieb/dsgvo";
+import { ART14_DRAFT_MARK, ART14_MAIL_PLACEHOLDER, ART14_OPTIONAL, ART14_OPTIONAL_PLACEHOLDER, fillPlaceholders, openPlaceholders } from "@/lib/vertrieb/dsgvo";
 
 const STORE_KEY = "vertrieb-art14-angaben";
 
@@ -10,7 +10,14 @@ const LABEL: Record<string, string> = {
   "E-Mail": "E-Mail für Widerspruch",
   Datenschutzkontakt: "Datenschutzkontakt",
   Aufsichtsbehörde: "Aufsichtsbehörde",
+  [ART14_MAIL_PLACEHOLDER]: "E-Mail-Dienstleister (optional)",
   [ART14_OPTIONAL_PLACEHOLDER]: "Druck- und Versanddienstleister (optional)",
+};
+
+/** Beschriftung der „keiner“-Checkbox je optionalem Platzhalter */
+const NONE_LABEL: Record<string, string> = {
+  [ART14_MAIL_PLACEHOLDER]: "kein E-Mail-Dienstleister",
+  [ART14_OPTIONAL_PLACEHOLDER]: "keine weiteren Dienstleister",
 };
 
 /** Merkt sich die allgemeinen Angaben (Firma, E-Mail …) nur in diesem Browser – Praxisdaten werden nicht gespeichert. */
@@ -28,20 +35,25 @@ const readStore = () => {
   }
 };
 
-function parseStore(raw: string): { values: Record<string, string>; none: boolean } {
+type NoneMap = Record<string, boolean>;
+
+function parseStore(raw: string): { values: Record<string, string>; none: NoneMap } {
   try {
     const saved = JSON.parse(raw) as Record<string, unknown>;
     const values: Record<string, string> = {};
     for (const k of REMEMBER) if (typeof saved[k] === "string") values[k] = saved[k] as string;
-    return { values, none: saved.__keineDienstleister === true };
+    const none: NoneMap = {};
+    const n = saved.__keine as Record<string, unknown> | undefined;
+    for (const k of Object.keys(ART14_OPTIONAL)) if (n && n[k] === true) none[k] = true;
+    return { values, none };
   } catch {
-    return { values: {}, none: false };
+    return { values: {}, none: {} };
   }
 }
 
-function writeStore(values: Record<string, string | undefined>, none: boolean) {
+function writeStore(values: Record<string, string | undefined>, none: NoneMap) {
   try {
-    const keep: Record<string, unknown> = { __keineDienstleister: none };
+    const keep: Record<string, unknown> = { __keine: none };
     for (const r of REMEMBER) if (values[r] !== undefined) keep[r] = values[r];
     localStorage.setItem(STORE_KEY, JSON.stringify(keep));
   } catch {
@@ -60,10 +72,10 @@ export function Art14Editor({ template, filename }: { template: string; filename
   const raw = useSyncExternalStore(subscribe, readStore, () => "{}");
   const saved = useMemo(() => parseStore(raw), [raw]);
   const [edits, setEdits] = useState<Record<string, string>>({});
-  const [noneEdit, setNoneEdit] = useState<boolean | null>(null);
+  const [noneEdit, setNoneEdit] = useState<NoneMap>({});
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   const values: Record<string, string | undefined> = { ...saved.values, ...edits };
-  const none = noneEdit ?? saved.none;
+  const none: NoneMap = { ...saved.none, ...noneEdit };
 
   const set = (k: string, v: string) => {
     setCopied("idle");
@@ -71,13 +83,16 @@ export function Art14Editor({ template, filename }: { template: string; filename
     setEdits(n);
     writeStore({ ...saved.values, ...n }, none);
   };
-  const setNone = (v: boolean) => {
+  const setNone = (k: string, v: boolean) => {
     setCopied("idle");
-    setNoneEdit(v);
-    writeStore(values, v);
+    const n = { ...noneEdit, [k]: v };
+    setNoneEdit(n);
+    writeStore(values, { ...saved.none, ...n });
   };
 
-  const effective = { ...values, [ART14_OPTIONAL_PLACEHOLDER]: none ? "" : values[ART14_OPTIONAL_PLACEHOLDER]?.trim() ? values[ART14_OPTIONAL_PLACEHOLDER] : undefined };
+  // optionale Platzhalter: „keiner“ angekreuzt = entfällt (""), leer und nicht angekreuzt = bleibt offen
+  const effective: Record<string, string | undefined> = { ...values };
+  for (const k of Object.keys(ART14_OPTIONAL)) effective[k] = none[k] ? "" : values[k]?.trim() ? values[k] : undefined;
   const text = fillPlaceholders(template, effective);
   const open = openPlaceholders(text);
   const ready = open.length === 0;
@@ -108,14 +123,14 @@ export function Art14Editor({ template, filename }: { template: string; filename
                 id={`${id}-${k}`}
                 className="h-10 rounded-xl border border-border bg-surface px-3"
                 value={values[k] ?? ""}
-                disabled={k === ART14_OPTIONAL_PLACEHOLDER && none}
+                disabled={!!ART14_OPTIONAL[k] && !!none[k]}
                 onChange={(e) => set(k, e.target.value)}
                 maxLength={300}
               />
-              {k === ART14_OPTIONAL_PLACEHOLDER ? (
+              {ART14_OPTIONAL[k] ? (
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" className="size-5 accent-[var(--primary)]" checked={none} onChange={(e) => setNone(e.target.checked)} />
-                  keine weiteren Dienstleister
+                  <input type="checkbox" className="size-5 accent-[var(--primary)]" checked={!!none[k]} onChange={(e) => setNone(k, e.target.checked)} />
+                  {NONE_LABEL[k] ?? "keiner"}
                 </label>
               ) : null}
             </div>

@@ -13,7 +13,8 @@ import {
   deleteMonthsOf,
   emailConsentValid,
   isConsentKind,
-  isExistingCustomer,
+  isExistingCustomerForRetention,
+  minDeleteMonths,
   NO_CONSENT_CONTACT_HINT,
   originLabel,
   phoneConsentValid,
@@ -73,8 +74,9 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
   const dueAt = lead.step > 0 && lead.step < SEQUENCE_STEPS && lead.lastSentAt ? new Date(lead.lastSentAt.getTime() + delayBefore(nextStep, settings.delays) * 86_400_000) : null;
   const today = berlinDateIso();
   // Telefonnummer nur mit Telefon-Einwilligung oder bei Bestandskunden – sonst gelangt sie gar nicht erst in die Seite
-  const showPhone = phoneVisible({ ...lead, stage });
-  const customer = isExistingCustomer({ status: lead.status, stage });
+  const showPhone = phoneVisible({ ...lead, org });
+  // Löschlauf schont jede zugeordnete Praxis (vorsichtig), die Telefon-Anzeige zählt nur sichere Treffer (streng)
+  const customer = isExistingCustomerForRetention({ status: lead.status, stage });
   const deadline = art14Deadline(lead.sourceRetrievedAt);
   const overdue = art14Overdue(lead, today);
   const { phone, ...leadWithoutPhone } = lead;
@@ -121,7 +123,7 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
             today={today}
             phoneHidden={!showPhone}
             phoneStored={!!phone}
-            values={{ ...leadWithoutPhone, ...(showPhone ? { phone } : {}), deleteMonths: lead.deleteAfterLegacy ? null : deleteMonthsOf(lead.createdAt, lead.deleteAfter), deleteAfterLabel: dateDe(lead.deleteAfter) }}
+            values={{ ...leadWithoutPhone, ...(showPhone ? { phone } : {}), deleteMonths: lead.deleteAfterLegacy ? null : deleteMonthsOf(lead.createdAt, lead.deleteAfter), deleteAfterLegacy: lead.deleteAfterLegacy, minDeleteMonths: minDeleteMonths(lead.createdAt), deleteAfterLabel: dateDe(lead.deleteAfter) }}
           />
         </Card>
         <Card>

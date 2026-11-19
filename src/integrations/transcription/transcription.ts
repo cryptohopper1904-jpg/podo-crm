@@ -30,7 +30,8 @@ export class WhisperCompatibleTranscription implements TranscriptionPort {
   private readonly envTarget: boolean;
 
   constructor(private readonly opts: TranscriptionOptions = {}) {
-    this.envTarget = !opts.baseUrl;
+    // eigener API-Schlüssel der Praxis zählt ebenfalls als Praxisziel
+    this.envTarget = !opts.baseUrl && !opts.apiKey;
     const baseUrl = opts.baseUrl ?? process.env.TRANSCRIPTION_BASE_URL;
     const apiKey = opts.apiKey ?? process.env.TRANSCRIPTION_API_KEY;
     const model = opts.model ?? process.env.TRANSCRIPTION_MODEL ?? "whisper-1";

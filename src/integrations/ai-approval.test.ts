@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AI_APPROVAL_TEXT, AI_APPROVAL_VERSION, aiApprovalInfo, aiApprovalProblem, aiApprovalValid, nextAiApproval } from "./ai-approval";
+import { AI_APPROVAL_TEXT, AI_APPROVAL_VERSION, aiApprovalInfo, aiApprovalProblem, aiApprovalValid, aiProcessingApproved, nextAiApproval } from "./ai-approval";
+import { OpenAiCompatibleLlm } from "./llm/openai-compatible";
 import { getAdapter } from "./registry";
 
 const now = new Date("2026-11-19T10:00:00Z");
@@ -64,6 +65,17 @@ describe("KI-Anbieter: Pflicht-Bestätigung", () => {
     expect(aiApprovalInfo({ ...target, dataProcessingApproved: true })).toBeNull();
   });
 
+  it("Freigabe zur Verarbeitung (processingApproved und Hinweis auf „Heute“): env-Freigabe nur ohne Praxisziel (Basis-URL oder eigener Schlüssel)", () => {
+    expect(aiProcessingApproved({ status: "connected", config: valid }, false)).toBe(true);
+    expect(aiProcessingApproved({ status: "connected", config: {} }, true)).toBe(true); // Plattform-Anbieter mit Betreiber-Freigabe
+    expect(aiProcessingApproved({ status: "connected", config: {} }, false)).toBe(false);
+    expect(aiProcessingApproved({ status: "connected", config: { ...target } }, true)).toBe(false); // eigene Basis-URL
+    expect(aiProcessingApproved({ status: "connected", config: {}, secretEnc: "enc" }, true)).toBe(false); // eigener API-Schlüssel
+    expect(aiProcessingApproved({ status: "disconnected", config: { ...target }, secretEnc: "enc" }, true)).toBe(true); // „aus“: nur env-Anbieter
+    expect(aiProcessingApproved(null, true)).toBe(true);
+    expect(aiProcessingApproved({ status: "mock", config: valid }, false)).toBe(false);
+  });
+
   it("Adapter: ohne gültige Bestätigung gesperrt; env-Freigabe gilt nicht für eine praxiseigene Basis-URL; „aus“ ignoriert die Praxis-Config", async () => {
     const saved = { approved: process.env.LLM_DATA_PROCESSING_APPROVED, key: process.env.LLM_API_KEY, url: process.env.LLM_BASE_URL, model: process.env.LLM_MODEL };
     process.env.LLM_DATA_PROCESSING_APPROVED = "true";
@@ -75,6 +87,9 @@ describe("KI-Anbieter: Pflicht-Bestätigung", () => {
       // praxiseigene Basis-URL mit altem Häkchen: trotz env-Freigabe gesperrt
       const own = getAdapter("llm", conn("connected", { ...target, dataProcessingApproved: true }), { mode: "live" });
       await expect(own.suggestReply("Hallo")).rejects.toThrow(/nicht freigegeben/);
+      // eigener API-Schlüssel ohne Basis-URL: ebenfalls Praxisziel – env-Freigabe gilt nicht
+      const ownKey = new OpenAiCompatibleLlm({ apiKey: "praxis-key" });
+      await expect(ownKey.suggestReply("Hallo")).rejects.toThrow(/nicht freigegeben/);
       const ok = getAdapter("llm", conn("connected", valid), { mode: "live" }) as unknown as { opts: { dataProcessingApproved?: boolean } };
       expect(ok.opts.dataProcessingApproved).toBe(true);
       // Status „aus“: nur der env-Anbieter, Praxis-Ziel und -Bestätigung werden ignoriert

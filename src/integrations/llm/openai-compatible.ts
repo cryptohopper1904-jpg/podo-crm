@@ -67,7 +67,8 @@ export class OpenAiCompatibleLlm implements LlmPort {
   private readonly envTarget: boolean;
 
   constructor(private readonly opts: LlmOptions = {}) {
-    this.envTarget = !opts.baseUrl;
+    // eigener API-Schlüssel der Praxis zählt ebenfalls als Praxisziel
+    this.envTarget = !opts.baseUrl && !opts.apiKey;
     const baseUrl = opts.baseUrl ?? process.env.LLM_BASE_URL;
     const apiKey = opts.apiKey ?? process.env.LLM_API_KEY;
     const model = opts.model ?? process.env.LLM_MODEL;

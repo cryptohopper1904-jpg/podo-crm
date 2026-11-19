@@ -7,7 +7,7 @@ const day = 86_400_000;
 const delays = { delay2Days: 5, delay3Days: 10 };
 const none = new Set<string>();
 let n = 0;
-const lead = (p: Partial<LeadForSend> = {}): LeadForSend => ({ id: `id-${++n}`, email: `p${n}@praxis.example`, status: "neu", step: 0, lastSentAt: null, consentEmailAt: new Date("2026-01-01"), ...p });
+const lead = (p: Partial<LeadForSend> = {}): LeadForSend => ({ id: `id-${++n}`, email: `p${n}@praxis.example`, status: "neu", step: 0, lastSentAt: null, consentEmailAt: new Date("2026-01-01"), consentEmailRevokedAt: null, ...p });
 const opts = { now, delays, suppressed: none };
 
 describe("eligibility", () => {
