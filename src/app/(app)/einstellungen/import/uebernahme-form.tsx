@@ -100,7 +100,7 @@ function Preview({ p }: { p: UebernahmePreview }) {
       {p.cashbook ? (
         <p className="rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
           Kassenbuch erkannt ({plural(p.cashbook.rows, "Buchung", "Buchungen")}{p.cashbook.lastDate ? `, bis ${p.cashbook.lastDate.split("-").reverse().join(".")}` : ""}). Es wird nicht nachgebucht.
-          {p.cashbook.lastBalanceCents !== null ? ` Letzter Kassenbestand: ${money(p.cashbook.lastBalanceCents)} – tragen Sie ihn unter Kasse als Anfangsbestand ein.` : ""}
+          {p.cashbook.lastBalanceCents !== null ? ` Letzter Kassenbestand: ${money(p.cashbook.lastBalanceCents)} – trag ihn unter Kasse als Anfangsbestand ein.` : ""}
         </p>
       ) : null}
 
@@ -195,7 +195,7 @@ function FilePicker() {
   const [names, setNames] = useState<string[]>([]);
   return (
     <div className="flex flex-col gap-1.5 text-sm">
-      <span id={`${id}-l`} className="font-medium">Exportdateien Ihrer bisherigen Software (mehrere möglich, auch ZIP)</span>
+      <span id={`${id}-l`} className="font-medium">Exportdateien deiner bisherigen Software (mehrere möglich, auch ZIP)</span>
       <div className="flex flex-wrap items-center gap-3">
         <label
           htmlFor={id}

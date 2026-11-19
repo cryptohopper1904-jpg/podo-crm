@@ -56,7 +56,7 @@ function Foot({ side, selected, onToggle }: { side: "left" | "right"; selected: 
               type="button"
               aria-pressed={on}
               title={p.label}
-              aria-label={p.label}
+              aria-label={`${p.id} – ${p.label}`}
               onClick={() => onToggle(side, p.id)}
               className={`h-11 min-w-11 rounded-lg px-2 text-xs font-bold ${on ? "bg-primary text-on-primary" : "border border-border bg-surface"}`}
             >

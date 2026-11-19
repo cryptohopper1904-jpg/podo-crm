@@ -117,7 +117,7 @@ for (const level of ["komplex", "kompakt", "einfach"] as const) {
 }
 
 test("„Mehr“ führt zur Kasse; Konto-Menü mit Neuigkeiten, Einstellungen, Hell/Dunkel und Abmelden (iPhone SE)", async ({ browser }) => {
-  await setLevel(null); // Standard „Komplex“
+  await setLevel(null); // Standard „Alle Bereiche“ (komplex)
   const { context, page, errors } = await newDevice(browser, iphoneSE);
   await page.goto("/heute");
   await page.getByRole("button", { name: /^Mehr/ }).click();
@@ -132,7 +132,7 @@ test("„Mehr“ führt zur Kasse; Konto-Menü mit Neuigkeiten, Einstellungen, H
   await menu.click();
   await expect(menu).toHaveAttribute("aria-expanded", "true");
   for (const name of ["Neuigkeiten", "Einstellungen"]) await expect(page.getByRole("link", { name, exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Ansicht: Komplex/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Ansicht: Alle Bereiche/ })).toBeVisible();
   await expect(page.getByRole("button", { name: "Abmelden" })).toBeVisible();
   // Hell/Dunkel schaltet um, Menü bleibt offen
   const before = await page.evaluate(() => document.documentElement.dataset.theme);
