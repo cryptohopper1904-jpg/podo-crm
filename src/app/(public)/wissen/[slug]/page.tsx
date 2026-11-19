@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowRight, ExternalLink, Info } from "lucide-react";
-import { LinkButton } from "@/components/ui";
 import { articleBySlug, ARTICLES } from "../../_content/articles";
 import { Breadcrumbs } from "../../_content/faq-list";
 import { articleLd, breadcrumbLd, JsonLd } from "../../_content/json-ld";
 import { pageMeta } from "../../_content/site";
+import { TrialButton } from "../../_content/trial-cta";
 
 export const dynamicParams = false;
 
@@ -91,7 +91,7 @@ export default async function ArticlePage({ params }: PageProps<"/wissen/[slug]"
               <Link href={a.feature.href} className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
                 {a.feature.label} <ArrowRight size={16} aria-hidden />
               </Link>
-              <LinkButton href="/einrichtung" variant="accent" className="mt-4 w-full">30 Tage kostenlos testen</LinkButton>
+              <TrialButton variant="accent" className="mt-4 w-full" label="30 Tage kostenlos testen" />
             </div>
           ) : null}
           <nav aria-label="Weitere Artikel" className="rounded-[var(--radius-card)] border border-border bg-surface p-5">

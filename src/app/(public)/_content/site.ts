@@ -5,7 +5,7 @@
 import type { Metadata } from "next";
 import { log } from "@/lib/log";
 
-type Env = Partial<Record<"PUBLIC_URL" | "PUBLIC_SITE_INDEX" | "NODE_ENV", string | undefined>>;
+type Env = Partial<Record<"PUBLIC_URL" | "PUBLIC_SITE_INDEX" | "NODE_ENV" | "ALLOW_SIGNUP" | "PUBLIC_CONTACT_EMAIL", string | undefined>>;
 
 const DEV_FALLBACK = "http://localhost:3000";
 let warned = false;
@@ -61,4 +61,24 @@ export function pageMeta({ title, description, path, type = "website" }: { title
     openGraph: { title: `${title} · ${SITE_NAME}`, description, url: path, type, locale: "de_DE", siteName: SITE_NAME, images: [OG_IMAGE] },
     twitter: { card: "summary_large_image" as const, title: `${title} · ${SITE_NAME}`, description, images: [OG_IMAGE.url] },
   };
+}
+
+/**
+ * Selbst-Registrierung offen? Nur dann darf die Website „kostenlos testen“ anbieten – sonst leitet /einrichtung auf /login
+ * (siehe (auth)/einrichtung/page.tsx). Serverseitig zur Laufzeit lesen (vorher `await connection()`).
+ */
+export const signupOpen = (env: Env = process.env) => env.ALLOW_SIGNUP === "true";
+
+/** Texte bei gesperrter Registrierung (Rechtsprüfung R1) */
+export const TRIAL_ON_REQUEST = "Testzugang auf Anfrage – wir schalten Praxen schrittweise frei.";
+export const TRIAL_REQUEST_LABEL = "Testzugang anfragen";
+
+/**
+ * Ziel für „Testzugang anfragen“: mailto an PUBLIC_CONTACT_EMAIL (Kontaktadresse aus dem Impressum), sonst das Impressum
+ * mit den Kontaktdaten. Bewusst keine Adresse im Code.
+ */
+export function trialRequestHref(env: Env = process.env): string {
+  const mail = env.PUBLIC_CONTACT_EMAIL?.trim();
+  if (mail && /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(mail)) return `mailto:${mail}?subject=${encodeURIComponent("Testzugang PodoHero")}`;
+  return "/impressum";
 }

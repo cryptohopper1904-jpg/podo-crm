@@ -149,7 +149,7 @@ export default async function AboPage({ searchParams }: PageProps<"/einstellunge
         <Card>
           <CardTitle>Kostenlos weiter nutzen</CardTitle>
           <p className="mb-3 text-sm text-muted">
-            0 € ohne Zeitlimit für kleine Praxen: bis zu {FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit), 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Aktuell: {patientCount} Patient:innen.
+            0 € unbefristet für kleine Praxen: bis zu {FREE_MAX_PATIENTS} Patient:innen (archivierte zählen mit), 1 Person, Termine, Doku, Rechnungen und Kasse. Ohne Patientenportal, KI-Telefon und Praxis-Website. Aktuell: {patientCount} Patient:innen.
           </p>
           <FreePlanForm disabledReason={freeProblem} warning={freeWarning} />
         </Card>

@@ -34,8 +34,8 @@ const notes = (...parts: (string | null)[]) => parts.filter(Boolean).join(" · "
 const plan = (p: Omit<PublicPlan, "price" | "gross">): PublicPlan => ({ ...p, price: moneyShort(p.priceCents), gross: grossLabel(p.priceCents) });
 
 export const PUBLIC_PLANS: readonly PublicPlan[] = [
-  plan({ id: "trial", name: "Testphase", priceCents: PLANS.trial.priceCents, period: "30 Tage", therapists: "alle Funktionen zum Ausprobieren", note: "endet automatisch, keine Zahlungsdaten nötig" }),
-  plan({ id: "free", name: "Kostenlos", priceCents: PLANS.free.priceCents, period: "ohne Zeitlimit", therapists: `${seatSummary("free")}, bis ${FREE_MAX_PATIENTS} Patient:innen`, note: "Termine, Doku, Rechnungen, Kasse – ohne Portal, KI-Telefon, Website. Start über die Testphase, danach unter Abo & Tarif wählbar." }),
+  plan({ id: "trial", name: "Testphase", priceCents: PLANS.trial.priceCents, period: "30 Tage", therapists: "alle Funktionen zum Ausprobieren", note: "endet automatisch, keine Zahlungsdaten nötig; Testzugang derzeit auf Anfrage" }),
+  plan({ id: "free", name: "Kostenlos", priceCents: PLANS.free.priceCents, period: "unbefristet", therapists: `${seatSummary("free")}, bis ${FREE_MAX_PATIENTS} Patient:innen`, note: "Termine, Doku, Rechnungen, Kasse – ohne Portal, Website und KI-Telefon (Pilot). Start über die Testphase, danach unter Abo & Tarif wählbar." }),
   plan({ id: "starter", name: "Starter", priceCents: PLANS.starter.priceCents, period: "pro Monat", therapists: seatSummary("starter"), note: notes(SEAT_FREE, `Praxis-Website als Zusatzmodul: ${websiteAddon}`) }),
   plan({ id: "praxis", name: "Praxis", priceCents: PLANS.praxis.priceCents, period: "pro Monat", therapists: seatSummary("praxis"), note: notes(extraSeat("praxis"), "inkl. Praxis-Website", SEAT_FREE), highlight: true }),
   plan({ id: "plus", name: "Plus", priceCents: PLANS.plus.priceCents, period: "pro Monat", therapists: seatSummary("plus"), note: notes(extraSeat("plus"), "inkl. Praxis-Website", SEAT_FREE) }),

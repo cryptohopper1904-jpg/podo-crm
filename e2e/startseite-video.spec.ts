@@ -8,7 +8,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const NOTE =
-  "Lädt erst beim Klick auf Abspielen · direkt von unserem Server, ohne eingebundene Fremddienste und ohne Tracking · Untertitel verfügbar · Sprecherstimme KI-generiert · Demo-Daten, Abläufe gekürzt · Kassen-TSE derzeit im Testmodus";
+  "Lädt erst beim Klick auf Abspielen · direkt von unserem Server, ohne eingebundene Fremddienste und ohne Tracking · Untertitel verfügbar · Sprecherstimme KI-generiert · Demo-Daten, Abläufe gekürzt · Kassen-TSE in Vorbereitung";
 const PLAY = "Erklärvideo abspielen (2:36, mit Untertiteln)";
 
 /** Alle Anfragen auf Video-/Untertiteldateien mitschneiden (auch solche, die der Browser abbricht) */
@@ -44,7 +44,7 @@ test("Desktop: Video lädt erst beim Klick, danach 16:9 mit Untertitel-Spur", as
   // VideoObject-JSON-LD mit den Pflichtangaben, Dateien vom eigenen Origin
   const ld = await page.locator('script[type="application/ld+json"]').allTextContents();
   const video = ld.map((t) => JSON.parse(t)).find((d) => d["@type"] === "VideoObject");
-  expect(video).toMatchObject({ uploadDate: "2026-11-16T00:00:00+01:00", duration: "PT2M36S", inLanguage: "de" });
+  expect(video).toMatchObject({ uploadDate: "2026-11-16T00:00:00+01:00", duration: "PT2M36S", inLanguage: "de-DE" });
   expect(video.contentUrl).toMatch(/\/video\/podohero-erklaervideo-v2\.mp4$/);
   expect(video.thumbnailUrl[0]).toMatch(/\/video\/podohero-erklaervideo-poster-v2\.jpg$/);
 
