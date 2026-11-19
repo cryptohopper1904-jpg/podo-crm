@@ -41,6 +41,7 @@ SETUP_TOKEN=$(rnd | cut -c1-16)
 CRON_SECRET=$(rnd)
 HEALTH_TOKEN=$(rnd)
 ALLOW_SIGNUP=false
+PUBLIC_CONTACT_EMAIL=
 INTEGRATIONS_MODE=mock
 SEED_DEMO=$([[ "$TARGET" =~ ^[0-9.]+$ ]] && echo true || echo false)
 LLM_DATA_PROCESSING_APPROVED=false

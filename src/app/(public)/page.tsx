@@ -125,7 +125,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
       { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website (Patientenportal ab Tarif Praxis).", href: "/funktionen#termine" },
       { icon: PhoneCall, title: "KI-Telefonassistent", text: "Soll Anrufe annehmen, freie Zeiten nennen und Termin- und Rückrufwünsche notieren.", href: "/funktionen#kommunikation", pilot: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
-      { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
+      { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine", test: true },
       { icon: TabletSmartphone, title: "iPad-Übergabe", text: "Patient:innen füllen die Anamnese selbst am iPad aus – die übrigen Praxisdaten bleiben gesperrt.", href: "/funktionen#doku" },
     ],
   },
@@ -155,14 +155,14 @@ const DAY: { time: string; title: string; text: string }[] = [
   { time: "11:30", title: "Während Sie behandeln", text: "Eine Absage? Die Warteliste bietet den Termin automatisch an. Ein KI-Telefonassistent für Terminwünsche ist als Pilot in Vorbereitung." },
   { time: "14:00", title: "Hausbesuch im Pflegeheim", text: "Bewohnerliste öffnen, Schnell-Doku je Person. Die Sammelrechnung entsteht am Monatsende von selbst." },
   { time: "17:30", title: "Abrechnen", text: "Rechnung mit Karte über SumUp bezahlen lassen, Verordnungen abrechnungsreif setzen und als Export für das Abrechnungszentrum bereitstellen." },
-  { time: "18:30", title: "Feierabend", text: "Tagesabschluss mit Z-Bon. Die Erinnerungen für morgen gehen automatisch raus – nur an Personen mit Einwilligung." },
+  { time: "18:30", title: "Feierabend", text: "Tagesabschluss mit Z-Bon. Die Erinnerungen für morgen gehen automatisch raus, sobald E-Mail- oder SMS-Versand eingerichtet ist – nur an Personen mit Einwilligung." },
 ];
 
 const SECURITY = [
   { icon: ServerCog, title: "Hosting in Deutschland", text: "Die PodoHero-Cloud läuft bei Hetzner in Deutschland." },
   { icon: Lock, title: "Verschlüsselt", text: "Fotos und Dokumente mit eigenem Schlüssel je Praxis." },
   { icon: ShieldCheck, title: "Doppelte Mandantentrennung", text: "In der Anwendung und per Row-Level-Security der Datenbank." },
-  { icon: Sparkles, title: "Kein KI-Training mit Ihren Daten", text: "Wir nutzen Ihre Daten nicht zum KI-Training. KI-Funktionen sind standardmäßig aus; Sie wählen den Anbieter selbst und bestätigen AVV und Geheimhaltung." },
+  { icon: Sparkles, title: "Kein KI-Training durch PodoHero", text: "Wir nutzen Ihre Daten nicht zum KI-Training (AGB § 7). KI-Funktionen sind standardmäßig aus. Für externe KI-Anbieter bestätigen Sie vor dem Einschalten AVV, Verarbeitung in der EU und den Ausschluss des Trainings." },
   { icon: KeyRound, title: "Zwei-Faktor-Anmeldung", text: "Pflicht für Inhaber:innen, auf Wunsch für das ganze Team." },
   { icon: Lock, title: "Unveränderbare Doku", text: "Einträge und Kassenabschlüsse in einer prüfbaren Hash-Kette." },
 ] as const;
@@ -220,7 +220,7 @@ export default async function Landing() {
               <span className="mt-3 block">Ihre Praxis läuft.</span>{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoHero dokumentiert am Behandlungsstuhl, füllt freie Termine über die Warteliste nach, erinnert Ihre Patient:innen und schließt abends
+              PodoHero dokumentiert am Behandlungsstuhl, füllt freie Termine über die Warteliste nach, erinnert Ihre Patient:innen (Versand per E-Mail/SMS mit eigenem Anbietervertrag) und schließt abends
               die Kasse. Eine Software für die ganze Praxis – vom Termin bis zum Z-Bon.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -260,7 +260,7 @@ export default async function Landing() {
             <div>
               <h2 id="alles-drin" className="font-display text-3xl font-semibold tracking-tight">Alles drin – nicht nur die Pflicht</h2>
               <p className="mt-2 max-w-2xl text-muted">
-                Behandlung, Termine, Kommunikation, Abrechnung und Praxisbetrieb in einem System. Hier steht nur, was heute eingebaut ist.
+                Behandlung, Termine, Kommunikation, Abrechnung und Praxisbetrieb in einem System. Hier steht, was heute eingebaut ist; Funktionen in Vorbereitung und im Testmodus sind gekennzeichnet.
               </p>
             </div>
             <Link href="/funktionen" className="inline-flex items-center gap-1 rounded-lg font-semibold text-primary hover:underline">
@@ -314,8 +314,8 @@ export default async function Landing() {
             <Badge tone="primary"><ClipboardList size={14} aria-hidden className="mr-1" /> Für Kassenpraxen</Badge>
             <h2 id="gkv" className="mt-4 font-display text-3xl font-semibold tracking-tight">Podologie-Software mit GKV-Abrechnung</h2>
             <p className="mt-3 text-muted">
-              Von der Heilmittelverordnung bis zum Abrechnungslauf: PodoHero prüft jede Verordnung gegen die Vorgaben des Podologie-Vertrags und
-              meldet, was vor der Abrechnung fehlt. Abgerechnet wird über Ihr Abrechnungszentrum: Abrechnungsreife Verordnungen stehen als
+              Von der Heilmittelverordnung bis zum Abrechnungslauf: PodoHero prüft Verordnungen auf Pflichtangaben, Fristen, Frequenz und Höchstmengen nach Anlage 3 zum
+              Podologie-Vertrag und meldet, was vor der Abrechnung fehlt. Abgerechnet wird über Ihr Abrechnungszentrum: Abrechnungsreife Verordnungen stehen als
               Export im neutralen Format bereit – ob Ihr Zentrum das Format übernimmt, bitte vorab klären; eine feste Partneranbindung besteht noch
               nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum.
             </p>

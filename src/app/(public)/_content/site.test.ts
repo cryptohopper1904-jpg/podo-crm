@@ -36,5 +36,19 @@ describe("Website: Testangebot nur bei offener Registrierung (Rechtsprüfung R1)
     expect(trialRequestHref({ PUBLIC_CONTACT_EMAIL: "info@podo.example" })).toBe("mailto:info@podo.example?subject=Testzugang%20PodoHero");
     expect(trialRequestHref({ PUBLIC_CONTACT_EMAIL: "kein mail" })).toBe("/impressum");
     expect(trialRequestHref({})).toBe("/impressum");
+    // kein Einschleusen weiterer mailto-Header über einen Tippfehler in der Variable
+    expect(trialRequestHref({ PUBLIC_CONTACT_EMAIL: "info@podo.example?bcc=x@y.de" })).toBe("/impressum");
+  });
+});
+
+describe("Website: kein fest verdrahteter Registrierungs-Link (Rechtsprüfung R1)", () => {
+  it("öffentliche Seiten verlinken /einrichtung nie unbedingt – nur über signupOpen()/TrialButton", async () => {
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const root = join(process.cwd(), "src/app/(public)");
+    const files = (readdirSync(root, { recursive: true }) as string[]).filter((f) => /\.tsx?$/.test(f) && !f.endsWith(".test.ts"));
+    // aktion/[code]: Link erscheint nur mit gültigem Angebot, und Angebote gibt es nur bei signupOpen()
+    const hits = files.filter((f) => !f.startsWith("aktion") && /href=(["`]|\{\s*["`])\/einrichtung/.test(readFileSync(join(root, f), "utf8")));
+    expect(hits).toEqual([]);
   });
 });

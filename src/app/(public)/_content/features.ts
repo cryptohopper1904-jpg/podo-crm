@@ -35,7 +35,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Fotos direkt aus der Kamera – verschlüsselt gespeichert, nie in der Mediathek" },
       { text: "Nagelspangen-Episoden mit Pflichtfoto-Assistent (fehlendes Foto nur mit Begründung)" },
       { text: "Unveränderbare Einträge (§ 630f BGB), Korrekturen als Nachtrag, Gegenzeichnung für Azubis" },
-      { text: "Strukturierte Anamnese mit Feld für die von Ihnen eingetragene IWGDF-Risikoklasse, Online-Anamnese per Einmal-Link" },
+      { text: "Strukturierte Anamnese mit Feld für die IWGDF-Risikoklasse (Einstufung durch die Fachkraft; die Software zeigt einen rechnerischen Vorschlag aus den eingegebenen Kriterien an), Online-Anamnese per Einmal-Link" },
       { text: "Übergabe-Modus: iPad zum Ausfüllen der Anamnese an die Patient:in geben – die übrigen Praxisdaten bleiben gesperrt, zurück nur mit PIN oder Passwort" },
       { text: "Sprachbericht: Diktat wird transkribiert und in Felder sortiert", status: "test" },
     ],

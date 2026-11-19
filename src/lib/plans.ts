@@ -86,7 +86,7 @@ const PLAN_DEFS: Record<PlanId, PlanInfo> = {
     features: [],
     voiceMinutesIncluded: 0,
     maxPatients: FREE_MAX_PATIENTS,
-    description: `Kostenlos ohne Zeitlimit: bis zu ${FREE_MAX_PATIENTS} Patient:innen, 1 Person; ohne Patientenportal, KI-Telefon und Website`,
+    description: `Kostenlos und unbefristet: bis zu ${FREE_MAX_PATIENTS} Patient:innen, 1 Person; ohne Patientenportal, KI-Telefon und Website`,
   },
   starter: {
     label: "Starter",

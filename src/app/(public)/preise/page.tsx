@@ -24,7 +24,7 @@ const INCLUDED = [
 ];
 
 const FAQ = [
-  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und ist unbefristet; beide Seiten können ihn mit drei Monaten Frist zum Monatsende kündigen (AGB § 3a). Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
+  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und ist unbefristet; beide Seiten können ihn mit drei Monaten Frist zum Monatsende kündigen (AGB § 3a). Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal und Praxis-Website gibt es in den bezahlten Tarifen; das KI-Telefon ist als Pilot in Vorbereitung. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
   ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 Patient:innen, 1 Person."],
   ["Kostet der Empfang extra?", SEATS_FAQ],
   ["Gelten die Preise netto oder brutto?", "PodoHero richtet sich ausschließlich an Unternehmer, also Praxen. Maßgeblich sind die Nettopreise zuzüglich der gesetzlichen Umsatzsteuer (derzeit 19 %). Den Bruttobetrag zeigen wir zur Orientierung daneben."],

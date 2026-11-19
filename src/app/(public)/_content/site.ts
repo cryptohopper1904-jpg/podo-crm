@@ -79,6 +79,6 @@ export const TRIAL_REQUEST_LABEL = "Testzugang anfragen";
  */
 export function trialRequestHref(env: Env = process.env): string {
   const mail = env.PUBLIC_CONTACT_EMAIL?.trim();
-  if (mail && /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(mail)) return `mailto:${mail}?subject=${encodeURIComponent("Testzugang PodoHero")}`;
+  if (mail && /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(mail)) return `mailto:${mail}?subject=${encodeURIComponent("Testzugang PodoHero")}`;
   return "/impressum";
 }
