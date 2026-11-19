@@ -78,6 +78,16 @@ Das Skript erkennt den vorhandenen Caddy (systemd oder Docker), startet PodoCRM 
 
 Standard ist Testbetrieb mit Demo-Praxis (`SEED_DEMO=true`, Login `demo@podocrm.local`) – **keine echten Patientendaten**. Für Echtbetrieb `SEED_DEMO=false` setzen und die Demo-Praxis löschen (Abschnitt 7).
 
+### 1c. Repository privat stellen (Deploy-Key)
+Solange das Repository öffentlich ist, holen Server Code und Updates anonym über HTTPS. Bevor es auf **privat** gestellt wird, braucht **jeder** laufende Server einen Deploy-Key – sonst schlagen `update.sh` und das tägliche Auto-Update fehl.
+
+1. Auf dem Server (als root): `bash /opt/podo-crm/deploy/setup-deploy-key.sh` – erzeugt `/root/.ssh/podo_crm_deploy` und zeigt den öffentlichen Schlüssel.
+2. Den Schlüssel auf GitHub eintragen: `podo-crm` → **Settings → Deploy keys → Add deploy key**, „Allow write access“ **nicht** anhaken.
+3. Skript erneut aufrufen: prüft den Zugang und stellt `/opt/podo-crm` auf SSH um (`git@github-podo-crm:…`).
+4. Für jeden weiteren Server wiederholen, danach das Repository auf privat stellen und einmal `bash /opt/podo-crm/deploy/update.sh --dry-run` laufen lassen.
+
+Neue Server bei privatem Repository: `install-subdomain.sh` per `scp` auf den Server kopieren (der `curl`-Aufruf von raw.githubusercontent.com geht dann nicht mehr), zuerst `setup-deploy-key.sh` ausführen – beide Skripte nutzen den Schlüssel automatisch. Für `deploy/cloud/hetzner-user-data.sh` den privaten Deploy-Key base64-kodiert als `PODO_DEPLOY_KEY_B64` eintragen. Statt `git clone https://github.com/…` in den Abschnitten 1a und 5 dann `git clone git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git /opt/podo-crm` (nach `setup-deploy-key.sh`).
+
 **Demo-Passwort** (`scripts/seed-demo.ts`, Gesamt-Review K1) – der Seed läuft nur einmal (solange die Demo-Praxis nicht existiert):
 
 | Situation | Passwort der Demo-Inhaber:in |

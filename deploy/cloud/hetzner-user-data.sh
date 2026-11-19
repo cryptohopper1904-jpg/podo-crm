@@ -16,6 +16,9 @@ exec > >(tee -a /root/podo-install.log) 2>&1
 # ───────────── KONFIGURATION ─────────────
 DOMAIN="${PODO_DOMAIN:-podo.algoverdict.com}"
 REPO_URL="${PODO_REPO_URL:-https://github.com/cryptohopper1904-jpg/podo-crm.git}"
+# Privates Repository: privaten Deploy-Key (Lesezugriff, siehe deploy/setup-deploy-key.sh) base64-kodiert eintragen.
+# Er landet nur in /root/.ssh/podo_crm_deploy auf dem neuen Server; danach wird per SSH geklont.
+PODO_DEPLOY_KEY_B64="${PODO_DEPLOY_KEY_B64:-}"
 PODO_AUTO_UPDATE="${PODO_AUTO_UPDATE:-true}"
 BOOTSTRAP_ADMIN_EMAIL="${BOOTSTRAP_ADMIN_EMAIL:-}"
 BOOTSTRAP_ADMIN_NAME="${BOOTSTRAP_ADMIN_NAME:-}"
@@ -36,6 +39,22 @@ apt-get update -qq && apt-get install -y -qq git curl openssl ufw >/dev/null
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker
 timedatectl set-timezone Europe/Berlin 2>/dev/null || true
+if [ -n "$PODO_DEPLOY_KEY_B64" ]; then
+  install -d -m 700 /root/.ssh
+  ( umask 077; printf '%s' "$PODO_DEPLOY_KEY_B64" | base64 -d > /root/.ssh/podo_crm_deploy )
+  grep -qF "# podo-crm deploy key" /root/.ssh/config 2>/dev/null || cat >> /root/.ssh/config <<'SSHCONF'
+
+# podo-crm deploy key
+Host github-podo-crm
+  HostName github.com
+  User git
+  IdentityFile /root/.ssh/podo_crm_deploy
+  IdentitiesOnly yes
+  StrictHostKeyChecking accept-new
+SSHCONF
+  chmod 600 /root/.ssh/config
+  [ -n "${PODO_REPO_URL:-}" ] || REPO_URL=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
+fi
 [ -d "$APP_DIR/.git" ] || git clone -q "$REPO_URL" "$APP_DIR"
 cd "$APP_DIR"
 ENV=deploy/.env

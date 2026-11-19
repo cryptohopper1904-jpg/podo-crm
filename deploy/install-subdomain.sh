@@ -5,6 +5,8 @@
 #
 # Aufruf (als root):
 #   curl -fsSL https://raw.githubusercontent.com/cryptohopper1904-jpg/podo-crm/main/deploy/install-subdomain.sh | bash -s podo.algoverdict.com
+#   (Nur solange das Repository öffentlich ist. Bei privatem Repository: Skript per scp auf den Server kopieren,
+#    vorher deploy/setup-deploy-key.sh ausführen und dann: bash install-subdomain.sh podo.algoverdict.com)
 #
 # Voraussetzung: DNS-A-Eintrag der Subdomain zeigt auf diesen Server.
 # Testbetrieb: Demo-Praxis wird angelegt – KEINE echten Patientendaten eingeben.
@@ -13,7 +15,10 @@ DOMAIN="${1:?Subdomain angeben, z. B. podo.algoverdict.com}"
 REF="${PODO_REF:-main}"
 APP_DIR=/opt/podo-crm
 PORT="${PODO_PORT:-3010}"
-REPO=https://github.com/cryptohopper1904-jpg/podo-crm.git
+# Privates Repository: vorher deploy/setup-deploy-key.sh ausführen; dann wird automatisch per SSH geklont.
+if [ -f /root/.ssh/podo_crm_deploy ]; then DEFAULT_REPO=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
+else DEFAULT_REPO=https://github.com/cryptohopper1904-jpg/podo-crm.git; fi
+REPO="${PODO_REPO_URL:-$DEFAULT_REPO}"
 MARK="# podo-crm:$DOMAIN"
 
 say() { printf '\n\033[1;32m▶ %s\033[0m\n' "$*"; }
