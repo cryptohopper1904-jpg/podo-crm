@@ -1,7 +1,7 @@
 /**
  * GKV Paket E, Laufseite: Erst-Export des Übergabepakets ohne JSON-Seite. Fehler (hier 429/409 aus der Route,
  * nachgestellt per Request-Abfang) erscheinen als Meldung auf der Seite; der echte Erst-Export (POST, Pflicht-Häkchen)
- * startet den Download und zeigt danach ohne Neuladen den neuen Status. Erfundene Daten: leerer Lauf „E2E Übergabe …“
+ * startet den Download und zeigt danach ohne Neuladen den neuen Status. Erfundene Daten: Lauf „E2E Übergabe …“ mit einer Verordnung von „UEtest…“
  * (Läufe sind nicht löschbar – je Lauf ein neuer).
  */
 import { expect, test } from "@playwright/test";
@@ -10,9 +10,25 @@ import { loginDemoWithFreshTotp, withDemoOrg } from "./support";
 let batchId: string;
 
 test.beforeAll(async () => {
+  // Ein Lauf braucht mindestens eine abgerechnete Verordnung mit passenden Summen (Trigger podo_billing_batch_sum_check,
+  // geprüft beim COMMIT) – Lauf und Verordnung deshalb in einer Transaktion. Eigene Person „UEtest…“, keine echten Daten.
   batchId = await withDemoOrg(async (q, org) => {
-    const r = await q("insert into billing_batches (organization_id, partner, note) values ($1, 'other', $2) returning id", [org, `E2E Übergabe ${Date.now().toString(36)}`]);
-    return r.rows[0].id as string;
+    const tag = Date.now().toString(36);
+    const p = await q(
+      `insert into patients (organization_id, number, last_name, first_name, birth_date, insurance_type, insurer_name, insurer_ik, insurance_number, insured_status)
+       values ($1, (select coalesce(max(number), 0) + 1 from patients where organization_id = $1), $2, 'Erika', '1950-03-01', 'gkv', 'Beispiel-BKK', '109911114', 'A000500015', '1') returning id`,
+      [org, `UEtest${tag}`],
+    );
+    const b = await q(
+      "insert into billing_batches (organization_id, partner, note, prescription_count, total_cents, copayment_total_cents, remedy_total_cents) values ($1, 'other', $2, 1, 0, 0, 0) returning id",
+      [org, `E2E Übergabe ${tag}`],
+    );
+    await q(
+      `insert into prescriptions (organization_id, patient_id, issued_at, diagnosis_group, units, status, billing_batch_id, insurer_ik, insurance_number, insured_status, doctor_name)
+       values ($1, $2, current_date - 30, 'DF', 2, 'billed', $3, '109911114', 'A000500015', '1', 'Dr. Beispiel')`,
+      [org, p.rows[0].id, b.rows[0].id],
+    );
+    return b.rows[0].id as string;
   });
 });
 
