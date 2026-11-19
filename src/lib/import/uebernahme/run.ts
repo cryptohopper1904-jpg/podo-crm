@@ -30,7 +30,7 @@ import { buildPlan, choiceConflictsMessage, type ExistingSnapshot, type ImportPl
 import type { DetectedFile, InputFile } from "./types";
 
 export class ImportBusyError extends Error {
-  constructor(message = "Für diese Praxis läuft gerade schon eine Übernahme. Bitte warten Sie, bis sie abgeschlossen ist, und versuchen Sie es dann erneut.") {
+  constructor(message = "Für diese Praxis läuft gerade schon eine Übernahme. Bitte warte, bis sie abgeschlossen ist, und versuch es dann erneut.") {
     super(message);
     this.name = "ImportBusyError";
   }
@@ -39,7 +39,7 @@ export class ImportBusyError extends Error {
 /** Prozessweite Grenze: ein Lauf gleichzeitig (Unterklasse von ImportBusyError, gleiche Behandlung in der Action) */
 export class ServerBusyError extends ImportBusyError {
   constructor() {
-    super("Gerade läuft bereits eine andere Datenübernahme. Bitte versuchen Sie es in einigen Minuten erneut.");
+    super("Gerade läuft bereits eine andere Datenübernahme. Bitte versuch es in einigen Minuten erneut.");
     this.name = "ServerBusyError";
   }
 }
@@ -91,7 +91,7 @@ export const STORE_TOTAL_TIMEOUT_MS = 10 * 60_000;
 
 export class StoreTimeoutError extends Error {
   constructor() {
-    super("Das Ablegen der Dokumente dauert zu lange. Es wurde nichts gespeichert – bitte versuchen Sie es später erneut.");
+    super("Das Ablegen der Dokumente dauert zu lange. Es wurde nichts gespeichert – bitte versuch es später erneut.");
     this.name = "StoreTimeoutError";
   }
 }
@@ -102,7 +102,7 @@ export function isDbTimeout(e: unknown): boolean {
   const code = err?.code ?? err?.cause?.code;
   return code === "55P03" || code === "57014";
 }
-export const DB_TIMEOUT_MESSAGE = "Die Datenbank ist gerade ausgelastet. Es wurde nichts gespeichert – bitte versuchen Sie es in einigen Minuten erneut.";
+export const DB_TIMEOUT_MESSAGE = "Die Datenbank ist gerade ausgelastet. Es wurde nichts gespeichert – bitte versuch es in einigen Minuten erneut.";
 
 /**
  * Promise mit Zeitgrenze; `onLate` räumt ein Ergebnis auf, das erst NACH der Zeitüberschreitung fertig wird (z. B.

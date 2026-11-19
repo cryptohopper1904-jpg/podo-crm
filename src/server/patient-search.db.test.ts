@@ -1,7 +1,7 @@
 /**
  * Live-Patientensuche gegen eine echte DB (RLS aktiv, erfundene Daten):
  * Treffer, Mandantentrennung, Rechte, archivierte/gelöschte ausgeblendet, Verstorbene gekennzeichnet,
- * „Meinten Sie“ bei Tippfehlern, mehrteilige Namen in der Patientenliste.
+ * „Meintest du“ bei Tippfehlern, mehrteilige Namen in der Patientenliste.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
@@ -76,7 +76,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(r.hits[0]).toMatchObject({ id: ids.deceased, deceased: true });
   });
 
-  it("„Meinten Sie“ bei Tippfehlern – nur eigene Praxis, keine archivierten", async () => {
+  it("„Meintest du“ bei Tippfehlern – nur eigene Praxis, keine archivierten", async () => {
     const r = await mod.suggestPatients(auth(orgA), "Schmitt");
     expect(r.hits).toEqual([]);
     expect(r.didYouMean?.query).toBe("Schmidt");
@@ -91,19 +91,19 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     expect(full.didYouMean).toMatchObject({ query: "Erika Musterfrau" });
     expect(full.didYouMean!.patients[0].id).toBe(ids.musterfrau);
 
-    // genug direkte Treffer bzw. nichts Ähnliches → kein „Meinten Sie“
+    // genug direkte Treffer bzw. nichts Ähnliches → kein „Meintest du“
     expect((await mod.suggestPatients(auth(orgA), "Qwxyz")).didYouMean).toBeNull();
   });
 
-  it("„Meinten Sie“ ohne pg_trgm (Rückfall: gleicher Anfangsbuchstabe, begrenzt)", async () => {
+  it("„Meintest du“ ohne pg_trgm (Rückfall: gleicher Anfangsbuchstabe, begrenzt)", async () => {
     mod.__resetFuzzyStateForTests({ trgm: false });
     const r = await mod.suggestPatients(auth(orgA), "Schmitt");
     expect(r.didYouMean?.query).toBe("Schmidt");
     expect(r.didYouMean!.patients.map((p) => p.id)).not.toContain(ids.foreign);
   });
 
-  it("„Meinten Sie“ nur ohne direkten Treffer, eigene Drosselung je Person", async () => {
-    // „Schmid“ trifft Schmidt direkt → kein „Meinten Sie“, obwohl Schmitz ähnlich wäre
+  it("„Meintest du“ nur ohne direkten Treffer, eigene Drosselung je Person", async () => {
+    // „Schmid“ trifft Schmidt direkt → kein „Meintest du“, obwohl Schmitz ähnlich wäre
     const direct = await mod.suggestPatients(auth(orgA), "Schmid");
     expect(direct.hits.map((h) => h.id)).toEqual([ids.schmidt]);
     expect(direct.didYouMean).toBeNull();

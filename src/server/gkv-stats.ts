@@ -37,10 +37,18 @@ import { periodBounds } from "./stats";
  *    (billing_batch_payouts, eingelesen oder von Hand) nach Auszahlungsdatum – Ist, NEBEN dem Soll laut Läufen, nicht
  *    verrechnet (Abgrenzung mit der Steuerberatung klären). Betrag netto nach Gebühren des Zentrums; ein Storno
  *    (Gegenbuchung) mindert den Monat, in dem storniert wurde.
- *  - Stand Abruf: Stornos/Korrekturen wirken rückwirkend auf frühere Zeiträume.
+ *  - Stand Abruf: Stornierte Belege, später angerechnete Quittungen und Statusänderungen bei Absetzungen ändern frühere
+ *    Zeiträume nachträglich. Abrechnungsläufe sind unveränderlich; Neuabrechnungen zählen im Monat des neuen Laufs,
+ *    Stornos von Auszahlungen im Monat des Stornos.
  */
 
 const n = (v: unknown) => Number(v ?? 0);
+
+/** Höchstens so viele Stornos werden in der Auswertung einzeln mit Bezug gezeigt (die neuesten zuerst) */
+export const REVERSALS_LIMIT = 100;
+
+/** Hinweis zum Bezug eines Stornos (Auswertung und Laufseite) */
+export const reversalRefText = (originalPaidOn: string) => `Storno betrifft Auszahlung vom ${dateDe(originalPaidOn)}`;
 
 /**
  * Bedingung „Erstabrechnung durch Neuabrechnung ersetzt“ für einen Korrekturvermerk `c` mit altem Lauf `ob` – gemeinsam
@@ -50,6 +58,17 @@ const n = (v: unknown) => Number(v ?? 0);
 const REPLACED_SQL = sql`c.resolution = 'rebilled' and c.original_remedy_cost_cents is not null and ob.remedy_total_cents is not null`;
 
 export type GkvPrivateMonth = { month: string; insurerCents: number; copaymentCents: number; privateCents: number; deductionCents: number; payoutCents: number; payoutFeeCents: number };
+export type PayoutReversal = {
+  /** Datum des Stornos (wirkt in diesem Monat) */
+  reversedOn: string;
+  /** Datum der stornierten Original-Auszahlung */
+  originalPaidOn: string;
+  /** Gegenbuchung netto (negativ) und Gebühr (negativ) */
+  amountCents: number;
+  feeCents: number;
+  reversalInPeriod: boolean;
+  originalInPeriod: boolean;
+};
 export type GkvPrivateStats = {
   gkvEnabled: boolean;
   /**
@@ -72,7 +91,15 @@ export type GkvPrivateStats = {
    * `cents` = netto (überwiesen), `feeCents` = einbehaltene Gebühr (Betriebsausgabe), `grossCents` = brutto; Stornos im
    * Monat des Stornos; `count` ohne Stornos und stornierte Auszahlungen
    */
-  payouts: { count: number; cents: number; feeCents: number; grossCents: number };
+  /** `reversedLater*`: Auszahlungen im Zeitraum, deren Storno in einem späteren Zeitraum liegt (in `cents` noch enthalten) */
+  payouts: { count: number; cents: number; feeCents: number; grossCents: number; reversedLaterCount: number; reversedLaterCents: number };
+  /**
+   * Stornos mit Bezug zum Zeitraum (Storno oder stornierte Auszahlung liegt darin), je mit Datum der Original-Auszahlung –
+   * damit sichtbar ist, welche Auszahlung ein Storno betrifft (wirkt im Monat des Stornos). Keine Personendaten.
+   */
+  reversals: PayoutReversal[];
+  /** mehr als REVERSALS_LIMIT Stornos – die Liste zeigt nur die neuesten */
+  reversalsMore: boolean;
   private: { count: number; cents: number };
   deductions: Record<DeductionStatus, { count: number; cents: number }>;
   /**
@@ -145,17 +172,31 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     ).rows;
     // Zahlungseingang (GKV Paket E): Auszahlungen des Abrechnungszentrums nach Auszahlungsdatum, netto nach Gebühren;
     // Stornos (Gegenbuchung, negativ) im Monat des Stornos – nicht rückwirkend; gezählt werden nur Auszahlungen
+    const LATER_REVERSED = sql`exists (select 1 from billing_batch_payouts r where r.organization_id = ${org} and r.reverses_payout_id = bp.id and r.paid_at > ${period.until})`;
     const payoutRows = (
-      await tx.execute<{ ym: string; n: number; v: number; fee: number }>(sql`
+      await tx.execute<{ ym: string; n: number; v: number; fee: number; later_n: number; later_v: number }>(sql`
         select to_char(bp.paid_at, 'YYYY-MM') as ym,
                count(*) filter (where bp.source <> 'reversal'
                  and not exists (select 1 from billing_batch_payouts r where r.organization_id = ${org} and r.reverses_payout_id = bp.id))::int as n,
-               coalesce(sum(bp.amount_cents), 0)::bigint as v, coalesce(sum(bp.fee_cents), 0)::bigint as fee
+               coalesce(sum(bp.amount_cents), 0)::bigint as v, coalesce(sum(bp.fee_cents), 0)::bigint as fee,
+               count(*) filter (where ${LATER_REVERSED})::int as later_n,
+               coalesce(sum(bp.amount_cents) filter (where ${LATER_REVERSED}), 0)::bigint as later_v
         from billing_batch_payouts bp
         where bp.organization_id = ${org} and bp.paid_at >= ${period.from} and bp.paid_at <= ${period.until}
         group by 1`)
     ).rows;
-    return { batchRows, invRows, dedRows, replacedRows, payoutRows };
+    // Bezug der Stornos: Original-Auszahlung über reverses_payout_id (Storno oder Original im Zeitraum)
+    const reversalRows = (
+      await tx.execute<{ reversed_on: string; original_on: string; v: number; fee: number }>(sql`
+        select r.paid_at::text as reversed_on, o.paid_at::text as original_on, r.amount_cents as v, r.fee_cents as fee
+        from billing_batch_payouts r
+        join billing_batch_payouts o on o.id = r.reverses_payout_id and o.organization_id = ${org}
+        where r.organization_id = ${org} and r.source = 'reversal'
+          and ((r.paid_at >= ${period.from} and r.paid_at <= ${period.until}) or (o.paid_at >= ${period.from} and o.paid_at <= ${period.until}))
+        order by r.paid_at desc, o.paid_at desc, r.id
+        limit ${REVERSALS_LIMIT + 1}`)
+    ).rows;
+    return { batchRows, invRows, dedRows, replacedRows, payoutRows, reversalRows };
   });
   const byMonth = new Map<string, GkvPrivateMonth>(months.map((m) => [m, { month: m, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0, payoutFeeCents: 0 }]));
   const at = (ym: string) => byMonth.get(ym) ?? byMonth.set(ym, { month: ym, insurerCents: 0, copaymentCents: 0, privateCents: 0, deductionCents: 0, payoutCents: 0, payoutFeeCents: 0 }).get(ym)!;
@@ -200,17 +241,29 @@ export async function gkvPrivateStats(auth: AuthContext, period: Period): Promis
     // Monatsspalte „Absetzungen“: nur die Minderung (akzeptiert + erledigt/Absetzung bleibt)
     if (kind === "reduction") at(r.ym).deductionCents += n(r.v);
   }
-  const payouts = { count: 0, cents: 0, feeCents: 0, grossCents: 0 };
+  const payouts = { count: 0, cents: 0, feeCents: 0, grossCents: 0, reversedLaterCount: 0, reversedLaterCents: 0 };
   for (const r of res.payoutRows) {
     payouts.count += n(r.n);
     payouts.cents += n(r.v);
     payouts.feeCents += n(r.fee);
+    payouts.reversedLaterCount += n(r.later_n);
+    payouts.reversedLaterCents += n(r.later_v);
     at(r.ym).payoutCents += n(r.v);
     at(r.ym).payoutFeeCents += n(r.fee);
   }
   payouts.grossCents = payouts.cents + payouts.feeCents;
+  const inPeriod = (d: string) => d >= period.from && d <= period.until;
+  const reversalsMore = res.reversalRows.length > REVERSALS_LIMIT;
+  const reversals: PayoutReversal[] = res.reversalRows.slice(0, REVERSALS_LIMIT).map((r) => ({
+    reversedOn: r.reversed_on,
+    originalPaidOn: r.original_on,
+    amountCents: n(r.v),
+    feeCents: n(r.fee),
+    reversalInPeriod: inPeriod(r.reversed_on),
+    originalInPeriod: inPeriod(r.original_on),
+  }));
   await audit({ organizationId: org, userId: auth.user.id, action: "stats.gkv_private", meta: { from: period.from, to: period.until } });
-  return { gkvEnabled, batches, copayments, payouts, private: priv, deductions, deductionSummary, months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)) };
+  return { gkvEnabled, batches, copayments, payouts, reversals, reversalsMore, private: priv, deductions, deductionSummary, months: [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)) };
 }
 
 /**

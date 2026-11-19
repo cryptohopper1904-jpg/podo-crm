@@ -118,7 +118,7 @@ export type QuickPatientState =
  * (patients.write), Prüfung (patientInput) und Dublettenprüfung wie /kunden/neu; „trotzdem anlegen“ mit ignoreDuplicates.
  * `requestId` (Token je geöffnetem Schnellformular) macht das Anlegen idempotent: kommt dieselbe Anfrage mehrfach an
  * (Mehrfach-Enter, Doppelklick, erneutes Senden), gibt es genau eine Patient:in – Wiederholungen liefern dieselbe.
- * Archivierte Treffer in „Meinten Sie …?“ sind gekennzeichnet (`archived`) und im Formular nicht auswählbar.
+ * Archivierte Treffer in „Meintest du …?“ sind gekennzeichnet (`archived`) und im Formular nicht auswählbar.
  */
 export async function quickCreatePatientAction(_: QuickPatientState, form: FormData): Promise<QuickPatientState> {
   const auth = await requireAuth("patients.write");

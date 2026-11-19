@@ -303,10 +303,11 @@ describe("Feldlängen, Einzahl, Texte", () => {
     expect(plan.warnings.some((w) => w.message.startsWith("1 Rechnung aus Tinana"))).toBe(true);
   });
 
-  it("Rechtstexte: kein Art. 20, Datenkopie nach Art. 28, Hinweis nur für Online-Software, Sie-Form", () => {
+  it("Rechtstexte: kein Art. 20, Datenkopie nach Art. 28, Hinweis nur für Online-Software, du-Form", () => {
     const all = [...SOURCE_HELP.flatMap((h) => [...h.steps, ...h.missing, ...h.tips]), DSGVO_HINT, RETENTION_HINT, CONSENT_HINT].join("\n");
     expect(all).not.toMatch(/Art\. 20/);
-    expect(all).not.toMatch(/\b(du|dir|dein|deine|deiner|deinen)\b/i);
+    // Anrede „du“ wie in der App; „Sie“ nur im Musterschreiben an den bisherigen Anbieter
+    expect(all.replace(/„Bitte stellen Sie mir[^“]*“/g, "")).not.toMatch(/\b(Sie|Ihr|Ihre|Ihren|Ihrem|Ihrer|Ihres|Ihnen)\b/);
     expect(dataCopyHint("beim Tinana-Support")).toMatch(/Art\. 28 Abs\. 3 lit\. a und g DSGVO/);
     expect(SOURCE_HELP.find((h) => h.id === "excel")).toMatchObject({ online: false, tips: [expect.not.stringMatching(/Art\. 28/)] });
     expect(SOURCE_HELP.find((h) => h.id === "pododesk")!.missing.join(" ")).toMatch(/in der Regel über die sevdesk-Anbindung/);

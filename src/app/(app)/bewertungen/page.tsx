@@ -60,7 +60,7 @@ export default async function ReviewsPage() {
           <p className="text-sm text-muted">Place-ID unter Einstellungen → Schnittstellen → Google Unternehmensprofil eintragen, dann erscheint hier der Bewertungslink.</p>
         )}
         <p className="mt-2 text-sm text-muted">
-          Einen QR-Code für den Empfangstresen erhalten Sie im Google Unternehmensprofil unter „Bewertungen erhalten“. Keine Gegenleistungen für
+          Einen QR-Code für den Empfangstresen erhältst du im Google Unternehmensprofil unter „Bewertungen erhalten“. Keine Gegenleistungen für
           Bewertungen anbieten (UWG, Google-Richtlinien) und nicht gezielt nur zufriedene Patient:innen fragen.
         </p>
       </Card>
@@ -79,7 +79,7 @@ export default async function ReviewsPage() {
               </div>
               <p className="whitespace-pre-wrap">{r.text ?? <span className="text-muted">(ohne Text)</span>}</p>
               {r.reply ? (
-                <p className="mt-3 whitespace-pre-wrap rounded-xl bg-surface-2 p-3 text-sm"><strong>Ihre Antwort:</strong> {r.reply}</p>
+                <p className="mt-3 whitespace-pre-wrap rounded-xl bg-surface-2 p-3 text-sm"><strong>Deine Antwort:</strong> {r.reply}</p>
               ) : canWrite ? (
                 <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
                   {aiEnabled ? (

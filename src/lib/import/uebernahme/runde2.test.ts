@@ -197,16 +197,16 @@ describe("Recht und Buchhaltung Runde 2 (Texte)", () => {
     expect(RETENTION_HINT).toMatch(/Excel-Rechnungsmanager/);
     expect(RETENTION_HINT).toMatch(/Excel/);
     expect(RETENTION_HINT).toContain("10 Jahre für Kassenbuch");
-    expect(RETENTION_HINT).toContain("Übertragen Sie diese Rechnungen nicht noch einmal in Ihre Buchhaltung (z. B. Lexoffice), wenn sie dort schon erfasst sind.");
+    expect(RETENTION_HINT).toContain("Übertrage diese Rechnungen nicht noch einmal in deine Buchhaltung (z. B. Lexoffice), wenn sie dort schon erfasst sind.");
     expect(RETENTION_HINT.startsWith("Rechnungen aus Online-Software (z. B. Tinana) legt PodoHero nur als PDF-Kopie bei der Patient:in ab")).toBe(true);
   });
 
   it("E1/E2/E3: Einwilligungen, Datenkopie, Pododesk-Support", () => {
     expect(CONSENT_HINT).toContain(
-      "Holen Sie sie in PodoHero neu ein; bis dahin verschickt PodoHero an neu übernommene Patient:innen keine Erinnerungen. Bei Personen, die schon in PodoHero geführt werden, gelten deren bisherige Einwilligungen in PodoHero weiter.",
+      "Hol sie in PodoHero neu ein; bis dahin verschickt PodoHero an neu übernommene Patient:innen keine Erinnerungen. Bei Personen, die schon in PodoHero geführt werden, gelten deren bisherige Einwilligungen in PodoHero weiter.",
     );
     expect(DSGVO_HINT).toContain(
-      "Sie können jederzeit eine vollständige Kopie anweisen; bei Vertragsende muss sie die Daten nach Ihrer Wahl zurückgeben oder löschen (Art. 28 Abs. 3 lit. a und g DSGVO) – wählen Sie die Rückgabe.",
+      "Du kannst jederzeit eine vollständige Kopie anweisen; bei Vertragsende muss sie die Daten nach deiner Wahl zurückgeben oder löschen (Art. 28 Abs. 3 lit. a und g DSGVO) – wähle die Rückgabe.",
     );
     const pododesk = SOURCE_HELP.find((h) => h.id === "pododesk")!;
     expect(pododesk.tips).toEqual([dataCopyHint("beim Pododesk-Support")]);
@@ -219,10 +219,10 @@ describe("Recht und Buchhaltung Runde 2 (Texte)", () => {
     const excel: DetectedFile = { name: "r.xlsx", sha256: "x", size: 1, kind: "podohero.excel", source: "podohero-excel", label: "Excel", target: "–", status: "import", records: 1, issues: [], excel: res };
     const plan = buildPlan([excel], empty(), { prescriptionMode: "billed", now: NOW });
     const msg = plan.warnings.find((w) => w.message.startsWith("Excel-Rechnungsmanager"))!.message;
-    expect(msg).toContain(" Übertragen Sie sie nicht erneut an Ihre Buchhaltung, wenn sie dort schon erfasst sind.");
+    expect(msg).toContain(" Übertrage sie nicht erneut an deine Buchhaltung, wenn sie dort schon erfasst sind.");
     expect(msg).toContain(EXCEL_PAYMENTS_HINT);
     expect(EXCEL_PAYMENTS_HINT).toBe(
-      "Übernommene Zahlungen werden nur an der Rechnung vermerkt. Sie erscheinen nicht in der Kasse, im Tagesabschluss oder im DSFinV-K-Export – sie sind im Kassenbuch Ihres bisherigen Systems erfasst.",
+      "Übernommene Zahlungen werden nur an der Rechnung vermerkt. Sie erscheinen nicht in der Kasse, im Tagesabschluss oder im DSFinV-K-Export – sie sind im Kassenbuch deines bisherigen Systems erfasst.",
     );
   });
 });

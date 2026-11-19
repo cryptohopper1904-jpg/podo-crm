@@ -233,7 +233,7 @@ export default async function AppointmentPage(props: PageProps<"/kalender/termin
             <p className="mt-3 text-xs text-muted">
               {depositOk
                 ? "Der Termin liegt in der Zukunft – Rechnung oder Quittung gibt es nach der Behandlung. Anzahlung (Vorauszahlung): für Zahlungen vor der Behandlung, z. B. Nagelspange – wird später auf die Rechnung bzw. Sammelrechnung angerechnet."
-                : `Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen können Sie vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen. ${RECEIPT_COLLECTIVE_HINT}`}
+                : `Rechnung: mit den Leistungen des Termins vorausgefüllt – weitere Positionen kannst du vor dem Ausstellen ergänzen. Quittung: Zahlung jetzt annehmen. ${RECEIPT_COLLECTIVE_HINT}`}
             </p>
           ) : null}
         </Card>

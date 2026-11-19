@@ -1,9 +1,9 @@
 import { Card, CardTitle, PageHeader, Stat } from "@/components/ui";
 import { requireAuth } from "@/lib/auth/session";
-import { berlinDateIso, money } from "@/lib/format";
+import { berlinDateIso, dateDe, money } from "@/lib/format";
 import { monthLabel, periodQuery, resolvePeriod } from "@/lib/stats";
 import { statsDetailsOpen } from "@/lib/view-level";
-import { gkvPrivateStats } from "@/server/gkv-stats";
+import { gkvPrivateStats, reversalRefText, REVERSALS_LIMIT } from "@/server/gkv-stats";
 import { currentViewLevel } from "@/server/view-level";
 import { ValuesTable } from "../charts";
 import { StatsFilter, StatsTabs, yearOfPeriod } from "../stats-nav";
@@ -43,7 +43,9 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
       <p className="mb-6 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         Abrechnungsvolumen, kein Umsatz im Sinne der Buchhaltung: Abrechnungsläufe zählen nach Erstellungstag (Soll an die Kassen, nicht der
         Zahlungseingang), Zuzahlungs- und Privatbelege nach Belegdatum (Ist) – Soll und Ist sind gemischt, Läufe und Belege können in
-        verschiedenen Monaten liegen. Stand Abruf: Stornos und Korrekturen wirken rückwirkend auf frühere Zeiträume.
+        verschiedenen Monaten liegen. Stand Abruf: Stornierte Belege, später angerechnete Quittungen und Statusänderungen bei Absetzungen können frühere
+        Zeiträume nachträglich ändern. Abrechnungsläufe bleiben unverändert – Neuabrechnungen zählen im Monat des neuen Laufs, Stornos von Auszahlungen im
+        Monat des Stornos (siehe unten).
       </p>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -69,14 +71,36 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">Anteil am Abrechnungsvolumen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{pct(gkvTotal, total)}</dd></div>
             <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="min-w-0 text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum brutto ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.grossCents)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">− Gebühr des Abrechnungszentrums (Betriebsausgabe)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.feeCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Zahlungseingang netto (überwiesen)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Zahlungseingang netto (überwiesen){s.payouts.reversedLaterCount ? ` (davon ${money(s.payouts.reversedLaterCents)} aus ${s.payouts.reversedLaterCount} Auszahlung(en) später storniert)` : ""}</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
           </dl>
+          {s.reversals.length ? (
+            <div className="mt-3 border-t border-border pt-2">
+              <h3 className="mb-1 text-sm font-semibold">Stornos von Auszahlungen</h3>
+              <ul className="grid gap-1 text-sm" aria-label="Stornos von Auszahlungen mit Bezug">
+                {s.reversals.map((r, i) => (
+                  <li key={i} className="flex justify-between gap-4">
+                    <span className="min-w-0 text-muted">
+                      {r.reversalInPeriod
+                        ? `Storno vom ${dateDe(r.reversedOn)} – ${reversalRefText(r.originalPaidOn)}${r.originalInPeriod ? "" : " (früherer Zeitraum)"}`
+                        : `Auszahlung vom ${dateDe(r.originalPaidOn)} – storniert am ${dateDe(r.reversedOn)} (späterer Zeitraum, hier nicht gemindert)`}
+                    </span>
+                    <span className="shrink-0 whitespace-nowrap tabular-nums">{r.reversalInPeriod ? `${money(r.amountCents)} netto · Gebühr ${money(r.feeCents)}` : "–"}</span>
+                  </li>
+                ))}
+              </ul>
+              {s.reversalsMore ? <p className="mt-1 text-xs text-muted">Es gibt mehr Stornos – aufgeführt sind die neuesten {REVERSALS_LIMIT}.</p> : null}
+            </div>
+          ) : null}
           <p className="mt-3 text-xs text-muted">
             Kassenanteil = Heilmittelkosten − Zuzahlungen der Abrechnungsläufe nach Erstellungstag (Forderung an die Kassen, nicht der Zahlungseingang).
             Eine nach Korrektur neu abgerechnete Verordnung steht im alten und im neuen Lauf – der Stand der Erstabrechnung wird im Monat des neuen Laufs abgezogen.
             Zuzahlungen zählen nach dem Datum der Quittung – Läufe und Quittungen können in verschiedenen Monaten liegen.
             Der Zahlungseingang (Ist) stammt aus den am Abrechnungslauf erfassten Auszahlungen (Rückmeldung oder von Hand) und wird nicht mit dem Soll verrechnet;
-            Stornos zählen im Monat des Stornos. Die Gebühr des Abrechnungszentrums ist eine Betriebsausgabe: Rechnung des Abrechnungszentrums gesondert
+            Stornos wirken im Monat des Stornos: Der Gegenbetrag mindert den Zahlungseingang des Monats, in dem storniert wurde, nicht rückwirkend den Monat der
+            ursprünglichen Auszahlung. Fällt das Storno in einen späteren Zeitraum, zählt die ursprüngliche Auszahlung hier nicht mehr bei der Anzahl der
+            Auszahlungen mit, ihr Betrag ist in der Summe dieses Zeitraums aber noch enthalten – ausgeglichen wird er erst im Monat des Stornos. Bei jedem Storno
+            steht, welche Auszahlung es betrifft. Für die EÜR gilt der Kontoauszug: War eine Auszahlung nur falsch erfasst, ist kein Geld geflossen – mit der
+            Steuerberatung klären. Die Gebühr des Abrechnungszentrums ist eine Betriebsausgabe: Rechnung des Abrechnungszentrums gesondert
             ablegen; die Gebühr kann Umsatzsteuer enthalten – mit der Steuerberatung klären.
             {s.batches.withoutRemedy ? ` ${s.batches.withoutRemedy} Lauf/Läufe ohne gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) sind nicht enthalten.` : ""}
           </p>

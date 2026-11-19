@@ -122,7 +122,7 @@ describe("Code-Review Runde 3 (Nice)", () => {
     expect(plan.totals.patientsNew).toBe(1);
     expect(plan.totals.excel).toMatchObject({ patientsNew: 1, patientsExisting: 0 });
     expect(plan.warnings.map((w) => w.message)).toContain(
-      "Excel: E. M. (Jg. 1950) (ID 4711) – gleiche Person (Name + Geburtsdatum) wird in diesem Lauf auch aus Tinana bzw. Doctolib neu angelegt. Beide Einträge werden übernommen; bitte prüfen Sie diese Personen nach der Übernahme und führen Sie Doppelte zusammen.",
+      "Excel: E. M. (Jg. 1950) (ID 4711) – gleiche Person (Name + Geburtsdatum) wird in diesem Lauf auch aus Tinana bzw. Doctolib neu angelegt. Beide Einträge werden übernommen; bitte prüfe diese Personen nach der Übernahme und führe Doppelte zusammen.",
     );
     // ohne gleichnamige Neuanlage kein Hinweis
     const alone = buildPlan([excel], empty(), { prescriptionMode: "billed", now: NOW });

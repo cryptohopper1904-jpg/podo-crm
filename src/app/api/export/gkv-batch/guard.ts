@@ -15,7 +15,7 @@ export function handoverPreflight(req: NextRequest, orgId: string): NextResponse
   const site = req.headers.get("sec-fetch-site");
   const allowed = req.method === "POST" ? ["same-origin"] : ["same-origin", "none"];
   if (site && !allowed.includes(site)) return NextResponse.json({ error: "Anfrage von einer fremden Seite abgelehnt." }, { status: 403 });
-  if (limiter.limited(`org:${orgId}`)) return NextResponse.json({ error: "Bitte kurz warten." }, { status: 429, headers: { "Retry-After": "60" } });
+  if (limiter.limited(`org:${orgId}`)) return NextResponse.json({ error: "Zu viele Exporte in kurzer Zeit – bitte eine Minute warten und dann erneut versuchen." }, { status: 429, headers: { "Retry-After": "60" } });
   return null;
 }
 
