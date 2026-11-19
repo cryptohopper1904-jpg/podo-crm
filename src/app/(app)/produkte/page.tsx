@@ -24,14 +24,14 @@ function StockBadge({ p }: { p: ProductRow }) {
 function Actions({ p, manage, compact = false }: { p: ProductRow; manage: boolean; compact?: boolean }) {
   return (
     <div className="flex items-center gap-1">
-      <Link href={`/produkte/${p.id}`} className="inline-flex h-9 items-center rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-surface-2">
+      <Link href={`/produkte/${p.id}`} className="inline-flex h-11 items-center rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-surface-2">
         {compact ? "Details" : manage ? "Details & bearbeiten" : "Details"}
       </Link>
       {manage ? (
         <form action={setProductActiveAction}>
           <input type="hidden" name="id" value={p.id} />
           <input type="hidden" name="active" value={p.active ? "0" : "1"} />
-          <button className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-semibold text-muted hover:bg-surface-2" aria-label={p.active ? `${p.name} archivieren` : `${p.name} wiederherstellen`}>
+          <button className="inline-flex h-11 items-center gap-1 rounded-lg px-2.5 text-sm font-semibold text-muted hover:bg-surface-2" aria-label={p.active ? `${p.name} archivieren` : `${p.name} wiederherstellen`}>
             {p.active ? <Archive size={15} aria-hidden /> : <ArchiveRestore size={15} aria-hidden />} {compact ? null : p.active ? "Archivieren" : "Wiederherstellen"}
           </button>
         </form>

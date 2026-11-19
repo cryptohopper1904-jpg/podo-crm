@@ -237,11 +237,11 @@ export function UebernahmeForm({ action }: { action: (s: UebernahmeState, f: For
         <legend className="mb-1 font-medium">Übernommene Verordnungen</legend>
         <label className="flex items-start gap-2">
           <input type="radio" name="prescriptionMode" value="billed" defaultChecked className="mt-1 size-4" />
-          <span>als <strong>abgerechnet</strong> markieren (empfohlen, wenn Ihre bisherige Software bzw. Ihr Abrechnungszentrum sie schon abgerechnet hat – keine doppelte Abrechnung)</span>
+          <span>als <strong>abgerechnet</strong> markieren (empfohlen, wenn deine bisherige Software bzw. dein Abrechnungszentrum sie schon abgerechnet hat – keine doppelte Abrechnung)</span>
         </label>
         <label className="flex items-start gap-2">
           <input type="radio" name="prescriptionMode" value="active" className="mt-1 size-4" />
-          <span>als <strong>laufend</strong> übernehmen (noch nicht abgerechnet, Sie rechnen sie in PodoHero ab)</span>
+          <span>als <strong>laufend</strong> übernehmen (noch nicht abgerechnet, du rechnest sie in PodoHero ab)</span>
         </label>
       </fieldset>
       {state?.previewToken ? <input type="hidden" name="previewToken" value={state.previewToken} /> : null}

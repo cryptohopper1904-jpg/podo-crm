@@ -62,8 +62,8 @@ export default async function KassePage(props: PageProps<"/kasse">) {
           </p>
         ) : (
           <p>
-            <strong>Nutzen Sie bereits eine eigene Kasse mit TSE?</strong> Dann kann PodoHero Zahlungen nur vermerken; Beleg, TSE und
-            Tagesabschluss bleiben in Ihrer Praxiskasse. Umschalten geht nur, wenn alle PodoHero-Kassenvorgänge abgeschlossen sind
+            <strong>Nutzt du bereits eine eigene Kasse mit TSE?</strong> Dann kann PodoHero Zahlungen nur vermerken; Beleg, TSE und
+            Tagesabschluss bleiben in deiner Praxiskasse. Umschalten geht nur, wenn alle PodoHero-Kassenvorgänge abgeschlossen sind
             (Tagesabschluss).
           </p>
         )}

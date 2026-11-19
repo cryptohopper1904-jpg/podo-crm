@@ -286,7 +286,7 @@ export default async function PatientPage(props: PageProps<"/kunden/[id]">) {
           <Card>
             <CardTitle>Datenschutz</CardTitle>
             <div className="flex flex-col gap-2">
-              <LinkButton variant="secondary" href={`/api/patients/${p.id}/export`}><Download size={18} aria-hidden /> Auskunft (Art. 15) als JSON</LinkButton>
+              <LinkButton variant="secondary" href={`/api/patients/${p.id}/export`}><Download size={18} aria-hidden /> Datenauskunft (Art. 15 DSGVO) herunterladen</LinkButton>
               <LinkButton variant="secondary" href={`/kunden/${p.id}/akte-drucken`}>Akte drucken / PDF</LinkButton>
               {auth.can("patients.write") && !deceased ? <PortalLinkButton patientId={p.id} /> : null}
             </div>

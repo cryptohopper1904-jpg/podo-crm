@@ -92,14 +92,14 @@ export function SignatureField({ patientName, compact = false, onChange }: { pat
               aria-label="Unterschriftsfeld – mit Finger oder Stift unterschreiben"
               className={cx("w-full touch-none rounded-xl border-2 border-dashed border-border bg-white", compact ? "h-28" : "h-40")}
             />
-            {!data ? <span className="pointer-events-none absolute inset-x-0 bottom-3 text-center text-xs text-muted">Hier unterschreiben</span> : null}
+            {!data ? <span className="pointer-events-none absolute inset-x-0 bottom-3 text-center text-xs text-[#525252]">Hier unterschreiben</span> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input name="signerName" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="Name der unterschreibenden Person" aria-label="Name der unterschreibenden Person" className="min-w-48 flex-1" />
             <Select name="signerRole" value={role} onChange={(e) => setRole(e.target.value as SignerRole)} aria-label="Wer unterschreibt?" className="w-auto">
               {SIGNER_ROLES.map((r) => <option key={r} value={r}>{SIGNER_ROLE_LABEL[r]}</option>)}
             </Select>
-            <Button type="button" variant="ghost" onClick={clear} className="h-10 text-sm"><Eraser size={16} aria-hidden /> Löschen</Button>
+            <Button type="button" variant="ghost" onClick={clear} className="text-sm"><Eraser size={16} aria-hidden /> Unterschrift löschen</Button>
           </div>
         </>
       ) : null}

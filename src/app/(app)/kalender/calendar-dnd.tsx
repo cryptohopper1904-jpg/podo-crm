@@ -483,7 +483,7 @@ export function DndSurface({
               <Undo2 size={16} aria-hidden /> Rückgängig
             </Button>
           ) : null}
-          <button type="button" onClick={() => setToast(null)} aria-label="Hinweis schließen" className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg hover:bg-surface-2">
+          <button type="button" onClick={() => setToast(null)} aria-label="Hinweis schließen" className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg hover:bg-surface-2">
             <X size={16} aria-hidden />
           </button>
         </div>

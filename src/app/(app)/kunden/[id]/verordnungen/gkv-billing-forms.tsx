@@ -6,9 +6,9 @@ import { EURO_INPUT_MAX_LENGTH } from "@/lib/euro-input";
 import { PRESCRIPTION_KINDS, PRESCRIPTION_KIND_SOURCE, PRESCRIPTION_SPECIALS, type KindSuggestion } from "@/lib/rules/gkv-billing";
 import { billingDetailsAction, correctionAction, deductionAction, resolveCorrectionAction, type GkvActionState } from "./gkv-actions";
 
-const inputCls = "h-9 rounded-lg border border-border bg-surface px-2 text-sm";
+const inputCls = "h-11 rounded-lg border border-border bg-surface px-2 text-sm";
 const btnCls = "inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60";
-const cancelCls = "inline-flex min-h-11 items-center rounded-lg px-2 text-xs text-muted hover:bg-surface-2";
+const cancelCls = "inline-flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-text hover:bg-surface-2";
 
 function Result({ state }: { state: GkvActionState }) {
   return (
@@ -91,7 +91,7 @@ export function BillingDetailsForm({
       <Result state={state} />
       <div>
         <button type="submit" disabled={pending} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-semibold text-on-primary disabled:opacity-60">
-          {pending ? "…" : kind ? "Abrechnungsangaben speichern" : "Kennzeichen bestätigen und speichern"}
+          {pending ? "Wird gespeichert …" : kind ? "Abrechnungsangaben speichern" : "Kennzeichen bestätigen und speichern"}
         </button>
       </div>
     </form>
@@ -117,7 +117,7 @@ export function DeductionForm({ prescriptionId, patientId, today }: { prescripti
           Schreiben vom
           <input type="date" name="letterDate" max={today} className={inputCls} />
         </label>
-        <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Absetzung erfassen"}</button>
+        <button type="submit" disabled={pending} className={btnCls}>{pending ? "Wird gespeichert …" : "Absetzung erfassen"}</button>
       </div>
       <p className="text-xs text-muted">Grund ohne Gesundheitsangaben formulieren (z. B. „Unterschrift fehlt“, „Frist überschritten“).</p>
       <Result state={state} />
@@ -144,7 +144,7 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
             {deductions.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
           </select>
         ) : null}
-        <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Korrektur nötig setzen"}</button>
+        <button type="submit" disabled={pending} className={btnCls}>{pending ? "Wird gespeichert …" : "Korrektur nötig setzen"}</button>
         <button type="button" className={cancelCls} onClick={() => setOpen(false)}>Abbrechen</button>
       </div>
       {unlinked.length ? (
@@ -162,14 +162,14 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
 export function ResolveCorrectionForm({ prescriptionId, patientId }: { prescriptionId: string; patientId: string }) {
   const [state, action, pending] = useActionState<GkvActionState, FormData>(resolveCorrectionAction, undefined);
   const [open, setOpen] = useState(false);
-  if (!open) return <button type="button" className={btnCls} onClick={() => setOpen(true)}>ohne Neuabrechnung abschließen …</button>;
+  if (!open) return <button type="button" className={btnCls} onClick={() => setOpen(true)}>Ohne Neuabrechnung abschließen …</button>;
   return (
     <form action={action} className="flex flex-col gap-1">
       <input type="hidden" name="prescriptionId" value={prescriptionId} />
       <input type="hidden" name="patientId" value={patientId} />
       <div className="flex flex-wrap items-center gap-2">
         <input name="note" required minLength={5} maxLength={500} placeholder="Begründung (z. B. Absetzung akzeptiert)" aria-label="Begründung" className={`${inputCls} min-w-0 flex-1 basis-64`} />
-        <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "abschließen"}</button>
+        <button type="submit" disabled={pending} className={btnCls}>{pending ? "Wird gespeichert …" : "Abschließen"}</button>
         <button type="button" className={cancelCls} onClick={() => setOpen(false)}>Abbrechen</button>
       </div>
       <Result state={state} />

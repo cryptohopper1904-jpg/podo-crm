@@ -31,7 +31,7 @@ describe("bottomNavSplit (Handy/Tablet hochkant)", () => {
     const { visible } = splitNav(ALL, "einfach");
     const s = bottomNavSplit(ALL, visible);
     expect(s.bar).toEqual(["heute", "kalender", "kunden", "doku"]);
-    expect(s.inView).toEqual(["rechnungen", "kasse"]);
+    expect(s.inView).toEqual(["verordnungen", "rechnungen", "kasse"]);
     expect(s.hidden).toContain("posteingang");
     expect(s.hidden).toContain("auswertung");
   });

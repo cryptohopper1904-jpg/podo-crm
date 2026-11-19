@@ -94,11 +94,11 @@ export function Foot3D({
         <Segmented label="Fußseite" value={side} onChange={(s) => { setSide(s); setSelected(null); }} options={[["left", "Links"], ["right", "Rechts"]]} />
         <div role="group" aria-label="Ansicht" className="inline-flex flex-wrap gap-1">
           {VIEWS.map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setView((v) => ({ preset: k, n: v.n + 1 }))} className="h-9 rounded-lg border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2">
+            <button key={k} type="button" onClick={() => setView((v) => ({ preset: k, n: v.n + 1 }))} className="h-11 rounded-lg border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2">
               {l}
             </button>
           ))}
-          <button type="button" onClick={() => setView((v) => ({ preset: "default", n: v.n + 1 }))} className="inline-flex h-9 items-center gap-1 rounded-lg border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2">
+          <button type="button" onClick={() => setView((v) => ({ preset: "default", n: v.n + 1 }))} className="inline-flex h-11 items-center gap-1 rounded-lg border border-border bg-surface px-3 text-sm font-semibold hover:bg-surface-2">
             <RotateCcw size={14} aria-hidden /> Ansicht zurücksetzen
           </button>
         </div>

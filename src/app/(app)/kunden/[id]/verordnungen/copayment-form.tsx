@@ -6,7 +6,7 @@ import { EURO_INPUT_MAX_LENGTH } from "@/lib/euro-input";
 import { copaymentLegacyResetAction, copaymentReceiptAction, copaymentRefundAction, type CopaymentPaidState } from "./actions";
 
 const METHODS: Record<string, string> = { cash: "bar", card: "Karte", transfer: "Überweisung" };
-const inputCls = "h-9 rounded-lg border border-border bg-surface px-2 text-sm";
+const inputCls = "h-11 rounded-lg border border-border bg-surface px-2 text-sm";
 
 /**
  * „Zuzahlung quittieren“: erzeugt die Zuzahlungsquittung (Beleg ZZ…) mit Kassenbuchung – PodoHero-Kasse mit TSE bzw.
@@ -36,7 +36,7 @@ export function CopaymentReceiptForm({ prescriptionId, patientId, openCents, man
           {Object.entries(METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
         </select>
         {external && register ? <input name="registerReceiptNo" maxLength={40} autoComplete="off" placeholder="Bon-Nr. Praxiskasse" aria-label="Bon-Nr. der Praxiskasse" className={`${inputCls} w-36`} /> : null}
-        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60">{pending ? "…" : "Zuzahlung quittieren"}</button>
+        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60">{pending ? "Wird gespeichert …" : "Zuzahlung quittieren"}</button>
       </div>
       <label className="flex items-center gap-2 text-xs text-muted">
         <input type="checkbox" name="confirmOverpay" className="size-4 accent-[var(--primary)]" />{" "}
@@ -73,7 +73,7 @@ export function CopaymentRefundForm({ invoiceId, patientId, external }: { invoic
             {Object.entries(METHODS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
           </select>
           {external && (method === "cash" || method === "card") ? <input name="registerReceiptNo" maxLength={40} autoComplete="off" placeholder="Bon-Nr. Storno" aria-label="Bon-Nr. des Storno-Bons der Praxiskasse" className={`${inputCls} w-32`} /> : null}
-          <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-danger hover:bg-surface-2 disabled:opacity-60">{pending ? "…" : "Quittung stornieren und erstatten"}</button>
+          <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-danger hover:bg-surface-2 disabled:opacity-60">{pending ? "Wird gespeichert …" : "Quittung stornieren und erstatten"}</button>
         </div>
         <p className="text-muted">Die Erstattung wird als negative Zahlung auf dem Stornobeleg gebucht. Den richtigen Betrag danach neu quittieren.</p>
         {state?.ok ? <p role="status" className="font-medium text-primary">{state.ok}</p> : null}
@@ -98,7 +98,7 @@ export function CopaymentLegacyReset({ id, patientId }: { id: string; patientId:
         <input type="hidden" name="patientId" value={patientId} />
         <FormError message={state?.error} revealKey={state} />
         <input name="reason" required minLength={5} maxLength={300} placeholder="Begründung (Pflicht)" aria-label="Begründung" className={`${inputCls} min-w-0 flex-1 basis-48`} />
-        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-danger hover:bg-surface-2 disabled:opacity-60">{pending ? "…" : "Vermerk entfernen"}</button>
+        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-danger hover:bg-surface-2 disabled:opacity-60">{pending ? "Wird gespeichert …" : "Vermerk entfernen"}</button>
       </form>
     </details>
   );

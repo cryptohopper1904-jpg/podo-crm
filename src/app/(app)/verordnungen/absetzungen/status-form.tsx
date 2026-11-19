@@ -6,7 +6,7 @@ import { EURO_INPUT_MAX_LENGTH } from "@/lib/euro-input";
 import { DEDUCTION_OUTCOME_LABEL, DEDUCTION_STATUS_LABEL, canChangeDeductionStatus, type DeductionOutcome, type DeductionStatus } from "@/lib/rules/gkv-billing";
 import { deductionStatusAction, type DeductionStatusState } from "./actions";
 
-const inputCls = "h-9 rounded-lg border border-border bg-surface px-2 text-sm";
+const inputCls = "h-11 rounded-lg border border-border bg-surface px-2 text-sm";
 
 /** Status, Notiz, Kassenschreiben und (nur „offen“) Betrag einer Absetzung ändern; „erledigt“ nur mit Ausgang */
 export function DeductionStatusForm({ id, status, note, amount, letterRef, letterDate }: { id: string; status: DeductionStatus; note: string | null; amount: string; letterRef: string | null; letterDate: string | null }) {
@@ -30,7 +30,7 @@ export function DeductionStatusForm({ id, status, note, amount, letterRef, lette
         <input name="letterRef" defaultValue={letterRef ?? ""} maxLength={60} autoComplete="off" spellCheck={false} placeholder="Aktenzeichen Schreiben" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-40`} />
         <input type="date" name="letterDate" defaultValue={letterDate ?? ""} aria-label="Datum des Kassenschreibens" className={inputCls} />
         <input name="note" defaultValue={note ?? ""} maxLength={1000} placeholder="Notiz (z. B. Widerspruch am …)" aria-label="Notiz" className={`${inputCls} min-w-0 flex-1 basis-48`} />
-        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60">{pending ? "…" : "Speichern"}</button>
+        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60">{pending ? "Wird gespeichert …" : "Speichern"}</button>
       </div>
       <p className="text-xs text-muted">Aktenzeichen bzw. Datum des Schreibens leeren und speichern entfernt die Angabe.</p>
       <FormError message={state?.error} revealKey={state} />
