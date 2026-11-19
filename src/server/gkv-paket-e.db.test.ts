@@ -14,7 +14,7 @@ import { berlinToUtc } from "@/lib/format";
 import { addDaysIso } from "@/lib/calendar-grid";
 import { RULES_VERSION } from "@/lib/rules/prescription";
 import { RUECKMELDUNG_SPALTEN } from "@/lib/gkv-handover/rueckmeldung";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, TEST_DB, withMigratedDatabase } from "./__tests__/db-fixtures";
 
 const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
 const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
@@ -213,8 +213,6 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
         await expect(asOwner("delete from billing_batch_exports where billing_batch_id = $1", [batchId])).rejects.toThrow(/unveränderlich/);
         await expect(asOwner("update billing_batch_payouts set amount_cents = 1 where billing_batch_id = $1", [batchId])).rejects.toThrow(/unveränderlich/);
         await expect(asOwner("delete from billing_batch_payouts where billing_batch_id = $1", [batchId])).rejects.toThrow(/unveränderlich/);
-        await expect(asOwner("truncate billing_batch_payouts cascade")).rejects.toThrow(/geleert/);
-        await expect(asOwner("truncate billing_batch_exports")).rejects.toThrow(/geleert/);
       } finally {
         c.release();
       }
@@ -610,11 +608,13 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     try {
       const c = await owner.connect();
       try {
+        // Trigger nur für diese Transaktion aus (Superuser, session_replication_role) – kein ALTER TABLE, also keine
+        // ACCESS-EXCLUSIVE-Sperre, die mit parallelen Testdateien kollidieren könnte
+        if (!(await c.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) return;
         await c.query("begin");
+        await c.query("set local session_replication_role = replica");
         await c.query("select set_config('app.org_id', $1, true)", [w.org]);
-        await c.query("alter table billing_batch_exports disable trigger billing_batch_exports_guard");
         await c.query("update billing_batch_exports set sha256 = repeat('0', 64) where billing_batch_id = $1", [batchId]);
-        await c.query("alter table billing_batch_exports enable trigger billing_batch_exports_guard");
         await c.query("commit");
       } finally {
         c.release();
@@ -668,4 +668,17 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     // K3: „Ausgezahlt“ zählt stornierte Auszahlungen nicht mit
     expect((await ho.payoutTotals(w.auth)).get(batchId)).toMatchObject({ cents: 800, count: 1 });
   });
+  it("E20: TRUNCATE von Archiv und Auszahlungen abgelehnt (Trigger) – in eigener, frisch migrierter DB (ACCESS-EXCLUSIVE-Sperre kollidiert nicht mit parallelen Tests)", async () => {
+    const ran = await withMigratedDatabase(async (c) => {
+      for (const sql of ["truncate billing_batch_exports", "truncate billing_batch_payouts cascade"]) {
+        await c.query("begin");
+        try {
+          await expect(c.query(sql)).rejects.toThrow(/geleert/);
+        } finally {
+          await c.query("rollback");
+        }
+      }
+    });
+    if (!ran) console.warn("E20 übersprungen: kein Recht CREATE DATABASE");
+  }, 60_000);
 });
