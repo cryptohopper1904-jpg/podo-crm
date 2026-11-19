@@ -456,6 +456,8 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
       expect(e?.message).toMatch(ohneLookup);
       expect(e?.message).not.toMatch(/gehört nicht zu dieser Praxis/);
     }
+    // Kernaussage „kein Orakel“: beide Wege liefern dieselbe Antwort (eigene Person vs. unbekannte Person)
+    expect(e1?.message).toBe(e2?.message);
   });
 
   it("Altbestand: inkonsistente Zeile bleibt bearbeitbar, solange der Verweis nicht geändert wird", async (ctx) => {
