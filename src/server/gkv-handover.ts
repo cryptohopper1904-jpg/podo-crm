@@ -258,6 +258,8 @@ function streamArchive(org: string, a: { storageKey: string; sha256: string }): 
   });
   const src = readDecryptedStream(a.storageKey);
   src.on("error", (e) => check.destroy(e));
+  // Bricht der Client ab, auch die Entschlüsselung beenden
+  check.on("close", () => src.destroy());
   return src.pipe(check);
 }
 

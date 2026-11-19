@@ -610,7 +610,10 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
       try {
         // Trigger nur für diese Transaktion aus (Superuser, session_replication_role) – kein ALTER TABLE, also keine
         // ACCESS-EXCLUSIVE-Sperre, die mit parallelen Testdateien kollidieren könnte
-        if (!(await c.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) return;
+        if (!(await c.query("select rolsuper from pg_roles where rolname = current_user")).rows[0]?.rolsuper) {
+          console.warn("E17 übersprungen: Eigentümer-Rolle ist kein Superuser – Prüfsummen-Abbruch hier nicht geprüft");
+          return;
+        }
         await c.query("begin");
         await c.query("set local session_replication_role = replica");
         await c.query("select set_config('app.org_id', $1, true)", [w.org]);

@@ -30,7 +30,7 @@ Migration `drizzle/0068_gkv_paket_e.sql`.
   Hinweis auf den Support ab (beim Stream wird der letzte Block bis zur Prüfung zurückgehalten – der Empfänger erhält nie
   eine veränderte Datei vollständig).
 - **Schutz der Routen** (AppSec M1/M2): Der Erst-Export, der den Lauf unumkehrbar übergibt, nur per POST (Sitzungs-Cookie
-  `SameSite=Lax` → keine fremde Seite kann ihn auslösen); alle Übergabe-Routen lehnen `Sec-Fetch-Site: cross-site` ab
+  `SameSite=Lax` → keine fremde Seite kann ihn auslösen); alle Übergabe-Routen lehnen fremde Seiten ab (POST nur `Sec-Fetch-Site: same-origin`, GET zusätzlich `none` für direkte Navigation)
   (fehlt der Header, zugelassen); höchstens 5 Abrufe je Praxis und Minute und höchstens 2 gleichzeitige Paket-Erstbauten
   im Prozess (sonst 429 mit `Retry-After`).
 - **Nur-Lese-Modus** (z. B. nach Vertragsende): Nachdruck und CSV bleiben möglich (GET); der Erst-Export (POST, schreibend)
