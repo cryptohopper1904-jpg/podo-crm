@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, type Tx } from "@/db";
+import { db, withOrg, type Tx } from "@/db";
 import { memberships, organizations, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { hashPassword, passwordProblem, verifyPassword } from "@/lib/auth/password";
@@ -58,14 +58,15 @@ export async function savePracticeAction(_: SettingsState, form: FormData): Prom
   const { smallBusiness, materialCost, ...rest } = d.data;
   // settings atomar zusammenführen (||), statt gelesene Einstellungen zurückzuschreiben – sonst überschreibt ein
   // gleichzeitiges Speichern (z. B. Impressum, Fahrten) die Änderung des anderen (AppSec)
-  await db
-    .update(organizations)
-    .set({
-      ...rest,
-      smallBusiness: smallBusiness === "on",
-      settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ materialCostCents: parseMoney(materialCost ?? "") ?? 350 })}::jsonb`,
-    })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({
+        ...rest,
+        smallBusiness: smallBusiness === "on",
+        settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ materialCostCents: parseMoney(materialCost ?? "") ?? 350 })}::jsonb`,
+      })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.practice" });
   // Anschrift/Kontakt gehören zum Impressum → Hinweis „Online-Buchung gesperrt“ (Einstellungen, Heute) neu prüfen
   revalidatePath("/einstellungen", "layout");
@@ -113,10 +114,11 @@ export async function saveImprintAction(_: SettingsState, form: FormData): Promi
     dpo: v.dpo ?? "",
   };
   // settings atomar zusammenführen (andere Schlüssel bleiben unverändert)
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint })}::jsonb` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ imprint })}::jsonb` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.imprint" });
   revalidatePath("/einstellungen", "layout");
   revalidatePath("/heute");
@@ -159,10 +161,11 @@ export async function saveAiRepliesAction(_: SettingsState, form: FormData): Pro
     ? { enabled: true, provider, country: country!.name, avvConfirmed: true, confidentialityConfirmed: true, transferConfirmed: !country!.euEea, at: now, by: auth.user.id }
     : // Anbieter/Land als Vorbelegung behalten, Bestätigungen nicht (gelten nur für die jeweilige Einschaltung)
       { enabled: false, provider: before.provider, country: before.country, avvConfirmed: false, confidentialityConfirmed: false, transferConfirmed: false, at: before.at, by: before.by, offAt: now, offBy: auth.user.id };
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ aiReplies })}::jsonb` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ aiReplies })}::jsonb` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({
     organizationId: auth.organization.id,
     userId: auth.user.id,
@@ -189,10 +192,11 @@ export async function acceptAvvAction(_: SettingsState, form: FormData): Promise
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, auth.organization.id));
   const prev = storedLegalAcceptance(o?.settings);
   const legalAcceptance = avvReacceptance(prev, auth.user.id);
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ legalAcceptance })}::jsonb` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ legalAcceptance })}::jsonb` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "legal.avv_accepted", meta: { avv: LEGAL_VERSIONS.avv, previous: prev?.avv ?? null } });
   revalidatePath("/einstellungen", "layout");
   revalidatePath("/heute");
@@ -215,10 +219,11 @@ export async function saveOpeningHoursAction(_: SettingsState, form: FormData): 
   const v = validateWeek(raw);
   if (v.error !== undefined) return { error: v.error };
   const list = weekToList(v.week);
-  await db
-    .update(organizations)
-    .set({ settings: sql`(coalesce(${organizations.settings}, '{}'::jsonb) - 'opening') || ${JSON.stringify({ practiceHours: list })}::jsonb` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`(coalesce(${organizations.settings}, '{}'::jsonb) - 'opening') || ${JSON.stringify({ practiceHours: list })}::jsonb` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.opening_hours", meta: { hours: weekSummary(v.week) } });
   revalidatePath("/einstellungen/oeffnungszeiten");
   return { ok: isClosedWeek(v.week) ? "Gespeichert – die Praxis hat derzeit keine Öffnungszeiten." : "Gespeichert." };
@@ -471,10 +476,11 @@ export async function setUnlockPinAction(_: SettingsState, form: FormData): Prom
 export async function saveSecurityPolicyAction(_: SettingsState, form: FormData): Promise<SettingsState> {
   const auth = await requireAuth("users.manage");
   const require2faAllRoles = form.get("require2faAllRoles") === "on";
-  await db
-    .update(organizations)
-    .set({ settings: sql`${organizations.settings} || jsonb_build_object('security', coalesce(${organizations.settings}->'security', '{}'::jsonb) || jsonb_build_object('require2faAllRoles', ${require2faAllRoles}::boolean))` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`${organizations.settings} || jsonb_build_object('security', coalesce(${organizations.settings}->'security', '{}'::jsonb) || jsonb_build_object('require2faAllRoles', ${require2faAllRoles}::boolean))` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "security.2fa_policy", meta: { require2faAllRoles } });
   revalidatePath("/einstellungen/sicherheit");
   return { ok: require2faAllRoles ? "Zwei-Faktor-Anmeldung ist jetzt für das ganze Team Pflicht." : "Zwei-Faktor-Anmeldung ist nur für Inhaber:innen Pflicht." };
@@ -509,7 +515,7 @@ export async function saveGkvMasterDataAction(_: SettingsState, form: FormData):
   const ikError = ikProblem(v.ik, "IK der Praxis");
   if (ikError) return { error: ikError };
   if (v.legsCode && !isLegsCode(v.legsCode)) return { error: "Bitte einen Leistungserbringergruppenschlüssel aus der Liste wählen." };
-  await db.update(organizations).set(v).where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) => tx.update(organizations).set(v).where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.gkv_master_data", meta: { ik: !!v.ik, legsCode: v.legsCode, admission: !!v.gkvAdmissionDate } });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };
@@ -528,7 +534,7 @@ export async function applyGkvSuggestionAction(_: SettingsState, form: FormData)
   // atomar: nur in LEERE Felder schreiben (bedingte Updates statt Lesen-dann-Schreiben, PR #111 A3) – parallel
   // gespeicherte Werte aus Einstellungen → Praxis werden so nie überschrieben
   const orgId = auth.organization.id;
-  const values = await db.transaction(async (tx) => {
+  const values = await withOrg(orgId, async (tx) => {
     const out: { ik?: string; gkvAdmissionDate?: string } = {};
     if (ik && (await tx.update(organizations).set({ ik }).where(and(eq(organizations.id, orgId), isNull(organizations.ik))).returning({ id: organizations.id })).length) out.ik = ik;
     if (admission && (await tx.update(organizations).set({ gkvAdmissionDate: admission }).where(and(eq(organizations.id, orgId), isNull(organizations.gkvAdmissionDate))).returning({ id: organizations.id })).length) out.gkvAdmissionDate = admission;
@@ -551,7 +557,7 @@ export async function saveBankTaxAction(_: SettingsState, form: FormData): Promi
   if (v.iban && !isValidIban(v.iban)) return { error: "Die IBAN ist ungültig (Prüfziffer oder Länge stimmt nicht)." };
   if (v.bic && !isValidBic(v.bic)) return { error: "Die BIC ist ungültig (8 oder 11 Zeichen, z. B. COBADEFFXXX)." };
   const values = { ...v, iban: v.iban ? normalizeIban(v.iban) : null, bic: v.bic ? normalizeBic(v.bic) : null };
-  await db.update(organizations).set(values).where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) => tx.update(organizations).set(values).where(eq(organizations.id, auth.organization.id)));
   // nur, WAS geändert wurde – keine Kontodaten im Protokoll
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.bank_tax", meta: { iban: !!values.iban, bic: !!values.bic, bankName: !!values.bankName, accountHolder: !!values.accountHolder, taxNumber: !!values.taxNumber, vatId: !!values.vatId } });
   revalidatePath("/einstellungen/praxis");
@@ -596,12 +602,13 @@ export async function saveDocumentsAction(_: SettingsState, form: FormData): Pro
         ? { channel: "custom", url: v.customUrl, ...(v.customLabel ? { label: v.customLabel } : {}) }
         : { channel: v.bookingChannel };
   const documents = { dueDays: v.dueDays, therapeuticDefault: v.therapeuticDefault === "on", qualification: v.qualification, whatsapp: v.whatsapp === "on", booking };
-  await db
-    .update(organizations)
-    .set({
-      settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb, 'websiteUrl', ${v.websiteUrl}::text)`,
-    })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({
+        settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('documents', ${JSON.stringify(documents)}::jsonb, 'websiteUrl', ${v.websiteUrl}::text)`,
+      })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.documents", meta: { dueDays: v.dueDays, therapeuticDefault: documents.therapeuticDefault, bookingChannel: v.bookingChannel, whatsapp: documents.whatsapp, qualification: !!v.qualification, website: !!v.websiteUrl } });
   revalidatePath("/einstellungen/praxis");
   return { ok: "Gespeichert." };

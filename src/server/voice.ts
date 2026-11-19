@@ -503,10 +503,11 @@ export async function setVoiceLive(auth: AuthContext, live: boolean) {
 export async function saveVoiceSettings(auth: AuthContext, input: { storeTranscripts: boolean }) {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
-  await db
-    .update(organizations)
-    .set({ settings: sql`jsonb_set(coalesce(${organizations.settings}, '{}'::jsonb), '{voice}', coalesce(${organizations.settings} -> 'voice', '{}'::jsonb) || ${JSON.stringify({ storeTranscripts: input.storeTranscripts })}::jsonb)` })
-    .where(eq(organizations.id, org));
+  await withOrg(org, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`jsonb_set(coalesce(${organizations.settings}, '{}'::jsonb), '{voice}', coalesce(${organizations.settings} -> 'voice', '{}'::jsonb) || ${JSON.stringify({ storeTranscripts: input.storeTranscripts })}::jsonb)` })
+      .where(eq(organizations.id, org)));
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.voice", meta: { storeTranscripts: input.storeTranscripts } });
 }
 

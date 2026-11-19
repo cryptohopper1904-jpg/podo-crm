@@ -21,16 +21,17 @@ const perMinute = createRateLimiter({ windowMs: 60_000, max: 6, maxKeys: 5000 })
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export async function loadOcrSettings(organizationId: string): Promise<OcrSettings> {
-  // organizations hat keine RLS → nur über die Praxis-ID aus der Sitzung lesen
+  // organizations: RLS nur im Praxis-Kontext, Migration 0069 → nur über die Praxis-ID aus der Sitzung lesen
   const [o] = await db.select({ settings: organizations.settings }).from(organizations).where(eq(organizations.id, organizationId));
   return parseOcrSettings((o?.settings as Record<string, unknown> | undefined)?.ocr);
 }
 
 async function storeOcrSettings(organizationId: string, s: OcrSettings) {
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('ocr', ${JSON.stringify(s)}::jsonb)` })
-    .where(eq(organizations.id, organizationId));
+  await withOrg(organizationId, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('ocr', ${JSON.stringify(s)}::jsonb)` })
+      .where(eq(organizations.id, organizationId)));
 }
 
 /** Für das Verordnungsformular: darf die Schaltfläche „Auslesen“ erscheinen? */

@@ -40,10 +40,11 @@ export async function saveTripSettings(auth: AuthContext, input: TripSettings) {
   assertCan(auth, "settings.manage");
   const org = auth.organization.id;
   // atomar zusammenführen (||): andere Einstellungen bleiben unverändert, auch bei gleichzeitigem Speichern (AppSec)
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ trips: input })}::jsonb` })
-    .where(eq(organizations.id, org));
+  await withOrg(org, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify({ trips: input })}::jsonb` })
+      .where(eq(organizations.id, org)));
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.trips", meta: { rateCents: input.rateCents, billing: input.billing, returnToStart: input.returnToStart } });
 }
 

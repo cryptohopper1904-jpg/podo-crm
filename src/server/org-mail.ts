@@ -1,6 +1,6 @@
 import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, withOrg } from "@/db";
 import { memberships, organizations, users } from "@/db/schema";
 import { MailNotConfiguredError, type MailPort } from "@/integrations/mail/mail";
 import { audit } from "@/lib/audit";
@@ -102,18 +102,19 @@ async function claimAccountantMail(organizationId: string, kind: AccountantMailK
   // dann nicht drosseln, sonst hielte die Steuerberatung den veralteten Stand für aktuell (AppSec I-1)
   const other: AccountantMailKind = kind === "deletion_request" ? "deletion_withdrawn" : "deletion_request";
   const prev = sql`(case when jsonb_typeof(${organizations.settings}->'accountantMailAt') = 'object' then ${organizations.settings}->'accountantMailAt' else '{}'::jsonb end)`;
-  const rows = await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('accountantMailAt', ${prev} || jsonb_build_object(${kind}::text, ${now.toISOString()}::text))` })
-    .where(
-      and(
-        eq(organizations.id, organizationId),
-        sql`(case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end
-          or case when coalesce(${prev}->>${other}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' and coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
-                  then (${prev}->>${other}::text)::timestamptz > (${prev}->>${kind}::text)::timestamptz else false end)`,
-      ),
-    )
-    .returning({ id: organizations.id });
+  const rows = await withOrg(organizationId, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('accountantMailAt', ${prev} || jsonb_build_object(${kind}::text, ${now.toISOString()}::text))` })
+      .where(
+        and(
+          eq(organizations.id, organizationId),
+          sql`(case when coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' then (${prev}->>${kind}::text)::timestamptz <= ${cutoff}::timestamptz else true end
+            or case when coalesce(${prev}->>${other}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' and coalesce(${prev}->>${kind}::text, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+                    then (${prev}->>${other}::text)::timestamptz > (${prev}->>${kind}::text)::timestamptz else false end)`,
+        ),
+      )
+      .returning({ id: organizations.id }));
   return rows.length > 0;
 }
 

@@ -7,7 +7,7 @@
  * Gleiche Anfragen werden 10 min im Prozessspeicher gehalten.
  */
 import { eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, withOrg } from "@/db";
 import { organizations } from "@/db/schema";
 import { guardedFetch } from "@/integrations/net-guard";
 import {
@@ -159,10 +159,11 @@ export async function practiceBias(orgId: string, near: string | null, now = Dat
       if (geo?.key === key && geo.failedAt && now - geo.failedAt < GEO_RETRY_MS) return near ? geocodePlace(near, now) : null;
       const found = (await geocodePlace(text, now)) ?? (await geocodePlace(place, now));
       const next: GeoSetting = found ? { key, lat: found.lat, lon: found.lon } : { key, failedAt: now };
-      await db
-        .update(organizations)
-        .set({ settings: sql`${organizations.settings} || ${JSON.stringify({ geo: next })}::jsonb` })
-        .where(eq(organizations.id, orgId));
+      await withOrg(orgId, (tx) =>
+        tx
+          .update(organizations)
+          .set({ settings: sql`${organizations.settings} || ${JSON.stringify({ geo: next })}::jsonb` })
+          .where(eq(organizations.id, orgId)));
       if (found) return found;
     }
   } catch (e) {
