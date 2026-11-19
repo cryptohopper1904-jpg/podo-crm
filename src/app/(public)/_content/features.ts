@@ -1,7 +1,7 @@
 /**
  * Funktionsbeschreibung für die Website – nur, was laut docs/STATUS.md tatsächlich umgesetzt ist.
  * status: "live" = nutzbar; "test" = eingebaut, externe Anbindung im Testmodus (Vertrag/AVV nötig);
- * "planned" = noch nicht verfügbar (ehrlich gekennzeichnet).
+ * "planned" = in Vorbereitung, noch nicht nutzbar (ehrlich gekennzeichnet).
  */
 export type FeatureStatus = "live" | "test" | "planned";
 
@@ -36,6 +36,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Nagelspangen-Episoden mit Pflichtfoto-Assistent (fehlendes Foto nur mit Begründung)" },
       { text: "Unveränderbare Einträge (§ 630f BGB), Korrekturen als Nachtrag, Gegenzeichnung für Azubis" },
       { text: "Strukturierte Anamnese mit IWGDF-Risikoklasse, Online-Anamnese per Einmal-Link" },
+      { text: "Übergabe-Modus: iPad zum Ausfüllen der Anamnese an die Patient:in geben – die übrigen Praxisdaten bleiben gesperrt, zurück nur mit PIN oder Passwort" },
       { text: "Sprachbericht: Diktat wird transkribiert und in Felder sortiert", status: "test" },
     ],
   },
@@ -56,13 +57,21 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
   },
   {
     id: "verordnungen",
-    title: "Verordnungen (GKV)",
-    lead: "Fristen, Frequenz und Einheiten im Griff – bis zur Abrechnungsreife.",
+    title: "GKV-Abrechnung & Verordnungen",
+    lead: "Von der Verordnungsprüfung bis zum Abrechnungslauf – mit Quellenangabe zu jeder Regel und Hinweisen statt Rätselraten.",
     items: [
-      { text: "Erfassung mit Positionen und Foto der Papierverordnung" },
-      { text: "Ampeln für Behandlungsbeginn und Fristen, verbrauchte Einheiten, Zuzahlung" },
+      { text: "Verordnungsprüfung nach Anlage 3 zum Podologie-Vertrag: Pflichtangaben, Fristen, Frequenz, Höchstmengen und Positionsnummern" },
+      { text: "Ampeln für Behandlungsbeginn und Unterbrechung, verbrauchte Einheiten, Zuzahlung und Zuzahlungsbefreiung" },
+      { text: "Unterschrift der versicherten Person je Behandlung am Tablet – oder bewusster Vermerk „Unterschrift auf der Papier-Verordnung“" },
+      { text: "Leistungsnachweis als PDF mit allen Behandlungen und Unterschriften einer Verordnung" },
+      { text: "Zuzahlungsquittung mit eigener Belegnummer und Buchung in der Kasse" },
+      { text: "Therapiebericht als PDF und Hinweis „Folgeverordnung anfordern“ mit Vorlage für die Arztpraxis" },
+      { text: "Kennzeichen der Verordnungsart (03/04), Verordnungsbesonderheit und Genehmigung je Verordnung" },
+      { text: "Absetzungen und Retaxen erfassen und bis zur Erledigung verfolgen, Korrektur und Neuabrechnung abgerechneter Verordnungen" },
       { text: "Abrechnungslauf mit Export für ein Abrechnungszentrum (die Übermittlung nach § 302 SGB V übernimmt der Partner)" },
-      { text: "Verordnung per Foto auslesen: jedes Feld wird angezeigt und erst nach Bestätigung übernommen", status: "test" },
+      { text: "Auswertung Kasse vs. privat und Belegliste als interne Übersicht für die Steuerberatung" },
+      { text: "Erfassung mit Foto der Papierverordnung; Verordnung per Foto auslesen – jedes Feld wird angezeigt und erst nach Bestätigung übernommen", status: "test" },
+      { text: "Direktabrechnung nach § 302 SGB V: Prüflauf und Testdatei-Export vorhanden; Versand an die Datenannahmestellen (mit Zertifikat) noch nicht möglich", status: "planned" },
       { text: "KIM-Postfach und Import der eVerordnung vorbereitet – Echtbetrieb braucht die TI-Komponenten (SMC-B, Konnektor, KIM-Anbieter)", status: "test" },
     ],
   },
@@ -76,6 +85,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Mischzahlung, Gutscheine mit Restwert, PDF-Rechnungen" },
       { text: "SumUp-Kartenterminal und Zahlungslink direkt aus der Rechnung", status: "test" },
       { text: "Kasse: Kassenbuch, Zählprotokoll, lückenlos nummerierter Tagesabschluss (Z-Bon), DSFinV-K-Export" },
+      { text: "Zuzahlungsquittungen für Kassenpatient:innen laufen direkt in die Kasse" },
       { text: "TSE-Signatur für jeden Kassenvorgang über fiskaly", status: "test" },
       { text: "Belege an lexoffice übertragen", status: "test" },
     ],
@@ -103,7 +113,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Gerätebuch mit Wartungs-, Validierungs- und Prüffristen, Tages-Checkliste, Materialliste" },
       { text: "Arbeitszeiten und Abwesenheiten, Rollen: Inhaber:in, Podolog:in, Empfang, Azubi, Steuerberatung" },
       { text: "Auswertungen: Umsatz und Behandlungen je Monat, Fixkosten, Break-even" },
-      { text: "Import aus Excel-Vorlage und Doctolib-CSV mit Prüfbericht" },
+      { text: "Übernahme-Assistent für Exporte aus Pododesk und Tinana, Import aus Excel-Vorlage und Doctolib-CSV – jeweils mit Vorschau und Prüfbericht" },
     ],
   },
 ];
@@ -111,5 +121,5 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
 export const STATUS_LABEL: Record<FeatureStatus, string> = {
   live: "verfügbar",
   test: "Testmodus – Echtbetrieb mit eigenem Anbietervertrag",
-  planned: "geplant",
+  planned: "in Vorbereitung – noch nicht nutzbar",
 };

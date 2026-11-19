@@ -23,28 +23,69 @@ import {
   ShieldCheck,
   Sparkles,
   SprayCan,
+  TabletSmartphone,
+  Upload,
+  FileSignature,
   type LucideIcon,
 } from "lucide-react";
+import type { Metadata } from "next";
 import { Badge, LinkButton } from "@/components/ui";
 import { getAuth } from "@/lib/auth/session";
 import { HeroShots } from "./_content/hero-shots";
 import { ExplainerVideoPlayer } from "./_content/explainer-video-player";
 import { EXPLAINER_VIDEO_NOTE } from "./_content/explainer-video";
-import { JsonLd, softwareApplicationLd, videoObjectLd } from "./_content/json-ld";
+import { faqLd, JsonLd, organizationLd, softwareApplicationLd, videoObjectLd } from "./_content/json-ld";
+import { FaqList } from "./_content/faq-list";
 import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
 import { DemoDataNote, ScreenshotFrame, ShotImage } from "./_content/screenshot-frame";
 import { SHOTS, type Screenshot } from "./_content/screenshots";
 import { OG_IMAGE } from "./_content/site";
 
+const HOME_TITLE = "PodoHero – Praxissoftware für Podologie mit GKV-Abrechnung";
 const HOME_DESCRIPTION =
-  "Praxissoftware, gebaut nur für Podologie: Doku mit Fußschema und Fotos am iPad, Termine, Online-Buchung, Rechnungen, Sammelrechnung, Kasse, Verordnungen, Hygiene, Pflegeheime – gehostet in Deutschland. 30 Tage kostenlos testen.";
+  "Praxissoftware Podologie: GKV-Verordnungen mit Prüfung und Leistungsnachweis, Terminplanung mit Online-Buchung, Kasse mit TSE-Anbindung, Doku am iPad – gehostet in Deutschland. 30 Tage kostenlos testen.";
 
-export const metadata = {
-  title: { absolute: "PodoHero – Praxissoftware für Podologie" },
+export const metadata: Metadata = {
+  title: { absolute: HOME_TITLE },
   description: HOME_DESCRIPTION,
   alternates: { canonical: "/" },
-  openGraph: { title: "PodoHero – Praxissoftware für Podologie", description: HOME_DESCRIPTION, url: "/", type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
+  openGraph: { title: HOME_TITLE, description: HOME_DESCRIPTION, url: "/", type: "website", locale: "de_DE", siteName: "PodoHero", images: [OG_IMAGE] },
+  twitter: { card: "summary_large_image", title: HOME_TITLE, description: HOME_DESCRIPTION, images: [OG_IMAGE.url] },
 };
+
+/** GKV-Abrechnung: nur, was laut docs/GKV.md umgesetzt ist. § 302-Direktabrechnung ist ausdrücklich nur in Vorbereitung. */
+const GKV_POINTS = [
+  "Verordnungsprüfung: Pflichtangaben, Fristen, Frequenz, Höchstmengen und Positionsnummern – mit Quelle zu jeder Regel",
+  "Unterschrift der versicherten Person je Behandlung am Tablet oder Vermerk auf der Papier-Verordnung",
+  "Leistungsnachweis als PDF, Therapiebericht und Vorlage zur Anforderung der Folgeverordnung",
+  "Zuzahlungsquittung mit eigener Belegnummer, direkt in der Kasse gebucht",
+  "Kennzeichen der Verordnungsart, Absetzungen und Retaxen, Korrektur abgerechneter Verordnungen",
+  "Abrechnungslauf mit Export für Ihr Abrechnungszentrum, Auswertung Kasse vs. privat und Belegliste",
+] as const;
+
+/** Kurze FAQ (sichtbar + FAQPage-JSON-LD) – Antworten müssen mit /funktionen, /sicherheit und docs/ übereinstimmen. */
+const HOME_FAQ = [
+  [
+    "Kann ich mit PodoHero gesetzliche Krankenkassen abrechnen?",
+    "Ja, über ein Abrechnungszentrum: PodoHero prüft die Verordnungen, sammelt Unterschriften und Leistungsnachweise und erstellt einen Abrechnungslauf als Export für Ihr Abrechnungszentrum. Die Übermittlung an die Kassen nach § 302 SGB V übernimmt der Partner.",
+  ],
+  [
+    "Gibt es eine Direktabrechnung nach § 302 SGB V?",
+    "Sie ist in Vorbereitung. Heute erzeugt PodoHero einen Prüflauf und eine Testdatei; der Versand an die Datenannahmestellen der Kassen ist noch nicht möglich, weil Verschlüsselung und Zertifikat fehlen. Bis dahin rechnen Sie über ein Abrechnungszentrum ab.",
+  ],
+  [
+    "Hat die Kasse eine TSE?",
+    "PodoHero signiert Kassenvorgänge (Bar, Karte, Gutschein) über die TSE-Anbindung an fiskaly. Für den Echtbetrieb brauchen Sie einen eigenen Vertrag mit fiskaly; bis dahin läuft die Anbindung im Testmodus. Kassenbuch, Z-Bon und DSFinV-K-Export sind eingebaut.",
+  ],
+  [
+    "Wo liegen die Gesundheitsdaten meiner Patient:innen?",
+    "Die PodoHero-Cloud läuft bei Hetzner in Deutschland. Fotos, Dokumente und Unterschriften werden mit einem eigenen Schlüssel je Praxis verschlüsselt, die Praxen sind in Anwendung und Datenbank voneinander getrennt. Ihre Daten trainieren keine KI-Modelle.",
+  ],
+  [
+    "Kann ich meine Daten aus Pododesk übernehmen?",
+    "Ja, für die Inhalte des Pododesk-Gesamtexports: Patient:innen, private Leistungen und Termine übernimmt der Übernahme-Assistent mit Vorschau. Behandlungsdokumentation, Verordnungen und Rechnungen sind nicht in diesem Export enthalten.",
+  ],
+] as const;
 
 /** Live-Beispiele: echte Screens mit Demodaten, verlinkt auf die passende Funktion */
 const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: string }[] = [
@@ -84,6 +125,7 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
       { icon: PhoneCall, title: "KI-Telefonassistent", text: "Nimmt Anrufe an, nennt freie Zeiten, notiert Termin- und Rückrufwünsche.", href: "/funktionen#kommunikation", test: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
       { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
+      { icon: TabletSmartphone, title: "iPad-Übergabe", text: "Patient:innen füllen die Anamnese selbst am iPad aus – die übrigen Praxisdaten bleiben gesperrt.", href: "/funktionen#doku" },
     ],
   },
   {
@@ -91,7 +133,8 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
     items: [
       { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine; Kartenzahlung über SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen", test: true },
       { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export; TSE-Signatur über fiskaly (Testmodus)", href: "/funktionen#rechnungen", test: true },
-      { icon: ClipboardList, title: "GKV-Verordnungen", text: "Fristen-Ampel, Einheiten, Export ans Abrechnungszentrum, KIM vorbereitet.", href: "/funktionen#verordnungen" },
+      { icon: ClipboardList, title: "GKV-Abrechnung", text: "Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis, Abrechnungslauf fürs Abrechnungszentrum.", href: "/funktionen#verordnungen" },
+      { icon: FileSignature, title: "Zuzahlung & Retaxen", text: "Zuzahlungsquittung mit Kassenbuchung, Absetzungen verfolgen, Korrektur und Neuabrechnung.", href: "/funktionen#verordnungen" },
     ],
   },
   {
@@ -99,7 +142,8 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
     items: [
       { icon: SprayCan, title: "Hygiene & Gerätebuch", text: "Sterilgut-Chargen mit Rückverfolgung, Prüffristen, Tages-Checkliste.", href: "/funktionen#praxis" },
       { icon: Building2, title: "Pflegeheim-Modus", text: "Besuchstag mit Schnell-Doku und Sammelrechnung je Monat.", href: "/funktionen#praxis" },
-      { icon: ChartColumn, title: "Auswertung & Break-even", text: "Umsatz, Behandlungen und Fixkosten – wann sich der Monat trägt.", href: "/funktionen#praxis" },
+      { icon: ChartColumn, title: "Auswertung & Break-even", text: "Umsatz, Behandlungen, Kasse vs. privat und Fixkosten – wann sich der Monat trägt.", href: "/funktionen#praxis" },
+      { icon: Upload, title: "Übernahme aus Pododesk", text: "Patient:innen, Leistungen und Termine aus dem Gesamtexport – auch aus Tinana, Excel und Doctolib-CSV.", href: "/wechseln" },
     ],
   },
 ];
@@ -131,7 +175,8 @@ const COMPARISON: { topic: string; podo: Cell }[] = [
   { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true },
   { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true },
   { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true },
-  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export)" },
+  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export); Direktabrechnung in Vorbereitung (bisher nur Testdatei-Export)" },
+  { topic: "Unterschrift je Behandlung, Leistungsnachweis, Zuzahlungsquittung", podo: true },
   { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten" },
   { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)" },
 ];
@@ -163,7 +208,7 @@ export default async function Landing() {
 
   return (
     <>
-      <JsonLd data={softwareApplicationLd()} />
+      <JsonLd data={[softwareApplicationLd(), organizationLd(), faqLd(HOME_FAQ)]} />
       {/* Hero */}
       <section aria-labelledby="hero-title" className="relative overflow-hidden">
         <div className="mx-auto grid grid-cols-1 max-w-6xl items-center gap-10 px-4 pb-12 pt-12 sm:px-6 md:pt-16 lg:grid-cols-[1fr_1.05fr] lg:gap-8 lg:pb-16">
@@ -257,6 +302,30 @@ export default async function Landing() {
         </div>
       </section>
 
+      {/* GKV-Abrechnung */}
+      <section aria-labelledby="gkv" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
+        <div className="grid grid-cols-1 gap-8 rounded-[24px] border border-border bg-surface p-6 sm:p-10 lg:grid-cols-[1fr_1.2fr]">
+          <div>
+            <Badge tone="primary"><ClipboardList size={14} aria-hidden className="mr-1" /> Für Kassenpraxen</Badge>
+            <h2 id="gkv" className="mt-4 font-display text-3xl font-semibold tracking-tight">Podologie-Software mit GKV-Abrechnung</h2>
+            <p className="mt-3 text-muted">
+              Von der Heilmittelverordnung bis zum Abrechnungslauf: PodoHero prüft jede Verordnung gegen die Vorgaben des Podologie-Vertrags und
+              meldet, was vor der Abrechnung fehlt. Abgerechnet wird über Ihr Abrechnungszentrum.
+            </p>
+            <p className="mt-3 rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">
+              <span className="font-semibold text-text">In Vorbereitung:</span> Direktabrechnung nach § 302 SGB V. Prüflauf und
+              Testdatei-Export sind eingebaut; ein Versand an die Kassen ist noch nicht möglich.
+            </p>
+            <LinkButton href="/funktionen#verordnungen" variant="secondary" className="mt-6">GKV-Funktionen im Detail</LinkButton>
+          </div>
+          <ul className="grid content-start gap-3">
+            {GKV_POINTS.map((t) => (
+              <li key={t} className="flex gap-2.5 text-[15px]"><Check size={18} aria-hidden className="mt-0.5 shrink-0 text-primary" /> {t}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
       {/* Live-Beispiele */}
       <section aria-labelledby="live" className="mx-auto max-w-6xl px-4 pt-16 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
@@ -344,8 +413,8 @@ export default async function Landing() {
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
           <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Wo PodoHero den Schwerpunkt setzt</h2>
           <p className="mt-2 max-w-3xl text-muted">
-            PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung und Selbstzahler. Bei GKV-Abrechnung und Telematik gehen wir bewusst
-            einen anderen Weg: Abrechnung über ein Abrechnungszentrum per Export, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
+            PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung und Selbstzahler – und bereitet GKV-Verordnungen bis zur Abrechnung
+            vor. Abgerechnet wird über ein Abrechnungszentrum per Export; die Direktabrechnung nach § 302 SGB V ist in Vorbereitung, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
             Sie unter <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
           <ScrollArea label="Schwerpunkte von PodoHero" className="mt-8 rounded-[var(--radius-card)] border border-border bg-surface">
@@ -414,6 +483,11 @@ export default async function Landing() {
           ))}
         </div>
       </section>
+
+      {/* FAQ */}
+      <div className="mx-auto max-w-3xl px-4 pb-16 sm:px-6">
+        <FaqList items={HOME_FAQ} title="Häufige Fragen zu GKV-Abrechnung, Kasse und Datenschutz" />
+      </div>
 
       {/* Abschluss */}
       <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CalendarSync, Check, FileSpreadsheet, ShieldCheck, Upload } from "lucide-react";
+import { ArrowRightLeft, CalendarSync, Check, FileSpreadsheet, ShieldCheck, Upload } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
 import { Breadcrumbs, FaqList } from "../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../_content/json-ld";
@@ -11,11 +11,16 @@ import { SHOTS } from "../_content/screenshots";
 export const metadata = pageMeta({
   title: "Wechseln zu PodoHero",
   description:
-    "Von Excel, Doctolib oder einer anderen Praxissoftware zu PodoHero wechseln: Import mit Prüfbericht, Doctolib-CSV und Kalender-Abo, Checkliste und Antworten auf häufige Fragen.",
+    "Von Pododesk, Tinana, Excel oder Doctolib zu PodoHero wechseln: Übernahme-Assistent mit Vorschau, Import mit Prüfbericht, Doctolib-Kalender-Abo, Checkliste und Antworten auf häufige Fragen.",
   path: "/wechseln",
 });
 
 const PATHS = [
+  {
+    icon: ArrowRightLeft,
+    title: "Übernahme aus Pododesk und Tinana",
+    text: "Der Übernahme-Assistent liest den Export Ihrer bisherigen Software und zeigt vor dem Speichern eine Vorschau. Aus dem Pododesk-Gesamtexport kommen Patient:innen, private Leistungen und Termine; aus dem Tinana-Datenexport zusätzlich Verordnungen und Rechnungs-PDFs. Was ein Export nicht enthält, zeigt der Assistent vorher an.",
+  },
   {
     icon: FileSpreadsheet,
     title: "Excel-Import mit Prüfbericht",
@@ -55,7 +60,7 @@ const CHECKLIST = [
 
 const FAQ = [
   ["Was kostet der Wechsel?", "Der Import ist in allen Tarifen enthalten (im kostenlosen Tarif bis 20 Patient:innen). Sie können 30 Tage kostenlos testen; danach wählen Sie einen Tarif oder nutzen den kostenlosen Tarif (1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit, eingeschränkter Funktionsumfang – siehe Preise)."],
-  ["Kann ich Daten aus jeder Praxissoftware importieren?", "Direkt eingelesen werden die Excel-Vorlage „Podologie Rechnungsmanager“ und die Doctolib-Patientenliste (CSV). Aus anderen Programmen exportieren Sie die Patientenliste und übertragen sie in die Excel-Vorlage. Welche Exporte Ihr bisheriges Programm anbietet, erfahren Sie beim jeweiligen Anbieter."],
+  ["Kann ich Daten aus jeder Praxissoftware importieren?", "Direkt eingelesen werden der Gesamtexport aus Pododesk, der Datenexport aus Tinana, die Excel-Vorlage „Podologie Rechnungsmanager“ und die Doctolib-Patientenliste (CSV). Aus anderen Programmen exportieren Sie die Patientenliste und übertragen sie in die Excel-Vorlage. Welche Exporte Ihr bisheriges Programm anbietet, erfahren Sie beim jeweiligen Anbieter."],
   ["Werden Behandlungsdokumentationen und Fotos übernommen?", "Ein automatischer Import alter Behandlungsdokumentation ist nicht vorgesehen. Bewahren Sie die alte Dokumentation für die gesetzliche Frist auf – lesend im alten System oder als vollständiger Export."],
   ["Was passiert mit Doctolib?", "Sie können Doctolib parallel weiter nutzen: Termine kommen über das Kalender-Abo zu PodoHero, Patientenlisten per CSV. Zusätzlich bietet PodoHero eine eigene Online-Buchung und ein Patientenportal."],
   ["Kann ich PodoHero wieder verlassen?", "Ja. Kostenpflichtige Tarife sind monatlich kündbar; für den kostenlosen Tarif gilt die Frist laut AGB. Ihre Daten können Sie jederzeit vollständig exportieren."],
@@ -73,7 +78,7 @@ export default function SwitchPage() {
           <Badge tone="primary">Gebaut nur für Podologie</Badge>
           <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">Wechseln zu PodoHero</h1>
           <p className="mt-4 text-lg text-muted">
-            Von Excel-Listen, Doctolib oder einer anderen Praxissoftware: Importieren Sie Ihre Patient:innen mit Prüfbericht, übernehmen Sie
+            Von Pododesk, Tinana, Excel-Listen oder Doctolib: Übernehmen Sie Ihre Patient:innen mit Vorschau und Prüfbericht, übernehmen Sie
             Doctolib-Termine per Kalender-Abo über einen Synchronisationsdienst (Testmodus) und starten Sie unverbindlich.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">

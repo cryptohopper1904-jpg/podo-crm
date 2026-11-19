@@ -22,7 +22,27 @@ export function softwareApplicationLd() {
     url: absoluteUrl("/"),
     image: absoluteUrl(OG_IMAGE.url),
     description:
-      "Praxissoftware nur für Podologie: Patientenakte, Termine, Behandlungsdoku mit Fußschema und Fotos am iPad, Rechnungen, Sammelrechnung, Kasse, Verordnungen, Hygiene, Pflegeheime und Touren – gehostet in Deutschland.",
+      "Praxissoftware nur für Podologie: Patientenakte, Terminplanung mit Online-Buchung, Behandlungsdoku mit Fußschema und Fotos am iPad, GKV-Abrechnung über ein Abrechnungszentrum, Rechnungen, Kasse mit TSE-Anbindung, Hygiene, Pflegeheime und Touren – gehostet in Deutschland.",
+    featureList: [
+      "GKV-Verordnungen mit Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis und Abrechnungslauf",
+      "Zuzahlungsquittung mit Kassenbuchung, Therapiebericht und Folgeverordnung",
+      "Terminplanung, Online-Buchung, Patientenportal und Warteliste",
+      "Kasse mit Z-Bon, DSFinV-K-Export und TSE-Anbindung",
+      "Behandlungsdoku mit Fußschema in 2D und 3D",
+      "Hygiene, Sterilgut-Chargen und Gerätebuch",
+    ],
+    publisher: { "@type": "Organization", name: SITE_NAME, url: absoluteUrl("/") },
+  };
+}
+
+/** Organisation hinter der Website – bewusst nur Name, URL und Logo (keine Anschrift/Kontaktdaten, solange das Impressum Entwurf ist). */
+export function organizationLd() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: SITE_NAME,
+    url: absoluteUrl("/"),
+    logo: absoluteUrl("/icons/icon-512.png"),
   };
 }
 
