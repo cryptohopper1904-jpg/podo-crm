@@ -61,7 +61,7 @@ export default async function DeductionsPage(props: PageProps<"/verordnungen/abs
         {rows.length === 0 ? (
           <Empty title="Keine Absetzungen">Absetzungen der Kassen werden an der abgerechneten Verordnung in der Akte erfasst.</Empty>
         ) : (
-          <Table>
+          <Table label="Absetzungen" minWidth={960}>
             <thead>
               <tr><th>Datum</th><th>Person · Verordnung</th><th>Betrag</th><th>Code · Grund</th><th>Status</th>{canEdit ? <th>Bearbeiten</th> : <th>Notiz</th>}</tr>
             </thead>
@@ -73,8 +73,8 @@ export default async function DeductionsPage(props: PageProps<"/verordnungen/abs
                     <Link href={`/kunden/${r.patientId}/verordnungen`} className="font-semibold text-primary">{r.patient} (#{r.patientNumber})</Link>
                     <div className="text-xs text-muted">VO vom {dateDe(r.issuedAt)}{r.prescriptionStatus === "correction_needed" ? " · Korrektur nötig" : ""}</div>
                   </td>
-                  <td className="tabular-nums">{money(r.amountCents)}</td>
-                  <td>
+                  <td className="whitespace-nowrap tabular-nums">{money(r.amountCents)}</td>
+                  <td className="wrap-break-word">
                     {r.reasonCode ? <span className="font-semibold">{r.reasonCode} · </span> : null}{r.reason}
                     {r.letterRef || r.letterDate ? <div className="text-xs text-muted">Schreiben {r.letterRef ?? ""}{r.letterDate ? ` vom ${dateDe(r.letterDate)}` : ""}</div> : null}
                   </td>

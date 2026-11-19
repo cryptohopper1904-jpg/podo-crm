@@ -2,6 +2,9 @@
  * Testdaten für echte DB-Tests (nur mit TEST_DATABASE_URL, erfundene Daten).
  * Legt Praxis, Benutzer, Personen und ausgestellte Rechnungen direkt per SQL an (App-Rolle, RLS aktiv).
  */
+import path from "node:path";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Pool, type PoolClient } from "pg";
 import { vi } from "vitest";
 import { addDaysIso } from "@/lib/calendar-grid";
@@ -27,6 +30,65 @@ BEGIN
     EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, public, pg_temp', fn);
   END LOOP;
 END $$`;
+
+/** Owner-Verbindung zur gemeinsamen Test-DB (TEST_OWNER_DATABASE_URL, sonst podo_owner auf TEST_DATABASE_URL) */
+export const testOwnerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
+
+/**
+ * Migrationstest in einer EIGENEN, frisch migrierten Datenbank (Muster aus gkv-grundlagen.db.test.ts): legt
+ * `podo_mig_<zufall>` an, spielt alle Migrationen ein und ruft `fn` mit einer Owner-Verbindung (ohne Praxis-Kontext)
+ * dorthin auf. So spielt kein Test eine Migration erneut auf der gemeinsamen Test-DB ein – parallele Testdateien
+ * laufen nicht in Sperren/Deadlocks (40P01) der DDL und sehen nie eine ältere Fassung ersetzter Funktionen.
+ * Ohne Recht CREATE DATABASE `false` (Test überspringen). Danach DROP DATABASE ohne FORCE (FORCE beendete eine noch
+ * schließende Sitzung → „uncaught“ 57P01), bei 55006 kurz warten; gelingt es endgültig nicht, Warnung mit dem Namen.
+ */
+export async function withMigratedDatabase(fn: (c: PoolClient) => Promise<void>): Promise<boolean> {
+  const name = `podo_mig_${Math.random().toString(36).slice(2, 10)}`;
+  const admin = new Pool({ connectionString: testOwnerUrl(), max: 1 });
+  admin.on("error", () => undefined);
+  let created = false;
+  try {
+    const can = await admin.query("select rolsuper or rolcreatedb as ok from pg_roles where rolname = current_user");
+    if (!can.rows[0]?.ok) return false;
+    await admin.query(`create database ${name}`);
+    created = true;
+    const url = new URL(testOwnerUrl());
+    url.pathname = `/${name}`;
+    const pool = new Pool({ connectionString: url.toString(), max: 1 });
+    // Verbindungsfehler beim Abbau (Server beendet die Sitzung) nicht als „uncaught“ melden – auch je Client
+    pool.on("error", () => undefined);
+    pool.on("connect", (c) => c.on("error", () => undefined));
+    try {
+      await pool.query("create extension if not exists pgcrypto");
+      await pool.query("create extension if not exists pg_trgm");
+      await migrate(drizzle(pool), { migrationsFolder: path.join(__dirname, "../../../drizzle") });
+      const c = await pool.connect();
+      try {
+        await fn(c);
+      } finally {
+        c.release();
+      }
+    } finally {
+      await pool.end();
+    }
+    return true;
+  } finally {
+    let dropError: unknown = null;
+    for (let i = 0; created && i < 20; i++) {
+      try {
+        await admin.query(`drop database if exists ${name}`);
+        dropError = null;
+        break;
+      } catch (e) {
+        dropError = e;
+        if ((e as { code?: string }).code !== "55006") break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+    if (dropError) console.warn(`Test-Datenbank ${name} konnte nicht gelöscht werden (bitte von Hand: DROP DATABASE ${name}):`, (dropError as Error).message);
+    await admin.end();
+  }
+}
 
 /**
  * Altbestand nachstellen, den heutige Trigger nicht mehr zulassen (z. B. Support-Freigabe ohne Person): als Owner mit

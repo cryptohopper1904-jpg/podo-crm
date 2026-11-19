@@ -6,6 +6,7 @@ import { users } from "@/db/schema";
 import { getAuthState, getSession } from "@/lib/auth/session";
 import { TWO_FACTOR_SETUP_PATH } from "@/lib/auth/two-factor";
 import { LoginForm } from "./login-form";
+import { TRIAL_REQUEST_LABEL, signupOpen, trialRequestHref } from "@/app/(public)/_content/site";
 
 export const metadata = { title: "Anmelden" };
 
@@ -33,11 +34,15 @@ export default async function LoginPage(props: PageProps<"/login">) {
         <p role="status" className="mt-4 rounded-xl bg-primary-soft p-3 text-sm">Dein Passwort wurde geändert und alle Sitzungen wurden beendet. Bitte melde dich neu an.</p>
       ) : null}
       <LoginForm />
-      {process.env.ALLOW_SIGNUP === "true" ? (
+      {signupOpen() ? (
         <p className="mt-6 text-center text-sm text-muted">
           Neue Praxis? <Link href="/einrichtung" className="font-semibold text-primary">Kostenlos registrieren</Link>
         </p>
-      ) : null}
+      ) : (
+        <p className="mt-6 text-center text-sm text-muted">
+          Noch kein Zugang? <Link href={trialRequestHref()} className="font-semibold text-primary">{TRIAL_REQUEST_LABEL}</Link>
+        </p>
+      )}
     </>
   );
 }

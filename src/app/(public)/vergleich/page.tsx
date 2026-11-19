@@ -5,6 +5,7 @@ import { COMPARISON_STAND, COMPETITORS, PODO } from "../_content/competitors";
 import { Breadcrumbs, FaqList } from "../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../_content/json-ld";
 import { pageMeta } from "../_content/site";
+import { TrialButton, TrialText } from "../_content/trial-cta";
 
 
 export const metadata = pageMeta({
@@ -26,7 +27,7 @@ const CRITERIA = [
 const FAQ = [
   ["Ist dieser Vergleich neutral?", "Er stammt von PodoHero und ist daher nicht unabhängig. Wir vergleichen nur nachprüfbare Eigenschaften, nennen zu jeder Angabe über andere Anbieter die Quelle auf deren Website und den Stand. Was dort nicht steht, kennzeichnen wir als „nicht angegeben“ – das heißt nicht, dass es die Funktion nicht gibt."],
   ["Warum sind nicht alle Programme aufgeführt?", "Wir nehmen nur Anbieter auf, deren Website Podologie ausdrücklich als Zielgruppe nennt und deren Angaben wir öffentlich prüfen konnten. Weitere Vergleiche folgen."],
-  ["Kann PodoHero direkt mit den Krankenkassen abrechnen?", "Nein. PodoHero bereitet Verordnungen bis zur Abrechnungsreife vor und übergibt sie per Export an ein Abrechnungszentrum, das die Übermittlung nach § 302 SGB V übernimmt."],
+  ["Kann PodoHero direkt mit den Krankenkassen abrechnen?", "Nein. PodoHero bereitet Verordnungen bis zur Abrechnungsreife vor. Abrechnungsreife Verordnungen als Export im neutralen Format zur Weitergabe an Ihr Abrechnungszentrum – ob Ihr Zentrum das Format übernimmt, bitte vorab klären; eine feste Partneranbindung besteht noch nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum. Eine Direktabrechnung ist in Vorbereitung (bisher nur Testdatei-Export)."],
   ["Wie wechsle ich zu PodoHero?", "Patientendaten lassen sich aus einer Excel-Vorlage oder als Doctolib-CSV importieren; Doctolib-Termine können per Kalender-Abo übernommen werden. Details auf der Seite „Wechseln zu PodoHero“."],
 ] as const;
 
@@ -93,12 +94,12 @@ export default function ComparisonHub() {
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Selbst ausprobieren statt nur vergleichen</h2>
           <p className="mt-1">
-            30 Tage kostenlos, danach auf Wunsch im kostenlosen Tarif weiter (bis 20 Patient:innen, eingeschränkter Funktionsumfang,{" "}
+            <TrialText open="30 Tage kostenlos," closed="Testzugang auf Anfrage – wir schalten Praxen schrittweise frei. Nach der Testphase" /> auf Wunsch im kostenlosen Tarif weiter (bis 20 Patient:innen, eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>).
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+          <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
           <LinkButton href="/wechseln" variant="secondary" className="h-12 px-6 text-base">Wechsel planen</LinkButton>
         </div>
       </section>

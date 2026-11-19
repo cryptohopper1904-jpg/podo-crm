@@ -5,7 +5,8 @@ import { Menu } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkButton } from "@/components/ui";
-import { publicSiteMetadata } from "./_content/site";
+import { publicSiteMetadata, TRIAL_REQUEST_LABEL, trialRequestHref } from "./_content/site";
+import { trialOpen } from "./_content/trial-cta";
 
 /**
  * Öffentliche Website (ohne Anmeldung). Indexierung erst einschalten, wenn Impressum/AGB/AVV
@@ -45,7 +46,10 @@ const LEGAL = [
 /** Seitenabstand inkl. Safe-Area (iPhone quer: Kamera-Aussparung links/rechts, viewport-fit=cover) */
 const SAFE_X = "pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]";
 
-export default function PublicLayout({ children }: LayoutProps<"/">) {
+export default async function PublicLayout({ children }: LayoutProps<"/">) {
+  const open = await trialOpen();
+  const trialHref = open ? "/einrichtung" : trialRequestHref();
+  const trialLabel = open ? "Kostenlos testen" : TRIAL_REQUEST_LABEL;
   return (
     <div className="flex min-h-screen flex-col">
       <a href="#inhalt" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-surface focus:px-4 focus:py-2 focus:font-semibold">
@@ -66,7 +70,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
           <div className="ml-auto flex items-center gap-2">
             <ThemeToggle />
             <LinkButton href="/login" variant="ghost" className="max-sm:hidden">Anmelden</LinkButton>
-            <LinkButton href="/einrichtung" variant="accent" className="max-sm:hidden">Kostenlos testen</LinkButton>
+            <LinkButton href={trialHref} variant="accent" className="max-sm:hidden">{trialLabel}</LinkButton>
             {/* Mobiles Menü ohne JavaScript (details/summary ist per Tastatur bedienbar) */}
             <details className="group relative lg:hidden">
               <summary className="inline-flex size-11 cursor-pointer list-none items-center justify-center rounded-xl border border-border bg-surface [&::-webkit-details-marker]:hidden" aria-label="Menü">
@@ -79,7 +83,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
                 <Link href="/wechseln" className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">Wechseln zu PodoHero</Link>
                 <hr className="my-1 border-border" />
                 <Link href="/login" className="rounded-lg px-3 py-2.5 font-medium hover:bg-surface-2">Anmelden</Link>
-                <LinkButton href="/einrichtung" variant="accent">Kostenlos testen</LinkButton>
+                <LinkButton href={trialHref} variant="accent">{trialLabel}</LinkButton>
               </nav>
             </details>
           </div>
@@ -101,7 +105,7 @@ export default function PublicLayout({ children }: LayoutProps<"/">) {
             {NAV.map(([href, label]) => (
               <Link key={href} href={href} className="text-muted hover:text-text">{label}</Link>
             ))}
-            <Link href="/einrichtung" className="text-muted hover:text-text">Kostenlos testen</Link>
+            <Link href={trialHref} className="text-muted hover:text-text">{trialLabel}</Link>
             <Link href="/login" className="text-muted hover:text-text">Anmelden</Link>
           </nav>
           <nav aria-label="Ressourcen" className="flex flex-col gap-2 text-sm">

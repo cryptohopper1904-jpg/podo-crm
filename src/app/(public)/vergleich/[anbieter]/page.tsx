@@ -8,6 +8,7 @@ import { COMPARISON_RETRIEVED, COMPARISON_STAND, competitorBySlug, COMPETITORS, 
 import { Breadcrumbs, FaqList } from "../../_content/faq-list";
 import { breadcrumbLd, faqLd, JsonLd } from "../../_content/json-ld";
 import { pageMeta } from "../../_content/site";
+import { TrialButton, TrialText } from "../../_content/trial-cta";
 
 export const dynamicParams = false;
 
@@ -33,8 +34,8 @@ function sourceRefs(row: CompareRow) {
 function faqFor(c: Competitor) {
   return [
     [`Ist PodoHero eine Alternative zu ${c.name}?`, `Für Praxen, die eine Software ausschließlich für Podologie suchen und Wert auf Doku am iPad, Selbstzahler-Funktionen, Hygiene und Pflegeheime legen, kann PodoHero eine Alternative sein. Welche Software passt, hängt von Ihrer Praxis ab – vergleichen Sie die Angaben in der Tabelle und testen Sie selbst.`],
-    [`Wie kommen meine Daten aus ${c.name} zu PodoHero?`, "PodoHero importiert Patientenlisten aus einer Excel-Vorlage mit Prüfbericht vor dem Import sowie Patientenexporte aus Doctolib (CSV). Ob und in welchem Format Ihr bisheriges Programm Daten exportiert, erfragen Sie bitte beim jeweiligen Anbieter."],
-    ["Rechnet PodoHero direkt mit den Krankenkassen ab?", "Nein. Abrechnungsreife Verordnungen werden per Export an ein Abrechnungszentrum übergeben, das die Übermittlung nach § 302 SGB V übernimmt."],
+    [`Wie kommen meine Daten aus ${c.name} zu PodoHero?`, "PodoHero übernimmt Exporte aus Pododesk und Tinana mit Vorschau, importiert Patientenlisten aus einer Excel-Vorlage mit Prüfbericht vor dem Import sowie Patientenexporte aus Doctolib (CSV). Ob und in welchem Format Ihr bisheriges Programm Daten exportiert, erfragen Sie bitte beim jeweiligen Anbieter."],
+    ["Rechnet PodoHero direkt mit den Krankenkassen ab?", "Nein. Abrechnungsreife Verordnungen als Export im neutralen Format zur Weitergabe an Ihr Abrechnungszentrum – ob Ihr Zentrum das Format übernimmt, bitte vorab klären; eine feste Partneranbindung besteht noch nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum. Eine Direktabrechnung ist in Vorbereitung (bisher nur Testdatei-Export)."],
     ["Woher stammen die Angaben?", `Alle Angaben zu ${c.name} stammen von den öffentlich zugänglichen Seiten des Herstellers (Stand ${COMPARISON_STAND}) und sind in der Tabelle mit Quelle verlinkt. „Nicht angegeben“ bedeutet: Auf den genannten Seiten haben wir dazu keine Angabe gefunden.`],
   ] as const;
 }
@@ -119,14 +120,14 @@ export default async function CompetitorPage({ params }: PageProps<"/vergleich/[
 
       <section className="mt-12 flex flex-col items-start gap-4 rounded-[24px] bg-primary px-6 py-8 text-on-primary sm:px-10 md:flex-row md:items-center">
         <div className="flex-1">
-          <h2 className="font-display text-2xl font-semibold">PodoHero 30 Tage kostenlos testen</h2>
+          <h2 className="font-display text-2xl font-semibold"><TrialText open="PodoHero 30 Tage kostenlos testen" closed="PodoHero kennenlernen" /></h2>
           <p className="mt-1">
-            Keine Zahlungsdaten nötig, endet automatisch. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
+            <TrialText open="Keine Zahlungsdaten nötig, endet automatisch." closed="Testzugang auf Anfrage – wir schalten Praxen schrittweise frei." /> Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>).
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+          <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
           <LinkButton href="/wechseln" variant="secondary" className="h-12 px-6 text-base">So gelingt der Wechsel</LinkButton>
         </div>
       </section>

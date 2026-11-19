@@ -57,17 +57,17 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
         <Card>
           <CardTitle>GKV gesamt (Kassenanteil laut Läufen + ZZ-Quittungen)</CardTitle>
           <dl className="grid gap-2 text-sm">
-            <div className="flex justify-between gap-4"><dt className="text-muted">Heilmittelkosten laut Läufen (brutto)</dt><dd className="tabular-nums">{money(s.batches.remedyCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">− Zuzahlungen laut Läufen</dt><dd className="tabular-nums">{money(s.batches.copaymentCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">= Kassenanteil laut Läufen</dt><dd className="tabular-nums">{money(s.batches.insurerCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">Heilmittelkosten laut Läufen (brutto)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.batches.remedyCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">− Zuzahlungen laut Läufen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.batches.copaymentCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Kassenanteil laut Läufen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.batches.insurerCents)}</dd></div>
             {s.batches.replaced.count ? (
-              <div className="flex justify-between gap-4"><dt className="text-muted">− ersetzt durch Neuabrechnung ({s.batches.replaced.count} Verordnung(en), Kassenanteil der Erstabrechnung)</dt><dd className="tabular-nums">{money(s.batches.replaced.insurerCents)}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">− ersetzt durch Neuabrechnung ({s.batches.replaced.count} Verordnung(en), Kassenanteil der Erstabrechnung)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.batches.replaced.insurerCents)}</dd></div>
             ) : null}
-            <div className="flex justify-between gap-4 font-semibold"><dt>= Kassenanteil</dt><dd className="tabular-nums">{money(s.batches.insurerNetCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">+ Zuzahlungsquittungen (ZZ) im Zeitraum</dt><dd className="tabular-nums">{money(s.copayments.cents)}</dd></div>
-            <div className="flex justify-between gap-4 font-semibold"><dt>GKV gesamt</dt><dd className="tabular-nums">{money(gkvTotal)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">Anteil am Abrechnungsvolumen</dt><dd className="tabular-nums">{pct(gkvTotal, total)}</dd></div>
-            <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="tabular-nums">{money(s.payouts.cents)}</dd></div>
+            <div className="flex justify-between gap-4 font-semibold"><dt>= Kassenanteil</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.batches.insurerNetCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">+ Zuzahlungsquittungen (ZZ) im Zeitraum</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.copayments.cents)}</dd></div>
+            <div className="flex justify-between gap-4 font-semibold"><dt>GKV gesamt</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(gkvTotal)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">Anteil am Abrechnungsvolumen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{pct(gkvTotal, total)}</dd></div>
+            <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="min-w-0 text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
           </dl>
           <p className="mt-3 text-xs text-muted">
             Kassenanteil = Heilmittelkosten − Zuzahlungen der Abrechnungsläufe nach Erstellungstag (Forderung an die Kassen, nicht der Zahlungseingang).
@@ -80,11 +80,11 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
         <Card>
           <CardTitle>Absetzungen im Zeitraum</CardTitle>
           <dl className="grid gap-2 text-sm">
-            <div className="flex justify-between gap-4 font-semibold"><dt>Minderung: akzeptiert bzw. erledigt – Absetzung bleibt ({ds.reductionCount})</dt><dd className="tabular-nums">{money(ds.reductionCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">noch offen bzw. im Widerspruch ({ds.pendingCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.pendingCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-muted">erledigt – Widerspruch erfolgreich ({ds.reversedCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.reversedCents)}</dd></div>
+            <div className="flex justify-between gap-4 font-semibold"><dt>Minderung: akzeptiert bzw. erledigt – Absetzung bleibt ({ds.reductionCount})</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(ds.reductionCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">noch offen bzw. im Widerspruch ({ds.pendingCount}) – keine Minderung</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(ds.pendingCents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">erledigt – Widerspruch erfolgreich ({ds.reversedCount}) – keine Minderung</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(ds.reversedCents)}</dd></div>
             {ds.replacedCount ? (
-              <div className="flex justify-between gap-4"><dt className="text-muted">durch Neuabrechnung ersetzt ({ds.replacedCount}) – keine Minderung</dt><dd className="tabular-nums">{money(ds.replacedCents)}</dd></div>
+              <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">durch Neuabrechnung ersetzt ({ds.replacedCount}) – keine Minderung</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(ds.replacedCents)}</dd></div>
             ) : null}
           </dl>
           <p className="mt-3 text-xs text-muted">

@@ -79,7 +79,7 @@ export default async function DunningPage() {
       ) : (
         <DunningOverviewTable items={items} canWrite={auth.can("invoices.write")} />
       )}
-      <p className="mt-4 text-xs text-muted">Erstellte Schreiben öffnen Sie über „Letztes Schreiben“ oder auf der Rechnung (Drucken, E-Mail, Versandvermerk).</p>
+      <p className="mt-4 text-xs text-muted">Erstellte Schreiben öffnest du über „Letztes Schreiben“ oder auf der Rechnung (Drucken, E-Mail, Versandvermerk).</p>
     </div>
   );
 }

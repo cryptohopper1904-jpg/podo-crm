@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Check, Clock, FlaskConical } from "lucide-react";
 import { Badge, LinkButton } from "@/components/ui";
 import { FEATURE_GROUPS, STATUS_LABEL, type FeatureStatus } from "../_content/features";
@@ -5,11 +6,12 @@ import { breadcrumbLd, JsonLd } from "../_content/json-ld";
 import { DemoDataNote, ScreenshotFrame } from "../_content/screenshot-frame";
 import { FEATURE_SHOTS } from "../_content/screenshots";
 import { pageMeta } from "../_content/site";
+import { TrialButton } from "../_content/trial-cta";
 
 export const metadata = pageMeta({
-  title: "Funktionen mit Screenshots",
+  title: "Funktionen: Terminplanung, Kasse und GKV",
   description:
-    "Was PodoHero heute kann – mit echten Screenshots: Patientenakte, Doku mit Fußschema und 3D-Modell am iPad, Termine und Patientenportal, Verordnungen, Rechnungen und Kasse, Hygiene, Pflegeheime und Touren.",
+    "Praxissoftware für Podologie mit Screenshots: Terminplanung mit Online-Buchung, Kasse mit Z-Bon, GKV-Verordnungen mit Prüfung, Doku am iPad, Hygiene.",
   path: "/funktionen",
 });
 
@@ -24,10 +26,12 @@ export default function FeaturesPage() {
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
       <JsonLd data={breadcrumbLd([{ name: "Funktionen", path: "/funktionen" }])} />
       <header className="max-w-3xl">
-        <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Funktionen</h1>
+        <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Funktionen: Terminplanung, Kasse und GKV-Abrechnung für die Podologie</h1>
         <p className="mt-4 text-lg text-muted">
           Alles, was eine Podologie-Praxis im Alltag braucht – vom Behandlungsstuhl bis zur Abrechnung. Wir kennzeichnen ehrlich, was im
-          Testmodus läuft und was noch geplant ist.
+          Testmodus läuft und was noch in Vorbereitung ist. Häufige Fragen zur GKV-Abrechnung beantworten wir auf der{" "}
+          <Link href="/#faq" className="font-semibold text-primary hover:underline">Startseite</Link>, die Tarife stehen unter{" "}
+          <Link href="/preise" className="font-semibold text-primary hover:underline">Preise</Link>.
         </p>
         <ul className="mt-6 flex flex-wrap gap-2 text-sm" aria-label="Legende">
           <li><Badge tone="primary"><Check size={14} aria-hidden className="mr-1" /> {STATUS_LABEL.live}</Badge></li>
@@ -65,7 +69,7 @@ export default function FeaturesPage() {
                         <span>
                           {it.text}
                           {it.status && it.status !== "live" ? <span className="sr-only"> ({STATUS_LABEL[it.status]})</span> : null}
-                          {it.status === "planned" ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-muted" aria-hidden>geplant</span> : null}
+                          {it.status === "planned" ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-muted" aria-hidden>in Vorbereitung</span> : null}
                           {it.status === "test" ? <span className="ml-2 text-xs font-semibold uppercase tracking-wide text-info-soft-text" aria-hidden>Testmodus</span> : null}
                         </span>
                       </li>
@@ -95,13 +99,12 @@ export default function FeaturesPage() {
         <h2 className="font-display text-xl font-semibold">Was „Testmodus“ bedeutet</h2>
         <p className="mt-2 text-[15px] text-muted">
           Schnittstellen zu Diensten wie Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI sind fertig eingebaut, senden aber keine Daten, solange
-          kein Vertrag mit dem Anbieter hinterlegt ist. KI-Funktionen werden für Gesundheitsdaten erst freigeschaltet, wenn ein EU-Anbieter mit
-          Auftragsverarbeitungsvertrag und ohne Datenspeicherung bestätigt ist. KI-Ergebnisse sind Dokumentationshilfen, keine Diagnose.
+          kein Vertrag mit dem Anbieter hinterlegt ist. Wir nutzen Ihre Daten nicht zum KI-Training. KI-Funktionen sind standardmäßig aus; Sie wählen den Anbieter selbst und bestätigen AVV und Geheimhaltung. KI-Ergebnisse sind Dokumentationshilfen, keine Diagnose.
         </p>
       </section>
 
       <div className="mt-12 flex flex-wrap gap-3">
-        <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+        <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
         <LinkButton href="/preise" variant="secondary" className="h-12 px-6 text-base">Preise ansehen</LinkButton>
       </div>
     </div>

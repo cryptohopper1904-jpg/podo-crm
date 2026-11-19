@@ -18,6 +18,12 @@ describe("Input mit Einheit (F1)", () => {
     expect(out).toContain('inputMode="numeric"');
     expect(out).toContain(" in Wochen");
   });
+  it("Zahlenfeld ohne Einheit: Ziffernblock, bei Nachkommaschritt dezimal, bei negativem Minimum keiner", () => {
+    expect(html(h(Input, { type: "number", name: "n", min: 1 }))).toContain('inputMode="numeric"');
+    expect(html(h(Input, { type: "number", name: "n", step: "0.1" }))).toContain('inputMode="decimal"');
+    expect(html(h(Input, { type: "number", name: "n", min: -5 }))).not.toContain("inputMode");
+    expect(html(h(Input, { name: "t" }))).not.toContain("inputMode");
+  });
   it("Textfeld mit € behält seine Tastatur, keine Pfeil-Klassen", () => {
     const out = html(h(Input, { name: "materialCost", suffix: "€", inputMode: "decimal" }));
     expect(out).toContain('inputMode="decimal"');

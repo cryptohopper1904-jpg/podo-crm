@@ -14,17 +14,17 @@ export const DEFAULT_VIEW_LEVEL: ViewLevel = "komplex";
 export const VIEW_LEVEL_LABELS: Record<ViewLevel, string> = {
   einfach: "Einfach",
   kompakt: "Kompakt",
-  komplex: "Komplex",
+  komplex: "Alle Bereiche",
 };
 
 export const VIEW_LEVEL_HINTS: Record<ViewLevel, string> = {
-  einfach: "Nur das Wichtigste für den Praxisalltag: Termine, Patient:innen, Behandlung, Rechnungen und Kasse. Startseite mit den heutigen Terminen, Schnellzugriff und offenen Aufgaben.",
-  kompakt: "Dazu Posteingang, Verordnungen, Touren, Gutscheine und Auswertung (Finanzen, Termine, Leistungen & Produkte). Startseite ohne Nebenkarten.",
+  einfach: "Nur das Wichtigste für den Praxisalltag: Termine, Patient:innen, Verordnungen, Behandlung, Rechnungen und Kasse. Startseite mit den heutigen Terminen, Schnellzugriff und offenen Aufgaben.",
+  kompakt: "Dazu Posteingang, Touren, Gutscheine und Auswertung (Finanzen, Termine, Leistungen & Produkte). Startseite ohne Nebenkarten.",
   komplex: "Alle Bereiche und die vollständige Startseite (wie bisher).",
 };
 
-const EINFACH: readonly NavKey[] = ["heute", "kalender", "kunden", "doku", "rechnungen", "kasse", "einstellungen"];
-const KOMPAKT: readonly NavKey[] = [...EINFACH, "posteingang", "verordnungen", "touren", "gutscheine", "auswertung"];
+const EINFACH: readonly NavKey[] = ["heute", "kalender", "kunden", "verordnungen", "doku", "rechnungen", "kasse", "einstellungen"];
+const KOMPAKT: readonly NavKey[] = [...EINFACH, "posteingang", "touren", "gutscheine", "auswertung"];
 
 /** Navigationspunkte je Ansicht; null = keine Einschränkung (alle erlaubten Punkte) */
 export const NAV_BY_LEVEL: Record<ViewLevel, readonly NavKey[] | null> = {

@@ -5,7 +5,7 @@ import { pageMeta } from "../_content/site";
 
 export const metadata = pageMeta({
   title: "Sicherheit",
-  description: "Wie PodoHero Gesundheitsdaten schützt: Hosting bei Hetzner in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training.",
+  description: "Wie PodoHero Gesundheitsdaten schützt: Hosting bei Hetzner in Deutschland, Verschlüsselung, Row-Level-Security, Audit-Log, 2FA, kein KI-Training durch PodoHero.",
   path: "/sicherheit",
 });
 
@@ -47,8 +47,8 @@ const MEASURES = [
   },
   {
     icon: Sparkles,
-    title: "Kein KI-Training",
-    text: "Ihre Daten werden nicht zum Training von KI-Modellen verwendet. KI-Funktionen laufen im Testmodus, bis ein EU-Anbieter mit AVV und ohne Datenspeicherung bestätigt ist. Namen werden vor dem Versand entfernt. Das KI-Telefon läuft über einen eigenen Vertrag der Praxis mit dem Telefonie-Anbieter; Echtbetrieb erst nach Prüfung von AVV und Datenübermittlung.",
+    title: "Kein KI-Training durch PodoHero",
+    text: "Wir nutzen Ihre Daten nicht zum KI-Training (AGB § 7). KI-Funktionen sind standardmäßig aus. Für externe KI-Anbieter bestätigen Sie vor dem Einschalten AVV, Verarbeitung in der EU und den Ausschluss des Trainings. Bei KI-Antwortvorschlägen und Sprachberichten entfernen wir bekannte Namen vor dem Versand, soweit technisch möglich. Fotos (Verordnung auslesen) und Sprachaufnahmen enthalten personenbezogene Daten und gehen nur nach Ihrer Aktivierung an den gewählten Anbieter mit AVV. Das KI-Telefon läuft über einen eigenen Vertrag der Praxis mit dem Telefonie-Anbieter; Echtbetrieb erst nach Prüfung von AVV und Datenübermittlung.",
   },
 ] as const;
 
@@ -59,15 +59,15 @@ const INTEGRATIONS: { name: string; state: "real" | "test" | "planned"; note: st
   { name: "E-Mail-Versand", state: "test", note: "vorbereitet, Versand über einen Mailserver noch einzurichten" },
   { name: "SMS, WhatsApp", state: "test", note: "Testmodus; nur Organisatorisches, nur mit Einwilligung" },
   { name: "Google-Bewertungen", state: "test", note: "Testmodus bis zur API-Freigabe" },
-  { name: "Sprachbericht (Transkription, KI)", state: "test", note: "technisch gesperrt bis zur Freigabe eines EU-Anbieters mit AVV" },
-  { name: "Kassen-TSE (fiskaly)", state: "test", note: "Schnittstelle vorbereitet, Vertrag erforderlich" },
-  { name: "KI-Telefon (Vapi, Retell AI)", state: "test", note: "Anbindung implementiert; Echtbetrieb erst mit Ihrem eigenen Anbietervertrag inkl. AVV, bis dahin Testmodus; im Tarif Plus enthalten, im Tarif Praxis als Zusatzmodul" },
+  { name: "Sprachbericht (Transkription, KI)", state: "test", note: "standardmäßig aus; Sie wählen den Anbieter selbst und bestätigen AVV und Geheimhaltung" },
+  { name: "Kassen-TSE (fiskaly)", state: "planned", note: "in Vorbereitung – vor dem Echtbetrieb als elektronische Kasse noch nicht einsetzen" },
+  { name: "KI-Telefon (Vapi, Retell AI)", state: "planned", note: "Pilot in Vorbereitung; Echtbetrieb erst mit Ihrem eigenen Anbietervertrag inkl. AVV, bis dahin Testmodus; nach dem Start voraussichtlich im Tarif Plus enthalten, im Tarif Praxis als Zusatzmodul (Preis wird vor Buchung genannt)" },
 ];
 
 const STATE_BADGE = {
   real: { tone: "primary", label: "echte Anbindung" },
   test: { tone: "info", label: "Testmodus" },
-  planned: { tone: "neutral", label: "geplant" },
+  planned: { tone: "neutral", label: "in Vorbereitung" },
 } as const;
 
 export default function SecurityPage() {

@@ -4,7 +4,6 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -20,7 +19,7 @@ vi.mock("@/lib/auth/session", () => ({
 
 import { practiceHours, storedPracticeHours, validateWeek } from "@/lib/opening-hours";
 import { websiteOpeningHours } from "@/lib/website";
-import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, TEST_DB, withMigratedDatabase } from "./__tests__/db-fixtures";
 
 const fd = (o: Record<string, string>) => {
   const f = new FormData();
@@ -28,11 +27,9 @@ const fd = (o: Record<string, string>) => {
   return f;
 };
 const h = (weekday: number, from: string, to: string) => ({ weekday, from, to });
-const ownerUrlFrom = (url: string) => url.replace(/\/\/[^@]+@/, "//podo_owner:podo_owner@");
 
 (TEST_DB ? describe : describe.skip)("Öffnungszeiten je Wochentag (DB)", () => {
   const f = fixtures(TEST_DB!);
-  const owner = new Pool({ connectionString: process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? ""), max: 1 });
   let actions: typeof import("@/app/(app)/einstellungen/actions");
   let websiteActions: typeof import("@/app/(app)/einstellungen/website/actions");
   let staff: typeof import("./staff");
@@ -45,7 +42,6 @@ const ownerUrlFrom = (url: string) => url.replace(/\/\/[^@]+@/, "//podo_owner:po
   });
   afterAll(async () => {
     await f.end();
-    await owner.end();
     const { db } = await import("@/db");
     await (db.$client as { end: () => Promise<void> }).end();
   });
@@ -119,52 +115,72 @@ const ownerUrlFrom = (url: string) => url.replace(/\/\/[^@]+@/, "//podo_owner:po
     expect(websiteOpeningHours(s)).toEqual([h(1, "08:00", "12:00"), h(1, "13:00", "18:00")]);
   });
 
-  it("Migration 0046: nur Altdaten werden übernommen (Website-Zeiten vor opening), eingerastet, gefiltert; idempotent; Code liest gleich", async () => {
+  it("Migration 0046: nur Altdaten werden übernommen (Website-Zeiten vor opening), eingerastet, gefiltert; idempotent; Code liest gleich", async (ctx) => {
+    // In eigener, frisch migrierter DB (withMigratedDatabase) – 0046 nicht erneut auf der gemeinsamen Test-DB einspielen
+    // (parallele Testdateien: Sperren/Deadlocks, fremde Praxen würden mit „migriert“).
     const sql = readFileSync(path.join(__dirname, "../../drizzle/0046_oeffnungszeiten_tage.sql"), "utf8").split("--> statement-breakpoint");
-    const legacy = await f.org({ settings: { opening: { from: "07:30", to: "16:00" }, website: { enabled: true, claim: "Hallo" } } });
-    const none = await f.org({ settings: { website: { enabled: true } } });
-    // wie per Bootstrap angelegt: opening = min/max, openingHours = echte Tage
-    const boot = await f.org({ settings: { opening: { from: "08:00", to: "17:00" }, openingHours: [h(3, "08:00", "17:00"), h(2, "08:00", "17:00")] } });
-    const offGrid = await f.org({ settings: { openingHours: [h(1, "08:03", "12:01"), h(1, "13:00", "18:00"), h(9, "08:00", "09:00"), h(2, "12:00", "08:00"), { weekday: 4, from: 8, to: "09:00" }, "x", h(5, "23:56", "23:59")] } });
-    const odd = await f.org({ settings: { opening: "kaputt", website: null } });
-    const badRange = await f.org({ settings: { opening: { from: "18:00", to: "08:00" } } });
-    const done = await f.org({ settings: { practiceHours: [h(6, "09:00", "12:00")], website: { customHours: true }, openingHours: [h(2, "08:00", "17:00")] } });
-    const orgs = [legacy, none, boot, offGrid, odd, badRange, done];
-    const before = await Promise.all(orgs.map(settingsOf));
-    const run = async () => {
-      for (const stmt of sql) await owner.query(stmt);
-    };
-    await run();
-    const after = await Promise.all(orgs.map(settingsOf));
-    const weekdays = (from: string, to: string) => [1, 2, 3, 4, 5].map((d) => h(d, from, to));
+    const ran = await withMigratedDatabase(async (c) => {
+      const org = async (settings: unknown) =>
+        (await c.query("insert into organizations (name, slug, settings) values ('Testpraxis Fuß', $1, $2) returning id", [`t-${Math.random().toString(36).slice(2, 10)}`, JSON.stringify(settings)])).rows[0]
+          .id as string;
+      const settingsIn = async (id: string) => {
+        await c.query("begin");
+        await c.query("select set_config('app.org_id', $1, true)", [id]);
+        const s = (await c.query("select settings from organizations where id = $1", [id])).rows[0].settings;
+        await c.query("commit");
+        return s;
+      };
+      const legacy = await org({ opening: { from: "07:30", to: "16:00" }, website: { enabled: true, claim: "Hallo" } });
+      const none = await org({ website: { enabled: true } });
+      // wie per Bootstrap angelegt: opening = min/max, openingHours = echte Tage
+      const boot = await org({ opening: { from: "08:00", to: "17:00" }, openingHours: [h(3, "08:00", "17:00"), h(2, "08:00", "17:00")] });
+      const offGrid = await org({ openingHours: [h(1, "08:03", "12:01"), h(1, "13:00", "18:00"), h(9, "08:00", "09:00"), h(2, "12:00", "08:00"), { weekday: 4, from: 8, to: "09:00" }, "x", h(5, "23:56", "23:59")] });
+      const odd = await org({ opening: "kaputt", website: null });
+      const badRange = await org({ opening: { from: "18:00", to: "08:00" } });
+      const done = await org({ practiceHours: [h(6, "09:00", "12:00")], website: { customHours: true }, openingHours: [h(2, "08:00", "17:00")] });
+      const orgs = [legacy, none, boot, offGrid, odd, badRange, done];
+      const all = async () => {
+        const out = [];
+        for (const o of orgs) out.push(await settingsIn(o));
+        return out;
+      };
+      const before = await all();
+      const run = async () => {
+        for (const stmt of sql) if (stmt.trim()) await c.query(stmt);
+      };
+      await run();
+      const after = await all();
+      const weekdays = (from: string, to: string) => [1, 2, 3, 4, 5].map((d) => h(d, from, to));
 
-    expect(after[0].practiceHours).toEqual(weekdays("07:30", "16:00"));
-    expect(after[0].website).toEqual({ enabled: true, claim: "Hallo", customHours: false });
-    // ohne Angaben: keine practiceHours, Website ohne Zeiten
-    expect(after[1]).toEqual({ website: { enabled: true, customHours: false } });
-    expect(websiteOpeningHours(after[1])).toEqual([]);
-    // Bootstrap: Website-Zeiten werden Praxis-Öffnungszeiten (nicht Mo–Fr), Website identisch
-    expect(after[2].practiceHours).toEqual([h(2, "08:00", "17:00"), h(3, "08:00", "17:00")]);
-    expect(after[2].website.customHours).toBe(false);
-    expect(websiteOpeningHours(after[2])).toEqual([h(2, "08:00", "17:00"), h(3, "08:00", "17:00")]);
-    // Raster + Filter wie websiteSettings()/openingHours()
-    expect(after[3].practiceHours).toEqual([h(1, "08:00", "12:05"), h(1, "13:00", "18:00")]);
-    expect(after[4].practiceHours).toBeUndefined();
-    expect(after[4].website).toEqual({ customHours: false });
-    expect(after[5].practiceHours).toEqual([]);
-    expect(after[6]).toEqual(before[6]);
+      expect(after[0].practiceHours).toEqual(weekdays("07:30", "16:00"));
+      expect(after[0].website).toEqual({ enabled: true, claim: "Hallo", customHours: false });
+      // ohne Angaben: keine practiceHours, Website ohne Zeiten
+      expect(after[1]).toEqual({ website: { enabled: true, customHours: false } });
+      expect(websiteOpeningHours(after[1])).toEqual([]);
+      // Bootstrap: Website-Zeiten werden Praxis-Öffnungszeiten (nicht Mo–Fr), Website identisch
+      expect(after[2].practiceHours).toEqual([h(2, "08:00", "17:00"), h(3, "08:00", "17:00")]);
+      expect(after[2].website.customHours).toBe(false);
+      expect(websiteOpeningHours(after[2])).toEqual([h(2, "08:00", "17:00"), h(3, "08:00", "17:00")]);
+      // Raster + Filter wie websiteSettings()/openingHours()
+      expect(after[3].practiceHours).toEqual([h(1, "08:00", "12:05"), h(1, "13:00", "18:00")]);
+      expect(after[4].practiceHours).toBeUndefined();
+      expect(after[4].website).toEqual({ customHours: false });
+      expect(after[5].practiceHours).toEqual([]);
+      expect(after[6]).toEqual(before[6]);
 
-    // Code liest Altdaten genauso wie die migrierten Daten
-    for (let i = 0; i < orgs.length; i++) {
-      expect(practiceHours(after[i]), `Praxis ${i}`).toEqual(practiceHours(before[i]));
-      expect(storedPracticeHours(after[i]), `gespeichert ${i}`).toEqual(storedPracticeHours(before[i]));
-      expect(websiteOpeningHours(after[i]), `Website ${i}`).toEqual(websiteOpeningHours(before[i]));
-    }
-    // gespeicherte Zeiten lassen sich unverändert wieder speichern (Raster)
-    expect(validateWeek(after[3].practiceHours).error).toBeUndefined();
+      // Code liest Altdaten genauso wie die migrierten Daten
+      for (let i = 0; i < orgs.length; i++) {
+        expect(practiceHours(after[i]), `Praxis ${i}`).toEqual(practiceHours(before[i]));
+        expect(storedPracticeHours(after[i]), `gespeichert ${i}`).toEqual(storedPracticeHours(before[i]));
+        expect(websiteOpeningHours(after[i]), `Website ${i}`).toEqual(websiteOpeningHours(before[i]));
+      }
+      // gespeicherte Zeiten lassen sich unverändert wieder speichern (Raster)
+      expect(validateWeek(after[3].practiceHours).error).toBeUndefined();
 
-    // zweiter Lauf ändert nichts
-    await run();
-    expect(await Promise.all(orgs.map(settingsOf))).toEqual(after);
-  });
+      // zweiter Lauf ändert nichts
+      await run();
+      expect(await all()).toEqual(after);
+    });
+    if (!ran) ctx.skip();
+  }, 120_000);
 });

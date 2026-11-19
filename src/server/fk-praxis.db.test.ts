@@ -495,6 +495,15 @@ async function pgCode(p: Promise<unknown>): Promise<{ code?: string; message: st
     const e2 = await tryInsert(a.org, sql, [b.org, randomUUID()]);
     expect(e1?.code).toBe("42501");
     expect(e2?.code).toBe("42501");
+    // Je nach Reihenfolge/Stand meldet entweder der Trigger (Kontext-Prüfung vor jedem Lookup) oder die RLS-Prüfung
+    // (WITH CHECK) – beides ohne Lookup. Exakter Meldungsvergleich war in der CI unzuverlässig. Kernaussage bleibt:
+    // kein Zugriff auf die fremde Praxis, und keine Antwort verrät, wem die Person gehört (keine Lookup-Meldung).
+    const ohneLookup = /Zeile gehört nicht zur Praxis des aktuellen Kontexts|row-level security/;
+    for (const e of [e1, e2]) {
+      expect(e?.message).toMatch(ohneLookup);
+      expect(e?.message).not.toMatch(/gehört nicht zu dieser Praxis/);
+    }
+    // Kernaussage „kein Orakel“: beide Wege liefern dieselbe Antwort (eigene Person vs. unbekannte Person)
     expect(e1?.message).toBe(e2?.message);
   });
 

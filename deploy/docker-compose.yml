@@ -68,6 +68,8 @@ services:
       PUBLIC_URL:
       PUBLIC_SITE_INDEX:
       ALLOW_SIGNUP:
+      # Kontaktadresse aus dem Impressum für „Testzugang anfragen“ (Website, solange ALLOW_SIGNUP nicht true ist); leer → Link aufs Impressum
+      PUBLIC_CONTACT_EMAIL:
       SETUP_TOKEN:
       TRUSTED_PROXY_HOPS:
       CRON_SECRET:

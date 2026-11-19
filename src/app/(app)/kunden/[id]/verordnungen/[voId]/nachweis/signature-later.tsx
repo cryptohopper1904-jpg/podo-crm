@@ -13,7 +13,7 @@ export function SignatureLater({ recordId, patientId, prescriptionId, patientNam
   if (state?.ok) return <p role="status" className="text-sm font-medium text-primary">{state.ok}</p>;
   if (!open) {
     return (
-      <Button type="button" variant="secondary" className="h-9 text-sm" onClick={() => setOpen(true)}>
+      <Button type="button" variant="secondary" className="text-sm" onClick={() => setOpen(true)}>
         Unterschrift nachtragen
       </Button>
     );
@@ -26,8 +26,8 @@ export function SignatureLater({ recordId, patientId, prescriptionId, patientNam
       <FormError message={state?.error} revealKey={state} />
       <SignatureField patientName={patientName} compact onChange={setFilled} />
       <div className="flex gap-2">
-        <Button type="submit" disabled={pending || !filled} className="h-9 text-sm">{pending ? "…" : "Speichern (unveränderbar)"}</Button>
-        <Button type="button" variant="ghost" className="h-9 text-sm" onClick={() => setOpen(false)}>Abbrechen</Button>
+        <Button type="submit" disabled={pending || !filled} className="text-sm">{pending ? "Wird gespeichert …" : "Speichern (unveränderbar)"}</Button>
+        <Button type="button" variant="ghost" className="text-sm" onClick={() => setOpen(false)}>Abbrechen</Button>
       </div>
     </form>
   );
