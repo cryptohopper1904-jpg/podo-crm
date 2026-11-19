@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { z } from "zod";
 import { CSV_MAX_BYTES, type LeadInput } from "@/lib/vertrieb/csv";
 import { LEAD_STATUSES, SEQUENCE_STEPS } from "@/lib/vertrieb/constants";
-import { CONSENT_KINDS, DELETE_MONTHS } from "@/lib/vertrieb/dsgvo";
+import { CONSENT_CHANNELS, CONSENT_KINDS, DELETE_MONTHS } from "@/lib/vertrieb/dsgvo";
 import { isRunning } from "@/lib/vertrieb/lead-search";
 import { getLeadSearch, runLeadSearch, saveLeadSearchSettings } from "@/server/lead-search";
 import { requirePlatformAdmin } from "@/server/platform";
@@ -22,6 +22,7 @@ import {
   saveSalesSettings,
   saveSalesTemplates,
   sendNextMails,
+  recordArt14Notice,
   recordLeadConsent,
   removeLeadConsent,
   setLeadStatus,
@@ -74,9 +75,15 @@ const leadSchema = z.object({
     .refine((v) => v === null || (Number.isFinite(v) && v >= 0 && v < 10_000), "Entfernung ist keine gültige Zahl."),
   // Herkunft (Art. 14 DSGVO): Pflicht – genauer geprüft in src/server/vertrieb.ts (assertOrigin)
   source: z.string().trim().min(3, "Bitte die Quelle der Daten angeben (z. B. „OpenStreetMap“ oder „Impressum der Praxis-Website“).").max(200),
-  sourceRetrievedAt: z.string().trim().min(1, "Bitte das Abrufdatum der Quelle angeben.").max(10),
+  // Pflicht beim Anlegen; beim Bearbeiten darf ein fehlendes Abrufdatum fehlen bleiben (Prüfung in updateLead)
+  sourceRetrievedAt: z.string().trim().max(10).optional().transform((v) => v || null),
   notes: opt(2000),
-  deleteMonths: z.coerce.number().int().min(DELETE_MONTHS.min, "Löschfrist: mindestens 6 Monate.").max(DELETE_MONTHS.max, "Löschfrist: höchstens 24 Monate."),
+  // leer = unverändert (nur beim Bearbeiten, z. B. Altbestand mit Schonfrist)
+  deleteMonths: z
+    .string()
+    .optional()
+    .transform((v) => (v?.trim() ? Number(v) : null))
+    .refine((v) => v === null || (Number.isInteger(v) && v >= DELETE_MONTHS.min && v <= DELETE_MONTHS.max), `Löschfrist: ${DELETE_MONTHS.min} bis ${DELETE_MONTHS.max} Monate.`),
 });
 
 function parseLead(form: FormData): { data: LeadInput; opts: LeadOptions } | { error: string } {
@@ -92,6 +99,7 @@ export async function createLeadAction(_s: State, form: FormData): Promise<State
   if ("error" in p) return { error: p.error };
   let id: string;
   try {
+    if (!p.data.sourceRetrievedAt) return { error: "Bitte das Abrufdatum der Quelle angeben." };
     id = await createLead(row.user.id, p.data, { deleteMonths: p.opts.deleteMonths });
   } catch (e) {
     return { error: msg(e) };
@@ -312,6 +320,7 @@ export async function consentAction(_s: State, form: FormData): Promise<State> {
   const d = z
     .object({
       id: z.uuid(),
+      channel: z.enum(CONSENT_CHANNELS, { error: "Bitte den Kanal der Einwilligung angeben." }),
       kind: z.enum(CONSENT_KINDS, { error: "Bitte die Art der Einwilligung auswählen." }),
       date: z.string().trim().min(1, "Bitte das Datum der Einwilligung angeben.").max(10),
       note: z.string().trim().min(3, "Bitte Wortlaut bzw. Nachweis der Einwilligung angeben.").max(500),
@@ -319,7 +328,7 @@ export async function consentAction(_s: State, form: FormData): Promise<State> {
     .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
   try {
-    if (!(await recordLeadConsent(row.user.id, d.data.id, { note: d.data.note, kind: d.data.kind, date: d.data.date }))) {
+    if (!(await recordLeadConsent(row.user.id, d.data.id, { channel: d.data.channel, note: d.data.note, kind: d.data.kind, date: d.data.date }))) {
       const lead = await getLead(d.data.id);
       return { error: lead ? "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." : "Eintrag nicht gefunden (inzwischen gelöscht?)." };
     }
@@ -330,12 +339,27 @@ export async function consentAction(_s: State, form: FormData): Promise<State> {
   return { ok: "Einwilligung dokumentiert." };
 }
 
+/** Widerruf der Einwilligung für EINEN Kanal (Datum wird gespeichert, Nachweis bleibt). */
 export async function removeConsentAction(form: FormData) {
   const row = await requirePlatformAdmin();
-  const id = z.uuid().safeParse(form.get("id"));
-  if (!id.success) redirect(`${BASE}?fehler=eingabe`);
-  await removeLeadConsent(row.user.id, [id.data]);
+  const d = z.object({ id: z.uuid(), channel: z.enum(CONSENT_CHANNELS) }).safeParse(Object.fromEntries(form));
+  if (!d.success) redirect(`${BASE}?fehler=eingabe`);
+  await removeLeadConsent(row.user.id, [d.data.id], new Date(), d.data.channel);
   revalidatePath(BASE, "layout");
+}
+
+/** Erstbrief mit Datenschutzhinweis (Art. 14 DSGVO) als versendet vermerken. */
+export async function art14NoticeAction(_s: State, form: FormData): Promise<State> {
+  const row = await requirePlatformAdmin();
+  const d = z.object({ id: z.uuid(), date: z.string().trim().min(1, "Bitte das Versanddatum angeben.").max(10) }).safeParse(Object.fromEntries(form));
+  if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
+  try {
+    if (!(await recordArt14Notice(row.user.id, d.data.id, d.data.date))) return { error: "Eintrag nicht gefunden (inzwischen gelöscht?)." };
+  } catch (e) {
+    return { error: msg(e) };
+  }
+  revalidatePath(BASE, "layout");
+  return { ok: "Versand vermerkt." };
 }
 
 const bulkSchema = z.discriminatedUnion("op", [
@@ -355,7 +379,7 @@ export async function bulkAction(ids: string[], input: unknown): Promise<{ ok: s
   try {
     let text: string;
     if (d.data.op === "status") text = `${await bulkSetStatus(row.user.id, list.data, d.data.status as (typeof LEAD_STATUSES)[number])} Einträge geändert.`;
-    else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung bei ${await removeLeadConsent(row.user.id, list.data)} Einträgen entfernt.`;
+    else if (d.data.op === "einwilligung_entfernen") text = `Einwilligung (E-Mail und Telefon) bei ${await removeLeadConsent(row.user.id, list.data)} Einträgen widerrufen.`;
     else if (d.data.op === "abmelden") text = `${await bulkSetStatus(row.user.id, list.data, "abgemeldet")} Einträge abgemeldet: Adressen gesperrt, Einträge gelöscht.`;
     else text = `${await setLeadsCampaign(row.user.id, list.data, d.data.campaignId || null)} Einträge ${d.data.campaignId ? "der Kampagne zugeordnet" : "aus der Kampagne entfernt"}.`;
     revalidatePath(BASE, "layout");

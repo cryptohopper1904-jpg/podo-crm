@@ -135,10 +135,13 @@ export function getAdapter<P extends SupportedProvider>(
     // LLM/Transkription dürfen über env konfiguriert sein, Doctolib arbeitet lokal
     throw new IntegrationNotConfiguredError(provider, "Verbindung ist getrennt");
   }
-  const cfg = connection?.config ?? {};
+  // LLM/Transkription mit Status „aus“: nur der env-konfigurierte Plattform-Anbieter – Praxis-Config (baseUrl, apiKey,
+  // Bestätigung) wird ignoriert, damit eine abgeschaltete praxiseigene Verbindung nie benutzt wird.
+  const envOnly = connection?.status === "disconnected" && (provider === "llm" || provider === "transcription");
+  const cfg = envOnly ? {} : (connection?.config ?? {});
   checkTargets(cfg);
   // Jeder echte Request läuft über den SSRF-Schutz (https, keine privaten Ziele, keine Weiterleitungen)
-  return REAL[provider](cfg, resolveSecret(connection), guardedFetch(opts.fetch));
+  return REAL[provider](cfg, envOnly ? {} : resolveSecret(connection), guardedFetch(opts.fetch));
 }
 
 const port = (v: unknown): number | undefined => {

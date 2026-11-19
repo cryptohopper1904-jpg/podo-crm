@@ -254,24 +254,38 @@ test("Plattform-Admin: /plattform mit 200 in der App-Hülle (Kopfzeile, Navigati
     await expect(nav.getByRole("link", { name: "Plattform", exact: true })).toHaveAttribute("aria-current", "page");
     expect((await page.request.get("/plattform/vertrieb", { maxRedirects: 0 })).status()).toBe(200);
 
-    // Vertrieb (Rechtsprüfung): Quelle + Abrufdatum Pflicht, Löschfrist, Hinweis ohne Einwilligung, Telefonnummer ausgeblendet
+    // Vertrieb (Rechtsprüfung): Quelle + Abrufdatum Pflicht, Löschfrist 6–12, Hinweis je Kanal, Telefonnummer ausgeblendet
     await page.goto("/plattform/vertrieb/neu");
     await page.getByLabel("Name der Praxis *").fill(leadName);
     await page.getByLabel("Telefon").fill("030 0000 9999");
     await expect(page.getByLabel("Abgerufen am *")).not.toHaveValue("");
     await expect(page.getByLabel("Löschfrist")).toHaveValue("12");
+    await expect(page.getByLabel("Löschfrist").locator("option")).toHaveCount(7);
     await page.getByLabel("Quelle der Daten *").fill("OpenStreetMap");
     await page.getByRole("button", { name: "Anlegen" }).click();
     await page.waitForURL(/\/plattform\/vertrieb\/[0-9a-f-]{36}$/);
-    await expect(page.getByText("Werbe-E-Mails und Werbeanrufe nur mit Einwilligung (§ 7 UWG). Kaltanrufe nicht erlaubt.").first()).toBeVisible();
+    await expect(page.getByText(/^Werbung per E-Mail nur mit vorheriger ausdrücklicher Einwilligung in E-Mails \(§ 7 Abs\. 2 Nr\. 2 UWG\)\./).first()).toBeVisible();
     await expect(page.getByText(/^OpenStreetMap · abgerufen \d{2}\.\d{2}\.\d{4}$/)).toBeVisible();
-    await expect(page.getByText("ausgeblendet (nur mit Einwilligung oder bei Bestandskunden)")).toBeVisible();
+    await expect(page.getByText("ausgeblendet (nur mit Einwilligung in Anrufe oder bei Bestandskunden)")).toBeVisible();
+    await expect(page.getByText(/^Erstbrief bis \d{2}\.\d{2}\.\d{4}/)).toBeVisible();
     expect(await page.content()).not.toContain("030 0000 9999");
-    await page.goto("/plattform/vertrieb");
-    await expect(page.getByRole("row", { name: new RegExp(leadName) }).getByText("Einwilligung: nein")).toBeVisible();
-    await page.goto("/plattform/vertrieb/datenschutzhinweis");
+    // Art.-14-Hinweis: Entwurfsvermerk nur in der Ansicht; Kopieren erst ohne offene Platzhalter
     await expect(page.getByText("ENTWURF – vor Verwendung rechtlich prüfen lassen").first()).toBeVisible();
-    await expect(page.getByText(/Verantwortlich für die Verarbeitung ist \{\{Firma\}\}/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Text kopieren" })).toBeDisabled();
+    await page.getByLabel("Firma (Verantwortlicher)").fill("Muster GmbH");
+    await page.getByLabel("E-Mail für Widerspruch").fill("datenschutz@muster.example");
+    await page.getByLabel("Datenschutzkontakt").fill("datenschutz@muster.example");
+    await page.getByLabel("Aufsichtsbehörde").fill("Landesbeauftragte für den Datenschutz");
+    await expect(page.getByRole("button", { name: "Text kopieren" })).toBeDisabled();
+    await page.getByRole("checkbox", { name: "keine weiteren Dienstleister" }).check();
+    await expect(page.getByRole("button", { name: "Text kopieren" })).toBeEnabled();
+    await expect(page.getByText(/^Ihr Widerspruchsrecht \(Art\. 21 Abs\. 2 DSGVO\): .*Eine formlose Nachricht an Muster GmbH genügt/)).toBeVisible();
+    await page.goto("/plattform/vertrieb");
+    const row = page.getByRole("row", { name: new RegExp(leadName) });
+    await expect(row.getByText("E-Mail: nein")).toBeVisible();
+    await expect(row.getByText("Telefon: nein")).toBeVisible();
+    await page.goto("/plattform/vertrieb/datenschutzhinweis");
+    await expect(page.getByText(/Verantwortlich für die Verarbeitung ist (\{\{Firma\}\}|Muster GmbH)/)).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await pool.query("delete from sales_leads where name = $1", [leadName]).catch(() => undefined);

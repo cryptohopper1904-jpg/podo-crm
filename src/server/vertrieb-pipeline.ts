@@ -4,8 +4,9 @@ import { db } from "@/db";
 import { memberships, organizations, promoCodes, promoRedemptions, salesCampaigns, salesLeadEvents, salesLeads, salesSends, users } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
+import { anyConsentValid, emailConsentValid } from "@/lib/vertrieb/dsgvo";
 import { normalizeEmail } from "@/lib/vertrieb/eligibility";
-import { deriveStage, emailDomain, isFreemail, matchLeadsToOrgs, STAGES, websiteDomain, type MatchedOrg, type Stage } from "@/lib/vertrieb/pipeline";
+import { deriveStage, emailDomain, isFreemail, matchLeadsToOrgs, STAGES, websiteDomain, type MatchedOrg, type PipelineLead, type Stage } from "@/lib/vertrieb/pipeline";
 import { validateTemplate } from "@/lib/vertrieb/template";
 import { blockedEmails, isBlocked } from "./blocklist";
 import { NAMED_NOTE } from "./lead-search";
@@ -76,7 +77,7 @@ export async function loadPipeline(): Promise<PipelineItem[]> {
  * Kandidaten gezielt laden (nicht alle Praxen): Inhaber:innen mit gleicher E-Mail oder gleicher Domain wie ein Lead
  * (E-Mail- oder Website-Domain, ohne Freemail) sowie Praxen, die einen persönlichen Code eines Leads eingelöst haben.
  */
-async function matchOrgs(leads: (Lead & { suppressed: boolean })[]) {
+export async function matchOrgs(leads: (PipelineLead & { suppressed: boolean })[]) {
   const emails = [...new Set(leads.flatMap((l) => (l.email ? [l.email.trim().toLowerCase()] : [])))];
   const domains = [...new Set(leads.flatMap((l) => [emailDomain(l.email), websiteDomain(l.website)]).filter((d): d is string => !!d && !isFreemail(d)))];
   const codeRed = await db
@@ -125,7 +126,7 @@ export type PipelineFilter = {
   source?: string | null;
   email?: "mit" | "ohne" | null;
   named?: boolean;
-  /** dokumentierte Einwilligung vorhanden? */
+  /** gültige Einwilligung (E-Mail oder Telefon) vorhanden? */
   consent?: "mit" | "ohne" | null;
   maxKm?: number | null;
   /** Kampagnen-ID oder „ohne“ */
@@ -141,8 +142,8 @@ export function filterPipeline(items: PipelineItem[], f: PipelineFilter): Pipeli
     if (f.email === "mit" && !l.email) return false;
     if (f.email === "ohne" && l.email) return false;
     if (f.named && !l.named) return false;
-    if (f.consent === "mit" && !l.consentAt) return false;
-    if (f.consent === "ohne" && l.consentAt) return false;
+    if (f.consent === "mit" && !anyConsentValid(l)) return false;
+    if (f.consent === "ohne" && anyConsentValid(l)) return false;
     if (f.maxKm != null && (l.distanceKm == null || l.distanceKm > f.maxKm)) return false;
     if (f.campaign === "ohne" ? l.campaignId : f.campaign && l.campaignId !== f.campaign) return false;
     if (q && ![l.name, l.email, l.city, l.zip, l.contactPerson].some((v) => v?.toLowerCase().includes(q))) return false;
@@ -190,7 +191,7 @@ export async function salesDashboard(items: PipelineItem[], now = new Date()): P
     newThisWeek: fresh.length,
     newFromSearch: fresh.filter((l) => (l.source ?? "").startsWith("osm")).length,
     withEmail: items.filter((l) => l.email).length,
-    withConsent: items.filter((l) => l.consentAt).length,
+    withConsent: items.filter((l) => emailConsentValid(l)).length,
     mailsSent: Number(s?.ok ?? 0),
     mailsMock: Number(s?.mock ?? 0),
     mailsFailed: Number(s?.failed ?? 0),
@@ -209,7 +210,7 @@ export const leadSources = (items: PipelineItem[]) => [...new Set(items.map((l) 
 
 export type TimelineEntry =
   | { at: Date; kind: "send"; step: number; ok: boolean; mock: boolean; error: string | null }
-  | { at: Date; kind: "note" | "status" | "reply" | "campaign" | "consent"; text: string | null; meta: Record<string, unknown> | null }
+  | { at: Date; kind: "note" | "status" | "reply" | "campaign" | "consent" | "letter"; text: string | null; meta: Record<string, unknown> | null }
   | { at: Date; kind: "created" };
 
 export async function leadTimeline(lead: Lead): Promise<TimelineEntry[]> {
@@ -220,7 +221,7 @@ export async function leadTimeline(lead: Lead): Promise<TimelineEntry[]> {
   const out: TimelineEntry[] = [
     { at: lead.createdAt, kind: "created" },
     ...sends.map((s) => ({ at: s.sentAt, kind: "send" as const, step: s.step, ok: s.ok, mock: s.mock, error: s.error })),
-    ...events.map((e) => ({ at: e.createdAt, kind: e.kind as "note" | "status" | "reply" | "campaign" | "consent", text: e.text, meta: e.meta })),
+    ...events.map((e) => ({ at: e.createdAt, kind: e.kind as "note" | "status" | "reply" | "campaign" | "consent" | "letter", text: e.text, meta: e.meta })),
   ];
   return out.sort((a, b) => b.at.getTime() - a.at.getTime());
 }

@@ -88,11 +88,20 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
     secret.webhookToken = randomBytes(32).toString("base64url");
     secretChanged = true;
   }
-  // Externer KI-Anbieter: Pflicht-Häkchen (AVV, EU, kein Training) – ohne wird „verbunden (echt)“ abgelehnt;
-  // gespeichert werden Zeitpunkt, Benutzer und Textversion (src/integrations/ai-approval.ts)
+  // Externer KI-Anbieter: Pflicht-Bestätigung (AVV mit § 203, EU/EWR, Zero Data Retention/kein Training, Patienteninfo) –
+  // ohne gültige Bestätigung wird „verbunden (echt)“ abgelehnt. Neue Bestätigung nur durch die Inhaber:in, nie im
+  // Support-Zugang; gespeichert mit Zeitpunkt, Benutzer, Textversion und Ziel (src/integrations/ai-approval.ts).
+  // Zielwechsel (baseUrl/Host) verwirft eine bestehende Bestätigung.
   let approvalChanged = false;
   if (isAiProvider(info.provider)) {
-    const a = nextAiApproval(oldConfig, { status: status.data, checked: form.get("dataProcessingApproved") === "on", userId: auth.user.id });
+    const a = nextAiApproval(oldConfig, config, {
+      status: status.data,
+      checked: form.get("dataProcessingApproved") === "on",
+      userId: auth.user.id,
+      role: auth.role,
+      support: !!auth.support,
+      targetChanged,
+    });
     if ("error" in a) return { error: a.error };
     config.dataProcessingApproved = a.dataProcessingApproved;
     if (a.dataProcessingApproval) config.dataProcessingApproval = a.dataProcessingApproval;

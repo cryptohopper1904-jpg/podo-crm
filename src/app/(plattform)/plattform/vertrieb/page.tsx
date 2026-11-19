@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, LinkButton, Stat, cx } from "@/components/ui";
-import { dateTimeDe } from "@/lib/format";
+import { berlinDateIso, dateDe, dateTimeDe } from "@/lib/format";
 import { describeMailSettings, resolveMailSettings } from "@/integrations/mail/mail";
 import { LEAD_STATUSES, MAX_PER_CLICK, MAX_PER_DAY, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
-import { originLabel, sourceLabel } from "@/lib/vertrieb/dsgvo";
+import { art14Deadline, art14Overdue, emailConsentValid, originLabel, phoneConsentValid, sourceLabel } from "@/lib/vertrieb/dsgvo";
 import { isRunning } from "@/lib/vertrieb/lead-search";
 import { isStage, replyRate, STAGE_HINT, STAGE_LABEL, STAGES, stageLabel, type Stage } from "@/lib/vertrieb/pipeline";
 import { requirePlatformAdmin } from "@/server/platform";
@@ -36,6 +36,7 @@ function hrefWith(sp: Record<string, string | string[] | undefined>, patch: Reco
 export default async function VertriebPage({ searchParams }: PageProps<"/plattform/vertrieb">) {
   await requirePlatformAdmin();
   const sp = await searchParams;
+  const today = berlinDateIso();
   const filter: PipelineFilter = {
     stage: isStage(sp.stufe) ? sp.stufe : null,
     status: typeof sp.status === "string" && isLeadStatus(sp.status) ? sp.status : null,
@@ -75,7 +76,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
     <div className="flex flex-col gap-5">
       {sp.hinweis === "abgemeldet" ? <p role="status" className="rounded-xl bg-primary-soft px-4 py-3 text-sm font-medium text-primary-soft-text">Abgemeldet: Die Adresse steht auf der Sperrliste, der Eintrag wurde samt Verlauf gelöscht.</p> : null}
       <section aria-label="Kennzahlen" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Stat tone="neutral" label="Leads gesamt" value={dash.leads} sub={`${dash.newThisWeek} neu diese Woche (${dash.newFromSearch} aus der Praxissuche) · ${dash.withEmail} mit E-Mail · ${dash.withConsent} mit Einwilligung`} />
+        <Stat tone="neutral" label="Leads gesamt" value={dash.leads} sub={`${dash.newThisWeek} neu diese Woche (${dash.newFromSearch} aus der Praxissuche) · ${dash.withEmail} mit E-Mail · ${dash.withConsent} mit E-Mail-Einwilligung`} />
         <Stat tone="info" label="Mails gesendet" value={dash.mailsSent} sub={`${dash.mailsFailed} fehlgeschlagen${dash.mailsMock ? ` · ${dash.mailsMock} im Testmodus` : ""} · ${stats.sentLast24h}/${MAX_PER_DAY} in 24 h`} />
         <Stat tone="warn" label="Antwortquote" value={rate === null ? "–" : `${rate} %`} sub={`${dash.replied} von ${dash.contacted} angeschriebenen Praxen`} />
         <Stat tone="info" label="Tests" value={dash.tests} sub={`gestartete Tests aus der Pipeline · ${dash.redemptions} Aktionscodes eingelöst`} />
@@ -133,8 +134,8 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           Einwilligung
           <select name="einwilligung" defaultValue={filter.consent ?? ""} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm">
             <option value="">egal</option>
-            <option value="mit">dokumentiert</option>
-            <option value="ohne">fehlt</option>
+            <option value="mit">dokumentiert (E-Mail oder Telefon)</option>
+            <option value="ohne">keine (weder E-Mail noch Telefon)</option>
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium">
@@ -166,7 +167,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
         <p>
           Versand: {mail} · In den letzten 24 Stunden gesendet: <strong className="tabular-nums">{stats.sentLast24h}</strong> von {MAX_PER_DAY} · höchstens {MAX_PER_CLICK} je Klick.
           Abstände: Mail 2 nach {settings.delays.delay2Days} Tagen, Mail 3 nach weiteren {settings.delays.delay3Days} Tagen. Es wird nie automatisch gesendet –
-          und nur an Praxen mit dokumentierter Einwilligung (Praxissuche und Import sammeln nur Kontaktdaten).
+          und nur an Praxen mit dokumentierter E-Mail-Einwilligung (Praxissuche und Import sammeln nur Kontaktdaten).
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-border pt-3">
           <p className="flex-1">{searchLine}</p>
@@ -200,7 +201,9 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
             stage: l.stage,
             stageLabel: stageLabel(l.stage, l.step),
             campaignName: l.campaignName,
-            consent: !!l.consentAt,
+            consent: emailConsentValid(l),
+            consentPhone: phoneConsentValid(l),
+            art14OverdueSince: art14Overdue(l, today) ? dateDe(`${art14Deadline(l.sourceRetrievedAt)}T12:00:00Z`) : null,
             origin: originLabel(l.source, l.sourceRetrievedAt),
             orgName: l.org ? `${l.org.name}${l.org.via === "domain" ? " – Zuordnung unsicher (Domain)" : ""}` : null,
           }))}

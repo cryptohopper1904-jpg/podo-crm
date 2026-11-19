@@ -6,8 +6,9 @@ import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, ty
 import { audit } from "@/lib/audit";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { dedupeLeads, nameZipKey, parseLeadCsv, type ImportDecision, type LeadInput } from "@/lib/vertrieb/csv";
-import { checkRetrievedDate, CONSENT_KIND_LABEL, DELETE_MONTHS, deleteAfterFor, isConsentKind, isDeleteMonths, type ConsentKind } from "@/lib/vertrieb/dsgvo";
+import { CHANNEL_LABEL, checkRetrievedDate, CONSENT_KIND_LABEL, CONSENT_RETENTION_MONTHS, DELETE_MONTHS, deleteAfterFor, isConsentChannel, isConsentKind, isDeleteMonths, isExistingCustomer, REACTION_RETENTION_MONTHS, type ConsentChannel, type ConsentKind } from "@/lib/vertrieb/dsgvo";
 import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibility";
+import { deriveStage } from "@/lib/vertrieb/pipeline";
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
 import { promoLandingUrl } from "@/lib/promo-codes";
 import { usableCodesFor } from "./promo-codes";
@@ -20,8 +21,9 @@ import { platformMailPort } from "./mail";
  * Vertrieb des Plattform-Betreibers (kleines CRM für die Ansprache von Praxen per E-Mail-Sequenz).
  * - Kein Mandantenbezug: Tabellen sales_* ohne organization_id/RLS, Zugriff NUR über diese Datei.
  *   Aufrufer (Server Actions/Seiten unter /plattform/vertrieb) prüfen vorher requirePlatformAdmin() (Admin + 2FA).
- * - § 7 Abs. 2 Nr. 2 UWG: gesendet wird NUR an Leads mit dokumentierter Einwilligung (consent_at + Vermerk), geprüft in
- *   eligibility() unter der Versandsperre. Die Einwilligung gilt für die Adresse: ändert sich die E-Mail, wird sie entfernt.
+ * - § 7 Abs. 2 Nr. 2 UWG: gesendet wird NUR an Leads mit gültiger E-Mail-Einwilligung (consent_at + Vermerk, nicht
+ *   widerrufen), geprüft in eligibility() unter der Versandsperre. Die Einwilligung gilt für die Adresse: ändert sich die
+ *   E-Mail, wird sie entfernt. Telefon-Einwilligung getrennt (§ 7 Abs. 2 Nr. 1 UWG): nur sie gibt die Telefonnummer frei.
  * - Versand nur manuell, in kleinen Mengen (MAX_PER_CLICK, MAX_PER_DAY), mit Vorschau, Abmeldelink,
  *   List-Unsubscribe-Kopfzeilen und Sperrliste. Keine Automatik/Cron (nur die Praxissuche läuft nachts, ohne Versand).
  * - Kampagnen (sales_campaigns): eigene Vorlagen-Variante und Aktionscode für {{code}}/{{link}}; ohne gültigen Code
@@ -31,8 +33,9 @@ import { platformMailPort } from "./mail";
  *   (Tageslimit).
  * - Audit: Import, Versand, Statuswechsel, Einstellungen, Löschen, Abmeldung (ohne Mailinhalte).
  * - Rechtsprüfung (src/lib/vertrieb/dsgvo.ts): Quelle + Abrufdatum Pflicht beim Anlegen und Import; Löschfrist
- *   delete_after (6–24 Monate ab Anlage, Standard 12), abgelaufene Einträge ohne Einwilligung und ohne Status „Kunde“
- *   löscht purgeStaleLeads(); Einwilligung mit Datum und Art.
+ *   delete_after (6–12 Monate ab Erhebung, Standard 12), abgelaufene Einträge ohne gültige Einwilligung löscht
+ *   purgeStaleLeads(), außer bei Bestandskunden (isExistingCustomer); Einwilligung je Kanal mit Datum, Erteilungsweg,
+ *   Wortlaut/Nachweis und Widerruf.
  */
 
 export type Lead = typeof salesLeads.$inferSelect;
@@ -195,17 +198,21 @@ async function assertNoDuplicate(input: LeadInput, exceptId?: string, previous?:
   }
 }
 
-/** Herkunft ist Pflicht (Art. 14 DSGVO): Quelle (mind. 3 Zeichen) und Abrufdatum (nicht in der Zukunft). */
-function assertOrigin(input: LeadInput, now: Date): LeadInput {
+/**
+ * Herkunft ist Pflicht (Art. 14 DSGVO): Quelle (mind. 3 Zeichen) und Abrufdatum (nicht in der Zukunft).
+ * `allowMissingDate`: beim Bearbeiten eines Eintrags ohne gespeichertes Abrufdatum darf es leer bleiben (kein erfundenes Datum).
+ */
+function assertOrigin(input: LeadInput, now: Date, allowMissingDate = false): LeadInput {
   const source = input.source?.replace(/[\r\n]+/g, " ").trim().slice(0, 200) ?? "";
   if (source.length < 3) throw new Error("Bitte die Quelle der Daten angeben (z. B. „OpenStreetMap“ oder „Impressum praxis-muster.example“).");
+  if (allowMissingDate && !input.sourceRetrievedAt?.trim()) return { ...input, source, sourceRetrievedAt: null };
   const d = checkRetrievedDate(input.sourceRetrievedAt ?? "", now);
   if (!d.ok) throw new Error(d.error);
   return { ...input, source, sourceRetrievedAt: d.date };
 }
 
 export type LeadOptions = {
-  /** Löschfrist in Monaten ab Anlage (6–24); fehlt = Standard 12 bzw. beim Bearbeiten unverändert */
+  /** Löschfrist in Monaten ab Erhebung (6–12); fehlt = Standard 12 bzw. beim Bearbeiten unverändert */
   deleteMonths?: number | null;
   /** Telefonnummer war im Formular ausgeblendet (keine Einwilligung): leeres Feld = Nummer behalten */
   phoneHidden?: boolean;
@@ -232,16 +239,19 @@ export async function createLead(adminUserId: string, input: LeadInput, opts: Le
 }
 
 export async function updateLead(adminUserId: string, id: string, rawInput: LeadInput, opts: LeadOptions = {}, now = new Date()) {
-  const input = assertOrigin(rawInput, now);
   const months = checkMonths(opts.deleteMonths);
-  const [prev] = await db.select({ email: salesLeads.email, website: salesLeads.website, name: salesLeads.name, zip: salesLeads.zip }).from(salesLeads).where(eq(salesLeads.id, id));
+  const [prev] = await db
+    .select({ email: salesLeads.email, website: salesLeads.website, name: salesLeads.name, zip: salesLeads.zip, sourceRetrievedAt: salesLeads.sourceRetrievedAt })
+    .from(salesLeads)
+    .where(eq(salesLeads.id, id));
   if (!prev) throw new Error("Eintrag nicht gefunden.");
+  const input = assertOrigin(rawInput, now, prev.sourceRetrievedAt === null);
   await assertNoDuplicate(input, id, prev);
   const email = input.email ? normalizeEmail(input.email) : null;
   await db.transaction(async (tx) => {
-    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt, createdAt: salesLeads.createdAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
+    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentEmailAt, createdAt: salesLeads.createdAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!before) throw new Error("Eintrag nicht gefunden.");
-    // Einwilligung gilt für die bisherige Adresse – bei neuer Adresse entfernen
+    // E-Mail-Einwilligung gilt für die bisherige Adresse – bei neuer Adresse entfernen
     const consentLost = !!before.consentAt && (before.email ? normalizeEmail(before.email) : null) !== email;
     // ausgeblendete Telefonnummer (ohne Einwilligung) bleibt erhalten, wenn das Feld leer ankommt
     const { phone, ...rest } = input;
@@ -252,75 +262,117 @@ export async function updateLead(adminUserId: string, id: string, rawInput: Lead
         ...rest,
         ...(keepPhone ? {} : { phone }),
         email,
-        ...(consentLost ? { consentAt: null, consentNote: null, consentKind: null } : {}),
-        ...(months ? { deleteAfter: deleteAfterFor(before.createdAt, months) } : {}),
+        ...(consentLost ? { consentEmailAt: null, consentEmailNote: null, consentEmailKind: null, consentEmailRevokedAt: null } : {}),
+        ...(months ? { deleteAfter: deleteAfterFor(before.createdAt, months), deleteAfterLegacy: false } : {}),
         updatedAt: now,
       })
       .where(eq(salesLeads.id, id));
-    if (consentLost) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "consent", text: null, meta: { removed: true, reason: "E-Mail geändert" }, createdBy: adminUserId });
+    if (consentLost) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "consent", text: null, meta: { removed: true, channel: "email", reason: "E-Mail geändert" }, createdBy: adminUserId });
     const meta = { ...(consentLost ? { consentRemoved: true } : {}), ...(months ? { deleteMonths: months } : {}) };
     await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id, meta: Object.keys(meta).length ? meta : undefined }, tx);
   });
 }
 
 export type ConsentInput = {
+  /** Kanal, für den die Einwilligung gilt (E-Mail oder Telefon) */
+  channel: ConsentChannel;
   /** Wortlaut bzw. Nachweis (Pflicht, 3–500 Zeichen) */
   note: string;
-  /** Art der Einwilligung (CONSENT_KINDS) */
+  /** Erteilungsweg (CONSENT_KINDS) */
   kind: ConsentKind;
   /** Datum der Einwilligung YYYY-MM-DD (nicht in der Zukunft) */
   date: string;
 };
 
 /**
- * Einwilligung („ja“) für GENAU EINEN Lead dokumentieren: Datum, Art und Wortlaut/Nachweis sind Pflicht.
- * Bewusst keine Sammelaktion: jede Einwilligung wird einzeln mit ihrem Nachweis erfasst. Nur mit E-Mail-Adresse.
+ * Einwilligung für GENAU EINEN Lead und EINEN Kanal dokumentieren: Datum, Erteilungsweg und Wortlaut/Nachweis sind Pflicht.
+ * Bewusst keine Sammelaktion: jede Einwilligung wird einzeln mit ihrem Nachweis erfasst. E-Mail nur mit E-Mail-Adresse.
+ * Ein früherer Widerruf desselben Kanals wird durch die neue Einwilligung ersetzt.
  */
 export async function recordLeadConsent(adminUserId: string, id: string, input: ConsentInput, now = new Date()): Promise<boolean> {
-  return (await setLeadConsent(adminUserId, [id], input, now)) === 1;
+  if (!isConsentChannel(input.channel)) throw new Error("Bitte den Kanal der Einwilligung angeben.");
+  const note = input.note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
+  if (note.length < 3) throw new Error("Bitte Wortlaut bzw. Nachweis der Einwilligung angeben.");
+  if (!isConsentKind(input.kind)) throw new Error("Bitte die Art der Einwilligung auswählen.");
+  const d = checkRetrievedDate(input.date, now);
+  if (!d.ok) throw new Error(d.error.replace("Abrufdatum der Quelle", "Datum der Einwilligung").replace("Abrufdatum", "Datum der Einwilligung"));
+  const at = consentTime(d.date, now);
+  const email = input.channel === "email";
+  return db.transaction(async (tx) => {
+    const changed = await tx
+      .update(salesLeads)
+      .set(
+        email
+          ? { consentEmailAt: at, consentEmailNote: note, consentEmailKind: input.kind, consentEmailRevokedAt: null, updatedAt: now }
+          : { consentPhoneAt: at, consentPhoneNote: note, consentPhoneKind: input.kind, consentPhoneRevokedAt: null, updatedAt: now },
+      )
+      .where(and(eq(salesLeads.id, id), email ? sql`${salesLeads.email} is not null` : undefined))
+      .returning({ id: salesLeads.id });
+    if (!changed.length) return false;
+    await tx.insert(salesLeadEvents).values({
+      leadId: id,
+      kind: "consent",
+      text: note,
+      meta: { channel: input.channel, channelLabel: CHANNEL_LABEL[input.channel], kind: input.kind, kindLabel: CONSENT_KIND_LABEL[input.kind], date: at.toISOString() },
+      createdBy: adminUserId,
+      createdAt: now,
+    });
+    await audit({ userId: adminUserId, action: "vertrieb.consent_recorded", entity: "sales_lead", meta: { leads: [id], channel: input.channel, kind: input.kind } }, tx);
+    return true;
+  });
 }
 
-/** Einwilligung entfernen (auch für mehrere Leads, z. B. Widerruf) – zurück auf „nein“. */
-export async function removeLeadConsent(adminUserId: string, ids: string[], now = new Date()): Promise<number> {
-  return setLeadConsent(adminUserId, ids, null, now);
+/**
+ * Einwilligung widerrufen (auch für mehrere Leads): setzt das Widerrufsdatum, der Nachweis der Erteilung bleibt erhalten.
+ * `channel` „alle“ = E-Mail und Telefon. Gibt die Anzahl betroffener Leads zurück.
+ */
+export async function removeLeadConsent(adminUserId: string, ids: string[], now = new Date(), channel: ConsentChannel | "alle" = "alle"): Promise<number> {
+  const list = [...new Set(ids)].slice(0, 500);
+  if (!list.length) return 0;
+  const channels: ConsentChannel[] = channel === "alle" ? ["email", "phone"] : [channel];
+  return db.transaction(async (tx) => {
+    const affected = new Set<string>();
+    const events: (typeof salesLeadEvents.$inferInsert)[] = [];
+    for (const ch of channels) {
+      const rows =
+        ch === "email"
+          ? await tx
+              .update(salesLeads)
+              .set({ consentEmailRevokedAt: now, updatedAt: now })
+              .where(and(inArray(salesLeads.id, list), sql`${salesLeads.consentEmailAt} is not null and ${salesLeads.consentEmailRevokedAt} is null`))
+              .returning({ id: salesLeads.id })
+          : await tx
+              .update(salesLeads)
+              .set({ consentPhoneRevokedAt: now, updatedAt: now })
+              .where(and(inArray(salesLeads.id, list), sql`${salesLeads.consentPhoneAt} is not null and ${salesLeads.consentPhoneRevokedAt} is null`))
+              .returning({ id: salesLeads.id });
+      for (const r of rows) {
+        affected.add(r.id);
+        events.push({ leadId: r.id, kind: "consent", text: null, meta: { removed: true, channel: ch, channelLabel: CHANNEL_LABEL[ch], revokedAt: now.toISOString() }, createdBy: adminUserId, createdAt: now });
+      }
+    }
+    if (events.length) await tx.insert(salesLeadEvents).values(events);
+    await audit({ userId: adminUserId, action: "vertrieb.consent_removed", entity: "sales_lead", meta: { leads: [...affected], channels } }, tx);
+    return affected.size;
+  });
 }
 
 /** Zeitpunkt der Einwilligung aus dem Datum: 12:00 UTC des Tages, höchstens jetzt (heute erteilt). */
 const consentTime = (date: string, now: Date) => new Date(Math.min(Date.parse(`${date}T12:00:00Z`), now.getTime()));
 
-async function setLeadConsent(adminUserId: string, ids: string[], input: ConsentInput | null, now = new Date()): Promise<number> {
-  const list = [...new Set(ids)].slice(0, 500);
-  if (!list.length) return 0;
-  if (input !== null && list.length !== 1) throw new Error("Eine Einwilligung wird je Praxis einzeln dokumentiert.");
-  let consent: { at: Date; note: string; kind: ConsentKind } | null = null;
-  if (input !== null) {
-    const note = input.note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
-    if (note.length < 3) throw new Error("Bitte Wortlaut bzw. Nachweis der Einwilligung angeben.");
-    if (!isConsentKind(input.kind)) throw new Error("Bitte die Art der Einwilligung auswählen.");
-    const d = checkRetrievedDate(input.date, now);
-    if (!d.ok) throw new Error(d.error.replace("Abrufdatum der Quelle", "Datum der Einwilligung").replace("Abrufdatum", "Datum der Einwilligung"));
-    consent = { at: consentTime(d.date, now), note, kind: input.kind };
-  }
+/**
+ * Erstbrief mit Datenschutzhinweis (Art. 14 DSGVO) als versendet vermerken (Datum YYYY-MM-DD, nicht in der Zukunft).
+ * Kein Kontakt im Sinne der Löschregel (dort zählt nur eine Reaktion der Praxis).
+ */
+export async function recordArt14Notice(adminUserId: string, id: string, date: string, now = new Date()): Promise<boolean> {
+  const d = checkRetrievedDate(date, now);
+  if (!d.ok) throw new Error(d.error.replace("Abrufdatum der Quelle", "Versanddatum").replace("Abrufdatum", "Versanddatum"));
   return db.transaction(async (tx) => {
-    const changed = await tx
-      .update(salesLeads)
-      .set(consent === null ? { consentAt: null, consentNote: null, consentKind: null, updatedAt: now } : { consentAt: consent.at, consentNote: consent.note, consentKind: consent.kind, updatedAt: now })
-      .where(and(inArray(salesLeads.id, list), consent === null ? sql`${salesLeads.consentAt} is not null` : sql`${salesLeads.email} is not null`))
-      .returning({ id: salesLeads.id });
-    if (changed.length) {
-      await tx.insert(salesLeadEvents).values(
-        changed.map((c) => ({
-          leadId: c.id,
-          kind: "consent",
-          text: consent?.note ?? null,
-          meta: consent === null ? { removed: true } : { kind: consent.kind, kindLabel: CONSENT_KIND_LABEL[consent.kind], date: consent.at.toISOString() },
-          createdBy: adminUserId,
-          createdAt: now,
-        })),
-      );
-    }
-    await audit({ userId: adminUserId, action: consent === null ? "vertrieb.consent_removed" : "vertrieb.consent_recorded", entity: "sales_lead", meta: { leads: changed.map((c) => c.id), ...(consent ? { kind: consent.kind } : {}) } }, tx);
-    return changed.length;
+    const [row] = await tx.update(salesLeads).set({ art14NoticeAt: d.date }).where(eq(salesLeads.id, id)).returning({ id: salesLeads.id });
+    if (!row) return false;
+    await tx.insert(salesLeadEvents).values({ leadId: id, kind: "letter", text: null, meta: { date: d.date }, createdBy: adminUserId, createdAt: now });
+    await audit({ userId: adminUserId, action: "vertrieb.art14_notice", entity: "sales_lead", entityId: id }, tx);
+    return true;
   });
 }
 
@@ -602,14 +654,18 @@ export async function sendStats(now = new Date()) {
 
 // ───────────── Speicherdauer ─────────────
 
-/** Speicherdauer laut Datenschutzerklärung (Abschnitt „Vertrieb“): ohne Einwilligung 12, mit Einwilligung 24 Monate ohne Aktivität */
-export const LEAD_RETENTION_MONTHS = { withoutConsent: 12, withConsent: 24 } as const;
+/** Speicherdauer (Datenschutzerklärung § 6a): ohne Einwilligung höchstens 12 Monate, mit Einwilligung 24 Monate nach der letzten Reaktion */
+export const LEAD_RETENTION_MONTHS = { withoutConsent: REACTION_RETENTION_MONTHS, withConsent: CONSENT_RETENTION_MONTHS } as const;
 
 /**
- * Nächtlicher Löschlauf (Cron /api/cron/lead-search), Status „Kunde“ bleibt immer, die Sperrliste bleibt:
- * 1. Löschfrist abgelaufen (delete_after, 6–24 Monate ab Anlage) und keine Einwilligung („nein“)
- * 2. zusätzlich wie bisher (Datenschutzerklärung): ohne Aktivität (angelegt, geändert, Mail, Antwort, Einwilligung,
- *    Verlauf) seit 12 Monaten (ohne Einwilligung) bzw. 24 Monaten (mit Einwilligung).
+ * Nächtlicher Löschlauf (Cron /api/cron/lead-search). Bestandskunden (isExistingCustomer: Status „Kunde“ oder eine
+ * zugeordnete registrierte Praxis in Stufe „Test“/„Kunde“) bleiben immer, die Sperrliste bleibt.
+ * Ohne gültige Einwilligung: gelöscht zum FRÜHEREN Zeitpunkt aus (Erhebung + gewählte Frist = delete_after) und
+ *   (letzte Reaktion der Praxis + 12 Monate). Da die Frist höchstens 12 Monate beträgt und jede Reaktion nach der
+ *   Erhebung liegt, ist das immer delete_after – außer beim Altbestand mit Schonfrist (delete_after_legacy, Migration
+ *   0070: frühestens 30 Tage nach der Migration), für den bewusst nur delete_after zählt.
+ * Mit gültiger Einwilligung (E-Mail oder Telefon, nicht widerrufen): 24 Monate nach der letzten Reaktion der Praxis.
+ * „Reaktion“ = Antwort (replied_at, Verlauf „Antwort erhalten“) oder erteilte Einwilligung – NICHT unser eigenes Schreiben.
  * Audit nur mit Anzahlen, ohne Personendaten. Gibt die Anzahl gelöschter Einträge zurück.
  */
 export async function purgeStaleLeads(now = new Date()): Promise<number> {
@@ -618,29 +674,40 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
     d.setMonth(d.getMonth() - months);
     return d;
   };
-  const cutoffWithout = before(LEAD_RETENTION_MONTHS.withoutConsent);
-  const cutoffWith = before(LEAD_RETENTION_MONTHS.withConsent);
-  const cutoff = sql`(case when ${salesLeads.consentAt} is null then ${cutoffWithout}::timestamptz else ${cutoffWith}::timestamptz end)`;
-  const stale = and(
-    sql`${salesLeads.status} <> 'kunde'`,
-    sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
-      coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
-  );
-  const expired = and(sql`${salesLeads.status} <> 'kunde'`, sql`${salesLeads.consentAt} is null`, sql`${salesLeads.deleteAfter} <= ${now}::timestamptz`);
+  const emailOk = sql`(${salesLeads.consentEmailAt} is not null and ${salesLeads.consentEmailRevokedAt} is null)`;
+  const phoneOk = sql`(${salesLeads.consentPhoneAt} is not null and ${salesLeads.consentPhoneRevokedAt} is null)`;
+  const lastReaction = sql`greatest(${salesLeads.createdAt}, coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}),
+    coalesce(${salesLeads.consentEmailAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentPhoneAt}, ${salesLeads.createdAt}),
+    coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id} and e.kind = 'reply'), ${salesLeads.createdAt}))`;
+  const expired = and(sql`not ${emailOk}`, sql`not ${phoneOk}`, sql`${salesLeads.deleteAfter} <= ${now}::timestamptz`);
+  const stale = and(sql`(${emailOk} or ${phoneOk})`, sql`${lastReaction} < ${before(LEAD_RETENTION_MONTHS.withConsent)}::timestamptz`);
+  const { matchOrgs } = await import("./vertrieb-pipeline");
   const r = await db.transaction(async (tx) => {
     const rows = await tx
-      .select({ id: salesLeads.id, expired: sql<boolean>`coalesce(${expired}, false)` })
+      .select({
+        id: salesLeads.id,
+        status: salesLeads.status,
+        step: salesLeads.step,
+        repliedAt: salesLeads.repliedAt,
+        email: salesLeads.email,
+        website: salesLeads.website,
+        expired: sql<boolean>`coalesce(${expired}, false)`,
+      })
       .from(salesLeads)
-      .where(or(expired, stale))
+      .where(and(sql`${salesLeads.status} <> 'kunde'`, or(expired, stale)))
       .for("update");
-    if (!rows.length) return { count: 0, expired: 0 };
-    const ids = rows.map((x) => x.id);
+    if (!rows.length) return { count: 0, expired: 0, kept: 0 };
+    // Bestandskunden (registrierte Praxis zugeordnet) nie löschen – gleiche Definition wie bei der Telefon-Anzeige
+    const orgs = await matchOrgs(rows.map((x) => ({ ...x, suppressed: false })));
+    const del = rows.filter((x) => !isExistingCustomer({ status: x.status, stage: deriveStage(x, orgs.get(x.id)) }));
+    if (!del.length) return { count: 0, expired: 0, kept: rows.length };
+    const ids = del.map((x) => x.id);
     await anonymizeLeadCodes(tx, ids);
-    const del = await tx.delete(salesLeads).where(inArray(salesLeads.id, ids)).returning({ id: salesLeads.id });
-    return { count: del.length, expired: rows.filter((x) => x.expired).length };
+    const gone = await tx.delete(salesLeads).where(inArray(salesLeads.id, ids)).returning({ id: salesLeads.id });
+    return { count: gone.length, expired: del.filter((x) => x.expired).length, kept: rows.length - del.length };
   });
   if (r.count) {
-    await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.count, expired: r.expired, inactive: r.count - r.expired, months: { ...LEAD_RETENTION_MONTHS } } });
+    await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.count, expired: r.expired, inactive: r.count - r.expired, keptCustomers: r.kept, months: { ...LEAD_RETENTION_MONTHS } } });
   }
   return r.count;
 }

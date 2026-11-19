@@ -5,7 +5,7 @@ import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@/components/ui";
 import { withOrg } from "@/db";
 import { integrationConnections, memberships, users } from "@/db/schema";
-import { AI_APPROVAL_TEXT, aiApprovalInfo, isAiProvider } from "@/integrations/ai-approval";
+import { AI_APPROVAL_NO_SUPPORT, AI_APPROVAL_OWNER_ONLY, AI_APPROVAL_TEXT, aiApprovalInfo, aiApprovalProblem, isAiProvider } from "@/integrations/ai-approval";
 import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
 import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
@@ -133,15 +133,25 @@ export default async function IntegrationsSettings() {
                 (() => {
                   const approval = aiApprovalInfo(cfg);
                   const by = approval ? approvers.find((a) => a.id === approval.by)?.name : null;
+                  const problem = aiApprovalProblem(cfg);
+                  const mayApprove = auth.role === "owner" && !auth.support;
                   return (
                     <div className="rounded-xl border border-border bg-surface-2 px-4 py-2">
-                      <Checkbox name="dataProcessingApproved" defaultChecked={!!approval} label={<><strong>Pflicht für „verbunden (echt)“:</strong> {AI_APPROVAL_TEXT}</>} />
+                      {/* Nie vorbelegt: Ankreuzen = neue Bestätigung (für das eingetragene Ziel). Eine gültige Bestätigung bleibt ohne Häkchen bestehen, solange das Ziel gleich bleibt. */}
+                      <Checkbox
+                        name="dataProcessingApproved"
+                        disabled={!mayApprove}
+                        label={<><strong>Pflicht für „verbunden (echt)“:</strong> {AI_APPROVAL_TEXT}</>}
+                      />
                       <p className="pb-2 text-[13px] text-muted">
                         {approval
-                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""}.`
-                          : cfg.dataProcessingApproved === true
+                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""} für ${approval.baseUrl ? new URL(approval.baseUrl).host : "den Plattform-Anbieter"}${approval.model ? ` (Modell ${approval.model})` : ""}. Häkchen nur setzen, um neu zu bestätigen; bei geänderter Basis-URL oder geändertem Modell ist eine neue Bestätigung nötig.`
+                          : problem === "version"
                             ? "Die frühere Bestätigung gilt nicht mehr (neuer Wortlaut) – bitte erneut bestätigen, sonst bleibt der Anbieter gesperrt."
-                            : "Noch nicht bestätigt – ohne Häkchen lässt sich der echte Anbieter nicht einschalten."}
+                            : problem === "target"
+                              ? "Die frühere Bestätigung galt für ein anderes Ziel (Basis-URL oder Modell) – bitte für das eingetragene Ziel neu bestätigen."
+                              : "Noch nicht bestätigt – ohne Häkchen lässt sich der echte Anbieter nicht einschalten."}
+                        {!mayApprove ? ` ${auth.support ? AI_APPROVAL_NO_SUPPORT : AI_APPROVAL_OWNER_ONLY}` : ""}
                       </p>
                     </div>
                   );

@@ -11,7 +11,7 @@ export type LeadFormValues = {
   name?: string;
   contactPerson?: string | null;
   email?: string | null;
-  /** nur übergeben, wenn sichtbar (Einwilligung oder Bestandskunde) – sonst gelangt die Nummer nicht in den Browser */
+  /** nur übergeben, wenn sichtbar (Telefon-Einwilligung oder Bestandskunde) – sonst gelangt die Nummer nicht in den Browser */
   phone?: string | null;
   website?: string | null;
   street?: string | null;
@@ -21,7 +21,7 @@ export type LeadFormValues = {
   source?: string | null;
   sourceRetrievedAt?: string | null;
   notes?: string | null;
-  /** Löschfrist in Monaten ab Anlage (6–24); null = keine ganze Monatszahl (Altbestand) */
+  /** Löschfrist in Monaten ab Erhebung (6–12); null = keine ganze Monatszahl (Altbestand mit Schonfrist) */
   deleteMonths?: number | null;
   /** Löschdatum zur Anzeige (TT.MM.JJJJ) */
   deleteAfterLabel?: string | null;
@@ -40,7 +40,7 @@ export function LeadForm({
   action: (s: State, f: FormData) => Promise<State>;
   values?: LeadFormValues;
   submit: string;
-  /** Telefonnummer ausblenden (keine Einwilligung, kein Bestandskunde) */
+  /** Telefonnummer ausblenden (keine Telefon-Einwilligung, kein Bestandskunde) */
   phoneHidden?: boolean;
   /** es ist eine (ausgeblendete) Telefonnummer gespeichert */
   phoneStored?: boolean;
@@ -48,7 +48,11 @@ export function LeadForm({
   today: string;
 }) {
   const v = (x: string | number | null | undefined) => (x === null || x === undefined ? "" : String(x));
-  const months = values.deleteMonths ?? (values.id ? "" : DELETE_MONTHS.default);
+  // Altbestand ohne passende Monatszahl (Schonfrist aus 0070): „unverändert“ vorauswählen
+  const legacy = !!values.id && values.deleteMonths == null;
+  const months = legacy ? "" : (values.deleteMonths ?? DELETE_MONTHS.default);
+  // Bearbeiten ohne gespeichertes Abrufdatum: darf leer bleiben (kein erfundenes Datum)
+  const missingDate = !!values.id && !values.sourceRetrievedAt;
   return (
     <ActionForm action={action} submit={submit}>
       {values.id ? <input type="hidden" name="id" value={values.id} /> : null}
@@ -60,7 +64,11 @@ export function LeadForm({
         {phoneHidden ? (
           <Field
             label="Telefon"
-            hint={phoneStored ? "Nummer hinterlegt, aber ausgeblendet: Anzeige nur mit Einwilligung oder bei Bestandskunden. Leer lassen = Nummer behalten." : "Wird erst mit Einwilligung oder bei Bestandskunden angezeigt."}
+            hint={
+              phoneStored
+                ? "Nummer hinterlegt, aber ausgeblendet: Anzeige nur mit Einwilligung in Anrufe oder bei Bestandskunden (Zweck: Zuordnung bei Rückruf). Leer lassen = Nummer behalten."
+                : "Wird erst mit Einwilligung in Anrufe oder bei Bestandskunden angezeigt."
+            }
           >
             <Input name="phone" maxLength={60} defaultValue="" placeholder={phoneStored ? "ausgeblendet" : ""} autoComplete="off" />
           </Field>
@@ -75,15 +83,21 @@ export function LeadForm({
         <Field label="Quelle der Daten *" hint="Pflicht (Art. 14 DSGVO), z. B. „OpenStreetMap“ oder „Impressum praxis-muster.example“">
           <Input name="source" required minLength={3} maxLength={200} defaultValue={v(values.source)} />
         </Field>
-        <Field label="Abgerufen am *" hint="Datum, an dem die Daten aus der Quelle übernommen wurden">
-          <Input name="sourceRetrievedAt" type="date" required max={today} defaultValue={v(values.sourceRetrievedAt ?? (values.id ? null : today))} />
-        </Field>
+        {missingDate ? (
+          <Field label="Abgerufen am" hint="Abrufdatum fehlt – nur eintragen, wenn bekannt.">
+            <Input name="sourceRetrievedAt" type="date" max={today} defaultValue="" />
+          </Field>
+        ) : (
+          <Field label="Abgerufen am *" hint="Datum, an dem die Daten aus der Quelle übernommen wurden">
+            <Input name="sourceRetrievedAt" type="date" required max={today} defaultValue={v(values.sourceRetrievedAt ?? today)} />
+          </Field>
+        )}
         <Field
           label="Löschfrist"
-          hint={`Monate ab Anlage (${DELETE_MONTHS.min}–${DELETE_MONTHS.max}, Standard ${DELETE_MONTHS.default}).${values.deleteAfterLabel ? ` Derzeit: Löschung am ${values.deleteAfterLabel}.` : ""} Ohne Einwilligung und ohne Status „Kunde“ wird der Eintrag danach automatisch gelöscht.`}
+          hint={`Monate ab Erhebung (${DELETE_MONTHS.min}–${DELETE_MONTHS.max}, Standard ${DELETE_MONTHS.default}), spätestens 12 Monate nach der letzten Antwort der Praxis.${values.deleteAfterLabel ? ` Derzeit: Löschung am ${values.deleteAfterLabel}.` : ""} Ohne Einwilligung wird der Eintrag danach automatisch gelöscht, außer bei Bestandskunden.`}
         >
-          <Select name="deleteMonths" defaultValue={String(months)} required>
-            {months === "" ? <option value="">bitte wählen</option> : null}
+          <Select name="deleteMonths" defaultValue={String(months)} required={!legacy}>
+            {legacy ? <option value="">unverändert (Altbestand: Löschung am {values.deleteAfterLabel})</option> : null}
             {MONTHS.map((m) => <option key={m} value={m}>{m} Monate</option>)}
           </Select>
         </Field>

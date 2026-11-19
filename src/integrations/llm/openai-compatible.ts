@@ -63,8 +63,11 @@ export class OpenAiCompatibleLlm implements LlmPort {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchFn: FetchLike;
+  /** Ziel kommt aus env (Plattform-Anbieter) – nur dann gilt die Betreiber-Freigabe LLM_DATA_PROCESSING_APPROVED */
+  private readonly envTarget: boolean;
 
   constructor(private readonly opts: LlmOptions = {}) {
+    this.envTarget = !opts.baseUrl;
     const baseUrl = opts.baseUrl ?? process.env.LLM_BASE_URL;
     const apiKey = opts.apiKey ?? process.env.LLM_API_KEY;
     const model = opts.model ?? process.env.LLM_MODEL;
@@ -82,10 +85,12 @@ export class OpenAiCompatibleLlm implements LlmPort {
    * keine Patientendaten – dann ist die Freigabe LLM_DATA_PROCESSING_APPROVED nicht nötig.
    */
   private async chat(messages: ChatMessage[], json: boolean, opts: { publicDataOnly?: boolean; maxRetries?: number } = {}): Promise<string> {
-    if (!opts.publicDataOnly && !this.opts.dataProcessingApproved && process.env.LLM_DATA_PROCESSING_APPROVED !== "true") {
+    // Betreiber-Freigabe per env gilt nur für den env-konfigurierten Plattform-Anbieter, nie für eine praxiseigene baseUrl
+    const envApproved = this.envTarget && process.env.LLM_DATA_PROCESSING_APPROVED === "true";
+    if (!opts.publicDataOnly && !this.opts.dataProcessingApproved && !envApproved) {
       throw new IntegrationNotConfiguredError(
         "llm",
-        "Anbieter nicht freigegeben (unter Einstellungen → Schnittstellen bestätigen: AVV geschlossen, Verarbeitung in der EU, kein Training – oder LLM_DATA_PROCESSING_APPROVED=true)",
+        "Anbieter nicht freigegeben (unter Einstellungen → Schnittstellen die Datenschutz-Bestätigung abgeben: AVV mit § 203-Verpflichtung, EU/EWR, Zero Data Retention und kein Training, Patienteninformation)",
       );
     }
     const res = await requestJson<{ choices?: { message?: { content?: string } }[] }>({

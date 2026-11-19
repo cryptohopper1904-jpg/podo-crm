@@ -53,12 +53,15 @@ export async function recentSyncLog(organizationId: string, limit = 20) {
 }
 
 /**
- * Freigabe für Gesundheitsdaten (EU-Verarbeitung + AVV + kein Training), je Mandant als Bestätigung mit Zeitpunkt und
- * Benutzer in der Verbindungs-Config (src/integrations/ai-approval.ts) oder global per env (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true).
+ * Freigabe für Gesundheitsdaten: je Mandant als Bestätigung der Inhaber:in (Zeitpunkt, Benutzer, Ziel) in der
+ * Verbindungs-Config (src/integrations/ai-approval.ts). Die env-Freigabe LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true
+ * ist eine Erklärung des Betreibers und gilt NUR für den env-konfigurierten Plattform-Anbieter – nicht, wenn die Praxis
+ * eine eigene Basis-URL eingetragen hat (Verbindung nicht „aus“).
  */
 export async function processingApproved(organizationId: string, provider: "llm" | "transcription"): Promise<boolean> {
-  const env = provider === "llm" ? process.env.LLM_DATA_PROCESSING_APPROVED : process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED;
-  if (env === "true") return true;
   const conn = await loadConnection(organizationId, provider);
-  return aiApprovalValid(conn?.config);
+  if (aiApprovalValid(conn?.config) && conn?.status === "connected") return true;
+  const env = provider === "llm" ? process.env.LLM_DATA_PROCESSING_APPROVED : process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED;
+  const practiceTarget = !!conn && conn.status !== "disconnected" && typeof conn.config?.baseUrl === "string" && !!conn.config.baseUrl;
+  return env === "true" && !practiceTarget;
 }

@@ -2224,18 +2224,30 @@ export const salesLeads = pgTable(
     /** Zeitpunkt der zuletzt manuell erfassten Antwort („Antwort erhalten“) */
     repliedAt: timestamp("replied_at", { withTimezone: true }),
     /**
-     * Dokumentierte Einwilligung in Werbe-E-Mails (§ 7 Abs. 2 Nr. 2 UWG, auch B2B): ohne consent_at wird NIE gesendet.
-     * consent_note = wie/wann erteilt (Pflicht, CHECK in 0041). Wird beim Ändern der E-Mail-Adresse entfernt.
+     * Einwilligung in Werbe-E-Mails (§ 7 Abs. 2 Nr. 2 UWG, auch B2B): ohne gültige E-Mail-Einwilligung (Datum gesetzt,
+     * nicht widerrufen) wird NIE gesendet. DB-Spalten heißen weiter consent_at/consent_note (seit 0041, Deploy-sicher);
+     * Wortlaut/Nachweis Pflicht (CHECK in 0041). Wird beim Ändern der E-Mail-Adresse entfernt.
      */
-    consentAt: timestamp("consent_at", { withTimezone: true }),
-    consentNote: text("consent_note"),
-    /** Art der Einwilligung (CONSENT_KINDS in src/lib/vertrieb/dsgvo.ts); nur mit consent_at, Altbestand ohne Art (CHECK in 0070) */
-    consentKind: text("consent_kind"),
+    consentEmailAt: timestamp("consent_at", { withTimezone: true }),
+    consentEmailNote: text("consent_note"),
+    /** Erteilungsweg (CONSENT_KINDS in src/lib/vertrieb/dsgvo.ts); Altbestand ohne Angabe (CHECK in 0070) */
+    consentEmailKind: text("consent_email_kind"),
+    /** Widerruf der E-Mail-Einwilligung (Nachweis bleibt erhalten) */
+    consentEmailRevokedAt: timestamp("consent_email_revoked_at", { withTimezone: true }),
+    /** Einwilligung in Werbeanrufe (§ 7 Abs. 2 Nr. 1 UWG): Datum, Erteilungsweg, Wortlaut/Nachweis, Widerruf (CHECK in 0070) */
+    consentPhoneAt: timestamp("consent_phone_at", { withTimezone: true }),
+    consentPhoneKind: text("consent_phone_kind"),
+    consentPhoneNote: text("consent_phone_note"),
+    consentPhoneRevokedAt: timestamp("consent_phone_revoked_at", { withTimezone: true }),
     /**
-     * Löschfrist: Standard Anlage + 12 Monate, in der Konsole 6–24 Monate ab Anlage (CHECK in 0070). Danach löscht der
-     * nächtliche Lauf (purgeStaleLeads) den Eintrag, außer bei Status „Kunde“ oder dokumentierter Einwilligung.
+     * Löschfrist: Erhebung + 6–12 Monate (Standard 12, CHECK in 0070). Danach löscht der nächtliche Lauf
+     * (purgeStaleLeads) den Eintrag, außer bei gültiger Einwilligung oder Bestandskunden (isExistingCustomer).
      */
     deleteAfter: timestamp("delete_after", { withTimezone: true }).notNull().default(sql`(now() + interval '12 months')`),
+    /** Altbestand aus 0070 mit Schonfrist (delete_after mindestens Migration + 30 Tage) – nur hier gilt die 12-Monats-Obergrenze nicht */
+    deleteAfterLegacy: boolean("delete_after_legacy").notNull().default(false),
+    /** Datenschutzhinweis nach Art. 14 DSGVO (Erstbrief) versendet am – Frist: Abrufdatum + 1 Monat */
+    art14NoticeAt: date("art14_notice_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -2270,7 +2282,7 @@ export const salesLeadEvents = pgTable(
     leadId: uuid("lead_id")
       .notNull()
       .references(() => salesLeads.id, { onDelete: "cascade" }),
-    /** note | status | reply | campaign | consent */
+    /** note | status | reply | campaign | consent | letter */
     kind: text("kind").notNull(),
     text: text("text"),
     meta: jsonb("meta").$type<Record<string, unknown>>(),
