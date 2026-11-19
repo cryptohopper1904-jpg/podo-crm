@@ -6,6 +6,7 @@ import { breadcrumbLd, faqLd, JsonLd } from "../_content/json-ld";
 import { pageMeta } from "../_content/site";
 import { DemoDataNote, ScreenshotFrame } from "../_content/screenshot-frame";
 import { SHOTS } from "../_content/screenshots";
+import { TrialButton, TrialText, trialOpen } from "../_content/trial-cta";
 
 
 export const metadata = pageMeta({
@@ -39,7 +40,7 @@ const PATHS = [
 ] as const;
 
 const STEPS = [
-  ["Testzugang anlegen", "Praxis registrieren – 30 Tage kostenlos, ohne Zahlungsdaten. Der Einrichtungsassistent führt durch Praxisdaten, Leistungen und Team."],
+  ["Testzugang erhalten", "Testzugang anfragen bzw. – sobald die Registrierung offen ist – die Praxis selbst registrieren. Der Einrichtungsassistent führt durch Praxisdaten, Leistungen und Team."],
   ["Leistungskatalog prüfen", "Die Podologie-Vorlage übernehmen und Preise, Dauer und Steuersatz an Ihre Praxis anpassen."],
   ["Daten importieren", "Excel-Vorlage oder Doctolib-CSV hochladen, den Prüfbericht lesen, dann importieren."],
   ["Parallelbetrieb kurz halten", "Ab einem Stichtag neue Termine und Doku nur noch in PodoHero führen. Alte Software bis zum Ende Ihrer Aufbewahrungspflichten lesend behalten oder vollständig exportieren."],
@@ -58,8 +59,8 @@ const CHECKLIST = [
   "Patient:innen über neue Online-Buchung bzw. Patientenportal informiert",
 ] as const;
 
-const FAQ = [
-  ["Was kostet der Wechsel?", "Der Import ist in allen Tarifen enthalten (im kostenlosen Tarif bis 20 Patient:innen). Sie können 30 Tage kostenlos testen; danach wählen Sie einen Tarif oder nutzen den kostenlosen Tarif (1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit, eingeschränkter Funktionsumfang – siehe Preise)."],
+const faq = (open: boolean) => [
+  ["Was kostet der Wechsel?", `Der Import ist in allen Tarifen enthalten (im kostenlosen Tarif bis 20 Patient:innen). ${open ? "Sie können 30 Tage kostenlos testen" : "Testzugänge schalten wir derzeit auf Anfrage frei; die Testphase dauert 30 Tage"}; danach wählen Sie einen Tarif oder nutzen den kostenlosen Tarif (1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit, eingeschränkter Funktionsumfang – siehe Preise).`],
   ["Kann ich Daten aus jeder Praxissoftware importieren?", "Direkt eingelesen werden der Gesamtexport aus Pododesk, der Datenexport aus Tinana, die Excel-Vorlage „Podologie Rechnungsmanager“ und die Doctolib-Patientenliste (CSV). Aus anderen Programmen exportieren Sie die Patientenliste und übertragen sie in die Excel-Vorlage. Welche Exporte Ihr bisheriges Programm anbietet, erfahren Sie beim jeweiligen Anbieter."],
   ["Werden Behandlungsdokumentationen und Fotos übernommen?", "Ein automatischer Import alter Behandlungsdokumentation ist nicht vorgesehen. Bewahren Sie die alte Dokumentation für die gesetzliche Frist auf – lesend im alten System oder als vollständiger Export."],
   ["Was passiert mit Doctolib?", "Sie können Doctolib parallel weiter nutzen: Termine kommen über das Kalender-Abo zu PodoHero, Patientenlisten per CSV. Zusätzlich bietet PodoHero eine eigene Online-Buchung und ein Patientenportal."],
@@ -67,7 +68,8 @@ const FAQ = [
   ["Wo liegen meine Daten?", "Die PodoHero-Cloud läuft bei Hetzner in Deutschland. Fotos und Dokumente werden mit einem eigenen Schlüssel je Praxis verschlüsselt."],
 ] as const;
 
-export default function SwitchPage() {
+export default async function SwitchPage() {
+  const FAQ = faq(await trialOpen());
   const trail = [{ name: "Wechseln zu PodoHero", path: "/wechseln" }];
   return (
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
@@ -78,14 +80,14 @@ export default function SwitchPage() {
           <Badge tone="primary">Gebaut nur für Podologie</Badge>
           <h1 className="mt-4 font-display text-4xl font-bold tracking-tight sm:text-5xl">Wechseln zu PodoHero</h1>
           <p className="mt-4 text-lg text-muted">
-            Von Pododesk, Tinana, Excel-Listen oder Doctolib: Übernehmen Sie Ihre Patient:innen mit Vorschau und Prüfbericht, übernehmen Sie
-            Doctolib-Termine per Kalender-Abo über einen Synchronisationsdienst (Testmodus) und starten Sie unverbindlich.
+            Von Pododesk, Tinana, Excel-Listen oder Doctolib: Übernehmen Sie Ihre Patient:innen mit Vorschau und Prüfbericht, holen Sie
+            Doctolib-Termine per Kalender-Abo über einen Synchronisationsdienst (Testmodus) dazu und starten Sie unverbindlich.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
-            <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">30 Tage kostenlos testen</LinkButton>
+            <TrialButton variant="accent" className="h-12 px-6 text-base" label="30 Tage kostenlos testen" />
             <LinkButton href="/preise" variant="secondary" className="h-12 px-6 text-base">Kostenloser Tarif</LinkButton>
           </div>
-          <p className="mt-3 text-sm text-muted">Keine Zahlungsdaten nötig · endet automatisch · kostenpflichtige Tarife monatlich kündbar</p>
+          <p className="mt-3 text-sm text-muted"><TrialText open="Keine Zahlungsdaten nötig · endet automatisch · kostenpflichtige Tarife monatlich kündbar" /></p>
         </header>
         <div>
           <ScreenshotFrame shot={SHOTS.akte} sizes="(min-width: 1024px) 560px, 100vw" eager />
@@ -142,12 +144,12 @@ export default function SwitchPage() {
         <div className="flex-1">
           <h2 className="font-display text-2xl font-semibold">Jetzt unverbindlich wechseln</h2>
           <p className="mt-1">
-            30 Tage alle Funktionen testen. Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
+            <TrialText open="30 Tage alle Funktionen testen." closed="Testzugang auf Anfrage – wir schalten Praxen schrittweise frei." /> Danach kostenlos weiter mit bis zu 20 Patient:innen (eingeschränkter Funktionsumfang,{" "}
             <Link href="/preise" className="underline">siehe Preise</Link>) oder Tarif wählen.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+          <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
           <LinkButton href="/vergleich" variant="secondary" className="h-12 px-6 text-base">Vergleich ansehen</LinkButton>
         </div>
       </section>

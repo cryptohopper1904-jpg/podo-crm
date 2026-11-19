@@ -5,6 +5,9 @@ import { absoluteUrl, OG_IMAGE, SITE_NAME } from "./site";
  * Strukturierte Daten (schema.org) als <script type="application/ld+json">.
  * Nur statische, eigene Inhalte; „<“ wird maskiert (siehe Next-Guide „JSON-LD“), damit kein HTML ausbrechen kann.
  */
+/** Fester Bezeichner der Organisation – SoftwareApplication/Article verweisen per @id darauf. */
+const ORGANIZATION_ID = () => absoluteUrl("/#organization");
+
 export function JsonLd({ data }: { data: Record<string, unknown> | Record<string, unknown>[] }) {
   return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(data).replace(/</g, "\\u003c") }} />;
 }
@@ -22,16 +25,16 @@ export function softwareApplicationLd() {
     url: absoluteUrl("/"),
     image: absoluteUrl(OG_IMAGE.url),
     description:
-      "Praxissoftware nur für Podologie: Patientenakte, Terminplanung mit Online-Buchung, Behandlungsdoku mit Fußschema und Fotos am iPad, GKV-Abrechnung über ein Abrechnungszentrum, Rechnungen, Kasse mit TSE-Anbindung, Hygiene, Pflegeheime und Touren – gehostet in Deutschland.",
+      "Praxissoftware nur für Podologie: Patientenakte, Terminplanung mit Online-Buchung, Behandlungsdoku mit Fußschema und Fotos am iPad, GKV-Verordnungen bis zur Abrechnungsreife mit Export für ein Abrechnungszentrum, Rechnungen, Kasse mit Z-Bon, Hygiene, Pflegeheime und Touren – gehostet in Deutschland.",
     featureList: [
-      "GKV-Verordnungen mit Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis und Abrechnungslauf",
+      "GKV-Verordnungen mit Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis und Export für ein Abrechnungszentrum",
       "Zuzahlungsquittung mit Kassenbuchung, Therapiebericht und Folgeverordnung",
       "Terminplanung, Online-Buchung, Patientenportal und Warteliste",
-      "Kasse mit Z-Bon, DSFinV-K-Export und TSE-Anbindung",
+      "Kasse mit Kassenbuch, Z-Bon und DSFinV-K-Export",
       "Behandlungsdoku mit Fußschema in 2D und 3D",
       "Hygiene, Sterilgut-Chargen und Gerätebuch",
     ],
-    publisher: { "@type": "Organization", name: SITE_NAME, url: absoluteUrl("/") },
+    publisher: { "@id": ORGANIZATION_ID() },
   };
 }
 
@@ -40,6 +43,7 @@ export function organizationLd() {
   return {
     "@context": "https://schema.org",
     "@type": "Organization",
+    "@id": ORGANIZATION_ID(),
     name: SITE_NAME,
     url: absoluteUrl("/"),
     logo: absoluteUrl("/icons/icon-512.png"),
@@ -74,7 +78,7 @@ export function articleLd(a: { title: string; description: string; path: string;
     mainEntityOfPage: absoluteUrl(a.path),
     image: absoluteUrl(OG_IMAGE.url),
     author: { "@type": "Organization", name: `${SITE_NAME}-Redaktion` },
-    publisher: { "@type": "Organization", name: SITE_NAME, logo: { "@type": "ImageObject", url: absoluteUrl("/icons/icon-512.png") } },
+    publisher: { "@type": "Organization", "@id": ORGANIZATION_ID(), name: SITE_NAME, logo: { "@type": "ImageObject", url: absoluteUrl("/icons/icon-512.png") } },
   };
 }
 
@@ -90,6 +94,6 @@ export function videoObjectLd() {
     contentUrl: absoluteUrl(v.wide.src),
     uploadDate: v.uploadDate,
     duration: v.durationIso,
-    inLanguage: "de",
+    inLanguage: "de-DE",
   };
 }

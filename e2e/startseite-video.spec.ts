@@ -8,7 +8,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const NOTE =
-  "Lädt erst beim Klick auf Abspielen · direkt von unserem Server, ohne eingebundene Fremddienste und ohne Tracking · Untertitel verfügbar · Sprecherstimme KI-generiert · Demo-Daten, Abläufe gekürzt · Kassen-TSE derzeit im Testmodus";
+  "Lädt erst beim Klick auf Abspielen · direkt von unserem Server, ohne eingebundene Fremddienste und ohne Tracking · Untertitel verfügbar · Sprecherstimme KI-generiert · Demo-Daten, Abläufe gekürzt · Kassen-TSE in Vorbereitung";
 const PLAY = "Erklärvideo abspielen (2:36, mit Untertiteln)";
 
 /** Alle Anfragen auf Video-/Untertiteldateien mitschneiden (auch solche, die der Browser abbricht) */

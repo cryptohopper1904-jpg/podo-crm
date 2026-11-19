@@ -40,10 +40,11 @@ import { PRICE_NOTE, PUBLIC_PLANS } from "./_content/plans";
 import { DemoDataNote, ScreenshotFrame, ShotImage } from "./_content/screenshot-frame";
 import { SHOTS, type Screenshot } from "./_content/screenshots";
 import { OG_IMAGE } from "./_content/site";
+import { TrialButton, TrialText } from "./_content/trial-cta";
 
 const HOME_TITLE = "PodoHero – Praxissoftware für Podologie mit GKV-Abrechnung";
 const HOME_DESCRIPTION =
-  "Praxissoftware Podologie: GKV-Verordnungen mit Prüfung und Leistungsnachweis, Terminplanung mit Online-Buchung, Kasse mit TSE-Anbindung, Doku am iPad – gehostet in Deutschland. 30 Tage kostenlos testen.";
+  "Praxissoftware für Podologie: Terminplanung mit Online-Buchung, GKV-Verordnungen bis zur Abrechnung, Kasse mit Z-Bon, Doku am iPad. Hosting in Deutschland.";
 
 export const metadata: Metadata = {
   title: { absolute: HOME_TITLE },
@@ -60,14 +61,14 @@ const GKV_POINTS = [
   "Leistungsnachweis als PDF, Therapiebericht und Vorlage zur Anforderung der Folgeverordnung",
   "Zuzahlungsquittung mit eigener Belegnummer, direkt in der Kasse gebucht",
   "Kennzeichen der Verordnungsart, Absetzungen und Retaxen, Korrektur abgerechneter Verordnungen",
-  "Abrechnungslauf mit Export für Ihr Abrechnungszentrum, Auswertung Kasse vs. privat und Belegliste",
+  "Abrechnungslauf mit Export im neutralen Format für Ihr Abrechnungszentrum, Auswertung Kasse vs. privat und Belegliste",
 ] as const;
 
 /** Kurze FAQ (sichtbar + FAQPage-JSON-LD) – Antworten müssen mit /funktionen, /sicherheit und docs/ übereinstimmen. */
 const HOME_FAQ = [
   [
     "Kann ich mit PodoHero gesetzliche Krankenkassen abrechnen?",
-    "Ja, über ein Abrechnungszentrum: PodoHero prüft die Verordnungen, sammelt Unterschriften und Leistungsnachweise und erstellt einen Abrechnungslauf als Export für Ihr Abrechnungszentrum. Die Übermittlung an die Kassen nach § 302 SGB V übernimmt der Partner.",
+    "Über ein Abrechnungszentrum: PodoHero prüft die Verordnungen, sammelt Unterschriften und Leistungsnachweise und stellt abrechnungsreife Verordnungen als Export im neutralen Format zur Weitergabe an Ihr Abrechnungszentrum bereit. Ob Ihr Zentrum das Format übernimmt, klären Sie bitte vorab; eine feste Partneranbindung besteht noch nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum.",
   ],
   [
     "Gibt es eine Direktabrechnung nach § 302 SGB V?",
@@ -75,11 +76,11 @@ const HOME_FAQ = [
   ],
   [
     "Hat die Kasse eine TSE?",
-    "PodoHero signiert Kassenvorgänge (Bar, Karte, Gutschein) über die TSE-Anbindung an fiskaly. Für den Echtbetrieb brauchen Sie einen eigenen Vertrag mit fiskaly; bis dahin läuft die Anbindung im Testmodus. Kassenbuch, Z-Bon und DSFinV-K-Export sind eingebaut.",
+    "Noch nicht für den Echtbetrieb. Eingebaut sind Kassenbuch, Z-Bon und DSFinV-K-Export. Die TSE-Anbindung (fiskaly) ist in Vorbereitung – setzen Sie PodoHero vor dem Echtbetrieb der TSE noch nicht als elektronische Kasse ein.",
   ],
   [
     "Wo liegen die Gesundheitsdaten meiner Patient:innen?",
-    "Die PodoHero-Cloud läuft bei Hetzner in Deutschland. Fotos, Dokumente und Unterschriften werden mit einem eigenen Schlüssel je Praxis verschlüsselt, die Praxen sind in Anwendung und Datenbank voneinander getrennt. Ihre Daten trainieren keine KI-Modelle.",
+    "Die PodoHero-Cloud läuft bei Hetzner in Deutschland. Fotos, Dokumente und Unterschriften werden mit einem eigenen Schlüssel je Praxis verschlüsselt, die Praxen sind in Anwendung und Datenbank voneinander getrennt. Wir nutzen Ihre Daten nicht zum KI-Training; KI-Funktionen sind standardmäßig aus.",
   ],
   [
     "Kann ich meine Daten aus Pododesk übernehmen?",
@@ -92,7 +93,7 @@ const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: 
   { shot: SHOTS.fussschema, tag: "iPad", title: "Doku am Behandlungsstuhl", text: "Befunde im Fußschema antippen, je Stelle notieren, Sterilgut-Charge erfassen.", href: "/funktionen#doku" },
   { shot: SHOTS.besuchstag, tag: "iPad", title: "Besuchstag im Pflegeheim", text: "Je Bewohner:in Leistungen antippen und Kurzbefund speichern – Liste statt Einzelakten.", href: "/funktionen#praxis" },
   { shot: SHOTS.sammelrechnung, tag: "Desktop", title: "Sammelrechnung ans Pflegeheim", text: "Positionen kommen aus dem Besuchstag, Steuerbefreiung wird geprüft und vermerkt.", href: "/funktionen#rechnungen" },
-  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss; TSE-Signatur über fiskaly im Testmodus.", href: "/funktionen#rechnungen" },
+  { shot: SHOTS.kasse, tag: "Desktop", title: "Kasse mit Z-Bon", text: "Bar, Karte, Gutschein – Kassenbuch, Zählprotokoll und lückenloser Tagesabschluss; TSE-Anbindung (fiskaly) in Vorbereitung.", href: "/funktionen#rechnungen" },
   { shot: SHOTS.hygiene, tag: "Desktop", title: "Hygiene & Gerätebuch", text: "Chargen freigeben, Fristen für Wartung und Validierung, Tages-Checkliste.", href: "/funktionen#praxis" },
   { shot: SHOTS.website, tag: "Website", title: "Ihre Praxis-Website", text: "Aus Ihren Praxisdaten erzeugt – mit „Termin online buchen“, ohne Cookies.", href: "/funktionen#termine" },
 ];
@@ -100,13 +101,13 @@ const LIVE: { shot: Screenshot; title: string; text: string; href: string; tag: 
 const ONLY_PODO = [
   "Fußschema in 2D und am 3D-Fußmodell",
   "Nagelspangen-Episoden mit Pflichtfoto-Assistent",
-  "Risiko-Ampel für Diabetes, Blutverdünner, pAVK, Neuropathie",
+  "Risiko-Hinweise: erfasste Risikofaktoren wie Diabetes, Blutverdünner, pAVK, Neuropathie auf einen Blick",
   "Verordnungen DF, NF, QF und UI mit Fristen-Ampel",
   "Sterilgut-Chargen bis zur einzelnen Behandlung rückverfolgbar",
   "Pflegeheim-Modus, Touren und Sammelrechnung",
 ] as const;
 
-type Capability = { icon: LucideIcon; title: string; text: string; href: string; test?: boolean };
+type Capability = { icon: LucideIcon; title: string; text: string; href: string; test?: boolean; pilot?: boolean };
 
 /** „Alles drin“: nur, was laut docs/STATUS.md eingebaut ist. test = eingebaut, Echtbetrieb mit eigenem Anbietervertrag. */
 const CAPABILITIES: { group: string; items: Capability[] }[] = [
@@ -115,14 +116,14 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
     items: [
       { icon: Camera, title: "Doku mit Fotos am Stuhl", text: "Leistungen antippen, Fotos direkt aus der Kamera, unveränderbar gespeichert.", href: "/funktionen#doku" },
       { icon: Footprints, title: "Fuß in 2D und 3D", text: "Befunde im Fußschema oder am 3D-Modell markieren.", href: "/funktionen#doku" },
-      { icon: HeartPulse, title: "Risiko-Ampel", text: "Diabetes, Blutverdünner, pAVK, MRSA – im Kopf jeder Akte.", href: "/funktionen#akte" },
+      { icon: HeartPulse, title: "Risiko-Hinweise", text: "Zeigt die von Ihnen erfassten Risikofaktoren wie Diabetes, Blutverdünner, pAVK, MRSA im Kopf jeder Akte an.", href: "/funktionen#akte" },
     ],
   },
   {
     group: "Termine & Kommunikation",
     items: [
       { icon: CalendarCheck, title: "Online-Buchung & Patientenportal", text: "Patient:innen buchen und verschieben selbst, auch über Ihre Praxis-Website (Patientenportal ab Tarif Praxis).", href: "/funktionen#termine" },
-      { icon: PhoneCall, title: "KI-Telefonassistent", text: "Nimmt Anrufe an, nennt freie Zeiten, notiert Termin- und Rückrufwünsche.", href: "/funktionen#kommunikation", test: true },
+      { icon: PhoneCall, title: "KI-Telefonassistent", text: "Soll Anrufe annehmen, freie Zeiten nennen und Termin- und Rückrufwünsche notieren.", href: "/funktionen#kommunikation", pilot: true },
       { icon: MessagesSquare, title: "Ein Posteingang", text: "E-Mail, WhatsApp und SMS an einem Ort, mit KI-Antwortvorschlägen.", href: "/funktionen#kommunikation", test: true },
       { icon: Repeat, title: "Erinnerung & Warteliste", text: "Automatische Erinnerungen, Rückholung und Nachrücker bei Absagen.", href: "/funktionen#termine" },
       { icon: TabletSmartphone, title: "iPad-Übergabe", text: "Patient:innen füllen die Anamnese selbst am iPad aus – die übrigen Praxisdaten bleiben gesperrt.", href: "/funktionen#doku" },
@@ -132,8 +133,8 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
     group: "Abrechnung & Kasse",
     items: [
       { icon: CreditCard, title: "Rechnungen & Kartenzahlung", text: "Lückenlose Nummernkreise, Gutscheine; Kartenzahlung über SumUp-Terminal und Zahlungslink.", href: "/funktionen#rechnungen", test: true },
-      { icon: Receipt, title: "Kasse mit TSE", text: "Kassenbuch, Z-Bon und DSFinV-K-Export; TSE-Signatur über fiskaly (Testmodus)", href: "/funktionen#rechnungen", test: true },
-      { icon: ClipboardList, title: "GKV-Abrechnung", text: "Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis, Abrechnungslauf fürs Abrechnungszentrum.", href: "/funktionen#verordnungen" },
+      { icon: Receipt, title: "Kasse mit Z-Bon", text: "Kassenbuch, Z-Bon und DSFinV-K-Export. TSE-Anbindung (fiskaly) in Vorbereitung – vor dem Echtbetrieb als elektronische Kasse noch nicht einsetzen.", href: "/funktionen#rechnungen" },
+      { icon: ClipboardList, title: "GKV-Abrechnung", text: "Verordnungsprüfung, Unterschrift je Behandlung, Leistungsnachweis, Export im neutralen Format fürs Abrechnungszentrum.", href: "/funktionen#verordnungen" },
       { icon: FileSignature, title: "Zuzahlung & Retaxen", text: "Zuzahlungsquittung mit Kassenbuchung, Absetzungen verfolgen, Korrektur und Neuabrechnung.", href: "/funktionen#verordnungen" },
     ],
   },
@@ -151,9 +152,9 @@ const CAPABILITIES: { group: string; items: Capability[] }[] = [
 const DAY: { time: string; title: string; text: string }[] = [
   { time: "7:45", title: "Praxis öffnen", text: "Hygiene-Checkliste abhaken, Sterilgut-Charge freigeben. Der Tagesüberblick zeigt Termine und neue Nachrichten." },
   { time: "9:00", title: "Am Behandlungsstuhl", text: "Risiken sind sofort sichtbar. Leistungen antippen, Befund am Fuß markieren, Fotos aufnehmen – fertig dokumentiert." },
-  { time: "11:30", title: "Während Sie behandeln", text: "Der Telefonassistent (Testmodus) nimmt Anrufe an und legt Terminwünsche zur Bestätigung ab. Eine Absage? Die Warteliste bietet den Termin automatisch an." },
+  { time: "11:30", title: "Während Sie behandeln", text: "Eine Absage? Die Warteliste bietet den Termin automatisch an. Ein KI-Telefonassistent für Terminwünsche ist als Pilot in Vorbereitung." },
   { time: "14:00", title: "Hausbesuch im Pflegeheim", text: "Bewohnerliste öffnen, Schnell-Doku je Person. Die Sammelrechnung entsteht am Monatsende von selbst." },
-  { time: "17:30", title: "Abrechnen", text: "Rechnung mit Karte über SumUp bezahlen lassen, Verordnungen abrechnungsreif setzen und für das Abrechnungszentrum exportieren." },
+  { time: "17:30", title: "Abrechnen", text: "Rechnung mit Karte über SumUp bezahlen lassen, Verordnungen abrechnungsreif setzen und als Export für das Abrechnungszentrum bereitstellen." },
   { time: "18:30", title: "Feierabend", text: "Tagesabschluss mit Z-Bon. Die Erinnerungen für morgen gehen automatisch raus – nur an Personen mit Einwilligung." },
 ];
 
@@ -161,7 +162,7 @@ const SECURITY = [
   { icon: ServerCog, title: "Hosting in Deutschland", text: "Die PodoHero-Cloud läuft bei Hetzner in Deutschland." },
   { icon: Lock, title: "Verschlüsselt", text: "Fotos und Dokumente mit eigenem Schlüssel je Praxis." },
   { icon: ShieldCheck, title: "Doppelte Mandantentrennung", text: "In der Anwendung und per Row-Level-Security der Datenbank." },
-  { icon: Sparkles, title: "Kein KI-Training", text: "Ihre Daten trainieren keine Modelle. KI nur mit AVV." },
+  { icon: Sparkles, title: "Kein KI-Training mit Ihren Daten", text: "Wir nutzen Ihre Daten nicht zum KI-Training. KI-Funktionen sind standardmäßig aus; Sie wählen den Anbieter selbst und bestätigen AVV und Geheimhaltung." },
   { icon: KeyRound, title: "Zwei-Faktor-Anmeldung", text: "Pflicht für Inhaber:innen, auf Wunsch für das ganze Team." },
   { icon: Lock, title: "Unveränderbare Doku", text: "Einträge und Kassenabschlüsse in einer prüfbaren Hash-Kette." },
 ] as const;
@@ -171,11 +172,11 @@ const COMPARISON: { topic: string; podo: Cell }[] = [
   { topic: "Behandlungsdoku mit Fotos direkt am iPad/iPhone", podo: true },
   { topic: "Pflichtfoto-Assistent für Nagelspangen", podo: true },
   { topic: "CRM: Rückholung, Erinnerungen, Patientenportal mit Selbstbuchung", podo: "ja (Patientenportal ab Tarif Praxis)" },
-  { topic: "KI-Telefonassistent für Terminwünsche", podo: "eingebaut (Testmodus)" },
+  { topic: "KI-Telefonassistent für Terminwünsche", podo: "Pilot in Vorbereitung" },
   { topic: "Selbstzahler: Gutscheine, Mischzahlung, eigene Online-Buchung", podo: true },
   { topic: "Hygiene: Sterilgut-Chargen, Rückverfolgung, Gerätebuch", podo: true },
   { topic: "Praxisfinanzen: Fixkosten und Break-even", podo: true },
-  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "über Abrechnungszentrum (Export); Direktabrechnung in Vorbereitung (bisher nur Testdatei-Export)" },
+  { topic: "GKV-Abrechnung nach § 302 SGB V", podo: "Export im neutralen Format zur Weitergabe an ein Abrechnungszentrum (Format vorab mit dem Zentrum klären); Direktabrechnung in Vorbereitung (bisher nur Testdatei-Export)" },
   { topic: "Unterschrift je Behandlung, Leistungsnachweis, Zuzahlungsquittung", podo: true },
   { topic: "Telematikinfrastruktur (TI/KIM)", podo: "KIM vorbereitet, Echtbetrieb mit eigenen TI-Komponenten" },
   { topic: "Verordnung per Foto auslesen", podo: "eingebaut (Testmodus, Felder werden bestätigt)" },
@@ -215,19 +216,20 @@ export default async function Landing() {
           <div>
             <Badge tone="primary">Gebaut nur für Podologie</Badge>
             <h1 id="hero-title" className="mt-5 font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3.6rem]">
-              Ihre Praxis läuft.{" "}<span className="block text-primary">Sie behandeln.</span>
+              <span className="block text-xl font-semibold tracking-normal text-muted sm:text-2xl">Praxissoftware für Podologie</span>
+              <span className="mt-3 block">Ihre Praxis läuft.</span>{" "}<span className="block text-primary">Sie behandeln.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg text-muted">
-              PodoHero dokumentiert am Behandlungsstuhl, nimmt auf Wunsch Anrufe an (KI-Telefonassistent, Testmodus), füllt freie Termine nach, erinnert Ihre Patient:innen und schließt abends
-              die Kasse. Eine Software für die ganze Praxis – vom ersten Anruf bis zum Z-Bon.
+              PodoHero dokumentiert am Behandlungsstuhl, füllt freie Termine über die Warteliste nach, erinnert Ihre Patient:innen und schließt abends
+              die Kasse. Eine Software für die ganze Praxis – vom Termin bis zum Z-Bon.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">
-                Kostenlos testen <ArrowRight size={18} aria-hidden />
-              </LinkButton>
+              <TrialButton variant="accent" className="h-12 px-6 text-base">
+                {" "}<ArrowRight size={18} aria-hidden />
+              </TrialButton>
               <LinkButton href="/funktionen" variant="secondary" className="h-12 px-6 text-base">Funktionen ansehen</LinkButton>
             </div>
-            <p className="mt-4 text-sm text-muted">30 Tage kostenlos · keine Zahlungsdaten nötig · endet automatisch</p>
+            <p className="mt-4 text-sm text-muted"><TrialText open="30 Tage kostenlos · keine Zahlungsdaten nötig · endet automatisch" /></p>
             <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm font-medium" aria-label="Datenschutz">
               <li className="inline-flex items-center gap-1.5"><ServerCog size={16} aria-hidden className="text-primary" /> Hosting in Deutschland</li>
               <li className="inline-flex items-center gap-1.5"><Lock size={16} aria-hidden className="text-primary" /> Fotos verschlüsselt</li>
@@ -270,7 +272,7 @@ export default async function Landing() {
               <div key={group}>
                 <h3 className="text-sm font-semibold uppercase tracking-wide text-muted">{group}</h3>
                 <ul className="mt-3 flex flex-col gap-2">
-                  {items.map(({ icon: Icon, title, text, href, test }) => (
+                  {items.map(({ icon: Icon, title, text, href, test, pilot }) => (
                     <li key={title}>
                       <Link
                         href={href}
@@ -282,6 +284,9 @@ export default async function Landing() {
                         <span className="min-w-0">
                           <span className="flex flex-wrap items-center gap-x-2 font-semibold group-hover:text-primary">
                             {title}
+                            {pilot ? (
+                              <span className="rounded-full bg-surface-2 px-2 py-px text-[11px] font-semibold text-muted">Pilot in Vorbereitung</span>
+                            ) : null}
                             {test ? (
                               <span className="rounded-full bg-info-soft px-2 py-px text-[11px] font-semibold text-info-soft-text">Testmodus</span>
                             ) : null}
@@ -310,7 +315,9 @@ export default async function Landing() {
             <h2 id="gkv" className="mt-4 font-display text-3xl font-semibold tracking-tight">Podologie-Software mit GKV-Abrechnung</h2>
             <p className="mt-3 text-muted">
               Von der Heilmittelverordnung bis zum Abrechnungslauf: PodoHero prüft jede Verordnung gegen die Vorgaben des Podologie-Vertrags und
-              meldet, was vor der Abrechnung fehlt. Abgerechnet wird über Ihr Abrechnungszentrum.
+              meldet, was vor der Abrechnung fehlt. Abgerechnet wird über Ihr Abrechnungszentrum: Abrechnungsreife Verordnungen stehen als
+              Export im neutralen Format bereit – ob Ihr Zentrum das Format übernimmt, bitte vorab klären; eine feste Partneranbindung besteht noch
+              nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum.
             </p>
             <p className="mt-3 rounded-xl bg-surface-2 px-4 py-3 text-sm text-muted">
               <span className="font-semibold text-text">In Vorbereitung:</span> Direktabrechnung nach § 302 SGB V. Prüflauf und
@@ -414,7 +421,7 @@ export default async function Landing() {
           <h2 id="vergleich" className="font-display text-3xl font-semibold tracking-tight">Wo PodoHero den Schwerpunkt setzt</h2>
           <p className="mt-2 max-w-3xl text-muted">
             PodoHero setzt den Schwerpunkt auf mobile Doku, Patientenbindung und Selbstzahler – und bereitet GKV-Verordnungen bis zur Abrechnung
-            vor. Abgerechnet wird über ein Abrechnungszentrum per Export; die Direktabrechnung nach § 302 SGB V ist in Vorbereitung, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
+            vor. Abgerechnet wird über ein Abrechnungszentrum (Export im neutralen Format, eine feste Partneranbindung besteht noch nicht); die Direktabrechnung nach § 302 SGB V ist in Vorbereitung, KIM vorbereitet. Konkrete Gegenüberstellungen mit Quellen finden
             Sie unter <Link href="/vergleich" className="font-semibold text-primary hover:underline">Podologie-Software im Vergleich</Link>.
           </p>
           <ScrollArea label="Schwerpunkte von PodoHero" className="mt-8 rounded-[var(--radius-card)] border border-border bg-surface">
@@ -493,11 +500,16 @@ export default async function Landing() {
       <section className="mx-auto max-w-6xl px-4 pb-20 sm:px-6">
         <div className="flex flex-col items-start gap-6 rounded-[24px] bg-primary px-6 py-10 text-on-primary sm:px-10 md:flex-row md:items-center">
           <div className="flex-1">
-            <h2 className="font-display text-3xl font-semibold tracking-tight">In zwei Minuten startklar</h2>
-            <p className="mt-2">Praxis anlegen, Leistungskatalog übernehmen, Excel-Liste importieren. Schnittstellen starten im Testmodus.</p>
+            <h2 className="font-display text-3xl font-semibold tracking-tight"><TrialText open="In zwei Minuten startklar" closed="PodoHero kennenlernen" /></h2>
+            <p className="mt-2">
+              <TrialText
+                open="Praxis anlegen, Leistungskatalog übernehmen, Excel-Liste importieren. Schnittstellen starten im Testmodus."
+                closed="Testzugang auf Anfrage – wir schalten Praxen schrittweise frei. Danach: Leistungskatalog übernehmen, Daten importieren, Schnittstellen im Testmodus ausprobieren."
+              />
+            </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+            <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
             <LinkButton href="/login" variant="secondary" className="h-12 px-6 text-base">
               Anmelden
             </LinkButton>

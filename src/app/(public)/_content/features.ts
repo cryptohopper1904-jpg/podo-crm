@@ -19,7 +19,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
     lead: "Alles zu einer Person an einem Ort – mit Risiken immer im Blick.",
     items: [
       { text: "Stammdaten, Versicherung, abweichender Rechnungsempfänger (Angehörige, Betreuer, Pflegeheim)" },
-      { text: "Risiko-Ampel: Diabetes, Blutverdünner, pAVK, Neuropathie, MRSA, Allergien" },
+      { text: "Risiko-Hinweise: zeigt die von Ihnen erfassten Risikofaktoren (z. B. Diabetes, Blutverdünner, pAVK, Neuropathie, MRSA, Allergien) übersichtlich an" },
       { text: "Status Neu / Aktiv / Überfällig / Inaktiv nach Wunsch-Intervall" },
       { text: "Zeitleiste mit Terminen, Doku, Fotos und Rechnungen, Dubletten-Prüfung" },
       { text: "Versionierte Einwilligungen, Auskunft nach Art. 15 DSGVO als Datei" },
@@ -35,14 +35,14 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Fotos direkt aus der Kamera – verschlüsselt gespeichert, nie in der Mediathek" },
       { text: "Nagelspangen-Episoden mit Pflichtfoto-Assistent (fehlendes Foto nur mit Begründung)" },
       { text: "Unveränderbare Einträge (§ 630f BGB), Korrekturen als Nachtrag, Gegenzeichnung für Azubis" },
-      { text: "Strukturierte Anamnese mit IWGDF-Risikoklasse, Online-Anamnese per Einmal-Link" },
+      { text: "Strukturierte Anamnese mit Feld für die von Ihnen eingetragene IWGDF-Risikoklasse, Online-Anamnese per Einmal-Link" },
       { text: "Übergabe-Modus: iPad zum Ausfüllen der Anamnese an die Patient:in geben – die übrigen Praxisdaten bleiben gesperrt, zurück nur mit PIN oder Passwort" },
       { text: "Sprachbericht: Diktat wird transkribiert und in Felder sortiert", status: "test" },
     ],
   },
   {
     id: "termine",
-    title: "Termine & Online-Buchung",
+    title: "Terminplanung & Online-Buchung",
     lead: "Kalender, der Leistungsdauer, Feiertage und Abwesenheiten kennt.",
     items: [
       { text: "Tages- und Wochenansicht, Serientermine, Hausbesuche, Doppelbuchungsprüfung" },
@@ -68,7 +68,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Therapiebericht als PDF und Hinweis „Folgeverordnung anfordern“ mit Vorlage für die Arztpraxis" },
       { text: "Kennzeichen der Verordnungsart (03/04), Verordnungsbesonderheit und Genehmigung je Verordnung" },
       { text: "Absetzungen und Retaxen erfassen und bis zur Erledigung verfolgen, Korrektur und Neuabrechnung abgerechneter Verordnungen" },
-      { text: "Abrechnungslauf mit Export für ein Abrechnungszentrum (die Übermittlung nach § 302 SGB V übernimmt der Partner)" },
+      { text: "Abrechnungsreife Verordnungen als Export im neutralen Format zur Weitergabe an Ihr Abrechnungszentrum – ob Ihr Zentrum das Format übernimmt, bitte vorab klären; eine feste Partneranbindung besteht noch nicht. Die Übermittlung nach § 302 SGB V übernimmt das Zentrum." },
       { text: "Auswertung Kasse vs. privat und Belegliste als interne Übersicht für die Steuerberatung" },
       { text: "Erfassung mit Foto der Papierverordnung; Verordnung per Foto auslesen – jedes Feld wird angezeigt und erst nach Bestätigung übernommen", status: "test" },
       { text: "Direktabrechnung nach § 302 SGB V: Prüflauf und Testdatei-Export vorhanden; Versand an die Datenannahmestellen (mit Zertifikat) noch nicht möglich", status: "planned" },
@@ -77,7 +77,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
   },
   {
     id: "rechnungen",
-    title: "Rechnungen, Kasse & Gutscheine",
+    title: "Kasse, Rechnungen & Gutscheine",
     lead: "Lückenlose Nummernkreise und klare Umsatzsteuer-Logik.",
     items: [
       { text: "Rechnung, Quittung, Sammelrechnung, Ausfallhonorar, Storno – unveränderbar nach Ausstellung" },
@@ -86,7 +86,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "SumUp-Kartenterminal und Zahlungslink direkt aus der Rechnung", status: "test" },
       { text: "Kasse: Kassenbuch, Zählprotokoll, lückenlos nummerierter Tagesabschluss (Z-Bon), DSFinV-K-Export" },
       { text: "Zuzahlungsquittungen für Kassenpatient:innen laufen direkt in die Kasse" },
-      { text: "TSE-Signatur für jeden Kassenvorgang über fiskaly", status: "test" },
+      { text: "TSE-Anbindung (fiskaly) in Vorbereitung – vor dem Echtbetrieb als elektronische Kasse noch nicht einsetzen", status: "planned" },
       { text: "Belege an lexoffice übertragen", status: "test" },
     ],
   },
@@ -100,7 +100,7 @@ export const FEATURE_GROUPS: readonly FeatureGroup[] = [
       { text: "Posteingang für E-Mail, WhatsApp und SMS mit KI-Antwortvorschlägen", status: "test" },
       { text: "SMS, E-Mail-Versand und WhatsApp (nur Organisatorisches)", status: "test" },
       { text: "Google-Bewertungen lesen und beantworten (ohne Gesundheitsdetails)", status: "test" },
-      { text: "KI-Telefonassistent: nimmt Anrufe an, nennt freie Termine, legt Terminwünsche zur Bestätigung an und notiert Rückrufwünsche", status: "test" },
+      { text: "KI-Telefonassistent (Pilot in Vorbereitung): soll Anrufe annehmen, freie Termine nennen, Terminwünsche zur Bestätigung anlegen und Rückrufwünsche notieren", status: "planned" },
     ],
   },
   {

@@ -43,14 +43,14 @@ export const PODO = {
   hosting: "Hetzner, Deutschland",
   footDoc: "Fußschema 2D und 3D-Fußmodell, Fotos direkt aus der Kamera (verschlüsselt)",
   booking: "eigene Online-Buchung; Patientenportal zum Buchen, Verschieben, Absagen (ab Tarif Praxis)",
-  gkv: "Verordnungen mit Fristen-Ampel; Abrechnung per Export an ein Abrechnungszentrum (keine Direktabrechnung)",
+  gkv: "Verordnungen mit Prüfung und Fristen-Ampel; Export im neutralen Format zur Weitergabe an ein Abrechnungszentrum (Format vorab mit dem Zentrum klären, keine feste Partneranbindung); Direktabrechnung in Vorbereitung",
   ti: "KIM-Postfach vorbereitet; Echtbetrieb mit eigenen TI-Komponenten (SMC-B, Konnektor, KIM-Anbieter)",
   invoices: "Rechnung, Quittung, Sammelrechnung, Gutscheine, USt-Prüfung nach § 4 Nr. 14 UStG",
-  kasse: "Kassenbuch, Zählprotokoll, Z-Bon, DSFinV-K-Export; TSE über fiskaly im Testmodus",
+  kasse: "Kassenbuch, Zählprotokoll, Z-Bon, DSFinV-K-Export; TSE-Anbindung (fiskaly) in Vorbereitung – vor dem Echtbetrieb als elektronische Kasse noch nicht einsetzen",
   hygiene: "Sterilgut-Chargen mit Freigabe und Rückverfolgung, Gerätebuch, Tages-Checkliste",
   carehome: "Pflegeheim-Modus mit Besuchstag, Schnell-Doku und Sammelrechnung; Tourenplanung",
-  free: "kostenloser Tarif: 1 Behandler:in, bis 20 Patient:innen, ohne Zeitlimit (eingeschränkter Funktionsumfang, siehe „Preise“)",
-  trial: "30 Tage kostenlos, endet automatisch, keine Zahlungsdaten nötig",
+  free: "kostenloser Tarif: 1 Behandler:in, bis 20 Patient:innen, unbefristet, Kündigung laut AGB (eingeschränkter Funktionsumfang, siehe „Preise“)",
+  trial: "Testphase 30 Tage, endet automatisch, keine Zahlungsdaten nötig (Testzugang derzeit auf Anfrage)",
 } as const;
 
 export const COMPETITORS: Competitor[] = [
@@ -87,7 +87,7 @@ export const COMPETITORS: Competitor[] = [
       "Behandlungsalltag am iPad: Fotos direkt aus der Kamera, Fußschema in 2D oder 3D, unveränderbare Einträge mit Nachträgen.",
       "Selbstzahler und Patientenbindung: Patientenportal, Warteliste, Erinnerungen, Gutscheine, eigene Praxis-Website.",
       "Praxisbetrieb: Hygiene mit Sterilgut-Chargen und Gerätebuch, Pflegeheim-Modus mit Sammelrechnung, Touren und Kasse mit Z-Bon.",
-      "GKV-Abrechnung bewusst über ein Abrechnungszentrum (Export) – keine Direktabrechnung.",
+      "GKV-Abrechnung über ein Abrechnungszentrum (Export im neutralen Format, keine feste Partneranbindung) – Direktabrechnung erst in Vorbereitung.",
     ],
   },
   {
@@ -121,10 +121,10 @@ export const COMPETITORS: Competitor[] = [
       "Laut Herstellerwebsite: eine Software für mehrere Heilmittel-Berufe und Standorte.",
     ],
     podoDifferent: [
-      "Ausschließlich für Podologie gebaut: Fußschema in 2D und 3D, Nagelspangen-Episoden mit Pflichtfoto-Assistent, Risiko-Ampel.",
+      "Ausschließlich für Podologie gebaut: Fußschema in 2D und 3D, Nagelspangen-Episoden mit Pflichtfoto-Assistent, Risiko-Hinweise aus den erfassten Risikofaktoren.",
       "Pflegeheim-Modus, Tourenplanung mit Fahrtenbuch-Hilfe und Hygiene mit Sterilgut-Rückverfolgung sind eingebaut.",
       "Selbstzahler-Funktionen: Gutscheine, Patientenportal, Praxis-Website.",
-      "GKV-Abrechnung über ein Abrechnungszentrum per Export statt Direktabrechnung.",
+      "GKV-Abrechnung über ein Abrechnungszentrum (Export im neutralen Format, keine feste Partneranbindung) – Direktabrechnung erst in Vorbereitung.",
     ],
   },
   {
@@ -156,9 +156,9 @@ export const COMPETITORS: Competitor[] = [
     ],
     podoDifferent: [
       "Ausschließlich für Podologie gebaut – mit Fußschema in 2D und 3D und Fotos direkt am iPad.",
-      "Kostenloser Tarif (eingeschränkter Funktionsumfang) und 30 Tage Test ohne Zahlungsdaten.",
+      "Kostenloser Tarif (eingeschränkter Funktionsumfang) und 30 Tage Testphase ohne Zahlungsdaten (Testzugang derzeit auf Anfrage).",
       "Patientenportal, Online-Buchung, Praxis-Website, Hygiene, Pflegeheim-Modus und Kasse sind eingebaut.",
-      "GKV-Abrechnung über ein Abrechnungszentrum per Export statt Direktabrechnung.",
+      "GKV-Abrechnung über ein Abrechnungszentrum (Export im neutralen Format, keine feste Partneranbindung) – Direktabrechnung erst in Vorbereitung.",
     ],
   },
 ];

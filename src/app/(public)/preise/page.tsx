@@ -1,21 +1,22 @@
 import { Check } from "lucide-react";
-import { Badge, LinkButton } from "@/components/ui";
+import { Badge } from "@/components/ui";
 import { faqLd, JsonLd, softwareApplicationLd } from "../_content/json-ld";
 import { ADDONS, PRICE_NOTE, PRICE_PRELIMINARY_TEXT, PUBLIC_PLANS, SEATS_FAQ } from "../_content/plans";
 import { pageMeta } from "../_content/site";
+import { TrialButton } from "../_content/trial-cta";
 
 const paid = PUBLIC_PLANS.filter((p) => p.priceCents > 0).map((p) => `${p.name} ${p.price} (${p.therapists})`).join(", ");
 
 export const metadata = pageMeta({
   title: "Preise",
-  description: `PodoHero-Tarife: 30 Tage kostenlos testen, kostenloser Tarif bis 20 Patient:innen ohne Zeitlimit, ${paid} pro Monat, netto zzgl. USt., vorläufig. Empfang kostenlos. Nur für Unternehmer.`,
+  description: `PodoHero-Tarife: Testphase 30 Tage, unbefristeter kostenloser Tarif bis 20 Patient:innen, ${paid} pro Monat, netto zzgl. USt., vorläufig. Empfang kostenlos. Nur für Unternehmer.`,
   path: "/preise",
 });
 
 const INCLUDED = [
   "Patientenakte, Kalender, Behandlungsdoku mit Fotos",
   "Rechnungen, Quittungen, Gutscheine, Auswertungen",
-  "Verordnungen mit Export für das Abrechnungszentrum",
+  "Verordnungen mit Export im neutralen Format für Ihr Abrechnungszentrum",
   "Erinnerungen per E-Mail/SMS",
   "Hygiene, Gerätebuch, Pflegeheime",
   "Vollständiger Datenexport jederzeit",
@@ -23,7 +24,7 @@ const INCLUDED = [
 ];
 
 const FAQ = [
-  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und hat kein Zeitlimit. Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
+  ["Gibt es eine kostenlose Version?", "Ja. Der Tarif „Kostenlos“ kostet 0 € und ist unbefristet; beide Seiten können ihn mit drei Monaten Frist zum Monatsende kündigen (AGB § 3a). Er gilt für bis zu 20 Patient:innen (archivierte zählen mit) und eine Person und umfasst Termine, Behandlungsdoku, Rechnungen und Kasse. Patientenportal, KI-Telefon und Praxis-Website gibt es in den bezahlten Tarifen. Änderungen am kostenlosen Tarif kündigen wir mindestens drei Monate vorher an (AGB § 3a). Ihre Daten bleiben immer exportierbar."],
   ["Was passiert nach der Testphase?", "Die Testphase endet nach 30 Tagen automatisch. Es wird nichts berechnet, solange Sie keinen Tarif buchen. Kleine Praxen können danach kostenlos weitermachen: bis zu 20 Patient:innen, 1 Person."],
   ["Kostet der Empfang extra?", SEATS_FAQ],
   ["Gelten die Preise netto oder brutto?", "PodoHero richtet sich ausschließlich an Unternehmer, also Praxen. Maßgeblich sind die Nettopreise zuzüglich der gesetzlichen Umsatzsteuer (derzeit 19 %). Den Bruttobetrag zeigen wir zur Orientierung daneben."],
@@ -60,9 +61,7 @@ export default function PricingPage() {
             <p className="mt-4 font-medium">{p.therapists}</p>
             {p.note ? <p className="mt-1 text-sm text-muted">{p.note}</p> : null}
             <div className="mt-auto pt-6">
-              <LinkButton href="/einrichtung" variant={p.highlight ? "accent" : "secondary"} className="w-full">
-                {p.id === "trial" ? "Kostenlos testen" : "Mit Test starten"}
-              </LinkButton>
+              <TrialButton variant={p.highlight ? "accent" : "secondary"} className="w-full" label={p.id === "trial" ? "Kostenlos testen" : "Mit Test starten"} />
             </div>
           </section>
         ))}

@@ -2,6 +2,7 @@ import { LinkButton } from "@/components/ui";
 import { InstallGuide } from "@/components/pwa/install-guide";
 import { pageMeta } from "../_content/site";
 import { trademarkNotice } from "@/lib/pwa/app-meta";
+import { TrialButton } from "../_content/trial-cta";
 
 export const metadata = pageMeta({
   title: "PodoHero als App",
@@ -44,7 +45,7 @@ export default function AppInfoPage() {
       </section>
       <div className="mt-10 flex flex-wrap gap-3">
         <LinkButton href="/login">Anmelden</LinkButton>
-        <LinkButton href="/einrichtung" variant="secondary">Kostenlos testen</LinkButton>
+        <TrialButton variant="secondary" label="Kostenlos testen" />
       </div>
     </div>
   );

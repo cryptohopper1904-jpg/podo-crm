@@ -6,11 +6,12 @@ import { breadcrumbLd, JsonLd } from "../_content/json-ld";
 import { DemoDataNote, ScreenshotFrame } from "../_content/screenshot-frame";
 import { FEATURE_SHOTS } from "../_content/screenshots";
 import { pageMeta } from "../_content/site";
+import { TrialButton } from "../_content/trial-cta";
 
 export const metadata = pageMeta({
-  title: "Funktionen: GKV-Abrechnung, Termine, Kasse",
+  title: "Funktionen: Terminplanung, Kasse und GKV",
   description:
-    "Was die Praxissoftware für Podologie heute kann – mit echten Screenshots: GKV-Abrechnung mit Verordnungsprüfung und Leistungsnachweis, Terminplanung mit Online-Buchung, Kasse mit TSE-Anbindung, Doku am iPad, Hygiene.",
+    "Praxissoftware für Podologie mit Screenshots: Terminplanung mit Online-Buchung, Kasse mit Z-Bon, GKV-Verordnungen mit Prüfung, Doku am iPad, Hygiene.",
   path: "/funktionen",
 });
 
@@ -25,7 +26,7 @@ export default function FeaturesPage() {
     <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6">
       <JsonLd data={breadcrumbLd([{ name: "Funktionen", path: "/funktionen" }])} />
       <header className="max-w-3xl">
-        <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Funktionen der Praxissoftware für Podologie</h1>
+        <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Funktionen: Terminplanung, Kasse und GKV-Abrechnung für die Podologie</h1>
         <p className="mt-4 text-lg text-muted">
           Alles, was eine Podologie-Praxis im Alltag braucht – vom Behandlungsstuhl bis zur Abrechnung. Wir kennzeichnen ehrlich, was im
           Testmodus läuft und was noch in Vorbereitung ist. Häufige Fragen zur GKV-Abrechnung beantworten wir auf der{" "}
@@ -98,13 +99,12 @@ export default function FeaturesPage() {
         <h2 className="font-display text-xl font-semibold">Was „Testmodus“ bedeutet</h2>
         <p className="mt-2 text-[15px] text-muted">
           Schnittstellen zu Diensten wie Kartenzahlung, Buchhaltung, SMS, WhatsApp oder KI sind fertig eingebaut, senden aber keine Daten, solange
-          kein Vertrag mit dem Anbieter hinterlegt ist. KI-Funktionen werden für Gesundheitsdaten erst freigeschaltet, wenn ein EU-Anbieter mit
-          Auftragsverarbeitungsvertrag und ohne Datenspeicherung bestätigt ist. KI-Ergebnisse sind Dokumentationshilfen, keine Diagnose.
+          kein Vertrag mit dem Anbieter hinterlegt ist. Wir nutzen Ihre Daten nicht zum KI-Training. KI-Funktionen sind standardmäßig aus; Sie wählen den Anbieter selbst und bestätigen AVV und Geheimhaltung. KI-Ergebnisse sind Dokumentationshilfen, keine Diagnose.
         </p>
       </section>
 
       <div className="mt-12 flex flex-wrap gap-3">
-        <LinkButton href="/einrichtung" variant="accent" className="h-12 px-6 text-base">Kostenlos testen</LinkButton>
+        <TrialButton variant="accent" className="h-12 px-6 text-base" label="Kostenlos testen" />
         <LinkButton href="/preise" variant="secondary" className="h-12 px-6 text-base">Preise ansehen</LinkButton>
       </div>
     </div>

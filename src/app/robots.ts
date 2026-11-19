@@ -4,7 +4,11 @@ import { absoluteUrl, siteIndexable } from "./(public)/_content/site";
 /** Zur Laufzeit ausgewertet: PUBLIC_SITE_INDEX/PUBLIC_URL sind Umgebungsvariablen des Servers, nicht des Builds. */
 export const dynamic = "force-dynamic";
 
-/** Oberste Pfade der angemeldeten App ((app), (plattform)) – liefern ohnehin noindex/Weiterleitung, sollen aber gar nicht gecrawlt werden. */
+/**
+ * Oberste Pfade der angemeldeten App ((app), (plattform)) – liefern ohnehin noindex/Weiterleitung, sollen aber gar nicht gecrawlt werden.
+ * robots.txt vergleicht Präfixe: "/kunden" sperrt auch "/kunden/…" (und z. B. "/kundenliste"). Keine öffentliche Seite beginnt mit
+ * einem dieser Präfixe – bei neuen öffentlichen Pfaden hier gegenprüfen.
+ */
 const APP_PATHS = [
   "/heute", "/kunden", "/kalender", "/doku", "/verordnungen", "/rechnungen", "/kasse", "/gutscheine", "/produkte", "/auswertung",
   "/posteingang", "/bewertungen", "/hygiene", "/pflegeheime", "/touren", "/team", "/telefon", "/einstellungen", "/willkommen",

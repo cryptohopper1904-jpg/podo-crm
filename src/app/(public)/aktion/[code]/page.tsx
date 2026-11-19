@@ -6,6 +6,7 @@ import { PLANS, TRIAL_DAYS } from "@/lib/plans";
 import { normalizePromoCode, promoTermsText, trialDaysLabel } from "@/lib/promo-codes";
 import { clientKey } from "@/lib/rate-limit";
 import { lookupPromoCode, promoLookupLimiter } from "@/server/promo-codes";
+import { TRIAL_ON_REQUEST, TRIAL_REQUEST_LABEL, trialRequestHref } from "../../_content/site";
 
 /**
  * Öffentliche Aktionsseite für Vertriebskampagnen: /aktion/PODO-XXXX-XXXX.
@@ -39,9 +40,11 @@ export default async function PromoLandingPage({ params }: PageProps<"/aktion/[c
     return (
       <div className="mx-auto max-w-2xl px-4 py-20 sm:px-6">
         <h1 className="font-display text-3xl font-bold tracking-tight">Diese Aktion ist nicht verfügbar</h1>
-        <p className="mt-4 text-lg text-muted">Der Link ist ungültig oder abgelaufen. Sie können PodoHero trotzdem kostenlos testen.</p>
+        <p className="mt-4 text-lg text-muted">
+          {signupOpen ? "Der Link ist ungültig oder abgelaufen. Sie können PodoHero trotzdem kostenlos testen." : `Der Link ist ungültig oder abgelaufen. ${TRIAL_ON_REQUEST}`}
+        </p>
         <div className="mt-8">
-          <LinkButton href="/einrichtung" variant="accent">Kostenlos testen</LinkButton>
+          <LinkButton href={signupOpen ? "/einrichtung" : trialRequestHref()} variant="accent">{signupOpen ? "Kostenlos testen" : TRIAL_REQUEST_LABEL}</LinkButton>
         </div>
       </div>
     );
