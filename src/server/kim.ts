@@ -120,7 +120,7 @@ export const KIM_SYNC_TIMEOUT_MS = 60_000;
 
 /**
  * Cron: alle Praxen mit aktiver KIM-Verbindung (Status „verbunden“, „Fehler“ oder „Testmodus“).
- * organizations hat keine RLS; Verbindungen werden je Praxis mit withOrg gelesen.
+ * organizations: RLS nur im Praxis-Kontext, Migration 0069; Verbindungen werden je Praxis mit withOrg gelesen.
  * Höchstens `concurrency` Praxen parallel (jede in eigenen, kurzen Transaktionen), je Praxis `timeoutMs`.
  */
 export async function runKimSyncAll(

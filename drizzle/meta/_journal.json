@@ -484,6 +484,13 @@
       "when": 1795074459152,
       "tag": "0068_gkv_paket_e",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1795074519152,
+      "tag": "0069_org_stammdaten_rls",
+      "breakpoints": true
     }
   ]
 }

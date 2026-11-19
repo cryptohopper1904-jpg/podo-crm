@@ -91,7 +91,7 @@ async function main() {
     await pool.query(`revoke update, delete on billing_batch_exports, billing_batch_payouts from ${appRole}`);
     // Personen nur über podo_delete_patient löschen (SECURITY DEFINER, Prüfung der Aufbewahrungsgründe, Löschfreigabe in
     // podo_private.delete_grants – Migration 0067, AppSec K2); Praxen nur im Löschlauf als Eigentümer
-    // (src/server/purge-organization.ts) – organizations hat keine RLS
+    // (src/server/purge-organization.ts); organizations hat RLS nur mit Praxis-Kontext (Migration 0069)
     await pool.query(`revoke delete on patients, organizations from ${appRole}`);
     // Lösch-Guards rufen podo_owner_delete_allowed auch als App-Rolle auf (Ergebnis dann immer false, 0067)
     await pool.query(`grant execute on function podo_owner_delete_allowed(oid, uuid) to ${appRole}`);

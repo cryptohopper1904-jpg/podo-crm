@@ -2,7 +2,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, withOrg } from "@/db";
 import { organizations } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { KIM_CONNECTION_PROVIDER } from "@/integrations/kim/provider";
@@ -50,10 +50,11 @@ export async function setBillingMode(auth: AuthContext, mode: BillingMode, sourc
   const from = billingModeOf(o?.settings);
   const isSet = !!o && Object.hasOwn(o.settings ?? {}, "billingMode");
   if (from === mode && isSet) return { changed: false };
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingMode', ${mode}::text)` })
-    .where(eq(organizations.id, org));
+  await withOrg(org, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || jsonb_build_object('billingMode', ${mode}::text)` })
+      .where(eq(organizations.id, org)));
   await audit({ organizationId: org, userId: auth.user.id, action: "settings.billing_mode", entity: "organization", entityId: org, meta: { from, to: mode, source } });
   return { changed: from !== mode };
 }

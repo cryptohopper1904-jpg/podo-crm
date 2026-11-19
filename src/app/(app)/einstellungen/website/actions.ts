@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { db, withOrg } from "@/db";
+import { withOrg } from "@/db";
 import { organizations, services } from "@/db/schema";
 import { audit } from "@/lib/audit";
 import { requireAuth } from "@/lib/auth/session";
@@ -63,10 +63,11 @@ export async function saveWebsiteAction(_: State, form: FormData): Promise<State
   };
   // ohne eigene Zeiten bleiben früher gepflegte Website-Zeiten gespeichert (Schalter zurück → wieder da)
   const patch = { website, ...(hours ? { openingHours: hours } : {}), homeVisitAreas: parseAreas(d.areas) };
-  await db
-    .update(organizations)
-    .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
-    .where(eq(organizations.id, auth.organization.id));
+  await withOrg(auth.organization.id, (tx) =>
+    tx
+      .update(organizations)
+      .set({ settings: sql`coalesce(${organizations.settings}, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb` })
+      .where(eq(organizations.id, auth.organization.id)));
   await audit({ organizationId: auth.organization.id, userId: auth.user.id, action: "settings.website", meta: { enabled: website.enabled, showPrices: website.showPrices, customHours } });
   revalidatePath("/einstellungen/website");
   return { ok: website.enabled ? "Gespeichert – die Website ist eingeschaltet." : "Gespeichert." };
