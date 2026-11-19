@@ -10,7 +10,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PDFPage } from "pdf-lib";
 import { Pool } from "pg";
-import { fixtures, RESTORE_SEARCH_PATH_SQL, TEST_DB } from "./__tests__/db-fixtures";
+import { fixtures, TEST_DB, withMigratedDatabase } from "./__tests__/db-fixtures";
 
 const ownerUrlFrom = (url: string) => url.replace(/\/\/[^:@/]+(:[^@/]*)?@/, "//podo_owner:podo_owner@");
 const MIGRATION = readFileSync(path.join(__dirname, "../../drizzle/0049_beleg_archiv.sql"), "utf8");
@@ -492,23 +492,9 @@ afterEach(() => vi.restoreAllMocks());
     expect(drawn.join(" ")).not.toMatch(/Reproduktion/);
   });
 
-  it("Migration 0049 auf einer Datenbank mit der früheren Fassung (retain_until, alter Datei-Constraint): danach ausstellbar", async () => {
-    const dbName = `podo_alt_${Math.random().toString(36).slice(2, 8)}`;
-    await owner.query(`create database ${dbName}`);
-    const url = (process.env.TEST_OWNER_DATABASE_URL ?? ownerUrlFrom(TEST_DB ?? "")).replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
-    const alt = new Pool({ connectionString: url, max: 1 });
-    // Beim DROP … WITH (FORCE) beendet Postgres evtl. noch offene Verbindungen (57P01); ohne Listener
-    // wäre das ein „Unhandled Error“, der den ganzen vitest-Lauf rot macht.
-    // pool.end() wartet nicht, bis die Sockets zu sind; der Client ist dann schon aus dem Pool entfernt und
-    // meldet 57P01 an sich selbst – daher den Listener auch je Client setzen.
-    alt.on("error", () => {});
-    alt.on("connect", (c) => c.on("error", () => {}));
-    try {
-      await alt.query("create extension if not exists pgcrypto");
-      await alt.query("create extension if not exists pg_trgm");
-      const { drizzle } = await import("drizzle-orm/node-postgres");
-      const { migrate } = await import("drizzle-orm/node-postgres/migrator");
-      await migrate(drizzle(alt), { migrationsFolder: path.join(__dirname, "../../drizzle") });
+  it("Migration 0049 auf einer Datenbank mit der früheren Fassung (retain_until, alter Datei-Constraint): danach ausstellbar", async (ctx) => {
+    // eigene, frisch migrierte DB (withMigratedDatabase) – keine DDL auf der gemeinsamen Test-DB
+    const ran = await withMigratedDatabase(async (alt) => {
       // frühere Fassung nachstellen
       await alt.query(`alter table document_archive add column retain_until date not null`);
       await alt.query(`alter table document_archive drop constraint document_archive_file_check`);
@@ -537,10 +523,8 @@ afterEach(() => vi.restoreAllMocks());
       // Guard ohne Backfill-Ausnahme nach der Migration
       const src = (await alt.query("select prosrc from pg_proc where proname = 'podo_invoice_credit_guard'")).rows[0].prosrc as string;
       expect(src).not.toContain("podo.backfill");
-    } finally {
-      await alt.end();
-      await owner.query(`drop database ${dbName} with (force)`);
-    }
+    });
+    if (!ran) ctx.skip();
   }, 120_000);
 
   it("parallele Barzahlungen: Zahlungsbelege lückenlos und eindeutig nummeriert", async () => {
@@ -866,10 +850,15 @@ afterEach(() => vi.restoreAllMocks());
     expect(view.archive).toBeNull();
   });
 
-  it("Migration 0049 verknüpft Anrechnungen stornierter Altbelege aus der Stornorechnung (idempotent)", async () => {
-    const { org, patient } = await setup();
-    const sfx = Math.random().toString(36).slice(2, 8);
-    const ids = await f.asOrg(org, async (c) => {
+  it("Migration 0049 verknüpft Anrechnungen stornierter Altbelege aus der Stornorechnung (idempotent)", async (ctx) => {
+    // In eigener, frisch migrierter DB (withMigratedDatabase): 0049 erneut auf der gemeinsamen Test-DB einzuspielen
+    // (DDL, CREATE OR REPLACE) lief in der CI parallel zu anderen Testdateien in Deadlocks (40P01).
+    const ran = await withMigratedDatabase(async (c) => {
+      const sfx = Math.random().toString(36).slice(2, 8);
+      await c.query("begin");
+      const org = (await c.query("insert into organizations (name, slug) values ('Praxis', $1) returning id", [`m-${sfx}`])).rows[0].id as string;
+      await c.query("select set_config('app.org_id', $1, true)", [org]);
+      const patient = (await c.query("insert into patients (organization_id, number, last_name) values ($1, 1, 'Muster') returning id", [org])).rows[0].id as string;
       const issue = async (kind: string, number: string, status: string, total: number, extra: { cancels?: string; notes?: string } = {}) => {
         const id = (
           await c.query("insert into invoices (organization_id, patient_id, kind, status, cancels_invoice_id, notes) values ($1,$2,$3,'draft',$4,$5) returning id", [
@@ -898,18 +887,27 @@ afterEach(() => vi.restoreAllMocks());
         cancels: orig,
         notes: `Storno zu SR-${sfx} vom 01.01.2026. Grund: Test\nAngerechnete Anzahlungen (AZ-${sfx}) bleiben gültig und werden auf die neue Rechnung angerechnet.\n[intern] Angerechnete Quittungen: Q-${sfx}`,
       });
-      return { dep, rec, orig };
+      await c.query("commit");
+      const credited = async () => {
+        await c.query("begin");
+        await c.query("select set_config('app.org_id', $1, true)", [org]);
+        const rows = (
+          await c.query(
+            "select ic.credited_invoice_id, ic.amount_cents, i.number from invoice_credits ic join invoices i on i.id = ic.credited_invoice_id where ic.invoice_id = $1 order by ic.amount_cents",
+            [orig],
+          )
+        ).rows;
+        await c.query("commit");
+        return rows;
+      };
+      expect(await credited()).toEqual([]);
+      await c.query(MIGRATION);
+      await c.query(MIGRATION);
+      expect(await credited()).toEqual([
+        { credited_invoice_id: dep, amount_cents: 1500, number: `AZ-${sfx}` },
+        { credited_invoice_id: rec, amount_cents: 2000, number: `Q-${sfx}` },
+      ]);
     });
-    expect((await bundle(org, ids.orig)).credited).toEqual([]);
-    await owner.query(MIGRATION);
-    await owner.query(MIGRATION);
-    // CREATE OR REPLACE aus 0049 hat den festen search_path zurückgesetzt – Stand der späteren Migrationen wiederherstellen
-    await owner.query(RESTORE_SEARCH_PATH_SQL);
-    const links = await f.asOrg(org, async (c) => (await c.query("select credited_invoice_id, amount_cents from invoice_credits where invoice_id = $1 order by amount_cents", [ids.orig])).rows);
-    expect(links).toEqual([
-      { credited_invoice_id: ids.dep, amount_cents: 1500 },
-      { credited_invoice_id: ids.rec, amount_cents: 2000 },
-    ]);
-    expect((await bundle(org, ids.orig)).credited.map((c) => c.number).sort()).toEqual([`AZ-${sfx}`, `Q-${sfx}`]);
-  });
+    if (!ran) ctx.skip();
+  }, 120_000);
 });
