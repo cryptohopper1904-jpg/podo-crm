@@ -48,7 +48,7 @@ const MEASURES = [
   {
     icon: Sparkles,
     title: "Kein KI-Training durch PodoHero",
-    text: "Wir nutzen Ihre Daten nicht zum KI-Training (AGB § 7). KI-Funktionen sind standardmäßig aus. Für externe KI-Anbieter bestätigen Sie vor dem Einschalten AVV, Verarbeitung in der EU und den Ausschluss des Trainings. Bei Text- und Sprachberichten entfernen wir bekannte Namen vor dem Versand, soweit technisch möglich. Fotos (Verordnung auslesen) und Sprachaufnahmen enthalten personenbezogene Daten und gehen nur nach Ihrer Aktivierung an den gewählten Anbieter mit AVV. Das KI-Telefon läuft über einen eigenen Vertrag der Praxis mit dem Telefonie-Anbieter; Echtbetrieb erst nach Prüfung von AVV und Datenübermittlung.",
+    text: "Wir nutzen Ihre Daten nicht zum KI-Training (AGB § 7). KI-Funktionen sind standardmäßig aus. Für externe KI-Anbieter bestätigen Sie vor dem Einschalten AVV, Verarbeitung in der EU und den Ausschluss des Trainings. Bei KI-Antwortvorschlägen und Sprachberichten entfernen wir bekannte Namen vor dem Versand, soweit technisch möglich. Fotos (Verordnung auslesen) und Sprachaufnahmen enthalten personenbezogene Daten und gehen nur nach Ihrer Aktivierung an den gewählten Anbieter mit AVV. Das KI-Telefon läuft über einen eigenen Vertrag der Praxis mit dem Telefonie-Anbieter; Echtbetrieb erst nach Prüfung von AVV und Datenübermittlung.",
   },
 ] as const;
 

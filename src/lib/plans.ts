@@ -60,7 +60,7 @@ export type PlanInfo = {
   description: string;
 };
 
-/** Kostenloser Tarif: ohne Zeitlimit gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
+/** Kostenloser Tarif: unbefristet gratis, begrenzt auf so viele Patient:innen (archivierte zählen mit, gelöschte nicht) */
 export const FREE_MAX_PATIENTS = 20;
 
 /** Platzhalter in den Beschreibungen unten, wird durch seatSummary ersetzt (eine Quelle für die Zahlen) */
@@ -106,7 +106,7 @@ const PLAN_DEFS: Record<PlanId, PlanInfo> = {
     features: ["portal", "website"],
     voiceMinutesIncluded: 0,
     maxPatients: null,
-    description: `${SEATS}; Patientenportal und Praxis-Website, KI-Telefon als Zusatzmodul; Empfang kostenlos`,
+    description: `${SEATS}; Patientenportal und Praxis-Website, KI-Telefon (Pilot in Vorbereitung) als Zusatzmodul; Empfang kostenlos`,
   },
   plus: {
     label: "Plus",
@@ -116,7 +116,7 @@ const PLAN_DEFS: Record<PlanId, PlanInfo> = {
     features: ["portal", "voice_agent", "website"],
     voiceMinutesIncluded: 300,
     maxPatients: null,
-    description: `${SEATS}; inkl. KI-Telefonagent (300 Minuten/Monat); Empfang kostenlos`,
+    description: `${SEATS}; KI-Telefonagent (Pilot in Vorbereitung; nach dem Start voraussichtlich 300 Minuten/Monat inklusive); Empfang kostenlos`,
   },
   internal: {
     label: "Intern",
