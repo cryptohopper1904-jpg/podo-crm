@@ -29,7 +29,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Kalender: Termine ziehen, Farben je Behandler:in, Sperrzeiten",
     items: [
-      { tag: "neu", text: "Termine per Ziehen verschieben: In der vollständigen Ansicht einen Termin auf eine andere Zeit, einen anderen Tag oder (in der Tagesansicht) zu einer anderen Behandler:in ziehen; am unteren Rand ziehen ändert die Dauer. Auf iPad und Handy kurz gedrückt halten. Nach dem Verschieben können Sie es mit „Rückgängig“ zurücknehmen.", href: "/kalender" },
+      { tag: "neu", text: "Termine per Ziehen verschieben: In der vollständigen Ansicht einen Termin auf eine andere Zeit, einen anderen Tag oder (in der Tagesansicht) zu einer anderen Behandler:in ziehen; am unteren Rand ziehen ändert die Dauer. Auf iPad und Handy kurz gedrückt halten. Nach dem Verschieben kannst du es mit „Rückgängig“ zurücknehmen.", href: "/kalender" },
       { tag: "neu", text: "Jede Behandler:in hat eine eigene Farbe im Kalender. Festlegen unter Einstellungen → Team, die eigene Farbe auch unter Einstellungen → Ansicht.", href: "/einstellungen/team" },
       { tag: "neu", text: "Sperrzeiten für Pausen, Schulungen, früheren Feierabend, Wartung oder Reinigung – einmalig oder wiederkehrend, für eine Person oder die ganze Praxis. Online-Buchung, Patientenportal und KI-Telefon bieten in dieser Zeit keine Termine an.", href: "/kalender/sperrzeit/neu" },
       { tag: "behoben", text: "Terminserien behalten bei der Umstellung auf Sommer- oder Winterzeit ihre gewohnte Uhrzeit." },
@@ -40,7 +40,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Eine Quittung statt zwei, Belege im A4-Format",
     items: [
-      { tag: "verbessert", text: "Am Termin und in der Doku gibt es nur noch „Rechnung erstellen“ und „Quittung“. Bezahlte Quittungen können Sie später in die Sammelrechnung übernehmen." },
+      { tag: "verbessert", text: "Am Termin und in der Doku gibt es nur noch „Rechnung erstellen“ und „Quittung“. Bezahlte Quittungen kannst du später in die Sammelrechnung übernehmen." },
       { tag: "verbessert", text: "Eine Anzahlung ist jetzt eine Vorauszahlung für einen künftigen Termin. In der Sammelrechnung wird sie erst angerechnet, wenn der Termin stattgefunden hat." },
       { tag: "neu", text: "„Anzahlung ohne Termin“ (z. B. für eine Nagelspange) direkt aus der Rechnungsliste oder der Patientenakte.", href: "/rechnungen/anzahlung" },
       { tag: "verbessert", text: "Rechnungen und Mahnungen im A4-Format: lange Belege laufen sauber über mehrere Seiten mit „Seite X von Y“, Folgeseiten tragen oben die Belegnummer. Entwürfe sind beim Drucken als Entwurf gekennzeichnet." },
@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Öffnungszeiten je Wochentag und neue Auswertungen",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Öffnungszeiten je Wochentag mit einem oder mehreren Zeitfenstern, z. B. mit Mittagspause. Sie gelten für Online-Buchung, KI-Telefon, Ihre Praxis-Website und für Teammitglieder ohne eigene Arbeitszeiten.", href: "/einstellungen/oeffnungszeiten" },
+      { tag: "neu", text: "Öffnungszeiten je Wochentag mit einem oder mehreren Zeitfenstern, z. B. mit Mittagspause. Sie gelten für Online-Buchung, KI-Telefon, deine Praxis-Website und für Teammitglieder ohne eigene Arbeitszeiten.", href: "/einstellungen/oeffnungszeiten" },
       { tag: "neu", text: "Auswertung mit neuen Reitern zu Terminen sowie Leistungen & Produkten: welche Termine schnell ausgebucht sind, stärkste und schwächste Tage, meistverkaufte Produkte und gefragteste Leistungen.", href: "/auswertung/termine" },
       { tag: "verbessert", text: "Die Tabellen in der Auswertung passen jetzt vollständig in ihre Karten – kein seitliches Scrollen mehr.", href: "/auswertung" },
     ],
@@ -62,10 +62,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Patientensuche mit Vorschlägen, übersichtlichere Bedienung",
     items: [
-      { tag: "neu", text: "Patientensuche oben rechts: Schon nach wenigen Buchstaben erscheinen passende Patient:innen zum Antippen. Bei einem Tippfehler fragt PodoHero „Meinten Sie …?“." },
+      { tag: "neu", text: "Patientensuche oben rechts: Schon nach wenigen Buchstaben erscheinen passende Patient:innen zum Antippen. Bei einem Tippfehler fragt PodoHero „Meintest du …?“." },
       { tag: "verbessert", text: "Der Knopf zum Einklappen der Navigation bleibt beim Scrollen sichtbar." },
-      { tag: "verbessert", text: "In Terminlisten stehen die Knöpfe immer an derselben Stelle – so finden Sie sie schneller." },
-      { tag: "neu", text: "Detailseiten haben oben einen Zurück-Link. Er führt dorthin, wo Sie herkamen – etwa zu „Heute“, zur Doku oder zu Ihrer gefilterten Liste." },
+      { tag: "verbessert", text: "In Terminlisten stehen die Knöpfe immer an derselben Stelle – so findest du sie schneller." },
+      { tag: "neu", text: "Detailseiten haben oben einen Zurück-Link. Er führt dorthin, wo du herkamst – etwa zu „Heute“, zur Doku oder zu deiner gefilterten Liste." },
     ],
   },
   {
@@ -84,7 +84,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Aktionscode einlösen",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Haben Sie einen Aktionscode erhalten, lösen Sie ihn unter Abo & Tarif ein – die Testphase verlängert sich entsprechend. Je Praxis ist ein Code möglich, nicht bei laufendem Abo.", href: "/einstellungen/abo" },
+      { tag: "neu", text: "Hast du einen Aktionscode erhalten, löse ihn unter Abo & Tarif ein – die Testphase verlängert sich entsprechend. Je Praxis ist ein Code möglich, nicht bei laufendem Abo.", href: "/einstellungen/abo" },
     ],
   },
   {
@@ -95,7 +95,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       { tag: "verbessert", text: "Belege nennen das richtige Leistungsdatum bzw. den Leistungszeitraum – aus Terminen, Behandlungen und übernommenen Quittungen. Es wird beim Ausstellen fest gespeichert und ändert sich später nicht mehr. Sammelrechnungen ohne Termine können einen Zeitraum „von – bis“ angeben.", href: "/rechnungen/neu" },
       { tag: "verbessert", text: "Rechnungen für Termine in der Zukunft sind nicht mehr möglich (dafür gibt es die Anzahlung). Beim Ausfallhonorar muss das Datum des versäumten Termins angegeben werden." },
       { tag: "verbessert", text: "Alle Formularfelder sind einheitlich ausgerichtet; lange Beschriftungen werden nicht mehr abgeschnitten." },
-      { tag: "neu", text: "Einstellungen mit neuer Navigation: am großen Bildschirm links nach Gruppen sortiert, auf iPad und Handy als Auswahlliste. Es erscheinen nur Bereiche, die Sie auch öffnen dürfen.", href: "/einstellungen" },
+      { tag: "neu", text: "Einstellungen mit neuer Navigation: am großen Bildschirm links nach Gruppen sortiert, auf iPad und Handy als Auswahlliste. Es erscheinen nur Bereiche, die du auch öffnen darfst.", href: "/einstellungen" },
     ],
   },
   {
@@ -104,7 +104,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Quittungen in die Sammelrechnung, Schutz vor Doppelabrechnung",
     items: [
       { tag: "neu", text: "Bezahlte Quittungen (Q) können jetzt – wie Anzahlungen (AZ) – in die Sammelrechnung des Jahres übernommen werden. Die Sammelrechnung listet jede Quittung mit Nummer auf, rechnet die bezahlten Beträge an und weist die verbleibende USt. je Steuersatz aus.", href: "/rechnungen/neu" },
-      { tag: "neu", text: "Eine Behandlung oder ein Termin kann nicht mehr doppelt abgerechnet werden: PodoHero zeigt den vorhandenen Beleg mit Link („bereits mit Quittung Q… abgerechnet“). Bei gleicher Leistung am selben Tag ohne Terminbezug gibt es einen Hinweis, den Sie bewusst bestätigen können." },
+      { tag: "neu", text: "Eine Behandlung oder ein Termin kann nicht mehr doppelt abgerechnet werden: PodoHero zeigt den vorhandenen Beleg mit Link („bereits mit Quittung Q… abgerechnet“). Bei gleicher Leistung am selben Tag ohne Terminbezug gibt es einen Hinweis, den du bewusst bestätigen kannst." },
       { tag: "verbessert", text: "Gibt es zu einem Termin eine offene Anzahlung, weist PodoHero beim Abrechnen darauf hin und schlägt sie zur Anrechnung vor." },
     ],
   },
@@ -113,8 +113,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Produkte und kleine Warenwirtschaft",
     items: [
-      { tag: "neu", text: "Neuer Bereich Produkte (z. B. Salben): in der Rechnung auswählbar. In der Behandlung angewendete Produkte werden einer Behandlung zugeordnet und ohne USt. berechnet, Verkauf ohne Behandlung mit regulärem Satz. Bitte die steuerliche Einordnung mit Ihrer Steuerberatung abstimmen.", href: "/produkte" },
-      { tag: "neu", text: "Kleine Warenwirtschaft: Bestand, Wareneingang, Inventur, Nachbestellliste und Lieferanten. Verkäufe buchen den Bestand automatisch ab; beim Storno wählen Sie je Produkt, ob es zurück ins Lager geht.", href: "/produkte/bestand" },
+      { tag: "neu", text: "Neuer Bereich Produkte (z. B. Salben): in der Rechnung auswählbar. In der Behandlung angewendete Produkte werden einer Behandlung zugeordnet und ohne USt. berechnet, Verkauf ohne Behandlung mit regulärem Satz. Bitte die steuerliche Einordnung mit deiner Steuerberatung abstimmen.", href: "/produkte" },
+      { tag: "neu", text: "Kleine Warenwirtschaft: Bestand, Wareneingang, Inventur, Nachbestellliste und Lieferanten. Verkäufe buchen den Bestand automatisch ab; beim Storno wählst du je Produkt, ob es zurück ins Lager geht.", href: "/produkte/bestand" },
       { tag: "verbessert", text: "Leistungen wahlweise als Kacheln, Liste oder kompakt anzeigen; nicht mehr benötigte Leistungen archivieren und bei Bedarf wiederherstellen.", href: "/einstellungen/leistungen" },
     ],
   },
@@ -132,7 +132,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Kalender: Anzeige nach Wunsch",
     items: [
-      { tag: "neu", text: "Im Kalender unter „Anzeige“ ein- und ausschalten: Feiertage, Schulferien (alle Bundesländer), Abwesenheiten, abgesagte Termine, Wochenende, Arbeitszeiten, Kalenderwoche und Zeitachse. Ihre Einstellung wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Im Kalender unter „Anzeige“ ein- und ausschalten: Feiertage, Schulferien (alle Bundesländer), Abwesenheiten, abgesagte Termine, Wochenende, Arbeitszeiten, Kalenderwoche und Zeitachse. Deine Einstellung wird gemerkt.", href: "/kalender" },
       { tag: "verbessert", text: "Ausgeblendete Wochenend-Termine werden mit Hinweis angezeigt, damit nichts übersehen wird. Sonntag erscheint automatisch, wenn dort Termine liegen." },
     ],
   },
@@ -169,7 +169,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Kalender: vollständige Ansicht und freie Termine finden",
     items: [
-      { tag: "neu", text: "Im Kalender können Sie zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Ihre Wahl wird gemerkt.", href: "/kalender" },
+      { tag: "neu", text: "Im Kalender kannst du zwischen „Einfach“ (Terminliste wie bisher) und „Vollständig“ wählen: Tag, Woche und Monat mit Zeitachse wie in Outlook, in der Tagesansicht eine Spalte je Behandler:in. Deine Wahl wird gemerkt.", href: "/kalender" },
       { tag: "neu", text: "Freie Zeit im Kalender anklicken (oder einen Tag in der Monatsansicht) – das Formular „Neuer Termin“ ist mit Datum, Uhrzeit und Behandler:in vorausgefüllt.", href: "/kalender" },
       { tag: "neu", text: "„Freien Termin finden“: ab sofort, morgen oder in 1, 2, 4 oder 6 Wochen die nächsten freien Zeiten anzeigen – passend zu Leistung/Dauer und Behandler:in (oder egal wer). Termine, Abwesenheiten und Arbeitszeiten werden berücksichtigt.", href: "/kalender" },
       { tag: "verbessert", text: "Belegte Zeiten und Abwesenheiten sind als „nicht verfügbar“ markiert. Beim Eintragen und Verschieben warnt PodoHero sofort, wenn die Behandler:in schon einen Termin hat (mit Uhrzeit) oder abwesend ist – gespeichert wird dann nur nach ausdrücklicher Bestätigung." },
@@ -180,7 +180,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "Ansicht: Einfach, Kompakt oder Komplex",
     items: [
-      { tag: "neu", text: "Unter Einstellungen → Ansicht (oder direkt unten links in der Navigation) wählen Sie, wie viel Sie sehen: „Einfach“ zeigt nur Heute, Kalender, Patienten, Behandlung, Rechnungen und Kasse, „Kompakt“ zusätzlich Posteingang, Verordnungen, Touren, Gutscheine und Auswertung, „Komplex“ alles wie bisher. Die Einstellung gilt nur für Ihr Konto.", href: "/einstellungen/ansicht" },
+      { tag: "neu", text: "Unter Einstellungen → Ansicht (oder direkt unten links in der Navigation) wählst du, wie viel du siehst: „Einfach“ zeigt nur Heute, Kalender, Patienten, Behandlung, Rechnungen und Kasse, „Kompakt“ zusätzlich Posteingang, Verordnungen, Touren, Gutscheine und Auswertung, „Komplex“ alles wie bisher. Die Einstellung gilt nur für dein Konto.", href: "/einstellungen/ansicht" },
       { tag: "neu", text: "Ausgeblendete Bereiche bleiben erreichbar: unten in der Navigation unter „Mehr“ oder über „Alle Bereiche“ – auf dem Handy über „Mehr“ in der unteren Leiste.", href: "/bereiche" },
       { tag: "verbessert", text: "Die Startseite „Heute“ passt sich an: „Einfach“ zeigt die heutigen Termine, einen Schnellzugriff und offene Aufgaben, „Kompakt“ verzichtet auf die Karte „Schnittstellen“." },
     ],
@@ -190,7 +190,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-13",
     title: "iPad an Patient:in übergeben – gesperrt bis zur PIN",
     items: [
-      { tag: "neu", text: "In der Akte unter „Anamnese“: „An Patient:in übergeben“. Das Gerät zeigt dann nur noch den Anamnesebogen mit den Datenschutz-Einwilligungen – Zurück-Taste oder andere Adressen führen zur Sperrseite. Zurück in die Praxisdaten nur mit Ihrer PIN oder Ihrem Passwort; nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig." },
+      { tag: "neu", text: "In der Akte unter „Anamnese“: „An Patient:in übergeben“. Das Gerät zeigt dann nur noch den Anamnesebogen mit den Datenschutz-Einwilligungen – Zurück-Taste oder andere Adressen führen zur Sperrseite. Zurück in die Praxisdaten nur mit deiner PIN oder deinem Passwort; nach 5 Fehlversuchen oder 30 Minuten ist eine neue Anmeldung nötig." },
       { tag: "neu", text: "PIN einrichten unter Einstellungen → Sicherheit (4–8 Ziffern).", href: "/einstellungen/sicherheit" },
     ],
   },
@@ -218,7 +218,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "USt-Wächter einmal bestätigen statt bei jeder Rechnung",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Unter Einstellungen → Praxisdaten → Belege können Sie einmalig bestätigen, dass Ihre 0-%-Leistungen Heilbehandlungen mit therapeutischem Ziel sind. Dann ist der Haken auf neuen Rechnungen schon gesetzt. Bei kosmetischen Leistungen auf der Rechnung 19 % wählen – die Bestätigung wird weiterhin je Rechnung gespeichert.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "Unter Einstellungen → Praxisdaten → Belege kannst du einmalig bestätigen, dass deine 0-%-Leistungen Heilbehandlungen mit therapeutischem Ziel sind. Dann ist der Haken auf neuen Rechnungen schon gesetzt. Bei kosmetischen Leistungen auf der Rechnung 19 % wählen – die Bestätigung wird weiterhin je Rechnung gespeichert.", href: "/einstellungen/praxis" },
     ],
   },
   {
@@ -233,21 +233,21 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     id: "2026-11-13-c",
     date: "2026-11-13",
-    title: "Zahlungsziel nach Ihrer Gewohnheit",
+    title: "Zahlungsziel nach deiner Gewohnheit",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Standard-Zahlungsziel: Unter Einstellungen → Praxisdaten → Belege legen Sie fest, wie viele Tage neue Rechnungen Zeit haben – oder 0 für „Zahlbar sofort“. Auf jeder Rechnung lässt es sich weiter ändern.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "Standard-Zahlungsziel: Unter Einstellungen → Praxisdaten → Belege legst du fest, wie viele Tage neue Rechnungen Zeit haben – oder 0 für „Zahlbar sofort“. Auf jeder Rechnung lässt es sich weiter ändern.", href: "/einstellungen/praxis" },
       { tag: "verbessert", text: "Termin-QR auf der Rechnung ohne langen Link darunter – der QR-Code reicht." },
     ],
   },
   {
     id: "2026-11-13-b",
     date: "2026-11-13",
-    title: "Ihr Logo auf Rechnungen, QR-Code zum Bezahlen und Anamnese am iPad",
+    title: "Dein Logo auf Rechnungen, QR-Code zum Bezahlen und Anamnese am iPad",
     items: [
-      { tag: "neu", text: "Logos im Profil: Laden Sie Ihr vollständiges Logo und Ihr Zeichen hoch. Das Logo steht oben auf jeder Rechnung und in Ihren E-Mails, das Zeichen dezent auf Anamnesebögen, Ausdrucken und Quittungen.", href: "/einstellungen/praxis" },
-      { tag: "neu", text: "QR-Code zum Bezahlen: Auf offenen Rechnungen steht ein GiroCode. Ihre Patient:innen scannen ihn mit der Banking-App – Betrag, IBAN und Rechnungsnummer sind schon ausgefüllt. Bar bezahlte Quittungen bekommen keinen." },
-      { tag: "neu", text: "Nächsten Termin buchen: Auf Wunsch zeigt jede Rechnung einen QR-Code zu Ihrer Online-Buchung – PodoHero, Doctolib oder ein eigener Link.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "Logos im Profil: Lade dein vollständiges Logo und dein Zeichen hoch. Das Logo steht oben auf jeder Rechnung und in deinen E-Mails, das Zeichen dezent auf Anamnesebögen, Ausdrucken und Quittungen.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "QR-Code zum Bezahlen: Auf offenen Rechnungen steht ein GiroCode. Deine Patient:innen scannen ihn mit der Banking-App – Betrag, IBAN und Rechnungsnummer sind schon ausgefüllt. Bar bezahlte Quittungen bekommen keinen." },
+      { tag: "neu", text: "Nächsten Termin buchen: Auf Wunsch zeigt jede Rechnung einen QR-Code zu deiner Online-Buchung – PodoHero, Doctolib oder ein eigener Link.", href: "/einstellungen/praxis" },
       { tag: "verbessert", text: "Neues Rechnungsdesign: Logo oben, Kasten mit Rechnungsnummer und Terminvereinbarung (auch WhatsApp), „Rechnung zur Behandlung am …“, Zahlungshinweis passend zur Zahlart und eine Fußzeile mit Bankverbindung, Steuernummer und Berufsbezeichnung." },
       { tag: "neu", text: "Anamnesebogen am iPad: Datum, Name und Patientennummer sind schon ausgefüllt – direkt aus der Patientenakte oder über „Anamnese“ beim heutigen Termin. Große Felder zum Antippen, dazu eine Druckfassung mit gleichem Kopf.", href: "/heute" },
     ],
@@ -265,8 +265,8 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-09",
     title: "Termine verschieben, Rechnung und Quittung direkt aus dem Termin",
     items: [
-      { tag: "neu", text: "Termin verschieben: Uhrzeit im Kalender antippen, neues Datum und neue Uhrzeit wählen – fertig. Termine aus Doctolib oder dem Kalender-Abo ändern Sie weiter dort, sie kommen automatisch zurück.", href: "/kalender" },
-      { tag: "neu", text: "Rechnung direkt aus dem Termin oder der Behandlung: Die Leistungen sind schon eingetragen, weitere Positionen ergänzen Sie vor dem Ausstellen.", href: "/kalender" },
+      { tag: "neu", text: "Termin verschieben: Uhrzeit im Kalender antippen, neues Datum und neue Uhrzeit wählen – fertig. Termine aus Doctolib oder dem Kalender-Abo änderst du weiter dort, sie kommen automatisch zurück.", href: "/kalender" },
+      { tag: "neu", text: "Rechnung direkt aus dem Termin oder der Behandlung: Die Leistungen sind schon eingetragen, weitere Positionen ergänzt du vor dem Ausstellen.", href: "/kalender" },
       { tag: "neu", text: "Quittung für die Sammelrechnung: Zahlt jemand gleich bar oder mit Karte, bekommt er sofort eine Quittung. Der Betrag wird auf der Sammelrechnung zum Jahresende automatisch abgezogen." },
       { tag: "neu", text: "Erinnerung zum Jahresende: Ab Dezember zeigt „Heute“, wer noch eine Sammelrechnung braucht – mit einem Klick ist sie vorbereitet.", href: "/rechnungen/sammelrechnungen" },
     ],
@@ -278,7 +278,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     items: [
       { tag: "neu", text: "Hausbesuche als Tour planen: PodoHero schlägt eine sinnvolle Reihenfolge vor und zeigt die Strecke – ab Praxis, Zuhause oder vom letzten Patienten.", href: "/touren" },
       { tag: "neu", text: "„Ich fahre los“: Ein Tipp genügt, die Kilometer werden automatisch ins Fahrtenbuch eingetragen – praktisch für die Steuer und fürs Wegegeld.", href: "/touren" },
-      { tag: "neu", text: "Startorte, Fahrzeug und km-Satz legen Sie unter Einstellungen → Fahrten & Startorte fest." },
+      { tag: "neu", text: "Startorte, Fahrzeug und km-Satz legst du unter Einstellungen → Fahrten & Startorte fest." },
     ],
   },
   {
@@ -286,7 +286,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-09",
     title: "Doctolib-Termine im Kalender",
     items: [
-      { tag: "neu", text: "Kalender-Abo: Termine aus Doctolib erscheinen automatisch in Ihrem PodoHero-Kalender – über Ihren Google-Kalender, ohne doppeltes Eintragen.", href: "/einstellungen/kalender-abo" },
+      { tag: "neu", text: "Kalender-Abo: Termine aus Doctolib erscheinen automatisch in deinem PodoHero-Kalender – über deinen Google-Kalender, ohne doppeltes Eintragen.", href: "/einstellungen/kalender-abo" },
     ],
   },
   {
@@ -295,7 +295,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Nur Privat & Selbstzahler",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Neuer Modus „nur Privat & Selbstzahler“: Behandeln Sie keine Kassenpatient:innen, blendet PodoHero Verordnungen und Kassenabrechnung einfach aus – alles wird übersichtlicher.", href: "/einstellungen/praxis" },
+      { tag: "neu", text: "Neuer Modus „nur Privat & Selbstzahler“: Behandelst du keine Kassenpatient:innen, blendet PodoHero Verordnungen und Kassenabrechnung einfach aus – alles wird übersichtlicher.", href: "/einstellungen/praxis" },
     ],
   },
   {
@@ -314,7 +314,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     audience: "platform",
     items: [
       { tag: "neu", text: "Die Plattform-Konsole zeigt, wie PodoHero genutzt wird – Praxen, Anmeldungen und Aktivität auf einen Blick, ohne Einsicht in Patientendaten.", href: "/plattform" },
-      { tag: "neu", text: "Eine Demo-Praxis mit Beispieldaten lässt sich mit einem Klick anlegen und zurücksetzen – ideal für Vorführungen. Zwischen Praxis und Plattform wechseln Sie oben im Menü.", href: "/plattform" },
+      { tag: "neu", text: "Eine Demo-Praxis mit Beispieldaten lässt sich mit einem Klick anlegen und zurücksetzen – ideal für Vorführungen. Zwischen Praxis und Plattform wechselst du oben im Menü.", href: "/plattform" },
       { tag: "verbessert", text: "Testphase: Praxen können während des Tests jetzt bis zu 10 Plätze für ihr Team bekommen.", href: "/plattform" },
     ],
   },
@@ -324,9 +324,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Neu für Inhaber:innen",
     audience: "owner",
     items: [
-      { tag: "neu", text: "Eigene Praxis-Website als Zusatzmodul: Öffnungszeiten, Leistungen und Kontakt – fertig gestaltet und direkt mit Ihrer Online-Buchung verbunden.", href: "/einstellungen/website" },
-      { tag: "verbessert", text: "Die Einstellungen sind jetzt in übersichtliche Gruppen sortiert – Sie finden schneller, was Sie suchen.", href: "/einstellungen" },
-      { tag: "neu", text: "Patient:innen löschen oder anonymisieren: Wünscht jemand die Löschung seiner Daten, erledigen Sie das direkt in der Patientenakte unter „Bearbeiten“ – gesetzliche Aufbewahrungsfristen werden dabei beachtet.", href: "/kunden" },
+      { tag: "neu", text: "Eigene Praxis-Website als Zusatzmodul: Öffnungszeiten, Leistungen und Kontakt – fertig gestaltet und direkt mit deiner Online-Buchung verbunden.", href: "/einstellungen/website" },
+      { tag: "verbessert", text: "Die Einstellungen sind jetzt in übersichtliche Gruppen sortiert – du findest schneller, was du suchst.", href: "/einstellungen" },
+      { tag: "neu", text: "Patient:innen löschen oder anonymisieren: Wünscht jemand die Löschung seiner Daten, erledigst du das direkt in der Patientenakte unter „Bearbeiten“ – gesetzliche Aufbewahrungsfristen werden dabei beachtet.", href: "/kunden" },
     ],
   },
   {
@@ -334,12 +334,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-11-09",
     title: "Aus PodoCRM wird PodoHero",
     items: [
-      { tag: "neu", text: "Neuer Name, neues Logo: Ihre Praxissoftware heißt jetzt PodoHero. Alles andere bleibt, wie Sie es kennen." },
+      { tag: "neu", text: "Neuer Name, neues Logo: Deine Praxissoftware heißt jetzt PodoHero. Alles andere bleibt, wie du es kennst." },
       { tag: "neu", text: "Neue Startseite: Auf unserer Website sehen Interessierte jetzt auf einen Blick, was PodoHero alles kann." },
-      { tag: "neu", text: "Zwei-Faktor-Anmeldung: Einfach den QR-Code mit einer Authenticator-App scannen – Ihr Konto ist damit deutlich besser geschützt. Für Inhaber:innen ist sie Pflicht.", href: "/einstellungen/sicherheit" },
-      { tag: "neu", text: "„Passwort vergessen“: Sie können Ihr Passwort jetzt selbst per E-Mail zurücksetzen – ohne beim Support anzurufen." },
-      { tag: "verbessert", text: "Online-Buchung: Patient:innen sehen nur noch Termine, die zu Ihren Arbeitszeiten passen – Urlaub und freie Tage werden automatisch berücksichtigt." },
-      { tag: "neu", text: "Kasse mit Tagesabschluss: Am Ende des Tages zählen Sie die Kasse und schließen mit einem Klick ab – der Abschlussbericht ist sofort fertig.", href: "/kasse" },
+      { tag: "neu", text: "Zwei-Faktor-Anmeldung: Einfach den QR-Code mit einer Authenticator-App scannen – dein Konto ist damit deutlich besser geschützt. Für Inhaber:innen ist sie Pflicht.", href: "/einstellungen/sicherheit" },
+      { tag: "neu", text: "„Passwort vergessen“: Du kannst dein Passwort jetzt selbst per E-Mail zurücksetzen – ohne beim Support anzurufen." },
+      { tag: "verbessert", text: "Online-Buchung: Patient:innen sehen nur noch Termine, die zu deinen Arbeitszeiten passen – Urlaub und freie Tage werden automatisch berücksichtigt." },
+      { tag: "neu", text: "Kasse mit Tagesabschluss: Am Ende des Tages zählst du die Kasse und schließt mit einem Klick ab – der Abschlussbericht ist sofort fertig.", href: "/kasse" },
     ],
   },
 ];

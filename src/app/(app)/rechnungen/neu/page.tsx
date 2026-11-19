@@ -99,7 +99,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
                 <CalendarCheck size={20} aria-hidden /> {sp.art === "quittung" ? "Quittung" : "Rechnung"} zur Behandlung am {dateDe(source.at)} – {source.patient.name}
               </p>
               <p className="text-muted">
-                Mit den Leistungen des Termins vorausgefüllt. Weitere Positionen (z. B. Pflegeprodukte, Wegegeld) ergänzen Sie unten mit „+ Position“ – erst „ausstellen“ macht die Rechnung endgültig.
+                Mit den Leistungen des Termins vorausgefüllt. Weitere Positionen (z. B. Pflegeprodukte, Wegegeld) ergänzt du unten mit „+ Position“ – erst „ausstellen“ macht die Rechnung endgültig.
               </p>
               {source.billedBy.length ? (
                 <p className="font-semibold text-danger">
@@ -116,7 +116,7 @@ export default async function NewInvoicePage(props: PageProps<"/rechnungen/neu">
               ) : null}
               {source.prescription ? (
                 <p className="flex gap-2 rounded-xl bg-info-soft p-3 text-info-soft-text">
-                  <Info size={18} className="mt-0.5 shrink-0" aria-hidden /> Behandlung auf Verordnung – die Leistung selbst rechnen Sie mit der Krankenkasse ab. Hier nur Zusatzleistungen berechnen.
+                  <Info size={18} className="mt-0.5 shrink-0" aria-hidden /> Behandlung auf Verordnung – die Leistung selbst rechnest du mit der Krankenkasse ab. Hier nur Zusatzleistungen berechnen.
                 </p>
               ) : null}
             </div>

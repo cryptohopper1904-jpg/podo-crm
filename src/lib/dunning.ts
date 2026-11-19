@@ -119,7 +119,7 @@ export type DunnableInvoice = {
 };
 
 /** Übernommene Altrechnungen (Import) werden in PodoHero nicht gemahnt (Buchhaltung P1) */
-export const IMPORTED_NOT_DUNNABLE = "Übernommene Altrechnung (Import) – Mahnungen bitte über Ihre bisherige Software bzw. Buchhaltung.";
+export const IMPORTED_NOT_DUNNABLE = "Übernommene Altrechnung (Import) – Mahnungen bitte über deine bisherige Software bzw. Buchhaltung.";
 export type PastDunning = { stage: string; letterDate: string; payBy: string; sentVia: string | null };
 
 /** Ganze Kalendertage von a bis b (YYYY-MM-DD). */

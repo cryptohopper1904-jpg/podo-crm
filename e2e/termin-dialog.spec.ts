@@ -218,11 +218,11 @@ test("Desktop: „Neu anlegen“ als letzte Vorschlagszeile, Dublettenwarnung mi
   await box.press("Enter");
   await expect(dlg.getByLabel("Nachname")).toHaveValue(known);
 
-  // gleiche Mobilnummer → „Meinten Sie …?“: aktive Person wählbar, archivierte gekennzeichnet und nicht wählbar
+  // gleiche Mobilnummer → „Meintest du …?“: aktive Person wählbar, archivierte gekennzeichnet und nicht wählbar
   await dlg.getByLabel("Vorname").fill("Erika");
   await dlg.getByLabel("Telefon (mobil)").fill(phone);
   await dlg.getByRole("button", { name: "Anlegen und auswählen" }).click();
-  await expect(dlg.getByText("Meinten Sie …?")).toBeVisible();
+  await expect(dlg.getByText("Meintest du …?")).toBeVisible();
   await expect(dlg.getByRole("button", { name: new RegExp(`Erika ${known}.*auswählen`) })).toBeVisible();
   await expect(dlg.getByText(/archiviert, nicht wählbar/)).toBeVisible();
   await expect(dlg.getByRole("button", { name: new RegExp(`Dialogtest${s}arch`) })).toHaveCount(0);

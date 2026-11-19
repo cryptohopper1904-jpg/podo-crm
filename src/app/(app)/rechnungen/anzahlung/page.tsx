@@ -126,7 +126,7 @@ export default async function DepositPage(props: PageProps<"/rechnungen/anzahlun
               <Receipt size={20} aria-hidden /> {chosen.name} · Anzahlung ohne Termin
             </p>
             <p className="mt-1 text-sm text-muted">
-              Die Patient:in erhält jetzt eine Quittung über die Anzahlung. Bei der späteren Rechnung bzw. Sammelrechnung wählen Sie die Anzahlung zur Anrechnung aus.{" "}
+              Die Patient:in erhält jetzt eine Quittung über die Anzahlung. Bei der späteren Rechnung bzw. Sammelrechnung wählst du die Anzahlung zur Anrechnung aus.{" "}
               <Link href="/rechnungen/anzahlung" className="font-semibold text-primary">Andere Person</Link>
             </p>
           </Card>

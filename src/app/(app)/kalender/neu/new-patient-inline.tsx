@@ -29,7 +29,7 @@ export function NewPatientInline({
   onCancel,
 }: {
   initial: { firstName: string; lastName: string };
-  /** bekannte Patient:innen (für die Auswahl aus „Meinten Sie …?“) */
+  /** bekannte Patient:innen (für die Auswahl aus „Meintest du …?“) */
   known: PickerPatient[];
   onCreated: (p: PickerPatient) => void;
   onCancel: () => void;
@@ -96,7 +96,7 @@ export function NewPatientInline({
       <FormError message={state?.error} revealKey={state} />
       {state?.duplicates?.length ? (
         <div className="flex flex-col gap-2 text-sm">
-          <p className="font-semibold">Meinten Sie …?</p>
+          <p className="font-semibold">Meintest du …?</p>
           <ul className="flex flex-col gap-1.5">
             {state.duplicates.map((d) =>
               d.archived ? (

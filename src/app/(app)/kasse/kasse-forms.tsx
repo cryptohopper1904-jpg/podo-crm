@@ -134,7 +134,7 @@ export function ExternalRegisterForm({ active }: { active: boolean }) {
   const [state, action, pending] = useActionState(setExternalRegisterAction, undefined);
   const question = active
     ? "Wieder mit der PodoHero-Kasse arbeiten? Bar-, Karten- und Gutscheinzahlungen werden dann wieder von PodoHero signiert, belegt und im Tagesabschluss erfasst."
-    : "Eigene Praxiskasse verwenden? PodoHero vermerkt Bar-, Karten- und Gutscheinzahlungen dann nur noch an der Rechnung – Beleg, TSE und Tagesabschluss kommen aus Ihrer Praxiskasse.";
+    : "Eigene Praxiskasse verwenden? PodoHero vermerkt Bar-, Karten- und Gutscheinzahlungen dann nur noch an der Rechnung – Beleg, TSE und Tagesabschluss kommen aus deiner Praxiskasse.";
   return (
     <form
       onSubmit={(e) => {

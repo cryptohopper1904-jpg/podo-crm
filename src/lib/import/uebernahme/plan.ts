@@ -575,12 +575,12 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
       });
       if (choice === hit.id) {
         totals.patientsExisting++;
-        warnings.push({ message: `${who}: mit Nr. ${hit.number} verknüpft (gleiche Pododesk-ID, ${doubt}; Ihre Auswahl) – nichts überschrieben.` });
+        warnings.push({ message: `${who}: mit Nr. ${hit.number} verknüpft (gleiche Pododesk-ID, ${doubt}; deine Auswahl) – nichts überschrieben.` });
         return done({ existingId: hit.id });
       }
       idConflicts.add(ext);
       warnings.push({
-        message: `Pododesk-ID ${extId.slice(0, 50)}: Nr. ${hit.number} im Bestand ist nicht sicher dieselbe Person (${doubt}) – nicht verknüpft, ${who} und Termine nicht übernommen. Wählen Sie in der Vorschau „verknüpfen mit Nr. ${hit.number}“, wenn es dieselbe Person ist.`,
+        message: `Pododesk-ID ${extId.slice(0, 50)}: Nr. ${hit.number} im Bestand ist nicht sicher dieselbe Person (${doubt}) – nicht verknüpft, ${who} und Termine nicht übernommen. Wähle in der Vorschau „verknüpfen mit Nr. ${hit.number}“, wenn es dieselbe Person ist.`,
       });
       target.set(ext, null);
       return null;
@@ -703,7 +703,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     warnings.push({
       message: pdDoctors.size
         ? `${plural(missingDoctorRefs, "Verweis", "Verweise")} auf Haus- oder Fachärzt:innen nicht in aerzte.csv gefunden – ohne Ärzt:in übernommen.`
-        : `Patient:innen verweisen auf Haus- oder Fachärzt:innen – laden Sie aerzte.csv aus dem Pododesk-Export mit hoch, damit die Namen übernommen werden.`,
+        : `Patient:innen verweisen auf Haus- oder Fachärzt:innen – lade aerzte.csv aus dem Pododesk-Export mit hoch, damit die Namen übernommen werden.`,
     });
   }
 
@@ -815,7 +815,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
   });
   for (const a of pd.appointments) appointments.push(a);
   if (unmatchedTherapists.size) {
-    warnings.push({ message: `Behandler:in ohne gleichnamiges Teammitglied: ${[...unmatchedTherapists].slice(0, 10).join(", ")} – Termine ohne Behandler:in übernommen. Legen Sie das Team vorher unter Einstellungen → Team an, wenn die Termine zugeordnet werden sollen.` });
+    warnings.push({ message: `Behandler:in ohne gleichnamiges Teammitglied: ${[...unmatchedTherapists].slice(0, 10).join(", ")} – Termine ohne Behandler:in übernommen. Leg das Team vorher unter Einstellungen → Team an, wenn die Termine zugeordnet werden sollen.` });
   }
 
   // ───── Verordnungen ─────
@@ -992,7 +992,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     if (twins.length) {
       const shown = twins.slice(0, 10).join(", ") + (twins.length > 10 ? ` und ${twins.length - 10} weitere` : "");
       warnings.push({
-        message: `Excel: ${shown} – gleiche Person (Name + Geburtsdatum) wird in diesem Lauf auch aus Tinana bzw. Doctolib neu angelegt. Beide Einträge werden übernommen; bitte prüfen Sie diese Personen nach der Übernahme und führen Sie Doppelte zusammen.`,
+        message: `Excel: ${shown} – gleiche Person (Name + Geburtsdatum) wird in diesem Lauf auch aus Tinana bzw. Doctolib neu angelegt. Beide Einträge werden übernommen; bitte prüfe diese Personen nach der Übernahme und führe Doppelte zusammen.`,
       });
     }
     totals.excel = {
@@ -1005,7 +1005,7 @@ export function buildPlan(input: DetectedFile[], existing: ExistingSnapshot, opt
     };
     if (excel.invoices.length) {
       warnings.push({
-        message: `Excel-Rechnungsmanager: Rechnungen werden wie beim bisherigen Excel-Import mit ihrer Nummer als ausgestellte Rechnungen übernommen; vorhandene Nummern werden übersprungen. Übertragen Sie sie nicht erneut an Ihre Buchhaltung, wenn sie dort schon erfasst sind. ${EXCEL_PAYMENTS_HINT}`,
+        message: `Excel-Rechnungsmanager: Rechnungen werden wie beim bisherigen Excel-Import mit ihrer Nummer als ausgestellte Rechnungen übernommen; vorhandene Nummern werden übersprungen. Übertrage sie nicht erneut an deine Buchhaltung, wenn sie dort schon erfasst sind. ${EXCEL_PAYMENTS_HINT}`,
       });
     }
   }
@@ -1128,7 +1128,7 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
       );
     }
     if (practice.defaultDurationMin !== null && practice.defaultDurationMin > 0) {
-      practiceHints.push(`Standard-Behandlungsdauer in Pododesk: ${practice.defaultDurationMin} Minuten. Übernommene Leistungen ohne eigene Behandlungszeit erhalten diese Dauer; in PodoHero legen Sie die Dauer je Leistung fest (Einstellungen → Leistungen).`);
+      practiceHints.push(`Standard-Behandlungsdauer in Pododesk: ${practice.defaultDurationMin} Minuten. Übernommene Leistungen ohne eigene Behandlungszeit erhalten diese Dauer; in PodoHero legst du die Dauer je Leistung fest (Einstellungen → Leistungen).`);
     }
     if (practice.ik) {
       practiceHints.push(
@@ -1192,7 +1192,7 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   if (deleted) warnings.push({ message: `${plural(deleted, "in Pododesk gelöschte Leistung wird", "in Pododesk gelöschte Leistungen werden")} nicht übernommen.` });
   if (dupCodes.size) warnings.push({ message: `Kürzel mehrfach in leistungenPrivat.csv: ${[...dupCodes].slice(0, 10).join(", ")} – nur die erste Leistung wird angelegt.` });
   if (servicesCreate.some((s) => s.vatRate !== 0)) {
-    warnings.push({ message: "Leistungen mit Mehrwertsteuer werden mit dem Steuersatz aus Pododesk angelegt. Prüfen Sie unter Einstellungen → Leistungen, ob Heilbehandlungen steuerfrei sind (0 %, § 4 Nr. 14 UStG)." });
+    warnings.push({ message: "Leistungen mit Mehrwertsteuer werden mit dem Steuersatz aus Pododesk angelegt. Prüfe unter Einstellungen → Leistungen, ob Heilbehandlungen steuerfrei sind (0 %, § 4 Nr. 14 UStG)." });
   }
   if (newByCode.size || totals.servicesExisting) {
     warnings.push({ message: "Terminfarben und Online-Buchbarkeit der Pododesk-Leistungen werden nicht übernommen. Vorhandene Leistungen mit gleichem Kürzel bleiben unverändert." });
@@ -1365,19 +1365,19 @@ function planPododesk(active: DetectedFile[], existing: ExistingSnapshot, c: Pod
   if (deceasedFuture) warnings.push({ message: `${plural(deceasedFuture, "künftiger Termin gehört", "künftige Termine gehören")} zu als verstorben markierten Personen – nicht übernommen.` });
   if (organizational) {
     warnings.push({
-      message: `${plural(organizational, "organisatorischer Termin", "organisatorische Termine")} (z. B. Besprechungen) nicht übernommen${organizationalFuture ? ` – davon ${organizationalFuture} in der Zukunft: Tragen Sie diese bei Bedarf als Sperrzeit im Kalender ein` : ""}.`,
+      message: `${plural(organizational, "organisatorischer Termin", "organisatorische Termine")} (z. B. Besprechungen) nicht übernommen${organizationalFuture ? ` – davon ${organizationalFuture} in der Zukunft: Trag diese bei Bedarf als Sperrzeit im Kalender ein` : ""}.`,
     });
   }
   if (kk) warnings.push({ message: `${plural(kk, "Termin enthält", "Termine enthalten")} Kassenleistungen: Sie stehen nur als Hinweis in der Terminnotiz (ohne Preis); Verordnungen sind nicht im Pododesk-Export.` });
   if (products) warnings.push({ message: `An ${plural(products, "Termin", "Terminen")} wurden Produkte verkauft – Produktverkäufe werden nicht übernommen.` });
-  if (unknownTherapist) warnings.push({ message: `${plural(unknownTherapist, "Termin verweist", "Termine verweisen")} auf Mitarbeitende, die nicht in users.csv stehen – ohne Behandler:in übernommen. Laden Sie users.csv mit hoch.` });
+  if (unknownTherapist) warnings.push({ message: `${plural(unknownTherapist, "Termin verweist", "Termine verweisen")} auf Mitarbeitende, die nicht in users.csv stehen – ohne Behandler:in übernommen. Lade users.csv mit hoch.` });
   if (deletedService) warnings.push({ message: `${plural(deletedService, "Termin verweist", "Termine verweisen")} auf eine in Pododesk gelöschte Leistung – nur als Hinweis in der Terminnotiz übernommen.` });
   if (idConflict) {
-    warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist – nicht übernommen. Bitte prüfen Sie die Auswahl in der Vorschau und ob der Export aus derselben Praxis stammt.` });
+    warnings.push({ message: `${plural(idConflict, "Termin gehört", "Termine gehören")} zu Pododesk-IDs, deren Bestandsperson nicht sicher dieselbe ist – nicht übernommen. Bitte prüfe die Auswahl in der Vorschau und ob der Export aus derselben Praxis stammt.` });
   }
   if (notInPatients) {
     warnings.push({
-      message: `${plural(notInPatients, "Termin verweist", "Termine verweisen")} auf Patient:innen, die nicht in der hochgeladenen patienten.csv stehen – nicht übernommen. Bitte laden Sie patienten.csv und termine.csv aus demselben Pododesk-Export gemeinsam hoch.`,
+      message: `${plural(notInPatients, "Termin verweist", "Termine verweisen")} auf Patient:innen, die nicht in der hochgeladenen patienten.csv stehen – nicht übernommen. Bitte lade patienten.csv und termine.csv aus demselben Pododesk-Export gemeinsam hoch.`,
     });
   }
   if (apptCollisions.length === 1) {

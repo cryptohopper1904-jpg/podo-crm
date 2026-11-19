@@ -107,7 +107,7 @@ export const INTERNAL_NOTE_PREFIX = "[intern] ";
 
 /** Altbestand aus dem Import (invoices.source ≠ "crm"): nur Nachschlagen – Buchhaltung L1/P1 */
 export const IMPORTED_INVOICE_LOCKED =
-  "Übernommene Altrechnung (Import) – sie wurde in Ihrer bisherigen Software ausgestellt. Versand, Zahlungslink und Kartenzahlung sind hier nicht möglich.";
+  "Übernommene Altrechnung (Import) – sie wurde in deiner bisherigen Software ausgestellt. Versand, Zahlungslink und Kartenzahlung sind hier nicht möglich.";
 export const IMPORTED_LEXOFFICE_NOTE = "Altbestand aus Import – nicht an lexoffice übertragbar";
 /** Zahlung erfassen auf einer übernommenen Altrechnung (Buchhaltung BA) */
 export const IMPORTED_PAYMENT_NOTE =
@@ -120,4 +120,4 @@ export const IMPORTED_PAYMENTS_DATED_NOTE = "Übernommene Zahlungen sind auf das
 export const IMPORTED_RECEIPT_MARK = "Altbestand";
 /** Rechnung/Quittung zu einem übernommenen Termin (Quelle „import“) – gesperrt (Code-Review Runde 2 S1, Runde 3 CS2) */
 export const IMPORTED_APPOINTMENT_NOT_BILLABLE =
-  "Übernommener Termin (Import) – er wurde in Ihrer bisherigen Software abgerechnet. Eine Rechnung oder Quittung dazu ist hier nicht möglich.";
+  "Übernommener Termin (Import) – er wurde in deiner bisherigen Software abgerechnet. Eine Rechnung oder Quittung dazu ist hier nicht möglich.";

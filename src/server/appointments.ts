@@ -181,7 +181,7 @@ export async function createInternalAppointments(
     await lockBooking(tx, org);
     if (!(await isCalendarMember(tx, org, input.therapistId))) return { ok: false as const, error: "Bitte eine Behandler:in (Inhaber:in oder Podolog:in) wählen." };
     // Patient:in muss zur Praxis gehören und darf nicht archiviert sein (Auswahl im Formular zeigt Archivierte nicht an –
-    // hier serverseitig, falls eine Kennung von woanders kommt, z. B. „Meinten Sie …?“ oder ein veraltetes Formular).
+    // hier serverseitig, falls eine Kennung von woanders kommt, z. B. „Meintest du …?“ oder ein veraltetes Formular).
     // Fremdschlüssel umgehen RLS; zweite Sicherung: DB-Trigger podo_fk_same_org.
     if (input.patientId) {
       if (!(await patientInOrg(tx, org, input.patientId))) return { ok: false as const, error: PATIENT_NOT_IN_ORG_MSG };

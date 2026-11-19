@@ -463,6 +463,15 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const s = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -40), bis: today }, today));
     expect(s.payouts.cents).toBe(1000);
     expect(s.months.reduce((a, m) => a + m.payoutCents, 0)).toBe(1000);
+    // Bezug des Stornos: Datum der Original-Auszahlung (reverses_payout_id → paid_at)
+    expect(s.reversals).toEqual([
+      { reversedOn: today, originalPaidOn: addDaysIso(today, -3), amountCents: -5000, feeCents: -300, reversalInPeriod: true, originalInPeriod: true },
+    ]);
+    expect(stats.reversalRefText(addDaysIso(today, -3))).toMatch(/^Storno betrifft Auszahlung vom \d{2}\.\d{2}\.\d{4}$/);
+    // Zeitraum vor dem Storno: Auszahlung nicht mehr gezählt, Betrag aber noch enthalten; Storno als „später“ aufgeführt
+    const before = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -40), bis: addDaysIso(today, -2) }, today));
+    expect(before.payouts).toMatchObject({ count: 0, cents: 5000 });
+    expect(before.reversals).toEqual([expect.objectContaining({ reversedOn: today, originalPaidOn: addDaysIso(today, -3), reversalInPeriod: false, originalInPeriod: true })]);
     // Audit ohne Begründung
     const a = await w.q<{ meta: unknown }>("select meta from audit_log where organization_id = $1 and action = 'billing_batch.payout_reversal'", [w.org]);
     expect(a.length).toBe(1);

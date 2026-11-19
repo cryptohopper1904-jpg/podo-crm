@@ -22,8 +22,8 @@ export default async function ImportSettings() {
       <Card aria-labelledby="daten-uebernehmen">
         <h2 id="daten-uebernehmen" className="mb-1 font-display text-xl font-semibold">Daten übernehmen</h2>
         <p className="mb-4 text-sm text-muted">
-          Sie wechseln von einer anderen Software? Laden Sie deren Exportdateien hier hoch – auch mehrere auf einmal oder als ZIP. PodoHero erkennt jede
-          Datei automatisch, zeigt Ihnen vorher, was übernommen wird, und ergänzt nur: Es wird nichts gelöscht oder überschrieben, und ein erneuter Upload
+          Du wechselst von einer anderen Software? Lade deren Exportdateien hier hoch – auch mehrere auf einmal oder als ZIP. PodoHero erkennt jede
+          Datei automatisch, zeigt dir vorher, was übernommen wird, und ergänzt nur: Es wird nichts gelöscht oder überschrieben, und ein erneuter Upload
           legt nichts doppelt an.
         </p>
         <UebernahmeForm action={uebernahmeAction} />
@@ -34,7 +34,7 @@ export default async function ImportSettings() {
         <p className="mt-3 text-xs text-muted">{HELP_STAND}</p>
         {SOURCE_HELP.map((h) => (
           <details key={h.id} className="mt-3 text-sm">
-            <summary className="cursor-pointer font-semibold">So finden Sie den Export in {h.title}</summary>
+            <summary className="cursor-pointer font-semibold">So findest du den Export in {h.title}</summary>
             <ol className="mt-2 list-decimal pl-5">{h.steps.map((x) => <li key={x}>{x}</li>)}</ol>
             {h.missing.length ? (
               <>

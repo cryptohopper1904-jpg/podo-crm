@@ -184,7 +184,7 @@ export const RECOGNIZERS: Recognizer[] = [
     match: (s) => pododeskFileOf(s.headers) === "users",
     fileName: /^users\.csv$/i,
     status: "info",
-    note: "Mitarbeitende werden nicht als Nutzerkonten angelegt, sondern über den Namen Ihrem Team in PodoHero zugeordnet. Zugangsdaten, Tokens und Kontaktdaten werden nicht gelesen.",
+    note: "Mitarbeitende werden nicht als Nutzerkonten angelegt, sondern über den Namen deinem Team in PodoHero zugeordnet. Zugangsdaten, Tokens und Kontaktdaten werden nicht gelesen.",
     pododesk: "users",
   },
   {
@@ -206,7 +206,7 @@ export const RECOGNIZERS: Recognizer[] = [
     match: (s) => has(s, "buchungsnummer", "belegnummer", "erfasst von", "kassenbestand in €"),
     fileName: /^Kassenbuch .+\.csv$/i,
     status: "info",
-    note: "Kassenbuch – nicht nachbuchen, nur Anfangsbestand. Alte Kassenbuchungen werden nicht übernommen (GoBD, Kassensicherungsverordnung). Tragen Sie den letzten Kassenbestand in PodoHero unter Kasse als Anfangsbestand ein und bewahren Sie den Export selbst auf.",
+    note: "Kassenbuch – nicht nachbuchen, nur Anfangsbestand. Alte Kassenbuchungen werden nicht übernommen (GoBD, Kassensicherungsverordnung). Trag den letzten Kassenbestand in PodoHero unter Kasse als Anfangsbestand ein und bewahre den Export selbst auf.",
   },
 ];
 

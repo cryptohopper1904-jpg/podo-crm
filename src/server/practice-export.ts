@@ -521,7 +521,7 @@ function readme(p: {
     "AUFBEWAHRUNG – BITTE BEACHTEN",
     "-----------------------------",
     "Dieser Export enthält Gesundheitsdaten (Art. 9 DSGVO) und unterliegt der Schweigepflicht (§ 203 StGB).",
-    "Bewahren Sie ihn verschlüsselt und zugriffsgeschützt auf.",
+    "Bewahre ihn verschlüsselt und zugriffsgeschützt auf.",
     "",
     "Gesetzliche Aufbewahrungsfristen gelten für die Praxis weiter, auch nach einer Kündigung:",
     "- Behandlungsdokumentation: 10 Jahre nach Abschluss der Behandlung (§ 630f Abs. 3 BGB)",
@@ -530,7 +530,7 @@ function readme(p: {
     "- Arbeitsanweisungen und Organisationsunterlagen (Verfahrensdokumentation, Einrichtungsprotokolle der Kasse,",
     "  Kassenmeldung ans Finanzamt, Angaben zum TSE-Zertifikat): 10 Jahre (§ 147 AO)",
     "- Steuerliche Fristen enden frühestens dann – Ablaufhemmung nach § 147 Abs. 3 S. 5 AO beachten.",
-    "Nach der Löschung der Praxis in PodoHero ist dieser Export Ihre einzige Kopie.",
+    "Nach der Löschung der Praxis in PodoHero ist dieser Export deine einzige Kopie.",
     "",
   ];
   return lines.join("\n");

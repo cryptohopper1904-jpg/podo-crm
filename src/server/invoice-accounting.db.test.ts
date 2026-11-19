@@ -74,7 +74,7 @@ import { fixtures, TEST_DB } from "./__tests__/db-fixtures";
     const { auth, invoice } = await setup();
     const alt = await invoice("excel-import");
     await expect(invoices.pushInvoiceToAccounting(auth, alt)).rejects.toThrow(
-      "Übernommene Altrechnung (Import) – sie wurde in Ihrer bisherigen Software bzw. Buchhaltung erfasst und wird nicht an lexoffice übertragen.",
+      "Übernommene Altrechnung (Import) – sie wurde in deiner bisherigen Software bzw. Buchhaltung erfasst und wird nicht an lexoffice übertragen.",
     );
     const storno = await invoice("crm", { kind: "credit_note", cancels: alt });
     await expect(invoices.pushInvoiceToAccounting(auth, storno)).rejects.toThrow("Storno einer übernommenen Altrechnung – bitte in der Buchhaltung manuell gegen den Originalbeleg buchen.");

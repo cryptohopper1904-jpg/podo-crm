@@ -1879,7 +1879,7 @@ export async function pushInvoiceToAccounting(auth: AuthContext, invoiceId: stri
     if (inv.kind === "deposit") throw new InvoiceError("Anzahlungen werden nicht einzeln übertragen – sie sind in der Sammelrechnung enthalten.");
     // Buchhaltung L1: Altbestand aus dem Import ist schon in der bisherigen Buchhaltung; nichts doppelt übertragen
     if (inv.source !== "crm") {
-      throw new InvoiceError("Übernommene Altrechnung (Import) – sie wurde in Ihrer bisherigen Software bzw. Buchhaltung erfasst und wird nicht an lexoffice übertragen.");
+      throw new InvoiceError("Übernommene Altrechnung (Import) – sie wurde in deiner bisherigen Software bzw. Buchhaltung erfasst und wird nicht an lexoffice übertragen.");
     }
     if (inv.externalSyncedAt) throw new InvoiceError(`Diese Rechnung wurde bereits am ${dateDe(berlinDateIso(inv.externalSyncedAt))} an lexoffice übertragen.`);
     const lines = await tx

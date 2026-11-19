@@ -39,10 +39,10 @@ const ALLOWED_EXT = /\.(csv|txt|xlsx|zip|pdf)$/i;
 
 async function readFiles(form: FormData): Promise<{ files: InputFile[]; hash: string } | { error: string }> {
   const raw = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
-  if (!raw.length) return { error: "Bitte wählen Sie mindestens eine Datei aus." };
-  if (raw.length > MAX_UPLOAD_FILES) return { error: `Bitte laden Sie höchstens ${MAX_UPLOAD_FILES} Dateien auf einmal hoch (oder als ZIP).` };
+  if (!raw.length) return { error: "Bitte wähle mindestens eine Datei aus." };
+  if (raw.length > MAX_UPLOAD_FILES) return { error: `Bitte lade höchstens ${MAX_UPLOAD_FILES} Dateien auf einmal hoch (oder als ZIP).` };
   const total = raw.reduce((a, f) => a + f.size, 0);
-  if (total > MAX_TOTAL_BYTES) return { error: "Die Dateien sind zusammen größer als 24 MB. Bitte laden Sie sie in mehreren Durchgängen hoch (z. B. Rechnungs-PDFs je Jahr)." };
+  if (total > MAX_TOTAL_BYTES) return { error: "Die Dateien sind zusammen größer als 24 MB. Bitte lade sie in mehreren Durchgängen hoch (z. B. Rechnungs-PDFs je Jahr)." };
   const bad = raw.find((f) => !ALLOWED_EXT.test(f.name));
   if (bad) return { error: `„${bad.name.slice(0, 80)}“: Bitte nur CSV-, Excel- (.xlsx), ZIP- oder PDF-Dateien hochladen.` };
   const files: InputFile[] = [];
@@ -74,7 +74,7 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
   if (!auth.can("settings.manage") || auth.support) denyAccess(auth, "import.run");
   const org = auth.organization.id;
   if (uebernahmeLimiter.limited(`${org}:${auth.user.id}`)) {
-    return { error: "Zu viele Durchläufe in kurzer Zeit. Bitte warten Sie einige Minuten und versuchen Sie es dann erneut." };
+    return { error: "Zu viele Durchläufe in kurzer Zeit. Bitte warte einige Minuten und versuch es dann erneut." };
   }
   const up = await readFiles(form);
   if ("error" in up) return { error: up.error };
@@ -93,13 +93,13 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
       if (isDbTimeout(e)) return { error: DB_TIMEOUT_MESSAGE };
       // nicht weiterwerfen: die Fehlermeldung (z. B. aus der Datenbank) enthielte Klardaten im Log/Fehlerbericht (R3-6)
       console.error("[import.uebernahme.preview]", errorForLog(e));
-      return { error: "Die Vorschau konnte nicht erstellt werden. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
+      return { error: "Die Vorschau konnte nicht erstellt werden. Bitte prüfe die Dateien oder wende dich an den Support." };
     }
   }
 
   const token = String(form.get("previewToken") ?? "");
   if (!verifyPreviewToken(token, binding)) {
-    return { error: "Bitte prüfen Sie zuerst genau diese Dateien (Vorschau, höchstens 15 Minuten gültig) und importieren Sie dann." };
+    return { error: "Bitte prüfe zuerst genau diese Dateien (Vorschau, höchstens 15 Minuten gültig) und importiere dann." };
   }
   let summary: ApplySummary;
   try {
@@ -123,7 +123,7 @@ export async function uebernahmeAction(_: UebernahmeState, form: FormData): Prom
     if (e instanceof PatientLimitError) return { error: `${e.message} Es wurde nichts importiert.` };
     // nur Fehlerart + Code: DB-Fehlermeldungen enthalten die Abfrage samt Klardaten (AppSec A-B2)
     console.error("[import.uebernahme]", errorForLog(e));
-    return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfen Sie die Dateien oder wenden Sie sich an den Support." };
+    return { error: "Import abgebrochen, es wurde nichts gespeichert. Bitte prüfe die Dateien oder wende dich an den Support." };
   }
   revalidatePath("/kunden");
   revalidatePath("/kalender");

@@ -5,7 +5,9 @@ import { Badge, BackLink, Card, CardTitle, Empty, Field, Input, Stat, Table } fr
 import { requireAuth } from "@/lib/auth/session";
 import { berlinDateIso, dateDe, dateTimeDe, money } from "@/lib/format";
 import { batchHandoverInfo } from "@/server/gkv-handover";
+import { reversalRefText } from "@/server/gkv-stats";
 import { manualPayoutAction, reversePayoutAction } from "./actions";
+import { HandoverExport } from "./handover-export";
 import { PayoutImport } from "./payout-import";
 
 export const metadata = { title: "Abrechnungslauf" };
@@ -28,6 +30,8 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
   const writes = !auth.support && !auth.readOnly && !!b.exportedAt;
   const open = info.openCents;
   const d = info.deductions;
+  // Storno ↔ Original-Auszahlung (reverses_payout_id): Bezugsdatum am Storno, Stornodatum am Original
+  const paidOn = new Map(info.payouts.map((p) => [p.id, p.paidAt]));
   return (
     <div className="mx-auto max-w-6xl">
       <BackLink href="/verordnungen/abrechnung" label="GKV-Abrechnung" />
@@ -74,18 +78,7 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
             <a href={`/api/export/gkv-batch/${b.id}`} className="inline-flex h-11 items-center gap-2 rounded-xl border border-border px-4 font-semibold"><Download size={18} aria-hidden /> nur Verordnungen (CSV)</a>
           </div>
         ) : downloads ? (
-          // Erst-Export nur per POST mit Bestätigung (übergibt den Lauf unumkehrbar, AppSec M2); danach Seite neu laden
-          <form method="post" action={`/api/export/gkv-batch/${b.id}/paket`} className="flex flex-col gap-3">
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" required className="mt-0.5 size-5 accent-[var(--primary)]" />
-              Ich übergebe diesen Abrechnungslauf an das Abrechnungszentrum. Das Paket wird archiviert und der Lauf als übergeben vermerkt – das lässt sich
-              nicht rückgängig machen.
-            </label>
-            <div>
-              <button type="submit" className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary"><Download size={18} aria-hidden /> Übergabepaket erzeugen und herunterladen</button>
-            </div>
-            <p className="text-xs text-muted">Nach dem Download die Seite neu laden. Die CSV „nur Verordnungen“ gibt es danach aus dem Archiv.</p>
-          </form>
+          <HandoverExport batchId={b.id} />
         ) : (
           <p className="text-sm text-muted">Im Support-Modus sind Downloads gesperrt.</p>
         )}
@@ -116,7 +109,13 @@ export default async function BatchPage(props: PageProps<"/verordnungen/abrechnu
                   <td className="tabular-nums">{p.feeCents ? money(p.feeCents) : "–"}</td>
                   <td className="tabular-nums">{p.deductionCents ? money(p.deductionCents) : "–"}</td>
                   <td>{p.reference ?? "–"}</td>
-                  <td>{p.source === "import" ? `Rückmeldung (${p.lineCount} Zeilen)` : p.source === "reversal" ? `Storno – ${p.reason ?? ""}` : "von Hand"}</td>
+                  <td>
+                    {p.source === "import" ? `Rückmeldung (${p.lineCount} Zeilen)` : p.source === "reversal" ? `Storno – ${p.reason ?? ""}` : "von Hand"}
+                    {p.source === "reversal" && p.reversesPayoutId && paidOn.get(p.reversesPayoutId) ? (
+                      <span className="block text-xs text-muted">{reversalRefText(paidOn.get(p.reversesPayoutId)!)}</span>
+                    ) : null}
+                    {p.reversedBy && paidOn.get(p.reversedBy) ? <span className="block text-xs text-muted">storniert am {dateDe(paidOn.get(p.reversedBy))}</span> : null}
+                  </td>
                   <td>{dateTimeDe(p.createdAt)}</td>
                   <td>
                     {writes && p.source !== "reversal" && !p.reversedBy ? (

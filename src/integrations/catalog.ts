@@ -92,7 +92,7 @@ export const PROVIDER_CATALOG: ProviderInfo[] = [
     key: "kim",
     label: "KIM (Kommunikation im Medizinwesen, TI)",
     description:
-      "KIM-Postfach der Praxis: Arztbriefe und Rückfragen empfangen, Antworten senden. Verbindung zum KIM-Clientmodul bzw. TI-Gateway Ihres KIM-Anbieters über POP3S (Abruf) und SMTPS (Versand). Voraussetzung: SMC-B, Konnektor oder TI-Gateway, KIM-Vertrag – siehe Einstellungen → TI.",
+      "KIM-Postfach der Praxis: Arztbriefe und Rückfragen empfangen, Antworten senden. Verbindung zum KIM-Clientmodul bzw. TI-Gateway deines KIM-Anbieters über POP3S (Abruf) und SMTPS (Versand). Voraussetzung: SMC-B, Konnektor oder TI-Gateway, KIM-Vertrag – siehe Einstellungen → TI.",
     privacy:
       "Ende-zu-Ende-Verschlüsselung und Signatur übernimmt das Clientmodul des zugelassenen KIM-Anbieters. PodoHero ist kein zertifiziertes TI-Produkt. Anhänge werden nicht gespeichert, nur ihre Namen. Nachrichten werden auf dem Server nur gelöscht, wenn „Nach Abruf löschen“ = ja.",
     docs: "https://fachportal.gematik.de/anwendungen/kommunikation-im-medizinwesen",

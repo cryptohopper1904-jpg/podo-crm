@@ -113,7 +113,7 @@ function rejectSeveralPododeskPractices(files: DetectedFile[]): DetectedFile[] {
   );
 }
 
-export const PODODESK_TERMINE_NOTE = "termine.csv nur zusammen mit patienten.csv aus demselben Pododesk-Export – bitte laden Sie beide Dateien gemeinsam hoch.";
+export const PODODESK_TERMINE_NOTE = "termine.csv nur zusammen mit patienten.csv aus demselben Pododesk-Export – bitte lade beide Dateien gemeinsam hoch.";
 
 /**
  * Termine werden nur Personen aus der mitgeladenen patienten.csv zugeordnet (R4-A): ohne sie könnte eine Pododesk-ID

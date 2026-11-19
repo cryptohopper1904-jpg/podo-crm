@@ -275,7 +275,7 @@ async function ExternalRegisterSection({
     <section className={active ? "mb-8" : ""} aria-labelledby={active ? "kassenvermerke" : undefined} aria-label={active ? undefined : "Frühere Kassenvermerke"}>
       {active ? (
         <p className="mb-6 rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text" role="note">
-          <strong>SumUp:</strong> Kartenzahlungen am SumUp-Terminal über die PodoHero-Anbindung bucht PodoHero nur als Vermerk. Sie müssen <strong>zusätzlich in der Praxiskasse</strong> als Kartenzahlung erfasst werden – für jeden Eingang erscheint eine
+          <strong>SumUp:</strong> Kartenzahlungen am SumUp-Terminal über die PodoHero-Anbindung bucht PodoHero nur als Vermerk. Du musst sie <strong>zusätzlich in der Praxiskasse</strong> als Kartenzahlung erfassen – für jeden Eingang erscheint eine
           Meldung im Posteingang.
         </p>
       ) : null}
