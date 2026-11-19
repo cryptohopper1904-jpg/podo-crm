@@ -46,7 +46,7 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
         {b.receipts.length === 0 ? (
           <Empty title="Keine Zuzahlungsquittungen im Zeitraum" />
         ) : (
-          <Table>
+          <Table label="Zuzahlungsquittungen" minWidth={720}>
             <thead><tr><th>Datum</th><th>Beleg</th><th>Person</th><th>Betrag</th><th>Zahlungsart</th><th>Status</th></tr></thead>
             <tbody>
               {b.receipts.map((r) => (
@@ -57,7 +57,7 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
                     {r.kind === "storno" ? <div className="text-xs text-muted">Storno zu {r.related ?? "–"}</div> : r.related ? <div className="text-xs text-muted">storniert durch {r.related}</div> : null}
                   </td>
                   <td>{r.patient}{r.patientNumber !== null ? ` (#${r.patientNumber})` : ""}</td>
-                  <td className="tabular-nums">{money(r.totalCents)}</td>
+                  <td className="whitespace-nowrap tabular-nums">{money(r.totalCents)}</td>
                   <td>{r.methods.map((m) => PAYMENT_METHOD_LABEL[m] ?? m).join(", ") || "–"}</td>
                   <td>{r.status === "cancelled" ? <Badge tone="neutral">storniert</Badge> : r.kind === "storno" ? <Badge tone="warn">Storno</Badge> : <Badge tone="primary">gültig</Badge>}</td>
                 </tr>
@@ -71,7 +71,7 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
         {b.batches.length === 0 ? (
           <Empty title="Keine Abrechnungsläufe im Zeitraum" />
         ) : (
-          <Table>
+          <Table label="Abrechnungsläufe" minWidth={820}>
             <thead><tr><th>Lauf</th><th>Partner</th><th>Verordnungen</th><th>Heilmittelkosten</th><th>Zuzahlungen</th><th>Kassenanteil</th><th>Export</th></tr></thead>
             <tbody>
               {b.batches.map((x) => (
@@ -81,10 +81,10 @@ export default async function BeleglistePage(props: PageProps<"/auswertung/beleg
                     {batchCorrectionNote(x) ? <div className="text-xs text-muted">{batchCorrectionNote(x)}</div> : null}
                   </td>
                   <td>{PARTNER[x.partner] ?? x.partner}</td>
-                  <td className="tabular-nums">{x.prescriptionCount}</td>
-                  <td className="tabular-nums">{x.remedyCents === null ? "–" : money(x.remedyCents)}</td>
-                  <td className="tabular-nums">{money(x.copaymentCents)}</td>
-                  <td className="tabular-nums">{x.insurerCents === null ? "–" : money(x.insurerCents)}</td>
+                  <td className="whitespace-nowrap tabular-nums">{x.prescriptionCount}</td>
+                  <td className="whitespace-nowrap tabular-nums">{x.remedyCents === null ? "–" : money(x.remedyCents)}</td>
+                  <td className="whitespace-nowrap tabular-nums">{money(x.copaymentCents)}</td>
+                  <td className="whitespace-nowrap tabular-nums">{x.insurerCents === null ? "–" : money(x.insurerCents)}</td>
                   <td>{x.exportedOn ? <Badge tone="primary">{dateDe(x.exportedOn)}</Badge> : <Badge tone="warn">offen</Badge>}</td>
                 </tr>
               ))}

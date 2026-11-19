@@ -7,7 +7,8 @@ import { PRESCRIPTION_KINDS, PRESCRIPTION_KIND_SOURCE, PRESCRIPTION_SPECIALS, ty
 import { billingDetailsAction, correctionAction, deductionAction, resolveCorrectionAction, type GkvActionState } from "./gkv-actions";
 
 const inputCls = "h-9 rounded-lg border border-border bg-surface px-2 text-sm";
-const btnCls = "text-xs font-semibold text-primary disabled:opacity-60";
+const btnCls = "inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60";
+const cancelCls = "inline-flex min-h-11 items-center rounded-lg px-2 text-xs text-muted hover:bg-surface-2";
 
 function Result({ state }: { state: GkvActionState }) {
   return (
@@ -80,7 +81,7 @@ export function BillingDetailsForm({
       <div className="flex flex-wrap items-end gap-2">
         <label className="flex flex-col gap-1">
           <span className="font-medium">Genehmigung langfristiger Heilmittelbedarf (B2)</span>
-          <input name="approvalRef" defaultValue={approvalRef ?? ""} maxLength={20} placeholder="Genehmigungskennzeichen" aria-label="Genehmigungskennzeichen" className={`${inputCls} w-52`} />
+          <input name="approvalRef" defaultValue={approvalRef ?? ""} maxLength={20} placeholder="Genehmigungskennzeichen" autoComplete="off" spellCheck={false} className={`${inputCls} w-full max-w-52`} />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs text-muted">Datum der Genehmigung</span>
@@ -89,7 +90,7 @@ export function BillingDetailsForm({
       </div>
       <Result state={state} />
       <div>
-        <button type="submit" disabled={pending} className="inline-flex h-9 items-center rounded-lg bg-primary px-3 text-sm font-semibold text-on-primary disabled:opacity-60">
+        <button type="submit" disabled={pending} className="inline-flex h-11 items-center rounded-lg bg-primary px-3 text-sm font-semibold text-on-primary disabled:opacity-60">
           {pending ? "…" : kind ? "Abrechnungsangaben speichern" : "Kennzeichen bestätigen und speichern"}
         </button>
       </div>
@@ -107,14 +108,14 @@ export function DeductionForm({ prescriptionId, patientId, today }: { prescripti
       <div className="flex flex-wrap items-center gap-2">
         <input name="amount" inputMode="decimal" required maxLength={EURO_INPUT_MAX_LENGTH} placeholder="Betrag €" aria-label="abgesetzter Betrag in Euro" className={`${inputCls} w-24`} />
         <input type="date" name="deductedOn" required defaultValue={today} max={today} aria-label="Datum der Absetzung" className={inputCls} />
-        <input name="reasonCode" maxLength={20} placeholder="Code (optional)" aria-label="Absetzungscode" className={`${inputCls} w-32`} />
-        <input name="reason" required minLength={3} maxLength={500} placeholder="Grund der Absetzung" aria-label="Grund der Absetzung" className={`${inputCls} min-w-56 flex-1`} />
+        <input name="reasonCode" maxLength={20} autoComplete="off" spellCheck={false} placeholder="Code (optional)" aria-label="Absetzungscode" className={`${inputCls} w-32`} />
+        <input name="reason" required minLength={3} maxLength={500} placeholder="Grund der Absetzung" aria-label="Grund der Absetzung" className={`${inputCls} min-w-0 flex-1 basis-56`} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <input name="letterRef" maxLength={60} placeholder="Aktenzeichen Kassenschreiben (optional)" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-64`} />
+        <input name="letterRef" maxLength={60} autoComplete="off" spellCheck={false} placeholder="Aktenzeichen Kassenschreiben (optional)" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-full max-w-64`} />
         <label className="flex items-center gap-1 text-xs text-muted">
           Schreiben vom
-          <input type="date" name="letterDate" max={today} aria-label="Datum des Kassenschreibens" className={inputCls} />
+          <input type="date" name="letterDate" max={today} className={inputCls} />
         </label>
         <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Absetzung erfassen"}</button>
       </div>
@@ -136,7 +137,7 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
       <input type="hidden" name="prescriptionId" value={prescriptionId} />
       <input type="hidden" name="patientId" value={patientId} />
       <div className="flex flex-wrap items-center gap-2">
-        <input name="reason" required minLength={5} maxLength={500} placeholder="Was muss korrigiert werden?" aria-label="Begründung der Korrektur" className={`${inputCls} min-w-64 flex-1`} />
+        <input name="reason" required minLength={5} maxLength={500} placeholder="Was muss korrigiert werden?" aria-label="Begründung der Korrektur" className={`${inputCls} min-w-0 flex-1 basis-64`} />
         {deductions.length ? (
           <select name="deductionId" defaultValue={unlinked.length === 1 ? unlinked[0].id : ""} aria-label="zugehörige Absetzung" className={inputCls}>
             <option value="">ohne Bezug auf eine Absetzung</option>
@@ -144,7 +145,7 @@ export function CorrectionForm({ prescriptionId, patientId, deductions }: { pres
           </select>
         ) : null}
         <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "Korrektur nötig setzen"}</button>
-        <button type="button" className="text-xs text-muted" onClick={() => setOpen(false)}>Abbrechen</button>
+        <button type="button" className={cancelCls} onClick={() => setOpen(false)}>Abbrechen</button>
       </div>
       {unlinked.length ? (
         <p className="text-xs font-medium text-warn-soft-text">
@@ -167,9 +168,9 @@ export function ResolveCorrectionForm({ prescriptionId, patientId }: { prescript
       <input type="hidden" name="prescriptionId" value={prescriptionId} />
       <input type="hidden" name="patientId" value={patientId} />
       <div className="flex flex-wrap items-center gap-2">
-        <input name="note" required minLength={5} maxLength={500} placeholder="Begründung (z. B. Absetzung akzeptiert)" aria-label="Begründung" className={`${inputCls} min-w-64 flex-1`} />
+        <input name="note" required minLength={5} maxLength={500} placeholder="Begründung (z. B. Absetzung akzeptiert)" aria-label="Begründung" className={`${inputCls} min-w-0 flex-1 basis-64`} />
         <button type="submit" disabled={pending} className={btnCls}>{pending ? "…" : "abschließen"}</button>
-        <button type="button" className="text-xs text-muted" onClick={() => setOpen(false)}>Abbrechen</button>
+        <button type="button" className={cancelCls} onClick={() => setOpen(false)}>Abbrechen</button>
       </div>
       <Result state={state} />
     </form>

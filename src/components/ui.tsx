@@ -294,7 +294,9 @@ export function Input({
 }) {
   const isNumber = props.type === "number";
   if (props.type && DATE_TYPES.has(props.type) && suffix == null) return <DateInput className={cx(inputCls, className)} clearable={clearable} {...props} />;
-  if (suffix == null && !(stepper && isNumber)) return <input className={cx(inputCls, className)} {...props} />;
+  // Zahlenfeld ohne Einheit: Ziffernblock auf Touch-Geräten – nicht bei negativem Minimum (iOS-Ziffernblock hat kein Minus)
+  const plainMode = isNumber && !(props.min != null && Number(props.min) < 0) ? numberInputMode(props.step, props.inputMode) : props.inputMode;
+  if (suffix == null && !(stepper && isNumber)) return <input className={cx(inputCls, className)} {...props} inputMode={plainMode} />;
   const inputMode = isNumber ? numberInputMode(props.step, props.inputMode) : props.inputMode;
   const unit = suffix ? spokenUnit(suffix, suffixSpoken) : "";
   const withStepper = !!stepper && isNumber;

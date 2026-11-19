@@ -27,10 +27,10 @@ export function DeductionStatusForm({ id, status, note, amount, letterRef, lette
             {(Object.keys(DEDUCTION_OUTCOME_LABEL) as DeductionOutcome[]).map((o) => <option key={o} value={o}>{DEDUCTION_OUTCOME_LABEL[o]}</option>)}
           </select>
         ) : null}
-        <input name="letterRef" defaultValue={letterRef ?? ""} maxLength={60} placeholder="Aktenzeichen Schreiben" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-40`} />
+        <input name="letterRef" defaultValue={letterRef ?? ""} maxLength={60} autoComplete="off" spellCheck={false} placeholder="Aktenzeichen Schreiben" aria-label="Aktenzeichen des Kassenschreibens" className={`${inputCls} w-40`} />
         <input type="date" name="letterDate" defaultValue={letterDate ?? ""} aria-label="Datum des Kassenschreibens" className={inputCls} />
-        <input name="note" defaultValue={note ?? ""} maxLength={1000} placeholder="Notiz (z. B. Widerspruch am …)" aria-label="Notiz" className={`${inputCls} min-w-48 flex-1`} />
-        <button type="submit" disabled={pending} className="text-xs font-semibold text-primary">{pending ? "…" : "Speichern"}</button>
+        <input name="note" defaultValue={note ?? ""} maxLength={1000} placeholder="Notiz (z. B. Widerspruch am …)" aria-label="Notiz" className={`${inputCls} min-w-0 flex-1 basis-48`} />
+        <button type="submit" disabled={pending} className="inline-flex min-h-11 items-center rounded-lg px-2 text-xs font-semibold text-primary hover:bg-surface-2 disabled:opacity-60">{pending ? "…" : "Speichern"}</button>
       </div>
       <p className="text-xs text-muted">Aktenzeichen bzw. Datum des Schreibens leeren und speichern entfernt die Angabe.</p>
       <FormError message={state?.error} revealKey={state} />
