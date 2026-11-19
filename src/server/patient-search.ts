@@ -25,21 +25,21 @@ import { patientSearchCondition } from "./patients";
  *   damit auch keine Personen mit gelöschten Kontaktdaten (Löschung archiviert immer). Verstorbene erscheinen wie
  *   in der Liste, mit Kennzeichnung.
  * - Direkte Treffer: dieselbe Suchbedingung wie die Liste (patientSearchCondition), höchstens SUGGEST_LIMIT.
- * - „Meinten Sie“ (nur ohne direkten Treffer) – Rechenzeit begrenzt (Appsec-Review):
+ * - „Meintest du“ (nur ohne direkten Treffer) – Rechenzeit begrenzt (Appsec-Review):
  *   1. Vorfilter in der DB per pg_trgm (Migration 0044, GIN-Index patients_name_trgm): höchstens
  *      FUZZY_DB_CANDIDATES ähnlichste Namen. Fehlt die Extension, Rückfall auf höchstens FUZZY_FALLBACK_SCAN Namen
  *      mit gleichem Anfangsbuchstaben (Nach- oder Vorname).
  *   2. Feinbewertung in der App (src/lib/patient-search.ts: Suchtext/Namen auf 40 Zeichen gekürzt, Levenshtein
  *      mit frühem Abbruch).
  *   3. Eigene Drosselung (FUZZY_PER_MIN je Person) und höchstens ein Lauf gleichzeitig je Instanz – sonst Antwort
- *      ohne „Meinten Sie“.
+ *      ohne „Meintest du“.
  *   Namen liegen unverschlüsselt in `patients` (wie für die Liste/ILIKE); der Trigramm-Index enthält nichts Neues.
  * - Antwort nur mit Anzeige-Feldern (Nr., Name, Geburtsdatum, Ort, verstorben) – keine Kontakt- oder Gesundheitsdaten.
  */
 
 /** Je Benutzer:in höchstens so viele Abfragen je Minute (Tippen ist entprellt, ~5/s wären viel) */
 export const suggestLimiter = createRateLimiter({ windowMs: 60_000, max: 90 });
-/** „Meinten Sie“-Läufe je Benutzer:in und Minute */
+/** „Meintest du“-Läufe je Benutzer:in und Minute */
 export const FUZZY_PER_MIN = 15;
 export const fuzzyLimiter = createRateLimiter({ windowMs: 60_000, max: FUZZY_PER_MIN });
 /** So viele Kandidaten liefert der DB-Vorfilter höchstens */
@@ -95,7 +95,7 @@ function shouldAudit(key: string, now = Date.now()): boolean {
   return true;
 }
 
-/** Höchstens ein „Meinten Sie“-Lauf gleichzeitig je Instanz */
+/** Höchstens ein „Meintest du“-Lauf gleichzeitig je Instanz */
 let fuzzyBusy = false;
 /** pg_trgm vorhanden? (einmal je Prozess ermittelt) */
 let trgmAvailable: boolean | null = null;

@@ -1,10 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import { Download } from "lucide-react";
 import { FormError } from "@/components/form-error";
-import { errorFromBody, filenameFromDisposition, handoverErrorText } from "@/lib/gkv-handover/download";
+import {
+  DOWNLOAD_ABORTED,
+  SESSION_EXPIRED,
+  errorFromBody,
+  filenameFromDisposition,
+  handoverErrorText,
+  isRedirect,
+  isZipResponse,
+} from "@/lib/gkv-handover/download";
 
 /**
  * Erst-Export des Übergabepakets (GKV Paket E): POST mit Pflicht-Häkchen an /api/export/gkv-batch/[id]/paket – per fetch
@@ -17,22 +25,49 @@ export function HandoverExport({ batchId }: { batchId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [pending, setPending] = useState(false);
+  // nach angenommenem Export bis zum fertigen Refresh gesperrt (kein zweiter POST per Doppelklick)
+  const [refreshing, startRefresh] = useTransition();
+  const [done, setDone] = useState(false);
+  const busy = pending || refreshing || done;
   const url = `/api/export/gkv-batch/${batchId}/paket`;
+
+  function fail(text: string) {
+    setError(text);
+    setAttempt((n) => n + 1);
+  }
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (pending) return;
+    if (busy) return;
     setPending(true);
     setError(null);
+    let accepted = false;
     try {
-      const res = await fetch(url, { method: "POST", credentials: "same-origin", cache: "no-store" });
-      if (!res.ok) {
-        const body: unknown = await res.json().catch(() => null);
-        setError(handoverErrorText(res.status, errorFromBody(body)));
-        setAttempt((n) => n + 1);
+      // keine Weiterleitung folgen: ohne Sitzung leitet der Proxy auf /login um – sonst würde dessen HTML als ZIP gespeichert
+      const res = await fetch(url, { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "manual" });
+      if (isRedirect(res)) {
+        fail(SESSION_EXPIRED);
         return;
       }
-      const blob = await res.blob();
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        fail(handoverErrorText(res.status, errorFromBody(body)));
+        return;
+      }
+      if (!isZipResponse(res.headers.get("Content-Type"))) {
+        fail(SESSION_EXPIRED);
+        return;
+      }
+      // ab hier hat der Server den Lauf übergeben – auch wenn der Download abbricht, den neuen Status zeigen
+      accepted = true;
+      let blob: Blob;
+      try {
+        blob = await res.blob();
+      } catch {
+        fail(DOWNLOAD_ABORTED);
+        startRefresh(() => router.refresh());
+        return;
+      }
       const href = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = href;
@@ -41,10 +76,11 @@ export function HandoverExport({ batchId }: { batchId: string }) {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(href), 60_000);
-      router.refresh();
+      setDone(true);
+      startRefresh(() => router.refresh());
     } catch {
-      setError("Keine Verbindung zum Server. Bitte prüfe die Internetverbindung und versuch es erneut.");
-      setAttempt((n) => n + 1);
+      fail(accepted ? DOWNLOAD_ABORTED : "Keine Verbindung zum Server. Bitte prüfe die Internetverbindung und versuch es erneut.");
+      if (accepted) startRefresh(() => router.refresh());
     } finally {
       setPending(false);
     }
@@ -52,7 +88,7 @@ export function HandoverExport({ batchId }: { batchId: string }) {
 
   return (
     // Erst-Export nur per POST mit Bestätigung (übergibt den Lauf unumkehrbar, AppSec M2)
-    <form method="post" action={url} onSubmit={onSubmit} className="flex flex-col gap-3" aria-busy={pending}>
+    <form method="post" action={url} onSubmit={onSubmit} className="flex flex-col gap-3" aria-busy={busy}>
       <FormError id="uebergabe-fehler" message={error} revealKey={attempt} />
       <label className="flex items-start gap-2 text-sm">
         <input type="checkbox" required className="mt-0.5 size-5 accent-[var(--primary)]" />
@@ -62,10 +98,10 @@ export function HandoverExport({ batchId }: { batchId: string }) {
       <div>
         <button
           type="submit"
-          disabled={pending}
+          disabled={busy}
           className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 font-semibold text-on-primary disabled:opacity-60"
         >
-          <Download size={18} aria-hidden /> {pending ? "Übergabepaket wird erzeugt …" : "Übergabepaket erzeugen und herunterladen"}
+          <Download size={18} aria-hidden /> {pending ? "Übergabepaket wird erzeugt …" : busy ? "Status wird aktualisiert …" : "Übergabepaket erzeugen und herunterladen"}
         </button>
       </div>
       <p className="text-xs text-muted">Nach dem Download zeigt die Seite den Lauf als übergeben. Die CSV „nur Verordnungen“ gibt es danach aus dem Archiv.</p>

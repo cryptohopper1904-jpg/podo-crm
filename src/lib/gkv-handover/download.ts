@@ -25,3 +25,20 @@ export function filenameFromDisposition(header: string | null | undefined, fallb
   const name = m?.[1] ?? "";
   return /^[A-Za-z0-9._-]{1,120}$/.test(name) ? name : fallback;
 }
+
+/** Ohne Sitzung leitet der Proxy auf /login um; die Antwort ist dann kein Übergabepaket */
+export const SESSION_EXPIRED = "Sitzung abgelaufen – bitte neu anmelden.";
+
+/** Download nach angenommenem Export abgebrochen (der Lauf kann bereits übergeben sein) */
+export const DOWNLOAD_ABORTED =
+  "Der Download wurde unterbrochen. Falls der Lauf jetzt als übergeben angezeigt wird, lade das Paket über den Nachdruck herunter.";
+
+/** Weiterleitung bei fetch(…, { redirect: "manual" }) (opaqueredirect) oder doch gefolgt (redirected) */
+export function isRedirect(res: { type?: string; redirected?: boolean; status: number }): boolean {
+  return res.type === "opaqueredirect" || res.redirected === true || (res.status >= 300 && res.status < 400);
+}
+
+/** Nur eine ZIP-Antwort wird als Übergabepaket gespeichert */
+export function isZipResponse(contentType: string | null | undefined): boolean {
+  return (contentType ?? "").split(";")[0].trim().toLowerCase() === "application/zip";
+}

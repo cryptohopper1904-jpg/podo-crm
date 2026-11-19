@@ -383,7 +383,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     expect(info.paidCents).toBe(4321);
     const period = (await import("@/lib/stats")).resolvePeriod({ zeitraum: "monat" }, today);
     const s = await stats.gkvPrivateStats(w.auth, period);
-    expect(s.payouts).toEqual({ count: 1, cents: 4321, feeCents: 0, grossCents: 4321 });
+    expect(s.payouts).toEqual({ count: 1, cents: 4321, feeCents: 0, grossCents: 4321, reversedLaterCount: 0, reversedLaterCents: 0 });
     expect(s.months.find((m) => m.month === today.slice(0, 7))!.payoutCents).toBe(4321);
   });
   it("E9: Praxis-Export enthält das archivierte Übergabepaket byte-gleich (Zuordnung über exportFile)", async () => {
@@ -473,8 +473,16 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     expect(stats.reversalRefText(addDaysIso(today, -3))).toMatch(/^Storno betrifft Auszahlung vom \d{2}\.\d{2}\.\d{4}$/);
     // Zeitraum vor dem Storno: Auszahlung nicht mehr gezählt, Betrag aber noch enthalten; Storno als „später“ aufgeführt
     const before = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -40), bis: addDaysIso(today, -2) }, today));
-    expect(before.payouts).toMatchObject({ count: 0, cents: 5000 });
+    expect(before.payouts).toMatchObject({ count: 0, cents: 5000, reversedLaterCount: 1, reversedLaterCents: 5000 });
     expect(before.reversals).toEqual([expect.objectContaining({ reversedOn: today, originalPaidOn: addDaysIso(today, -3), reversalInPeriod: false, originalInPeriod: true })]);
+    expect(before.reversalsMore).toBe(false);
+    expect(s.payouts).toMatchObject({ reversedLaterCount: 0, reversedLaterCents: 0 });
+    // Zeitraum nur mit dem Storno: Original davor (originalInPeriod: false), Gegenbuchung mindert diesen Zeitraum
+    const after = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "frei", von: addDaysIso(today, -2), bis: today }, today));
+    expect(after.reversals).toEqual([
+      { reversedOn: today, originalPaidOn: addDaysIso(today, -3), amountCents: -5000, feeCents: -300, reversalInPeriod: true, originalInPeriod: false },
+    ]);
+    expect(after.payouts).toMatchObject({ count: 1, cents: 1000 - 5000, reversedLaterCount: 0 });
     // Audit ohne Begründung
     const a = await w.q<{ meta: unknown }>("select meta from audit_log where organization_id = $1 and action = 'billing_batch.payout_reversal'", [w.org]);
     expect(a.length).toBe(1);
@@ -677,7 +685,7 @@ const ownerUrl = () => process.env.TEST_OWNER_DATABASE_URL ?? (TEST_DB ?? "").re
     const pay2 = await ho.recordManualPayout(w.auth, { batchId, amountCents: 800, feeCents: 50, paidAt: today, reference: "X2" });
     if ("error" in pay2) throw new Error(pay2.error);
     const s = await stats.gkvPrivateStats(w.auth, (await import("@/lib/stats")).resolvePeriod({ zeitraum: "monat" }, today));
-    expect(s.payouts).toEqual({ count: 1, cents: 800, feeCents: 50, grossCents: 850 });
+    expect(s.payouts).toEqual({ count: 1, cents: 800, feeCents: 50, grossCents: 850, reversedLaterCount: 0, reversedLaterCents: 0 });
     const m = s.months.find((x) => x.month === today.slice(0, 7))!;
     expect([m.payoutCents, m.payoutFeeCents]).toEqual([800, 50]);
     // K3: „Ausgezahlt“ zählt stornierte Auszahlungen nicht mit

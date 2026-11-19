@@ -139,7 +139,7 @@ export async function cancelSubscriptionAction(_: AboState, form: FormData): Pro
     case "no_subscription":
       return { error: "Es gibt kein laufendes Abo, das gekündigt werden kann." };
     case "failed":
-      return { error: "Das Abo konnte gerade nicht gekündigt werden. Bitte versuche es später erneut oder kontaktiere den Support – die Kündigung ist auch in Textform möglich." };
+      return { error: "Das Abo konnte gerade nicht gekündigt werden. Bitte versuch es später erneut oder kontaktiere den Support – die Kündigung ist auch in Textform möglich." };
   }
 }
 
@@ -163,6 +163,6 @@ export async function resumeSubscriptionAction(): Promise<AboState> {
     case "no_subscription":
       return { error: "Es gibt kein laufendes Abo mehr. Bitte wähle unten einen Tarif." };
     case "failed":
-      return { error: "Die Kündigung konnte gerade nicht zurückgenommen werden. Bitte versuche es später erneut oder kontaktiere den Support." };
+      return { error: "Die Kündigung konnte gerade nicht zurückgenommen werden. Bitte versuch es später erneut oder kontaktiere den Support." };
   }
 }

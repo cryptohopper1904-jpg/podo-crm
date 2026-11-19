@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorFromBody, filenameFromDisposition, handoverErrorText } from "./download";
+import { errorFromBody, filenameFromDisposition, handoverErrorText, isRedirect, isZipResponse } from "./download";
 
 describe("Erst-Export im Browser: Meldungen und Dateiname", () => {
   it("Meldung der Route hat Vorrang, sonst verständlicher Text je Status", () => {
@@ -23,5 +23,16 @@ describe("Erst-Export im Browser: Meldungen und Dateiname", () => {
     expect(filenameFromDisposition('attachment; filename="../x.zip"')).toBe("Uebergabepaket.zip");
     expect(filenameFromDisposition(null)).toBe("Uebergabepaket.zip");
     expect(filenameFromDisposition("attachment")).toBe("Uebergabepaket.zip");
+  });
+
+  it("Weiterleitung (Login) und Nicht-ZIP werden erkannt", () => {
+    expect(isRedirect({ type: "opaqueredirect", status: 0 })).toBe(true);
+    expect(isRedirect({ type: "basic", redirected: true, status: 200 })).toBe(true);
+    expect(isRedirect({ type: "basic", status: 307 })).toBe(true);
+    expect(isRedirect({ type: "basic", redirected: false, status: 200 })).toBe(false);
+    expect(isZipResponse("application/zip")).toBe(true);
+    expect(isZipResponse("Application/ZIP; charset=binary")).toBe(true);
+    expect(isZipResponse("text/html; charset=utf-8")).toBe(false);
+    expect(isZipResponse(null)).toBe(false);
   });
 });

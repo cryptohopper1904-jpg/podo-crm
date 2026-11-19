@@ -17,7 +17,7 @@ const fullName = (d: Pick<QuickPatientDuplicate, "firstName" | "lastName">) => [
  * Neue Patient:in direkt im Terminformular (kein eigenes <form> – liegt im Terminformular): Vorname, Nachname,
  * Telefon, optional Geburtsdatum und E-Mail. Legt über quickCreatePatientAction an (Rechte, Prüfung und
  * Dublettenprüfung wie unter Patienten → Neu) und wählt die Person direkt aus. Bei möglichen Dubletten
- * „Meinten Sie …?“ mit Auswahl oder „trotzdem anlegen“; archivierte Treffer sind gekennzeichnet und nicht wählbar.
+ * „Meintest du …?“ mit Auswahl oder „trotzdem anlegen“; archivierte Treffer sind gekennzeichnet und nicht wählbar.
  * Enter in einem Feld legt an (statt den Termin zu speichern) – genau einmal: synchrone Sperre bis zur Antwort,
  * gehaltene Taste (e.repeat) zählt nicht, und das Formular-Token (`requestId`) lässt den Server Wiederholungen
  * derselben Anfrage zusammenfassen. Escape bricht nur dieses Formular ab (nach Rückfrage, wenn schon etwas eingetragen ist).

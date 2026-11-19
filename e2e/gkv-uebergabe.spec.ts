@@ -46,6 +46,7 @@ test("Erst-Export: Fehler als Meldung, Erfolg lädt herunter und zeigt den Lauf 
   });
   await submit.click();
   await expect(page).toHaveURL(new RegExp(`/verordnungen/abrechnung/${batchId}$`));
+  await expect(confirm).not.toBeChecked();
   expect(posts).toBe(0);
 
   // Rate-Limit und Konflikt der Route → Meldung auf der Laufseite, keine JSON-Seite
@@ -66,6 +67,26 @@ test("Erst-Export: Fehler als Meldung, Erfolg lädt herunter und zeigt den Lauf 
   await submit.click();
   await expect(page.locator("#uebergabe-fehler")).toContainText("Das Übergabepaket konnte nicht erzeugt werden.");
   await page.unroute(paket);
+
+  // Sitzung abgelaufen: Weiterleitung zum Login bzw. Antwort ohne ZIP → Meldung, nichts wird als Paket gespeichert
+  let downloads = 0;
+  page.on("download", () => downloads++);
+  await page.route(paket, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 302, headers: { Location: "/login" }, body: "" }) : route.continue(),
+  );
+  await submit.click();
+  await expect(page.locator("#uebergabe-fehler")).toContainText("Sitzung abgelaufen – bitte neu anmelden.");
+  await page.unroute(paket);
+  await page.route(paket, (route) =>
+    route.request().method() === "POST" ? route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: "<!doctype html><title>Anmelden</title>" }) : route.continue(),
+  );
+  const htmlPost = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(`/api/export/gkv-batch/${batchId}/paket`));
+  await submit.click();
+  await htmlPost;
+  await expect(submit).toBeEnabled();
+  await expect(page.locator("#uebergabe-fehler")).toContainText("Sitzung abgelaufen – bitte neu anmelden.");
+  await page.unroute(paket);
+  expect(downloads).toBe(0);
   await expect(page.getByText("noch nicht übergeben")).toBeVisible();
 
   // echter Erst-Export: Download startet, Seite zeigt ohne Neuladen „übergeben“ und den Nachdruck

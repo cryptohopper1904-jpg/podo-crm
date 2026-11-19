@@ -43,7 +43,9 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
       <p className="mb-6 rounded-xl bg-info-soft p-4 text-sm text-info-soft-text">
         Abrechnungsvolumen, kein Umsatz im Sinne der Buchhaltung: Abrechnungsläufe zählen nach Erstellungstag (Soll an die Kassen, nicht der
         Zahlungseingang), Zuzahlungs- und Privatbelege nach Belegdatum (Ist) – Soll und Ist sind gemischt, Läufe und Belege können in
-        verschiedenen Monaten liegen. Stand Abruf: Stornos und Korrekturen wirken rückwirkend auf frühere Zeiträume.
+        verschiedenen Monaten liegen. Stand Abruf: Stornierte Belege, später angerechnete Quittungen und Statusänderungen bei Absetzungen können frühere
+        Zeiträume nachträglich ändern. Abrechnungsläufe bleiben unverändert – Neuabrechnungen zählen im Monat des neuen Laufs, Stornos von Auszahlungen im
+        Monat des Stornos (siehe unten).
       </p>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -69,7 +71,7 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">Anteil am Abrechnungsvolumen</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{pct(gkvTotal, total)}</dd></div>
             <div className="mt-2 flex justify-between gap-4 border-t border-border pt-2"><dt className="min-w-0 text-muted">Zum Vergleich: Zahlungseingang Abrechnungszentrum brutto ({s.payouts.count} Auszahlung(en), nach Auszahlungsdatum)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.grossCents)}</dd></div>
             <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">− Gebühr des Abrechnungszentrums (Betriebsausgabe)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.feeCents)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Zahlungseingang netto (überwiesen)</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
+            <div className="flex justify-between gap-4"><dt className="min-w-0 text-muted">= Zahlungseingang netto (überwiesen){s.payouts.reversedLaterCount ? ` (davon ${money(s.payouts.reversedLaterCents)} aus ${s.payouts.reversedLaterCount} Auszahlung(en) später storniert)` : ""}</dt><dd className="shrink-0 whitespace-nowrap tabular-nums">{money(s.payouts.cents)}</dd></div>
           </dl>
           {s.reversals.length ? (
             <div className="mt-3 border-t border-border pt-2">
@@ -82,11 +84,11 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
                         ? `Storno vom ${dateDe(r.reversedOn)} – ${reversalRefText(r.originalPaidOn)}${r.originalInPeriod ? "" : " (früherer Zeitraum)"}`
                         : `Auszahlung vom ${dateDe(r.originalPaidOn)} – storniert am ${dateDe(r.reversedOn)} (späterer Zeitraum, hier nicht gemindert)`}
                     </span>
-                    <span className="shrink-0 whitespace-nowrap tabular-nums">{r.reversalInPeriod ? money(r.amountCents) : "–"}</span>
+                    <span className="shrink-0 whitespace-nowrap tabular-nums">{r.reversalInPeriod ? `${money(r.amountCents)} netto · Gebühr ${money(r.feeCents)}` : "–"}</span>
                   </li>
                 ))}
               </ul>
-              {s.reversals.length >= REVERSALS_LIMIT ? <p className="mt-1 text-xs text-muted">Nur die ersten {REVERSALS_LIMIT} Stornos sind aufgeführt.</p> : null}
+              {s.reversalsMore ? <p className="mt-1 text-xs text-muted">Es gibt mehr Stornos – aufgeführt sind die neuesten {REVERSALS_LIMIT}.</p> : null}
             </div>
           ) : null}
           <p className="mt-3 text-xs text-muted">
@@ -97,7 +99,8 @@ export default async function StatsGkvPage(props: PageProps<"/auswertung/kasse">
             Stornos wirken im Monat des Stornos: Der Gegenbetrag mindert den Zahlungseingang des Monats, in dem storniert wurde, nicht rückwirkend den Monat der
             ursprünglichen Auszahlung. Fällt das Storno in einen späteren Zeitraum, zählt die ursprüngliche Auszahlung hier nicht mehr bei der Anzahl der
             Auszahlungen mit, ihr Betrag ist in der Summe dieses Zeitraums aber noch enthalten – ausgeglichen wird er erst im Monat des Stornos. Bei jedem Storno
-            steht, welche Auszahlung es betrifft. Die Gebühr des Abrechnungszentrums ist eine Betriebsausgabe: Rechnung des Abrechnungszentrums gesondert
+            steht, welche Auszahlung es betrifft. Für die EÜR gilt der Kontoauszug: War eine Auszahlung nur falsch erfasst, ist kein Geld geflossen – mit der
+            Steuerberatung klären. Die Gebühr des Abrechnungszentrums ist eine Betriebsausgabe: Rechnung des Abrechnungszentrums gesondert
             ablegen; die Gebühr kann Umsatzsteuer enthalten – mit der Steuerberatung klären.
             {s.batches.withoutRemedy ? ` ${s.batches.withoutRemedy} Lauf/Läufe ohne gespeicherte Heilmittelkosten (vor dem Preis-Snapshot) sind nicht enthalten.` : ""}
           </p>
