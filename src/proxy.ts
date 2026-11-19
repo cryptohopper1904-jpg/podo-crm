@@ -16,6 +16,8 @@ const PUBLIC = ["/login", "/login/passwort-vergessen", "/login/passwort-neu", "/
   "/agb", "/avv", "/datenschutz", "/impressum", "/preise", "/funktionen", "/sicherheit", "/unterauftragnehmer",
   // Vergleich, Wechsel-Ratgeber und Wissensbereich (statisch, ohne Praxisdaten)
   "/vergleich", "/wechseln", "/wissen",
+  // Infoseite zum geplanten Connector für Doctolib (statisch, ohne Praxisdaten)
+  "/connector-fuer-doctolib",
   // SEO-Dateien der Website (src/app/robots.ts, src/app/sitemap.ts)
   "/robots.txt", "/sitemap.xml",
   // Installierbare Web-App: Offline-Hinweis (vom Service Worker ohne Cookies vorab geladen), Infoseite /app, Service Worker
