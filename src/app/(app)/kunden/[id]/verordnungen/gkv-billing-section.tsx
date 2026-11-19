@@ -64,7 +64,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
       {vo.deductions.length ? (
         <ul className="flex flex-col gap-1 text-xs" aria-label="Absetzungen der Kasse">
           {vo.deductions.map((d) => (
-            <li key={d.id} className="flex flex-wrap items-center gap-2">
+            <li key={d.id} className="flex flex-wrap items-center gap-2 wrap-break-word">
               <span className="font-semibold">Absetzung {money(d.amountCents)}</span>
               <span>{dateDe(d.deductedOn)}{d.reasonCode ? ` · ${d.reasonCode}` : ""} · {d.reason}</span>
               {d.letterRef || d.letterDate ? <span className="text-muted">Schreiben {d.letterRef ?? ""}{d.letterDate ? ` vom ${dateDe(d.letterDate)}` : ""}</span> : null}
@@ -77,7 +77,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
       {vo.corrections.length ? (
         <ul className="flex flex-col gap-1 text-xs" aria-label="Korrekturvermerke">
           {vo.corrections.map((c) => (
-            <li key={c.id}>
+            <li key={c.id} className="wrap-break-word">
               Korrektur vom {dateDe(c.createdAt)}: {c.reason}
               {c.originalBilledAt ? ` · ursprünglich abgerechnet am ${dateDe(c.originalBilledAt)}` : ""}
               {c.resolvedAt ? ` · ${c.resolution === "rebilled" ? "erneut abgerechnet" : "ohne Neuabrechnung abgeschlossen"} am ${dateDe(c.resolvedAt)}${c.resolutionNote ? ` (${c.resolutionNote})` : ""}` : " · offen"}
@@ -96,7 +96,7 @@ export function GkvBillingSection({ vo, patientId, canWrite, canBilling, today }
               deductions={vo.deductions.map((d) => ({ id: d.id, label: `${money(d.amountCents)} vom ${dateDe(d.deductedOn)}`, linked: vo.corrections.some((c) => c.deductionId === d.id) }))}
             />
           ) : null}
-          <Link href="/verordnungen/absetzungen" className="text-xs font-semibold text-primary">Alle Absetzungen</Link>
+          <Link href="/verordnungen/absetzungen" className="inline-flex min-h-11 w-fit items-center text-xs font-semibold text-primary">Alle Absetzungen</Link>
         </div>
       ) : null}
     </div>

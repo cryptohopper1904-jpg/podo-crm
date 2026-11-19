@@ -31,7 +31,7 @@ export async function Gkv302Card({ org, readOnly, support }: { org: string; read
       <h3 className="mb-2 font-semibold">Tarifkennzeichen</h3>
       <ActionForm action={saveGkv302TarifAction}>
         <Field label="Tarifkennzeichen" hint="5 Stellen laut Zulassung bzw. Vertrag (Tarifbereich + Sondertarif), z. B. aus dem Zulassungsbescheid. Ohne Angabe entsteht keine Datei.">
-          <Input name="tarifkennzeichen" defaultValue={s.tarifkennzeichen ?? ""} maxLength={5} autoComplete="off" spellCheck={false} className="max-w-40 uppercase" />
+          <Input name="tarifkennzeichen" defaultValue={s.tarifkennzeichen ?? ""} maxLength={5} autoComplete="off" autoCapitalize="characters" spellCheck={false} className="max-w-40 uppercase" />
         </Field>
       </ActionForm>
 
@@ -48,7 +48,7 @@ export async function Gkv302Card({ org, readOnly, support }: { org: string; read
             {s.kotr.map((k) => (
               <tr key={k.kassenart}>
                 <td className="font-semibold">{k.kassenart}</td>
-                <td className="tabular-nums">{k.dateiname}</td>
+                <td className="break-all tabular-nums">{k.dateiname}</td>
                 <td>
                   {k.gueltigAb}{" "}
                   {k.gueltigAbDatum > heute ? <Badge tone="warn">noch nicht gültig</Badge> : <Badge tone="primary">in Kraft</Badge>}

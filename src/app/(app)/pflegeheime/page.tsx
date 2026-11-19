@@ -18,7 +18,7 @@ export default async function CareHomesPage() {
       <div className="flex flex-wrap gap-6">
         <div className="min-w-0 flex-[2_1_480px]">
           {homes.length === 0 ? (
-            <Empty title="Noch keine Pflegeheime">Legen Sie rechts eine Einrichtung an und ordnen Sie dann die Bewohner:innen zu.</Empty>
+            <Empty title="Noch keine Pflegeheime">Lege rechts eine Einrichtung an und ordne dann die Bewohner:innen zu.</Empty>
           ) : (
             <Table>
               <thead><tr><th>Einrichtung</th><th>Ort</th><th>Bewohner:innen</th><th><span className="sr-only">Aktionen</span></th></tr></thead>

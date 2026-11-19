@@ -57,13 +57,13 @@ export default async function KassePage(props: PageProps<"/kasse">) {
           <p>
             <strong>Eigene Praxiskasse aktiv{data.externalRegisterInfo ? ` (${data.externalRegisterInfo})` : ""}.</strong> Bar-, Karten- und
             Gutscheinzahlungen werden in PodoHero nur an der Rechnung vermerkt – ohne TSE-Signatur, ohne Kassenbeleg und ohne
-            Tagesabschluss. Erfassen Sie jede Zahlung <strong>zuerst in der Praxiskasse</strong> und vermerken Sie sie danach in PodoHero
-            (mit der Bon-Nr. der Praxiskasse). Beleg, TSE, Kassenbuch und Tagesabschluss kommen aus Ihrer Praxiskasse.
+            Tagesabschluss. Erfasse jede Zahlung <strong>zuerst in der Praxiskasse</strong> und vermerke sie danach in PodoHero
+            (mit der Bon-Nr. der Praxiskasse). Beleg, TSE, Kassenbuch und Tagesabschluss kommen aus deiner Praxiskasse.
           </p>
         ) : (
           <p>
-            <strong>Nutzen Sie bereits eine eigene Kasse mit TSE?</strong> Dann kann PodoHero Zahlungen nur vermerken; Beleg, TSE und
-            Tagesabschluss bleiben in Ihrer Praxiskasse. Umschalten geht nur, wenn alle PodoHero-Kassenvorgänge abgeschlossen sind
+            <strong>Nutzt du bereits eine eigene Kasse mit TSE?</strong> Dann kann PodoHero Zahlungen nur vermerken; Beleg, TSE und
+            Tagesabschluss bleiben in deiner Praxiskasse. Umschalten geht nur, wenn alle PodoHero-Kassenvorgänge abgeschlossen sind
             (Tagesabschluss).
           </p>
         )}

@@ -91,7 +91,7 @@ function RowActions({ s, qs, compact = false }: { s: Service; qs: string; compac
   const editHref = `${BASE}?${new URLSearchParams([...new URLSearchParams(qs), ["edit", s.id]])}`;
   return (
     <div className="flex items-center gap-1">
-      <Link href={editHref} className="inline-flex h-9 items-center gap-1 rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-surface-2" aria-label={`${s.name} bearbeiten`}>
+      <Link href={editHref} className="inline-flex h-11 items-center gap-1 rounded-lg px-2.5 text-sm font-semibold text-primary hover:bg-surface-2" aria-label={`${s.name} bearbeiten`}>
         <Pencil size={15} aria-hidden /> {compact ? null : "Bearbeiten"}
       </Link>
       <form action={setServiceActiveAction}>

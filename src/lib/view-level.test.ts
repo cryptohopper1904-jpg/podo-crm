@@ -31,10 +31,10 @@ describe("splitNav", () => {
   });
   it("Einfach: nur die Grundbereiche, Rest unter „Mehr“ – Reihenfolge bleibt", () => {
     const { visible, more } = splitNav(ALL, "einfach");
-    expect(visible).toEqual(["heute", "kalender", "kunden", "doku", "rechnungen", "kasse", "einstellungen"]);
-    expect(more).toEqual(["touren", "verordnungen", "pflegeheime", "posteingang", "telefon", "bewertungen", "gutscheine", "hygiene", "team", "news", "auswertung", "plattform"]);
+    expect(visible).toEqual(["heute", "kalender", "kunden", "verordnungen", "doku", "rechnungen", "kasse", "einstellungen"]);
+    expect(more).toEqual(["touren", "pflegeheime", "posteingang", "telefon", "bewertungen", "gutscheine", "hygiene", "team", "news", "auswertung", "plattform"]);
   });
-  it("Kompakt = Einfach + Posteingang, Verordnungen, Touren, Gutscheine, Auswertung", () => {
+  it("Kompakt = Einfach (mit Verordnungen) + Posteingang, Touren, Gutscheine, Auswertung", () => {
     const { visible } = splitNav(ALL, "kompakt");
     expect(visible).toEqual(["heute", "kalender", "touren", "kunden", "verordnungen", "doku", "posteingang", "rechnungen", "gutscheine", "kasse", "auswertung", "einstellungen"]);
     for (const k of NAV_BY_LEVEL.einfach!) expect(visible).toContain(k);

@@ -80,7 +80,7 @@ test("Behandlung dokumentieren mit 2D-Fußpunkt", async () => {
   await page.getByRole("button", { name: /^PK · / }).click();
   await page.getByLabel("Befund", { exact: true }).fill("Hyperkeratose plantar, Nagel D1 verdickt (E2E)");
   const rightFoot = page.locator("figure").filter({ has: page.getByRole("group", { name: "Fuß rechts" }) });
-  const n1 = rightFoot.getByRole("button", { name: "N1", exact: true });
+  const n1 = rightFoot.getByRole("button", { name: "N1 – Nagel D1", exact: true });
   await n1.click();
   await expect(n1).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel(/Ich habe die Angaben geprüft/).check();

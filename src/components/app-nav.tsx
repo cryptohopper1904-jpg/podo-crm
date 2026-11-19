@@ -103,7 +103,7 @@ function SideLink({ item, active, badge, collapsed }: { item: NavItem; active: b
 function CountBadge({ n, collapsed }: { n?: number; collapsed: boolean }) {
   if (!n) return null;
   return collapsed ? (
-    <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{n}</span>
+    <span className="absolute right-1.5 top-1.5 min-w-4 rounded-full bg-accent px-1 text-center text-[11px] font-bold leading-4 text-on-accent">{n}</span>
   ) : (
     <span className="rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-on-accent">{n}</span>
   );
@@ -232,7 +232,7 @@ const barItemCls = (active: boolean) =>
   );
 
 function MoreBadge({ n }: { n: number }) {
-  return n ? <span className="absolute right-[calc(50%-22px)] top-1 min-w-4 rounded-full bg-accent px-1 text-center text-[10px] font-bold leading-4 text-on-accent">{n}</span> : null;
+  return n ? <span className="absolute right-[calc(50%-22px)] top-1 min-w-4 rounded-full bg-accent px-1 text-center text-[11px] font-bold leading-4 text-on-accent">{n}</span> : null;
 }
 
 /**

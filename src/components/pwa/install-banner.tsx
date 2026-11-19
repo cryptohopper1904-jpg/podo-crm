@@ -82,7 +82,7 @@ export function InstallBanner() {
         Als App installieren
       </p>
       {platform === "ios" ? (
-        <Link href="/einstellungen/app" onClick={dismiss} className="inline-flex h-9 shrink-0 items-center rounded-lg bg-surface px-3 text-sm font-semibold text-text">
+        <Link href="/einstellungen/app" onClick={dismiss} className="inline-flex h-11 shrink-0 items-center rounded-lg bg-surface px-3 text-sm font-semibold text-text">
           So geht’s
         </Link>
       ) : (
