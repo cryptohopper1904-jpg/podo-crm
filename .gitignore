@@ -62,3 +62,8 @@ src/lib/import/__fixtures__/**/*.key
 src/lib/import/__fixtures__/**/*[Zz]ugang*
 src/lib/import/__fixtures__/**/[Cc]redentials*
 src/lib/import/__fixtures__/**/*.state.json
+
+# Agent-Worktrees und lokale Zugangsdateien nie versionieren
+.claude/worktrees/
+*pw*.json
+*zugang*.json
