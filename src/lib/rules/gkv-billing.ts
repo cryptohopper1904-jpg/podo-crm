@@ -108,9 +108,18 @@ export function deductionTotals(rows: readonly { status: string; amountCents: nu
   return { ...out, pendingCents: out.open.cents + out.objected.cents };
 }
 
-/** Steuerzeichen/Zeilenumbrüche aus Freitexten entfernen (Grund, Notiz) */
+/**
+ * Steuerzeichen (C0, DEL, C1) und Zeilenumbrüche aus Freitexten entfernen (Grund, Notiz); Bidi-Steuerzeichen und
+ * unsichtbare Zeichen (U+061C, U+200B–U+200F, U+202A–U+202E, U+2066–U+2069, U+FEFF) ersatzlos (AppSec H4/N2).
+ */
 export function cleanText(v: string | null | undefined, max: number): string {
-  return (v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  return (v ?? "")
+    .replace(/[\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
 }
 
 // ───────────────────────── Korrektur abgerechneter Verordnungen ─────────────────────────

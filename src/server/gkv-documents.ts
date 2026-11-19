@@ -12,7 +12,7 @@ import { priceSnapshot, type PriceSnapshot } from "@/lib/rules/prescription";
 import { SIGNER_ROLE_LABEL } from "@/lib/signature";
 import { assertCan } from "./authz";
 import { loadLogos } from "./practice-logos";
-import { proofRows, signatureImages } from "./signatures";
+import { proofRows, signatureImages, type ProofRow } from "./signatures";
 
 /** Praxis als Briefkopf (Fußzeile wie Rechnungen) inkl. IK */
 export async function letterOrg(tx: Tx, org: string): Promise<GkvPdfOrg | null> {
@@ -97,6 +97,48 @@ export function positionsByDay(
   return out;
 }
 
+type VoRow = typeof prescriptions.$inferSelect;
+type PatientRow = typeof patients.$inferSelect;
+type Logos = Awaited<ReturnType<typeof loadLogos>>;
+
+/** Behandlungen mit Unterschriften, Bilder und Berichtsdatum für den Leistungsnachweis (in der laufenden Transaktion) */
+async function loadProof(tx: Tx, org: string, prescriptionId: string, preloaded?: ProofRow[]) {
+  const rows = preloaded ?? (await proofRows(tx, org, [prescriptionId])).get(prescriptionId) ?? [];
+  const images = await signatureImages(tx, org, rows.flatMap((r) => (r.signature?.kind === "device" ? [r.signature.id] : [])));
+  const [report] = await tx.select({ reportDate: therapyReports.reportDate }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.prescriptionId, prescriptionId)));
+  return { rows, images, reportDate: report?.reportDate ?? null };
+}
+
+async function renderProof(vo: VoRow, p: PatientRow, d: Awaited<ReturnType<typeof loadProof>>, o: GkvPdfOrg, logos: Logos, generatedAt: Date) {
+  const byDay = positionsByDay(vo, [...new Set(d.rows.map((r) => r.date))], p.birthDate, d.reportDate);
+  // mehrere Einträge am selben Tag: Positionen des Tages nur in der ersten Zeile (Snapshot je Tag eindeutig)
+  const seen = new Set<string>();
+  const pdfRows: ProofPdfRow[] = d.rows.map((r) => {
+    const first = !seen.has(r.date);
+    seen.add(r.date);
+    const day = first ? byDay.get(r.date) : undefined;
+    return {
+      date: r.date,
+      positions: day?.text ?? (first ? "" : "(siehe oben, gleicher Tag)"),
+      units: day?.units ?? 0,
+      signature: r.signature
+        ? { kind: r.signature.kind, image: r.signature.kind === "device" ? (d.images.get(r.signature.id) ?? null) : null, signerName: r.signature.signerName, roleLabel: r.signature.signerRole ? SIGNER_ROLE_LABEL[r.signature.signerRole] : null, signedAt: r.signature.signedAt, late: r.signature.late }
+        : null,
+    };
+  });
+  const bytes = await renderProofPdf({ organization: o, logos, patient: pdfPatient(p, vo), prescription: pdfPrescription(vo), rows: pdfRows, generatedAt });
+  return { bytes, pdfRows };
+}
+
+/**
+ * Leistungsnachweis-PDF in einer laufenden Transaktion, ohne Audit – für das Übergabepaket eines Abrechnungslaufs (GKV
+ * Paket E; der Aufrufer prüft Rechte und protokolliert). `vo` darf der Stand der Erstabrechnung sein (original_row).
+ */
+export async function proofPdfInTx(tx: Tx, org: string, vo: VoRow, p: PatientRow, o: GkvPdfOrg, logos: Logos, generatedAt = new Date(), rows?: ProofRow[]): Promise<Uint8Array> {
+  // bereits geladene Behandlungszeilen (Übergabepaket lädt sie für alle Verordnungen auf einmal) – kein N+1
+  return (await renderProof(vo, p, await loadProof(tx, org, vo.id, rows), o, logos, generatedAt)).bytes;
+}
+
 /** Leistungsnachweis-PDF je Verordnung (Recht medical.read; Aufrufer prüft Download im Support-Modus) */
 export async function proofPdf(auth: AuthContext, prescriptionId: string): Promise<{ bytes: Uint8Array; filename: string } | null> {
   assertCan(auth, "medical.read");
@@ -107,30 +149,11 @@ export async function proofPdf(auth: AuthContext, prescriptionId: string): Promi
     if (!row) return null;
     const o = await letterOrg(tx, org);
     if (!o) return null;
-    const rows = (await proofRows(tx, org, [prescriptionId])).get(prescriptionId) ?? [];
-    const images = await signatureImages(tx, org, rows.flatMap((r) => (r.signature?.kind === "device" ? [r.signature.id] : [])));
-    const [report] = await tx.select({ reportDate: therapyReports.reportDate }).from(therapyReports).where(and(eq(therapyReports.organizationId, org), eq(therapyReports.prescriptionId, prescriptionId)));
-    return { ...row, o, rows, images, reportDate: report?.reportDate ?? null };
+    return { ...row, o, proof: await loadProof(tx, org, prescriptionId) };
   });
   if (!data) return null;
-  const byDay = positionsByDay(data.vo, [...new Set(data.rows.map((r) => r.date))], data.p.birthDate, data.reportDate);
-  // mehrere Einträge am selben Tag: Positionen des Tages nur in der ersten Zeile (Snapshot je Tag eindeutig)
-  const seen = new Set<string>();
-  const pdfRows: ProofPdfRow[] = data.rows.map((r) => {
-    const first = !seen.has(r.date);
-    seen.add(r.date);
-    const day = first ? byDay.get(r.date) : undefined;
-    return {
-      date: r.date,
-      positions: day?.text ?? (first ? "" : "(siehe oben, gleicher Tag)"),
-      units: day?.units ?? 0,
-      signature: r.signature
-        ? { kind: r.signature.kind, image: r.signature.kind === "device" ? (data.images.get(r.signature.id) ?? null) : null, signerName: r.signature.signerName, roleLabel: r.signature.signerRole ? SIGNER_ROLE_LABEL[r.signature.signerRole] : null, signedAt: r.signature.signedAt, late: r.signature.late }
-        : null,
-    };
-  });
   const logos = await loadLogos(org);
-  const bytes = await renderProofPdf({ organization: data.o, logos, patient: pdfPatient(data.p, data.vo), prescription: pdfPrescription(data.vo), rows: pdfRows, generatedAt: new Date() });
+  const { bytes, pdfRows } = await renderProof(data.vo, data.p, data.proof, data.o, logos, new Date());
   await audit({ organizationId: org, userId: auth.user.id, action: "prescription.proof_pdf", entity: "prescription", entityId: prescriptionId, meta: { patientId: data.p.id, rows: pdfRows.length, missing: pdfRows.filter((r) => !r.signature).length } });
   return { bytes, filename: `Leistungsnachweis-${data.vo.issuedAt}-${prescriptionId.slice(0, 8)}.pdf` };
 }

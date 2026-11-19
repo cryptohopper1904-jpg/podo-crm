@@ -127,6 +127,41 @@ export async function getTherapyReport(auth: AuthContext, prescriptionId: string
   });
 }
 
+/** Bericht, Verfasser:in und Behandlungstage für das PDF (in der laufenden Transaktion); null = kein Bericht */
+async function loadReport(tx: Tx, org: string, prescriptionId: string) {
+  const report = (await reportsFor(tx, org, [prescriptionId])).get(prescriptionId);
+  if (!report) return null;
+  const [author] = await tx.select({ name: users.name }).from(users).where(eq(users.id, report.updatedBy ?? report.createdBy));
+  const recs = await tx
+    .select({ treatedAt: treatmentRecords.treatedAt })
+    .from(treatmentRecords)
+    .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, prescriptionId)))
+    .orderBy(asc(treatmentRecords.treatedAt));
+  return { report, author: author?.name ?? null, dates: [...new Set(recs.map((r) => berlinDateIso(r.treatedAt)))] };
+}
+
+type ReportPdfInput = { vo: typeof prescriptions.$inferSelect; p: Parameters<typeof pdfPatient>[0]; o: NonNullable<Awaited<ReturnType<typeof letterOrg>>>; logos: Awaited<ReturnType<typeof loadLogos>> };
+
+const renderReport = (d: ReportPdfInput, r: NonNullable<Awaited<ReturnType<typeof loadReport>>>) =>
+  renderTherapyReportPdf({
+    organization: d.o,
+    logos: d.logos,
+    patient: pdfPatient(d.p, d.vo),
+    prescription: pdfPrescription(d.vo),
+    report: { ...r.report, author: r.author },
+    treatmentDates: r.dates,
+  });
+
+/**
+ * Therapiebericht-PDF in einer laufenden Transaktion, ohne Audit (Übergabepaket eines Abrechnungslaufs, GKV Paket E –
+ * der Aufrufer prüft Rechte und protokolliert). null = kein Bericht.
+ */
+export async function therapyReportPdfInTx(tx: Tx, org: string, d: ReportPdfInput): Promise<{ bytes: Uint8Array; reportDate: string } | null> {
+  const r = await loadReport(tx, org, d.vo.id);
+  if (!r) return null;
+  return { bytes: await renderReport(d, r), reportDate: r.report.reportDate };
+}
+
 /** Therapiebericht als PDF für die verordnende Ärztin/den Arzt (Praxiskopf mit Logo) */
 export async function therapyReportPdf(auth: AuthContext, prescriptionId: string): Promise<{ bytes: Uint8Array; filename: string } | null> {
   assertCan(auth, "medical.read");
@@ -135,27 +170,14 @@ export async function therapyReportPdf(auth: AuthContext, prescriptionId: string
   const data = await withOrg(org, async (tx) => {
     const row = await loadPrescriptionWithPatient(tx, org, prescriptionId);
     if (!row) return null;
-    const report = (await reportsFor(tx, org, [prescriptionId])).get(prescriptionId);
-    if (!report) return null;
+    const r = await loadReport(tx, org, prescriptionId);
+    if (!r) return null;
     const o = await letterOrg(tx, org);
     if (!o) return null;
-    const [author] = await tx.select({ name: users.name }).from(users).where(eq(users.id, report.updatedBy ?? report.createdBy));
-    const recs = await tx
-      .select({ treatedAt: treatmentRecords.treatedAt })
-      .from(treatmentRecords)
-      .where(and(eq(treatmentRecords.organizationId, org), eq(treatmentRecords.prescriptionId, prescriptionId)))
-      .orderBy(asc(treatmentRecords.treatedAt));
-    return { ...row, report, o, author: author?.name ?? null, dates: [...new Set(recs.map((r) => berlinDateIso(r.treatedAt)))] };
+    return { ...row, r, o };
   });
   if (!data) return null;
-  const bytes = await renderTherapyReportPdf({
-    organization: data.o,
-    logos: await loadLogos(org),
-    patient: pdfPatient(data.p, data.vo),
-    prescription: pdfPrescription(data.vo),
-    report: { ...data.report, author: data.author },
-    treatmentDates: data.dates,
-  });
+  const bytes = await renderReport({ vo: data.vo, p: data.p, o: data.o, logos: await loadLogos(org) }, data.r);
   await audit({ organizationId: org, userId: auth.user.id, action: "prescription.therapy_report_pdf", entity: "prescription", entityId: prescriptionId, meta: { patientId: data.p.id } });
-  return { bytes, filename: `Therapiebericht-${data.report.reportDate}-${prescriptionId.slice(0, 8)}.pdf` };
+  return { bytes, filename: `Therapiebericht-${data.r.report.reportDate}-${prescriptionId.slice(0, 8)}.pdf` };
 }

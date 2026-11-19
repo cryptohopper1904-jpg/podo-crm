@@ -1,6 +1,6 @@
 # GKV-Grundlagen Podologie (Kassenpraxen)
 
-Stand: 17.11.2026 · Regelwerk `podo-2026-11-anlage3-2025-06` (`RULES_VERSION` in `src/lib/rules/prescription.ts`)
+Stand: 19.11.2026 · Regelwerk `podo-2026-11-anlage3-2025-06` (`RULES_VERSION` in `src/lib/rules/prescription.ts`)
 
 PodoHero unterstützt Praxen mit Kassenzulassung (Heilmittelverordnung Muster 13, Vertrag nach § 125 Abs. 1 SGB V
 Podologie). Alle Kassen-Themen bleiben über den Praxis-Modus abschaltbar (`organizations.settings.billingMode =
@@ -460,7 +460,8 @@ folgt mit dem Echtbetrieb der Direktabrechnung (docs/GKV-302.md).
     des alten Laufs kann daher in diesen Spalten vom damals übergebenen abweichen. Reicht das für die Nachvollziehbarkeit,
     oder soll mehr gesichert werden? (Datenschutz/Steuerberatung)
     **Folgeaufgabe (Vorschlag)**: die erzeugte Exportdatei (CSV bzw. § 302-Paket) beim ersten Export mit SHA-256-Prüfsumme
-    archivieren (wie das Beleg-Archiv), damit genau die übergebene Fassung belegbar bleibt.
+    archivieren (wie das Beleg-Archiv), damit genau die übergebene Fassung belegbar bleibt. **Umgesetzt in Paket E**
+    (Archiv des Übergabepakets mit SHA-256, Nachdruck byte-gleich); offen bleibt die Frage für Altläufe (Fachfrage 48).
 
 ### Paket C Teil 2: Auswertung Kasse vs. privat und Belegliste
 
@@ -510,7 +511,8 @@ Zeitraum und Anzahlen.
 Offene Fachfragen (Steuerberatung):
 
 38. **Abgrenzung Kassenanteil**: Erstellungstag des Laufs (Forderung) oder Zahlungseingang des Abrechnungszentrums
-    (Zuflussprinzip wie „Finanzen“)? Die Auszahlung des Abrechnungszentrums wird heute nicht erfasst.
+    (Zuflussprinzip wie „Finanzen“)? Seit Paket E werden Auszahlungen erfasst und als „Zahlungseingang
+    Abrechnungszentrum“ neben dem Soll gezeigt (nicht verrechnet) – Abgrenzung weiter offen (Fachfrage 47).
 39. **Absetzungen in der Auswertung**: Sollen akzeptierte/erledigte Absetzungen den Kassenanteil mindern, und in
     welchem Monat (Absetzungsdatum oder Lauf)? Heute zählen Absetzungen, deren Verordnung nach Korrektur neu abgerechnet
     wurde (Bezug über den Korrekturvermerk), nicht als Minderung, sondern als „durch Neuabrechnung ersetzt“ – stimmt das
@@ -522,3 +524,99 @@ Offene Fachfragen (Steuerberatung):
 41. **Doppelzählung bei Neuabrechnung**: Heute wird die Erstabrechnung im Monat des neuen Laufs abgezogen (Laufsummen
     bleiben unverändert, reproduzierbar). Alternative: alten Monat rückwirkend mindern. Welche Abgrenzung erwartet die
     Steuerberatung, und wie bucht das Abrechnungszentrum Gutschrift/Nachberechnung? (Steuerberatung/Abrechnungszentrum)
+
+## Paket E: Neutrale Übergabe an ein Abrechnungszentrum (PR „GKV Paket E“)
+
+Entscheidung: **erstmal neutral** – kein festes Abrechnungszentrum (weder DMRZ, opta data noch Noventi). PodoHero erzeugt
+je Abrechnungslauf ein neutrales Übergabepaket und liest die Rückmeldung des Zentrums wieder ein. Das Format (Felder,
+Typen, Beispiele) steht vollständig in **docs/GKV-ABRECHNUNGSZENTRUM.md**. Code: `src/lib/gkv-handover/*`,
+`src/server/gkv-handover.ts`, Seite `/verordnungen/abrechnung/<lauf>`, Migration `0068_gkv_paket_e.sql`.
+
+- **Übergabepaket (ZIP)** je Lauf: `verordnungen.csv` (bisherige 43 Spalten + Status, Personennummer, Kassenanteil,
+  Zuzahlung 10 %/Verordnungsblattgebühr, Therapiebericht-Datum, fehlende Unterschriften, Dateien), `behandlungen.csv`
+  (je Behandlungstag und Position aus dem Preis-Snapshot, mit Unterschrift), `abrechnungslauf.json`
+  (`podohero-abrechnung/1`, Cent-Beträge), `begleitzettel.pdf` (Summen und Liste, ohne Diagnosen), Leistungsnachweise und
+  Therapieberichte als PDF (nur Verordnungen des Laufs; korrigierte mit dem Stand der Erstabrechnung), `PRUEFSUMMEN.sha256`,
+  `LIESMICH.txt`. CSV: UTF-8 mit BOM, Semikolon, Formel-Injection entschärft (`writeCsv`). Rechte wie der
+  Abrechnungslauf (`invoices.write` + `medical.read`, `gkvGuard("gkvBilling")`), Support-Modus gesperrt
+  (`downloadAllowed`, neue Art `gkv_handover`). Kein § 302-Datensatz.
+- **Archiv (Fachfrage 37, GoBD)**: Der erste Download erzeugt das Paket, legt es verschlüsselt ab (`storeEncrypted`) und
+  verzeichnet es mit SHA-256 in `billing_batch_exports` – in einer Transaktion mit dem Übergabevermerk und unter
+  Zeilensperre des Laufs (gleichzeitige Erst-Exporte → genau ein Archiv). Jeder weitere Download (auch der CSV-Link, der
+  jetzt `verordnungen.csv` aus dem Archiv liefert) gibt **byte-gleich** diese Datei aus, gekennzeichnet als „Nachdruck“
+  (Dateiname, Header `X-Podo-Nachdruck`). Prüfsumme falsch/Datei unlesbar → Abbruch mit Hinweis, keine Neuerzeugung.
+  Damit sind auch Behandlungstage, Unterschriften und „Zuzahlung erhalten am“ des übergebenen Stands belegbar (bisher
+  nicht eingefroren, siehe Fachfrage 37). Läufe, die vor Paket E schon per CSV übergeben wurden, werden beim ersten
+  Paket-Download mit dem dann aktuellen Stand archiviert und als „nach Erstübergabe“ gekennzeichnet
+  (`after_first_handover`, Trigger). `billingBatchExport` (Live-Stand ohne Archiv) ist nur noch für Tests (`@internal`,
+  von der App nicht aufgerufen) – keine Übergabe ohne Archiv.
+- **Nachbesserung (Bookkeeper/AppSec/Code-Review)**: Storno von Auszahlungen (Gegenbuchung), Rückmeldungsdatei als
+  verschlüsselter Beleg, Warnung bei Doppelerfassung (inhaltlicher Schlüssel, Bestätigung nötig), „Noch offen“ aus den
+  Absetzungen des Laufs (nach Status), Gebühren (`fee_cents`, netto/brutto), Obergrenze 500 Verordnungen/200 MB je Paket,
+  gestreamter Nachdruck, technische PDF-Fehler brechen den Erst-Export ab (fachlich fehlende Dokumente werden gezählt
+  und angezeigt), Übergabevermerk vor dem Archiv (Trigger), Absetzung nur zu Verordnungen des Laufs (Trigger),
+  Bidi-Zeichen aus Freitexten entfernt, `payoutTotals` mit vollen Abrechnungsrechten. Details:
+  docs/GKV-ABRECHNUNGSZENTRUM.md Abschnitte 1 und 3.4.
+- **Letzte Nachbesserung vor dem Merge**: Erst-Export nur per POST mit Bestätigung (GET nur Nachdruck/CSV aus dem
+  Archiv, sonst 409), Cross-Site abgelehnt, Rate-Limit 5/min je Praxis und höchstens 2 parallele Paketbauten (429),
+  Nachdruck-Stream hält den letzten Block bis zur Prüfung zurück, Absetzungen nur an eingelesenen Rückmeldungen,
+  `cleanText` ohne unsichtbare/C1-Zeichen, Auswertung brutto/Gebühr/netto, volle Verordnungs-ID in Dateinamen.
+  Folgeaufgaben: Löschpfad nach Fristablauf (Frage 49), Erst-Export im Nur-Lese-Modus (Code-Review K6, heute bewusst
+  gesperrt), Logo in PDFs verkleinern.
+- **Rückmeldung einlesen**: CSV oder JSON (`podohero-rueckmeldung/1`), höchstens 1 MB/5.000 Zeilen, strikt geprüft
+  (Zeilennummern, alles oder nichts), Zuordnung über Verordnungs-ID oder Versichertennummer + Ausstellungsdatum nur zu
+  Verordnungen des Laufs, Zeilen anderer Läufe übersprungen. Vorschau ändert nichts; „Übernehmen“ nur mit derselben Datei
+  (SHA-256) – legt eine Auszahlung (`billing_batch_payouts`) und neue Absetzungen (`gkv_deductions`, Status „offen“,
+  `payout_id`) an; gleiche Absetzungen werden nicht doppelt angelegt; dieselbe Datei je Lauf nur einmal (eindeutiger
+  Index). **Keine Änderung an Verordnungen.** Auszahlung auch **von Hand** erfassbar (Betrag, Datum, Referenz).
+- **Auswertung Kasse vs. privat (Fachfragen 36/38)**: neue Kennzahl/Monatsspalte **„Zahlungseingang
+  Abrechnungszentrum“** (Auszahlungen nach Auszahlungsdatum, Ist) **neben** dem Soll laut Läufen – bewusst nicht
+  verrechnet. Laufseite: Soll, ausgezahlt, Absetzungen laut Rückmeldungen, Hilfsrechnung „noch offen“.
+- **Datenbank (0068)**: beide Tabellen mit `organization_id`, RLS ENABLE + FORCE (`tenant_isolation`, USING + WITH CHECK),
+  `podo_fk_same_org`, `podo_user_in_org`, append-only per Trigger (UPDATE/DELETE/TRUNCATE abgelehnt, auch für den
+  Eigentümer) und `REVOKE UPDATE, DELETE` für die App-Rolle (scripts/migrate.ts); Auszahlung nur zu übergebenem Lauf;
+  Prüfungen lesen unter RLS und lehnen ohne passenden Praxis-Kontext (`app.org_id`) ab. `gkv_deductions.payout_id`
+  unveränderlich, nur zu einer Auszahlung desselben Laufs (`podo_gkv_deduction_guard`). Läufe bleiben eingefroren
+  (0066/0067 unverändert; nur der Übergabevermerk wird gesetzt). Keine Personen-Spalten → keine Änderung an
+  `podo_delete_patient`/`retentionFacts` (Personen mit abgerechneten Verordnungen sind ohnehin nicht löschbar). Praxis-Export
+  (`abrechnung/uebergabe/…`, `exportFile`), `scripts/archive-orphans.ts` (KNOWN_TABLES) und Löschlauf der Praxis
+  (automatisch über `organization_id`) berücksichtigen die neuen Tabellen.
+
+### Offene Fachfragen Paket E (Abrechnungszentrum/Steuerberatung/Datenschutz)
+
+42. **Annahme des neutralen Formats**: Welche Abrechnungszentren übernehmen CSV/JSON (`podohero-abrechnung/1`) direkt,
+    welche brauchen eine Zuordnung in ihr eigenes Importformat? Reicht das Begleitzettel-PDF als Deckblatt für den
+    Papierversand der Verordnungen? (Abrechnungszentrum)
+43. **Elektronische Leistungsnachweise**: Akzeptieren Zentren/Kassen die PDF-Leistungsnachweise mit elektronischer
+    Unterschrift als Ersatz für das Bestätigungsfeld auf der Rückseite der Verordnung (vgl. offener Punkt 22)? (Abrechnungszentrum)
+44. **Rückmeldeformat**: Liefern Zentren je Verordnung Auszahlung und Absetzung (wie hier gefordert) oder nur Summen je
+    Sammelrechnung? Bei Summen bleibt nur die Auszahlung von Hand. Ist „eine Auszahlung je Datei“ praxisnah? (Abrechnungszentrum)
+45. **Fehleingabe einer Auszahlung**: Umgesetzt als **Storno** (Gegenbuchung mit exakt negativen Beträgen,
+    Pflichtbegründung, höchstens einmal, Datum = Tag des Stornos) und Neuerfassung. Offen: Reicht das als
+    Korrekturbuchung, oder braucht es einen Stornobeleg/Verweis auf ein Schreiben des Zentrums? (Steuerberatung)
+46. **Gebühren des Abrechnungszentrums**: Umgesetzt: `fee_cents` (Rückmeldung „Gebühr EUR“ bzw. Handeingabe, optional);
+    Auszahlung = netto nach Gebühr, Anzeige brutto = netto + Gebühr. Offen: Ist die Gebühr als Betriebsausgabe (mit
+    Rechnung des Zentrums, ggf. USt) zu buchen und nicht als Minderung der Einnahme? (Steuerberatung)
+47. **Abgrenzung Kassenanteil (Fortsetzung 38)**: Die Auswertung zeigt Soll (Lauf) und Ist (Zahlungseingang netto, Stornos
+    im Monat des Stornos) nebeneinander. Welche Größe ist für die Gewinnermittlung maßgeblich (Zuflussprinzip § 11 EStG bei
+    EÜR), und gehört die Gebühr in den Zufluss (brutto) oder nicht (netto)? (Steuerberatung)
+48. **Archiv bei Altläufen**: Läufe, die vor Paket E per CSV übergeben wurden, erhalten ein Archiv mit dem späteren Stand
+    („nach Erstübergabe“). Reicht das, oder soll die damalige CSV aus anderen Quellen (E-Mail-Ausgang) beigelegt werden?
+    (Steuerberatung/Datenschutz)
+49. **Aufbewahrungsfrist des Archivs**: Übergabepaket und eingelesene Rückmeldungsdateien enthalten Gesundheits- bzw.
+    Abrechnungsdaten im Klartext (verschlüsselt abgelegt). Fristen: Buchungsbelege 8 Jahre (§ 147 Abs. 3 AO i. d. F. BEG IV),
+    Patientendokumentation 10 Jahre (§ 630f Abs. 3 BGB) – für das Paket gilt die längere. Ein Löschpfad nach Fristablauf
+    fehlt noch (heute Löschung nur mit der Praxis) – Folgeaufgabe. Offen: Reicht für die Rückmeldungsdatei die 8-Jahres-Frist,
+    und wie wird nach Ablauf gelöscht bzw. gesperrt? (Datenschutz/Steuerberatung)
+50. **Übermittlungsweg**: Das Paket wird heruntergeladen und von der Praxis übergeben (Portal des Zentrums, verschlüsselte
+    E-Mail, Datenträger). Braucht es einen eigenen, verschlüsselten Übertragungsweg (z. B. passwortgeschütztes ZIP,
+    SFTP)? Auftragsverarbeitungsvertrag mit dem Zentrum? (Datenschutz)
+51. **Rückmeldungsdatei als Beleg**: Die eingelesene Datei wird verschlüsselt archiviert (Prüfsumme, Praxis-Export). Ist sie
+    der Buchungsbeleg für den Zahlungseingang, oder ist zusätzlich die Sammelabrechnung/Avis des Zentrums (PDF) abzulegen?
+    (Steuerberatung)
+52. **Duplikatschutz Hand/Import**: Gleiche Auszahlung (Lauf, Datum, Referenz, Nettobetrag) wird nur nach ausdrücklicher
+    Bestätigung ein zweites Mal erfasst. Gibt es Fälle (Teilzahlungen mit gleicher Referenz und gleichem Betrag), in denen
+    das regelmäßig vorkommt, oder soll stattdessen streng gesperrt werden? (Abrechnungszentrum/Steuerberatung)
+53. **Monat des Stornos**: Ein Storno mindert den Zahlungseingang im Monat des Stornos (nicht rückwirkend im Monat der
+    stornierten Auszahlung). Ist das für die Auswertung/EÜR so gewünscht, oder soll ein Storno im Monat der ursprünglichen
+    Auszahlung wirken (dann ändern sich abgeschlossene Monate)? (Steuerberatung)

@@ -86,6 +86,9 @@ async function main() {
     // Absetzungen und Korrekturvermerke (Migration 0066, GKV Paket C) sind Abrechnungsunterlagen: nie löschen (Status
     // ändern bzw. Korrektur abschließen, beides per Trigger begrenzt) – gelöscht wird nur mit der Praxis
     await pool.query(`revoke delete on gkv_deductions, prescription_corrections from ${appRole}`);
+    // Archiv der Übergabepakete und Auszahlungen des Abrechnungszentrums (Migration 0068, GKV Paket E) sind append-only:
+    // kein UPDATE/DELETE (zusätzlich Trigger) – gelöscht wird nur mit der Praxis im Löschlauf als Eigentümer
+    await pool.query(`revoke update, delete on billing_batch_exports, billing_batch_payouts from ${appRole}`);
     // Personen nur über podo_delete_patient löschen (SECURITY DEFINER, Prüfung der Aufbewahrungsgründe, Löschfreigabe in
     // podo_private.delete_grants – Migration 0067, AppSec K2); Praxen nur im Löschlauf als Eigentümer
     // (src/server/purge-organization.ts) – organizations hat keine RLS
