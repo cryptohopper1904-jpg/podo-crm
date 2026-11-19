@@ -259,7 +259,10 @@ export function streamArchive(org: string, a: { storageKey: string; sha256: stri
   // pipeline statt pipe: Fehler der Quelle (GCM-Tag, Lesefehler) kommen am Ergebnis an, und jede Seite wird bei Fehler
   // oder Abbruch der anderen zerstört (Client bricht ab → Entschlüsselung endet). Der Fehler erreicht den Aufrufer über
   // den zurückgegebenen Stream; der Callback verhindert nur eine unbehandelte Ablehnung.
-  return pipeline(readDecryptedStream(a.storageKey), check, () => undefined);
+  return pipeline(readDecryptedStream(a.storageKey), check, (e) => {
+    // Abbruch durch den Empfänger ist normal; Prüfsummen-/GCM-Fehler (manipuliertes Archiv) dagegen protokollieren
+    if (e && (e as NodeJS.ErrnoException).code !== "ERR_STREAM_PREMATURE_CLOSE") log.error("gkv_handover.reprint_integrity", { error: e, storageKey: a.storageKey });
+  });
 }
 
 type ArchiveRow = typeof billingBatchExports.$inferSelect;
