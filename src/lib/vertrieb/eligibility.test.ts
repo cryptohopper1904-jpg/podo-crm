@@ -7,14 +7,16 @@ const day = 86_400_000;
 const delays = { delay2Days: 5, delay3Days: 10 };
 const none = new Set<string>();
 let n = 0;
-const lead = (p: Partial<LeadForSend> = {}): LeadForSend => ({ id: `id-${++n}`, email: `p${n}@praxis.example`, status: "neu", step: 0, lastSentAt: null, consentAt: new Date("2026-01-01"), ...p });
+const lead = (p: Partial<LeadForSend> = {}): LeadForSend => ({ id: `id-${++n}`, email: `p${n}@praxis.example`, status: "neu", step: 0, lastSentAt: null, consentEmailAt: new Date("2026-01-01"), consentEmailRevokedAt: null, ...p });
 const opts = { now, delays, suppressed: none };
 
 describe("eligibility", () => {
   it("neuer Lead → Mail 1", () => expect(eligibility(lead(), opts)).toEqual({ ok: true, step: 1 }));
   it("ohne dokumentierte Einwilligung nie (§ 7 Abs. 2 Nr. 2 UWG)", () => {
-    expect(eligibility(lead({ consentAt: null }), opts)).toEqual({ ok: false, reason: "keine dokumentierte Einwilligung" });
-    expect(planBatch([lead({ consentAt: null }), lead()], { ...opts, sentLast24h: 0 }).send).toHaveLength(1);
+    expect(eligibility(lead({ consentEmailAt: null }), opts)).toEqual({ ok: false, reason: "keine dokumentierte Einwilligung" });
+    expect(planBatch([lead({ consentEmailAt: null }), lead()], { ...opts, sentLast24h: 0 }).send).toHaveLength(1);
+    // widerrufene E-Mail-Einwilligung sperrt ebenfalls
+    expect(eligibility(lead({ consentEmailRevokedAt: new Date("2026-02-01") }), opts)).toEqual({ ok: false, reason: "keine dokumentierte Einwilligung" });
   });
 
   it("Abstand: Mail 2 erst nach 5 Tagen, Mail 3 erst 10 Tage nach Mail 2", () => {

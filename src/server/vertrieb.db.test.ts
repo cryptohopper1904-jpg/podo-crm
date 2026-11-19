@@ -80,18 +80,28 @@ const day = 86_400_000;
     ].join("\n");
     const p = await v.previewImport(csv);
     expect(p.newCount).toBe(2);
-    expect(await v.importLeads(admin, csv, " ")).toMatchObject({ imported: 0, error: expect.stringMatching(/Quelle/) });
-    const r = await v.importLeads(admin, csv, "Messe Test 2026");
+    expect(await v.importLeads(admin, csv, " ", "2026-11-01")).toMatchObject({ imported: 0, error: expect.stringMatching(/Quelle/) });
+    const r = await v.importLeads(admin, csv, "Messe Test 2026", "2026-11-01");
     expect(r).toEqual({ imported: 2, skipped: 2 });
-    expect((await v.importLeads(admin, csv, "Messe Test 2026")).imported).toBe(0);
+    expect((await v.importLeads(admin, csv, "Messe Test 2026", "2026-11-01")).imported).toBe(0);
     expect((await leadByName("Podologie Eins")).source).toBe("Messe Test 2026");
     // Altbestand überführt: kein Klartext mehr, nur Prüfwert
     expect((await f.pool.query("select count(*)::int as n from sales_suppressions")).rows[0].n).toBe(0);
     expect((await f.pool.query("select hash, reason from sales_blocklist where reason = 'abgemeldet'")).rows.every((r: { hash: string }) => /^v1:[0-9a-f]{64}$/.test(r.hash))).toBe(true);
     const bl = await import("./blocklist");
     expect(await bl.isBlocked(" Gesperrt@Praxis.example")).toBe(true);
-    await expect(v.createLead(admin, { name: "Gesperrt neu", contactPerson: null, email: "gesperrt@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/Sperrliste/);
-    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([{ imported: 2, skipped: 2, source: "Messe Test 2026" }, { imported: 0, skipped: 4, source: "Messe Test 2026" }]);
+    await expect(v.createLead(admin, { name: "Gesperrt neu", contactPerson: null, email: "gesperrt@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "Testquelle", sourceRetrievedAt: "2026-11-01", notes: null })).rejects.toThrow(/Sperrliste/);
+    expect(auditCalls().filter((a) => a.action === "vertrieb.import").map((a) => a.meta)).toEqual([
+      { imported: 2, skipped: 2, source: "Messe Test 2026", retrievedAt: "2026-11-01" },
+      { imported: 0, skipped: 4, source: "Messe Test 2026", retrievedAt: "2026-11-01" },
+    ]);
+    // Herkunft je Lead: Quelle + Abrufdatum; Löschfrist Standard 12 Monate ab Anlage
+    const eins = await leadByName("Podologie Eins");
+    expect((await f.pool.query("select source_retrieved_at::text as d from sales_leads where id = $1", [eins.id])).rows[0].d).toBe("2026-11-01");
+    expect(Math.round((eins.delete_after.getTime() - eins.created_at.getTime()) / day)).toBeGreaterThanOrEqual(365);
+    expect(Math.round((eins.delete_after.getTime() - eins.created_at.getTime()) / day)).toBeLessThanOrEqual(366);
+    expect(await v.importLeads(admin, csv, "Messe Test 2026", "")).toMatchObject({ imported: 0, error: expect.stringMatching(/Abrufdatum/) });
+    expect(await v.importLeads(admin, csv, "Messe Test 2026", "2999-01-01")).toMatchObject({ imported: 0, error: expect.stringMatching(/Zukunft/) });
     expect(auditCalls().some((a) => a.action === "vertrieb.settings")).toBe(true);
   });
 
@@ -105,9 +115,9 @@ const day = 86_400_000;
     const noPort = new MockMailAdapter();
     expect(await v.sendNextMails(admin, [eins.id], { port: noPort, now: () => t0, env })).toMatchObject({ sent: 0, skipped: 1 });
     expect(noPort.sent).toHaveLength(0);
-    await expect(v.recordLeadConsent(admin, eins.id, " x ")).rejects.toThrow(/Wortlaut, Kanal und Datum/);
-    expect(await v.recordLeadConsent(admin, eins.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
-    expect(await v.recordLeadConsent(admin, zwei.id, "Anfrage per E-Mail vom 01.11.2026")).toBe(true);
+    await expect(v.recordLeadConsent(admin, eins.id, { channel: "email", note: " x ", kind: "email", date: "2026-11-01" })).rejects.toThrow(/Wortlaut bzw. Nachweis/);
+    expect(await v.recordLeadConsent(admin, eins.id, { channel: "email", note: "Anfrage per E-Mail vom 01.11.2026", kind: "email", date: "2026-11-01" })).toBe(true);
+    expect(await v.recordLeadConsent(admin, zwei.id, { channel: "email", note: "Anfrage per E-Mail vom 01.11.2026", kind: "email", date: "2026-11-01" })).toBe(true);
     expect(await leadByName("Podologie Eins")).toMatchObject({ consent_note: "Anfrage per E-Mail vom 01.11.2026" });
     await expect(f.pool.query("update sales_leads set consent_note = null where id = $1", [eins.id])).rejects.toThrow(/sales_leads_consent_check/);
     const pre = await v.previewSend([eins.id, zwei.id], { now: t0, env });
@@ -183,13 +193,13 @@ const day = 86_400_000;
     expect(await bl.isBlocked("eins@praxis.example")).toBe(true);
     expect((await f.pool.query("select count(*)::int as n from sales_blocklist where hash like '%eins%' or reason like '%@%'")).rows[0].n).toBe(0);
     expect(auditCalls().some((a) => a.action === "vertrieb.unsubscribe" && a.entityId === eins.id)).toBe(true);
-    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n", "Messe Test 2026");
+    const again = await v.importLeads(admin, "name,email\nPodologie Eins neu,EINS@praxis.example\n", "Messe Test 2026", "2026-11-01");
     expect(again).toEqual({ imported: 0, skipped: 1 });
   });
 
   it("Versandfehler wird protokolliert, Schritt bleibt", async () => {
-    const id = await v.createLead(admin, { name: "Fehlerpraxis", contactPerson: null, email: "fehler@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
-    await v.recordLeadConsent(admin, id, "Messe Test, Formular");
+    const id = await v.createLead(admin, { name: "Fehlerpraxis", contactPerson: null, email: "fehler@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "Testquelle", sourceRetrievedAt: "2026-11-01", notes: null });
+    await v.recordLeadConsent(admin, id, { channel: "email", note: "Messe Test, Formular", kind: "email", date: "2026-11-01" });
     const failing: MailPort = { kind: "smtp", isMock: false, source: "platform", send: async (_m: MailMessage) => Promise.reject(new MailSendError("SMTP-Server nicht erreichbar.", "ECONNECTION")) };
     const r = await v.sendNextMails(admin, [id], { port: failing, now: () => t0, env });
     expect(r.sent).toBe(0);
@@ -212,12 +222,12 @@ const day = 86_400_000;
 
   it("Liste mit Filter/Suche, Zähler, manuelle Sperre und Bearbeiten", async () => {
     const id = (await leadByName("Fehlerpraxis")).id;
-    await v.updateLead(admin, id, { name: "Fehlerpraxis", contactPerson: "Herr Test", email: "Fehler@Praxis.example", phone: null, website: null, street: null, zip: "99999", city: "Teststadt", distanceKm: 4.2, source: "OpenStreetMap", notes: null });
+    await v.updateLead(admin, id, { name: "Fehlerpraxis", contactPerson: "Herr Test", email: "Fehler@Praxis.example", phone: null, website: null, street: null, zip: "99999", city: "Teststadt", distanceKm: 4.2, source: "OpenStreetMap", sourceRetrievedAt: "2026-11-01", notes: null });
     expect(await leadByName("Fehlerpraxis")).toMatchObject({ email: "fehler@praxis.example", city: "Teststadt", consent_note: "Messe Test, Formular" });
     expect((await v.listLeads({ q: "teststadt" })).map((l) => l.name)).toEqual(["Fehlerpraxis"]);
     expect((await v.listLeads({ q: "100%_" })).length).toBe(0);
     expect((await v.listLeads({ status: "geantwortet" })).map((l) => l.name)).toEqual(["Podologie Zwei"]);
-    await expect(v.updateLead(admin, id, { name: "X", contactPerson: null, email: "zwei@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/bereits/);
+    await expect(v.updateLead(admin, id, { name: "X", contactPerson: null, email: "zwei@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "Testquelle", sourceRetrievedAt: "2026-11-01", notes: null })).rejects.toThrow(/bereits/);
     const before = (await v.listSuppressions()).count;
     await v.addSuppression(admin, " FEHLER@praxis.example ");
     // Widerspruch: Eintrag gelöscht, nur Prüfwert (die Konsole zeigt keine Adressen)
@@ -226,7 +236,7 @@ const day = 86_400_000;
     expect(ov.count).toBe(before + 1);
     expect(ov.recent[0]).toMatchObject({ reason: "widerspruch" });
     // manuell „abgemeldet“ löscht ebenfalls
-    const ab = await v.createLead(admin, { name: "Abmelde-Test", contactPerson: null, email: "ab@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null });
+    const ab = await v.createLead(admin, { name: "Abmelde-Test", contactPerson: null, email: "ab@praxis.example", phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "Testquelle", sourceRetrievedAt: "2026-11-01", notes: null });
     expect(await v.setLeadStatus(admin, ab, "abgemeldet")).toBe("deleted");
     expect(await v.getLead(ab)).toBeNull();
     expect(await (await import("./blocklist")).isBlocked("ab@praxis.example")).toBe(true);
@@ -377,8 +387,8 @@ const day = 86_400_000;
     const sfx = Math.random().toString(36).slice(2, 7);
     const later = new Date(Date.now() + 3 * day); // außerhalb des Tageslimits der vorigen Tests
     const mk = async (name: string, email: string | null, website: string | null = null) => {
-      const id = await v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
-      if (email) await v.recordLeadConsent(admin, id, "Anfrage über das Kontaktformular");
+      const id = await v.createLead(admin, { name, contactPerson: null, email, phone: null, website, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null });
+      if (email) await v.recordLeadConsent(admin, id, { channel: "email", note: "Anfrage über das Kontaktformular", kind: "email", date: "2026-11-01" });
       return id;
     };
     const ownerOrg = async (email: string, patch: { plan?: string; status?: string } = {}) => {
@@ -481,39 +491,197 @@ const day = 86_400_000;
       await promo.redeemPromoCodeForOrganization(o, await ownerOf(o), code);
       expect((await pl.campaignStats(await pl.loadPipeline(), [camp])).get(camp)).toMatchObject({ tests: 1, converted: 0 });
       // Einwilligung gilt für die Adresse: neue E-Mail → Einwilligung weg, Versand übersprungen
-      await v.updateLead(admin, id, { name: "Pipe Kampagne", contactPerson: null, email: `neu@pipe5-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      await v.updateLead(admin, id, { name: "Pipe Kampagne", contactPerson: null, email: `neu@pipe5-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null });
       const after = (await v.getLead(id))!.lead;
-      expect(after).toMatchObject({ consentAt: null, consentNote: null });
+      expect(after).toMatchObject({ consentEmailAt: null, consentEmailNote: null });
       expect((await pl.leadTimeline(after)).some((e) => e.kind === "consent")).toBe(true);
       // zurück auf Standardvorlagen
       await pl.saveCampaignTemplates(admin, camp, null);
       expect(pl.campaignTemplates((await pl.getCampaign(camp))!)).toBeNull();
     });
   
-    it("Speicherdauer: Leads ohne Kontakt seit 24 Monaten werden gelöscht, Kunden und aktive bleiben", async () => {
+    it("Speicherdauer: ohne Einwilligung zur Löschfrist, mit Einwilligung 24 Monate nach der letzten Reaktion der Praxis (nicht nach unserem Schreiben)", async () => {
       const stale = await mk("Pipe Alt", `alt@pipe6-${sfx}.example`);
+      const replied = await mk("Pipe Antwort", `antwort@pipe6-${sfx}.example`);
       const fresh = await mk("Pipe Frisch", `frisch@pipe6-${sfx}.example`);
       const kunde = await mk("Pipe Kunde", `kunde@pipe6-${sfx}.example`);
       await f.pool.query("update sales_leads set status = 'kunde' where id = $1", [kunde]);
-      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[stale, kunde]]);
-      await f.pool.query("update sales_leads set created_at = now() - interval '25 months', updated_at = now() - interval '25 months', consent_at = now() - interval '25 months' where id = any($1)", [[stale, kunde]]);
-      // ohne Einwilligung schon nach 12 Monaten, mit Einwilligung erst nach 24
+      await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[stale, replied, kunde]]);
+      // Einwilligung vor 25 Monaten; wir haben gestern noch geschrieben und den Eintrag bearbeitet – das zählt nicht
+      await f.pool.query(
+        "update sales_leads set created_at = now() - interval '25 months', consent_at = now() - interval '25 months', delete_after = now() - interval '13 months', updated_at = now(), last_sent_at = now() - interval '1 day' where id = any($1)",
+        [[stale, replied, kunde]],
+      );
+      // eine Antwort der Praxis vor 3 Monaten hält den Eintrag
+      await f.pool.query("update sales_leads set replied_at = now() - interval '3 months' where id = $1", [replied]);
       const noConsent = await mk("Pipe Ohne", null);
       const withConsent13 = await mk("Pipe Mit13", `mit13@pipe6-${sfx}.example`);
+      const revoked = await mk("Pipe Widerruf", `widerruf@pipe6-${sfx}.example`);
+      await v.removeLeadConsent(admin, [revoked]);
       await f.pool.query("delete from sales_lead_events where lead_id = any($1)", [[noConsent, withConsent13]]);
-      await f.pool.query("update sales_leads set created_at = now() - interval '13 months', updated_at = now() - interval '13 months', consent_at = case when consent_at is null then null else now() - interval '13 months' end where id = any($1)", [[noConsent, withConsent13]]);
+      await f.pool.query(
+        "update sales_leads set created_at = now() - interval '13 months', delete_after = now() - interval '1 month', consent_at = case when consent_at is null then null else now() - interval '13 months' end where id = any($1)",
+        [[noConsent, withConsent13, revoked]],
+      );
       await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-P`, label: "Pipe Ohne", trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: noConsent });
-      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(2);
+      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(3);
       expect((await f.pool.query("select label from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-P`])).rows[0].label).toBe("(gelöscht)");
       expect(await v.getLead(stale)).toBeNull();
       expect(await v.getLead(noConsent)).toBeNull();
+      expect(await v.getLead(revoked)).toBeNull();
+      expect(await v.getLead(replied)).not.toBeNull();
       expect(await v.getLead(withConsent13)).not.toBeNull();
       expect(await v.getLead(fresh)).not.toBeNull();
       expect(await v.getLead(kunde)).not.toBeNull();
     });
 
+    it("Löschfrist (delete_after): abgelaufen ohne Einwilligung → gelöscht; Einwilligung, Status „Kunde“ und registrierte Praxis (Test/Kunde) bleiben; Audit nur Anzahl", async () => {
+      const ohne = await mk("Pipe Frist Ohne", null);
+      const mit = await mk("Pipe Frist Mit", `mit@pipe9-${sfx}.example`);
+      const kd = await mk("Pipe Frist Kunde", null);
+      const offen = await mk("Pipe Frist Offen", null);
+      const tel = await mk("Pipe Frist Telefon", null);
+      await v.recordLeadConsent(admin, tel, { channel: "phone", note: "Messe, Formular „Anruf erwünscht“", kind: "persoenlich", date: "2026-11-01" });
+      // konvertierte Praxis (bezahltes Abo) und registrierte Praxis im Test – nur über die Domain zugeordnet, Status „neu“
+      const konv = await mk("Pipe Frist Konvertiert", null, `https://pipe11-${sfx}.example/`);
+      const test = await mk("Pipe Frist Test", null, `https://pipe12-${sfx}.example/`);
+      await ownerOrg(`chefin@pipe11-${sfx}.example`, { plan: "praxis", status: "active" });
+      await ownerOrg(`chef@pipe12-${sfx}.example`);
+      await f.pool.query("update sales_leads set status = 'kunde' where id = $1", [kd]);
+      // vor 7 Monaten erhoben, Frist 6 Monate (abgelaufen); gerade bearbeitet – unser Bearbeiten verlängert nichts
+      await f.pool.query("update sales_leads set created_at = now() - interval '7 months', delete_after = now() - interval '7 months' + interval '6 months', updated_at = now() where id = any($1)", [[ohne, mit, kd, tel, konv, test]]);
+      // DB-Grenzen: weniger als 6 bzw. mehr als 12 Monate ab Erhebung abgelehnt – außer Altbestand mit Schonfrist
+      await expect(f.pool.query("update sales_leads set delete_after = created_at + interval '5 months' where id = $1", [offen])).rejects.toThrow(/sales_leads_delete_after_check/);
+      await expect(f.pool.query("update sales_leads set delete_after = created_at + interval '13 months' where id = $1", [offen])).rejects.toThrow(/sales_leads_delete_after_check/);
+      await f.pool.query("update sales_leads set delete_after = created_at + interval '25 months', delete_after_legacy = true where id = $1", [offen]);
+      vi.mocked((await import("@/lib/audit")).audit).mockClear();
+      expect(await v.purgeStaleLeads()).toBeGreaterThanOrEqual(1);
+      expect(await v.getLead(ohne)).toBeNull();
+      expect(await v.getLead(mit)).not.toBeNull();
+      expect(await v.getLead(tel)).not.toBeNull();
+      expect(await v.getLead(kd)).not.toBeNull();
+      expect(await v.getLead(offen)).not.toBeNull();
+      // Bestandskunde: konvertierte Org mit delete_after in der Vergangenheit bleibt erhalten, ebenso Stufe „Test“
+      expect(await v.getLead(konv)).not.toBeNull();
+      expect(await item(konv)).toMatchObject({ stage: "kunde" });
+      expect(await v.getLead(test)).not.toBeNull();
+      expect(await item(test)).toMatchObject({ stage: "test" });
+      const purged = auditCalls().filter((a) => a.action === "vertrieb.leads_purged");
+      expect(purged).toHaveLength(1);
+      expect(Object.keys(purged[0].meta!).sort()).toEqual(["count", "expired", "inactive", "keptCustomers", "months"]);
+      expect(purged[0].meta).toMatchObject({ expired: expect.any(Number), keptCustomers: expect.any(Number) });
+      expect(JSON.stringify(purged[0])).not.toMatch(/Pipe|pipe9|pipe11|@/);
+    });
+
+    it("Löschung AM Löschdatum (deutscher Kalendertag); Altbestand mit alter Einwilligung bleibt bis zur Schonfrist", async () => {
+      const heute = await mk("Pipe Tag Heute", null);
+      const morgen = await mk("Pipe Tag Morgen", null);
+      // Löschdatum: morgen 20:00 bzw. übermorgen 20:00 (Berlin); der Lauf läuft „morgen 08:00“
+      await f.pool.query(
+        `update sales_leads set created_at = now() - interval '7 months',
+           delete_after = (date_trunc('day', (now() + make_interval(days => $2)) at time zone 'Europe/Berlin') + interval '20 hours') at time zone 'Europe/Berlin'
+         where id = $1`,
+        [heute, 1],
+      );
+      await f.pool.query(
+        `update sales_leads set created_at = now() - interval '7 months',
+           delete_after = (date_trunc('day', (now() + make_interval(days => $2)) at time zone 'Europe/Berlin') + interval '20 hours') at time zone 'Europe/Berlin'
+         where id = $1`,
+        [morgen, 2],
+      );
+      const lauf = new Date((await f.pool.query("select delete_after - interval '12 hours' as t from sales_leads where id = $1", [heute])).rows[0].t);
+      // Altbestand mit Einwilligung älter als 24 Monate: Schonfrist (delete_after in 30 Tagen) gilt auch hier
+      const alt = await mk("Pipe Altbestand Einwilligung", `altbestand@pipe13-${sfx}.example`);
+      await f.pool.query("delete from sales_lead_events where lead_id = $1", [alt]);
+      await f.pool.query(
+        "update sales_leads set created_at = now() - interval '30 months', consent_at = now() - interval '30 months', delete_after = now() + interval '30 days', delete_after_legacy = true where id = $1",
+        [alt],
+      );
+      await v.purgeStaleLeads(lauf);
+      expect(await v.getLead(heute)).toBeNull();
+      expect(await v.getLead(morgen)).not.toBeNull();
+      expect(await v.getLead(alt)).not.toBeNull();
+      // nach Ablauf der Schonfrist: gelöscht (Einwilligung älter als 24 Monate ohne Reaktion)
+      await v.purgeStaleLeads(new Date(Date.now() + 31 * day));
+      expect(await v.getLead(alt)).toBeNull();
+    });
+
+    it("Neue Löschfrist beim Bearbeiten: mindestens heute + 7 Tage; Altbestand nicht vorziehen; unveränderte Frist immer speicherbar", async () => {
+      const base = { contactPerson: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, notes: null, email: null, phone: null, source: "manuell", sourceRetrievedAt: "2026-11-01" };
+      const id = await mk("Pipe Frist Neu", null);
+      // vor 6 Monaten und 2 Tagen erhoben, Frist 12 Monate
+      await f.pool.query("update sales_leads set created_at = now() - interval '6 months' - interval '2 days', delete_after = now() - interval '6 months' - interval '2 days' + interval '12 months' where id = $1", [id]);
+      await expect(v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 6 })).rejects.toThrow(/Löschfrist läge vor dem .*„Löschen“/);
+      await v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 12 }); // unverändert
+      await v.updateLead(admin, id, { ...base, name: "Pipe Frist Neu" }, { deleteMonths: 8 });
+      expect((await f.pool.query("select (delete_after - created_at) > interval '7 months' as ok from sales_leads where id = $1", [id])).rows[0].ok).toBe(true);
+      // Altbestand: jede gewählte Frist läge vor der Schonfrist → abgelehnt
+      const alt = await mk("Pipe Frist Alt", null);
+      await f.pool.query("update sales_leads set created_at = now() - interval '13 months', delete_after = now() + interval '30 days', delete_after_legacy = true where id = $1", [alt]);
+      await expect(v.updateLead(admin, alt, { ...base, name: "Pipe Frist Alt" }, { deleteMonths: 12 })).rejects.toThrow(/Altbestand/);
+      await v.updateLead(admin, alt, { ...base, name: "Pipe Frist Alt" }, {});
+      expect((await f.pool.query("select delete_after_legacy from sales_leads where id = $1", [alt])).rows[0].delete_after_legacy).toBe(true);
+    });
+
+    it("Herkunft und Löschfrist beim Anlegen/Bearbeiten; ausgeblendete Telefonnummer bleibt; Einwilligung je Kanal; Erstbrief", async () => {
+      const base = { contactPerson: null, website: null, street: null, zip: null, city: "Pipestadt", distanceKm: 3, notes: null };
+      const t = new Date("2026-11-15T10:00:00Z");
+      await expect(v.createLead(admin, { ...base, name: `Frist ${sfx}`, email: null, phone: null, source: "  ", sourceRetrievedAt: "2026-11-01" }, {}, t)).rejects.toThrow(/Quelle/);
+      await expect(v.createLead(admin, { ...base, name: `Frist ${sfx}`, email: null, phone: null, source: "OpenStreetMap", sourceRetrievedAt: null }, {}, t)).rejects.toThrow(/Abrufdatum/);
+      await expect(v.createLead(admin, { ...base, name: `Frist ${sfx}`, email: null, phone: null, source: "OpenStreetMap", sourceRetrievedAt: "2026-11-16" }, {}, t)).rejects.toThrow(/Zukunft/);
+      await expect(v.createLead(admin, { ...base, name: `Frist ${sfx}`, email: null, phone: null, source: "OpenStreetMap", sourceRetrievedAt: "2026-11-01" }, { deleteMonths: 13 }, t)).rejects.toThrow(/Löschfrist/);
+      const id = await v.createLead(admin, { ...base, name: `Frist ${sfx}`, email: `frist@pipe10-${sfx}.example`, phone: "030 000000", source: "OpenStreetMap", sourceRetrievedAt: "2026-11-01" }, { deleteMonths: 6 }, t);
+      let row = (await v.getLead(id))!.lead;
+      expect(row.deleteAfter.toISOString()).toBe("2027-05-15T10:00:00.000Z");
+      expect(row.sourceRetrievedAt).toBe("2026-11-01");
+      // Bearbeiten mit ausgeblendeter Nummer: leeres Feld behält sie, „löschen“ entfernt sie; Frist neu ab Erhebung
+      await v.updateLead(admin, id, { ...base, name: `Frist ${sfx}`, email: `frist@pipe10-${sfx}.example`, phone: null, source: "OpenStreetMap", sourceRetrievedAt: "2026-11-01" }, { phoneHidden: true, deleteMonths: 12 }, t);
+      row = (await v.getLead(id))!.lead;
+      expect(row.phone).toBe("030 000000");
+      expect(row.deleteAfter.toISOString()).toBe("2027-11-15T10:00:00.000Z");
+      // gespeichertes Abrufdatum darf beim Bearbeiten nicht verschwinden
+      await expect(v.updateLead(admin, id, { ...base, name: `Frist ${sfx}`, email: `frist@pipe10-${sfx}.example`, phone: null, source: "OpenStreetMap", sourceRetrievedAt: null }, { phoneHidden: true }, t)).rejects.toThrow(/Abrufdatum/);
+      await v.updateLead(admin, id, { ...base, name: `Frist ${sfx}`, email: `frist@pipe10-${sfx}.example`, phone: null, source: "OpenStreetMap", sourceRetrievedAt: "2026-11-01" }, { phoneHidden: true, clearPhone: true }, t);
+      expect((await v.getLead(id))!.lead.phone).toBeNull();
+      // Altbestand ohne Abrufdatum: darf beim Bearbeiten leer bleiben (kein erfundenes Datum)
+      await f.pool.query("update sales_leads set source_retrieved_at = null where id = $1", [id]);
+      await v.updateLead(admin, id, { ...base, name: `Frist ${sfx}`, email: `frist@pipe10-${sfx}.example`, phone: null, source: "Impressum", sourceRetrievedAt: null }, {}, t);
+      expect((await v.getLead(id))!.lead).toMatchObject({ source: "Impressum", sourceRetrievedAt: null });
+      // Einwilligung E-Mail: Datum und Erteilungsweg Pflicht, per CHECK nur aus der Liste
+      await expect(v.recordLeadConsent(admin, id, { channel: "email", note: "Formular Messe", kind: "fax" as never, date: "2026-11-10" }, t)).rejects.toThrow(/Art/);
+      await expect(v.recordLeadConsent(admin, id, { channel: "email", note: "Formular Messe", kind: "persoenlich", date: "2026-11-20" }, t)).rejects.toThrow(/Zukunft/);
+      await expect(v.recordLeadConsent(admin, id, { channel: "fax" as never, note: "Formular Messe", kind: "persoenlich", date: "2026-11-10" }, t)).rejects.toThrow(/Kanal/);
+      expect(await v.recordLeadConsent(admin, id, { channel: "email", note: "Formular Messe", kind: "persoenlich", date: "2026-11-10" }, t)).toBe(true);
+      row = (await v.getLead(id))!.lead;
+      expect(row).toMatchObject({ consentEmailKind: "persoenlich", consentEmailNote: "Formular Messe", consentPhoneAt: null });
+      expect(row.consentEmailAt!.toISOString()).toBe("2026-11-10T12:00:00.000Z");
+      await expect(f.pool.query("update sales_leads set consent_email_kind = 'fax' where id = $1", [id])).rejects.toThrow(/sales_leads_consent_email_kind_check/);
+      // Telefon getrennt: eigene Einwilligung, CHECK verlangt Erteilungsweg und Nachweis
+      await expect(f.pool.query("update sales_leads set consent_phone_at = now() where id = $1", [id])).rejects.toThrow(/sales_leads_consent_phone_check/);
+      expect(await v.recordLeadConsent(admin, id, { channel: "phone", note: "Rückrufbitte per Brief", kind: "schriftlich", date: "2026-11-12" }, t)).toBe(true);
+      // Widerruf nur E-Mail: Nachweis bleibt, Widerrufsdatum gesetzt, Telefon unberührt
+      expect(await v.removeLeadConsent(admin, [id], t, "email")).toBe(1);
+      row = (await v.getLead(id))!.lead;
+      expect(row).toMatchObject({ consentEmailNote: "Formular Messe", consentPhoneNote: "Rückrufbitte per Brief", consentPhoneRevokedAt: null });
+      expect(row.consentEmailRevokedAt!.toISOString()).toBe(t.toISOString());
+      // erneute Einwilligung hebt den Widerruf auf
+      expect(await v.recordLeadConsent(admin, id, { channel: "email", note: "E-Mail vom 14.11.2026", kind: "email", date: "2026-11-14" }, t)).toBe(true);
+      expect((await v.getLead(id))!.lead.consentEmailRevokedAt).toBeNull();
+      // alle Kanäle widerrufen (Sammelaktion)
+      expect(await v.removeLeadConsent(admin, [id], t)).toBe(1);
+      row = (await v.getLead(id))!.lead;
+      expect(row.consentEmailRevokedAt).not.toBeNull();
+      expect(row.consentPhoneRevokedAt).not.toBeNull();
+      // Erstbrief mit Datenschutzhinweis vermerken (nicht in der Zukunft), Verlauf „letter“
+      await expect(v.recordArt14Notice(admin, id, "2026-11-20", t)).rejects.toThrow(/Zukunft/);
+      expect(await v.recordArt14Notice(admin, id, "2026-11-14", t)).toBe(true);
+      row = (await v.getLead(id))!.lead;
+      expect(row.art14NoticeAt).toBe("2026-11-14");
+      expect((await pl.leadTimeline(row)).some((e) => e.kind === "letter")).toBe(true);
+    });
+
     it("Abmeldung sperrt auch Website und Name+PLZ; persönlicher Code anonymisiert; Kunde mit gesperrter Adresse bearbeitbar", async () => {
-      const id = await v.createLead(admin, { name: `Pipe Weg ${sfx}`, contactPerson: null, email: `weg@pipe7-${sfx}.example`, phone: null, website: `https://www.pipe7-${sfx}.example/`, street: null, zip: "12345", city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null });
+      const id = await v.createLead(admin, { name: `Pipe Weg ${sfx}`, contactPerson: null, email: `weg@pipe7-${sfx}.example`, phone: null, website: `https://www.pipe7-${sfx}.example/`, street: null, zip: "12345", city: "Pipestadt", distanceKm: 3, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null });
       await promo.createPromoCode(admin, { code: `TPIPE${sfx.toUpperCase()}-W`, label: `Pipe Weg ${sfx}`, trialDays: 90, grantPlan: null, maxRedemptions: 1, validUntil: null, campaignId: null, leadId: id });
       expect(await v.setLeadStatus(admin, id, "abgemeldet")).toBe("deleted");
       expect((await f.pool.query("select label, lead_id from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-W`])).rows[0]).toEqual({ label: "(gelöscht)", lead_id: null });
@@ -524,7 +692,7 @@ const day = 86_400_000;
       expect(pre.newCount).toBe(0);
       expect(pre.decisions.map((d) => (d.action === "übersprungen" ? d.reason : d.action))).toEqual([expect.stringMatching(/abgemeldet/), expect.stringMatching(/abgemeldet/)]);
       // Anlegen von Hand: Website bzw. Name+PLZ der abgemeldeten Praxis abgelehnt
-      const base = { contactPerson: null, phone: null, street: null, city: "Pipestadt", distanceKm: 3, source: "manuell", notes: null };
+      const base = { contactPerson: null, phone: null, street: null, city: "Pipestadt", distanceKm: 3, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null };
       await expect(v.createLead(admin, { ...base, name: `Neu ${sfx}`, email: `neu1@x-${sfx}.example`, website: `https://pipe7-${sfx}.example`, zip: "99999" })).rejects.toThrow(/Website/);
       await expect(v.createLead(admin, { ...base, name: `Pipe Weg ${sfx}`, email: `neu2@x-${sfx}.example`, website: null, zip: "12345" })).rejects.toThrow(/Name und PLZ/);
       const okId = await v.createLead(admin, { ...base, name: `Neu ${sfx}`, email: `neu3@x-${sfx}.example`, website: null, zip: "99999" });
@@ -534,10 +702,10 @@ const day = 86_400_000;
       await v.deleteLead(admin, okId);
       expect((await f.pool.query("select label from promo_codes where code = $1", [`TPIPE${sfx.toUpperCase()}-D`])).rows[0].label).toBe("(gelöscht)");
       // Kunde mit gesperrter Adresse (Widerspruch) bleibt bearbeitbar, solange die Adresse gleich bleibt
-      const k = await v.createLead(admin, { name: `Pipe Kunde2 ${sfx}`, contactPerson: null, email: `k2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null });
+      const k = await v.createLead(admin, { name: `Pipe Kunde2 ${sfx}`, contactPerson: null, email: `k2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null });
       await v.setLeadStatus(admin, k, "kunde");
       await v.addSuppression(admin, `k2@pipe7-${sfx}.example`);
-      await expect(v.updateLead(admin, k, { name: `Pipe Kunde2 ${sfx} GmbH`, contactPerson: null, email: `K2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", notes: null })).resolves.toBeUndefined();
+      await expect(v.updateLead(admin, k, { name: `Pipe Kunde2 ${sfx} GmbH`, contactPerson: null, email: `K2@pipe7-${sfx}.example`, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "manuell", sourceRetrievedAt: "2026-11-01", notes: null })).resolves.toBeUndefined();
     });
 
     it("Kanarienwert: anderer Sperrlisten-Schlüssel sperrt Versand, Import und Praxissuche (fail-closed)", async () => {
@@ -558,8 +726,8 @@ const day = 86_400_000;
       try {
         await expect(v.sendNextMails(admin, [id], { port: new MockMailAdapter(), now: () => later, env })).rejects.toThrow(/Sperrlisten-Schlüssel passt nicht/);
         expect((await v.previewSend([id], { now: later, env })).problems).toEqual(expect.arrayContaining([expect.stringMatching(/Sperrlisten-Schlüssel/)]));
-        expect(await v.importLeads(admin, "name,email\nX,x@kanarie.example\n", "Test")).toMatchObject({ imported: 0, error: expect.stringMatching(/Sperrlisten-Schlüssel/) });
-        await expect(v.createLead(admin, { name: "Kanarie neu", contactPerson: null, email: null, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: null, notes: null })).rejects.toThrow(/Sperrlisten-Schlüssel/);
+        expect(await v.importLeads(admin, "name,email\nX,x@kanarie.example\n", "Test", "2026-11-01")).toMatchObject({ imported: 0, error: expect.stringMatching(/Sperrlisten-Schlüssel/) });
+        await expect(v.createLead(admin, { name: "Kanarie neu", contactPerson: null, email: null, phone: null, website: null, street: null, zip: null, city: null, distanceKm: null, source: "Testquelle", sourceRetrievedAt: "2026-11-01", notes: null })).rejects.toThrow(/Sperrlisten-Schlüssel/);
         const ls = await import("./lead-search");
         await expect(ls.runLeadSearch({ trigger: "manual", adminUserId: admin })).rejects.toThrow(/Sperrlisten-Schlüssel/);
       } finally {

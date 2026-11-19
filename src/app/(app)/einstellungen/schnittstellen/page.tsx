@@ -1,17 +1,18 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@/components/ui";
 import { withOrg } from "@/db";
-import { integrationConnections } from "@/db/schema";
+import { integrationConnections, memberships, users } from "@/db/schema";
+import { AI_APPROVAL_NO_SUPPORT, AI_APPROVAL_OWNER_ONLY, AI_APPROVAL_TEXT, aiApprovalInfo, aiApprovalProblem, isAiProvider } from "@/integrations/ai-approval";
 import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
 import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
 import { calendarToken } from "@/lib/calendar-token";
 import { dateTimeDe } from "@/lib/format";
 import { decryptSecret } from "@/lib/secrets";
-import { recentSyncLog } from "@/server/integrations";
+import { hasOwnApiKey, recentSyncLog } from "@/server/integrations";
 import { webhookStatus } from "@/server/webhooks";
 import { saveIntegrationAction, testIntegrationAction } from "./actions";
 import { MailCard } from "./mail-card";
@@ -29,6 +30,17 @@ export default async function IntegrationsSettings() {
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost"}`;
   const mockEnv = process.env.INTEGRATIONS_MODE === "mock";
+  // Wer hat die KI-Bestätigung abgegeben? (nur Mitglieder dieser Praxis)
+  const approverIds = [...new Set(rows.flatMap((r) => (isAiProvider(r.provider) ? [aiApprovalInfo(r.config as Record<string, unknown>, hasOwnApiKey(r.secretEnc, org))?.by] : [])).filter((x): x is string => !!x))];
+  const approvers = approverIds.length
+    ? await withOrg(org, (tx) =>
+        tx
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .innerJoin(memberships, and(eq(memberships.userId, users.id), eq(memberships.organizationId, org)))
+          .where(inArray(users.id, approverIds)),
+      )
+    : [];
 
   let feedUrl: string | null = null;
   try {
@@ -117,12 +129,34 @@ export default async function IntegrationsSettings() {
                   </Field>
                 ))}
               </div>
-              {info.provider === "llm" || info.provider === "transcription" ? (
-                <Checkbox
-                  name="dataProcessingApproved"
-                  defaultChecked={cfg.dataProcessingApproved === true}
-                  label="Ich bestätige: Anbieter verarbeitet in der EU, AVV liegt vor, Zero Data Retention und kein Training auf unseren Daten."
-                />
+              {isAiProvider(info.provider) ? (
+                (() => {
+                  const ownKey = !!secretValues.apiKey;
+                  const approval = aiApprovalInfo(cfg, ownKey);
+                  const by = approval ? approvers.find((a) => a.id === approval.by)?.name : null;
+                  const problem = aiApprovalProblem(cfg, ownKey);
+                  const mayApprove = auth.role === "owner" && !auth.support;
+                  return (
+                    <div className="rounded-xl border border-border bg-surface-2 px-4 py-2">
+                      {/* Nie vorbelegt: Ankreuzen = neue Bestätigung (für das eingetragene Ziel). Eine gültige Bestätigung bleibt ohne Häkchen bestehen, solange das Ziel gleich bleibt. */}
+                      <Checkbox
+                        name="dataProcessingApproved"
+                        disabled={!mayApprove}
+                        label={<><strong>Pflicht für „verbunden (echt)“:</strong> {AI_APPROVAL_TEXT}</>}
+                      />
+                      <p className="pb-2 text-[13px] text-muted">
+                        {approval
+                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""} für ${approval.baseUrl ? new URL(approval.baseUrl).host : "den Plattform-Anbieter"}${approval.model ? ` (Modell ${approval.model})` : ""}${approval.ownKey ? " mit eigenem API-Schlüssel" : ""}. Häkchen nur setzen, um neu zu bestätigen; bei geänderter Basis-URL, geändertem Modell oder neuem bzw. gelöschtem API-Schlüssel ist eine neue Bestätigung nötig.`
+                          : problem === "version"
+                            ? "Die frühere Bestätigung gilt nicht mehr (neuer Wortlaut) – bitte erneut bestätigen, sonst bleibt der Anbieter gesperrt."
+                            : problem === "target"
+                              ? "Die frühere Bestätigung galt für ein anderes Ziel (Basis-URL, Modell oder API-Schlüssel) – bitte für das eingetragene Ziel neu bestätigen."
+                              : "Noch nicht bestätigt – ohne Häkchen lässt sich der echte Anbieter nicht einschalten."}
+                        {!mayApprove ? ` ${auth.support ? AI_APPROVAL_NO_SUPPORT : AI_APPROVAL_OWNER_ONLY}` : ""}
+                      </p>
+                    </div>
+                  );
+                })()
               ) : null}
               {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) && secretValues.webhookToken ? (
                 <Checkbox name="rotateWebhookToken" label="Webhook-Token neu erzeugen (alte Adresse wird ungültig)" />

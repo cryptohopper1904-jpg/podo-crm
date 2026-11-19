@@ -9,6 +9,8 @@ import { OnboardingCard } from "@/components/onboarding-card";
 import { followUpsDue } from "@/server/follow-ups";
 import { Badge, Card, CardTitle, Empty, LinkButton, Stat, pageTitleBox, pageTitleCls } from "@/components/ui";
 import { withOrg } from "@/db";
+import { AI_APPROVAL_PAUSED_HINT, aiProcessingApproved, envAiApproved, isAiProvider } from "@/integrations/ai-approval";
+import { hasOwnApiKey } from "@/server/integrations";
 import { integrationConnections, invoices, messages, payments, tasks, treatmentRecords } from "@/db/schema";
 import { HiddenAreaNotice } from "@/components/hidden-area-notice";
 import { requireAuth } from "@/lib/auth/session";
@@ -84,6 +86,12 @@ export default async function TodayPage(props: PageProps<"/heute">) {
   // Inhaber:innen: Hinweis, wenn das KI-Telefon-Kontingent (fast) erschöpft ist
   const voiceQuota =
     auth.role === "owner" && stats.integ.some((i) => i.provider === "voice_agent" && i.status === "connected") ? await voiceQuotaFor(auth) : null;
+  // Inhaber:innen: KI-Anbieter verbunden, aber tatsächlich gesperrt (dieselbe Logik wie processingApproved: keine gültige
+  // Bestätigung und keine env-Freigabe für den Plattform-Anbieter ohne Praxisziel) → KI pausiert
+  const aiPaused =
+    auth.role === "owner" &&
+    !auth.support &&
+    stats.integ.some((i) => isAiProvider(i.provider) && i.status === "connected" && !aiProcessingApproved({ ...i, config: i.config as Record<string, unknown> }, envAiApproved(i.provider), hasOwnApiKey(i.secretEnc, org)));
   // Jahresende: ab 1. Dezember (und im Januar fürs Vorjahr) an fehlende Sammelrechnungen erinnern
   const reminderYear = auth.can("invoices.write") ? collectiveReminderYear(today) : null;
   const openCollective = reminderYear ? await collectiveOverview(auth, reminderYear) : [];
@@ -119,6 +127,12 @@ export default async function TodayPage(props: PageProps<"/heute">) {
       {isGkvArea(hiddenArea) && !feature(auth.organization, hiddenArea) ? <HiddenAreaNotice area={hiddenArea} settingsLink={auth.can("settings.manage")} /> : null}
       <div className="max-md:order-5"><OnboardingCard auth={auth} /></div>
       {voiceQuota?.entitlement.enabled && (voiceQuota.usage.exceeded || voiceQuota.usage.warn) ? <div className="mb-6"><VoiceQuotaBanner usage={voiceQuota.usage} /></div> : null}
+      {aiPaused ? (
+        <p role="alert" className="mb-6 rounded-xl border-2 border-accent bg-accent-soft px-4 py-3 text-sm font-semibold text-accent-soft-text">
+          {AI_APPROVAL_PAUSED_HINT}{" "}
+          <Link href="/einstellungen/schnittstellen" className="touch-target whitespace-nowrap underline">Zu den Schnittstellen</Link>
+        </p>
+      ) : null}
       {avvPrevious !== undefined ? <div className="mb-6"><AvvBanner previous={avvPrevious} /></div> : null}
       {imprintMissing ? <div className="mb-6"><BookingImprintNotice missing={imprintMissing} /></div> : null}
 

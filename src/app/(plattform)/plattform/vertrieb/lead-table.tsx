@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Empty, FormError, FormSuccess, Table } from "@/components/ui";
 import { MAX_PER_CLICK, STATUS_LABEL, STOP_STATUSES, isLeadStatus } from "@/lib/vertrieb/constants";
+import { NO_CONSENT_CONTACT_HINT } from "@/lib/vertrieb/dsgvo";
 import { BULK_STATUSES, type Stage } from "@/lib/vertrieb/pipeline";
 import type { SendPreview } from "@/server/vertrieb";
 import { bulkAction, previewSendAction, sendAction } from "./actions";
@@ -26,8 +27,14 @@ export type LeadRow = {
   campaignName?: string | null;
   /** registrierte Praxis (zugeordnet über Code/E-Mail/Domain) */
   orgName?: string | null;
-  /** dokumentierte Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) – ohne sie wird nicht gesendet */
+  /** gültige E-Mail-Einwilligung (§ 7 Abs. 2 Nr. 2 UWG) – ohne sie wird nicht gesendet */
   consent?: boolean;
+  /** gültige Telefon-Einwilligung (§ 7 Abs. 2 Nr. 1 UWG) */
+  consentPhone?: boolean;
+  /** Erstbrief mit Datenschutzhinweis überfällig (Art. 14 Abs. 3 DSGVO) – Frist als TT.MM.JJJJ */
+  art14OverdueSince?: string | null;
+  /** Herkunft (Quelle · Abrufdatum), z. B. „OpenStreetMap · abgerufen 12.11.2026“ */
+  origin?: string;
 };
 
 const stageTone = (s?: Stage) => (s === "kunde" ? "primary" : s === "test" ? "info" : s === "geantwortet" ? "warn" : s === "aus" ? "accent" : "neutral");
@@ -128,7 +135,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
               <option value="kampagne:">aus Kampagne entfernen</option>
             </optgroup>
             <optgroup label="Einwilligung (dokumentieren nur einzeln im Eintrag)">
-              <option value="einwilligung_entfernen">Einwilligung entfernen</option>
+              <option value="einwilligung_entfernen">Einwilligung widerrufen (E-Mail und Telefon)</option>
             </optgroup>
             <option value="abmelden">Abmelden (Sperrliste, Einträge löschen)</option>
           </select>
@@ -137,6 +144,17 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
       </div>
       <FormError message={error} />
       <FormSuccess message={ok} />
+      {leads.some((l) => !l.consent || !l.consentPhone) ? (
+        <p role="note" className="rounded-xl border-2 border-accent bg-accent-soft px-4 py-3 text-sm font-semibold text-accent-soft-text">
+          {NO_CONSENT_CONTACT_HINT}{" "}
+          <span className="font-normal">Betrifft alle Einträge mit „E-Mail: nein“ bzw. „Telefon: nein“; ohne Telefon-Einwilligung sind Telefonnummern ausgeblendet (außer bei Bestandskunden).</span>
+        </p>
+      ) : null}
+      {leads.some((l) => l.art14OverdueSince) ? (
+        <p role="note" className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn-soft-text">
+          <strong>Erstbrief überfällig:</strong> Bei markierten Einträgen ist die Frist für den Datenschutzhinweis (Art. 14 Abs. 3 DSGVO: spätestens einen Monat nach dem Abruf) abgelaufen, ohne dass ein Versand vermerkt ist. Bitte im Eintrag entscheiden: Brief nachholen und vermerken oder Eintrag löschen.
+        </p>
+      ) : null}
 
       {preview ? (
         <section aria-label="Vorschau" className="rounded-[var(--radius-card)] border-2 border-primary bg-surface p-5">
@@ -179,7 +197,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
             <th>
               <input
                 type="checkbox"
-                aria-label="Alle sendbaren auswählen (mit Einwilligung)"
+                aria-label="Alle sendbaren auswählen (mit E-Mail-Einwilligung)"
                 className="size-5 accent-[var(--primary)]"
                 checked={selectable.length > 0 && selectable.every((id) => selected.has(id))}
                 onChange={(e) => setSelected(e.target.checked ? new Set(selectable) : new Set())}
@@ -189,6 +207,7 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
             <th>Praxis</th>
             <th>E-Mail</th>
             <th>Ort</th>
+            <th>Herkunft</th>
             <th>km</th>
             <th>Stufe</th>
             <th>Status</th>
@@ -207,9 +226,11 @@ export function LeadTable({ leads, campaigns = [] }: { leads: LeadRow[]; campaig
                 {l.contactPerson ? <p className="text-xs text-muted">{l.contactPerson}</p> : null}
                 {l.campaignName ? <p className="text-xs text-muted">Kampagne: {l.campaignName}</p> : null}
                 {l.orgName ? <p className="text-xs text-muted">registriert als „{l.orgName}“</p> : null}
+                {l.art14OverdueSince ? <p><Badge tone="warn">Erstbrief überfällig (Frist {l.art14OverdueSince})</Badge></p> : null}
               </td>
-              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}{l.email && l.consent === false ? <> <Badge tone="neutral">ohne Einwilligung</Badge></> : null}{l.consent ? <> <Badge tone="primary">Einwilligung</Badge></> : null}</td>
+              <td className="break-all text-sm">{l.email ?? <span className="text-muted">–</span>}{l.suppressed ? <> <Badge tone="accent">gesperrt</Badge></> : null}{l.named && l.email ? <> <Badge tone="warn">mit Namensbezug</Badge></> : null}{" "}<Badge tone={l.consent ? "primary" : "accent"}>E-Mail: {l.consent ? "ja" : "nein"}</Badge>{" "}<Badge tone={l.consentPhone ? "primary" : "accent"}>Telefon: {l.consentPhone ? "ja" : "nein"}</Badge></td>
               <td className="text-sm">{l.city ?? "–"}</td>
+              <td className="text-xs text-muted">{l.origin ?? "–"}</td>
               <td className="tabular-nums text-sm">{l.distanceKm ?? "–"}</td>
               <td>{l.stage ? <Badge tone={stageTone(l.stage)}>{l.stageLabel}</Badge> : "–"}</td>
               <td><Badge tone={tone(l.status)}>{isLeadStatus(l.status) ? STATUS_LABEL[l.status] : l.status}</Badge></td>

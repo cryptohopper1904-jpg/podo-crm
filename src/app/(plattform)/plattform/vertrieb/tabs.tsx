@@ -10,6 +10,7 @@ const TABS = [
   { href: "/plattform/vertrieb/aktionscodes", label: "Aktionscodes" },
   { href: "/plattform/vertrieb/import", label: "CSV-Import" },
   { href: "/plattform/vertrieb/vorlagen", label: "Vorlagen" },
+  { href: "/plattform/vertrieb/datenschutzhinweis", label: "Datenschutzhinweis" },
   { href: "/plattform/vertrieb/einstellungen", label: "Einstellungen & Sperrliste" },
 ];
 

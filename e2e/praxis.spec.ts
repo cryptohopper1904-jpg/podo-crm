@@ -468,6 +468,45 @@ test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Date
   }
 });
 
+test("Schnittstellen: externer KI-Anbieter nur mit Datenschutz-Bestätigung der Inhaber:in; ungültige Bestätigung → Hinweis auf „Heute“", async () => {
+  const llmForm = () => page.locator('form:has(input[name="provider"][value="llm"]):has(select[name="status"])');
+  const box = () => llmForm().getByRole("checkbox", { name: /zur Verschwiegenheit nach § 203 Abs\. 4 StGB verpflichtet/ });
+  await page.goto("/einstellungen/schnittstellen");
+  // Häkchen ist nie vorbelegt
+  await expect(box()).not.toBeChecked();
+  await llmForm().locator('select[name="status"]').selectOption("connected");
+  // ohne eigene Basis-URL (Plattform-Anbieter): nur das Modell als Ziel, damit der Test keine DNS-Auflösung braucht
+  await llmForm().locator('input[name="config_baseUrl"]').fill("");
+  await llmForm().locator('input[name="config_model"]').fill("modell-a");
+  await llmForm().getByRole("button", { name: "Speichern" }).click();
+  await expect(llmForm().getByRole("alert")).toContainText("Datenschutz-Bestätigung");
+  await box().check();
+  await llmForm().getByRole("button", { name: "Speichern" }).click();
+  await expect(llmForm().getByRole("status")).toContainText("KI-Sprachmodell gespeichert.");
+  await page.reload();
+  await expect(llmForm().getByText(/^Bestätigt am \d{2}\.\d{2}\.\d{4}.* für den Plattform-Anbieter \(Modell modell-a\)/)).toBeVisible();
+  await expect(box()).not.toBeChecked();
+  // anderes Modell ohne neue Bestätigung → abgelehnt
+  await llmForm().locator('input[name="config_model"]').fill("modell-b");
+  await llmForm().getByRole("button", { name: "Speichern" }).click();
+  await expect(llmForm().getByRole("alert")).toContainText("Datenschutz-Bestätigung");
+  // Bestätigung mit altem Wortlaut (z. B. vor dem Update) → KI pausiert, Hinweis auf „Heute“
+  await withDemoOrg((q, org) =>
+    q("update integration_connections set config = jsonb_set(config, '{dataProcessingApproval,version}', '\"ki-avv-eu-kein-training-v1\"') where organization_id = $1 and provider = 'llm'", [org]),
+  );
+  await page.goto("/heute");
+  await expect(page.getByText("KI-Funktionen pausiert: Bitte unter Einstellungen → Schnittstellen die Datenschutz-Bestätigung erneuern.")).toBeVisible();
+  // zurück auf „aus“ (ohne Häkchen erlaubt, Bestätigung wird entfernt) – danach kein Hinweis mehr
+  await page.goto("/einstellungen/schnittstellen");
+  await llmForm().locator('select[name="status"]').selectOption("disconnected");
+  await llmForm().locator('input[name="config_baseUrl"]').fill("");
+  await llmForm().locator('input[name="config_model"]').fill("");
+  await llmForm().getByRole("button", { name: "Speichern" }).click();
+  await expect(llmForm().getByRole("status")).toContainText("KI-Sprachmodell gespeichert.");
+  await page.goto("/heute");
+  await expect(page.getByText(/KI-Funktionen pausiert/)).toHaveCount(0);
+});
+
 test("Abmelden", async () => {
   await page.goto("/heute");
   await page.getByRole("button", { name: "Abmelden" }).click();

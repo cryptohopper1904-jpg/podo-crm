@@ -491,6 +491,13 @@
       "when": 1795074519152,
       "tag": "0069_org_stammdaten_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1795075059152,
+      "tag": "0070_vertrieb_dsgvo",
+      "breakpoints": true
     }
   ]
 }

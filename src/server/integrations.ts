@@ -2,7 +2,9 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { integrationConnections, syncLog } from "@/db/schema";
+import { aiProcessingApproved, envAiApproved } from "@/integrations/ai-approval";
 import { getAdapter } from "@/integrations/registry";
+import { decryptSecret } from "@/lib/secrets";
 import type { IntegrationConnection, PortByProvider, ProviderId, SupportedProvider } from "@/integrations/types";
 
 /** Lädt die Verbindung eines Mandanten (Geheimnis bleibt verschlüsselt; die Registry entschlüsselt mit AAD = Mandant). */
@@ -52,12 +54,26 @@ export async function recentSyncLog(organizationId: string, limit = 20) {
 }
 
 /**
- * Freigabe für Gesundheitsdaten (EU-Verarbeitung + AVV + Zero Data Retention), je Mandant in der
- * Verbindungs-Config oder global per env (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true).
+ * Freigabe für Gesundheitsdaten: je Mandant als Bestätigung der Inhaber:in (Zeitpunkt, Benutzer, Ziel) in der
+ * Verbindungs-Config (src/integrations/ai-approval.ts). Die env-Freigabe LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true
+ * ist eine Erklärung des Betreibers und gilt NUR für den env-konfigurierten Plattform-Anbieter – nicht, wenn die Praxis
+ * eine eigene Basis-URL oder einen eigenen API-Schlüssel eingetragen hat (Verbindung nicht „aus“).
  */
 export async function processingApproved(organizationId: string, provider: "llm" | "transcription"): Promise<boolean> {
-  const env = provider === "llm" ? process.env.LLM_DATA_PROCESSING_APPROVED : process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED;
-  if (env === "true") return true;
   const conn = await loadConnection(organizationId, provider);
-  return conn?.config?.dataProcessingApproved === true;
+  return aiProcessingApproved(conn, envAiApproved(provider), hasOwnApiKey(conn?.secretEnc, organizationId));
+}
+
+/**
+ * Liegt im verschlüsselten Secret einer Verbindung ein eigener API-Schlüssel der Praxis? Nicht entschlüsselbar → true
+ * (vorsichtig: dann gilt die env-Freigabe nicht, eine eigene Bestätigung ist nötig).
+ */
+export function hasOwnApiKey(secretEnc: string | null | undefined, organizationId: string): boolean {
+  if (!secretEnc) return false;
+  try {
+    const s = JSON.parse(decryptSecret(secretEnc, organizationId)) as Record<string, unknown>;
+    return typeof s.apiKey === "string" && s.apiKey.trim() !== "";
+  } catch {
+    return true;
+  }
 }

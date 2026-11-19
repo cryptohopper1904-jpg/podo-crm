@@ -33,10 +33,22 @@ describe("parseLeadCsv", () => {
           city: "Musterstadt",
           distanceKm: 3.4,
           source: "OpenStreetMap",
+          sourceRetrievedAt: null,
           notes: "Notiz",
         },
       },
     ]);
+  });
+
+  it("Abrufdatum (retrieved_at/abgerufen_am): ISO oder deutsch, nicht in der Zukunft", () => {
+    const now = new Date("2026-11-19T10:00:00Z");
+    const csv = "name;abgerufen_am\nA;2026-11-01\nB;03.11.2026\nC;2026-12-01\nD;31.02.2026\nE;\n";
+    const { rows } = parseLeadCsv(csv, now);
+    expect(rows[0]).toMatchObject({ lead: { name: "A", sourceRetrievedAt: "2026-11-01" } });
+    expect(rows[1]).toMatchObject({ lead: { name: "B", sourceRetrievedAt: "2026-11-03" } });
+    expect(rows[2]).toMatchObject({ line: 4, error: expect.stringMatching(/retrieved_at/) });
+    expect(rows[3]).toMatchObject({ line: 5, error: expect.stringMatching(/retrieved_at/) });
+    expect(rows[4]).toMatchObject({ lead: { name: "E", sourceRetrievedAt: null } });
   });
 
   it("Semikolon-CSV, deutsche Spaltennamen, Fehlerzeilen mit Zeilennummer", () => {

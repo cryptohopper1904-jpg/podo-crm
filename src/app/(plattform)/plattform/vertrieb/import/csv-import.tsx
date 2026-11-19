@@ -7,13 +7,14 @@ import { importAction, previewImportAction } from "../actions";
 
 const MAX_BYTES = 1_000_000;
 
-export function CsvImport() {
+export function CsvImport({ today }: { today: string }) {
   const [csv, setCsv] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const [source, setSource] = useState("");
+  const [retrievedAt, setRetrievedAt] = useState(today);
 
   const onFile = async (file: File | undefined) => {
     setError(null);
@@ -37,7 +38,7 @@ export function CsvImport() {
   const doImport = () =>
     start(async () => {
       if (!csv) return;
-      const r = await importAction(csv, source);
+      const r = await importAction(csv, source, retrievedAt);
       if (r.error) setError(r.error);
       else {
         setOk(`${r.imported} Praxis/Praxen importiert, ${r.skipped} übersprungen.`);
@@ -61,10 +62,22 @@ export function CsvImport() {
             required
             minLength={3}
             maxLength={120}
-            placeholder="z. B. Messe XY 2026 (Kontaktformulare), eigene Recherche Praxis-Websites"
+            placeholder="z. B. OpenStreetMap, Impressum der Praxis-Websites, Messe XY 2026 (Kontaktformulare)"
             className="h-10 rounded-xl border border-border bg-surface px-3 text-sm"
           />
           <span className="text-xs font-normal text-muted">Pflicht (Art. 14 DSGVO): wird an jedem importierten Eintrag gespeichert. Einwilligungen in E-Mails werden nicht importiert, sondern je Eintrag dokumentiert.</span>
+        </label>
+        <label className="mt-4 flex flex-col gap-2 text-sm font-medium">
+          Abgerufen am *
+          <input
+            type="date"
+            value={retrievedAt}
+            onChange={(e) => setRetrievedAt(e.target.value)}
+            required
+            max={today}
+            className="h-10 w-48 rounded-xl border border-border bg-surface px-3 text-sm"
+          />
+          <span className="text-xs font-normal text-muted">Pflicht: Datum, an dem die Daten aus der Quelle übernommen wurden. Eine Spalte <code>retrieved_at</code> in der Datei hat Vorrang. Löschfrist der importierten Einträge: 12 Monate ab Import (je Eintrag änderbar).</span>
         </label>
       </Card>
       <FormError message={error} />
@@ -72,7 +85,7 @@ export function CsvImport() {
       {preview ? (
         <>
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={doImport} disabled={pending || preview.newCount === 0 || source.trim().length < 3}>{pending ? "…" : `${preview.newCount} importieren`}</Button>
+            <Button onClick={doImport} disabled={pending || preview.newCount === 0 || source.trim().length < 3 || !retrievedAt}>{pending ? "…" : `${preview.newCount} importieren`}</Button>
             <span className="text-sm text-muted">{preview.skippedCount} werden übersprungen.</span>
           </div>
           <Table>

@@ -26,8 +26,12 @@ export class WhisperCompatibleTranscription implements TranscriptionPort {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchFn: FetchLike;
+  /** Ziel kommt aus env (Plattform-Anbieter) – nur dann gilt die Betreiber-Freigabe TRANSCRIPTION_DATA_PROCESSING_APPROVED */
+  private readonly envTarget: boolean;
 
   constructor(private readonly opts: TranscriptionOptions = {}) {
+    // eigener API-Schlüssel der Praxis zählt ebenfalls als Praxisziel
+    this.envTarget = !opts.baseUrl && !opts.apiKey;
     const baseUrl = opts.baseUrl ?? process.env.TRANSCRIPTION_BASE_URL;
     const apiKey = opts.apiKey ?? process.env.TRANSCRIPTION_API_KEY;
     const model = opts.model ?? process.env.TRANSCRIPTION_MODEL ?? "whisper-1";
@@ -41,8 +45,12 @@ export class WhisperCompatibleTranscription implements TranscriptionPort {
   }
 
   async transcribe(audio: Uint8Array, o: { mime?: string; language?: string; filename?: string } = {}) {
-    if (!this.opts.dataProcessingApproved && process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED !== "true") {
-      throw new IntegrationNotConfiguredError("transcription", "Anbieter nicht freigegeben (EU, AVV, Zero Data Retention bestätigen)");
+    const envApproved = this.envTarget && process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED === "true";
+    if (!this.opts.dataProcessingApproved && !envApproved) {
+      throw new IntegrationNotConfiguredError(
+        "transcription",
+        "Anbieter nicht freigegeben (unter Einstellungen → Schnittstellen die Datenschutz-Bestätigung abgeben: AVV mit § 203-Verpflichtung, EU/EWR, Zero Data Retention und kein Training, Patienteninformation)",
+      );
     }
     const form = new FormData();
     form.append("file", new Blob([audio as BlobPart], { type: o.mime ?? "audio/webm" }), o.filename ?? "bericht.webm");

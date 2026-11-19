@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ transcript: MOCK_TRANSCRIPT, fields: {}, mock: true, aiAssisted: false }, { headers: { "Cache-Control": "no-store" } });
     }
     if (!(await processingApproved(org, "transcription")) || !(await processingApproved(org, "llm"))) {
-      return fail(503, "KI-Anbieter ist nicht für Gesundheitsdaten freigegeben (EU, AVV, Zero Data Retention in den Schnittstellen bestätigen).");
+      return fail(503, "KI-Anbieter ist nicht für Gesundheitsdaten freigegeben: Die Inhaberin bzw. der Inhaber muss unter Einstellungen → Schnittstellen die Datenschutz-Bestätigung abgeben.");
     }
     const bytes = new Uint8Array(await audio.arrayBuffer());
     const { text: transcript } = await transcriber.transcribe(bytes, { mime: audio.type || "audio/webm", language: "de" });
