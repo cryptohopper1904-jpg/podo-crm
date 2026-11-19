@@ -6,7 +6,8 @@
 #   - automatische Updates: systemd-Timer podo-update.timer (täglich 03:30 Europe/Berlin + 10 min nach dem Booten,
 #     deploy/update.sh --auto gegen main, Protokoll /var/log/podo-update.log)
 #
-# Konfiguration: die Werte unten im Block „KONFIGURATION“ vor dem Einfügen als user_data ausfüllen
+# Konfiguration: die Werte unten im Block „KONFIGURATION“ in einer KOPIE außerhalb des Repositorys ausfüllen
+# (nie die ausgefüllte Datei committen – sie enthält dann Passwörter und ggf. den Deploy-Key)
 # (oder als Umgebungsvariablen setzen). Leere BOOTSTRAP_*-Werte = nichts anlegen.
 # Ohne BOOTSTRAP_PRACTICE_JSON: Testbetrieb mit Demo-Praxis (erfundene Daten, keine echten Patientendaten).
 # Passwörter landen nur in /opt/podo-crm/deploy/.env (chmod 600) – nach dem ersten Login dort entfernen.
@@ -16,8 +17,10 @@ exec > >(tee -a /root/podo-install.log) 2>&1
 # ───────────── KONFIGURATION ─────────────
 DOMAIN="${PODO_DOMAIN:-podo.algoverdict.com}"
 REPO_URL="${PODO_REPO_URL:-https://github.com/cryptohopper1904-jpg/podo-crm.git}"
-# Privates Repository: privaten Deploy-Key (Lesezugriff, siehe deploy/setup-deploy-key.sh) base64-kodiert eintragen.
-# Er landet nur in /root/.ssh/podo_crm_deploy auf dem neuen Server; danach wird per SSH geklont.
+# Privates Repository: privaten Deploy-Key (auf GitHub „Allow write access“ NICHT anhaken) base64-kodiert eintragen;
+# je Server ein eigener Schlüssel. Danach wird per SSH geklont.
+# Achtung: user_data bleibt auf dem Server unter /var/lib/cloud lesbar und über den Metadaten-Dienst abrufbar.
+# Deshalb einen EIGENEN Schlüssel nur für Cloud-Installationen verwenden (siehe docs/BETRIEB.md, Abschnitt 1c).
 PODO_DEPLOY_KEY_B64="${PODO_DEPLOY_KEY_B64:-}"
 PODO_AUTO_UPDATE="${PODO_AUTO_UPDATE:-true}"
 BOOTSTRAP_ADMIN_EMAIL="${BOOTSTRAP_ADMIN_EMAIL:-}"
@@ -41,7 +44,10 @@ systemctl enable --now docker
 timedatectl set-timezone Europe/Berlin 2>/dev/null || true
 if [ -n "$PODO_DEPLOY_KEY_B64" ]; then
   install -d -m 700 /root/.ssh
-  ( umask 077; printf '%s' "$PODO_DEPLOY_KEY_B64" | base64 -d > /root/.ssh/podo_crm_deploy )
+  ( umask 077; printf '%s' "$PODO_DEPLOY_KEY_B64" | base64 -d > /root/.ssh/podo_crm_deploy ) \
+    && ssh-keygen -y -f /root/.ssh/podo_crm_deploy > /root/.ssh/podo_crm_deploy.pub \
+    || { rm -f /root/.ssh/podo_crm_deploy; echo "PODO_DEPLOY_KEY_B64 ist kein gültiger privater Schlüssel." >&2; exit 1; }
+  # Block synchron halten mit deploy/setup-deploy-key.sh
   grep -qF "# podo-crm deploy key" /root/.ssh/config 2>/dev/null || cat >> /root/.ssh/config <<'SSHCONF'
 
 # podo-crm deploy key
@@ -53,7 +59,7 @@ Host github-podo-crm
   StrictHostKeyChecking accept-new
 SSHCONF
   chmod 600 /root/.ssh/config
-  [ -n "${PODO_REPO_URL:-}" ] || REPO_URL=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
+  [ "$REPO_URL" = "https://github.com/cryptohopper1904-jpg/podo-crm.git" ] && REPO_URL=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
 fi
 [ -d "$APP_DIR/.git" ] || git clone -q "$REPO_URL" "$APP_DIR"
 cd "$APP_DIR"

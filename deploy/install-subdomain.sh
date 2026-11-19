@@ -16,8 +16,14 @@ REF="${PODO_REF:-main}"
 APP_DIR=/opt/podo-crm
 PORT="${PODO_PORT:-3010}"
 # Privates Repository: vorher deploy/setup-deploy-key.sh ausführen; dann wird automatisch per SSH geklont.
-if [ -f /root/.ssh/podo_crm_deploy ]; then DEFAULT_REPO=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
-else DEFAULT_REPO=https://github.com/cryptohopper1904-jpg/podo-crm.git; fi
+# SSH nur, wenn Schlüssel, Alias UND Zugang auf GitHub wirklich funktionieren – sonst HTTPS (öffentliches Repo).
+SSH_REPO=git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git
+if [ -f /root/.ssh/podo_crm_deploy ] && grep -qF "# podo-crm deploy key" /root/.ssh/config 2>/dev/null \
+   && GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="ssh -o BatchMode=yes" timeout 30 git ls-remote -q "$SSH_REPO" HEAD >/dev/null 2>&1; then
+  DEFAULT_REPO=$SSH_REPO
+else
+  DEFAULT_REPO=https://github.com/cryptohopper1904-jpg/podo-crm.git
+fi
 REPO="${PODO_REPO_URL:-$DEFAULT_REPO}"
 MARK="# podo-crm:$DOMAIN"
 

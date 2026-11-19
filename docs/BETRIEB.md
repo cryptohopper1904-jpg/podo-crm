@@ -59,7 +59,7 @@ Zugangsdaten unlesbar, sondern auch:
 
 ### 1a. Eigener Server (PodoCRM bringt seinen eigenen Caddy für HTTPS mit)
 ```bash
-git clone https://github.com/cryptohopper1904-jpg/podo-crm.git /opt/podo-crm
+git clone https://github.com/cryptohopper1904-jpg/podo-crm.git /opt/podo-crm   # privates Repo: siehe 1c (SSH-URL)
 bash /opt/podo-crm/deploy/install.sh crm.deine-praxis.de
 ```
 `install.sh` bricht ab, wenn Port 80/443 schon belegt ist (dann 1b). Es installiert Docker, schaltet die Firewall (`ufw`: 22/80/443) ein, erzeugt `deploy/.env` mit Zufallswerten (nur wenn sie noch nicht existiert) und startet alle Dienste: `db`, `migrate`, `app`, `caddy`, `backup`, `cron`. Mit einer IP statt Domain wird ein selbst signiertes Zertifikat und eine Demo-Praxis verwendet (nur Test, keine echten Daten).
@@ -81,12 +81,19 @@ Standard ist Testbetrieb mit Demo-Praxis (`SEED_DEMO=true`, Login `demo@podocrm.
 ### 1c. Repository privat stellen (Deploy-Key)
 Solange das Repository öffentlich ist, holen Server Code und Updates anonym über HTTPS. Bevor es auf **privat** gestellt wird, braucht **jeder** laufende Server einen Deploy-Key – sonst schlagen `update.sh` und das tägliche Auto-Update fehl.
 
-1. Auf dem Server (als root): `bash /opt/podo-crm/deploy/setup-deploy-key.sh` – erzeugt `/root/.ssh/podo_crm_deploy` und zeigt den öffentlichen Schlüssel.
+1. Auf dem Server (als root): `bash /opt/podo-crm/deploy/setup-deploy-key.sh` – erzeugt `/root/.ssh/podo_crm_deploy` und zeigt den öffentlichen Schlüssel. Meldet das Skript einen anderen Fehler als „noch nicht eingetragen“ (z. B. Zeitüberschreitung), liegt es am Netz, nicht am Schlüssel.
 2. Den Schlüssel auf GitHub eintragen: `podo-crm` → **Settings → Deploy keys → Add deploy key**, „Allow write access“ **nicht** anhaken.
 3. Skript erneut aufrufen: prüft den Zugang und stellt `/opt/podo-crm` auf SSH um (`git@github-podo-crm:…`).
 4. Für jeden weiteren Server wiederholen, danach das Repository auf privat stellen und einmal `bash /opt/podo-crm/deploy/update.sh --dry-run` laufen lassen.
 
-Neue Server bei privatem Repository: `install-subdomain.sh` per `scp` auf den Server kopieren (der `curl`-Aufruf von raw.githubusercontent.com geht dann nicht mehr), zuerst `setup-deploy-key.sh` ausführen – beide Skripte nutzen den Schlüssel automatisch. Für `deploy/cloud/hetzner-user-data.sh` den privaten Deploy-Key base64-kodiert als `PODO_DEPLOY_KEY_B64` eintragen. Statt `git clone https://github.com/…` in den Abschnitten 1a und 5 dann `git clone git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git /opt/podo-crm` (nach `setup-deploy-key.sh`).
+**Neue Server bei privatem Repository:**
+1. **Beide** Skripte nach `/root` kopieren: `scp deploy/setup-deploy-key.sh deploy/install-subdomain.sh root@SERVER:/root/` (der `curl`-Aufruf von raw.githubusercontent.com geht dann nicht mehr).
+2. `bash /root/setup-deploy-key.sh` – zweimal: erzeugen, auf GitHub eintragen, erneut aufrufen (prüft den Zugang).
+3. `bash /root/install-subdomain.sh podo.algoverdict.com` – klont automatisch per SSH. Für Abschnitt 1a und 5 statt `git clone https://github.com/…` entsprechend `git clone git@github-podo-crm:cryptohopper1904-jpg/podo-crm.git /opt/podo-crm`.
+
+**Cloud-Installation (`deploy/cloud/hetzner-user-data.sh`):** Den Schlüssel als `PODO_DEPLOY_KEY_B64` (base64) eintragen. Er bleibt auf dem Server in den user_data lesbar (`/var/lib/cloud`, Metadaten-Dienst). Deshalb dafür einen **eigenen** Schlüssel erzeugen – `ssh-keygen -t ed25519 -N "" -f podo_cloud` –, `podo_cloud.pub` als zusätzlichen Deploy-Key (nur Lesen) eintragen, `base64 -w0 podo_cloud` als Wert verwenden und die Dateien danach lokal löschen. Den Schlüssel nicht für andere Repositories wiederverwenden.
+
+**Vor dem Privatstellen bedenken:** Bei GitHub Free werden Branch-Schutzregeln in privaten Repositories nicht mehr durchgesetzt, und Actions-Minuten zählen (2.000/Monat).
 
 **Demo-Passwort** (`scripts/seed-demo.ts`, Gesamt-Review K1) – der Seed läuft nur einmal (solange die Demo-Praxis nicht existiert):
 
@@ -254,7 +261,7 @@ Voraussetzung: gesicherte `deploy/.env` (Abschnitt 0) und Offsite-Backups (Absch
 1. **Neuen Server** bereitstellen (gleiche Anforderungen wie in 1), DNS-Eintrag auf die neue IP umstellen (kurze TTL hilft).
 2. **Code holen** – möglichst dieselbe Version wie vorher (sonst `main`):
    ```bash
-   git clone https://github.com/cryptohopper1904-jpg/podo-crm.git /opt/podo-crm
+   git clone https://github.com/cryptohopper1904-jpg/podo-crm.git /opt/podo-crm   # privates Repo: siehe 1c (SSH-URL)
    ```
 3. **Alte `deploy/.env` zurücklegen**, *bevor* irgendetwas gestartet wird (sonst werden neue Schlüssel erzeugt):
    ```bash
