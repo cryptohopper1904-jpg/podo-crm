@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Card, CardTitle, Checkbox, Field, Input, Select, Table } from "@/components/ui";
 import { withOrg } from "@/db";
-import { integrationConnections } from "@/db/schema";
+import { integrationConnections, memberships, users } from "@/db/schema";
+import { AI_APPROVAL_TEXT, aiApprovalInfo, isAiProvider } from "@/integrations/ai-approval";
 import { HMAC_WEBHOOK_SECRET, PROVIDER_CATALOG, STATUS_LABEL, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
 import { fiscalLiveBlockedReason } from "@/integrations/tse";
 import { requireAuth } from "@/lib/auth/session";
@@ -29,6 +30,17 @@ export default async function IntegrationsSettings() {
   const h = await headers();
   const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host") ?? "localhost"}`;
   const mockEnv = process.env.INTEGRATIONS_MODE === "mock";
+  // Wer hat die KI-Bestätigung abgegeben? (nur Mitglieder dieser Praxis)
+  const approverIds = [...new Set(rows.flatMap((r) => (isAiProvider(r.provider) ? [aiApprovalInfo(r.config as Record<string, unknown>)?.by] : [])).filter((x): x is string => !!x))];
+  const approvers = approverIds.length
+    ? await withOrg(org, (tx) =>
+        tx
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .innerJoin(memberships, and(eq(memberships.userId, users.id), eq(memberships.organizationId, org)))
+          .where(inArray(users.id, approverIds)),
+      )
+    : [];
 
   let feedUrl: string | null = null;
   try {
@@ -117,12 +129,23 @@ export default async function IntegrationsSettings() {
                   </Field>
                 ))}
               </div>
-              {info.provider === "llm" || info.provider === "transcription" ? (
-                <Checkbox
-                  name="dataProcessingApproved"
-                  defaultChecked={cfg.dataProcessingApproved === true}
-                  label="Ich bestätige: Anbieter verarbeitet in der EU, AVV liegt vor, Zero Data Retention und kein Training auf unseren Daten."
-                />
+              {isAiProvider(info.provider) ? (
+                (() => {
+                  const approval = aiApprovalInfo(cfg);
+                  const by = approval ? approvers.find((a) => a.id === approval.by)?.name : null;
+                  return (
+                    <div className="rounded-xl border border-border bg-surface-2 px-4 py-2">
+                      <Checkbox name="dataProcessingApproved" defaultChecked={!!approval} label={<><strong>Pflicht für „verbunden (echt)“:</strong> {AI_APPROVAL_TEXT}</>} />
+                      <p className="pb-2 text-[13px] text-muted">
+                        {approval
+                          ? `Bestätigt am ${dateTimeDe(approval.at)}${by ? ` von ${by}` : ""}.`
+                          : cfg.dataProcessingApproved === true
+                            ? "Die frühere Bestätigung gilt nicht mehr (neuer Wortlaut) – bitte erneut bestätigen, sonst bleibt der Anbieter gesperrt."
+                            : "Noch nicht bestätigt – ohne Häkchen lässt sich der echte Anbieter nicht einschalten."}
+                      </p>
+                    </div>
+                  );
+                })()
               ) : null}
               {TOKEN_WEBHOOK_PROVIDERS.includes(info.provider) && secretValues.webhookToken ? (
                 <Checkbox name="rotateWebhookToken" label="Webhook-Token neu erzeugen (alte Adresse wird ungültig)" />

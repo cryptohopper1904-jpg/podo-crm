@@ -42,7 +42,7 @@ export class WhisperCompatibleTranscription implements TranscriptionPort {
 
   async transcribe(audio: Uint8Array, o: { mime?: string; language?: string; filename?: string } = {}) {
     if (!this.opts.dataProcessingApproved && process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED !== "true") {
-      throw new IntegrationNotConfiguredError("transcription", "Anbieter nicht freigegeben (EU, AVV, Zero Data Retention bestätigen)");
+      throw new IntegrationNotConfiguredError("transcription", "Anbieter nicht freigegeben (unter Einstellungen → Schnittstellen bestätigen: AVV geschlossen, Verarbeitung in der EU, kein Training)");
     }
     const form = new FormData();
     form.append("file", new Blob([audio as BlobPart], { type: o.mime ?? "audio/webm" }), o.filename ?? "bericht.webm");

@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { z } from "zod";
 import { CSV_MAX_BYTES, type LeadInput } from "@/lib/vertrieb/csv";
 import { LEAD_STATUSES, SEQUENCE_STEPS } from "@/lib/vertrieb/constants";
+import { CONSENT_KINDS, DELETE_MONTHS } from "@/lib/vertrieb/dsgvo";
 import { isRunning } from "@/lib/vertrieb/lead-search";
 import { getLeadSearch, runLeadSearch, saveLeadSearchSettings } from "@/server/lead-search";
 import { requirePlatformAdmin } from "@/server/platform";
@@ -26,6 +27,7 @@ import {
   setLeadStatus,
   updateLead,
   type ImportPreview,
+  type LeadOptions,
   type SendPreview,
   type SendResult,
 } from "@/server/vertrieb";
@@ -70,14 +72,18 @@ const leadSchema = z.object({
     .optional()
     .transform((v) => (v?.trim() ? Number(v.replace(",", ".")) : null))
     .refine((v) => v === null || (Number.isFinite(v) && v >= 0 && v < 10_000), "Entfernung ist keine gültige Zahl."),
-  source: opt(120),
+  // Herkunft (Art. 14 DSGVO): Pflicht – genauer geprüft in src/server/vertrieb.ts (assertOrigin)
+  source: z.string().trim().min(3, "Bitte die Quelle der Daten angeben (z. B. „OpenStreetMap“ oder „Impressum der Praxis-Website“).").max(200),
+  sourceRetrievedAt: z.string().trim().min(1, "Bitte das Abrufdatum der Quelle angeben.").max(10),
   notes: opt(2000),
+  deleteMonths: z.coerce.number().int().min(DELETE_MONTHS.min, "Löschfrist: mindestens 6 Monate.").max(DELETE_MONTHS.max, "Löschfrist: höchstens 24 Monate."),
 });
 
-function parseLead(form: FormData): { data: LeadInput } | { error: string } {
+function parseLead(form: FormData): { data: LeadInput; opts: LeadOptions } | { error: string } {
   const d = leadSchema.safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
-  return { data: d.data };
+  const { deleteMonths, ...data } = d.data;
+  return { data, opts: { deleteMonths, phoneHidden: form.get("phoneHidden") === "1", clearPhone: form.get("clearPhone") === "on" } };
 }
 
 export async function createLeadAction(_s: State, form: FormData): Promise<State> {
@@ -86,7 +92,7 @@ export async function createLeadAction(_s: State, form: FormData): Promise<State
   if ("error" in p) return { error: p.error };
   let id: string;
   try {
-    id = await createLead(row.user.id, p.data);
+    id = await createLead(row.user.id, p.data, { deleteMonths: p.opts.deleteMonths });
   } catch (e) {
     return { error: msg(e) };
   }
@@ -101,7 +107,7 @@ export async function updateLeadAction(_s: State, form: FormData): Promise<State
   const p = parseLead(form);
   if ("error" in p) return { error: p.error };
   try {
-    await updateLead(row.user.id, id.data, p.data);
+    await updateLead(row.user.id, id.data, p.data, p.opts);
   } catch (e) {
     return { error: msg(e) };
   }
@@ -140,13 +146,13 @@ export async function previewImportAction(csv: string): Promise<ImportPreview> {
   return previewImport(d.data);
 }
 
-export async function importAction(csv: string, source: string): Promise<{ imported: number; skipped: number; error?: string }> {
+export async function importAction(csv: string, source: string, retrievedAt: string): Promise<{ imported: number; skipped: number; error?: string }> {
   const row = await requirePlatformAdmin();
   const d = csvSchema.safeParse(csv);
   if (!d.success) return { imported: 0, skipped: 0, error: d.error.issues[0]?.message };
   const src = z.string().trim().min(3, "Bitte die Quelle der Daten angeben (z. B. „Messe XY 2026, Kontaktformular“).").max(120).safeParse(source);
   if (!src.success) return { imported: 0, skipped: 0, error: src.error.issues[0]?.message };
-  const r = await importLeads(row.user.id, d.data, src.data);
+  const r = await importLeads(row.user.id, d.data, src.data, String(retrievedAt ?? "").slice(0, 10));
   revalidatePath(BASE);
   return r;
 }
@@ -303,10 +309,17 @@ export async function setLeadCampaignAction(form: FormData) {
 
 export async function consentAction(_s: State, form: FormData): Promise<State> {
   const row = await requirePlatformAdmin();
-  const d = z.object({ id: z.uuid(), note: z.string().trim().min(3, "Bitte angeben, wie und wann die Einwilligung erteilt wurde.").max(500) }).safeParse(Object.fromEntries(form));
+  const d = z
+    .object({
+      id: z.uuid(),
+      kind: z.enum(CONSENT_KINDS, { error: "Bitte die Art der Einwilligung auswählen." }),
+      date: z.string().trim().min(1, "Bitte das Datum der Einwilligung angeben.").max(10),
+      note: z.string().trim().min(3, "Bitte Wortlaut bzw. Nachweis der Einwilligung angeben.").max(500),
+    })
+    .safeParse(Object.fromEntries(form));
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Eingaben ungültig." };
   try {
-    if (!(await recordLeadConsent(row.user.id, d.data.id, d.data.note))) {
+    if (!(await recordLeadConsent(row.user.id, d.data.id, { note: d.data.note, kind: d.data.kind, date: d.data.date }))) {
       const lead = await getLead(d.data.id);
       return { error: lead ? "Nur möglich, wenn eine E-Mail-Adresse eingetragen ist." : "Eintrag nicht gefunden (inzwischen gelöscht?)." };
     }

@@ -7,6 +7,7 @@ import { findWebsiteEmails, PoliteFetcher, queryOverpass, type FetchImpl } from 
 import type { Resolver } from "@/integrations/net-guard";
 import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
+import { berlinDateIso } from "@/lib/format";
 import { acceptedEmails, type AcceptedEmail, type EmailKind } from "@/lib/vertrieb/email-filter";
 import {
   buildDedupeKeys,
@@ -254,7 +255,7 @@ async function enrichExisting(c: RunCtx, enrich: LeadSearch["enrich"], startedAt
     try {
       const upd = await db
         .update(salesLeads)
-        .set({ email: f.email, source: "osm+impressum", notes: notesFor(null, f.kind, l.notes) })
+        .set({ email: f.email, source: "osm+impressum", sourceRetrievedAt: berlinDateIso(c.now()), notes: notesFor(null, f.kind, l.notes) })
         .where(and(eq(salesLeads.id, l.id), isNull(salesLeads.email), sql`${salesLeads.updatedAt} <= ${salesLeads.createdAt} + interval '1 minute'`))
         .returning({ id: salesLeads.id });
       if (upd.length) {
@@ -323,7 +324,7 @@ export async function runLeadSearch(opts: { trigger: "cron" | "manual"; adminUse
         const lead = { name: p.name, email: f.email, website: p.website, zip: p.zip, city: p.city };
         const ins = await db
           .insert(salesLeads)
-          .values({ ...lead, distanceKm: p.distanceKm, source: f.fromWebsite ? "osm+impressum" : "osm", status: "neu", notes: notesFor(p.osmId, f.kind) })
+          .values({ ...lead, distanceKm: p.distanceKm, source: f.fromWebsite ? "osm+impressum" : "osm", sourceRetrievedAt: berlinDateIso(started), status: "neu", notes: notesFor(p.osmId, f.kind) })
           .onConflictDoNothing()
           .returning({ id: salesLeads.id });
         rememberLead(c.keys, { ...lead, lat: p.lat, lon: p.lon, osmId: p.osmId });

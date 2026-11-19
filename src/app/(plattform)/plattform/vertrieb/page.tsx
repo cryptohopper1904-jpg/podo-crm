@@ -4,6 +4,7 @@ import { Badge, Card, LinkButton, Stat, cx } from "@/components/ui";
 import { dateTimeDe } from "@/lib/format";
 import { describeMailSettings, resolveMailSettings } from "@/integrations/mail/mail";
 import { LEAD_STATUSES, MAX_PER_CLICK, MAX_PER_DAY, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
+import { originLabel, sourceLabel } from "@/lib/vertrieb/dsgvo";
 import { isRunning } from "@/lib/vertrieb/lead-search";
 import { isStage, replyRate, STAGE_HINT, STAGE_LABEL, STAGES, stageLabel, type Stage } from "@/lib/vertrieb/pipeline";
 import { requirePlatformAdmin } from "@/server/platform";
@@ -117,7 +118,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
           Quelle
           <select name="quelle" defaultValue={filter.source ?? ""} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm">
             <option value="">alle</option>
-            {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+            {sources.map((s) => <option key={s} value={s}>{sourceLabel(s)}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm font-medium">
@@ -200,6 +201,7 @@ export default async function VertriebPage({ searchParams }: PageProps<"/plattfo
             stageLabel: stageLabel(l.stage, l.step),
             campaignName: l.campaignName,
             consent: !!l.consentAt,
+            origin: originLabel(l.source, l.sourceRetrievedAt),
             orgName: l.org ? `${l.org.name}${l.org.via === "domain" ? " – Zuordnung unsicher (Domain)" : ""}` : null,
           }))}
         />

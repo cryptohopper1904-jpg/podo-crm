@@ -2,6 +2,7 @@ import "server-only";
 import { and, desc, eq } from "drizzle-orm";
 import { withOrg } from "@/db";
 import { integrationConnections, syncLog } from "@/db/schema";
+import { aiApprovalValid } from "@/integrations/ai-approval";
 import { getAdapter } from "@/integrations/registry";
 import type { IntegrationConnection, PortByProvider, ProviderId, SupportedProvider } from "@/integrations/types";
 
@@ -52,12 +53,12 @@ export async function recentSyncLog(organizationId: string, limit = 20) {
 }
 
 /**
- * Freigabe für Gesundheitsdaten (EU-Verarbeitung + AVV + Zero Data Retention), je Mandant in der
- * Verbindungs-Config oder global per env (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true).
+ * Freigabe für Gesundheitsdaten (EU-Verarbeitung + AVV + kein Training), je Mandant als Bestätigung mit Zeitpunkt und
+ * Benutzer in der Verbindungs-Config (src/integrations/ai-approval.ts) oder global per env (LLM_/TRANSCRIPTION_DATA_PROCESSING_APPROVED=true).
  */
 export async function processingApproved(organizationId: string, provider: "llm" | "transcription"): Promise<boolean> {
   const env = provider === "llm" ? process.env.LLM_DATA_PROCESSING_APPROVED : process.env.TRANSCRIPTION_DATA_PROCESSING_APPROVED;
   if (env === "true") return true;
   const conn = await loadConnection(organizationId, provider);
-  return conn?.config?.dataProcessingApproved === true;
+  return aiApprovalValid(conn?.config);
 }

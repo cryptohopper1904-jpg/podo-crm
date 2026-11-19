@@ -234,6 +234,7 @@ test("Plattform-Routen: notFound() liefert eine echte 404 (keine gestreamte 200)
 });
 
 test("Plattform-Admin: /plattform mit 200 in der App-Hülle (Kopfzeile, Navigation mit „Plattform“)", async ({ browser }) => {
+  const leadName = `E2E Praxis ${Date.now().toString(36)}`;
   const pool = new Pool({ connectionString: process.env.E2E_DATABASE_URL ?? process.env.DATABASE_URL, max: 1 });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "de-DE", timezoneId: "Europe/Berlin" });
   try {
@@ -252,8 +253,28 @@ test("Plattform-Admin: /plattform mit 200 in der App-Hülle (Kopfzeile, Navigati
     const nav = page.getByRole("navigation", { name: "Hauptnavigation" });
     await expect(nav.getByRole("link", { name: "Plattform", exact: true })).toHaveAttribute("aria-current", "page");
     expect((await page.request.get("/plattform/vertrieb", { maxRedirects: 0 })).status()).toBe(200);
+
+    // Vertrieb (Rechtsprüfung): Quelle + Abrufdatum Pflicht, Löschfrist, Hinweis ohne Einwilligung, Telefonnummer ausgeblendet
+    await page.goto("/plattform/vertrieb/neu");
+    await page.getByLabel("Name der Praxis *").fill(leadName);
+    await page.getByLabel("Telefon").fill("030 0000 9999");
+    await expect(page.getByLabel("Abgerufen am *")).not.toHaveValue("");
+    await expect(page.getByLabel("Löschfrist")).toHaveValue("12");
+    await page.getByLabel("Quelle der Daten *").fill("OpenStreetMap");
+    await page.getByRole("button", { name: "Anlegen" }).click();
+    await page.waitForURL(/\/plattform\/vertrieb\/[0-9a-f-]{36}$/);
+    await expect(page.getByText("Werbe-E-Mails und Werbeanrufe nur mit Einwilligung (§ 7 UWG). Kaltanrufe nicht erlaubt.").first()).toBeVisible();
+    await expect(page.getByText(/^OpenStreetMap · abgerufen \d{2}\.\d{2}\.\d{4}$/)).toBeVisible();
+    await expect(page.getByText("ausgeblendet (nur mit Einwilligung oder bei Bestandskunden)")).toBeVisible();
+    expect(await page.content()).not.toContain("030 0000 9999");
+    await page.goto("/plattform/vertrieb");
+    await expect(page.getByRole("row", { name: new RegExp(leadName) }).getByText("Einwilligung: nein")).toBeVisible();
+    await page.goto("/plattform/vertrieb/datenschutzhinweis");
+    await expect(page.getByText("ENTWURF – vor Verwendung rechtlich prüfen lassen").first()).toBeVisible();
+    await expect(page.getByText(/Verantwortlich für die Verarbeitung ist \{\{Firma\}\}/)).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
+    await pool.query("delete from sales_leads where name = $1", [leadName]).catch(() => undefined);
     await pool.query("update users set is_platform_admin = false where email = $1", [DEMO_EMAIL]).catch(() => undefined);
     await pool.end();
     await context.close();

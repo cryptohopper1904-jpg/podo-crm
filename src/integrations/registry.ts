@@ -12,6 +12,7 @@
  *  - `config`     = nicht geheime Einstellungen (baseUrl, merchantCode, phoneNumberId, …)
  */
 import { decryptJson } from "@/lib/crypto";
+import { aiApprovalValid } from "./ai-approval";
 import { IntegrationNotConfiguredError } from "./errors";
 import { assertSafeHostSyntax, assertSafeUrlSyntax, guardedFetch } from "./net-guard";
 import { DoctolibAdapter, DoctolibMock } from "./doctolib/doctolib";
@@ -110,7 +111,7 @@ const REAL: { [P in SupportedProvider]: Builder<P> } = {
       baseUrl: str(cfg.baseUrl),
       apiKey: sec.apiKey,
       model: str(cfg.model),
-      dataProcessingApproved: cfg.dataProcessingApproved === true,
+      dataProcessingApproved: aiApprovalValid(cfg),
       fetch: f,
     }),
   llm: (cfg, sec, f) =>
@@ -118,7 +119,7 @@ const REAL: { [P in SupportedProvider]: Builder<P> } = {
       baseUrl: str(cfg.baseUrl),
       apiKey: sec.apiKey,
       model: str(cfg.model),
-      dataProcessingApproved: cfg.dataProcessingApproved === true,
+      dataProcessingApproved: aiApprovalValid(cfg),
       fetch: f,
     }),
 };

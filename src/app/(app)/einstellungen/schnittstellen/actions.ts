@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { withOrg } from "@/db";
 import { integrationConnections } from "@/db/schema";
+import { isAiProvider, nextAiApproval } from "@/integrations/ai-approval";
 import { PROVIDER_CATALOG, TOKEN_WEBHOOK_PROVIDERS } from "@/integrations/catalog";
 import { assertPublicHost, assertPublicUrl, UnsafeTargetError } from "@/integrations/net-guard";
 import { testConnection } from "@/integrations/test-connection";
@@ -87,8 +88,16 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
     secret.webhookToken = randomBytes(32).toString("base64url");
     secretChanged = true;
   }
-  if (info.provider === "llm" || info.provider === "transcription") {
-    config.dataProcessingApproved = form.get("dataProcessingApproved") === "on";
+  // Externer KI-Anbieter: Pflicht-Häkchen (AVV, EU, kein Training) – ohne wird „verbunden (echt)“ abgelehnt;
+  // gespeichert werden Zeitpunkt, Benutzer und Textversion (src/integrations/ai-approval.ts)
+  let approvalChanged = false;
+  if (isAiProvider(info.provider)) {
+    const a = nextAiApproval(oldConfig, { status: status.data, checked: form.get("dataProcessingApproved") === "on", userId: auth.user.id });
+    if ("error" in a) return { error: a.error };
+    config.dataProcessingApproved = a.dataProcessingApproved;
+    if (a.dataProcessingApproval) config.dataProcessingApproval = a.dataProcessingApproval;
+    else delete config.dataProcessingApproval;
+    approvalChanged = a.changed;
   }
 
   const values = {
@@ -110,7 +119,12 @@ export async function saveIntegrationAction(_: IntegrationState, form: FormData)
     action: "integration.save",
     entity: "integration",
     entityId: info.provider,
-    meta: { status: status.data, secretChanged, configKeys: Object.keys(config) },
+    meta: {
+      status: status.data,
+      secretChanged,
+      configKeys: Object.keys(config),
+      ...(isAiProvider(info.provider) ? { aiApproved: config.dataProcessingApproved === true, aiApprovalChanged: approvalChanged } : {}),
+    },
   });
   revalidatePath("/einstellungen/schnittstellen");
   return { ok: targetChanged && existing?.secretEnc ? `${info.label} gespeichert. Ziel geändert – bitte Zugangsdaten neu eingeben.` : `${info.label} gespeichert.` };

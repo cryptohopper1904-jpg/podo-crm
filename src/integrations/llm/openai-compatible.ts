@@ -85,7 +85,7 @@ export class OpenAiCompatibleLlm implements LlmPort {
     if (!opts.publicDataOnly && !this.opts.dataProcessingApproved && process.env.LLM_DATA_PROCESSING_APPROVED !== "true") {
       throw new IntegrationNotConfiguredError(
         "llm",
-        "Anbieter nicht freigegeben (EU-Verarbeitung, AVV und Zero Data Retention bestätigen: LLM_DATA_PROCESSING_APPROVED=true)",
+        "Anbieter nicht freigegeben (unter Einstellungen → Schnittstellen bestätigen: AVV geschlossen, Verarbeitung in der EU, kein Training – oder LLM_DATA_PROCESSING_APPROVED=true)",
       );
     }
     const res = await requestJson<{ choices?: { message?: { content?: string } }[] }>({

@@ -468,6 +468,27 @@ test("Abo kündigen und Kündigung zurücknehmen (Testmodus), Hinweis unter Date
   }
 });
 
+test("Schnittstellen: externer KI-Anbieter nur mit Pflicht-Häkchen (AVV, EU, kein Training)", async () => {
+  await page.goto("/einstellungen/schnittstellen");
+  const form = page.locator('form:has(input[name="provider"][value="llm"]):has(select[name="status"])');
+  const box = form.getByRole("checkbox", { name: /einen AVV geschlossen, die Verarbeitung erfolgt in der EU und der Anbieter nutzt die Daten nicht zum Training/ });
+  await form.locator('select[name="status"]').selectOption("connected");
+  await box.uncheck();
+  await form.getByRole("button", { name: "Speichern" }).click();
+  await expect(form.getByRole("alert")).toContainText("AVV");
+  await box.check();
+  await form.getByRole("button", { name: "Speichern" }).click();
+  await expect(form.getByRole("status")).toContainText("KI-Sprachmodell gespeichert.");
+  await page.reload();
+  await expect(page.locator('form:has(input[name="provider"][value="llm"]):has(select[name="status"])').getByText(/^Bestätigt am \d{2}\.\d{2}\.\d{4}/)).toBeVisible();
+  // zurück auf „aus“ (ohne Häkchen erlaubt, Bestätigung wird entfernt)
+  const again = page.locator('form:has(input[name="provider"][value="llm"]):has(select[name="status"])');
+  await again.locator('select[name="status"]').selectOption("disconnected");
+  await again.getByRole("checkbox", { name: /AVV geschlossen/ }).uncheck();
+  await again.getByRole("button", { name: "Speichern" }).click();
+  await expect(again.getByRole("status")).toContainText("KI-Sprachmodell gespeichert.");
+});
+
 test("Abmelden", async () => {
   await page.goto("/heute");
   await page.getByRole("button", { name: "Abmelden" }).click();

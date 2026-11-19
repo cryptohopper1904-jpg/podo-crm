@@ -2,12 +2,14 @@
  * CSV-Import für Vertriebs-Leads.
  * Format: UTF-8 (BOM erlaubt), Trennzeichen „;“ oder „,“ (aus der Kopfzeile erkannt), Felder optional in "…".
  * Spalten (Kopfzeile, Reihenfolge egal, Groß/Klein egal): name,email,phone,website,street,zip,city,distance_km,source,notes
- * Zusätzlich erlaubt: contact_person (Ansprechpartner:in). Pflicht: name.
+ * Zusätzlich erlaubt: contact_person (Ansprechpartner:in), retrieved_at (Abrufdatum der Quelle, JJJJ-MM-TT oder TT.MM.JJJJ).
+ * Pflicht: name. Quelle und Abrufdatum gibt der Import zusätzlich für alle Zeilen an (Art. 14 DSGVO).
  * Dublettenprüfung: E-Mail (ohne Groß/Klein) und Name+PLZ – innerhalb der Datei und gegen den Bestand; Sperrliste wird übersprungen.
  */
+import { checkRetrievedDate } from "./dsgvo";
 import { normalizeEmail } from "./eligibility";
 
-export const CSV_COLUMNS = ["name", "email", "phone", "website", "street", "zip", "city", "distance_km", "source", "notes", "contact_person"] as const;
+export const CSV_COLUMNS = ["name", "email", "phone", "website", "street", "zip", "city", "distance_km", "source", "notes", "contact_person", "retrieved_at"] as const;
 type Column = (typeof CSV_COLUMNS)[number];
 
 export const CSV_MAX_BYTES = 1_000_000;
@@ -27,6 +29,8 @@ const ALIASES: Record<string, Column> = {
   quelle: "source",
   notizen: "notes",
   ansprechpartner: "contact_person",
+  abgerufen_am: "retrieved_at",
+  abrufdatum: "retrieved_at",
 };
 
 export type LeadInput = {
@@ -40,6 +44,8 @@ export type LeadInput = {
   city: string | null;
   distanceKm: number | null;
   source: string | null;
+  /** Abrufdatum der Quelle (YYYY-MM-DD) */
+  sourceRetrievedAt: string | null;
   notes: string | null;
 };
 
@@ -110,7 +116,16 @@ function normalizeWebsite(v: string | null): string | null {
   }
 }
 
-export function parseLeadCsv(raw: string): { rows: ParsedRow[]; error?: string } {
+/** Abrufdatum aus der Datei: JJJJ-MM-TT oder TT.MM.JJJJ, nicht in der Zukunft; leer = null */
+function parseCsvDate(v: string | null, now: Date): string | null | "invalid" {
+  if (!v) return null;
+  const de = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(v);
+  const iso = de ? `${de[3]}-${de[2].padStart(2, "0")}-${de[1].padStart(2, "0")}` : v;
+  const r = checkRetrievedDate(iso, now);
+  return r.ok ? r.date : "invalid";
+}
+
+export function parseLeadCsv(raw: string, now = new Date()): { rows: ParsedRow[]; error?: string } {
   const text = raw.replace(/^﻿/, "");
   if (!text.trim()) return { rows: [], error: "Die Datei ist leer." };
   const firstLine = text.split(/\r?\n/, 1)[0];
@@ -144,6 +159,11 @@ export function parseLeadCsv(raw: string): { rows: ParsedRow[]; error?: string }
       rows.push({ line, error: "distance_km ist keine Zahl" });
       continue;
     }
+    const retrieved = parseCsvDate(cell(rec.retrieved_at, 20), now);
+    if (retrieved === "invalid") {
+      rows.push({ line, error: "retrieved_at ist kein gültiges Datum (nicht in der Zukunft)" });
+      continue;
+    }
     rows.push({
       line,
       lead: {
@@ -157,6 +177,7 @@ export function parseLeadCsv(raw: string): { rows: ParsedRow[]; error?: string }
         city: cell(rec.city, 120),
         distanceKm: dist,
         source: cell(rec.source, 120),
+        sourceRetrievedAt: retrieved,
         notes: cell(rec.notes, 2000),
       },
     });

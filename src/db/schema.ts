@@ -2211,7 +2211,10 @@ export const salesLeads = pgTable(
     zip: text("zip"),
     city: text("city"),
     distanceKm: doublePrecision("distance_km"),
+    /** Herkunft (Art. 14 DSGVO): Quelle der Daten, z. B. „OpenStreetMap“, „Impressum praxis.example“ – Pflicht für neue Einträge */
     source: text("source"),
+    /** Abrufdatum der Quelle (YYYY-MM-DD); Altbestand ohne Angabe = null („fehlt“) */
+    sourceRetrievedAt: date("source_retrieved_at"),
     notes: text("notes"),
     status: text("status").notNull().default("neu"),
     step: smallint("step").notNull().default(0),
@@ -2226,10 +2229,18 @@ export const salesLeads = pgTable(
      */
     consentAt: timestamp("consent_at", { withTimezone: true }),
     consentNote: text("consent_note"),
+    /** Art der Einwilligung (CONSENT_KINDS in src/lib/vertrieb/dsgvo.ts); nur mit consent_at, Altbestand ohne Art (CHECK in 0070) */
+    consentKind: text("consent_kind"),
+    /**
+     * Löschfrist: Standard Anlage + 12 Monate, in der Konsole 6–24 Monate ab Anlage (CHECK in 0070). Danach löscht der
+     * nächtliche Lauf (purgeStaleLeads) den Eintrag, außer bei Status „Kunde“ oder dokumentierter Einwilligung.
+     */
+    deleteAfter: timestamp("delete_after", { withTimezone: true }).notNull().default(sql`(now() + interval '12 months')`),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
+    index("sales_leads_delete_after").on(t.deleteAfter),
     uniqueIndex("sales_leads_email").on(sql`lower(${t.email})`).where(sql`${t.email} is not null`),
     index("sales_leads_status").on(t.status),
     index("sales_leads_campaign").on(t.campaignId),

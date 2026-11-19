@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui";
+import { berlinDateIso } from "@/lib/format";
 import { requirePlatformAdmin } from "@/server/platform";
 import { createLeadAction } from "../actions";
 import { LeadForm } from "../lead-form";
@@ -10,7 +11,7 @@ export default async function NewLeadPage() {
   return (
     <Card className="max-w-3xl">
       <h2 className="mb-4 font-display text-xl font-semibold">Praxis anlegen</h2>
-      <LeadForm action={createLeadAction} submit="Anlegen" />
+      <LeadForm action={createLeadAction} submit="Anlegen" today={berlinDateIso()} />
     </Card>
   );
 }

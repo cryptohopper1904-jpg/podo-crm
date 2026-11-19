@@ -6,6 +6,7 @@ import { formatFrom, isEmail, MailNotConfiguredError, parseFrom, toMailError, ty
 import { audit } from "@/lib/audit";
 import { DEFAULT_DELAYS, DEFAULT_TEMPLATES, MAX_PER_CLICK, MAX_PER_DAY, SEQUENCE_STEPS, isLeadStatus, type LeadStatus, type Template } from "@/lib/vertrieb/constants";
 import { dedupeLeads, nameZipKey, parseLeadCsv, type ImportDecision, type LeadInput } from "@/lib/vertrieb/csv";
+import { checkRetrievedDate, CONSENT_KIND_LABEL, DELETE_MONTHS, deleteAfterFor, isConsentKind, isDeleteMonths, type ConsentKind } from "@/lib/vertrieb/dsgvo";
 import { normalizeEmail, planBatch, type Delays } from "@/lib/vertrieb/eligibility";
 import { composeMail, templateUsesPromo, validateTemplate, type PromoValues } from "@/lib/vertrieb/template";
 import { promoLandingUrl } from "@/lib/promo-codes";
@@ -29,6 +30,9 @@ import { platformMailPort } from "./mail";
  *   der Adresse bleibt auf der Sperrliste (src/server/blocklist.ts); Versandzeilen bleiben ohne Bezug und ohne Mailangaben
  *   (Tageslimit).
  * - Audit: Import, Versand, Statuswechsel, Einstellungen, Löschen, Abmeldung (ohne Mailinhalte).
+ * - Rechtsprüfung (src/lib/vertrieb/dsgvo.ts): Quelle + Abrufdatum Pflicht beim Anlegen und Import; Löschfrist
+ *   delete_after (6–24 Monate ab Anlage, Standard 12), abgelaufene Einträge ohne Einwilligung und ohne Status „Kunde“
+ *   löscht purgeStaleLeads(); Einwilligung mit Datum und Art.
  */
 
 export type Lead = typeof salesLeads.$inferSelect;
@@ -191,61 +195,131 @@ async function assertNoDuplicate(input: LeadInput, exceptId?: string, previous?:
   }
 }
 
-export async function createLead(adminUserId: string, input: LeadInput): Promise<string> {
-  await assertNoDuplicate(input);
-  const [row] = await db.insert(salesLeads).values({ ...input, email: input.email ? normalizeEmail(input.email) : null }).returning({ id: salesLeads.id });
-  await audit({ userId: adminUserId, action: "vertrieb.lead_created", entity: "sales_lead", entityId: row.id });
+/** Herkunft ist Pflicht (Art. 14 DSGVO): Quelle (mind. 3 Zeichen) und Abrufdatum (nicht in der Zukunft). */
+function assertOrigin(input: LeadInput, now: Date): LeadInput {
+  const source = input.source?.replace(/[\r\n]+/g, " ").trim().slice(0, 200) ?? "";
+  if (source.length < 3) throw new Error("Bitte die Quelle der Daten angeben (z. B. „OpenStreetMap“ oder „Impressum praxis-muster.example“).");
+  const d = checkRetrievedDate(input.sourceRetrievedAt ?? "", now);
+  if (!d.ok) throw new Error(d.error);
+  return { ...input, source, sourceRetrievedAt: d.date };
+}
+
+export type LeadOptions = {
+  /** Löschfrist in Monaten ab Anlage (6–24); fehlt = Standard 12 bzw. beim Bearbeiten unverändert */
+  deleteMonths?: number | null;
+  /** Telefonnummer war im Formular ausgeblendet (keine Einwilligung): leeres Feld = Nummer behalten */
+  phoneHidden?: boolean;
+  /** ausgeblendete Telefonnummer ausdrücklich löschen */
+  clearPhone?: boolean;
+};
+
+function checkMonths(m: number | null | undefined): number | null {
+  if (m === null || m === undefined) return null;
+  if (!isDeleteMonths(m)) throw new Error(`Löschfrist: ${DELETE_MONTHS.min} bis ${DELETE_MONTHS.max} Monate.`);
+  return m;
+}
+
+export async function createLead(adminUserId: string, input: LeadInput, opts: LeadOptions = {}, now = new Date()): Promise<string> {
+  const clean = assertOrigin(input, now);
+  const months = checkMonths(opts.deleteMonths) ?? DELETE_MONTHS.default;
+  await assertNoDuplicate(clean);
+  const [row] = await db
+    .insert(salesLeads)
+    .values({ ...clean, email: clean.email ? normalizeEmail(clean.email) : null, createdAt: now, updatedAt: now, deleteAfter: deleteAfterFor(now, months) })
+    .returning({ id: salesLeads.id });
+  await audit({ userId: adminUserId, action: "vertrieb.lead_created", entity: "sales_lead", entityId: row.id, meta: { deleteMonths: months } });
   return row.id;
 }
 
-export async function updateLead(adminUserId: string, id: string, input: LeadInput) {
+export async function updateLead(adminUserId: string, id: string, rawInput: LeadInput, opts: LeadOptions = {}, now = new Date()) {
+  const input = assertOrigin(rawInput, now);
+  const months = checkMonths(opts.deleteMonths);
   const [prev] = await db.select({ email: salesLeads.email, website: salesLeads.website, name: salesLeads.name, zip: salesLeads.zip }).from(salesLeads).where(eq(salesLeads.id, id));
   if (!prev) throw new Error("Eintrag nicht gefunden.");
   await assertNoDuplicate(input, id, prev);
   const email = input.email ? normalizeEmail(input.email) : null;
   await db.transaction(async (tx) => {
-    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
+    const [before] = await tx.select({ email: salesLeads.email, consentAt: salesLeads.consentAt, createdAt: salesLeads.createdAt }).from(salesLeads).where(eq(salesLeads.id, id)).for("update");
     if (!before) throw new Error("Eintrag nicht gefunden.");
     // Einwilligung gilt für die bisherige Adresse – bei neuer Adresse entfernen
     const consentLost = !!before.consentAt && (before.email ? normalizeEmail(before.email) : null) !== email;
+    // ausgeblendete Telefonnummer (ohne Einwilligung) bleibt erhalten, wenn das Feld leer ankommt
+    const { phone, ...rest } = input;
+    const keepPhone = opts.phoneHidden && !phone && !opts.clearPhone;
     await tx
       .update(salesLeads)
-      .set({ ...input, email, ...(consentLost ? { consentAt: null, consentNote: null } : {}), updatedAt: new Date() })
+      .set({
+        ...rest,
+        ...(keepPhone ? {} : { phone }),
+        email,
+        ...(consentLost ? { consentAt: null, consentNote: null, consentKind: null } : {}),
+        ...(months ? { deleteAfter: deleteAfterFor(before.createdAt, months) } : {}),
+        updatedAt: now,
+      })
       .where(eq(salesLeads.id, id));
     if (consentLost) await tx.insert(salesLeadEvents).values({ leadId: id, kind: "consent", text: null, meta: { removed: true, reason: "E-Mail geändert" }, createdBy: adminUserId });
-    await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id, meta: consentLost ? { consentRemoved: true } : undefined }, tx);
+    const meta = { ...(consentLost ? { consentRemoved: true } : {}), ...(months ? { deleteMonths: months } : {}) };
+    await audit({ userId: adminUserId, action: "vertrieb.lead_updated", entity: "sales_lead", entityId: id, meta: Object.keys(meta).length ? meta : undefined }, tx);
   });
 }
 
+export type ConsentInput = {
+  /** Wortlaut bzw. Nachweis (Pflicht, 3–500 Zeichen) */
+  note: string;
+  /** Art der Einwilligung (CONSENT_KINDS) */
+  kind: ConsentKind;
+  /** Datum der Einwilligung YYYY-MM-DD (nicht in der Zukunft) */
+  date: string;
+};
+
 /**
- * Einwilligung in Werbe-E-Mails für GENAU EINEN Lead dokumentieren (`note` = Wortlaut, Kanal, Datum – Pflicht).
+ * Einwilligung („ja“) für GENAU EINEN Lead dokumentieren: Datum, Art und Wortlaut/Nachweis sind Pflicht.
  * Bewusst keine Sammelaktion: jede Einwilligung wird einzeln mit ihrem Nachweis erfasst. Nur mit E-Mail-Adresse.
  */
-export async function recordLeadConsent(adminUserId: string, id: string, note: string, now = new Date()): Promise<boolean> {
-  return (await setLeadConsent(adminUserId, [id], note, now)) === 1;
+export async function recordLeadConsent(adminUserId: string, id: string, input: ConsentInput, now = new Date()): Promise<boolean> {
+  return (await setLeadConsent(adminUserId, [id], input, now)) === 1;
 }
 
-/** Einwilligung entfernen (auch für mehrere Leads, z. B. Widerruf). */
+/** Einwilligung entfernen (auch für mehrere Leads, z. B. Widerruf) – zurück auf „nein“. */
 export async function removeLeadConsent(adminUserId: string, ids: string[], now = new Date()): Promise<number> {
   return setLeadConsent(adminUserId, ids, null, now);
 }
 
-async function setLeadConsent(adminUserId: string, ids: string[], note: string | null, now = new Date()): Promise<number> {
+/** Zeitpunkt der Einwilligung aus dem Datum: 12:00 UTC des Tages, höchstens jetzt (heute erteilt). */
+const consentTime = (date: string, now: Date) => new Date(Math.min(Date.parse(`${date}T12:00:00Z`), now.getTime()));
+
+async function setLeadConsent(adminUserId: string, ids: string[], input: ConsentInput | null, now = new Date()): Promise<number> {
   const list = [...new Set(ids)].slice(0, 500);
   if (!list.length) return 0;
-  if (note !== null && list.length !== 1) throw new Error("Eine Einwilligung wird je Praxis einzeln dokumentiert.");
-  const clean = note === null ? null : note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
-  if (clean !== null && clean.length < 3) throw new Error("Bitte Wortlaut, Kanal und Datum der Einwilligung angeben.");
+  if (input !== null && list.length !== 1) throw new Error("Eine Einwilligung wird je Praxis einzeln dokumentiert.");
+  let consent: { at: Date; note: string; kind: ConsentKind } | null = null;
+  if (input !== null) {
+    const note = input.note.replace(/[\r\n]+/g, " ").trim().slice(0, 500);
+    if (note.length < 3) throw new Error("Bitte Wortlaut bzw. Nachweis der Einwilligung angeben.");
+    if (!isConsentKind(input.kind)) throw new Error("Bitte die Art der Einwilligung auswählen.");
+    const d = checkRetrievedDate(input.date, now);
+    if (!d.ok) throw new Error(d.error.replace("Abrufdatum der Quelle", "Datum der Einwilligung").replace("Abrufdatum", "Datum der Einwilligung"));
+    consent = { at: consentTime(d.date, now), note, kind: input.kind };
+  }
   return db.transaction(async (tx) => {
     const changed = await tx
       .update(salesLeads)
-      .set(clean === null ? { consentAt: null, consentNote: null, updatedAt: now } : { consentAt: now, consentNote: clean, updatedAt: now })
-      .where(and(inArray(salesLeads.id, list), clean === null ? sql`${salesLeads.consentAt} is not null` : sql`${salesLeads.email} is not null`))
+      .set(consent === null ? { consentAt: null, consentNote: null, consentKind: null, updatedAt: now } : { consentAt: consent.at, consentNote: consent.note, consentKind: consent.kind, updatedAt: now })
+      .where(and(inArray(salesLeads.id, list), consent === null ? sql`${salesLeads.consentAt} is not null` : sql`${salesLeads.email} is not null`))
       .returning({ id: salesLeads.id });
     if (changed.length) {
-      await tx.insert(salesLeadEvents).values(changed.map((c) => ({ leadId: c.id, kind: "consent", text: clean, meta: clean === null ? { removed: true } : null, createdBy: adminUserId, createdAt: now })));
+      await tx.insert(salesLeadEvents).values(
+        changed.map((c) => ({
+          leadId: c.id,
+          kind: "consent",
+          text: consent?.note ?? null,
+          meta: consent === null ? { removed: true } : { kind: consent.kind, kindLabel: CONSENT_KIND_LABEL[consent.kind], date: consent.at.toISOString() },
+          createdBy: adminUserId,
+          createdAt: now,
+        })),
+      );
     }
-    await audit({ userId: adminUserId, action: clean === null ? "vertrieb.consent_removed" : "vertrieb.consent_recorded", entity: "sales_lead", meta: { leads: changed.map((c) => c.id) } }, tx);
+    await audit({ userId: adminUserId, action: consent === null ? "vertrieb.consent_removed" : "vertrieb.consent_recorded", entity: "sales_lead", meta: { leads: changed.map((c) => c.id), ...(consent ? { kind: consent.kind } : {}) } }, tx);
     return changed.length;
   });
 }
@@ -338,12 +412,15 @@ export async function previewImport(csv: string, exec: Tx | typeof db = db): Pro
 }
 
 /**
- * Import mit Pflichtangabe „Quelle der Daten“ (z. B. „Messe XY 2026, Kontaktformular“ – Art. 14 DSGVO);
- * sie wird an jedem importierten Lead gespeichert (vor einer evtl. Quellen-Spalte der Datei).
+ * Import mit Pflichtangaben „Quelle der Daten“ (z. B. „OpenStreetMap“, „Impressum der Praxis-Websites“ – Art. 14 DSGVO)
+ * und „Abrufdatum“; beides wird an jedem importierten Lead gespeichert (Quelle vor einer evtl. Quellen-Spalte der Datei,
+ * Abrufdatum nur, wenn die Zeile kein eigenes retrieved_at hat). Löschfrist: Standard (Anlage + 12 Monate).
  */
-export async function importLeads(adminUserId: string, csv: string, source: string): Promise<{ imported: number; skipped: number; error?: string }> {
+export async function importLeads(adminUserId: string, csv: string, source: string, retrievedAt: string, now = new Date()): Promise<{ imported: number; skipped: number; error?: string }> {
   const src = source.replace(/[\r\n]+/g, " ").trim().slice(0, 120);
   if (src.length < 3) return { imported: 0, skipped: 0, error: "Bitte die Quelle der Daten angeben." };
+  const retrieved = checkRetrievedDate(retrievedAt, now);
+  if (!retrieved.ok) return { imported: 0, skipped: 0, error: retrieved.error };
   const keyProblem = await blocklistKeyProblem();
   if (keyProblem) return { imported: 0, skipped: 0, error: keyProblem };
   return db.transaction(async (tx) => {
@@ -353,8 +430,19 @@ export async function importLeads(adminUserId: string, csv: string, source: stri
     const p = await previewImport(csv, tx);
     if (p.error) return { imported: 0, skipped: 0, error: p.error };
     const rows = p.decisions.flatMap((d) => (d.action === "neu" ? [d.lead] : []));
-    if (rows.length) await tx.insert(salesLeads).values(rows.map((l) => ({ ...l, source: (l.source ? `${src} – ${l.source}` : src).slice(0, 200) })));
-    await audit({ userId: adminUserId, action: "vertrieb.import", entity: "sales_lead", meta: { imported: rows.length, skipped: p.skippedCount, source: src } }, tx);
+    if (rows.length) {
+      await tx.insert(salesLeads).values(
+        rows.map((l) => ({
+          ...l,
+          source: (l.source ? `${src} – ${l.source}` : src).slice(0, 200),
+          sourceRetrievedAt: l.sourceRetrievedAt ?? retrieved.date,
+          createdAt: now,
+          updatedAt: now,
+          deleteAfter: deleteAfterFor(now, DELETE_MONTHS.default),
+        })),
+      );
+    }
+    await audit({ userId: adminUserId, action: "vertrieb.import", entity: "sales_lead", meta: { imported: rows.length, skipped: p.skippedCount, source: src, retrievedAt: retrieved.date } }, tx);
     return { imported: rows.length, skipped: p.skippedCount };
   });
 }
@@ -518,9 +606,11 @@ export async function sendStats(now = new Date()) {
 export const LEAD_RETENTION_MONTHS = { withoutConsent: 12, withConsent: 24 } as const;
 
 /**
- * Löscht Leads ohne Aktivität (angelegt, geändert, Mail, Antwort, Einwilligung, Verlauf) seit 12 Monaten (ohne
- * Einwilligung) bzw. 24 Monaten (mit Einwilligung), Status nicht „Kunde“. Die Sperrliste bleibt.
- * Aufruf: nächtlicher Cron /api/cron/lead-search. Gibt die Anzahl gelöschter Einträge zurück.
+ * Nächtlicher Löschlauf (Cron /api/cron/lead-search), Status „Kunde“ bleibt immer, die Sperrliste bleibt:
+ * 1. Löschfrist abgelaufen (delete_after, 6–24 Monate ab Anlage) und keine Einwilligung („nein“)
+ * 2. zusätzlich wie bisher (Datenschutzerklärung): ohne Aktivität (angelegt, geändert, Mail, Antwort, Einwilligung,
+ *    Verlauf) seit 12 Monaten (ohne Einwilligung) bzw. 24 Monaten (mit Einwilligung).
+ * Audit nur mit Anzahlen, ohne Personendaten. Gibt die Anzahl gelöschter Einträge zurück.
  */
 export async function purgeStaleLeads(now = new Date()): Promise<number> {
   const before = (months: number) => {
@@ -536,14 +626,23 @@ export async function purgeStaleLeads(now = new Date()): Promise<number> {
     sql`greatest(${salesLeads.createdAt}, ${salesLeads.updatedAt}, coalesce(${salesLeads.lastSentAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.repliedAt}, ${salesLeads.createdAt}), coalesce(${salesLeads.consentAt}, ${salesLeads.createdAt}),
       coalesce((select max(e.created_at) from ${salesLeadEvents} e where e.lead_id = ${salesLeads.id}), ${salesLeads.createdAt})) < ${cutoff}`,
   );
+  const expired = and(sql`${salesLeads.status} <> 'kunde'`, sql`${salesLeads.consentAt} is null`, sql`${salesLeads.deleteAfter} <= ${now}::timestamptz`);
   const r = await db.transaction(async (tx) => {
-    const ids = (await tx.select({ id: salesLeads.id }).from(salesLeads).where(stale).for("update")).map((x) => x.id);
-    if (!ids.length) return [];
+    const rows = await tx
+      .select({ id: salesLeads.id, expired: sql<boolean>`coalesce(${expired}, false)` })
+      .from(salesLeads)
+      .where(or(expired, stale))
+      .for("update");
+    if (!rows.length) return { count: 0, expired: 0 };
+    const ids = rows.map((x) => x.id);
     await anonymizeLeadCodes(tx, ids);
-    return tx.delete(salesLeads).where(inArray(salesLeads.id, ids)).returning({ id: salesLeads.id });
+    const del = await tx.delete(salesLeads).where(inArray(salesLeads.id, ids)).returning({ id: salesLeads.id });
+    return { count: del.length, expired: rows.filter((x) => x.expired).length };
   });
-  if (r.length) await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.length, months: { ...LEAD_RETENTION_MONTHS } } });
-  return r.length;
+  if (r.count) {
+    await audit({ action: "vertrieb.leads_purged", entity: "sales_lead", meta: { count: r.count, expired: r.expired, inactive: r.count - r.expired, months: { ...LEAD_RETENTION_MONTHS } } });
+  }
+  return r.count;
 }
 
 // ───────────── Abmeldung (öffentlich, per signiertem Token) ─────────────

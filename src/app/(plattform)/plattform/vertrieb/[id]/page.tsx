@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActionForm } from "@/components/action-form";
 import { Badge, Button, Card, Textarea, BackLink } from "@/components/ui";
-import { dateDe, dateTimeDe } from "@/lib/format";
+import { berlinDateIso, dateDe, dateTimeDe } from "@/lib/format";
+import { art14Text, CONSENT_KIND_LABEL, CONSENT_KINDS, deleteMonthsOf, isConsentKind, NO_CONSENT_CONTACT_HINT, originLabel, phoneVisible, sourceLabel } from "@/lib/vertrieb/dsgvo";
 import { isPlanId, PLANS } from "@/lib/plans";
 import { LEAD_STATUSES, SEQUENCE_STEPS, STATUS_LABEL, isLeadStatus } from "@/lib/vertrieb/constants";
 import { delayBefore } from "@/lib/vertrieb/eligibility";
@@ -11,7 +12,9 @@ import { requirePlatformAdmin } from "@/server/platform";
 import { getLead, getSalesSettings } from "@/server/vertrieb";
 import { leadOrg, leadTimeline, listCampaigns, type TimelineEntry } from "@/server/vertrieb-pipeline";
 import { addNoteAction, consentAction, deleteLeadAction, markRepliedAction, removeConsentAction, setLeadCampaignAction, setStatusAction, updateLeadAction } from "../actions";
+import { CopyButton } from "../aktionscodes/copy-button";
 import { LeadForm } from "../lead-form";
+import { Art14Download } from "../datenschutzhinweis/art14-download";
 
 export const metadata = { title: "Praxis · Vertrieb" };
 
@@ -30,7 +33,9 @@ function describe(e: TimelineEntry): { title: string; detail?: string | null; to
     case "campaign":
       return { title: e.text ? `Kampagne „${e.text}“` : "Aus Kampagne entfernt" };
     case "consent":
-      return e.meta?.removed ? { title: "Einwilligung entfernt", detail: e.meta.reason ? String(e.meta.reason) : null } : { title: "Einwilligung dokumentiert", detail: e.text };
+      return e.meta?.removed
+        ? { title: "Einwilligung entfernt", detail: e.meta.reason ? String(e.meta.reason) : null }
+        : { title: "Einwilligung dokumentiert", detail: [e.meta?.kindLabel ? `Art: ${String(e.meta.kindLabel)}` : null, e.meta?.date ? `erteilt am ${dateDe(String(e.meta.date))}` : null, e.text].filter(Boolean).join(" · ") };
   }
 }
 
@@ -45,14 +50,44 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
   const stage = deriveStage({ ...lead, suppressed }, org);
   const nextStep = lead.step + 1;
   const dueAt = lead.step > 0 && lead.step < SEQUENCE_STEPS && lead.lastSentAt ? new Date(lead.lastSentAt.getTime() + delayBefore(nextStep, settings.delays) * 86_400_000) : null;
+  const today = berlinDateIso();
+  // Telefonnummer nur mit Einwilligung oder bei Bestandskunden – sonst gelangt sie gar nicht erst in die Seite
+  const showPhone = phoneVisible({ consentAt: lead.consentAt, status: lead.status, stage });
+  const { phone, ...leadWithoutPhone } = lead;
+  const art14 = art14Text({
+    quelle: sourceLabel(lead.source),
+    abrufdatum: lead.sourceRetrievedAt ? dateDe(`${lead.sourceRetrievedAt}T12:00:00Z`) : null,
+    loeschdatum: dateDe(lead.deleteAfter),
+  });
 
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
       <div className="flex flex-col gap-5">
         <BackLink href="/plattform/vertrieb" label="Praxen" className="-mb-5 self-start" />
         <Card>
-          <h2 className="mb-4 font-display text-xl font-semibold">{lead.name}</h2>
-          <LeadForm action={updateLeadAction} submit="Speichern" values={{ ...lead }} />
+          <h2 className="mb-2 font-display text-xl font-semibold">{lead.name}</h2>
+          {!lead.consentAt ? (
+            <p role="note" className="mb-4 rounded-xl border-2 border-accent bg-accent-soft px-4 py-3 text-sm font-semibold text-accent-soft-text">{NO_CONSENT_CONTACT_HINT}</p>
+          ) : null}
+          <dl className="mb-4 grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+            <dt className="text-muted">Herkunft</dt>
+            <dd>{originLabel(lead.source, lead.sourceRetrievedAt)}</dd>
+            <dt className="text-muted">Löschung</dt>
+            <dd>
+              {dateDe(lead.deleteAfter)}
+              {lead.status === "kunde" ? " – entfällt, solange Status „Kunde“" : lead.consentAt ? " – entfällt bei Einwilligung (dann 24 Monate ohne Kontakt)" : null}
+            </dd>
+            <dt className="text-muted">Telefon</dt>
+            <dd>{showPhone ? (phone ?? "–") : phone ? "ausgeblendet (nur mit Einwilligung oder bei Bestandskunden)" : "–"}</dd>
+          </dl>
+          <LeadForm
+            action={updateLeadAction}
+            submit="Speichern"
+            today={today}
+            phoneHidden={!showPhone}
+            phoneStored={!!phone}
+            values={{ ...leadWithoutPhone, ...(showPhone ? { phone } : {}), deleteMonths: deleteMonthsOf(lead.createdAt, lead.deleteAfter), deleteAfterLabel: dateDe(lead.deleteAfter) }}
+          />
         </Card>
         <Card>
           <h2 className="font-display text-lg font-semibold">Verlauf</h2>
@@ -101,10 +136,11 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
           <p className="mt-2 text-xs text-muted">„Antwort erhalten“ beendet die Sequenz (Status „Geantwortet“). „Interessiert“, „Kein Interesse“, „Abgemeldet“ und „Kunde“ beenden sie ebenfalls. „Abgemeldet“ sperrt die Adresse dauerhaft und löscht diesen Eintrag samt Verlauf (Widerspruch).</p>
         </Card>
         <Card>
-          <h2 className="font-display text-lg font-semibold">Einwilligung (§ 7 Abs. 2 Nr. 2 UWG)</h2>
+          <h2 className="font-display text-lg font-semibold">Einwilligung (§ 7 UWG)</h2>
           {lead.consentAt ? (
             <>
-              <p className="mt-2 text-sm"><Badge tone="primary">dokumentiert {dateDe(lead.consentAt)}</Badge></p>
+              <p className="mt-2 text-sm"><Badge tone="primary">ja – erteilt am {dateDe(lead.consentAt)}</Badge></p>
+              <p className="mt-1 text-sm">Art: {isConsentKind(lead.consentKind) ? CONSENT_KIND_LABEL[lead.consentKind] : "nicht angegeben (vor der Erfassung der Art dokumentiert)"}</p>
               <p className="mt-1 whitespace-pre-wrap text-sm text-muted">{lead.consentNote}</p>
               <form action={removeConsentAction} className="mt-2">
                 <input type="hidden" name="id" value={lead.id} />
@@ -113,11 +149,19 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
             </>
           ) : (
             <>
-              <p className="mt-2 text-sm"><Badge tone="accent">keine Einwilligung</Badge> – an diese Praxis wird keine Mail gesendet.</p>
+              <p className="mt-2 text-sm"><Badge tone="accent">nein</Badge> – an diese Praxis wird keine Mail gesendet.</p>
+              <p className="mt-2 rounded-xl bg-accent-soft px-3 py-2 text-sm font-semibold text-accent-soft-text">{NO_CONSENT_CONTACT_HINT}</p>
               {lead.email ? (
                 <ActionForm action={consentAction} submit="Einwilligung dokumentieren" className="mt-3 flex flex-col gap-2">
                   <input type="hidden" name="id" value={lead.id} />
-                  <label className="text-sm font-medium" htmlFor="consentNote">Wortlaut, Kanal und Datum der Einwilligung *</label>
+                  <label className="text-sm font-medium" htmlFor="consentKind">Art der Einwilligung *</label>
+                  <select id="consentKind" name="kind" required defaultValue="" className="h-10 rounded-xl border border-border bg-surface px-3 text-sm">
+                    <option value="" disabled>bitte wählen</option>
+                    {CONSENT_KINDS.map((k) => <option key={k} value={k}>{CONSENT_KIND_LABEL[k]}</option>)}
+                  </select>
+                  <label className="text-sm font-medium" htmlFor="consentDate">Erteilt am *</label>
+                  <input id="consentDate" name="date" type="date" required max={today} defaultValue={today} className="h-10 rounded-xl border border-border bg-surface px-3 text-sm" />
+                  <label className="text-sm font-medium" htmlFor="consentNote">Wortlaut bzw. Nachweis *</label>
                   <Textarea id="consentNote" name="note" required minLength={3} maxLength={500} rows={3} placeholder="z. B. E-Mail vom 12.11.2026: „Bitte schicken Sie mir weitere Infos per E-Mail.“ / Messe XY 10.11.2026, unterschriebenes Formular „Ja, ich möchte Informationen per E-Mail“" />
                   <p className="text-xs text-muted">
                     Nötig ist eine ausdrückliche Einwilligung in Informationen per E-Mail (z. B. Anfrage mit Wunsch nach weiteren Infos per E-Mail,
@@ -171,6 +215,16 @@ export default async function LeadPage({ params }: PageProps<"/plattform/vertrie
             <div><Button type="submit" variant="danger" className="h-10">Löschen</Button></div>
           </form>
           <p className="mt-3 text-xs text-muted">Angelegt {dateTimeDe(lead.createdAt)} · geändert {dateTimeDe(lead.updatedAt)}</p>
+        </Card>
+        <Card>
+          <h2 className="font-display text-lg font-semibold">Datenschutzhinweis (Art. 14 DSGVO)</h2>
+          <p className="mt-1 text-sm">Für den ersten Kontakt per Brief: Quelle, Abrufdatum und Löschdatum dieser Praxis sind eingesetzt, {"{{Firma}}"} und die übrigen Platzhalter bitte ergänzen.</p>
+          <p className="mt-2 rounded-xl bg-warn-soft px-3 py-2 text-sm font-semibold text-warn-soft-text">Entwurf – vor Verwendung rechtlich prüfen lassen.</p>
+          <div className="mt-2 flex flex-wrap gap-4">
+            <CopyButton text={art14} label="Text" />
+            <Art14Download text={art14} filename="datenschutzhinweis-art14.txt" />
+            <Link href="/plattform/vertrieb/datenschutzhinweis" className="text-sm font-semibold text-primary">Vorlage ohne Praxisdaten</Link>
+          </div>
         </Card>
       </div>
     </div>
